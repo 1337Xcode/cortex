@@ -1,0 +1,68 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-*
+
+# Cortex data (local only)
+.cortex/
+.cortex-data/
+.cortex-demo/
+*.db
+*.db-wal
+*.db-shm
+
+# Generated files
+CORTEX_REPORT.md
+
+# Dependencies
+node_modules/
+
+# Site build output & cache
+site/dist/
+site/.astro/
+
+# Site worker secrets (deploy separately)
+site/workers/**/.dev.vars
+site/workers/**/.wrangler/
+site/workers/**/node_modules/
+
+# npm binary vendor (downloaded at install time)
+npm/vendor/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Lock files (keep package-lock.json, ignore pnpm-lock)
+site/pnpm-lock.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Agent/spec files (not part of the tool)
+.agent/
+.kiro/
+.serena/
+
+# Benchmark data (large)
+benchmark/cpython_architecture.json
+
+# Misc
+*.tgz
+*.tar.gz

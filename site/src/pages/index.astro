@@ -1,0 +1,17 @@
+---
+import LandingLayout from '../layouts/LandingLayout.astro';
+import Hero from '../components/landing/Hero.astro';
+import FeaturesBento from '../components/landing/FeaturesBento.tsx';
+import ComparisonTable from '../components/landing/ComparisonTable.astro';
+import InstallBlock from '../components/landing/InstallBlock.astro';
+import { siteConfig } from '../../site.config';
+---
+<LandingLayout pageSeo={{ title: siteConfig.tagline, description: siteConfig.description }}>
+  <Hero />
+  <div class="mx-auto max-w-5xl px-8"><div class="h-px bg-gradient-to-r from-transparent via-border to-transparent"></div></div>
+  <FeaturesBento client:visible />
+  <div class="mx-auto max-w-5xl px-8"><div class="h-px bg-gradient-to-r from-transparent via-border to-transparent"></div></div>
+  <ComparisonTable />
+  <div class="mx-auto max-w-5xl px-8"><div class="h-px bg-gradient-to-r from-transparent via-border to-transparent"></div></div>
+  <InstallBlock />
+</LandingLayout>

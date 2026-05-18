@@ -1,0 +1,65 @@
+---
+import { getCollection, type CollectionEntry } from 'astro:content';
+import { withBase } from '../../lib/paths';
+
+interface Props {
+  currentSlug: string;
+}
+
+const { currentSlug } = Astro.props;
+const docs = await getCollection('docs');
+const sorted = docs.sort((a: CollectionEntry<'docs'>, b: CollectionEntry<'docs'>) => a.data.order - b.data.order);
+
+const categoryLabels: Record<string, string> = {
+  guides: 'Guides',
+  reference: 'Reference',
+  concepts: 'Concepts',
+  general: 'General',
+};
+
+const categories = new Map<string, CollectionEntry<'docs'>[]>();
+for (const doc of sorted) {
+  const cat = doc.data.category || 'general';
+  if (!categories.has(cat)) categories.set(cat, []);
+  categories.get(cat)!.push(doc);
+}
+
+const categoryOrder = ['guides', 'reference', 'concepts', 'general'];
+const orderedCategories = categoryOrder.filter((c) => categories.has(c));
+for (const key of categories.keys()) {
+  if (!orderedCategories.includes(key)) orderedCategories.push(key);
+}
+
+const navSections = orderedCategories.map((category) => ({
+  label: categoryLabels[category] ?? category.charAt(0).toUpperCase() + category.slice(1),
+  entries: categories.get(category)!,
+}));
+---
+
+<nav aria-label="Documentation navigation" class="space-y-5 pr-1">
+  {navSections.map((section) => (
+    <div>
+      <p class="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {section.label}
+      </p>
+      <ul class="space-y-0.5">
+        {section.entries.map((entry) => (
+          <li>
+            <a
+              href={withBase(`/docs/${entry.id}/`)}
+              class:list={[
+                'block rounded-md px-3 py-2 text-sm leading-snug transition-colors',
+                entry.id === currentSlug
+                  ? 'bg-muted font-medium text-foreground'
+                  : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+              ]}
+              aria-current={entry.id === currentSlug ? 'page' : undefined}
+            >
+              {entry.data.title}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  ))}
+</nav>

@@ -1,0 +1,23 @@
+---
+import { siteConfig } from '../../../site.config';
+import { withBase } from '../../lib/paths';
+import HeroHeadline from './HeroHeadline.tsx';
+import HeroCta from './HeroCta.tsx';
+import HeroDemo from './HeroDemo.tsx';
+---
+<section class="relative pt-28 pb-16 sm:pt-36 sm:pb-20">
+  <div class="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+    <div class="absolute top-[-15%] left-[20%] w-[min(80vw,480px)] h-[min(80vw,480px)] rounded-full blur-[100px] animate-aurora-1 bg-teal-500/10 dark:bg-teal-400/5"></div>
+    <div class="absolute bottom-[-5%] right-[15%] w-[min(70vw,400px)] h-[min(70vw,400px)] rounded-full blur-[110px] animate-aurora-2 bg-violet-500/8 dark:bg-violet-400/5"></div>
+    <div class="absolute inset-0 hero-grain"></div>
+  </div>
+
+  <div class="relative z-10 mx-auto flex w-full max-w-3xl flex-col items-center px-4 sm:px-6 text-center">
+    <HeroHeadline client:load />
+    <p class="mt-5 w-full max-w-xl text-base sm:text-lg text-text-muted leading-relaxed text-center mx-auto">
+      {siteConfig.description}
+    </p>
+    <HeroCta client:load docsHref={withBase('/docs/getting-started/')} />
+    <!-- <HeroDemo client:load /> -->
+  </div>
+</section>

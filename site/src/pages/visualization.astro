@@ -1,0 +1,22 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageShell from '../components/layout/PageShell.astro';
+import PageHeader from '../components/layout/PageHeader.astro';
+import { withBase } from '../lib/paths';
+import VizFrame from '../components/visualization/VizFrame.tsx';
+---
+<BaseLayout
+  pageSeo={{
+    title: 'Codebase Visualization',
+    description: 'Interactive 3D force-directed graph of the Cortex codebase. Explore modules, functions, classes, and their relationships.',
+  }}
+  slug="visualization"
+>
+  <PageShell>
+    <PageHeader title="Codebase visualization">
+      Explore the Cortex repository as an interactive call graph. Same output as running
+      <code class="text-sm bg-muted px-1.5 py-0.5 rounded border border-border font-mono">cortex viz</code> locally.
+    </PageHeader>
+    <VizFrame client:load src={withBase('/visualizer.html')} />
+  </PageShell>
+</BaseLayout>

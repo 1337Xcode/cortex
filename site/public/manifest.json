@@ -1,0 +1,9 @@
+{
+  "name": "Cortex Documentation",
+  "short_name": "Cortex",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#171717",
+  "icons": []
+}

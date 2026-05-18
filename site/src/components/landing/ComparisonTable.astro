@@ -1,0 +1,112 @@
+---
+const tools = ['Cortex', 'codebase-memory-mcp', 'Srclight', 'Serena', 'mcp-codebase-index'];
+const features = [
+  { name: 'Architecture', values: ['Rust + SQLite', 'C + SQLite', 'Python + SQLite', 'Python + LSP', 'Python + SQLite'] },
+  { name: 'Languages', values: ['29', '66', '10', '40+', '4'] },
+  { name: 'MCP tools', values: ['32 (5 smart)', '14', '42', '~20', '17'] },
+  { name: 'Smart tool routing', values: ['Yes', 'No', 'No', 'No', 'No'] },
+  { name: 'Call graph depth', values: ['Function-level', 'Full chains', 'Callers/callees', 'LSP-precise', 'Cross-file'] },
+  { name: 'Hybrid search', values: ['FTS5 + vectors', 'Graph only', 'RRF fusion', 'Keyword', 'Structural'] },
+  { name: 'Token reduction', values: ['10-100x', '121x avg', 'N/A', 'N/A', '87%'] },
+  { name: 'Incremental update', values: ['13ms', 'ms-scale', 'Git hooks', 'LSP live', 'Hash-based'] },
+  { name: 'Security (taint/OWASP/SBOM)', values: ['Yes', 'No', 'No', 'No', 'No'] },
+  { name: 'Cross-session memory', values: ['Staleness-aware', 'No', 'No', 'No', 'No'] },
+  { name: 'Multi-repo federation', values: ['Yes', 'No', 'SQLite ATTACH', 'Partial', 'No'] },
+  { name: 'Document ingestion', values: ['Yes', 'No', 'No', 'No', 'No'] },
+  { name: 'Build system awareness', values: ['Yes', 'No', 'Yes', 'No', 'No'] },
+  { name: 'Git intelligence', values: ['Yes', 'Partial', 'Blame', 'No', 'No'] },
+  { name: 'Community detection', values: ['Yes', 'No', 'Yes', 'No', 'No'] },
+  { name: 'Coverage gap analysis', values: ['Yes', 'No', 'No', 'No', 'No'] },
+  { name: 'CI quality gates', values: ['Yes', 'No', 'No', 'No', 'No'] },
+  { name: 'Single binary, zero deps', values: ['Yes', 'Yes', 'No', 'No', 'No'] },
+  { name: 'Auto IDE config', values: ['Yes', 'No', 'No', 'No', 'No'] },
+  { name: '3D visualization', values: ['Yes', 'Yes', 'No', 'No', 'No'] },
+  { name: 'Air-gap compatible', values: ['Yes', 'Yes', 'Yes', 'Yes', 'Yes'] },
+];
+
+const checkIcon = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="text-emerald-600 dark:text-emerald-400"><path d="M5 12l5 5l10 -10"/></svg>';
+const xIcon = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="text-text-muted"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>';
+const partialIcon = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="text-amber-600 dark:text-amber-400"><path d="M5 12h14"/></svg>';
+
+function renderValue(value: string) {
+  if (value === 'Yes') return { html: checkIcon };
+  if (value === 'No') return { html: xIcon };
+  if (value === 'Partial') return { html: partialIcon };
+  return { html: `<span class="text-text font-medium text-xs sm:text-sm tabular-nums leading-snug">${value}</span>` };
+}
+---
+<section class="py-16 sm:py-20" data-animate>
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <div class="text-center mb-8 sm:mb-10 max-w-2xl mx-auto">
+      <h2 class="text-2xl sm:text-3xl font-bold text-text">How Cortex compares</h2>
+      <p class="mt-2 text-sm sm:text-base text-text-muted">Based on each project&apos;s public documentation.</p>
+    </div>
+
+    <div class="hidden lg:block rounded-xl border border-border bg-card overflow-hidden shadow-sm">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm min-w-[960px]">
+          <thead>
+            <tr class="bg-muted/60 border-b border-border">
+              <th class="sticky left-0 z-20 bg-muted/95 backdrop-blur px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-text">Feature</th>
+              {tools.map((tool, i) => (
+                <th class={`px-3 py-3 text-center min-w-[8.5rem] ${i === 0 ? 'comparison-cortex-col' : ''}`}>
+                  {i === 0 ? (
+                    <span class="font-mono text-sm font-semibold text-text normal-case">{tool}</span>
+                  ) : (
+                    <span class="text-[11px] font-medium text-text-muted normal-case leading-tight">{tool}</span>
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {features.map((feature, rowIdx) => (
+              <tr class={`border-t border-border ${rowIdx % 2 === 0 ? 'bg-card' : 'bg-muted/20'} hover:bg-muted/40 transition-colors`}>
+                <td class="sticky left-0 z-10 bg-inherit px-4 py-2.5 font-medium text-text text-sm border-r border-border">{feature.name}</td>
+                {feature.values.map((value, j) => {
+                  const rendered = renderValue(value);
+                  return (
+                    <td class={`px-3 py-2.5 text-center ${j === 0 ? 'comparison-cortex-col' : ''}`}>
+                      <span class="inline-flex items-center justify-center" set:html={rendered.html} />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="lg:hidden space-y-3">
+      {features.map((feature) => {
+        const cortexVal = renderValue(feature.values[0]);
+        return (
+          <details class="group rounded-xl border border-border bg-card overflow-hidden">
+            <summary class="flex items-center justify-between px-4 py-3 cursor-pointer list-none font-medium text-sm text-text bg-muted/30">
+              {feature.name}
+              <span class="text-text-muted group-open:rotate-180 transition-transform">▼</span>
+            </summary>
+            <div class="px-4 py-2 flex items-center justify-between comparison-cortex-col border-y border-border">
+              <span class="font-mono text-sm font-semibold">Cortex</span>
+              <span set:html={cortexVal.html} />
+            </div>
+            <div class="divide-y divide-border">
+              {tools.slice(1).map((tool, idx) => {
+                const rendered = renderValue(feature.values[idx + 1]);
+                return (
+                  <div class="flex items-center justify-between px-4 py-2 text-xs">
+                    <span class="text-text-muted">{tool}</span>
+                    <span set:html={rendered.html} />
+                  </div>
+                );
+              })}
+            </div>
+          </details>
+        );
+      })}
+    </div>
+
+    <p class="text-center text-xs text-text-subtle mt-6">Partial = limited support. N/A = not documented.</p>
+  </div>
+</section>

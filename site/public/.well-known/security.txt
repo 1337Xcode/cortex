@@ -1,0 +1,5 @@
+Contact: https://github.com/1337Xcode/cortex/security/advisories
+Expires: 2026-12-31T23:59:59.000Z
+Preferred-Languages: en
+Canonical: https://1337xcode.github.io/cortex/.well-known/security.txt
+Policy: https://github.com/1337Xcode/cortex/blob/main/SECURITY.md

@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local `wrangler dev` (never commit .dev.vars)
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GITHUB_ISSUES_TOKEN=
+GITHUB_READ_TOKEN=
+SESSION_SECRET=
+TURNSTILE_SECRET=

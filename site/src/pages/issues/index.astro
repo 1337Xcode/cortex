@@ -1,0 +1,29 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageShell from '../../components/layout/PageShell.astro';
+import PageHeader from '../../components/layout/PageHeader.astro';
+import IssueForm from '../../components/issues/IssueForm.tsx';
+
+const issuesApiUrl = import.meta.env.PUBLIC_ISSUES_API_URL ?? '';
+const turnstileKey =
+  import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ??
+  (import.meta.env as { TURNSTILE_SITE?: string }).TURNSTILE_SITE ??
+  '';
+---
+<BaseLayout
+  pageSeo={{
+    title: 'Report an Issue',
+    description: 'Report bugs, request features, or ask questions for Cortex on GitHub.',
+  }}
+  slug="issues"
+>
+  <PageShell>
+    <div class="page-inner max-w-4xl">
+      <PageHeader title="Issues & feedback">
+        Report bugs, request features, ask questions, or flag security concerns on the
+        <a href="https://github.com/1337Xcode/cortex/issues" class="underline underline-offset-2 hover:opacity-80" target="_blank" rel="noopener noreferrer">Cortex repository</a>.
+      </PageHeader>
+      <IssueForm client:load apiUrl={issuesApiUrl} turnstileKey={turnstileKey} />
+    </div>
+  </PageShell>
+</BaseLayout>

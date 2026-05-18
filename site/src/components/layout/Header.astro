@@ -1,0 +1,27 @@
+---
+import { withBase } from '../../lib/paths';
+import ScrollHeader from './ScrollHeader.tsx';
+import HeaderNav from './HeaderNav.tsx';
+import CortexLogo from './CortexLogo.tsx';
+import MobileNav from './MobileNav.tsx';
+import SearchDialog from './SearchDialog.tsx';
+import ThemeToggle from './ThemeToggle.tsx';
+---
+
+<ScrollHeader client:load>
+  <div class="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:px-8">
+    <CortexLogo client:load href={withBase('/')} />
+
+    <div class="ml-auto hidden md:flex items-center gap-0.5 shrink-0">
+      <HeaderNav client:load />
+      <SearchDialog client:load />
+      <ThemeToggle client:load />
+    </div>
+
+    <div class="ml-auto flex items-center gap-0.5 md:hidden shrink-0">
+      <ThemeToggle client:load />
+      <SearchDialog client:load />
+      <MobileNav client:media="(max-width: 767px)" />
+    </div>
+  </div>
+</ScrollHeader>

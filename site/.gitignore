@@ -1,0 +1,22 @@
+# Build output
+dist/
+
+# Astro cache (regenerated on build)
+.astro/
+
+# Worker secrets (never commit)
+workers/**/.dev.vars
+workers/**/.wrangler/
+workers/**/node_modules/
+
+# Local env
+.env
+.env.*
+!.env.example
+
+# Lock files (use package-lock.json only)
+pnpm-lock.yaml
+yarn.lock
+
+# Node
+node_modules/

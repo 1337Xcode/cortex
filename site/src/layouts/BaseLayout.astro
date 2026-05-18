@@ -1,0 +1,207 @@
+---
+import Head from '../components/seo/Head.astro';
+import JsonLd from '../components/seo/JsonLd.astro';
+import Header from '../components/layout/Header.astro';
+import Footer from '../components/layout/Footer.astro';
+import TooltipProviderShell from '../components/layout/TooltipProviderShell.tsx';
+import ClickGraphEffect from '../components/effects/ClickGraphEffect.tsx';
+import { buildSeoMeta } from '../lib/seo';
+import { buildWebSiteSchema, buildSoftwareApplicationSchema } from '../lib/structured-data';
+import { base } from '../lib/paths';
+import type { IPageSeo } from '../types/seo';
+import '@fontsource/press-start-2p/400.css';
+import '../styles/global.css';
+
+interface Props {
+  pageSeo?: IPageSeo;
+  slug?: string;
+  extraSchemas?: Record<string, unknown>[];
+}
+
+const { pageSeo = {}, slug = '', extraSchemas = [] } = Astro.props;
+const seo = buildSeoMeta(pageSeo, slug);
+const schemas = [buildWebSiteSchema(), buildSoftwareApplicationSchema(), ...extraSchemas];
+const fontBase = base;
+---
+<!DOCTYPE html>
+<html lang="en" style={`--base-url: '${fontBase}'`}>
+  <head>
+    <Head seo={seo} />
+    <JsonLd schemas={schemas} />
+    <style is:global set:html={`
+      @font-face{font-family:'IBM Plex Sans';src:url('${fontBase}fonts/IBMPlexSans-Regular.woff2') format('woff2');font-weight:400;font-display:swap}
+      @font-face{font-family:'IBM Plex Sans';src:url('${fontBase}fonts/IBMPlexSans-Medium.woff2') format('woff2');font-weight:500;font-display:swap}
+      @font-face{font-family:'IBM Plex Sans';src:url('${fontBase}fonts/IBMPlexSans-SemiBold.woff2') format('woff2');font-weight:600;font-display:swap}
+      @font-face{font-family:'IBM Plex Sans';src:url('${fontBase}fonts/IBMPlexSans-Bold.woff2') format('woff2');font-weight:700;font-display:swap}
+      @font-face{font-family:'IBM Plex Mono';src:url('${fontBase}fonts/IBMPlexMono-Regular.woff2') format('woff2');font-weight:400;font-display:swap}
+      @font-face{font-family:'IBM Plex Mono';src:url('${fontBase}fonts/IBMPlexMono-Medium.woff2') format('woff2');font-weight:500;font-display:swap}
+    `} />
+    <script is:inline>
+      (function() {
+        const stored = localStorage.getItem('theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (stored === 'dark' || (!stored && prefersDark)) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+  </head>
+  <body class="flex min-h-screen flex-col bg-surface text-text font-sans antialiased selection:bg-accent/20 selection:text-text">
+    <TooltipProviderShell client:load>
+    <ClickGraphEffect client:load />
+    <!-- Subtle background gradient -->
+    <div class="fixed inset-0 pointer-events-none -z-10" style="background: radial-gradient(ellipse 100% 100% at 50% 0%, color-mix(in srgb, var(--color-text) 3%, transparent), transparent 70%);"></div>
+    <Header />
+    <main class="flex-1 pt-14 w-full">
+      <slot />
+    </main>
+    <Footer />
+    <!-- Scroll to top button -->
+    <button
+      id="scroll-top"
+      class="fixed bottom-6 right-6 z-50 p-3 rounded-full bg-accent text-text-inverse shadow-lg opacity-0 pointer-events-none transition-all duration-300 hover:bg-accent-hover hover:scale-110"
+      aria-label="Scroll to top"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6 -6l6 6"/></svg>
+    </button>
+    <script>
+      // Intersection observer for scroll animations
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('visible');
+            }
+          });
+        },
+        { threshold: 0.1 }
+      );
+
+      document.querySelectorAll('[data-animate]').forEach((el) => {
+        observer.observe(el);
+      });
+
+      // Mermaid chart rendering
+      let mermaidModule = null;
+      let mermaidRenderId = 0;
+
+      function mermaidTheme() {
+        const isDark = document.documentElement.classList.contains('dark');
+        return {
+          theme: isDark ? 'dark' : 'neutral',
+          themeVariables: isDark
+            ? {
+                background: '#1f1f1f',
+                primaryColor: '#2a2a2a',
+                primaryTextColor: '#f6f4f2',
+                lineColor: '#8a8784',
+                fontFamily: 'IBM Plex Sans, system-ui, sans-serif',
+              }
+            : {
+                background: '#f6f4f2',
+                primaryColor: '#faf9f7',
+                primaryTextColor: '#1f1f1f',
+                lineColor: '#5c5a57',
+                fontFamily: 'IBM Plex Sans, system-ui, sans-serif',
+              },
+        };
+      }
+
+      async function renderMermaidBlocks() {
+        const pending = document.querySelectorAll('pre code.language-mermaid, code.language-mermaid');
+        const existing = document.querySelectorAll('.mermaid-rendered[data-mermaid-src]');
+        if (pending.length === 0 && existing.length === 0) return;
+
+        if (!mermaidModule) {
+          mermaidModule = (await import('mermaid')).default;
+        }
+
+        const { theme, themeVariables } = mermaidTheme();
+        mermaidModule.initialize({
+          startOnLoad: false,
+          securityLevel: 'loose',
+          theme,
+          themeVariables,
+        });
+
+        const renderOne = async (graphDefinition, targetEl) => {
+          const id = `mermaid-diagram-${mermaidRenderId++}`;
+          const { svg } = await mermaidModule.render(id, graphDefinition.trim());
+          const container = document.createElement('div');
+          container.className = 'mermaid-rendered';
+          container.dataset.mermaidSrc = graphDefinition;
+          container.innerHTML = svg;
+          targetEl.replaceWith(container);
+        };
+
+        for (const code of pending) {
+          const pre = code.parentElement?.tagName === 'PRE' ? code.parentElement : code;
+          const graphDefinition = code.textContent || '';
+          try {
+            await renderOne(graphDefinition, pre);
+          } catch (e) {
+            console.warn('Mermaid render failed', e);
+          }
+        }
+
+        for (const container of existing) {
+          const graphDefinition = container.dataset.mermaidSrc || '';
+          if (!graphDefinition) continue;
+          try {
+            await renderOne(graphDefinition, container);
+          } catch (e) {
+            console.warn('Mermaid re-render failed', e);
+          }
+        }
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', renderMermaidBlocks);
+      } else {
+        renderMermaidBlocks();
+      }
+
+      const themeObserver = new MutationObserver((mutations) => {
+        const classChanged = mutations.some(
+          (m) => m.type === 'attributes' && m.attributeName === 'class',
+        );
+        if (classChanged) renderMermaidBlocks();
+      });
+      themeObserver.observe(document.documentElement, { attributes: true });
+
+      // Add copy buttons to code blocks in docs
+      document.querySelectorAll('.prose pre').forEach((pre) => {
+        const btn = document.createElement('button');
+        btn.className = 'copy-btn';
+        btn.textContent = 'Copy';
+        btn.addEventListener('click', async () => {
+          const code = pre.querySelector('code')?.textContent || pre.textContent || '';
+          await navigator.clipboard.writeText(code);
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+        });
+        (pre as HTMLElement).style.position = 'relative';
+        pre.appendChild(btn);
+      });
+
+      // Scroll to top button
+      const scrollBtn = document.getElementById('scroll-top');
+      if (scrollBtn) {
+        window.addEventListener('scroll', () => {
+          if (window.scrollY > 300) {
+            scrollBtn.classList.remove('opacity-0', 'pointer-events-none');
+            scrollBtn.classList.add('opacity-100');
+          } else {
+            scrollBtn.classList.add('opacity-0', 'pointer-events-none');
+            scrollBtn.classList.remove('opacity-100');
+          }
+        });
+        scrollBtn.addEventListener('click', () => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+      }
+
+    </script>
+    </TooltipProviderShell>
+  </body>
+</html>

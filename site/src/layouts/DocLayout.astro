@@ -1,0 +1,101 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import { getCollection, type CollectionEntry } from 'astro:content';
+import { withBase } from '../lib/paths';
+import { buildBreadcrumbSchema } from '../lib/structured-data';
+import { siteConfig } from '../../site.config';
+import MobileDocsNav from '../components/docs/MobileDocsNav.tsx';
+import type { IPageSeo } from '../types/seo';
+
+interface Props {
+  pageSeo?: IPageSeo;
+  slug?: string;
+  headings?: { depth: number; slug: string; text: string }[];
+}
+
+const { pageSeo, slug, headings = [] } = Astro.props;
+
+const docs = await getCollection('docs');
+const sorted = docs.sort((a: CollectionEntry<'docs'>, b: CollectionEntry<'docs'>) => a.data.order - b.data.order);
+const navItems = sorted.map((d) => ({
+  id: d.id,
+  title: d.data.title,
+  category: d.data.category || 'general',
+}));
+
+const currentDocId = slug?.replace(/^docs\//, '').replace(/\/$/, '') || '';
+const currentIndex = sorted.findIndex((d: CollectionEntry<'docs'>) => d.id === currentDocId);
+const prevDoc = currentIndex > 0 ? sorted[currentIndex - 1] : null;
+const nextDoc = currentIndex < sorted.length - 1 ? sorted[currentIndex + 1] : null;
+const pageTitle = pageSeo?.title || '';
+const breadcrumbSchema = pageTitle
+  ? buildBreadcrumbSchema([
+      { name: 'Home', url: `${siteConfig.url}/` },
+      { name: 'Docs', url: `${siteConfig.url}/docs/getting-started/` },
+      { name: pageTitle, url: `${siteConfig.url}/${slug?.replace(/\/$/, '')}/` },
+    ])
+  : null;
+---
+<BaseLayout pageSeo={pageSeo} slug={slug} extraSchemas={breadcrumbSchema ? [breadcrumbSchema] : []}>
+  <div class="page-shell">
+    {pageTitle && (
+      <nav class="page-header mb-4 hidden sm:flex items-center gap-2 text-sm text-muted-foreground" aria-label="Breadcrumb">
+        <a href={withBase('/')} class="hover:text-text transition-colors">Home</a>
+        <span aria-hidden="true">/</span>
+        <a href={withBase('/docs/getting-started/')} class="hover:text-text transition-colors">Docs</a>
+        <span aria-hidden="true">/</span>
+        <span class="text-text font-medium truncate">{pageTitle}</span>
+      </nav>
+    )}
+
+    <MobileDocsNav
+      client:load
+      items={navItems}
+      currentSlug={currentDocId}
+      headings={headings}
+    />
+
+    <div class="lg:grid lg:grid-cols-[240px_minmax(0,1fr)_200px] lg:gap-10 xl:gap-12">
+      <aside class="hidden lg:block">
+        <div class="sticky top-24 max-h-[calc(100vh-7rem)] overflow-y-auto overflow-x-hidden overscroll-contain">
+          <slot name="sidebar" />
+        </div>
+      </aside>
+
+      <div class="min-w-0">
+        <article class="prose max-w-3xl mx-auto lg:mx-0 pb-28 lg:pb-0">
+          <slot />
+        </article>
+
+        {(prevDoc || nextDoc) && (
+          <nav class="mt-12 pt-8 border-t border-border grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl mx-auto lg:mx-0" aria-label="Page navigation">
+            {prevDoc ? (
+              <a href={withBase(`/docs/${prevDoc.id}/`)} class="group flex flex-col gap-1 p-4 rounded-xl border border-border hover:bg-surface-sunken transition-colors">
+                <span class="text-xs text-text-muted flex items-center gap-1">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 6l-6 6l6 6"/></svg>
+                  Previous
+                </span>
+                <span class="font-medium text-text group-hover:text-accent transition-colors">{prevDoc.data.title}</span>
+              </a>
+            ) : <div />}
+            {nextDoc ? (
+              <a href={withBase(`/docs/${nextDoc.id}/`)} class="group flex flex-col items-end gap-1 p-4 rounded-xl border border-border hover:bg-surface-sunken transition-colors sm:text-right">
+                <span class="text-xs text-text-muted flex items-center gap-1">
+                  Next
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 6l6 6l-6 6"/></svg>
+                </span>
+                <span class="font-medium text-text group-hover:text-accent transition-colors">{nextDoc.data.title}</span>
+              </a>
+            ) : <div />}
+          </nav>
+        )}
+      </div>
+
+      <aside class="hidden lg:block">
+        <div class="sticky top-24">
+          <slot name="toc" />
+        </div>
+      </aside>
+    </div>
+  </div>
+</BaseLayout>

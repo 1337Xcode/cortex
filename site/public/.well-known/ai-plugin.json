@@ -1,0 +1,11 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "Cortex",
+  "name_for_model": "cortex",
+  "description_for_human": "Local code intelligence for AI coding agents. Indexes repositories into call graphs via MCP.",
+  "description_for_model": "Cortex indexes code repositories into SQLite call graphs and exposes them over Model Context Protocol. Use for code navigation, analysis, and AI-assisted development.",
+  "url": "https://1337xcode.github.io",
+  "logo_url": "https://1337xcode.github.io/og-image.png",
+  "contact_email": "",
+  "legal_info_url": "https://github.com/1337Xcode/cortex/blob/main/LICENSE"
+}

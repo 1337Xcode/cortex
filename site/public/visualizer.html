@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cortex Graph</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body { position: relative; overflow: hidden; background: #0f0f14; font-family: 'IBM Plex Sans', sans-serif; color: #e2e4e9; }
+::-webkit-scrollbar { width: 0; height: 0; }
+* { scrollbar-width: none; }
+
+#graph { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+body.embed #header,
+body.embed #search-container,
+body.embed #panel,
+body.embed #legend,
+body.embed #controls,
+body.embed .loading {
+  display: none !important;
+}
+
+#header {
+  position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 100;
+  background: rgba(15,15,20,0.92); backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  display: flex; align-items: center; padding: 0 20px; gap: 16px;
+}
+#header h1 { font-size: 14px; font-weight: 500; color: #a8b1ff; letter-spacing: -0.3px; }
+#header .stats { font-size: 12px; color: #6b7280; font-family: 'IBM Plex Mono', monospace; }
+
+#search-container {
+  position: fixed; top: 60px; left: 16px; z-index: 90; width: 280px;
+}
+#search {
+  width: 100%; padding: 10px 14px; border-radius: 8px;
+  background: rgba(20,20,28,0.95); border: 1px solid rgba(255,255,255,0.08);
+  color: #e2e4e9; font-size: 13px; font-family: 'IBM Plex Mono', monospace;
+  outline: none; transition: border-color 0.2s;
+}
+#search:focus { border-color: rgba(168,177,255,0.4); }
+#search::placeholder { color: #4b5563; }
+
+#panel {
+  position: fixed; top: 60px; right: 16px; width: 320px; z-index: 90;
+  background: rgba(15,15,20,0.95); backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.06); border-radius: 12px;
+  padding: 20px; display: none; max-height: calc(100vh - 80px); overflow-y: auto;
+}
+#panel.visible { display: block; }
+#panel h2 { font-size: 14px; font-weight: 600; color: #a8b1ff; margin-bottom: 12px; word-break: break-all; }
+#panel .field { margin-bottom: 10px; }
+#panel .field-label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+#panel .field-value { font-size: 13px; font-family: 'IBM Plex Mono', monospace; color: #d1d5db; }
+#panel .connections { margin-top: 16px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px; }
+#panel .conn-item { font-size: 12px; padding: 4px 0; color: #9ca3af; cursor: pointer; transition: color 0.15s; }
+#panel .conn-item:hover { color: #a8b1ff; }
+#panel .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+#panel .badge-function { background: rgba(88,166,255,0.15); color: #58a6ff; }
+#panel .badge-class { background: rgba(214,168,255,0.15); color: #d2a8ff; }
+#panel .badge-module { background: rgba(255,166,87,0.15); color: #ffa657; }
+
+#legend {
+  position: absolute; bottom: 16px; left: 16px; z-index: 90;
+  background: rgba(15,15,20,0.9); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px; padding: 12px 16px; font-size: 11px;
+}
+#legend .item { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+#legend .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+#controls {
+  position: absolute; bottom: 16px; right: 16px; z-index: 90;
+  font-size: 11px; color: #9ca3af; text-align: right;
+  pointer-events: none;
+}
+body.viz-fullscreen #controls,
+body.viz-fullscreen #legend {
+  display: none;
+}
+
+.loading {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  color: #6b7280; font-size: 14px; z-index: 200;
+}
+</style>
+</head>
+<body>
+
+<div id="loading" class="loading">Loading graph...</div>
+
+<div id="header">
+  <h1>Cortex Graph</h1>
+  <span class="stats" id="stats-text"></span>
+  <span class="stats" id="top-nodes" style="margin-left:auto;cursor:pointer;color:#a8b1ff" onclick="showTopNodes()"><i data-lucide="flame" style="width:12px;height:12px;display:inline-block;vertical-align:middle;margin-right:4px"></i>Hotspots</span>
+</div>
+
+<div id="search-container">
+  <input id="search" type="text" placeholder="Search symbols..." autocomplete="off" spellcheck="false">
+</div>
+
+<div id="panel">
+  <h2 id="panel-name"></h2>
+  <div class="field"><div class="field-label">Kind</div><div class="field-value" id="panel-kind"></div></div>
+  <div class="field"><div class="field-label">File</div><div class="field-value" id="panel-file"></div></div>
+  <div class="field"><div class="field-label">Risk</div><div class="field-value" id="panel-risk"></div></div>
+  <div class="connections" id="panel-connections"></div>
+</div>
+
+<div id="legend">
+  <div class="item"><div class="dot" style="background:#7c8aff"></div> High connectivity</div>
+  <div class="item"><div class="dot" style="background:#f78166"></div> Medium connectivity</div>
+  <div class="item"><div class="dot" style="background:#7ee787"></div> Low connectivity</div>
+  <div class="item" style="margin-top:8px;color:#6b7280">Node size = connection count</div>
+</div>
+
+<div id="controls">
+  Scroll to zoom<br>Drag to rotate<br>Click to inspect<br>/ to search
+</div>
+
+<div id="graph"></div>
+
+<script src="https://unpkg.com/3d-force-graph@1"></script>
+<script>
+const palette = [
+  '#7c8aff', '#f78166', '#7ee787', '#d2a8ff', '#79c0ff',
+  '#ffa657', '#ff7b72', '#a5d6ff', '#56d364', '#e6edf3'
+];
+
+let data = { nodes: [], links: [] };
+let adjacency = {};
+let highlightNodes = new Set();
+let highlightLinks = new Set();
+let selectedNode = null;
+let Graph = null;
+
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get('embed') === '1') {
+  document.body.classList.add('embed');
+}
+
+function resizeGraph() {
+  if (!Graph) return;
+  const el = document.getElementById('graph');
+  if (!el) return;
+  const w = el.clientWidth || window.innerWidth;
+  const h = el.clientHeight || window.innerHeight;
+  Graph.width(w).height(h);
+}
+
+async function init() {
+  try {
+    const resp = await fetch(new URL('graph-data.json', window.location.href));
+    if (!resp.ok) throw new Error('Failed to load');
+    const raw = await resp.json();
+    
+    // Map our format to viz format
+    data.nodes = raw.nodes.map((n, i) => ({
+      id: n.id,
+      file: n.file,
+      kind: n.kind,
+      callers: n.connections || 0,
+      group: i % palette.length,
+    }));
+    data.links = raw.links.filter(l => {
+      const nodeIds = new Set(data.nodes.map(n => n.id));
+      return nodeIds.has(l.source) && nodeIds.has(l.target);
+    }).map(l => ({ source: l.source, target: l.target }));
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('stats-text').textContent = data.nodes.length + ' nodes, ' + data.links.length + ' edges';
+
+    // Build adjacency
+    data.links.forEach(l => {
+      const src = typeof l.source === 'object' ? l.source.id : l.source;
+      const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+      if (!adjacency[src]) adjacency[src] = { out: [], in: [] };
+      if (!adjacency[tgt]) adjacency[tgt] = { out: [], in: [] };
+      adjacency[src].out.push(tgt);
+      adjacency[tgt].in.push(src);
+    });
+
+    const nodeColor = n => palette[n.group % palette.length];
+
+    Graph = ForceGraph3D()(document.getElementById('graph'))
+      .graphData(data)
+      .backgroundColor('#0f0f14')
+      .showNavInfo(false)
+      .nodeColor(n => {
+        if (highlightNodes.size > 0) {
+          return highlightNodes.has(n.id) ? nodeColor(n) : 'rgba(60,60,80,0.3)';
+        }
+        return nodeColor(n);
+      })
+      .nodeVal(n => Math.max(2, Math.pow((n.callers || 0) + 1, 0.6) * 2))
+      .nodeOpacity(0.92)
+      .linkColor(link => {
+        if (highlightLinks.size > 0) {
+          return highlightLinks.has(link) ? 'rgba(168,177,255,0.7)' : 'rgba(40,40,60,0.06)';
+        }
+        return 'rgba(100,110,140,0.2)';
+      })
+      .linkWidth(link => highlightLinks.has(link) ? 2 : 0.8)
+      .linkDirectionalParticles(link => highlightLinks.has(link) ? 2 : 0)
+      .linkDirectionalParticleWidth(1.5)
+      .linkDirectionalParticleColor(() => '#a8b1ff')
+      .onNodeClick((node) => {
+        selectedNode = node;
+        showPanel(node);
+        highlightConnections(node);
+        Graph.nodeColor(Graph.nodeColor());
+        Graph.linkColor(Graph.linkColor());
+        Graph.linkWidth(Graph.linkWidth());
+      })
+      .onBackgroundClick(() => {
+        selectedNode = null;
+        highlightNodes.clear();
+        highlightLinks.clear();
+        document.getElementById('panel').classList.remove('visible');
+        Graph.nodeColor(Graph.nodeColor());
+        Graph.linkColor(Graph.linkColor());
+        Graph.linkWidth(Graph.linkWidth());
+      });
+
+    resizeGraph();
+    window.addEventListener('resize', resizeGraph);
+
+  } catch (err) {
+    document.getElementById('loading').textContent = 'Failed to load graph data';
+    console.error(err);
+  }
+}
+
+function highlightConnections(node) {
+  highlightNodes.clear();
+  highlightLinks.clear();
+  highlightNodes.add(node.id);
+  const adj = adjacency[node.id];
+  if (adj) {
+    adj.in.forEach(id => highlightNodes.add(id));
+    adj.out.forEach(id => highlightNodes.add(id));
+  }
+  data.links.forEach(link => {
+    const src = typeof link.source === 'object' ? link.source.id : link.source;
+    const tgt = typeof link.target === 'object' ? link.target.id : link.target;
+    if (src === node.id || tgt === node.id) highlightLinks.add(link);
+  });
+}
+
+function showPanel(node) {
+  const panel = document.getElementById('panel');
+  panel.classList.add('visible');
+  document.getElementById('panel-name').textContent = node.id.split('::').pop() || node.id.split(':').pop() || node.id;
+  document.getElementById('panel-kind').innerHTML = '<span class="badge badge-' + (node.kind || 'function') + '">' + (node.kind || 'function') + '</span>';
+  document.getElementById('panel-file').textContent = node.file || 'unknown';
+
+  const callers = node.callers || 0;
+  const adj = adjacency[node.id] || { in: [], out: [] };
+  let riskLevel, riskColor;
+  if (callers >= 10) { riskLevel = 'High'; riskColor = '#f78166'; }
+  else if (callers >= 4) { riskLevel = 'Medium'; riskColor = '#ffa657'; }
+  else { riskLevel = 'Low'; riskColor = '#7ee787'; }
+  document.getElementById('panel-risk').innerHTML = '<span style="color:' + riskColor + '">' + riskLevel + ' blast radius</span> (' + callers + ' connections)';
+
+  const connDiv = document.getElementById('panel-connections');
+  let html = '';
+  if (adj.in.length > 0) {
+    html += '<div class="field-label" style="margin-bottom:6px">Called by (' + adj.in.length + ')</div>';
+    adj.in.slice(0, 10).forEach(id => {
+      const name = id.split('::').pop() || id.split(':').pop() || id;
+      html += '<div class="conn-item" onclick="focusNode(\'' + id.replace(/'/g, "\\'") + '\')">' + name + '</div>';
+    });
+    if (adj.in.length > 10) html += '<div class="conn-item" style="color:#4b5563">+' + (adj.in.length - 10) + ' more</div>';
+  }
+  if (adj.out.length > 0) {
+    html += '<div class="field-label" style="margin-top:12px;margin-bottom:6px">Calls (' + adj.out.length + ')</div>';
+    adj.out.slice(0, 10).forEach(id => {
+      const name = id.split('::').pop() || id.split(':').pop() || id;
+      html += '<div class="conn-item" onclick="focusNode(\'' + id.replace(/'/g, "\\'") + '\')">' + name + '</div>';
+    });
+    if (adj.out.length > 10) html += '<div class="conn-item" style="color:#4b5563">+' + (adj.out.length - 10) + ' more</div>';
+  }
+  if (!adj.in.length && !adj.out.length) html = '<div style="color:#4b5563;font-size:12px">No connections</div>';
+  connDiv.innerHTML = html;
+  lucide.createIcons();
+}
+
+function focusNode(id) {
+  const node = data.nodes.find(n => n.id === id);
+  if (node && node.x !== undefined) {
+    Graph.cameraPosition(
+      { x: node.x + 100, y: node.y + 50, z: node.z + 100 },
+      { x: node.x, y: node.y, z: node.z },
+      1000
+    );
+    setTimeout(() => {
+      selectedNode = node;
+      showPanel(node);
+      highlightConnections(node);
+      Graph.nodeColor(Graph.nodeColor());
+      Graph.linkColor(Graph.linkColor());
+    }, 500);
+  }
+}
+
+function showTopNodes() {
+  const sorted = [...data.nodes].sort((a, b) => (b.callers || 0) - (a.callers || 0));
+  const top = sorted.slice(0, 5);
+  highlightNodes.clear();
+  top.forEach(n => highlightNodes.add(n.id));
+  Graph.nodeColor(Graph.nodeColor());
+  if (top[0]) focusNode(top[0].id);
+}
+
+// Search
+document.getElementById('search').addEventListener('input', (e) => {
+  const query = e.target.value.toLowerCase();
+  if (query.length < 2) {
+    highlightNodes.clear();
+    highlightLinks.clear();
+    if (Graph) Graph.nodeColor(Graph.nodeColor());
+    return;
+  }
+  highlightNodes.clear();
+  data.nodes.forEach(n => {
+    if (n.id.toLowerCase().includes(query)) highlightNodes.add(n.id);
+  });
+  if (Graph) Graph.nodeColor(Graph.nodeColor());
+});
+
+document.getElementById('search').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && highlightNodes.size > 0) {
+    focusNode([...highlightNodes][0]);
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement !== document.getElementById('search')) {
+    e.preventDefault();
+    document.getElementById('search').focus();
+  }
+  if (e.key === 'Escape') {
+    document.getElementById('search').blur();
+    document.getElementById('panel').classList.remove('visible');
+  }
+});
+
+window.addEventListener('message', (event) => {
+  if (event.data?.type === 'cortex-viz-fullscreen') {
+    document.body.classList.toggle('viz-fullscreen', Boolean(event.data.active));
+    requestAnimationFrame(resizeGraph);
+  }
+  if (event.data?.type === 'cortex-viz-resize') {
+    requestAnimationFrame(resizeGraph);
+  }
+});
+
+init();
+lucide.createIcons();
+</script>
+</body>
+</html>

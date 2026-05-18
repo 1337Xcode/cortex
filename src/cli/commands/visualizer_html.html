@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cortex</title>
+    <style>
+        :root {
+            --bg-primary: #1e1e2e;
+            --bg-secondary: #181825;
+            --bg-surface: rgba(30, 30, 46, 0.88);
+            --border: #313244;
+            --text-primary: #cdd6f4;
+            --text-secondary: #a6adc8;
+            --text-muted: #6c7086;
+            --accent: #cdd6f4;
+            --node-function: #b4befe;
+            --node-class: #a6e3a1;
+            --node-module: #cba6f7;
+            --node-route: #f9e2af;
+            --node-interface: #89dceb;
+            --node-type: #f5c2e7;
+            --link-color: rgba(108, 112, 134, 0.18);
+            --link-hover: rgba(205, 214, 244, 0.35);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            overflow: hidden;
+            background: var(--bg-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            color: var(--text-primary);
+        }
+
+        #graph { width: 100vw; height: 100vh; }
+
+        /* Top-left panel */
+        .panel {
+            position: fixed;
+            background: var(--bg-surface);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            z-index: 10;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        #info-panel {
+            top: 20px;
+            left: 20px;
+            min-width: 220px;
+        }
+
+        #info-panel h1 {
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: -0.3px;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #info-panel h1::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--node-function);
+            box-shadow: 0 0 8px var(--node-function);
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-primary);
+        }
+
+        /* Legend */
+        #legend {
+            top: 20px;
+            right: 20px;
+        }
+
+        .legend-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+
+        .legend-items {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* Node detail panel */
+        #node-detail {
+            bottom: 20px;
+            left: 20px;
+            max-width: 420px;
+            display: none;
+            animation: slideUp 0.2s ease-out;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        #node-detail .detail-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        #node-detail .detail-badge {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            background: var(--border);
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        #node-detail .detail-fqn {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            word-break: break-all;
+            line-height: 1.5;
+            padding: 8px 12px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
+        #node-detail .detail-file {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
+
+        /* Search */
+        #search-panel {
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 0;
+            overflow: hidden;
+        }
+
+        #search-input {
+            width: 280px;
+            padding: 10px 16px;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: inherit;
+        }
+
+        #search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* Loading state */
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--text-muted);
+            font-size: 14px;
+            z-index: 100;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid var(--text-muted);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading">Loading graph</div>
+    <div id="graph"></div>
+
+    <div id="info-panel" class="panel">
+        <h1>Cortex</h1>
+        <div class="stat-grid">
+            <div class="stat-item">
+                <span class="stat-label">Nodes</span>
+                <span class="stat-value" id="node-count">—</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Edges</span>
+                <span class="stat-value" id="edge-count">—</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Modules</span>
+                <span class="stat-value" id="module-count">—</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Files</span>
+                <span class="stat-value" id="file-count">—</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="search-panel" class="panel">
+        <input id="search-input" type="text" placeholder="Search nodes..." autocomplete="off" spellcheck="false" />
+    </div>
+
+    <div id="legend" class="panel">
+        <div class="legend-title">Node Types</div>
+        <div class="legend-items">
+            <div class="legend-item"><div class="legend-dot" style="background: var(--node-function); box-shadow: 0 0 6px var(--node-function);"></div>Function</div>
+            <div class="legend-item"><div class="legend-dot" style="background: var(--node-class); box-shadow: 0 0 6px var(--node-class);"></div>Class</div>
+            <div class="legend-item"><div class="legend-dot" style="background: var(--node-module); box-shadow: 0 0 6px var(--node-module);"></div>Module</div>
+            <div class="legend-item"><div class="legend-dot" style="background: var(--node-route); box-shadow: 0 0 6px var(--node-route);"></div>Route</div>
+            <div class="legend-item"><div class="legend-dot" style="background: var(--node-interface); box-shadow: 0 0 6px var(--node-interface);"></div>Interface</div>
+            <div class="legend-item"><div class="legend-dot" style="background: var(--node-type); box-shadow: 0 0 6px var(--node-type);"></div>Type</div>
+        </div>
+    </div>
+
+    <div id="node-detail" class="panel">
+        <div class="detail-header">
+            <span class="detail-badge" id="detail-kind">—</span>
+        </div>
+        <div class="detail-fqn" id="detail-fqn"></div>
+        <div class="detail-file" id="detail-file"></div>
+    </div>
+
+    <script src="https://unpkg.com/3d-force-graph@1"></script>
+    <script>
+        const KIND_COLORS = {
+            'Function': '#b4befe',
+            'Class':    '#a6e3a1',
+            'Module':   '#cba6f7',
+            'Route':    '#f9e2af',
+            'Interface':'#89dceb',
+            'Type':     '#f5c2e7'
+        };
+
+        const KIND_SIZES = {
+            'Module': 2,
+            'Class': 1.5,
+            'Interface': 1.2,
+            'Function': 1,
+            'Route': 1.2,
+            'Type': 1
+        };
+
+        let graphInstance = null;
+        let allNodes = [];
+
+        async function loadGraph() {
+            const [nodesResp, edgesResp, statsResp] = await Promise.all([
+                fetch('/api/nodes'),
+                fetch('/api/edges'),
+                fetch('/api/stats')
+            ]);
+
+            const nodes = await nodesResp.json();
+            const edges = await edgesResp.json();
+            const stats = await statsResp.json();
+
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('node-count').textContent = nodes.length.toLocaleString();
+            document.getElementById('edge-count').textContent = edges.length.toLocaleString();
+            document.getElementById('module-count').textContent = (stats.module_count || 0).toLocaleString();
+
+            const uniqueFiles = new Set(nodes.map(n => n.file));
+            document.getElementById('file-count').textContent = uniqueFiles.size.toLocaleString();
+
+            // Build a set of valid node IDs for link filtering
+            const nodeIds = new Set(nodes.map(n => n.fqn));
+
+            const graphData = {
+                nodes: nodes.map(n => ({
+                    id: n.fqn,
+                    kind: n.kind,
+                    file: n.file,
+                    name: n.fqn.split('::').pop() || n.fqn
+                })),
+                // Only include links where BOTH source and target exist in our node set
+                links: edges
+                    .filter(e => nodeIds.has(e.source_fqn) && nodeIds.has(e.target_fqn))
+                    .map(e => ({
+                        source: e.source_fqn,
+                        target: e.target_fqn,
+                        kind: e.kind,
+                        confidence: e.confidence
+                    }))
+            };
+
+            allNodes = graphData.nodes;
+
+            graphInstance = ForceGraph3D()(document.getElementById('graph'))
+                .graphData(graphData)
+                .nodeLabel(n => n.name)
+                .nodeColor(n => KIND_COLORS[n.kind] || '#6c7086')
+                .nodeVal(n => KIND_SIZES[n.kind] || 2)
+                .nodeOpacity(0.92)
+                .nodeResolution(12)
+                .linkColor(link => link.confidence > 0.8 ? 'rgba(205, 214, 244, 0.12)' : 'rgba(108, 112, 134, 0.06)')
+                .linkWidth(link => link.confidence > 0.8 ? 0.4 : 0.2)
+                .linkOpacity(0.6)
+                .backgroundColor('#1e1e2e')
+                .showNavInfo(false)
+                .onNodeClick(node => {
+                    const panel = document.getElementById('node-detail');
+                    panel.style.display = 'block';
+                    document.getElementById('detail-kind').textContent = node.kind;
+                    document.getElementById('detail-fqn').textContent = node.id;
+                    document.getElementById('detail-file').textContent = node.file;
+
+                    // Focus camera on clicked node
+                    const distance = 120;
+                    const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
+                    graphInstance.cameraPosition(
+                        { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
+                        node,
+                        1000
+                    );
+                })
+                .onBackgroundClick(() => {
+                    document.getElementById('node-detail').style.display = 'none';
+                });
+
+            // Warm colors glow effect via custom node rendering
+            graphInstance.nodeThreeObject(node => {
+                const THREE = window.THREE || graphInstance.scene().constructor.__proto__.constructor;
+                // Use default sphere rendering (return undefined to use default)
+                return undefined;
+            });
+        }
+
+        // Search functionality
+        document.getElementById('search-input').addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            if (!graphInstance || !query) return;
+
+            const match = allNodes.find(n =>
+                n.id.toLowerCase().includes(query) ||
+                n.name.toLowerCase().includes(query)
+            );
+
+            if (match && match.x !== undefined) {
+                const distance = 120;
+                const distRatio = 1 + distance / Math.hypot(match.x, match.y, match.z);
+                graphInstance.cameraPosition(
+                    { x: match.x * distRatio, y: match.y * distRatio, z: match.z * distRatio },
+                    match,
+                    800
+                );
+
+                // Show detail
+                const panel = document.getElementById('node-detail');
+                panel.style.display = 'block';
+                document.getElementById('detail-kind').textContent = match.kind;
+                document.getElementById('detail-fqn').textContent = match.id;
+                document.getElementById('detail-file').textContent = match.file;
+            }
+        });
+
+        // Keyboard shortcut: / to focus search
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '/' && document.activeElement !== document.getElementById('search-input')) {
+                e.preventDefault();
+                document.getElementById('search-input').focus();
+            }
+            if (e.key === 'Escape') {
+                document.getElementById('search-input').blur();
+                document.getElementById('node-detail').style.display = 'none';
+            }
+        });
+
+        loadGraph().catch(err => {
+            document.getElementById('loading').textContent = 'Failed to load graph';
+            console.error('Failed to load graph:', err);
+        });
+    </script>
+</body>
+</html>

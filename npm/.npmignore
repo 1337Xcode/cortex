@@ -1,0 +1,8 @@
+# Exclude everything by default
+*
+
+# Whitelist only the files needed for npm distribution
+!bin/cortex.js
+!scripts/install.js
+!README.md
+!package.json

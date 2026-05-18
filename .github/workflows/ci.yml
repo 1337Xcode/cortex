@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ci-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ci-cargo-
+
+      - name: Check compilation
+        run: cargo check --all-targets
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+        continue-on-error: true
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+  test:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ci-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ci-cargo-
+
+      - name: Run tests
+        run: cargo test --lib
+
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for known vulnerabilities
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  pr-checks:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check PR title format
+        shell: bash
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          if [[ ${#TITLE} -lt 10 ]]; then
+            echo "PR title too short (minimum 10 characters)"
+            exit 1
+          fi
+          if [[ ${#TITLE} -gt 72 ]]; then
+            echo "PR title too long (maximum 72 characters)"
+            exit 1
+          fi
+
+      - name: Check for large files
+        shell: bash
+        run: |
+          LARGE_FILES=$(find . -type f -size +5M -not -path './.git/*' -not -path './target/*')
+          if [ -n "$LARGE_FILES" ]; then
+            echo "Large files detected (>5MB):"
+            echo "$LARGE_FILES"
+            exit 1
+          fi
+
+      - name: Check no secrets in diff
+        shell: bash
+        run: |
+          DIFF=$(git diff origin/main...HEAD -- . ':!*.lock' ':!Cargo.lock')
+          if echo "$DIFF" | grep -qiE '(PRIVATE.KEY|sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36})' 2>/dev/null; then
+            echo "Potential secrets detected in PR diff."
+            exit 1
+          fi
+        continue-on-error: true

@@ -1,0 +1,63 @@
+---
+interface Props {
+  headings: { depth: number; slug: string; text: string }[];
+}
+
+const { headings } = Astro.props;
+const tocHeadings = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
+---
+
+{tocHeadings.length > 0 && (
+  <nav aria-label="Table of contents" class="flex flex-col h-full" id="toc-nav">
+    <h3 class="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3 shrink-0">
+      On this page
+    </h3>
+    <ul class="space-y-1 text-sm overflow-y-auto flex-1 max-h-[calc(100vh-200px)]">
+      {tocHeadings.map((heading) => (
+        <li class={heading.depth === 3 ? 'pl-3' : ''}>
+          <a
+            href={`#${heading.slug}`}
+            data-toc-link={heading.slug}
+            class="block py-1 text-text-muted hover:text-text transition-all duration-200 border-l-2 border-transparent pl-2"
+          >
+            {heading.text}
+          </a>
+        </li>
+      ))}
+    </ul>
+  </nav>
+)}
+
+<script>
+  // Highlight active TOC item based on scroll position
+  const tocLinks = document.querySelectorAll('[data-toc-link]');
+  if (tocLinks.length > 0) {
+    const headingEls = Array.from(tocLinks).map(link => {
+      const slug = link.getAttribute('data-toc-link');
+      return document.getElementById(slug || '');
+    }).filter(Boolean) as HTMLElement[];
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            // Remove active from all
+            tocLinks.forEach(link => {
+              link.classList.remove('text-text', 'font-medium', 'border-text');
+              link.classList.add('text-text-muted', 'border-transparent');
+            });
+            // Add active to current
+            const activeLink = document.querySelector(`[data-toc-link="${entry.target.id}"]`);
+            if (activeLink) {
+              activeLink.classList.add('text-text', 'font-medium', 'border-text');
+              activeLink.classList.remove('text-text-muted', 'border-transparent');
+            }
+          }
+        });
+      },
+      { rootMargin: '-80px 0px -70% 0px', threshold: 0 }
+    );
+
+    headingEls.forEach(el => observer.observe(el));
+  }
+</script>

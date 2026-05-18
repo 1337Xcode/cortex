@@ -1,0 +1,59 @@
+name: Deploy Site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: site
+        run: npm install
+
+      - name: Build site
+        working-directory: site
+        env:
+          PUBLIC_ISSUES_API_URL: ${{ secrets.PUBLIC_ISSUES_API_URL }}
+          # Accept PUBLIC_TURNSTILE_SITE_KEY or legacy TURNSTILE_SITE repository secret name
+          PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.PUBLIC_TURNSTILE_SITE_KEY || secrets.TURNSTILE_SITE }}
+        run: npx astro build --site "https://1337xcode.github.io/cortex" --base "/cortex"
+
+      - name: Add .nojekyll
+        run: touch site/dist/.nojekyll
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

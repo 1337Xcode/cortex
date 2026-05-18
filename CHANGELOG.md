@@ -1,0 +1,244 @@
+# Changelog
+
+All notable changes to Cortex are documented here.
+
+## [1.0.0] - 2026-05-18
+
+### Added
+- Documentation site built with Astro 5, deployed to GitHub Pages
+- Interactive 3D codebase visualization (same as `cortex viz` output)
+- Dark/light mode with system preference detection
+- Bento grid feature showcase with animated cards
+- Ctrl+K / Cmd+K search across docs
+- GitHub OAuth issue submission form via Cloudflare Worker
+- RSS and Atom feeds for documentation updates
+- `llms.txt` and `ai-plugin.json` for AI discoverability
+- Confetti effect on install command copy
+
+### Changed
+- npm package version aligned with changelog (0.0.30)
+- All em dashes removed from documentation and code comments
+- Site URL set to `1337xcode.github.io/cortex`
+- Comparison table updated with accurate data from each project's docs
+
+### Fixed
+- Federation console animation now types top-to-bottom
+- Bento card overflow on MCP tools and Federation cards
+- Language marquee no longer pauses on hover
+- Theme toggle properly switches between light and dark mode
+
+## [0.0.29] - 2025-07-15
+
+### Changed
+- License changed from PolyForm Noncommercial to MIT
+- Release workflow archive naming aligned with install scripts (darwin/x64/arm64/win32 convention)
+- All platforms now produce tar.gz archives for consistency
+- SECURITY.md version table corrected from 0.1.x to 0.0.x
+
+### Added
+- CONTRIBUTING.md with build, test, and PR guidelines
+
+### Removed
+- Committed binary files from npm/vendor/ (now download-only via GitHub Releases)
+- Agent-specific files (skill/, SKILL.md, tile.json)
+
+## [0.0.20] - 2025-05-17
+
+### Changed
+- All 32 MCP tools registered and verified in server.rs
+- All stub CLI commands implemented: status, memory list, memory prune, security vulns, config get/set/reset
+- Version synced to 0.0.20 across Cargo.toml, npm/package.json, SKILL.md, tile.json
+- Documentation reconciled with actual implementation (no false claims remain)
+- Removed non-existent --ui flag from docs
+
+## [0.0.19] - 2025-05-16
+
+### Added
+- `cortex ask` MCP meta-tool: single-call code intelligence that auto-routes to the right internal tools and composes a unified answer
+- `cortex federate add/remove/list`: multi-repo federation with unified cross-repo queries
+- `cortex ingest <path>`: local document ingestion (markdown, text, CSV, HTML, YAML) into the knowledge graph
+- `cortex serve --smart-tools`: expose only 5 core tools, reducing context window overhead by 89%
+- Build system awareness: detects Cargo workspaces, npm workspaces, Go workspaces, Gradle/Maven multi-module projects
+- `cortex hotspots`: combines git commit frequency with call graph connectivity to find maintenance risks
+- `get_class_hierarchy`, `get_git_hotspots`, `get_import_graph`, `find_similar_functions` MCP tools
+- `cortex coverage --lcov`: cross-references call graph with test coverage data
+
+## [0.0.18] - 2025-05-12
+
+### Added
+- Leiden community detection algorithm for module boundary analysis
+- `decompose_boundaries` MCP tool with coupling scores between clusters
+- 3D graph visualization: `cortex viz --export graph.html` generates standalone HTML with embedded 3d-force-graph
+- Nodes colored by community assignment, sized by caller count
+- `cortex report` generates CORTEX_REPORT.md with architecture overview, hotspots, dead code, security findings
+
+### Fixed
+- Community detection was treating all edges as undirected; now respects call direction for modularity score
+
+## [0.0.17] - 2025-05-10
+
+### Added
+- Hybrid search: when `search_symbols` returns fewer than 3 graph results, FTS5 BM25 runs as fallback
+- Results merged and deduplicated by FQN, sorted by confidence descending
+- `cortex semantic enable/disable/status` for local ONNX vector search management
+- sqlite-vec compiled as a loadable extension, statically linked for HNSW vector search
+
+### Changed
+- FTS5 ranking switched to explicit BM25 weighting (k1=1.2, b=0.75)
+
+## [0.0.16] - 2025-05-08
+
+### Added
+- Cross-session memory layer: `write_observation` stores text linked to a node FQN with agent ID and timestamp
+- `read_observations` retrieves observations with `is_stale` boolean flag
+- Staleness invalidation: when indexer detects a node's content hash changed, linked observations get `is_stale = true`
+- `prune_observations` removes stale observations filtered by age
+- ADR storage: `write_adr` / `read_adrs` with status and optional linked FQN
+- Migration 0004 creates observations and adrs tables
+
+## [0.0.15] - 2025-05-06
+
+### Added
+- `cortex security report` prints human-readable security summary with taint flows, OWASP categories, dependency count
+- `check_dependencies` MCP tool cross-references SBOM entries against OSV.dev API
+- Vulnerability check integrated into the report (skipped gracefully when offline)
+
+### Changed
+- SBOM generation extracts package versions from lock files (Cargo.lock, package-lock.json, go.sum, requirements.txt)
+
+## [0.0.14] - 2025-05-04
+
+### Added
+- SBOM generation in SPDX 2.3 JSON format from the import graph
+- `generate_sbom` MCP tool
+- `cortex security sbom` CLI command
+- Dependency extraction from Cargo.toml, package.json, go.mod, requirements.txt, pyproject.toml, Gemfile
+
+## [0.0.13] - 2025-05-02
+
+### Added
+- OWASP Top 10 pattern detection against the structural call graph
+- Patterns detected: A01 (Broken Access Control), A02 (Crypto Failures), A03 (Injection), A04 (Insecure Design)
+- `scan_owasp` MCP tool returns findings with category, node FQN, and confidence
+- Inter-procedural taint propagation: follows call edges up to depth 5
+
+### Fixed
+- Taint analysis was missing async function sinks in Python
+
+## [0.0.12] - 2025-04-30
+
+### Added
+- Taint flow analysis: detects HTTP input sources flowing to SQL queries, file writes, shell command execution
+- Source annotations for Flask, FastAPI, Express, Go net/http
+- Sink annotations for raw SQL, os.system/subprocess, file open with write mode
+- `find_taint_paths` MCP tool
+- `cortex security scan` CLI command
+- Migration 0003 creates security_findings and taint_paths tables
+
+## [0.0.11] - 2025-04-28
+
+### Added
+- Bundle export: `cortex bundle export` serializes full graph to cortex.json
+- Bundle import: `cortex bundle import` rebuilds SQLite from JSON bundle
+- Bundle format versioned (schema_version field) for forward compatibility
+- CCG export format via `cortex bundle export --format ccg`
+
+## [0.0.10] - 2025-04-26
+
+### Added
+- `cortex install` command: scans for installed AI agents and writes MCP server config
+- Detection for Claude Code and Cursor with idempotent config merging
+- Expanded detection: Windsurf, VS Code, Zed, JetBrains (7 agents total)
+- Workspace-level `.cortex/mcp.json` auto-written for VS Code/Cursor/Kiro auto-discovery
+
+### Fixed
+- Claude Code settings.json was being overwritten entirely instead of merged
+
+## [0.0.9] - 2025-04-24
+
+### Added
+- HTTP route extraction for Python Flask/FastAPI, TypeScript Express, Go net/http
+- `get_http_routes` and `trace_http_call` MCP tools
+- Cross-service linking: when service A calls an endpoint matching service B's route, creates an edge
+
+### Fixed
+- Go parser was not extracting method receivers
+- TypeScript arrow function exports were missing from the symbol table
+
+## [0.0.8] - 2025-04-22
+
+### Added
+- 15 additional tree-sitter languages: Scala, Swift, PHP, SQL, Kotlin, Dart, Elixir, Haskell, Lua, Zig, Bash, Perl, R, Objective-C, OCaml
+- Total language count now 25
+- Language quality tiers: Tier 1 (Python, TS, Rust, Go, Java), Tier 2 (C#, C++, Ruby, Kotlin, Swift), Tier 3 (remaining)
+
+### Changed
+- Parser module refactored: one file per language under `src/indexer/languages/`
+
+## [0.0.7] - 2025-04-19
+
+### Added
+- `query_graph` MCP tool: Cypher-like subset (MATCH, WHERE, RETURN, LIMIT, ORDER BY)
+- `get_code_snippet` MCP tool: reads source lines for a symbol by FQN
+- `detect_changes` MCP tool: nodes modified since a Unix timestamp
+- `blast_radius` MCP tool: BFS over inbound edges to configurable depth
+- MCP server over stdio transport (JSON-RPC 2.0, Tokio async runtime)
+- `cortex serve` command with concurrent tool handling
+
+## [0.0.6] - 2025-04-17
+
+### Added
+- File watcher using notify crate: inotify on Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows
+- Sub-second incremental re-indexing: only re-parses files whose content hash changed
+- .gitignore and .cortex-ignore exclusion rules applied to watcher events
+
+### Fixed
+- Watcher was triggering on .git/ internal file changes
+
+## [0.0.5] - 2025-04-15
+
+### Added
+- MCP server initial tool set: `search_symbols`, `trace_callers`, `trace_callees`, `get_file_context`, `get_architecture`
+- `find_dead_code` query: nodes with zero inbound call edges, excluding entry points
+- FTS5 full-text search over symbol names, file paths, and FQN components
+
+### Changed
+- Schema migration system formalized: numbered SQL files applied in order on startup
+
+## [0.0.4] - 2025-04-13
+
+### Added
+- Rayon parallel file parsing: each file gets its own tree-sitter parser instance on a thread pool
+- Progress reporting during indexing (file count, elapsed time, files/second)
+
+### Fixed
+- Large repositories (50K+ files) caused OOM; now processed in batches of 500
+
+## [0.0.3] - 2025-04-11
+
+### Added
+- Call edge extraction: function A calls function B creates a directed edge
+- FQN resolution across files using the import graph
+- Import relationship tracking stored as edges with kind "Imports"
+- Two-pass resolution: first pass collects definitions, second pass resolves call targets
+
+### Fixed
+- Python nested function definitions were being skipped
+- TypeScript re-exports were not creating import edges
+
+## [0.0.2] - 2025-04-09
+
+### Added
+- SQLite store with WAL mode, nodes/edges/files tables
+- tree-sitter parsing for 10 languages: Python, TypeScript, JavaScript, Go, Rust, Java, C#, C++, C, Ruby
+- Symbol extraction: functions, classes, methods, modules, interfaces, enums
+- `cortex index` walks the repository respecting .gitignore
+- Migration 0001 creates initial schema with indexes
+
+## [0.0.1] - 2025-04-05
+
+### Added
+- Initial project scaffold: Cargo.toml with clap, rusqlite, serde, tree-sitter
+- CLI skeleton with `cortex index` and `cortex serve` (stub) subcommands
+- Config loading from environment variables and .cortex/config.toml
+- Structured logging via tracing crate with configurable log level

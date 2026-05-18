@@ -1,0 +1,17 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import { buildFaqSchema, homepageFaqs } from '../lib/structured-data';
+import type { IPageSeo } from '../types/seo';
+
+interface Props {
+  pageSeo?: IPageSeo;
+}
+
+const { pageSeo } = Astro.props;
+const faqSchema = buildFaqSchema(homepageFaqs);
+---
+<BaseLayout pageSeo={pageSeo} slug="" extraSchemas={[faqSchema]}>
+  <div class="flex flex-col">
+    <slot />
+  </div>
+</BaseLayout>

@@ -1,0 +1,7 @@
+# Cortex - One binary. Zero dependencies. Local code intelligence for AI coding agents.
+
+Cortex indexes repositories into a SQLite call graph and serves it over MCP.
+29 languages, 32 tools, sub-second indexing, offline security analysis.
+
+Docs: https://1337xcode.github.io/cortex/docs/getting-started/
+GitHub: https://github.com/1337Xcode/cortex

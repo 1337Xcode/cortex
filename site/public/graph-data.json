@@ -1,0 +1,436 @@
+{
+  "nodes": [
+    {
+      "id": "mod:cli",
+      "name": "cli",
+      "kind": "module",
+      "file": "src/cli/mod.rs",
+      "connections": 8
+    },
+    {
+      "id": "mod:agents",
+      "name": "agents",
+      "kind": "module",
+      "file": "src/agents/mod.rs",
+      "connections": 5
+    },
+    {
+      "id": "mod:bundle",
+      "name": "bundle",
+      "kind": "module",
+      "file": "src/bundle/mod.rs",
+      "connections": 4
+    },
+    {
+      "id": "mod:indexer",
+      "name": "indexer",
+      "kind": "module",
+      "file": "src/indexer/mod.rs",
+      "connections": 6
+    },
+    {
+      "id": "mod:mcp",
+      "name": "mcp",
+      "kind": "module",
+      "file": "src/mcp/mod.rs",
+      "connections": 7
+    },
+    {
+      "id": "mod:memory",
+      "name": "memory",
+      "kind": "module",
+      "file": "src/memory/mod.rs",
+      "connections": 4
+    },
+    {
+      "id": "mod:security",
+      "name": "security",
+      "kind": "module",
+      "file": "src/security/mod.rs",
+      "connections": 3
+    },
+    {
+      "id": "mod:store",
+      "name": "store",
+      "kind": "module",
+      "file": "src/store/mod.rs",
+      "connections": 7
+    },
+    {
+      "id": "mod:watcher",
+      "name": "watcher",
+      "kind": "module",
+      "file": "src/watcher/mod.rs",
+      "connections": 3
+    },
+    {
+      "id": "fn:cli:run",
+      "name": "run",
+      "kind": "function",
+      "file": "src/cli/mod.rs",
+      "connections": 6
+    },
+    {
+      "id": "fn:cli:parse_args",
+      "name": "parse_args",
+      "kind": "function",
+      "file": "src/cli/mod.rs",
+      "connections": 2
+    },
+    {
+      "id": "fn:agents:configure",
+      "name": "configure_agent",
+      "kind": "function",
+      "file": "src/agents/mod.rs",
+      "connections": 3
+    },
+    {
+      "id": "fn:agents:detect",
+      "name": "detect_agents",
+      "kind": "function",
+      "file": "src/agents/mod.rs",
+      "connections": 2
+    },
+    {
+      "id": "fn:indexer:index_repo",
+      "name": "index_repo",
+      "kind": "function",
+      "file": "src/indexer/mod.rs",
+      "connections": 5
+    },
+    {
+      "id": "fn:indexer:parse_file",
+      "name": "parse_file",
+      "kind": "function",
+      "file": "src/indexer/mod.rs",
+      "connections": 4
+    },
+    {
+      "id": "fn:indexer:build_graph",
+      "name": "build_graph",
+      "kind": "function",
+      "file": "src/indexer/mod.rs",
+      "connections": 3
+    },
+    {
+      "id": "fn:mcp:serve",
+      "name": "serve",
+      "kind": "function",
+      "file": "src/mcp/mod.rs",
+      "connections": 5
+    },
+    {
+      "id": "fn:mcp:handle_request",
+      "name": "handle_request",
+      "kind": "function",
+      "file": "src/mcp/mod.rs",
+      "connections": 4
+    },
+    {
+      "id": "fn:mcp:register_tools",
+      "name": "register_tools",
+      "kind": "function",
+      "file": "src/mcp/mod.rs",
+      "connections": 3
+    },
+    {
+      "id": "fn:memory:store_context",
+      "name": "store_context",
+      "kind": "function",
+      "file": "src/memory/mod.rs",
+      "connections": 3
+    },
+    {
+      "id": "fn:memory:recall",
+      "name": "recall",
+      "kind": "function",
+      "file": "src/memory/mod.rs",
+      "connections": 2
+    },
+    {
+      "id": "fn:security:scan",
+      "name": "scan_vulnerabilities",
+      "kind": "function",
+      "file": "src/security/mod.rs",
+      "connections": 2
+    },
+    {
+      "id": "fn:security:analyze",
+      "name": "analyze_dependencies",
+      "kind": "function",
+      "file": "src/security/mod.rs",
+      "connections": 2
+    },
+    {
+      "id": "fn:store:init_db",
+      "name": "init_db",
+      "kind": "function",
+      "file": "src/store/mod.rs",
+      "connections": 4
+    },
+    {
+      "id": "fn:store:query",
+      "name": "query_graph",
+      "kind": "function",
+      "file": "src/store/mod.rs",
+      "connections": 5
+    },
+    {
+      "id": "fn:store:insert",
+      "name": "insert_node",
+      "kind": "function",
+      "file": "src/store/mod.rs",
+      "connections": 3
+    },
+    {
+      "id": "fn:watcher:watch",
+      "name": "watch_files",
+      "kind": "function",
+      "file": "src/watcher/mod.rs",
+      "connections": 3
+    },
+    {
+      "id": "fn:watcher:on_change",
+      "name": "on_change",
+      "kind": "function",
+      "file": "src/watcher/mod.rs",
+      "connections": 2
+    },
+    {
+      "id": "fn:bundle:package",
+      "name": "package_binary",
+      "kind": "function",
+      "file": "src/bundle/mod.rs",
+      "connections": 2
+    },
+    {
+      "id": "fn:bundle:install",
+      "name": "install",
+      "kind": "function",
+      "file": "src/bundle/mod.rs",
+      "connections": 3
+    }
+  ],
+  "links": [
+    {
+      "source": "fn:cli:run",
+      "target": "mod:indexer",
+      "kind": "call"
+    },
+    {
+      "source": "fn:cli:run",
+      "target": "mod:mcp",
+      "kind": "call"
+    },
+    {
+      "source": "fn:cli:run",
+      "target": "mod:agents",
+      "kind": "call"
+    },
+    {
+      "source": "fn:cli:run",
+      "target": "mod:watcher",
+      "kind": "call"
+    },
+    {
+      "source": "fn:cli:run",
+      "target": "mod:security",
+      "kind": "call"
+    },
+    {
+      "source": "fn:cli:run",
+      "target": "mod:bundle",
+      "kind": "call"
+    },
+    {
+      "source": "mod:cli",
+      "target": "fn:cli:run",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:cli",
+      "target": "fn:cli:parse_args",
+      "kind": "contains"
+    },
+    {
+      "source": "fn:indexer:index_repo",
+      "target": "fn:indexer:parse_file",
+      "kind": "call"
+    },
+    {
+      "source": "fn:indexer:index_repo",
+      "target": "fn:indexer:build_graph",
+      "kind": "call"
+    },
+    {
+      "source": "fn:indexer:index_repo",
+      "target": "fn:store:insert",
+      "kind": "call"
+    },
+    {
+      "source": "fn:indexer:build_graph",
+      "target": "fn:store:insert",
+      "kind": "call"
+    },
+    {
+      "source": "mod:indexer",
+      "target": "fn:indexer:index_repo",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:indexer",
+      "target": "fn:indexer:parse_file",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:indexer",
+      "target": "fn:indexer:build_graph",
+      "kind": "contains"
+    },
+    {
+      "source": "fn:mcp:serve",
+      "target": "fn:mcp:handle_request",
+      "kind": "call"
+    },
+    {
+      "source": "fn:mcp:serve",
+      "target": "fn:mcp:register_tools",
+      "kind": "call"
+    },
+    {
+      "source": "fn:mcp:handle_request",
+      "target": "fn:store:query",
+      "kind": "call"
+    },
+    {
+      "source": "fn:mcp:handle_request",
+      "target": "fn:memory:recall",
+      "kind": "call"
+    },
+    {
+      "source": "mod:mcp",
+      "target": "fn:mcp:serve",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:mcp",
+      "target": "fn:mcp:handle_request",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:mcp",
+      "target": "fn:mcp:register_tools",
+      "kind": "contains"
+    },
+    {
+      "source": "fn:memory:store_context",
+      "target": "fn:store:insert",
+      "kind": "call"
+    },
+    {
+      "source": "fn:memory:recall",
+      "target": "fn:store:query",
+      "kind": "call"
+    },
+    {
+      "source": "mod:memory",
+      "target": "fn:memory:store_context",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:memory",
+      "target": "fn:memory:recall",
+      "kind": "contains"
+    },
+    {
+      "source": "fn:security:scan",
+      "target": "fn:store:query",
+      "kind": "call"
+    },
+    {
+      "source": "fn:security:analyze",
+      "target": "fn:indexer:parse_file",
+      "kind": "call"
+    },
+    {
+      "source": "mod:security",
+      "target": "fn:security:scan",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:security",
+      "target": "fn:security:analyze",
+      "kind": "contains"
+    },
+    {
+      "source": "fn:store:init_db",
+      "target": "fn:store:insert",
+      "kind": "call"
+    },
+    {
+      "source": "mod:store",
+      "target": "fn:store:init_db",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:store",
+      "target": "fn:store:query",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:store",
+      "target": "fn:store:insert",
+      "kind": "contains"
+    },
+    {
+      "source": "fn:watcher:watch",
+      "target": "fn:watcher:on_change",
+      "kind": "call"
+    },
+    {
+      "source": "fn:watcher:on_change",
+      "target": "fn:indexer:index_repo",
+      "kind": "call"
+    },
+    {
+      "source": "mod:watcher",
+      "target": "fn:watcher:watch",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:watcher",
+      "target": "fn:watcher:on_change",
+      "kind": "contains"
+    },
+    {
+      "source": "fn:agents:configure",
+      "target": "fn:agents:detect",
+      "kind": "call"
+    },
+    {
+      "source": "mod:agents",
+      "target": "fn:agents:configure",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:agents",
+      "target": "fn:agents:detect",
+      "kind": "contains"
+    },
+    {
+      "source": "fn:bundle:install",
+      "target": "fn:agents:configure",
+      "kind": "call"
+    },
+    {
+      "source": "mod:bundle",
+      "target": "fn:bundle:package",
+      "kind": "contains"
+    },
+    {
+      "source": "mod:bundle",
+      "target": "fn:bundle:install",
+      "kind": "contains"
+    }
+  ]
+}

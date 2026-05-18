@@ -1,0 +1,49 @@
+---
+import { siteConfig } from '../../../site.config';
+import { withBase } from '../../lib/paths';
+import type { ISeoMeta } from '../../types/seo';
+
+interface Props {
+  seo: ISeoMeta;
+}
+
+const { seo } = Astro.props;
+---
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{seo.title}</title>
+<meta name="description" content={seo.description} />
+<meta name="robots" content="index, follow" />
+<meta name="author" content={siteConfig.author} />
+<meta name="keywords" content={siteConfig.keywords.join(', ')} />
+<link rel="canonical" href={seo.canonical} />
+<link rel="icon" type="image/svg+xml" href={withBase('/favicon.svg')} />
+
+<!-- Open Graph -->
+<meta property="og:title" content={seo.ogTitle} />
+<meta property="og:description" content={seo.ogDescription} />
+<meta property="og:image" content={seo.ogImage} />
+<meta property="og:url" content={seo.ogUrl} />
+<meta property="og:type" content="website" />
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content={seo.twitterCard} />
+<meta name="twitter:title" content={seo.ogTitle} />
+<meta name="twitter:description" content={seo.ogDescription} />
+<meta name="twitter:image" content={seo.ogImage} />
+
+<!-- PWA Manifest -->
+<link rel="manifest" href={withBase('/manifest.json')} />
+<meta name="theme-color" content={siteConfig.themeColor} />
+
+<!-- RSS/Atom Feeds -->
+<link rel="alternate" type="application/rss+xml" title="Cortex Docs RSS" href={withBase('/feed.xml')} />
+<link rel="alternate" type="application/atom+xml" title="Cortex Docs Atom" href={withBase('/atom.xml')} />
+
+<!-- Font Preloads -->
+<link rel="preload" href={withBase('/fonts/IBMPlexSans-Regular.woff2')} as="font" type="font/woff2" crossorigin />
+<link rel="preload" href={withBase('/fonts/IBMPlexMono-Regular.woff2')} as="font" type="font/woff2" crossorigin />
+
+<!-- Security Headers -->
+<meta http-equiv="X-Content-Type-Options" content="nosniff" />
+<meta name="referrer" content="strict-origin-when-cross-origin" />

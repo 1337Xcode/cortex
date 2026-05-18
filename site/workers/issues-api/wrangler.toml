@@ -1,0 +1,8 @@
+name = "cortex-issues-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[vars]
+GITHUB_REPO = "1337Xcode/cortex"
+ALLOWED_ORIGINS = "https://1337xcode.github.io,http://localhost:4321,http://127.0.0.1:4321"
+SITE_URL = "https://1337xcode.github.io/cortex"

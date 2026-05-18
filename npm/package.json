@@ -1,0 +1,34 @@
+{
+  "name": "@1337xcode/cortex",
+  "version": "1.0.0",
+  "description": "Code intelligence MCP server. Indexes your repository into a queryable call graph for AI coding agents.",
+  "bin": {
+    "cortex": "./bin/cortex.js"
+  },
+  "scripts": {
+    "install": "node scripts/install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1337Xcode/cortex.git"
+  },
+  "keywords": [
+    "mcp",
+    "code-intelligence",
+    "call-graph",
+    "tree-sitter",
+    "ai-coding",
+    "model-context-protocol",
+    "cortex",
+    "code-graph",
+    "security",
+    "taint-analysis"
+  ],
+  "author": "1337Xcode",
+  "license": "MIT",
+  "os": ["darwin", "linux", "win32"],
+  "cpu": ["x64", "arm64"],
+  "engines": {
+    "node": ">=16"
+  }
+}

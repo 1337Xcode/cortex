@@ -1,0 +1,17 @@
+---
+interface Props {
+  title: string;
+  narrow?: boolean;
+}
+
+const { title, narrow = false } = Astro.props;
+---
+
+<header class:list={['page-header', narrow && 'max-w-2xl']}>
+  <h1>{title}</h1>
+  {Astro.slots.has('default') && (
+    <p class="page-header-lead">
+      <slot />
+    </p>
+  )}
+</header>
