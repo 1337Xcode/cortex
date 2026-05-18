@@ -8,20 +8,43 @@
 [![Languages](https://img.shields.io/badge/languages-29-teal?style=flat-square)](docs/architecture.md)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey?style=flat-square)]()
 [![npm](https://img.shields.io/npm/v/@1337xcode/cortex?style=flat-square&color=red&label=npm)](https://www.npmjs.com/package/@1337xcode/cortex)
+[![Docs](https://img.shields.io/badge/docs-1337xcode.github.io%2Fcortex-blue?style=flat-square)](https://1337xcode.github.io/cortex)
 
 One binary. Zero dependencies. 29 languages. 32 MCP tools. Local code intelligence for AI coding agents.
 
+**[Documentation](https://1337xcode.github.io/cortex)** · **[npm](https://www.npmjs.com/package/@1337xcode/cortex)** · **[Issues](https://github.com/1337Xcode/cortex/issues)**
+
+## Works with
+
+<p>
+  <img src="assets/icons/claude.svg" width="32" height="32" alt="Claude Code" title="Claude Code" />&nbsp;&nbsp;
+  <img src="assets/icons/cursor-dark.svg" width="32" height="32" alt="Cursor" title="Cursor" />&nbsp;&nbsp;
+  <img src="assets/icons/copilot-dark.svg" width="32" height="32" alt="GitHub Copilot" title="GitHub Copilot" />&nbsp;&nbsp;
+  <img src="assets/icons/windsurf-dark.svg" width="32" height="32" alt="Windsurf" title="Windsurf" />&nbsp;&nbsp;
+  <img src="assets/icons/vscode.svg" width="32" height="32" alt="VS Code" title="VS Code" />&nbsp;&nbsp;
+  <img src="assets/icons/codex-dark.svg" width="32" height="32" alt="OpenAI Codex" title="OpenAI Codex" />&nbsp;&nbsp;
+  <img src="assets/icons/cline-dark.svg" width="32" height="32" alt="Cline" title="Cline" />&nbsp;&nbsp;
+  <img src="assets/icons/kiro.svg" width="32" height="32" alt="Kiro" title="Kiro" />&nbsp;&nbsp;
+  <img src="assets/icons/jetbrains.svg" width="32" height="32" alt="JetBrains" title="JetBrains" />&nbsp;&nbsp;
+  <img src="assets/icons/neovim.svg" width="32" height="32" alt="Neovim" title="Neovim" />
+</p>
+
+Any MCP-compatible AI agent, IDE, or CLI tool connects out of the box. `cortex install` auto-detects your setup and writes the config.
+
 ## Why Cortex
 
-AI agents burn tokens reading files to answer structural questions. An agent asking "what calls processOrder" gets a 200-token graph result instead of burning 20,000 tokens reading files. Cortex indexes your repository into a SQLite call graph and exposes it over the Model Context Protocol. It handles repositories with 100K to 1M+ lines of code without breaking a sweat. Indexes 127 files in 535ms, incremental re-index in 13ms.
+An agent asking "what calls processOrder" gets a 200-token graph result instead of burning 20,000 tokens reading files. That's 100x fewer tokens on a single structural question.
+
+Cortex indexes your repository into a SQLite call graph and exposes it over the Model Context Protocol. 127 files indexed in 535ms. Incremental re-index in 13ms. Handles 100K to 1M+ line repositories.
 
 ## Install
-
-**npx (recommended)**
 
 ```sh
 npx @1337xcode/cortex install
 ```
+
+<details>
+<summary>Other methods</summary>
 
 **Shell script**
 
@@ -37,6 +60,8 @@ cargo build --release
 cp target/release/cortex ~/.local/bin/
 ```
 
+</details>
+
 ## Quick start
 
 ```sh
@@ -45,21 +70,7 @@ cortex install  # detect Claude Code / Cursor, write MCP config
 cortex serve    # start the MCP server
 ```
 
-Your agent can now query the graph instead of reading raw files.
-
-## What you get
-
-- **29 languages** parsed via tree-sitter (Python, TypeScript, Rust, Go, Java, C#, C++, Ruby, Kotlin, Swift, PHP, Scala, and 17 more)
-- **32 MCP tools** exposed over stdio, or 5 in smart-tools mode (the `ask` meta-tool routes internally)
-- **Sub-second incremental re-indexing** via native OS file watcher (inotify, FSEvents, ReadDirectoryChangesW)
-- **Taint flow analysis, OWASP Top 10 detection, SBOM generation** all running locally, no cloud
-- **Cross-session memory** that marks observations stale when linked code changes
-- **Multi-repo federation** for querying across repositories with a unified graph
-- **Hybrid search** combining FTS5 BM25 with optional local ONNX vector search
-- **CI quality gates** with configurable thresholds and exit codes
-- **3D interactive graph visualization** exportable to standalone HTML
-- **Portable JSON bundle** (cortex.json) for team sharing via git
-- **Works offline.** No cloud, no API keys, no Docker, no language runtimes.
+Your agent queries the graph instead of reading raw files.
 
 ## Demo commands
 
@@ -75,6 +86,38 @@ cortex coverage --lcov coverage.lcov    # untested functions ranked by caller co
 cortex modules                          # Leiden community detection module boundaries
 cortex federate add ../auth-service     # query across repos with unified graph
 ```
+
+## What you get
+
+- **29 languages** parsed via tree-sitter
+- **32 MCP tools** exposed over stdio, or 5 in smart mode (the `ask` meta-tool routes internally)
+- **Sub-second incremental re-indexing** via native OS file watcher (inotify, FSEvents, ReadDirectoryChangesW)
+- **Taint flow analysis, OWASP Top 10 detection, SBOM generation** all running locally, no cloud
+- **Cross-session memory** that marks observations stale when linked code changes
+- **Multi-repo federation** for querying across repositories with a unified graph
+- **Hybrid search** combining FTS5 BM25 with optional local ONNX vector search
+- **CI quality gates** with configurable thresholds and exit codes
+- **3D interactive graph visualization** exportable to standalone HTML
+- **Portable JSON bundle** (cortex.json) for team sharing via git. `cortex bundle export` serializes the full graph as a portable JSON file. Commit it to git so your team skips the index step entirely.
+- **Works offline.** No cloud, no API keys, no Docker, no language runtimes.
+
+<details>
+<summary>All 29 supported languages</summary>
+
+| Language | Language | Language |
+|----------|----------|----------|
+| Python | TypeScript | JavaScript |
+| Rust | Go | Java |
+| C | C++ | C# |
+| Ruby | PHP | Swift |
+| Kotlin | Scala | Lua |
+| Zig | Haskell | Elixir |
+| Dart | R | Julia |
+| OCaml | Bash | HCL/Terraform |
+| Perl | Objective-C | SQL |
+| YAML | TOML | |
+
+</details>
 
 ## Architecture
 
@@ -105,7 +148,7 @@ graph TD
 | Smart tool routing | Yes (ask meta-tool) | No | No | No | No |
 | Call graph | Function-level | Full chains | Callers/callees | LSP-precise | Cross-file |
 | Hybrid search | FTS5 + sqlite-vec | Graph only | RRF fusion | Keyword | Structural |
-| Token reduction | 10-100x | 121x avg | Not measured | Not measured | 87% |
+| Token reduction | 100x on structural queries | 121x avg | Not measured | Not measured | 87% |
 | Incremental update | 13ms (no changes) | Milliseconds | Git hooks | LSP live | Hash-based |
 | Security (taint/OWASP/SBOM) | Yes | No | No | No | No |
 | Cross-session memory | Staleness-aware | No | No | No | No |
@@ -117,7 +160,7 @@ graph TD
 | Coverage gap analysis | Yes (LCOV cross-ref) | No | No | No | No |
 | CI quality gates | Yes (exit codes) | No | No | No | No |
 | Single binary, zero deps | Yes | Yes | No (Python) | No (Python+LSP) | No (Python) |
-| Auto IDE config | 2+ agents | No | No | No | No |
+| Auto IDE config | 7 agents | No | No | No | No |
 | 3D visualization | Yes | Yes | No | No | No |
 | Air-gap compatible | Yes | Yes | Yes | Yes | Yes |
 | License | MIT | MIT | MIT | MIT | MIT |
@@ -131,18 +174,7 @@ graph TD
 - [Configuration](docs/configuration.md)
 - [Architecture](docs/architecture.md)
 
-## Website
-
-The documentation site is built with Astro 5 and deployed to GitHub Pages.
-
-```sh
-cd site
-npm install
-npm run dev       # local dev at http://localhost:4321
-npm run build     # production build to dist/
-```
-
-Live at [1337xcode.github.io/cortex](https://1337xcode.github.io/cortex)
+Full docs site: [1337xcode.github.io/cortex](https://1337xcode.github.io/cortex)
 
 ## License
 
