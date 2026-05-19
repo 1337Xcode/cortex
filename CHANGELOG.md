@@ -2,6 +2,33 @@
 
 All notable changes to Cortex are documented here.
 
+## [1.0.1] - 2026-05-19
+
+### Added
+- Support for 25 AI coding agents (up from 15): added OpenCode, OpenClaw, Factory Droid,
+  Trae, Trae CN, Gemini CLI, Hermes, Kimi Code, Kiro IDE, and Pi coding agent.
+- Dedicated subcommands: `cortex cursor install`, `cortex vscode install`,
+  `cortex kiro install`, `cortex antigravity install` for one-step setup without `--platform`.
+- Platform alias normalization: `--platform` now accepts flexible names
+  (e.g. `copilot`, `codex`, `droid`, `claw`, `trae-cn`) and maps them to canonical IDs.
+- `synthesize_agent` fallback: `cortex install --platform <name>` now works even when
+  the agent's config directory does not exist yet (creates it on the fly).
+- Comprehensive IDE setup documentation with quick-reference install table.
+- `.editorconfig` at repo root to enforce UTF-8 without BOM, LF line endings, and
+  consistent indentation across all editors going forward.
+- CI `lint-scripts` job that fails the build if any `.js`, `.ts`, `.mjs`, `.cjs`, or
+  `.sh` file contains a UTF-8 BOM, preventing regressions.
+
+### Fixed
+- Stripped UTF-8 BOM (EF BB BF) from `npm/scripts/install.js` that caused a Node.js
+  `SyntaxError: Invalid or unexpected token` on `npm install`, breaking the post-install
+  binary download on all platforms.
+
+### Changed
+- Antigravity renamed to "Google Antigravity" in display output.
+- Codex CLI detection now also checks `~/.codex/` (home directory).
+- `cortex install` help output lists all 25 supported platforms with config file paths.
+
 ## [1.0.0] - 2026-05-18
 
 ### Added

@@ -62,6 +62,37 @@ jobs:
       - name: Run tests
         run: cargo test --lib
 
+  lint-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for UTF-8 BOM in JS/TS scripts
+        shell: bash
+        run: |
+          # BOM bytes: EF BB BF — fatal in Node.js scripts (breaks shebang parsing)
+          BOM_FILES=$(grep -rlP '^\xEF\xBB\xBF' --include='*.js' --include='*.ts' --include='*.mjs' --include='*.cjs' . 2>/dev/null || true)
+          if [ -n "$BOM_FILES" ]; then
+            echo "ERROR: UTF-8 BOM detected in the following files:"
+            echo "$BOM_FILES"
+            echo ""
+            echo "BOM causes Node.js SyntaxError when the file is used as a script."
+            echo "Fix: save the file as UTF-8 without BOM."
+            exit 1
+          fi
+          echo "No BOM detected in JS/TS files."
+
+      - name: Check for UTF-8 BOM in shell scripts
+        shell: bash
+        run: |
+          BOM_FILES=$(grep -rlP '^\xEF\xBB\xBF' --include='*.sh' . 2>/dev/null || true)
+          if [ -n "$BOM_FILES" ]; then
+            echo "ERROR: UTF-8 BOM detected in shell scripts:"
+            echo "$BOM_FILES"
+            exit 1
+          fi
+          echo "No BOM detected in shell scripts."
+
   security-audit:
     runs-on: ubuntu-latest
     steps:

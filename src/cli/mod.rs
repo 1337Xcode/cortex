@@ -41,9 +41,39 @@ pub enum Command {
     /// Auto-detect and configure AI agents.
     Install {
         /// Target platform to configure (auto-detects if omitted).
-        /// Supported: claude-code, cursor, windsurf, vscode, kiro, zed, jetbrains, cline, aider, continue
+        /// Supported: claude-code, cursor, windsurf, vscode, kiro, zed, jetbrains, cline,
+        /// aider, continue, codex, opencode, openclaw, droid, trae, trae-cn, gemini,
+        /// hermes, kimi, pi, copilot, antigravity
         #[arg(long)]
         platform: Option<String>,
+    },
+
+    /// Configure Cursor IDE to use Cortex as an MCP server.
+    #[command(name = "cursor")]
+    Cursor {
+        #[command(subcommand)]
+        action: CursorCommand,
+    },
+
+    /// Configure VS Code (Copilot Chat) to use Cortex as an MCP server.
+    #[command(name = "vscode")]
+    Vscode {
+        #[command(subcommand)]
+        action: VscodeCommand,
+    },
+
+    /// Configure Kiro IDE to use Cortex as an MCP server.
+    #[command(name = "kiro")]
+    Kiro {
+        #[command(subcommand)]
+        action: KiroCommand,
+    },
+
+    /// Configure Google Antigravity to use Cortex as an MCP server.
+    #[command(name = "antigravity")]
+    Antigravity {
+        #[command(subcommand)]
+        action: AntigravityCommand,
     },
 
     /// Bundle operations (export/import).
@@ -204,6 +234,34 @@ pub enum Command {
         #[arg(long, default_value = "md,txt,csv,rst,html,yaml")]
         types: String,
     },
+}
+
+/// Cursor subcommands.
+#[derive(Debug, Subcommand)]
+pub enum CursorCommand {
+    /// Configure Cursor to use Cortex as an MCP server.
+    Install,
+}
+
+/// VS Code subcommands.
+#[derive(Debug, Subcommand)]
+pub enum VscodeCommand {
+    /// Configure VS Code (Copilot Chat) to use Cortex as an MCP server.
+    Install,
+}
+
+/// Kiro subcommands.
+#[derive(Debug, Subcommand)]
+pub enum KiroCommand {
+    /// Configure Kiro to use Cortex as an MCP server.
+    Install,
+}
+
+/// Antigravity subcommands.
+#[derive(Debug, Subcommand)]
+pub enum AntigravityCommand {
+    /// Configure Google Antigravity to use Cortex as an MCP server.
+    Install,
 }
 
 /// Hook subcommands.
@@ -641,5 +699,40 @@ mod tests {
     fn test_no_subcommand_fails() {
         let result = Cli::try_parse_from(["cortex"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_cursor_install() {
+        let cli = Cli::try_parse_from(["cortex", "cursor", "install"]).unwrap();
+        assert!(matches!(cli.command, Command::Cursor { action: CursorCommand::Install }));
+    }
+
+    #[test]
+    fn test_parse_vscode_install() {
+        let cli = Cli::try_parse_from(["cortex", "vscode", "install"]).unwrap();
+        assert!(matches!(cli.command, Command::Vscode { action: VscodeCommand::Install }));
+    }
+
+    #[test]
+    fn test_parse_kiro_install() {
+        let cli = Cli::try_parse_from(["cortex", "kiro", "install"]).unwrap();
+        assert!(matches!(cli.command, Command::Kiro { action: KiroCommand::Install }));
+    }
+
+    #[test]
+    fn test_parse_antigravity_install() {
+        let cli = Cli::try_parse_from(["cortex", "antigravity", "install"]).unwrap();
+        assert!(matches!(cli.command, Command::Antigravity { action: AntigravityCommand::Install }));
+    }
+
+    #[test]
+    fn test_parse_install_with_platform() {
+        let cli = Cli::try_parse_from(["cortex", "install", "--platform", "gemini"]).unwrap();
+        match cli.command {
+            Command::Install { platform } => {
+                assert_eq!(platform, Some("gemini".to_string()));
+            }
+            _ => panic!("expected Install command"),
+        }
     }
 }

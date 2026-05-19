@@ -31,6 +31,39 @@ One binary. Zero dependencies. 29 languages. 32 MCP tools. Local code intelligen
 
 Any MCP-compatible AI agent, IDE, or CLI tool connects out of the box. `cortex install` auto-detects your setup and writes the config.
 
+<details>
+<summary>All 25 supported platforms</summary>
+
+| Platform | Install command |
+|---|---|
+| Claude Code (Linux/Mac) | `cortex install` |
+| Claude Code (Windows) | `cortex install --platform claude-code` |
+| Codex | `cortex install --platform codex` |
+| OpenCode | `cortex install --platform opencode` |
+| GitHub Copilot CLI | `cortex install --platform copilot` |
+| VS Code Copilot Chat | `cortex vscode install` |
+| Aider | `cortex install --platform aider` |
+| OpenClaw | `cortex install --platform openclaw` |
+| Factory Droid | `cortex install --platform droid` |
+| Trae | `cortex install --platform trae` |
+| Trae CN | `cortex install --platform trae-cn` |
+| Gemini CLI | `cortex install --platform gemini` |
+| Hermes | `cortex install --platform hermes` |
+| Kimi Code | `cortex install --platform kimi` |
+| Kiro IDE/CLI | `cortex kiro install` |
+| Pi coding agent | `cortex install --platform pi` |
+| Cursor | `cortex cursor install` |
+| Google Antigravity | `cortex antigravity install` |
+| Windsurf | `cortex install --platform windsurf` |
+| Zed | `cortex install --platform zed` |
+| JetBrains | `cortex install --platform jetbrains` |
+| Cline/Roo | `cortex install --platform cline` |
+| Continue.dev | `cortex install --platform continue` |
+| Supermaven | `cortex install --platform supermaven` |
+| Tabnine | `cortex install --platform tabnine` |
+
+</details>
+
 ## Why Cortex
 
 An agent asking "what calls processOrder" gets a 200-token graph result instead of burning 20,000 tokens reading files. That's 100x fewer tokens on a single structural question.
@@ -160,7 +193,7 @@ graph TD
 | Coverage gap analysis | Yes (LCOV cross-ref) | No | No | No | No |
 | CI quality gates | Yes (exit codes) | No | No | No | No |
 | Single binary, zero deps | Yes | Yes | No (Python) | No (Python+LSP) | No (Python) |
-| Auto IDE config | 7 agents | No | No | No | No |
+| Auto IDE config | 25 agents | No | No | No | No |
 | 3D visualization | Yes | Yes | No | No | No |
 | Air-gap compatible | Yes | Yes | Yes | Yes | Yes |
 | License | MIT | MIT | MIT | MIT | MIT |

@@ -33,6 +33,16 @@ pub fn configure_agent(agent: &DetectedAgent, cortex_binary: &Path) -> Result<()
         "supermaven" => configure_supermaven(agent, cortex_binary),
         "codeium" => configure_codeium(agent, cortex_binary),
         "tabnine" => configure_tabnine(agent, cortex_binary),
+        "opencode" => configure_opencode(agent, cortex_binary),
+        "openclaw" => configure_openclaw(agent, cortex_binary),
+        "droid" => configure_droid(agent, cortex_binary),
+        "trae" => configure_trae(agent, cortex_binary),
+        "trae-cn" => configure_trae_cn(agent, cortex_binary),
+        "gemini" => configure_gemini(agent, cortex_binary),
+        "hermes" => configure_hermes(agent, cortex_binary),
+        "kimi" => configure_kimi(agent, cortex_binary),
+        "kiro" => configure_kiro(agent, cortex_binary),
+        "pi" => configure_pi(agent, cortex_binary),
         _ => Err(AgentError::ConfigurationFailed {
             reason: format!("unknown agent: {}", agent.name),
         }),
@@ -246,6 +256,147 @@ fn configure_codeium(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), 
 
 /// Configure Tabnine: writes to .tabnine/mcp.json under "mcpServers".
 fn configure_tabnine(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("mcp.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure OpenCode: writes to .opencode/mcp.json (or ~/.opencode/mcp.json) under "mcpServers".
+fn configure_opencode(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("mcp.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure OpenClaw: writes to .openclaw/mcp.json under "mcpServers".
+fn configure_openclaw(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("mcp.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure Factory Droid: writes to .droid/mcp.json under "mcpServers".
+fn configure_droid(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("mcp.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure Trae: writes to .trae/mcp.json under "mcpServers".
+fn configure_trae(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("mcp.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure Trae CN: writes to .trae-cn/mcp.json under "mcpServers".
+fn configure_trae_cn(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("mcp.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure Gemini CLI: writes to .gemini/settings.json (or ~/.gemini/settings.json) under "mcpServers".
+/// Gemini CLI uses settings.json with an "mcpServers" key.
+fn configure_gemini(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("settings.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure Hermes: writes to .hermes/mcp.json under "mcpServers".
+fn configure_hermes(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("mcp.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure Kimi Code: writes to .kimi/mcp.json (or ~/.kimi/mcp.json) under "mcpServers".
+fn configure_kimi(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("mcp.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure Kiro IDE: writes to .kiro/settings/mcp.json under "mcpServers".
+fn configure_kiro(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
+    let config_file = agent.config_path.join("settings").join("mcp.json");
+    let mut config = load_json(&config_file)?;
+    ensure_object(&mut config);
+    let obj = config.as_object_mut().unwrap();
+    if !obj.contains_key(&agent.root_key) {
+        obj.insert(agent.root_key.clone(), serde_json::json!({}));
+    }
+    let servers = obj.get_mut(&agent.root_key).unwrap().as_object_mut().unwrap();
+    servers.insert("cortex".to_string(), build_cortex_entry(cortex_binary));
+    write_json(&config_file, &config)
+}
+
+/// Configure Pi coding agent: writes to .pi/mcp.json (or ~/.pi/mcp.json) under "mcpServers".
+fn configure_pi(agent: &DetectedAgent, cortex_binary: &Path) -> Result<(), AgentError> {
     let config_file = agent.config_path.join("mcp.json");
     let mut config = load_json(&config_file)?;
     ensure_object(&mut config);

@@ -1,6 +1,6 @@
 //! Agent detection: identifies installed AI coding agents.
 //!
-//! Detects 15 agents by checking for their configuration directories/files:
+//! Detects 25 agents by checking for their configuration directories/files:
 //! - Claude Code: ~/.claude/
 //! - Cursor: .cursor/ in repo root
 //! - Windsurf: ~/.windsurf/ or .windsurf/ in repo root
@@ -11,11 +11,21 @@
 //! - Continue.dev: .continue/ in repo root or ~/.continue/
 //! - GitHub Copilot: .github/ in repo root
 //! - Cline/Roo: .vscode/ in repo root (shares VS Code config dir)
-//! - Codex CLI: .codex/ in repo root
-//! - Antigravity: .antigravity/ in repo root
+//! - Codex CLI: .codex/ in repo root or ~/.codex/
+//! - Antigravity (Google): .antigravity/ in repo root or ~/.antigravity/
 //! - Supermaven: .supermaven/ in repo root
 //! - Codeium: .codeium/ in repo root
 //! - Tabnine: .tabnine/ in repo root
+//! - OpenCode: .opencode/ in repo root or ~/.opencode/
+//! - OpenClaw: .openclaw/ in repo root or ~/.openclaw/
+//! - Factory Droid: .droid/ in repo root or ~/.droid/
+//! - Trae: .trae/ in repo root or ~/.trae/
+//! - Trae CN: .trae-cn/ in repo root or ~/.trae-cn/
+//! - Gemini CLI: ~/.gemini/ or .gemini/ in repo root
+//! - Hermes: .hermes/ in repo root or ~/.hermes/
+//! - Kimi Code: .kimi/ in repo root or ~/.kimi/
+//! - Kiro IDE: .kiro/ in repo root (already present if using Kiro)
+//! - Pi coding agent: .pi/ in repo root or ~/.pi/
 
 use std::path::{Path, PathBuf};
 
@@ -193,26 +203,46 @@ pub fn detect_installed_agents(repo_root: &Path) -> Vec<DetectedAgent> {
         });
     }
 
-    // 11. Codex CLI: .codex/ in repo root
-    let codex_dir = repo_root.join(".codex");
-    if codex_dir.exists() {
+    // 11. Codex CLI: .codex/ in repo root or ~/.codex/
+    let codex_repo = repo_root.join(".codex");
+    if codex_repo.exists() {
         agents.push(DetectedAgent {
             name: "codex_cli".to_string(),
             display_name: "Codex CLI".to_string(),
             root_key: "mcpServers".to_string(),
-            config_path: codex_dir,
+            config_path: codex_repo,
         });
+    } else if let Some(ref home) = home {
+        let codex_home = home.join(".codex");
+        if codex_home.exists() {
+            agents.push(DetectedAgent {
+                name: "codex_cli".to_string(),
+                display_name: "Codex CLI".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: codex_home,
+            });
+        }
     }
 
-    // 12. Antigravity: .antigravity/ in repo root
-    let antigravity_dir = repo_root.join(".antigravity");
-    if antigravity_dir.exists() {
+    // 12. Antigravity (Google): .antigravity/ in repo root or ~/.antigravity/
+    let antigravity_repo = repo_root.join(".antigravity");
+    if antigravity_repo.exists() {
         agents.push(DetectedAgent {
             name: "antigravity".to_string(),
-            display_name: "Antigravity".to_string(),
+            display_name: "Google Antigravity".to_string(),
             root_key: "mcpServers".to_string(),
-            config_path: antigravity_dir,
+            config_path: antigravity_repo,
         });
+    } else if let Some(ref home) = home {
+        let antigravity_home = home.join(".antigravity");
+        if antigravity_home.exists() {
+            agents.push(DetectedAgent {
+                name: "antigravity".to_string(),
+                display_name: "Google Antigravity".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: antigravity_home,
+            });
+        }
     }
 
     // 13. Supermaven: .supermaven/ in repo root
@@ -246,6 +276,206 @@ pub fn detect_installed_agents(repo_root: &Path) -> Vec<DetectedAgent> {
             root_key: "mcpServers".to_string(),
             config_path: tabnine_dir,
         });
+    }
+
+    // 16. OpenCode: .opencode/ in repo root or ~/.opencode/
+    let opencode_repo = repo_root.join(".opencode");
+    if opencode_repo.exists() {
+        agents.push(DetectedAgent {
+            name: "opencode".to_string(),
+            display_name: "OpenCode".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: opencode_repo,
+        });
+    } else if let Some(ref home) = home {
+        let opencode_home = home.join(".opencode");
+        if opencode_home.exists() {
+            agents.push(DetectedAgent {
+                name: "opencode".to_string(),
+                display_name: "OpenCode".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: opencode_home,
+            });
+        }
+    }
+
+    // 17. OpenClaw: .openclaw/ in repo root or ~/.openclaw/
+    let openclaw_repo = repo_root.join(".openclaw");
+    if openclaw_repo.exists() {
+        agents.push(DetectedAgent {
+            name: "openclaw".to_string(),
+            display_name: "OpenClaw".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: openclaw_repo,
+        });
+    } else if let Some(ref home) = home {
+        let openclaw_home = home.join(".openclaw");
+        if openclaw_home.exists() {
+            agents.push(DetectedAgent {
+                name: "openclaw".to_string(),
+                display_name: "OpenClaw".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: openclaw_home,
+            });
+        }
+    }
+
+    // 18. Factory Droid: .droid/ in repo root or ~/.droid/
+    let droid_repo = repo_root.join(".droid");
+    if droid_repo.exists() {
+        agents.push(DetectedAgent {
+            name: "droid".to_string(),
+            display_name: "Factory Droid".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: droid_repo,
+        });
+    } else if let Some(ref home) = home {
+        let droid_home = home.join(".droid");
+        if droid_home.exists() {
+            agents.push(DetectedAgent {
+                name: "droid".to_string(),
+                display_name: "Factory Droid".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: droid_home,
+            });
+        }
+    }
+
+    // 19. Trae: .trae/ in repo root or ~/.trae/
+    let trae_repo = repo_root.join(".trae");
+    if trae_repo.exists() {
+        agents.push(DetectedAgent {
+            name: "trae".to_string(),
+            display_name: "Trae".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: trae_repo,
+        });
+    } else if let Some(ref home) = home {
+        let trae_home = home.join(".trae");
+        if trae_home.exists() {
+            agents.push(DetectedAgent {
+                name: "trae".to_string(),
+                display_name: "Trae".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: trae_home,
+            });
+        }
+    }
+
+    // 20. Trae CN: .trae-cn/ in repo root or ~/.trae-cn/
+    let trae_cn_repo = repo_root.join(".trae-cn");
+    if trae_cn_repo.exists() {
+        agents.push(DetectedAgent {
+            name: "trae-cn".to_string(),
+            display_name: "Trae CN".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: trae_cn_repo,
+        });
+    } else if let Some(ref home) = home {
+        let trae_cn_home = home.join(".trae-cn");
+        if trae_cn_home.exists() {
+            agents.push(DetectedAgent {
+                name: "trae-cn".to_string(),
+                display_name: "Trae CN".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: trae_cn_home,
+            });
+        }
+    }
+
+    // 21. Gemini CLI: ~/.gemini/ or .gemini/ in repo root
+    let gemini_repo = repo_root.join(".gemini");
+    if gemini_repo.exists() {
+        agents.push(DetectedAgent {
+            name: "gemini".to_string(),
+            display_name: "Gemini CLI".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: gemini_repo,
+        });
+    } else if let Some(ref home) = home {
+        let gemini_home = home.join(".gemini");
+        if gemini_home.exists() {
+            agents.push(DetectedAgent {
+                name: "gemini".to_string(),
+                display_name: "Gemini CLI".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: gemini_home,
+            });
+        }
+    }
+
+    // 22. Hermes: .hermes/ in repo root or ~/.hermes/
+    let hermes_repo = repo_root.join(".hermes");
+    if hermes_repo.exists() {
+        agents.push(DetectedAgent {
+            name: "hermes".to_string(),
+            display_name: "Hermes".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: hermes_repo,
+        });
+    } else if let Some(ref home) = home {
+        let hermes_home = home.join(".hermes");
+        if hermes_home.exists() {
+            agents.push(DetectedAgent {
+                name: "hermes".to_string(),
+                display_name: "Hermes".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: hermes_home,
+            });
+        }
+    }
+
+    // 23. Kimi Code: .kimi/ in repo root or ~/.kimi/
+    let kimi_repo = repo_root.join(".kimi");
+    if kimi_repo.exists() {
+        agents.push(DetectedAgent {
+            name: "kimi".to_string(),
+            display_name: "Kimi Code".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: kimi_repo,
+        });
+    } else if let Some(ref home) = home {
+        let kimi_home = home.join(".kimi");
+        if kimi_home.exists() {
+            agents.push(DetectedAgent {
+                name: "kimi".to_string(),
+                display_name: "Kimi Code".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: kimi_home,
+            });
+        }
+    }
+
+    // 24. Kiro IDE: .kiro/ in repo root (Kiro writes its own config here)
+    let kiro_dir = repo_root.join(".kiro");
+    if kiro_dir.exists() {
+        agents.push(DetectedAgent {
+            name: "kiro".to_string(),
+            display_name: "Kiro".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: kiro_dir,
+        });
+    }
+
+    // 25. Pi coding agent: .pi/ in repo root or ~/.pi/
+    let pi_repo = repo_root.join(".pi");
+    if pi_repo.exists() {
+        agents.push(DetectedAgent {
+            name: "pi".to_string(),
+            display_name: "Pi".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: pi_repo,
+        });
+    } else if let Some(ref home) = home {
+        let pi_home = home.join(".pi");
+        if pi_home.exists() {
+            agents.push(DetectedAgent {
+                name: "pi".to_string(),
+                display_name: "Pi".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: pi_home,
+            });
+        }
     }
 
     agents
@@ -368,7 +598,7 @@ mod tests {
 
         let agents = detect_installed_agents(repo_root);
         let ag = agents.iter().find(|a| a.name == "antigravity").unwrap();
-        assert_eq!(ag.display_name, "Antigravity");
+        assert_eq!(ag.display_name, "Google Antigravity");
         assert_eq!(ag.root_key, "mcpServers");
         assert_eq!(ag.config_path, repo_root.join(".antigravity"));
     }
@@ -416,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_all_15_agents() {
+    fn test_detect_all_25_agents() {
         let tmp = TempDir::new().unwrap();
         let repo_root = tmp.path();
 
@@ -434,6 +664,16 @@ mod tests {
         std::fs::create_dir_all(repo_root.join(".supermaven")).unwrap();
         std::fs::create_dir_all(repo_root.join(".codeium")).unwrap();
         std::fs::create_dir_all(repo_root.join(".tabnine")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".opencode")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".openclaw")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".droid")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".trae")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".trae-cn")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".gemini")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".hermes")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kimi")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kiro")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".pi")).unwrap();
 
         let agents = detect_installed_agents(repo_root);
 
@@ -443,11 +683,11 @@ mod tests {
             .filter(|a| a.config_path.starts_with(repo_root))
             .collect();
 
-        // Should detect at least 14 repo-based agents
-        // (claude_code is home-based, so 14 of 15 are repo-detectable)
+        // Should detect at least 24 repo-based agents
+        // (claude_code is home-based, so 24 of 25 are repo-detectable)
         assert!(
-            repo_agents.len() >= 14,
-            "Expected at least 14 repo-based agents, got {}",
+            repo_agents.len() >= 24,
+            "Expected at least 24 repo-based agents, got {}",
             repo_agents.len()
         );
 
@@ -467,5 +707,15 @@ mod tests {
         assert!(names.contains(&"supermaven"));
         assert!(names.contains(&"codeium"));
         assert!(names.contains(&"tabnine"));
+        assert!(names.contains(&"opencode"));
+        assert!(names.contains(&"openclaw"));
+        assert!(names.contains(&"droid"));
+        assert!(names.contains(&"trae"));
+        assert!(names.contains(&"trae-cn"));
+        assert!(names.contains(&"gemini"));
+        assert!(names.contains(&"hermes"));
+        assert!(names.contains(&"kimi"));
+        assert!(names.contains(&"kiro"));
+        assert!(names.contains(&"pi"));
     }
 }

@@ -20,12 +20,58 @@ use std::sync::Arc;
 use clap::Parser;
 
 use cli::{
-    BundleCommand, Cli, Command, ConfigCommand, FederateCommand, HookCommand, MemoryCommand,
-    QueryCommand, SecurityCommand, SemanticCommand,
+    AntigravityCommand, BundleCommand, Cli, Command, ConfigCommand, CursorCommand,
+    FederateCommand, HookCommand, KiroCommand, MemoryCommand, QueryCommand, SecurityCommand,
+    SemanticCommand, VscodeCommand,
 };
 use config::Config;
 use store::db::StoreManager;
 use version::VERSION;
+
+/// Synthesize a DetectedAgent for a known platform even when its config dir doesn't exist yet.
+/// Returns None for unknown platform names.
+fn synthesize_agent(canonical: &str, repo_root: &std::path::Path) -> Option<crate::agents::detect::DetectedAgent> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+
+    let (display_name, root_key, config_path) = match canonical {
+        "claude_code" => ("Claude Code", "mcpServers", home.join(".claude")),
+        "cursor" => ("Cursor", "mcpServers", repo_root.join(".cursor")),
+        "windsurf" => ("Windsurf", "mcpServers", repo_root.join(".windsurf")),
+        "vscode" => ("VS Code", "servers", repo_root.join(".vscode")),
+        "kiro" => ("Kiro", "mcpServers", repo_root.join(".kiro")),
+        "zed" => ("Zed", "context_servers", repo_root.join(".zed")),
+        "jetbrains" => ("JetBrains", "mcpServers", repo_root.join(".idea")),
+        "cline_roo" => ("Cline/Roo", "mcpServers", repo_root.join(".vscode")),
+        "aider" => ("Aider", "mcpServers", repo_root.join(".aider.conf.yml")),
+        "continue_dev" => ("Continue.dev", "mcpServers", repo_root.join(".continue")),
+        "copilot" => ("GitHub Copilot", "mcpServers", repo_root.join(".github")),
+        "codex_cli" => ("Codex CLI", "mcpServers", home.join(".codex")),
+        "opencode" => ("OpenCode", "mcpServers", home.join(".opencode")),
+        "openclaw" => ("OpenClaw", "mcpServers", home.join(".openclaw")),
+        "droid" => ("Factory Droid", "mcpServers", home.join(".droid")),
+        "trae" => ("Trae", "mcpServers", home.join(".trae")),
+        "trae-cn" => ("Trae CN", "mcpServers", home.join(".trae-cn")),
+        "gemini" => ("Gemini CLI", "mcpServers", home.join(".gemini")),
+        "hermes" => ("Hermes", "mcpServers", home.join(".hermes")),
+        "kimi" => ("Kimi Code", "mcpServers", home.join(".kimi")),
+        "pi" => ("Pi", "mcpServers", home.join(".pi")),
+        "antigravity" => ("Google Antigravity", "mcpServers", home.join(".antigravity")),
+        "supermaven" => ("Supermaven", "mcpServers", repo_root.join(".supermaven")),
+        "codeium" => ("Codeium", "mcpServers", repo_root.join(".codeium")),
+        "tabnine" => ("Tabnine", "mcpServers", repo_root.join(".tabnine")),
+        _ => return None,
+    };
+
+    Some(crate::agents::detect::DetectedAgent {
+        name: canonical.to_string(),
+        display_name: display_name.to_string(),
+        root_key: root_key.to_string(),
+        config_path,
+    })
+}
 
 fn main() {
     let cli = Cli::parse();
@@ -122,28 +168,161 @@ fn main() {
         }
         Command::Install { platform } => {
             if let Some(ref p) = platform {
-                match crate::agents::detect::detect_installed_agents(&config.repo_root)
+                // Normalize common aliases to canonical agent names
+                let normalized = p.to_lowercase().replace('-', "_");
+                let canonical = match normalized.as_str() {
+                    "claude_code" | "claude" => "claude_code",
+                    "cursor" => "cursor",
+                    "windsurf" => "windsurf",
+                    "vscode" | "vs_code" | "code" => "vscode",
+                    "kiro" => "kiro",
+                    "zed" => "zed",
+                    "jetbrains" | "idea" => "jetbrains",
+                    "cline" | "roo" | "cline_roo" => "cline_roo",
+                    "aider" => "aider",
+                    "continue" | "continue_dev" => "continue_dev",
+                    "copilot" | "github_copilot" | "copilot_cli" => "copilot",
+                    "codex" | "codex_cli" => "codex_cli",
+                    "opencode" => "opencode",
+                    "openclaw" | "claw" => "openclaw",
+                    "droid" | "factory_droid" => "droid",
+                    "trae" => "trae",
+                    "trae_cn" | "traecn" => "trae-cn",
+                    "gemini" | "gemini_cli" => "gemini",
+                    "hermes" => "hermes",
+                    "kimi" | "kimi_code" => "kimi",
+                    "pi" => "pi",
+                    "antigravity" | "google_antigravity" => "antigravity",
+                    "supermaven" => "supermaven",
+                    "codeium" => "codeium",
+                    "tabnine" => "tabnine",
+                    other => other,
+                };
+
+                // Try to find an already-detected agent first; if not found, synthesize one
+                let agent_opt = crate::agents::detect::detect_installed_agents(&config.repo_root)
                     .into_iter()
-                    .find(|a| a.name == *p || a.display_name.to_lowercase() == p.to_lowercase())
-                {
-                    Some(agent) => {
-                        let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
-                        if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
-                            eprintln!("error: {e}");
-                            process::exit(1);
-                        }
-                        println!("Configured {} at {}", agent.display_name, agent.config_path.display());
-                    }
+                    .find(|a| a.name == canonical || a.display_name.to_lowercase() == p.to_lowercase());
+
+                let agent = match agent_opt {
+                    Some(a) => a,
                     None => {
-                        eprintln!("Platform '{}' not detected. Supported: claude-code, cursor, windsurf, vscode, kiro, zed, jetbrains, cline, continue, aider", p);
-                        process::exit(1);
+                        // Synthesize agent with default config path so we can still write config
+                        match synthesize_agent(canonical, &config.repo_root) {
+                            Some(a) => a,
+                            None => {
+                                eprintln!("Platform '{}' is not supported. Run `cortex install` to see all supported platforms.", p);
+                                process::exit(1);
+                            }
+                        }
                     }
+                };
+
+                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
                 }
+                println!("  Configured {} MCP server.", agent.display_name);
             } else if let Err(e) = cli::commands::install::run(&config) {
                 eprintln!("error: {e}");
                 process::exit(1);
             }
         }
+        Command::Cursor { action } => match action {
+            CursorCommand::Install => {
+                let repo_root = &config.repo_root;
+                let cursor_dir = repo_root.join(".cursor");
+                if let Err(e) = std::fs::create_dir_all(&cursor_dir) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                let agent = crate::agents::detect::DetectedAgent {
+                    name: "cursor".to_string(),
+                    display_name: "Cursor".to_string(),
+                    root_key: "mcpServers".to_string(),
+                    config_path: cursor_dir.clone(),
+                };
+                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                println!("  Configured Cursor at {}", cursor_dir.join("mcp.json").display());
+                println!("  Restart Cursor to pick up the new MCP server.");
+            }
+        },
+        Command::Vscode { action } => match action {
+            VscodeCommand::Install => {
+                let repo_root = &config.repo_root;
+                let vscode_dir = repo_root.join(".vscode");
+                if let Err(e) = std::fs::create_dir_all(&vscode_dir) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                let agent = crate::agents::detect::DetectedAgent {
+                    name: "vscode".to_string(),
+                    display_name: "VS Code".to_string(),
+                    root_key: "servers".to_string(),
+                    config_path: vscode_dir.clone(),
+                };
+                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                println!("  Configured VS Code Copilot Chat at {}", vscode_dir.join("mcp.json").display());
+                println!("  Reload VS Code to pick up the new MCP server.");
+            }
+        },
+        Command::Kiro { action } => match action {
+            KiroCommand::Install => {
+                let repo_root = &config.repo_root;
+                let kiro_dir = repo_root.join(".kiro");
+                if let Err(e) = std::fs::create_dir_all(kiro_dir.join("settings")) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                let agent = crate::agents::detect::DetectedAgent {
+                    name: "kiro".to_string(),
+                    display_name: "Kiro".to_string(),
+                    root_key: "mcpServers".to_string(),
+                    config_path: kiro_dir.clone(),
+                };
+                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                println!("  Configured Kiro at {}", kiro_dir.join("settings").join("mcp.json").display());
+                println!("  Reload the Kiro MCP panel to pick up the new server.");
+            }
+        },
+        Command::Antigravity { action } => match action {
+            AntigravityCommand::Install => {
+                let home = std::env::var("USERPROFILE")
+                    .or_else(|_| std::env::var("HOME"))
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|_| config.repo_root.clone());
+                let ag_dir = home.join(".antigravity");
+                if let Err(e) = std::fs::create_dir_all(&ag_dir) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                let agent = crate::agents::detect::DetectedAgent {
+                    name: "antigravity".to_string(),
+                    display_name: "Google Antigravity".to_string(),
+                    root_key: "mcpServers".to_string(),
+                    config_path: ag_dir.clone(),
+                };
+                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                println!("  Configured Google Antigravity at {}", ag_dir.join("mcp.json").display());
+            }
+        },
         Command::Bundle(sub) => match sub {
             BundleCommand::Export { format } => {
                 let output_dir = config.data_dir.clone();

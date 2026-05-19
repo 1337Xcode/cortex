@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 
 const { execSync } = require("node:child_process");
 const crypto = require("node:crypto");

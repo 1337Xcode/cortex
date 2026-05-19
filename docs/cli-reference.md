@@ -54,6 +54,7 @@ Auto-detect and configure AI agents.
 ```sh
 cortex install
 cortex install --platform cursor
+cortex install --platform gemini
 ```
 
 Scans for installed agents, writes MCP server config for each one found. Also writes a workspace-level `.cortex/mcp.json` for VS Code/Cursor/Kiro auto-discovery.
@@ -61,7 +62,16 @@ Scans for installed agents, writes MCP server config for each one found. Also wr
 Options:
 - `--platform <name>`: configure a specific agent instead of auto-detecting
 
-Supported platforms: claude-code, cursor, windsurf, vscode, kiro, zed, jetbrains, cline, continue, aider
+Supported platforms: claude-code, cursor, windsurf, vscode, kiro, zed, jetbrains, cline, continue, aider, codex, opencode, openclaw, droid, trae, trae-cn, gemini, hermes, kimi, pi, copilot, antigravity, supermaven, codeium, tabnine
+
+Several agents also have dedicated subcommands:
+
+```sh
+cortex cursor install       # configure Cursor
+cortex vscode install       # configure VS Code Copilot Chat
+cortex kiro install         # configure Kiro IDE
+cortex antigravity install  # configure Google Antigravity
+```
 
 ## cortex security
 
