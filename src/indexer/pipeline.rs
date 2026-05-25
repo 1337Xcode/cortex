@@ -1620,7 +1620,7 @@ def get_aws_config():
 
             // The excluded file should NOT appear in results
             for path in &results {
-                let filename = path.split('/').last().unwrap_or("");
+                let filename = path.split('/').next_back().unwrap_or("");
                 prop_assert!(
                     !EXCLUDED_FILES.contains(&filename),
                     "Excluded file '{}' should not appear in walk results, but found path '{}'",
@@ -1671,13 +1671,12 @@ def get_aws_config():
         "[a-z][a-z0-9_]{0,11}"
     }
 
-    /// **Validates: Requirements 1.5, 2.1, 2.2**
-    ///
-    /// Property 1: Gitignore-style pattern matching
-    ///
-    /// Patterns loaded from .cortexignore should correctly match paths using
-    /// gitignore syntax: directory patterns (`dir/`), wildcard extension patterns
-    /// (`*.ext`), path prefix patterns (containing `/`), and simple name patterns.
+    // Property 1: Gitignore-style pattern matching
+    // Validates: Requirements 1.5, 2.1, 2.2
+    //
+    // Patterns loaded from .cortexignore should correctly match paths using
+    // gitignore syntax: directory patterns (`dir/`), wildcard extension patterns
+    // (`*.ext`), path prefix patterns (containing `/`), and simple name patterns.
     proptest! {
         /// Directory patterns ending in `/` match paths starting with the prefix.
         #[test]
@@ -1824,12 +1823,11 @@ def get_aws_config():
     // Property 2: Pattern file parsing filters non-pattern lines
     // -----------------------------------------------------------------------
 
-    /// **Validates: Requirements 2.3, 2.4**
-    ///
-    /// Property 2: Pattern file parsing filters non-pattern lines
-    ///
-    /// Comments (lines starting with #) and empty/whitespace lines should be
-    /// filtered out during parsing. Only valid pattern lines remain.
+    // Property 2: Pattern file parsing filters non-pattern lines
+    // Validates: Requirements 2.3, 2.4
+    //
+    // Comments (lines starting with #) and empty/whitespace lines should be
+    // filtered out during parsing. Only valid pattern lines remain.
     proptest! {
         /// Mixed content: valid patterns, comments, and blanks. Only valid patterns
         /// should appear in the result.

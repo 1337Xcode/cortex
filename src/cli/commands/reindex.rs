@@ -20,15 +20,13 @@ pub fn run_reindex(repo_root: &Path, data_dir: &Path) {
     // Delete existing database files (graph.db, graph.db-wal, graph.db-shm)
     for suffix in &["", "-wal", "-shm"] {
         let db_file = data_dir.join(format!("graph.db{}", suffix));
-        if db_file.exists() {
-            if let Err(e) = fs::remove_file(&db_file) {
-                eprintln!(
-                    "error: cannot delete '{}': {}. Close any running cortex processes.",
-                    db_file.display(),
-                    e
-                );
-                process::exit(1);
-            }
+        if db_file.exists() && let Err(e) = fs::remove_file(&db_file) {
+            eprintln!(
+                "error: cannot delete '{}': {}. Close any running cortex processes.",
+                db_file.display(),
+                e
+            );
+            process::exit(1);
         }
     }
 
