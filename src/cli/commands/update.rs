@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use sha2::{Digest, Sha256};
 
 use crate::version::VERSION;
@@ -72,8 +72,7 @@ pub fn check_for_updates(enabled: bool) -> UpdateCheckResult {
 // ---------------------------------------------------------------------------
 
 /// GitHub releases API endpoint for the latest release.
-const GITHUB_RELEASES_URL: &str =
-    "https://api.github.com/repos/1337Xcode/cortex/releases/latest";
+const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/1337Xcode/cortex/releases/latest";
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -93,8 +92,7 @@ pub async fn run_update() -> Result<(), anyhow::Error> {
 
     let archive_name = platform_archive_name()?;
     let archive_bytes = download_asset(&release, &archive_name).await?;
-    let expected_hash =
-        download_asset_text(&release, &format!("{}.sha256", archive_name)).await?;
+    let expected_hash = download_asset_text(&release, &format!("{}.sha256", archive_name)).await?;
 
     verify_sha256(&archive_bytes, &expected_hash, &archive_name)?;
 
@@ -106,9 +104,7 @@ pub async fn run_update() -> Result<(), anyhow::Error> {
 
     // Trigger reindex with the new binary
     let binary = bin_dir.join(binary_name());
-    let status = std::process::Command::new(&binary)
-        .arg("reindex")
-        .status();
+    let status = std::process::Command::new(&binary).arg("reindex").status();
 
     if let Err(e) = status {
         eprintln!("Warning: failed to run reindex after update: {}", e);
@@ -129,11 +125,10 @@ async fn fetch_latest_release() -> Result<GitHubRelease, anyhow::Error> {
         .build()
         .context("Failed to build HTTP client")?;
 
-    let response = client
-        .get(GITHUB_RELEASES_URL)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Network error: could not reach GitHub releases. {}", e))?;
+    let response =
+        client.get(GITHUB_RELEASES_URL).send().await.map_err(|e| {
+            anyhow::anyhow!("Network error: could not reach GitHub releases. {}", e)
+        })?;
 
     if !response.status().is_success() {
         bail!(
@@ -359,7 +354,12 @@ fn extract_tar_gz(archive_bytes: &[u8], target_dir: &Path) -> Result<(), anyhow:
         .with_context(|| format!("Failed to write temp archive to {}", tmp_archive.display()))?;
 
     let status = std::process::Command::new("tar")
-        .args(["xzf", &tmp_archive.to_string_lossy(), "-C", &target_dir.to_string_lossy()])
+        .args([
+            "xzf",
+            &tmp_archive.to_string_lossy(),
+            "-C",
+            &target_dir.to_string_lossy(),
+        ])
         .status()
         .context("Failed to execute tar command. Is tar available on PATH?")?;
 
@@ -500,7 +500,6 @@ mod tests {
         }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Property-based tests

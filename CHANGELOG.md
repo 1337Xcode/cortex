@@ -2,7 +2,7 @@
 
 All notable changes to Cortex are documented here.
 
-## [1.0.3] - 2026-06-01
+## [1.0.3] - 2026-05-25
 
 ### Added
 - `cortex update` self-update command: downloads latest release from GitHub, verifies SHA-256 checksum, replaces binary (with Windows rename-then-replace pattern), and triggers reindex
