@@ -17,6 +17,7 @@ pub mod install;
 pub mod memory_show;
 pub mod modules;
 pub mod query;
+pub mod reindex;
 pub mod report;
 pub mod security;
 pub mod serve;

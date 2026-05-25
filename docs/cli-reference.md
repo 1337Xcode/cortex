@@ -3,12 +3,40 @@ title: "CLI Reference"
 description: "Complete reference for all Cortex CLI commands and options."
 order: 3
 category: "reference"
-lastModified: "2025-07-14"
+lastModified: "2026-06-01"
 ---
 
 # CLI reference
 
 Complete reference for all `cortex` commands.
+
+## cortex update
+
+Self-update to the latest release.
+
+```sh
+cortex update
+```
+
+Checks GitHub Releases for a newer version, downloads the platform-specific archive, verifies the SHA-256 checksum, replaces the running binary, and triggers `cortex reindex`. On Windows, uses the rename-then-replace pattern to handle locked executables.
+
+Behavior:
+- Prints "already up to date" if the current version matches the latest release
+- Aborts with a checksum mismatch error if the SHA-256 does not match (possible tampering)
+- Exits non-zero with a network error if GitHub is unreachable
+- Prints `Updated cortex: {old} → {new}` on success
+
+## cortex reindex
+
+Delete and rebuild the graph database from scratch.
+
+```sh
+cortex reindex
+```
+
+Removes `graph.db`, `graph.db-wal`, and `graph.db-shm` from `.cortex-data/`, recreates the database with schema migrations, re-indexes the entire repository, and prints an `IndexStats` summary (files parsed, nodes created, edges created, duration).
+
+Use this after a schema change, a corrupted database, or when switching branches with significantly different code.
 
 ## cortex status
 

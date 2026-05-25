@@ -234,6 +234,12 @@ pub enum Command {
         #[arg(long, default_value = "md,txt,csv,rst,html,yaml")]
         types: String,
     },
+
+    /// Delete the graph database and perform a clean full index.
+    Reindex,
+
+    /// Self-update binary from GitHub releases.
+    Update,
 }
 
 /// Cursor subcommands.

@@ -95,20 +95,20 @@ pub fn detect_installed_agents(repo_root: &Path) -> Vec<DetectedAgent> {
         }
     }
 
-    // 4. VS Code: .vscode/ in repo root
+    // 4. VS Code: .vscode/ in repo root — only if mcp.json exists (evidence of MCP usage)
     let vscode_dir = repo_root.join(".vscode");
-    if vscode_dir.exists() {
+    if vscode_dir.exists() && vscode_dir.join("mcp.json").exists() {
         agents.push(DetectedAgent {
             name: "vscode".to_string(),
             display_name: "VS Code".to_string(),
             root_key: "servers".to_string(),
-            config_path: vscode_dir,
+            config_path: vscode_dir.clone(),
         });
     }
 
-    // 5. JetBrains: .idea/ in repo root
+    // 5. JetBrains: .idea/ in repo root — only if mcp.json exists
     let idea_dir = repo_root.join(".idea");
-    if idea_dir.exists() {
+    if idea_dir.exists() && idea_dir.join("mcp.json").exists() {
         agents.push(DetectedAgent {
             name: "jetbrains".to_string(),
             display_name: "JetBrains".to_string(),
@@ -180,27 +180,37 @@ pub fn detect_installed_agents(repo_root: &Path) -> Vec<DetectedAgent> {
         }
     }
 
-    // 9. GitHub Copilot: .github/ in repo root
+    // 9. GitHub Copilot: .github/ in repo root — only if copilot-specific files exist
     let github_dir = repo_root.join(".github");
     if github_dir.exists() {
-        agents.push(DetectedAgent {
-            name: "copilot".to_string(),
-            display_name: "GitHub Copilot".to_string(),
-            root_key: "mcpServers".to_string(),
-            config_path: github_dir,
-        });
+        // Only detect if Copilot-specific config exists (not just .github/ for workflows)
+        let has_copilot_mcp = github_dir.join("copilot-mcp.json").exists();
+        let has_copilot_instructions = github_dir.join("copilot-instructions.md").exists();
+        if has_copilot_mcp || has_copilot_instructions {
+            agents.push(DetectedAgent {
+                name: "copilot".to_string(),
+                display_name: "GitHub Copilot".to_string(),
+                root_key: "mcpServers".to_string(),
+                config_path: github_dir,
+            });
+        }
     }
 
-    // 10. Cline/Roo: .vscode/ in repo root (shares config dir with VS Code)
-    // Cline/Roo uses the same .vscode/mcp.json but with "mcpServers" root key
+    // 10. Cline/Roo: .vscode/ in repo root — only if mcp.json exists with cline/roo config
     let cline_dir = repo_root.join(".vscode");
-    if cline_dir.exists() {
-        agents.push(DetectedAgent {
-            name: "cline_roo".to_string(),
-            display_name: "Cline/Roo".to_string(),
-            root_key: "mcpServers".to_string(),
-            config_path: cline_dir,
-        });
+    if cline_dir.exists() && cline_dir.join("mcp.json").exists() {
+        // Check if the mcp.json contains cline or roo specific config
+        if let Ok(content) = std::fs::read_to_string(cline_dir.join("mcp.json")) {
+            let content_lower = content.to_lowercase();
+            if content_lower.contains("cline") || content_lower.contains("roo") {
+                agents.push(DetectedAgent {
+                    name: "cline_roo".to_string(),
+                    display_name: "Cline/Roo".to_string(),
+                    root_key: "mcpServers".to_string(),
+                    config_path: cline_dir,
+                });
+            }
+        }
     }
 
     // 11. Codex CLI: .codex/ in repo root or ~/.codex/
@@ -446,9 +456,9 @@ pub fn detect_installed_agents(repo_root: &Path) -> Vec<DetectedAgent> {
         }
     }
 
-    // 24. Kiro IDE: .kiro/ in repo root (Kiro writes its own config here)
+    // 24. Kiro IDE: .kiro/ in repo root — only if settings/ directory exists
     let kiro_dir = repo_root.join(".kiro");
-    if kiro_dir.exists() {
+    if kiro_dir.exists() && kiro_dir.join("settings").exists() {
         agents.push(DetectedAgent {
             name: "kiro".to_string(),
             display_name: "Kiro".to_string(),
@@ -503,10 +513,17 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let repo_root = tmp.path();
 
-        // Create .cursor and .vscode directories
+        // Create .cursor and .zed directories
         std::fs::create_dir_all(repo_root.join(".cursor")).unwrap();
-        std::fs::create_dir_all(repo_root.join(".vscode")).unwrap();
         std::fs::create_dir_all(repo_root.join(".zed")).unwrap();
+
+        // Create .vscode with mcp.json containing cline config (evidence of MCP usage)
+        std::fs::create_dir_all(repo_root.join(".vscode")).unwrap();
+        std::fs::write(
+            repo_root.join(".vscode").join("mcp.json"),
+            r#"{"mcpServers": {"cline": {}}}"#,
+        )
+        .unwrap();
 
         let agents = detect_installed_agents(repo_root);
 
@@ -514,7 +531,7 @@ mod tests {
         assert!(agents.iter().any(|a| a.name == "cursor"));
         assert!(agents.iter().any(|a| a.name == "vscode"));
         assert!(agents.iter().any(|a| a.name == "zed"));
-        // Cline/Roo shares .vscode directory
+        // Cline/Roo detected because mcp.json contains "cline"
         assert!(agents.iter().any(|a| a.name == "cline_roo"));
 
         // Verify root keys
@@ -567,6 +584,12 @@ mod tests {
         let repo_root = tmp.path();
 
         std::fs::create_dir_all(repo_root.join(".github")).unwrap();
+        // Must have copilot-specific file for detection
+        std::fs::write(
+            repo_root.join(".github").join("copilot-instructions.md"),
+            "instructions",
+        )
+        .unwrap();
 
         let agents = detect_installed_agents(repo_root);
         let copilot = agents.iter().find(|a| a.name == "copilot").unwrap();
@@ -674,6 +697,24 @@ mod tests {
         std::fs::create_dir_all(repo_root.join(".kimi")).unwrap();
         std::fs::create_dir_all(repo_root.join(".kiro")).unwrap();
         std::fs::create_dir_all(repo_root.join(".pi")).unwrap();
+
+        // Create additional evidence files for stricter detection
+        // GitHub Copilot: needs copilot-specific file
+        std::fs::write(
+            repo_root.join(".github").join("copilot-instructions.md"),
+            "instructions",
+        )
+        .unwrap();
+        // VS Code: needs mcp.json
+        std::fs::write(
+            repo_root.join(".vscode").join("mcp.json"),
+            r#"{"servers": {}, "mcpServers": {"cline": {}}}"#,
+        )
+        .unwrap();
+        // JetBrains: needs mcp.json
+        std::fs::write(repo_root.join(".idea").join("mcp.json"), "{}").unwrap();
+        // Kiro: needs settings/ directory
+        std::fs::create_dir_all(repo_root.join(".kiro").join("settings")).unwrap();
 
         let agents = detect_installed_agents(repo_root);
 

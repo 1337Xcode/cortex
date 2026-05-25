@@ -4,7 +4,8 @@
  * Cortex installer script.
  *
  * Downloads the correct platform binary from GitHub releases, places it in
- * ~/.cortex/bin/, and runs `cortex install` to configure detected AI agents.
+ * ~/.cortex/bin/, configures PATH, and runs `cortex reindex` to build the
+ * code graph.
  *
  * Handles fresh installs and updates: overwrites any existing binary in place.
  *
@@ -30,6 +31,7 @@ function getPlatformTarget() {
     "darwin-arm64": "cortex-darwin-arm64.tar.gz",
     "linux-x64": "cortex-linux-x64.tar.gz",
     "win32-x64": "cortex-win32-x64.tar.gz",
+    "win32-ia32": "cortex-win32-ia32.tar.gz",
   };
 
   const key = `${platform}-${arch}`;
@@ -105,14 +107,56 @@ async function extractTarGz(buffer, destDir) {
   }
 }
 
-function runCortexInstall(binaryPath) {
-  console.log("\nConfiguring AI agents...");
+function configurePath(installDir) {
+  if (process.platform === "win32") {
+    configurePathWindows(installDir);
+  } else {
+    configurePathUnix(installDir);
+  }
+}
+
+function configurePathWindows(installDir) {
+  const currentPath = process.env.PATH || "";
+  if (currentPath.toLowerCase().includes(installDir.toLowerCase())) {
+    return; // Already on PATH
+  }
   try {
-    execFileSync(binaryPath, ["install"], { stdio: "inherit" });
+    // Prepend so new binary takes precedence
+    execFileSync("setx", ["PATH", `${installDir};%PATH%`], { stdio: "ignore" });
+    console.log(`Added ${installDir} to PATH (via setx).`);
   } catch (e) {
-    // Non-fatal: binary is installed even if agent config fails
-    console.warn("Warning: `cortex install` exited with an error.");
-    console.warn("You can run it manually later: cortex install");
+    console.warn(`Warning: Could not update PATH via setx: ${e.message}`);
+    console.warn(`  Manually add to PATH: ${installDir}`);
+  }
+}
+
+function configurePathUnix(installDir) {
+  const exportLine = `export PATH="${installDir}:$PATH"`;
+  const shellFiles = [".bashrc", ".zshrc"]
+    .map((f) => path.join(os.homedir(), f))
+    .filter((f) => fs.existsSync(f));
+
+  if (shellFiles.length === 0) {
+    console.log(`Add to your shell config: ${exportLine}`);
+    return;
+  }
+
+  for (const file of shellFiles) {
+    const content = fs.readFileSync(file, "utf8");
+    if (content.includes(installDir)) {
+      continue; // Already configured
+    }
+    fs.appendFileSync(file, `\n# Added by cortex installer\n${exportLine}\n`);
+    console.log(`Updated ${path.basename(file)} with PATH entry.`);
+  }
+}
+
+function runReindex(binaryPath) {
+  console.log("\nRebuilding code graph...");
+  try {
+    execFileSync(binaryPath, ["reindex"], { stdio: "inherit", timeout: 120000 });
+  } catch (e) {
+    console.warn("Warning: `cortex reindex` failed. You can run it manually later: cortex reindex");
   }
 }
 
@@ -171,29 +215,11 @@ async function main() {
 
   console.log(`\nInstalled cortex to ${binaryPath}`);
 
-  // Add PATH hint if not already on PATH
-  const pathDirs = (process.env.PATH || "").split(path.delimiter);
-  const onPath = pathDirs.some((dir) => {
-    try {
-      return fs.realpathSync(dir) === fs.realpathSync(INSTALL_DIR);
-    } catch {
-      return dir === INSTALL_DIR;
-    }
-  });
+  // Configure PATH
+  configurePath(INSTALL_DIR);
 
-  if (!onPath) {
-    console.log("");
-    console.log("Add cortex to your PATH:");
-    if (platform === "win32") {
-      console.log(`  setx PATH "%PATH%;${INSTALL_DIR}"`);
-    } else {
-      console.log(`  export PATH="${INSTALL_DIR}:$PATH"`);
-      console.log(`  # Add to ~/.bashrc or ~/.zshrc to persist`);
-    }
-  }
-
-  // Run cortex install to configure agents
-  runCortexInstall(binaryPath);
+  // Run cortex reindex to build the code graph
+  runReindex(binaryPath);
 
   console.log("\nDone. Run `cortex serve` to start the MCP server.");
 }

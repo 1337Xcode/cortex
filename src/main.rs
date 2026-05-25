@@ -717,5 +717,18 @@ fn main() {
                 process::exit(1);
             }
         }
+        Command::Reindex => {
+            cli::commands::reindex::run_reindex(&config.repo_root, &config.data_dir);
+        }
+        Command::Update => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime");
+            if let Err(e) = rt.block_on(cli::commands::update::run_update()) {
+                eprintln!("error: {e}");
+                process::exit(1);
+            }
+        }
     }
 }

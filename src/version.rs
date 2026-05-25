@@ -128,6 +128,43 @@ mod tests {
         assert!(msg.starts_with("Update available:"));
         assert!(msg.contains("Run: npx @1337xcode/cortex install"));
     }
+
+    /// **Property 10: Version consistency**
+    ///
+    /// For any release build, the version reported by `env!("CARGO_PKG_VERSION")`
+    /// SHALL equal the version in `Cargo.toml`, and the `npm/package.json` version
+    /// field SHALL match both.
+    ///
+    /// **Validates: Requirements 9.1, 9.2, 9.3**
+    #[test]
+    fn test_version_consistency_with_npm() {
+        // VERSION comes from env!("CARGO_PKG_VERSION") which is Cargo.toml's version
+        let cargo_version = VERSION;
+
+        // Verify it's a valid semver format (3 dot-separated numeric parts)
+        let parts: Vec<&str> = cargo_version.split('.').collect();
+        assert_eq!(parts.len(), 3, "VERSION should have 3 parts: {}", cargo_version);
+        for part in &parts {
+            assert!(part.parse::<u64>().is_ok(), "VERSION part '{}' is not a number", part);
+        }
+
+        // Read npm/package.json and verify version matches
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let npm_pkg_path = std::path::Path::new(manifest_dir).join("npm").join("package.json");
+        if npm_pkg_path.exists() {
+            let content = std::fs::read_to_string(&npm_pkg_path)
+                .expect("Failed to read npm/package.json");
+            let pkg: serde_json::Value = serde_json::from_str(&content)
+                .expect("Failed to parse npm/package.json");
+            let npm_version = pkg["version"].as_str()
+                .expect("npm/package.json missing 'version' field");
+            assert_eq!(
+                cargo_version, npm_version,
+                "Cargo.toml version ({}) does not match npm/package.json version ({})",
+                cargo_version, npm_version
+            );
+        }
+    }
 }
 
 /// Property-based tests for version comparison.

@@ -2,6 +2,22 @@
 
 All notable changes to Cortex are documented here.
 
+## [1.0.3] - 2026-06-01
+
+### Added
+- `cortex update` self-update command: downloads latest release from GitHub, verifies SHA-256 checksum, replaces binary (with Windows rename-then-replace pattern), and triggers reindex
+- `cortex reindex` command: deletes and rebuilds the graph database from scratch
+- Default exclusions for `.serena`, `.cursor`, `.kiro`, `.agent` directories and lock files (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`)
+- Renamed `.cortex-ignore` to `.cortexignore` for consistency
+- Installer PATH configuration (Windows `setx`, Unix shell profile export)
+- Post-install automatic reindex with 120s timeout
+- Windows x86 (`win32-ia32`) binary support in release workflow and npm installer
+
+### Changed
+- Unified UI fully dark-themed (`#1e1e2e` background) with corner-positioned icon navigation replacing the nav bar
+- Hotspots table uses `overflow-x: auto` to prevent horizontal overflow
+- Statistics overlay uses CSS Grid with `tabular-nums` for numeric alignment
+
 ## [1.0.2] - 2026-05-25
 
 ### Added

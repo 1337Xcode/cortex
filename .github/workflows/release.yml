@@ -31,6 +31,10 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: cortex-win32-x64
             ext: ".exe"
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            artifact: cortex-win32-ia32
+            ext: ".exe"
 
     runs-on: ${{ matrix.os }}
 

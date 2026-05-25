@@ -30,6 +30,18 @@ const EXCLUDED_DIRS: &[&str] = &[
     "target",
     "__pycache__",
     ".venv",
+    ".serena",
+    ".cursor",
+    ".kiro",
+    ".agent",
+];
+
+/// Files to always skip during indexing (lock files, generated manifests).
+const EXCLUDED_FILES: &[&str] = &[
+    "pnpm-lock.yaml",
+    "package-lock.json",
+    "yarn.lock",
+    "Cargo.lock",
 ];
 
 /// Statistics from a full repository index run.
@@ -60,7 +72,7 @@ pub fn index_repository(repo_root: &Path, store: &StoreManager) -> Result<IndexS
 
     // Load ignore patterns
     let gitignore_patterns = load_ignore_patterns(repo_root, ".gitignore");
-    let cortex_ignore_patterns = load_ignore_patterns(repo_root, ".cortex-ignore");
+    let cortex_ignore_patterns = load_ignore_patterns(repo_root, ".cortexignore");
 
     // Step 1: Walk directory tree and collect candidate files
     let candidate_files = walk_directory(repo_root, &gitignore_patterns, &cortex_ignore_patterns);
@@ -233,6 +245,12 @@ fn walk_directory(
         }
 
         let path = entry.path();
+
+        // Skip excluded files (lock files, etc.) before any further processing
+        let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        if EXCLUDED_FILES.contains(&filename) {
+            continue;
+        }
 
         // Only process files with recognized extensions
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -1456,5 +1474,481 @@ def get_aws_config():
             attrs.get("secret_line").is_some(),
             "function should have secret_line attribute"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Property Tests: Default exclusion logic
+    // -----------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    /// Strategy to generate a valid path segment (alphanumeric, no dots at start,
+    /// no path separators, and not matching any excluded dir name).
+    /// Also excludes Windows reserved device names.
+    fn arb_safe_segment() -> impl Strategy<Value = String> {
+        "[a-zA-Z][a-zA-Z0-9]{2,10}"
+            .prop_filter("must not be an excluded dir or Windows reserved name", |s| {
+                let upper = s.to_uppercase();
+                !EXCLUDED_DIRS.contains(&s.as_str())
+                    && !["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4",
+                         "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2",
+                         "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"]
+                        .contains(&upper.as_str())
+            })
+    }
+
+    /// Strategy to generate a valid filename that is NOT in EXCLUDED_FILES.
+    fn arb_safe_filename() -> impl Strategy<Value = String> {
+        "[a-zA-Z][a-zA-Z0-9]{0,8}\\.(py|rs|js|ts)"
+            .prop_filter("must not be an excluded file", |s| {
+                !EXCLUDED_FILES.contains(&s.as_str())
+            })
+    }
+
+    // **Validates: Requirements 3.1, 3.4**
+    //
+    // Property 3: Default directory exclusion
+    //
+    // Any path containing a segment matching an EXCLUDED_DIRS entry should be
+    // excluded by `is_excluded_dir`.
+    proptest! {
+        #[test]
+        fn prop_excluded_dir_detected(
+            excluded_dir in proptest::sample::select(EXCLUDED_DIRS.to_vec()),
+        ) {
+            // Create a temp directory with the excluded dir name
+            let tmp = TempDir::new().unwrap();
+            let dir_path = tmp.path().join(excluded_dir);
+            fs::create_dir_all(&dir_path).unwrap();
+
+            // Walk and check that the excluded dir is detected
+            let mut found = false;
+            for entry in walkdir::WalkDir::new(tmp.path()).into_iter().filter_map(|e| e.ok()) {
+                if entry.file_type().is_dir() {
+                    let name = entry.file_name().to_string_lossy();
+                    if name == excluded_dir {
+                        found = true;
+                        prop_assert!(
+                            is_excluded_dir(&entry, tmp.path()),
+                            "Directory '{}' should be excluded but was not",
+                            name
+                        );
+                    }
+                }
+            }
+            prop_assert!(found, "Should have found directory '{}'", excluded_dir);
+        }
+
+        /// Property 3 (completeness): All EXCLUDED_DIRS entries are excluded regardless
+        /// of nesting depth.
+        #[test]
+        fn prop_excluded_dir_nested(
+            excluded_dir in proptest::sample::select(EXCLUDED_DIRS.to_vec()),
+            parent in arb_safe_segment(),
+        ) {
+            // Create a nested structure: parent/excluded_dir
+            let tmp = TempDir::new().unwrap();
+            let dir_path = tmp.path().join(&parent).join(excluded_dir);
+            fs::create_dir_all(&dir_path).unwrap();
+
+            // Walk and verify the excluded dir is detected even when nested
+            let mut found = false;
+            for entry in walkdir::WalkDir::new(tmp.path()).into_iter().filter_map(|e| e.ok()) {
+                if entry.file_type().is_dir() {
+                    let name = entry.file_name().to_string_lossy();
+                    if name == excluded_dir {
+                        found = true;
+                        prop_assert!(
+                            is_excluded_dir(&entry, tmp.path()),
+                            "Nested directory '{}' under '{}' should be excluded but was not",
+                            excluded_dir,
+                            parent
+                        );
+                    }
+                }
+            }
+            prop_assert!(found, "Should have found nested directory '{}'", excluded_dir);
+        }
+
+        /// Property 3 (inverse): Directories NOT in EXCLUDED_DIRS should NOT be excluded.
+        #[test]
+        fn prop_non_excluded_dir_not_detected(
+            dir_name in arb_safe_segment(),
+        ) {
+            let tmp = TempDir::new().unwrap();
+            let dir_path = tmp.path().join(&dir_name);
+            fs::create_dir_all(&dir_path).unwrap();
+
+            for entry in walkdir::WalkDir::new(tmp.path()).into_iter().filter_map(|e| e.ok()) {
+                if entry.file_type().is_dir() && entry.file_name().to_string_lossy() == dir_name {
+                    prop_assert!(
+                        !is_excluded_dir(&entry, tmp.path()),
+                        "Directory '{}' should NOT be excluded but was",
+                        dir_name
+                    );
+                }
+            }
+        }
+    }
+
+    // **Validates: Requirements 3.2**
+    //
+    // Property 4: Default file exclusion
+    //
+    // Any file whose name matches an EXCLUDED_FILES entry should be excluded
+    // from the walk results.
+    proptest! {
+        #[test]
+        fn prop_excluded_file_not_in_walk_results(
+            excluded_file in proptest::sample::select(EXCLUDED_FILES.to_vec()),
+            subdir in arb_safe_segment(),
+        ) {
+            let tmp = TempDir::new().unwrap();
+            let repo = tmp.path().join("repo");
+            fs::create_dir_all(repo.join(&subdir)).unwrap();
+
+            // Place the excluded file in the subdirectory
+            fs::write(repo.join(&subdir).join(excluded_file), "content").unwrap();
+
+            // Also place a valid source file so walk has something to find
+            fs::write(repo.join(&subdir).join("valid.py"), "x = 1").unwrap();
+
+            let gitignore_patterns: Vec<String> = Vec::new();
+            let cortex_ignore_patterns: Vec<String> = Vec::new();
+
+            let results = walk_directory(&repo, &gitignore_patterns, &cortex_ignore_patterns);
+
+            // The excluded file should NOT appear in results
+            for path in &results {
+                let filename = path.split('/').last().unwrap_or("");
+                prop_assert!(
+                    !EXCLUDED_FILES.contains(&filename),
+                    "Excluded file '{}' should not appear in walk results, but found path '{}'",
+                    filename,
+                    path
+                );
+            }
+        }
+
+        /// Property 4 (inverse): Files NOT in EXCLUDED_FILES should appear in walk results
+        /// (assuming they have a recognized extension and are not otherwise ignored).
+        #[test]
+        fn prop_non_excluded_file_in_walk_results(
+            filename in arb_safe_filename(),
+        ) {
+            let tmp = TempDir::new().unwrap();
+            let repo = tmp.path().join("repo");
+            fs::create_dir_all(&repo).unwrap();
+
+            // Write a file with valid content and a recognized extension
+            fs::write(repo.join(&filename), "def hello(): pass").unwrap();
+
+            let gitignore_patterns: Vec<String> = Vec::new();
+            let cortex_ignore_patterns: Vec<String> = Vec::new();
+
+            let results = walk_directory(&repo, &gitignore_patterns, &cortex_ignore_patterns);
+
+            prop_assert!(
+                results.iter().any(|p| p.ends_with(&filename)),
+                "Non-excluded file '{}' should appear in walk results but didn't. Results: {:?}",
+                filename,
+                results
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Property 1: Gitignore-style pattern matching
+    // -----------------------------------------------------------------------
+
+    /// Strategy to generate a valid file extension (1-4 lowercase alpha chars).
+    fn arb_extension() -> impl Strategy<Value = String> {
+        "[a-z]{1,4}"
+    }
+
+    /// Strategy to generate a valid path segment (alphanumeric, 1-12 chars).
+    fn arb_path_segment() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9_]{0,11}"
+    }
+
+    /// **Validates: Requirements 1.5, 2.1, 2.2**
+    ///
+    /// Property 1: Gitignore-style pattern matching
+    ///
+    /// Patterns loaded from .cortexignore should correctly match paths using
+    /// gitignore syntax: directory patterns (`dir/`), wildcard extension patterns
+    /// (`*.ext`), path prefix patterns (containing `/`), and simple name patterns.
+    proptest! {
+        /// Directory patterns ending in `/` match paths starting with the prefix.
+        #[test]
+        fn prop_pattern_dir_prefix_matches(
+            dir_name in arb_path_segment(),
+            sub_path_segments in proptest::collection::vec(arb_path_segment(), 1..=2),
+            filename in arb_path_segment(),
+            ext in arb_extension(),
+        ) {
+            let pattern = format!("{}/", dir_name);
+            let patterns = vec![pattern.clone()];
+
+            // A path that starts with the directory prefix should match
+            let matching_path = format!("{}/{}/{}.{}", dir_name, sub_path_segments.join("/"), filename, ext);
+            prop_assert!(
+                matches_any_pattern(&matching_path, &patterns),
+                "Path '{}' should match directory pattern '{}'",
+                matching_path, pattern
+            );
+        }
+
+        /// Directory patterns ending in `/` match paths containing the dir as a component.
+        #[test]
+        fn prop_pattern_dir_component_matches(
+            prefix_dir in arb_path_segment(),
+            dir_name in arb_path_segment(),
+            filename in arb_path_segment(),
+            ext in arb_extension(),
+        ) {
+            let pattern = format!("{}/", dir_name);
+            let patterns = vec![pattern.clone()];
+
+            // A path containing the directory as a nested component should match
+            let matching_path = format!("{}/{}/{}.{}", prefix_dir, dir_name, filename, ext);
+            prop_assert!(
+                matches_any_pattern(&matching_path, &patterns),
+                "Path '{}' should match directory pattern '{}' (nested component)",
+                matching_path, pattern
+            );
+        }
+
+        /// Wildcard extension patterns (`*.ext`) match paths ending with that extension.
+        #[test]
+        fn prop_pattern_wildcard_ext_matches(
+            dirs in proptest::collection::vec(arb_path_segment(), 1..=3),
+            filename in arb_path_segment(),
+            ext in arb_extension(),
+        ) {
+            let pattern = format!("*.{}", ext);
+            let patterns = vec![pattern.clone()];
+
+            // A path ending with the extension should match
+            let matching_path = format!("{}/{}.{}", dirs.join("/"), filename, ext);
+            prop_assert!(
+                matches_any_pattern(&matching_path, &patterns),
+                "Path '{}' should match wildcard pattern '{}'",
+                matching_path, pattern
+            );
+        }
+
+        /// Wildcard extension patterns do NOT match paths with a different extension.
+        #[test]
+        fn prop_pattern_wildcard_ext_rejects_different_ext(
+            dirs in proptest::collection::vec(arb_path_segment(), 1..=3),
+            filename in arb_path_segment(),
+            ext in arb_extension(),
+        ) {
+            let pattern = format!("*.{}", ext);
+            let patterns = vec![pattern.clone()];
+
+            // Use a guaranteed-different extension
+            let other_ext = format!("{}x", ext);
+            let non_matching_path = format!("{}/{}.{}", dirs.join("/"), filename, other_ext);
+            prop_assert!(
+                !matches_any_pattern(&non_matching_path, &patterns),
+                "Path '{}' should NOT match wildcard pattern '{}'",
+                non_matching_path, pattern
+            );
+        }
+
+        /// Path prefix patterns (containing `/`) match paths starting with the prefix.
+        #[test]
+        fn prop_pattern_path_prefix_matches(
+            dir in arb_path_segment(),
+            file in arb_path_segment(),
+            extra in arb_path_segment(),
+            ext in arb_extension(),
+        ) {
+            let pattern = format!("{}/{}", dir, file);
+            let patterns = vec![pattern.clone()];
+
+            // Exact match
+            prop_assert!(
+                matches_any_pattern(&pattern, &patterns),
+                "Path '{}' should match path pattern '{}' (exact)",
+                pattern, pattern
+            );
+
+            // Path starting with the pattern should match
+            let extended_path = format!("{}/{}/{}.{}", dir, file, extra, ext);
+            prop_assert!(
+                matches_any_pattern(&extended_path, &patterns),
+                "Path '{}' should match path pattern '{}' (prefix)",
+                extended_path, pattern
+            );
+        }
+
+        /// Simple name patterns match any path segment equal to the pattern.
+        #[test]
+        fn prop_pattern_simple_name_matches_segment(
+            prefix_dir in arb_path_segment(),
+            pattern_name in arb_path_segment(),
+            suffix_file in arb_path_segment(),
+            ext in arb_extension(),
+        ) {
+            let patterns = vec![pattern_name.clone()];
+
+            // Path containing the pattern as a segment should match
+            let matching_path = format!("{}/{}/{}.{}", prefix_dir, pattern_name, suffix_file, ext);
+            prop_assert!(
+                matches_any_pattern(&matching_path, &patterns),
+                "Path '{}' should match simple pattern '{}'",
+                matching_path, pattern_name
+            );
+        }
+
+        /// An empty pattern list matches nothing.
+        #[test]
+        fn prop_empty_patterns_match_nothing(
+            path in arb_path_segment(),
+            ext in arb_extension(),
+        ) {
+            let patterns: Vec<String> = Vec::new();
+            let full_path = format!("{}.{}", path, ext);
+            prop_assert!(
+                !matches_any_pattern(&full_path, &patterns),
+                "Empty patterns should match nothing, but matched '{}'",
+                full_path
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Property 2: Pattern file parsing filters non-pattern lines
+    // -----------------------------------------------------------------------
+
+    /// **Validates: Requirements 2.3, 2.4**
+    ///
+    /// Property 2: Pattern file parsing filters non-pattern lines
+    ///
+    /// Comments (lines starting with #) and empty/whitespace lines should be
+    /// filtered out during parsing. Only valid pattern lines remain.
+    proptest! {
+        /// Mixed content: valid patterns, comments, and blanks. Only valid patterns
+        /// should appear in the result.
+        #[test]
+        fn prop_parse_filters_comments_and_blanks(
+            valid_patterns in proptest::collection::vec("[a-z][a-z0-9]{0,8}\\.[a-z]{1,3}", 1..=5),
+            comment_bodies in proptest::collection::vec("[a-zA-Z0-9 ]{1,20}", 0..=4),
+            blank_count in 0usize..=3,
+            whitespace_lines in 0usize..=3,
+        ) {
+            let tmp = TempDir::new().unwrap();
+            let repo = tmp.path().to_path_buf();
+
+            // Build file content mixing valid patterns, comments, and blanks
+            let mut lines: Vec<String> = Vec::new();
+
+            // Add comment lines (prefixed with #)
+            for body in &comment_bodies {
+                lines.push(format!("# {}", body));
+            }
+
+            // Add blank lines
+            for _ in 0..blank_count {
+                lines.push(String::new());
+            }
+
+            // Add whitespace-only lines
+            for _ in 0..whitespace_lines {
+                lines.push("   ".to_string());
+            }
+
+            // Add valid patterns
+            for pattern in &valid_patterns {
+                lines.push(pattern.clone());
+            }
+
+            let content = lines.join("\n");
+            fs::write(repo.join(".cortexignore"), &content).unwrap();
+
+            let result = load_ignore_patterns(&repo, ".cortexignore");
+
+            // Result should contain exactly the valid patterns
+            prop_assert_eq!(
+                result.len(),
+                valid_patterns.len(),
+                "Expected {} patterns but got {}. Result: {:?}",
+                valid_patterns.len(), result.len(), result
+            );
+
+            // Each valid pattern should appear in the result
+            for pattern in &valid_patterns {
+                prop_assert!(
+                    result.contains(pattern),
+                    "Pattern '{}' should be in result {:?}",
+                    pattern, result
+                );
+            }
+
+            // No result line should start with '#'
+            for line in &result {
+                prop_assert!(
+                    !line.starts_with('#'),
+                    "Comment line '{}' should have been filtered",
+                    line
+                );
+            }
+
+            // No result line should be empty or whitespace-only
+            for line in &result {
+                prop_assert!(
+                    !line.trim().is_empty(),
+                    "Empty/whitespace line should have been filtered"
+                );
+            }
+        }
+
+        /// File with ONLY comments and blank lines should produce empty result.
+        #[test]
+        fn prop_parse_only_comments_and_blanks_returns_empty(
+            comment_bodies in proptest::collection::vec("[a-zA-Z0-9 ]{1,20}", 1..=5),
+            blank_count in 0usize..=5,
+        ) {
+            let tmp = TempDir::new().unwrap();
+            let repo = tmp.path().to_path_buf();
+
+            let mut lines: Vec<String> = Vec::new();
+            for body in &comment_bodies {
+                lines.push(format!("# {}", body));
+            }
+            for _ in 0..blank_count {
+                lines.push(String::new());
+            }
+
+            let content = lines.join("\n");
+            fs::write(repo.join(".cortexignore"), &content).unwrap();
+
+            let result = load_ignore_patterns(&repo, ".cortexignore");
+
+            prop_assert!(
+                result.is_empty(),
+                "File with only comments and blanks should produce empty result, got {:?}",
+                result
+            );
+        }
+
+        /// Missing file should produce empty result (no panic, no error).
+        #[test]
+        fn prop_parse_missing_file_returns_empty(
+            filename in "[a-z]{1,8}"
+        ) {
+            let tmp = TempDir::new().unwrap();
+            let repo = tmp.path().to_path_buf();
+            // Don't create the file — it should not exist
+            let result = load_ignore_patterns(&repo, &filename);
+            prop_assert!(
+                result.is_empty(),
+                "Missing file should produce empty result, got {:?}",
+                result
+            );
+        }
     }
 }

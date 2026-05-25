@@ -1,6 +1,6 @@
 {
   "name": "@1337xcode/cortex",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Code intelligence MCP server. Indexes your repository into a queryable call graph for AI coding agents.",
   "bin": {
     "cortex": "./bin/cortex.js"
@@ -25,7 +25,7 @@
   "author": "1337Xcode",
   "license": "MIT",
   "os": ["darwin", "linux", "win32"],
-  "cpu": ["x64", "arm64"],
+  "cpu": ["x64", "arm64", "ia32"],
   "engines": {
     "node": ">=16"
   }
