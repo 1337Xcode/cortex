@@ -39,22 +39,31 @@ pub fn run(store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
          FROM observations ORDER BY node_fqn, written_at DESC",
     )?;
 
-    let observations: Vec<(String, String, String, String, String, i64, String, Option<String>)> =
-        obs_stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, i64>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, Option<String>>(7)?,
-                ))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+    #[allow(clippy::type_complexity)]
+    let observations: Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        String,
+        Option<String>,
+    )> = obs_stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(7)?,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
 
     // Query all ADRs
     let mut adr_stmt = conn.prepare(
@@ -62,6 +71,7 @@ pub fn run(store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
          FROM architectural_decisions ORDER BY created_at DESC",
     )?;
 
+    #[allow(clippy::type_complexity)]
     let adrs: Vec<(String, String, String, String, Option<String>, i64, i64)> = adr_stmt
         .query_map([], |row| {
             Ok((
@@ -92,8 +102,20 @@ pub fn run(store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
         println!("{}", "━".repeat(60));
 
         // Group by node_fqn
-        let mut grouped: BTreeMap<&str, Vec<&(String, String, String, String, String, i64, String, Option<String>)>> =
-            BTreeMap::new();
+        #[allow(clippy::type_complexity)]
+        let mut grouped: BTreeMap<
+            &str,
+            Vec<&(
+                String,
+                String,
+                String,
+                String,
+                String,
+                i64,
+                String,
+                Option<String>,
+            )>,
+        > = BTreeMap::new();
         for obs in &observations {
             grouped.entry(obs.1.as_str()).or_default().push(obs);
         }
@@ -168,9 +190,7 @@ pub fn run(store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
 
     if stale_count > 0 {
         println!();
-        println!(
-            "  Tip: run `cortex memory prune --stale` to archive stale observations."
-        );
+        println!("  Tip: run `cortex memory prune --stale` to archive stale observations.");
     }
 
     println!();

@@ -170,10 +170,7 @@ fn language_name_to_enum(name: &str) -> Option<SupportedLanguage> {
 /// - `ParseError::ParseFailed` if tree-sitter fails to produce a tree at all.
 pub fn parse(path: &Path, source: &str) -> Result<(SupportedLanguage, Tree), ParseError> {
     // Extract extension from path
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("");
+    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
 
     // Map extension to language name
     let lang_name = languages::language_for_extension(extension).ok_or_else(|| {
@@ -183,11 +180,10 @@ pub fn parse(path: &Path, source: &str) -> Result<(SupportedLanguage, Tree), Par
     })?;
 
     // Map language name to enum
-    let supported_lang = language_name_to_enum(lang_name).ok_or_else(|| {
-        ParseError::UnsupportedLanguage {
+    let supported_lang =
+        language_name_to_enum(lang_name).ok_or_else(|| ParseError::UnsupportedLanguage {
             extension: extension.to_string(),
-        }
-    })?;
+        })?;
 
     // For regex-based languages without tree-sitter grammars, return UnsupportedLanguage
     // (they are handled directly in the pipeline via regex extraction)
@@ -198,11 +194,10 @@ pub fn parse(path: &Path, source: &str) -> Result<(SupportedLanguage, Tree), Par
     }
 
     // Get the tree-sitter Language grammar
-    let ts_language = languages::language_for_name(lang_name).ok_or_else(|| {
-        ParseError::UnsupportedLanguage {
+    let ts_language =
+        languages::language_for_name(lang_name).ok_or_else(|| ParseError::UnsupportedLanguage {
             extension: extension.to_string(),
-        }
-    })?;
+        })?;
 
     // Configure parser and parse
     let mut parser = tree_sitter::Parser::new();
@@ -213,10 +208,12 @@ pub fn parse(path: &Path, source: &str) -> Result<(SupportedLanguage, Tree), Par
             partial_tree: false,
         })?;
 
-    let tree = parser.parse(source, None).ok_or_else(|| ParseError::ParseFailed {
-        path: path.display().to_string(),
-        partial_tree: false,
-    })?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| ParseError::ParseFailed {
+            path: path.display().to_string(),
+            partial_tree: false,
+        })?;
 
     Ok((supported_lang, tree))
 }
@@ -480,17 +477,26 @@ mod tests {
         let kotlin_path = PathBuf::from("src/Main.kt");
         let result = parse(&kotlin_path, "fun main() {}");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ParseError::UnsupportedLanguage { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ParseError::UnsupportedLanguage { .. }
+        ));
 
         let sql_path = PathBuf::from("migrations/001.sql");
         let result = parse(&sql_path, "CREATE TABLE users (id INT);");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ParseError::UnsupportedLanguage { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ParseError::UnsupportedLanguage { .. }
+        ));
 
         let perl_path = PathBuf::from("lib/App.pm");
         let result = parse(&perl_path, "package App;");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ParseError::UnsupportedLanguage { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ParseError::UnsupportedLanguage { .. }
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -604,7 +610,11 @@ mod tests {
     #[test]
     fn test_parse_terraform() {
         let path = PathBuf::from("main.tf");
-        let (lang, tree) = parse(&path, "resource \"aws_instance\" \"web\" {\n  ami = \"abc\"\n}").unwrap();
+        let (lang, tree) = parse(
+            &path,
+            "resource \"aws_instance\" \"web\" {\n  ami = \"abc\"\n}",
+        )
+        .unwrap();
         assert_eq!(lang, SupportedLanguage::Terraform);
         assert!(!tree.root_node().kind().is_empty());
     }

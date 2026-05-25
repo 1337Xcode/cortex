@@ -1,4 +1,4 @@
-﻿//! TypeScript/TSX AST extractor.
+//! TypeScript/TSX AST extractor.
 //!
 //! Extracts structural nodes (functions, arrow functions, methods, classes, interfaces)
 //! and edges (calls, imports) from a tree-sitter TypeScript parse tree.
@@ -30,7 +30,14 @@ pub fn extract(tree: &Tree, file: &str, source: &str) -> ExtractionResult {
     // First pass: collect all definitions
     let mut defined_fqns: Vec<(String, String)> = Vec::new(); // (simple_name, fqn)
 
-    collect_definitions(root, file, source_bytes, None, &mut nodes, &mut defined_fqns);
+    collect_definitions(
+        root,
+        file,
+        source_bytes,
+        None,
+        &mut nodes,
+        &mut defined_fqns,
+    );
 
     // Compute cyclomatic complexity for Function nodes
     compute_node_complexities(&mut nodes, root, source_bytes);
@@ -44,13 +51,9 @@ pub fn extract(tree: &Tree, file: &str, source: &str) -> ExtractionResult {
 
 /// Compute cyclomatic complexity for all Function nodes by finding their
 /// corresponding AST nodes and walking the subtree.
-fn compute_node_complexities(
-    nodes: &mut [Node],
-    root: tree_sitter::Node,
-    source: &[u8],
-) {
+fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source: &[u8]) {
     for node in nodes.iter_mut() {
-        if node.kind == NodeKind::Function {
+        if node.kind == NodeKind::Function || node.kind == NodeKind::Method {
             // TypeScript functions can be function_declaration or method_definition
             if let Some(ast_node) =
                 find_ast_node_at_line(root, node.start_line, "function_declaration")
@@ -67,7 +70,11 @@ fn compute_node_complexities(
 }
 
 /// Find an AST node of a given kind at a specific start line (1-indexed).
-fn find_ast_node_at_line<'a>(node: tree_sitter::Node<'a>, target_line: u32, kind: &str) -> Option<tree_sitter::Node<'a>> {
+fn find_ast_node_at_line<'a>(
+    node: tree_sitter::Node<'a>,
+    target_line: u32,
+    kind: &str,
+) -> Option<tree_sitter::Node<'a>> {
     let node_start_line = node.start_position().row as u32 + 1;
     if node.kind() == kind && node_start_line == target_line {
         return Some(node);
@@ -101,12 +108,17 @@ fn collect_definitions(
                         Some(cls) => format!("{file}::{cls}::{name}"),
                         None => format!("{file}::{name}"),
                     };
+                    let kind = if class_name.is_some() {
+                        NodeKind::Method
+                    } else {
+                        NodeKind::Function
+                    };
                     let start_line = child.start_position().row as u32 + 1;
                     let end_line = child.end_position().row as u32 + 1;
 
                     nodes.push(Node {
                         fqn: fqn.clone(),
-                        kind: NodeKind::Function,
+                        kind,
                         file: file.to_string(),
                         start_line,
                         end_line,
@@ -140,7 +152,14 @@ fn collect_definitions(
 
                     // Recurse into class body to find methods
                     if let Some(body) = child.child_by_field_name("body") {
-                        collect_definitions(body, file, source, Some(cls_name), nodes, defined_fqns);
+                        collect_definitions(
+                            body,
+                            file,
+                            source,
+                            Some(cls_name),
+                            nodes,
+                            defined_fqns,
+                        );
                     }
                 }
             }
@@ -166,16 +185,8 @@ fn collect_definitions(
                 }
             }
             // Arrow functions assigned to const/let at top level
-            "lexical_declaration" | "variable_declaration" => {
-                if class_name.is_none() {
-                    extract_arrow_functions_from_declaration(
-                        child,
-                        file,
-                        source,
-                        nodes,
-                        defined_fqns,
-                    );
-                }
+            "lexical_declaration" | "variable_declaration" if class_name.is_none() => {
+                extract_arrow_functions_from_declaration(child, file, source, nodes, defined_fqns);
             }
             // Export statements may contain declarations
             "export_statement" => {
@@ -192,7 +203,7 @@ fn collect_definitions(
 
                         nodes.push(Node {
                             fqn: fqn.clone(),
-                            kind: NodeKind::Function,
+                            kind: NodeKind::Method,
                             file: file.to_string(),
                             start_line,
                             end_line,
@@ -269,12 +280,7 @@ fn has_child_of_kind(node: tree_sitter::Node, kind: &str) -> bool {
 
 /// Collect import statements and create Imports edges.
 /// Also detects re-export statements and marks them with `reexport: true`.
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -326,63 +332,60 @@ fn collect_calls(
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        if child.kind() == "call_expression" {
-            if let Some(func_node) = child.child_by_field_name("function") {
-                let caller_fqn = find_enclosing_function(child, file, source)
-                    .unwrap_or_else(|| file.to_string());
+        if child.kind() == "call_expression"
+            && let Some(func_node) = child.child_by_field_name("function")
+        {
+            let caller_fqn =
+                find_enclosing_function(child, file, source).unwrap_or_else(|| file.to_string());
 
-                match func_node.kind() {
-                    "identifier" => {
-                        let call_name = func_node.utf8_text(source).unwrap_or("");
-                        if let Some((_, target_fqn)) =
-                            defined_fqns.iter().find(|(name, _)| name == call_name)
-                        {
-                            if caller_fqn != *target_fqn {
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn: target_fqn.clone(),
-                                    kind: EdgeKind::Calls,
-                                    confidence: 1.0,
-                                    attributes: json!({}),
-                                });
-                            }
-                        }
+            match func_node.kind() {
+                "identifier" => {
+                    let call_name = func_node.utf8_text(source).unwrap_or("");
+                    if let Some((_, target_fqn)) =
+                        defined_fqns.iter().find(|(name, _)| name == call_name)
+                        && caller_fqn != *target_fqn
+                    {
+                        edges.push(Edge {
+                            id: None,
+                            source_fqn: caller_fqn,
+                            target_fqn: target_fqn.clone(),
+                            kind: EdgeKind::Calls,
+                            confidence: 1.0,
+                            attributes: json!({}),
+                        });
                     }
-                    "member_expression" => {
-                        // obj.method() - member_expression has object and property fields
-                        let full_text = func_node.utf8_text(source).unwrap_or("");
-                        if let Some(dot_pos) = full_text.rfind('.') {
-                            let receiver = &full_text[..dot_pos];
-                            let method_name = &full_text[dot_pos + 1..];
-                            if !method_name.is_empty() {
-                                let chain_position = count_chain_depth_ts(func_node);
-                                let (target_fqn, confidence) =
-                                    if let Some((_, fqn)) = defined_fqns
-                                        .iter()
-                                        .find(|(name, _)| name == method_name)
-                                    {
-                                        (fqn.clone(), 1.0_f64)
-                                    } else {
-                                        (method_name.to_string(), 0.0_f64)
-                                    };
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn,
-                                    kind: EdgeKind::Calls,
-                                    confidence,
-                                    attributes: json!({
-                                        "receiver": receiver,
-                                        "call_type": "method",
-                                        "chain_position": chain_position
-                                    }),
-                                });
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                "member_expression" => {
+                    // obj.method() - member_expression has object and property fields
+                    let full_text = func_node.utf8_text(source).unwrap_or("");
+                    if let Some(dot_pos) = full_text.rfind('.') {
+                        let receiver = &full_text[..dot_pos];
+                        let method_name = &full_text[dot_pos + 1..];
+                        if !method_name.is_empty() {
+                            let chain_position = count_chain_depth_ts(func_node);
+                            let (target_fqn, confidence) = if let Some((_, fqn)) =
+                                defined_fqns.iter().find(|(name, _)| name == method_name)
+                            {
+                                (fqn.clone(), 1.0_f64)
+                            } else {
+                                (method_name.to_string(), 0.0_f64)
+                            };
+                            edges.push(Edge {
+                                id: None,
+                                source_fqn: caller_fqn,
+                                target_fqn,
+                                kind: EdgeKind::Calls,
+                                confidence,
+                                attributes: json!({
+                                    "receiver": receiver,
+                                    "call_type": "method",
+                                    "chain_position": chain_position
+                                }),
+                            });
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -392,11 +395,7 @@ fn collect_calls(
 }
 
 /// Find the enclosing function/method for a given node to determine the caller FQN.
-fn find_enclosing_function(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_function(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
 
     while let Some(parent) = current {
@@ -423,13 +422,12 @@ fn find_enclosing_function(
             }
             "arrow_function" => {
                 // Check if this arrow function is assigned to a variable
-                if let Some(declarator) = parent.parent() {
-                    if declarator.kind() == "variable_declarator" {
-                        if let Some(name_node) = declarator.child_by_field_name("name") {
-                            let func_name = name_node.utf8_text(source).unwrap_or("");
-                            return Some(format!("{file}::{func_name}"));
-                        }
-                    }
+                if let Some(declarator) = parent.parent()
+                    && declarator.kind() == "variable_declarator"
+                    && let Some(name_node) = declarator.child_by_field_name("name")
+                {
+                    let func_name = name_node.utf8_text(source).unwrap_or("");
+                    return Some(format!("{file}::{func_name}"));
                 }
             }
             _ => {}
@@ -444,10 +442,10 @@ fn find_enclosing_function(
 fn find_enclosing_class(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
     while let Some(parent) = current {
-        if parent.kind() == "class_declaration" {
-            if let Some(name_node) = parent.child_by_field_name("name") {
-                return Some(name_node.utf8_text(source).unwrap_or("").to_string());
-            }
+        if parent.kind() == "class_declaration"
+            && let Some(name_node) = parent.child_by_field_name("name")
+        {
+            return Some(name_node.utf8_text(source).unwrap_or("").to_string());
         }
         current = parent.parent();
     }
@@ -466,10 +464,10 @@ fn count_chain_depth_ts(func_node: tree_sitter::Node) -> u32 {
 }
 
 fn count_chain_depth_in_call_ts(call_node: tree_sitter::Node) -> u32 {
-    if let Some(func) = call_node.child_by_field_name("function") {
-        if func.kind() == "member_expression" {
-            return count_chain_depth_ts(func);
-        }
+    if let Some(func) = call_node.child_by_field_name("function")
+        && func.kind() == "member_expression"
+    {
+        return count_chain_depth_ts(func);
     }
     0
 }
@@ -538,26 +536,34 @@ function bootstrap(): void {
         assert_eq!(class.fqn, "src/controllers/order.ts::OrderController");
 
         // Check methods
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/controllers/order.ts::OrderController::constructor"));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/controllers/order.ts::OrderController::handleOrder"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/controllers/order.ts::OrderController::constructor")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/controllers/order.ts::OrderController::handleOrder")
+        );
 
         // Check arrow function
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/controllers/order.ts::createApp"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/controllers/order.ts::createApp")
+        );
 
         // Check function declaration
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/controllers/order.ts::bootstrap"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/controllers/order.ts::bootstrap")
+        );
 
         // Check import edges
         let import_edges: Vec<&Edge> = result
@@ -623,10 +629,7 @@ function anotherValid(): void {}
 
         // Should not panic and should extract at least the valid definitions
         assert!(!result.nodes.is_empty());
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "broken.ts::validFunc"));
+        assert!(result.nodes.iter().any(|n| n.fqn == "broken.ts::validFunc"));
     }
 
     #[test]
@@ -678,5 +681,127 @@ export interface ExportedInterface {}
         assert!(fqns.contains(&"lib.ts::ExportedClass"));
         assert!(fqns.contains(&"lib.ts::ExportedClass::method"));
         assert!(fqns.contains(&"lib.ts::ExportedInterface"));
+    }
+
+    /// Validates: Requirements 9.4
+    /// Verify that standalone functions get NodeKind::Function and methods get NodeKind::Method.
+    #[test]
+    fn test_nodekind_method_vs_function() {
+        let source = r#"
+class Calculator {
+    add(a: number, b: number): number {
+        return a + b;
+    }
+
+    subtract(a: number, b: number): number {
+        return a - b;
+    }
+}
+
+function standaloneHelper(): number {
+    return 42;
+}
+
+const arrowHelper = () => {
+    return 99;
+};
+"#;
+        let tree = parse_typescript(source);
+        let result = extract(&tree, "test_nodekind.ts", source);
+
+        // Standalone function declaration should be NodeKind::Function
+        let helper = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::standaloneHelper"))
+            .expect("standaloneHelper should be extracted");
+        assert_eq!(
+            helper.kind,
+            NodeKind::Function,
+            "Standalone function should have NodeKind::Function"
+        );
+
+        // Arrow function should be NodeKind::Function
+        let arrow = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::arrowHelper"))
+            .expect("arrowHelper should be extracted");
+        assert_eq!(
+            arrow.kind,
+            NodeKind::Function,
+            "Arrow function should have NodeKind::Function"
+        );
+
+        // Methods inside class should be NodeKind::Method
+        let add_method = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::Calculator::add"))
+            .expect("Calculator.add should be extracted");
+        assert_eq!(
+            add_method.kind,
+            NodeKind::Method,
+            "Method inside class should have NodeKind::Method"
+        );
+
+        let subtract_method = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::Calculator::subtract"))
+            .expect("Calculator.subtract should be extracted");
+        assert_eq!(
+            subtract_method.kind,
+            NodeKind::Method,
+            "Method inside class should have NodeKind::Method"
+        );
+    }
+
+    /// Validates: Requirements 9.4
+    /// Verify that method FQNs include the parent type name in the format file::ClassName::method_name.
+    #[test]
+    fn test_method_fqn_includes_parent_type() {
+        let source = r#"
+class UserService {
+    getUser(id: string): void {}
+    deleteUser(id: string): void {}
+}
+
+function freeFunction(): void {}
+"#;
+        let tree = parse_typescript(source);
+        let result = extract(&tree, "src/user.ts", source);
+
+        // Method FQNs should include parent type
+        let get_user = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Method && n.fqn.contains("getUser"))
+            .expect("getUser method should be extracted");
+        assert_eq!(
+            get_user.fqn, "src/user.ts::UserService::getUser",
+            "Method FQN should be file::ClassName::method_name"
+        );
+
+        let delete_user = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Method && n.fqn.contains("deleteUser"))
+            .expect("deleteUser method should be extracted");
+        assert_eq!(
+            delete_user.fqn, "src/user.ts::UserService::deleteUser",
+            "Method FQN should be file::ClassName::method_name"
+        );
+
+        // Standalone function FQN should NOT include a class name
+        let free_fn = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Function && n.fqn.contains("freeFunction"))
+            .expect("freeFunction should be extracted");
+        assert_eq!(
+            free_fn.fqn, "src/user.ts::freeFunction",
+            "Function FQN should be file::function_name without class"
+        );
     }
 }

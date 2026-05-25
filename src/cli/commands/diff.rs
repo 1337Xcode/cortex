@@ -1,4 +1,4 @@
-﻿//! Diff command: compare call graphs between two git branches.
+//! Diff command: compare call graphs between two git branches.
 //!
 //! `cortex diff main feature-branch` shows what architectural changes
 //! a branch introduces - new edges, removed edges, new nodes, deleted nodes.
@@ -34,10 +34,14 @@ pub fn run(base: &str, head: &str, store: &Arc<StoreManager>) -> Result<(), anyh
     let conn = store.read_conn();
 
     println!();
-    println!("GRAPH DIFF — {} → {}", base, head);
+    println!("GRAPH DIFF: {} → {}", base, head);
     println!("{}", "━".repeat(50));
     println!();
-    println!("  {} file{} changed", changed_files.len(), if changed_files.len() == 1 { "" } else { "s" });
+    println!(
+        "  {} file{} changed",
+        changed_files.len(),
+        if changed_files.len() == 1 { "" } else { "s" }
+    );
     println!();
 
     // For each changed file, find all nodes defined in it and their edges
@@ -73,7 +77,8 @@ pub fn run(base: &str, head: &str, store: &Arc<StoreManager>) -> Result<(), anyh
         // Compute total blast radius
         println!();
         println!("  Blast radius:");
-        let mut total_affected: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut total_affected: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for fqn in affected_nodes.iter().take(50) {
             let radius = graph::blast_radius(&conn, fqn, 2)?;
             for n in &radius {
@@ -88,7 +93,8 @@ pub fn run(base: &str, head: &str, store: &Arc<StoreManager>) -> Result<(), anyh
         if total_affected.is_empty() {
             println!("    No downstream dependencies affected.");
         } else {
-            println!("    {} downstream function{} potentially affected",
+            println!(
+                "    {} downstream function{} potentially affected",
                 total_affected.len(),
                 if total_affected.len() == 1 { "" } else { "s" }
             );

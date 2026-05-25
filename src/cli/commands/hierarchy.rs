@@ -28,7 +28,7 @@ pub fn run(fqn: &str, store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
             eprintln!("Exact match not found for '{}'. Did you mean:", fqn);
             eprintln!();
             for c in &candidates {
-                eprintln!("  {} ({}, {})", c.fqn, format!("{:?}", c.kind), c.file);
+                eprintln!("  {} ({:?}, {})", c.fqn, c.kind, c.file);
             }
             eprintln!();
             eprintln!("Use the full FQN for an exact match.");
@@ -38,9 +38,8 @@ pub fn run(fqn: &str, store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
 
     // Query parents: edges where source_fqn = fqn AND kind = "Inherits"
     // (this node inherits from target_fqn)
-    let mut parents_stmt = conn.prepare(
-        "SELECT target_fqn FROM edges WHERE source_fqn = ?1 AND kind = 'Inherits'",
-    )?;
+    let mut parents_stmt =
+        conn.prepare("SELECT target_fqn FROM edges WHERE source_fqn = ?1 AND kind = 'Inherits'")?;
     let parents: Vec<String> = parents_stmt
         .query_map(rusqlite::params![&node.fqn], |row| row.get(0))?
         .filter_map(|r| r.ok())
@@ -48,18 +47,16 @@ pub fn run(fqn: &str, store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
 
     // Query children: edges where target_fqn = fqn AND kind = "Inherits"
     // (other nodes inherit from this node)
-    let mut children_stmt = conn.prepare(
-        "SELECT source_fqn FROM edges WHERE target_fqn = ?1 AND kind = 'Inherits'",
-    )?;
+    let mut children_stmt =
+        conn.prepare("SELECT source_fqn FROM edges WHERE target_fqn = ?1 AND kind = 'Inherits'")?;
     let children: Vec<String> = children_stmt
         .query_map(rusqlite::params![&node.fqn], |row| row.get(0))?
         .filter_map(|r| r.ok())
         .collect();
 
     // Query interfaces: edges where source_fqn = fqn AND kind = "Implements"
-    let mut implements_stmt = conn.prepare(
-        "SELECT target_fqn FROM edges WHERE source_fqn = ?1 AND kind = 'Implements'",
-    )?;
+    let mut implements_stmt =
+        conn.prepare("SELECT target_fqn FROM edges WHERE source_fqn = ?1 AND kind = 'Implements'")?;
     let interfaces: Vec<String> = implements_stmt
         .query_map(rusqlite::params![&node.fqn], |row| row.get(0))?
         .filter_map(|r| r.ok())
@@ -67,9 +64,8 @@ pub fn run(fqn: &str, store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
 
     // Query implementors: edges where target_fqn = fqn AND kind = "Implements"
     // (other nodes implement this interface)
-    let mut implementors_stmt = conn.prepare(
-        "SELECT source_fqn FROM edges WHERE target_fqn = ?1 AND kind = 'Implements'",
-    )?;
+    let mut implementors_stmt =
+        conn.prepare("SELECT source_fqn FROM edges WHERE target_fqn = ?1 AND kind = 'Implements'")?;
     let implementors: Vec<String> = implementors_stmt
         .query_map(rusqlite::params![&node.fqn], |row| row.get(0))?
         .filter_map(|r| r.ok())

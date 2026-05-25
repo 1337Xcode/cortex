@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cortex — Token Savings Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #f6f4f2;
+            --text: #1f1f1f;
+            --text-secondary: #5a5a5a;
+            --border: #e0ddd9;
+            --card-bg: #ffffff;
+            --card-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+            --accent: #1f1f1f;
+            --chart-line: #1f1f1f;
+            --chart-fill: rgba(31,31,31,0.08);
+            --chart-grid: #e0ddd9;
+            --table-header-bg: #f0eeec;
+            --table-row-hover: #faf9f8;
+            --mono: 'IBM Plex Mono', monospace;
+            --sans: 'IBM Plex Sans', sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            font-family: var(--sans);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        header {
+            margin-bottom: 2.5rem;
+        }
+
+        header h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.25rem;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.25rem 1.5rem;
+            box-shadow: var(--card-shadow);
+        }
+
+        .card-label {
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .card-value {
+            font-family: var(--mono);
+            font-size: 1.75rem;
+            font-weight: 500;
+            line-height: 1.2;
+        }
+
+        .card-sub {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .section {
+            margin-bottom: 2.5rem;
+        }
+
+        .section-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .chart-container {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.5rem;
+            box-shadow: var(--card-shadow);
+            overflow-x: auto;
+        }
+
+        .chart-container svg {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .table-container {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            box-shadow: var(--card-shadow);
+            overflow: hidden;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        thead {
+            background: var(--table-header-bg);
+        }
+
+        th {
+            text-align: left;
+            padding: 0.75rem 1.25rem;
+            font-weight: 600;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 0.75rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tbody tr:hover {
+            background: var(--table-row-hover);
+        }
+
+        td.mono {
+            font-family: var(--mono);
+            font-size: 0.85rem;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 4rem 2rem;
+        }
+
+        .no-data-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.4;
+        }
+
+        .no-data h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .no-data p {
+            color: var(--text-secondary);
+            max-width: 400px;
+            margin: 0 auto;
+            font-size: 0.9rem;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 1.25rem 1rem;
+            }
+
+            header h1 {
+                font-size: 1.4rem;
+            }
+
+            .cards {
+                grid-template-columns: 1fr;
+            }
+
+            .card-value {
+                font-size: 1.4rem;
+            }
+
+            th, td {
+                padding: 0.6rem 0.75rem;
+            }
+
+            .chart-container {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Token Savings</h1>
+            <p>Cumulative efficiency gains from Cortex MCP tools</p>
+        </header>
+
+        <div id="app">
+            <div class="loading">Loading data...</div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        var app = document.getElementById('app');
+
+        function formatNumber(n) {
+            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+            return n.toString();
+        }
+
+        function formatMoney(n) {
+            return '$' + n.toFixed(2);
+        }
+
+        function escapeHtml(str) {
+            var div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function renderNoData() {
+            app.innerHTML =
+                '<div class="no-data">' +
+                    '<div class="no-data-icon">&#x1F4CA;</div>' +
+                    '<h2>No savings data yet</h2>' +
+                    '<p>Start using Cortex MCP tools and your token savings will appear here automatically.</p>' +
+                '</div>';
+        }
+
+        function renderDashboard(summary, timeseries, perTool) {
+            var html = '';
+
+            html += '<div class="cards">';
+            html += '<div class="card">' +
+                '<div class="card-label">Tokens Saved</div>' +
+                '<div class="card-value">' + formatNumber(summary.total_tokens_saved) + '</div>' +
+                '<div class="card-sub">' + formatNumber(summary.total_tokens_used) + ' tokens used</div>' +
+                '</div>';
+            html += '<div class="card">' +
+                '<div class="card-label">Estimated Savings</div>' +
+                '<div class="card-value">' + formatMoney(summary.naive_cost_estimate) + '</div>' +
+                '<div class="card-sub">Based on model pricing</div>' +
+                '</div>';
+            html += '<div class="card">' +
+                '<div class="card-label">Tool Calls</div>' +
+                '<div class="card-value">' + formatNumber(summary.total_tool_calls) + '</div>' +
+                '<div class="card-sub">Total invocations</div>' +
+                '</div>';
+            html += '</div>';
+
+            html += '<div class="section">';
+            html += '<div class="section-title">Tokens Saved (Last 30 Days)</div>';
+            html += '<div class="chart-container">' + renderChart(timeseries) + '</div>';
+            html += '</div>';
+
+            html += '<div class="section">';
+            html += '<div class="section-title">Per-Tool Breakdown</div>';
+            html += renderTable(perTool);
+            html += '</div>';
+
+            app.innerHTML = html;
+        }
+
+        function renderChart(data) {
+            if (!data || data.length === 0) {
+                return '<div class="no-data" style="padding:2rem"><p>No time-series data available</p></div>';
+            }
+
+            var width = 900;
+            var height = 260;
+            var padLeft = 60;
+            var padRight = 20;
+            var padTop = 20;
+            var padBottom = 40;
+            var chartW = width - padLeft - padRight;
+            var chartH = height - padTop - padBottom;
+
+            var maxVal = 0;
+            for (var i = 0; i < data.length; i++) {
+                if (data[i].tokens_saved > maxVal) maxVal = data[i].tokens_saved;
+            }
+            if (maxVal === 0) maxVal = 1;
+
+            var gridStep = Math.pow(10, Math.floor(Math.log10(maxVal)));
+            if (maxVal / gridStep < 2) gridStep = gridStep / 4;
+            else if (maxVal / gridStep < 5) gridStep = gridStep / 2;
+            var yMax = Math.ceil(maxVal / gridStep) * gridStep;
+            if (yMax === 0) yMax = 1;
+
+            var svg = '<svg viewBox="0 0 ' + width + ' ' + height + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Token savings over the last 30 days">';
+
+            var gridLines = 4;
+            for (var g = 0; g <= gridLines; g++) {
+                var gy = padTop + chartH - (g / gridLines) * chartH;
+                var gVal = (g / gridLines) * yMax;
+                svg += '<line x1="' + padLeft + '" y1="' + gy + '" x2="' + (width - padRight) + '" y2="' + gy + '" stroke="var(--chart-grid)" stroke-width="1" />';
+                svg += '<text x="' + (padLeft - 8) + '" y="' + (gy + 4) + '" text-anchor="end" font-size="11" font-family="var(--mono)" fill="var(--text-secondary)">' + formatNumber(Math.round(gVal)) + '</text>';
+            }
+
+            var points = [];
+            var stepX = data.length > 1 ? chartW / (data.length - 1) : chartW;
+            for (var i = 0; i < data.length; i++) {
+                var x = padLeft + (data.length > 1 ? i * stepX : chartW / 2);
+                var y = padTop + chartH - (data[i].tokens_saved / yMax) * chartH;
+                points.push({ x: x, y: y });
+            }
+
+            if (points.length > 0) {
+                var areaPath = 'M' + points[0].x + ',' + (padTop + chartH);
+                for (var i = 0; i < points.length; i++) {
+                    areaPath += ' L' + points[i].x + ',' + points[i].y;
+                }
+                areaPath += ' L' + points[points.length - 1].x + ',' + (padTop + chartH) + ' Z';
+                svg += '<path d="' + areaPath + '" fill="var(--chart-fill)" />';
+            }
+
+            if (points.length > 0) {
+                var linePath = 'M' + points[0].x + ',' + points[0].y;
+                for (var i = 1; i < points.length; i++) {
+                    linePath += ' L' + points[i].x + ',' + points[i].y;
+                }
+                svg += '<path d="' + linePath + '" fill="none" stroke="var(--chart-line)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />';
+            }
+
+            for (var i = 0; i < points.length; i++) {
+                svg += '<circle cx="' + points[i].x + '" cy="' + points[i].y + '" r="3" fill="var(--chart-line)" />';
+            }
+
+            var labelInterval = Math.max(1, Math.floor(data.length / 6));
+            for (var i = 0; i < data.length; i += labelInterval) {
+                var lx = padLeft + (data.length > 1 ? i * stepX : chartW / 2);
+                var label = data[i].date || '';
+                if (label.length >= 10) {
+                    label = label.substring(5, 10);
+                }
+                svg += '<text x="' + lx + '" y="' + (height - 8) + '" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--text-secondary)">' + escapeHtml(label) + '</text>';
+            }
+
+            svg += '</svg>';
+            return svg;
+        }
+
+        function renderTable(data) {
+            if (!data || data.length === 0) {
+                return '<div class="table-container"><div class="no-data" style="padding:2rem"><p>No per-tool data available</p></div></div>';
+            }
+
+            var html = '<div class="table-container"><table>';
+            html += '<thead><tr>' +
+                '<th>Tool</th>' +
+                '<th>Calls</th>' +
+                '<th>Tokens Saved</th>' +
+                '<th>Avg Saved</th>' +
+                '</tr></thead>';
+            html += '<tbody>';
+
+            for (var i = 0; i < data.length; i++) {
+                var row = data[i];
+                html += '<tr>' +
+                    '<td class="mono">' + escapeHtml(row.tool_name) + '</td>' +
+                    '<td class="mono">' + formatNumber(row.call_count) + '</td>' +
+                    '<td class="mono">' + formatNumber(row.total_tokens_saved) + '</td>' +
+                    '<td class="mono">' + formatNumber(Math.round(row.average_tokens_saved)) + '</td>' +
+                    '</tr>';
+            }
+
+            html += '</tbody></table></div>';
+            return html;
+        }
+
+        function fetchData() {
+            var summaryDone = false, timeseriesDone = false, perToolDone = false;
+            var summary = null, timeseries = null, perTool = null;
+            var errors = 0;
+
+            function checkComplete() {
+                if (!summaryDone || !timeseriesDone || !perToolDone) return;
+
+                if (errors === 3 || (!summary && !timeseries && !perTool)) {
+                    renderNoData();
+                    return;
+                }
+
+                if (summary && summary.total_tool_calls === 0) {
+                    renderNoData();
+                    return;
+                }
+
+                renderDashboard(
+                    summary || { total_tokens_saved: 0, total_tokens_used: 0, naive_cost_estimate: 0, total_tool_calls: 0 },
+                    timeseries || [],
+                    perTool || []
+                );
+            }
+
+            fetch('/api/savings/summary')
+                .then(function(r) { return r.json(); })
+                .then(function(d) { summary = d; })
+                .catch(function() { errors++; })
+                .finally(function() { summaryDone = true; checkComplete(); });
+
+            fetch('/api/savings/timeseries')
+                .then(function(r) { return r.json(); })
+                .then(function(d) { timeseries = d; })
+                .catch(function() { errors++; })
+                .finally(function() { timeseriesDone = true; checkComplete(); });
+
+            fetch('/api/savings/per-tool')
+                .then(function(r) { return r.json(); })
+                .then(function(d) { perTool = d; })
+                .catch(function() { errors++; })
+                .finally(function() { perToolDone = true; checkComplete(); });
+        }
+
+        fetchData();
+    })();
+    </script>
+</body>
+</html>

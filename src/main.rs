@@ -1,4 +1,4 @@
-﻿#![allow(dead_code)]
+#![allow(dead_code)]
 
 mod agents;
 mod bundle;
@@ -20,9 +20,9 @@ use std::sync::Arc;
 use clap::Parser;
 
 use cli::{
-    AntigravityCommand, BundleCommand, Cli, Command, ConfigCommand, CursorCommand,
-    FederateCommand, HookCommand, KiroCommand, MemoryCommand, QueryCommand, SecurityCommand,
-    SemanticCommand, VscodeCommand,
+    AntigravityCommand, BundleCommand, Cli, Command, ConfigCommand, CursorCommand, FederateCommand,
+    HookCommand, KiroCommand, MemoryCommand, QueryCommand, SecurityCommand, SemanticCommand,
+    VscodeCommand,
 };
 use config::Config;
 use store::db::StoreManager;
@@ -30,7 +30,10 @@ use version::VERSION;
 
 /// Synthesize a DetectedAgent for a known platform even when its config dir doesn't exist yet.
 /// Returns None for unknown platform names.
-fn synthesize_agent(canonical: &str, repo_root: &std::path::Path) -> Option<crate::agents::detect::DetectedAgent> {
+fn synthesize_agent(
+    canonical: &str,
+    repo_root: &std::path::Path,
+) -> Option<crate::agents::detect::DetectedAgent> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map(std::path::PathBuf::from)
@@ -58,7 +61,11 @@ fn synthesize_agent(canonical: &str, repo_root: &std::path::Path) -> Option<crat
         "hermes" => ("Hermes", "mcpServers", home.join(".hermes")),
         "kimi" => ("Kimi Code", "mcpServers", home.join(".kimi")),
         "pi" => ("Pi", "mcpServers", home.join(".pi")),
-        "antigravity" => ("Google Antigravity", "mcpServers", home.join(".antigravity")),
+        "antigravity" => (
+            "Google Antigravity",
+            "mcpServers",
+            home.join(".antigravity"),
+        ),
         "supermaven" => ("Supermaven", "mcpServers", repo_root.join(".supermaven")),
         "codeium" => ("Codeium", "mcpServers", repo_root.join(".codeium")),
         "tabnine" => ("Tabnine", "mcpServers", repo_root.join(".tabnine")),
@@ -92,7 +99,10 @@ fn main() {
 
     // Create data directory if needed.
     if let Err(e) = std::fs::create_dir_all(&config.data_dir) {
-        eprintln!("error: failed to create data directory '{}': {e}", config.data_dir.display());
+        eprintln!(
+            "error: failed to create data directory '{}': {e}",
+            config.data_dir.display()
+        );
         process::exit(1);
     }
 
@@ -123,13 +133,25 @@ fn main() {
         config.data_dir.display()
     );
 
+    // Check for updates on startup (non-blocking, silently continues on failure).
+    if config.update_check
+        && let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        && let Some(latest) = rt.block_on(version::check_for_update())
+    {
+        eprintln!("{}", version::update_notification(&latest));
+    }
+
     // Wrap store in Arc for shared ownership.
     let store = Arc::new(store);
 
     // Dispatch subcommand.
     match cli.command {
         Command::Serve { smart_tools } => {
-            if let Err(e) = cli::commands::serve::run_with_options(&config, Arc::clone(&store), smart_tools) {
+            if let Err(e) =
+                cli::commands::serve::run_with_options(&config, Arc::clone(&store), smart_tools)
+            {
                 eprintln!("error: {e}");
                 process::exit(1);
             }
@@ -202,7 +224,9 @@ fn main() {
                 // Try to find an already-detected agent first; if not found, synthesize one
                 let agent_opt = crate::agents::detect::detect_installed_agents(&config.repo_root)
                     .into_iter()
-                    .find(|a| a.name == canonical || a.display_name.to_lowercase() == p.to_lowercase());
+                    .find(|a| {
+                        a.name == canonical || a.display_name.to_lowercase() == p.to_lowercase()
+                    });
 
                 let agent = match agent_opt {
                     Some(a) => a,
@@ -211,14 +235,18 @@ fn main() {
                         match synthesize_agent(canonical, &config.repo_root) {
                             Some(a) => a,
                             None => {
-                                eprintln!("Platform '{}' is not supported. Run `cortex install` to see all supported platforms.", p);
+                                eprintln!(
+                                    "Platform '{}' is not supported. Run `cortex install` to see all supported platforms.",
+                                    p
+                                );
                                 process::exit(1);
                             }
                         }
                     }
                 };
 
-                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                let binary =
+                    std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
                 if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
                     eprintln!("error: {e}");
                     process::exit(1);
@@ -243,12 +271,16 @@ fn main() {
                     root_key: "mcpServers".to_string(),
                     config_path: cursor_dir.clone(),
                 };
-                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                let binary =
+                    std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
                 if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
-                println!("  Configured Cursor at {}", cursor_dir.join("mcp.json").display());
+                println!(
+                    "  Configured Cursor at {}",
+                    cursor_dir.join("mcp.json").display()
+                );
                 println!("  Restart Cursor to pick up the new MCP server.");
             }
         },
@@ -266,12 +298,16 @@ fn main() {
                     root_key: "servers".to_string(),
                     config_path: vscode_dir.clone(),
                 };
-                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                let binary =
+                    std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
                 if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
-                println!("  Configured VS Code Copilot Chat at {}", vscode_dir.join("mcp.json").display());
+                println!(
+                    "  Configured VS Code Copilot Chat at {}",
+                    vscode_dir.join("mcp.json").display()
+                );
                 println!("  Reload VS Code to pick up the new MCP server.");
             }
         },
@@ -289,12 +325,16 @@ fn main() {
                     root_key: "mcpServers".to_string(),
                     config_path: kiro_dir.clone(),
                 };
-                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                let binary =
+                    std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
                 if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
-                println!("  Configured Kiro at {}", kiro_dir.join("settings").join("mcp.json").display());
+                println!(
+                    "  Configured Kiro at {}",
+                    kiro_dir.join("settings").join("mcp.json").display()
+                );
                 println!("  Reload the Kiro MCP panel to pick up the new server.");
             }
         },
@@ -315,34 +355,34 @@ fn main() {
                     root_key: "mcpServers".to_string(),
                     config_path: ag_dir.clone(),
                 };
-                let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
+                let binary =
+                    std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cortex"));
                 if let Err(e) = crate::agents::configure::configure_agent(&agent, &binary) {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
-                println!("  Configured Google Antigravity at {}", ag_dir.join("mcp.json").display());
+                println!(
+                    "  Configured Google Antigravity at {}",
+                    ag_dir.join("mcp.json").display()
+                );
             }
         },
         Command::Bundle(sub) => match sub {
             BundleCommand::Export { format } => {
                 let output_dir = config.data_dir.clone();
                 match format.as_str() {
-                    "ccg" => {
-                        match bundle::ccg::export_ccg(&store, &output_dir) {
-                            Ok(stats) => {
-                                println!(
-                                    "CCG exported: {} nodes, {} edges -> {}",
-                                    stats.nodes_exported,
-                                    stats.edges_exported,
-                                    stats.output_path,
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("error: {e}");
-                                process::exit(1);
-                            }
+                    "ccg" => match bundle::ccg::export_ccg(&store, &output_dir) {
+                        Ok(stats) => {
+                            println!(
+                                "CCG exported: {} nodes, {} edges -> {}",
+                                stats.nodes_exported, stats.edges_exported, stats.output_path,
+                            );
                         }
-                    }
+                        Err(e) => {
+                            eprintln!("error: {e}");
+                            process::exit(1);
+                        }
+                    },
                     _ => {
                         if let Err(e) = cli::commands::bundle::run_export(&store, &output_dir) {
                             eprintln!("error: {e}");
@@ -377,8 +417,7 @@ fn main() {
                 kind,
                 limit,
             } => {
-                if let Err(e) =
-                    cli::commands::query::find(&pattern, kind.as_deref(), limit, &store)
+                if let Err(e) = cli::commands::query::find(&pattern, kind.as_deref(), limit, &store)
                 {
                     eprintln!("error: {e}");
                     process::exit(1);
@@ -411,8 +450,8 @@ fn main() {
         },
         Command::Status => {
             let conn = store.read_conn();
-            let arch = crate::store::queries::graph::get_architecture_summary(&conn).unwrap_or_else(|_| {
-                crate::store::queries::graph::ArchitectureSummary {
+            let arch = crate::store::queries::graph::get_architecture_summary(&conn)
+                .unwrap_or_else(|_| crate::store::queries::graph::ArchitectureSummary {
                     total_nodes: 0,
                     total_edges: 0,
                     files_indexed: 0,
@@ -420,8 +459,7 @@ fn main() {
                     counts_by_kind: vec![],
                     top_level_modules: vec![],
                     entry_points: vec![],
-                }
-            });
+                });
             println!("Cortex status");
             println!("  Nodes: {}", arch.total_nodes);
             println!("  Edges: {}", arch.total_edges);
@@ -439,7 +477,10 @@ fn main() {
                 let conn = store.write_conn();
                 match crate::store::queries::memory::prune_stale_observations(&conn, None) {
                     Ok(count) => println!("Pruned {} stale observations", count),
-                    Err(e) => { eprintln!("error: {e}"); process::exit(1); }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        process::exit(1);
+                    }
                 }
             }
             MemoryCommand::Show => {
@@ -477,10 +518,20 @@ fn main() {
         },
         Command::Config(sub) => match sub {
             ConfigCommand::Get { key } => {
-                println!("Configuration key '{}' is managed via environment variables (CORTEX_{}) or .cortex/config.toml", key, key.to_uppercase());
+                println!(
+                    "Configuration key '{}' is managed via environment variables (CORTEX_{}) or .cortex/config.toml",
+                    key,
+                    key.to_uppercase()
+                );
             }
             ConfigCommand::Set { key, value } => {
-                println!("To set '{}' = '{}', add it to .cortex/config.toml or set CORTEX_{}={}", key, value, key.to_uppercase(), value);
+                println!(
+                    "To set '{}' = '{}', add it to .cortex/config.toml or set CORTEX_{}={}",
+                    key,
+                    value,
+                    key.to_uppercase(),
+                    value
+                );
             }
             ConfigCommand::Reset => {
                 let config_path = config.repo_root.join(".cortex").join("config.toml");
@@ -551,8 +602,20 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Ci { fail_on_taint, fail_on_dead_code_above, fail_on_owasp, format } => {
-            match cli::commands::ci::run(&config, &store, fail_on_taint, fail_on_dead_code_above, fail_on_owasp, &format) {
+        Command::Ci {
+            fail_on_taint,
+            fail_on_dead_code_above,
+            fail_on_owasp,
+            format,
+        } => {
+            match cli::commands::ci::run(
+                &config,
+                &store,
+                fail_on_taint,
+                fail_on_dead_code_above,
+                fail_on_owasp,
+                &format,
+            ) {
                 Ok(failed) => {
                     if failed {
                         process::exit(1);
@@ -584,7 +647,10 @@ fn main() {
                 }
             }
         },
-        Command::Modules { threshold, build_system } => {
+        Command::Modules {
+            threshold,
+            build_system,
+        } => {
             if build_system {
                 let info = indexer::build_system::detect(&config.repo_root);
                 println!("Build system: {:?}", info.build_system);

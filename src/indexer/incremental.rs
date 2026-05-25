@@ -40,8 +40,21 @@ impl TreeCache {
     }
 
     /// Store a parsed tree and source for a file.
-    pub fn insert(&mut self, path: PathBuf, tree: Tree, source: String, language: SupportedLanguage) {
-        self.entries.insert(path, CacheEntry { tree, source, language });
+    pub fn insert(
+        &mut self,
+        path: PathBuf,
+        tree: Tree,
+        source: String,
+        language: SupportedLanguage,
+    ) {
+        self.entries.insert(
+            path,
+            CacheEntry {
+                tree,
+                source,
+                language,
+            },
+        );
     }
 
     /// Check if a file has a cached tree.
@@ -79,11 +92,7 @@ impl TreeCache {
     ///
     /// Returns the new tree, or None if the file is not in the cache
     /// (in which case a full parse should be performed).
-    pub fn incremental_reparse(
-        &mut self,
-        path: &Path,
-        new_source: &str,
-    ) -> Option<Tree> {
+    pub fn incremental_reparse(&mut self, path: &Path, new_source: &str) -> Option<Tree> {
         let entry = self.entries.get_mut(path)?;
         let old_source = &entry.source;
 
@@ -151,8 +160,10 @@ impl MicroDelta {
 /// in both old and new but its start_line, end_line, or attributes differ.
 /// Edges are compared by (source_fqn, target_fqn, kind) tuple.
 pub fn diff_extractions(old: &ExtractionResult, new: &ExtractionResult) -> MicroDelta {
-    let old_node_map: HashMap<&str, &Node> = old.nodes.iter().map(|n| (n.fqn.as_str(), n)).collect();
-    let new_node_map: HashMap<&str, &Node> = new.nodes.iter().map(|n| (n.fqn.as_str(), n)).collect();
+    let old_node_map: HashMap<&str, &Node> =
+        old.nodes.iter().map(|n| (n.fqn.as_str(), n)).collect();
+    let new_node_map: HashMap<&str, &Node> =
+        new.nodes.iter().map(|n| (n.fqn.as_str(), n)).collect();
 
     let mut nodes_added = Vec::new();
     let mut nodes_modified = Vec::new();
@@ -209,7 +220,7 @@ pub fn diff_extractions(old: &ExtractionResult, new: &ExtractionResult) -> Micro
         }
     }
 
-    for (key, _edge) in &old_edge_set {
+    for key in old_edge_set.keys() {
         if !new_edge_set.contains_key(key) {
             edges_to_remove.push((key.0.to_string(), key.1.to_string()));
         }
@@ -346,7 +357,8 @@ mod tests {
         let path = PathBuf::from("test.py");
 
         let old_source = "def hello():\n    print('hello')\n\ndef world():\n    print('world')\n";
-        let new_source = "def hello():\n    print('hi there')\n\ndef world():\n    print('world')\n";
+        let new_source =
+            "def hello():\n    print('hi there')\n\ndef world():\n    print('world')\n";
 
         let (lang, tree) = parser::parse(&path, old_source).unwrap();
         cache.insert(path.clone(), tree, old_source.to_string(), lang);
@@ -612,7 +624,10 @@ mod tests {
         assert_eq!(delta.edges_to_add.len(), 1);
         assert_eq!(delta.edges_to_add[0].target_fqn, "test.py::foo");
         assert_eq!(delta.edges_to_remove.len(), 1);
-        assert_eq!(delta.edges_to_remove[0], ("test.py::hello".to_string(), "test.py::world".to_string()));
+        assert_eq!(
+            delta.edges_to_remove[0],
+            ("test.py::hello".to_string(), "test.py::world".to_string())
+        );
     }
 
     /// Integration test: modify one function in a multi-function file,
@@ -673,7 +688,11 @@ mod tests {
 
         // Only beta should be modified (its complexity attribute may change)
         // alpha and gamma should NOT be in modified since their lines didn't shift
-        let modified_fqns: Vec<&str> = delta.nodes_modified.iter().map(|n| n.fqn.as_str()).collect();
+        let modified_fqns: Vec<&str> = delta
+            .nodes_modified
+            .iter()
+            .map(|n| n.fqn.as_str())
+            .collect();
 
         // alpha should not be modified
         assert!(

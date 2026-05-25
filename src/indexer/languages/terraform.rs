@@ -1,4 +1,4 @@
-﻿//! Terraform/HCL AST extractor (tree-sitter based).
+//! Terraform/HCL AST extractor (tree-sitter based).
 //!
 //! Extracts structural nodes (resources, data sources, modules, variables, outputs,
 //! locals, providers) and edges (module source imports) from a tree-sitter HCL parse tree.
@@ -264,9 +264,7 @@ fn extract_module_block(
 
         // Emit an import edge from this module to its source
         if !edges.iter().any(|e| {
-            e.kind == EdgeKind::Imports
-                && e.source_fqn == fqn
-                && e.target_fqn == module_source
+            e.kind == EdgeKind::Imports && e.source_fqn == fqn && e.target_fqn == module_source
         }) {
             edges.push(Edge {
                 id: None,
@@ -408,12 +406,7 @@ fn extract_output_block(
 ///
 /// Produces a NodeKind::Constant for each key in the locals block.
 /// FQN: `file::local.key`
-fn extract_locals_block(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    nodes: &mut Vec<Node>,
-) {
+fn extract_locals_block(node: tree_sitter::Node, file: &str, source: &[u8], nodes: &mut Vec<Node>) {
     let start_line = node.start_position().row as u32 + 1;
     let end_line = node.end_position().row as u32 + 1;
     let body_text = node.utf8_text(source).unwrap_or("");
@@ -653,10 +646,11 @@ fn extract_locals_keys(body_text: &str) -> Vec<String> {
                 let key = trimmed[..eq_pos].trim();
                 // Validate it looks like an identifier
                 if !key.is_empty()
+                    && key.chars().all(|c| c.is_alphanumeric() || c == '_')
                     && key
                         .chars()
-                        .all(|c| c.is_alphanumeric() || c == '_')
-                    && key.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+                        .next()
+                        .is_some_and(|c| c.is_alphabetic() || c == '_')
                 {
                     keys.push(key.to_string());
                 }
@@ -666,7 +660,6 @@ fn extract_locals_keys(body_text: &str) -> Vec<String> {
 
     keys
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -707,8 +700,7 @@ resource "aws_security_group" "web_sg" {
         let result = parse_and_extract("infra/main.tf", source);
 
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/main.tf::resource.aws_instance.web"
-                && n.kind == NodeKind::Class
+            n.fqn == "infra/main.tf::resource.aws_instance.web" && n.kind == NodeKind::Class
         }));
         assert!(result.nodes.iter().any(|n| {
             n.fqn == "infra/main.tf::resource.aws_security_group.web_sg"
@@ -745,12 +737,10 @@ data "aws_vpc" "default" {
         let result = parse_and_extract("infra/data.tf", source);
 
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/data.tf::data.aws_ami.ubuntu"
-                && n.kind == NodeKind::Class
+            n.fqn == "infra/data.tf::data.aws_ami.ubuntu" && n.kind == NodeKind::Class
         }));
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/data.tf::data.aws_vpc.default"
-                && n.kind == NodeKind::Class
+            n.fqn == "infra/data.tf::data.aws_vpc.default" && n.kind == NodeKind::Class
         }));
 
         let ami_node = result
@@ -782,14 +772,18 @@ module "eks" {
         let result = parse_and_extract("infra/modules.tf", source);
 
         // Check module nodes
-        assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/modules.tf::module.vpc"
-                && n.kind == NodeKind::Module
-        }));
-        assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/modules.tf::module.eks"
-                && n.kind == NodeKind::Module
-        }));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| { n.fqn == "infra/modules.tf::module.vpc" && n.kind == NodeKind::Module })
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| { n.fqn == "infra/modules.tf::module.eks" && n.kind == NodeKind::Module })
+        );
 
         // Check import edges for module sources
         let imports: Vec<&Edge> = result
@@ -802,8 +796,7 @@ module "eks" {
                 && e.target_fqn == "terraform-aws-modules/vpc/aws"
         }));
         assert!(imports.iter().any(|e| {
-            e.source_fqn == "infra/modules.tf::module.eks"
-                && e.target_fqn == "./modules/eks"
+            e.source_fqn == "infra/modules.tf::module.eks" && e.target_fqn == "./modules/eks"
         }));
     }
 
@@ -829,16 +822,13 @@ variable "enable_monitoring" {
         let result = parse_and_extract("infra/variables.tf", source);
 
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/variables.tf::var.region"
-                && n.kind == NodeKind::Constant
+            n.fqn == "infra/variables.tf::var.region" && n.kind == NodeKind::Constant
         }));
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/variables.tf::var.instance_type"
-                && n.kind == NodeKind::Constant
+            n.fqn == "infra/variables.tf::var.instance_type" && n.kind == NodeKind::Constant
         }));
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/variables.tf::var.enable_monitoring"
-                && n.kind == NodeKind::Constant
+            n.fqn == "infra/variables.tf::var.enable_monitoring" && n.kind == NodeKind::Constant
         }));
 
         // Check attributes
@@ -866,12 +856,10 @@ output "vpc_id" {
         let result = parse_and_extract("infra/outputs.tf", source);
 
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/outputs.tf::output.instance_ip"
-                && n.kind == NodeKind::Constant
+            n.fqn == "infra/outputs.tf::output.instance_ip" && n.kind == NodeKind::Constant
         }));
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/outputs.tf::output.vpc_id"
-                && n.kind == NodeKind::Constant
+            n.fqn == "infra/outputs.tf::output.vpc_id" && n.kind == NodeKind::Constant
         }));
 
         // Check output attribute
@@ -899,17 +887,16 @@ locals {
         let result = parse_and_extract("infra/locals.tf", source);
 
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/locals.tf::local.common_tags"
-                && n.kind == NodeKind::Constant
+            n.fqn == "infra/locals.tf::local.common_tags" && n.kind == NodeKind::Constant
         }));
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/locals.tf::local.name_prefix"
-                && n.kind == NodeKind::Constant
+            n.fqn == "infra/locals.tf::local.name_prefix" && n.kind == NodeKind::Constant
         }));
-        assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/locals.tf::local.region"
-                && n.kind == NodeKind::Constant
-        }));
+        assert!(
+            result.nodes.iter().any(|n| {
+                n.fqn == "infra/locals.tf::local.region" && n.kind == NodeKind::Constant
+            })
+        );
     }
 
     #[test]
@@ -927,13 +914,13 @@ provider "google" {
 "#;
         let result = parse_and_extract("infra/providers.tf", source);
 
+        assert!(
+            result.nodes.iter().any(|n| {
+                n.fqn == "infra/providers.tf::provider.aws" && n.kind == NodeKind::Class
+            })
+        );
         assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/providers.tf::provider.aws"
-                && n.kind == NodeKind::Class
-        }));
-        assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/providers.tf::provider.google"
-                && n.kind == NodeKind::Class
+            n.fqn == "infra/providers.tf::provider.google" && n.kind == NodeKind::Class
         }));
 
         let aws_node = result
@@ -966,10 +953,12 @@ terraform {
 "#;
         let result = parse_and_extract("infra/versions.tf", source);
 
-        assert!(result.nodes.iter().any(|n| {
-            n.fqn == "infra/versions.tf::terraform"
-                && n.kind == NodeKind::Module
-        }));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| { n.fqn == "infra/versions.tf::terraform" && n.kind == NodeKind::Module })
+        );
 
         let tf_node = result
             .nodes
@@ -1078,21 +1067,70 @@ locals {
         let result = parse_and_extract("infra/main.tf", source);
 
         // Verify all construct types are extracted
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::terraform"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::provider.aws"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::var.region"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::var.instance_type"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::data.aws_ami.ubuntu"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::resource.aws_instance.web"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::resource.aws_security_group.web_sg"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::module.vpc"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::output.instance_ip"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "infra/main.tf::local.env"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::terraform")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::provider.aws")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::var.region")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::var.instance_type")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::data.aws_ami.ubuntu")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::resource.aws_instance.web")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::resource.aws_security_group.web_sg")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::module.vpc")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::output.instance_ip")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "infra/main.tf::local.env")
+        );
 
         // Verify module import edge
         assert!(result.edges.iter().any(|e| {
-            e.kind == EdgeKind::Imports
-                && e.target_fqn == "terraform-aws-modules/vpc/aws"
+            e.kind == EdgeKind::Imports && e.target_fqn == "terraform-aws-modules/vpc/aws"
         }));
     }
 
@@ -1110,9 +1148,19 @@ module "vpc" {
         #[allow(deprecated)]
         let result = extract_regex("main.tf", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "main.tf::resource.aws_instance.web"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "main.tf::resource.aws_instance.web")
+        );
         assert!(result.nodes.iter().any(|n| n.fqn == "main.tf::module.vpc"));
-        assert!(result.edges.iter().any(|e| e.target_fqn == "terraform-aws-modules/vpc/aws"));
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|e| e.target_fqn == "terraform-aws-modules/vpc/aws")
+        );
     }
 
     #[test]

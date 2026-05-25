@@ -13,7 +13,7 @@ use crate::store::db::StoreManager;
 use crate::store::types::{Adr, Edge, Node, Observation, SbomEntry, SecurityFinding, TaintPath};
 use crate::version::VERSION;
 
-use super::format::{BundleSchema, CortexBundle, CURRENT_FORMAT_VERSION};
+use super::format::{BundleSchema, CURRENT_FORMAT_VERSION, CortexBundle};
 
 // ---------------------------------------------------------------------------
 // Export stats
@@ -91,9 +91,10 @@ pub fn export_bundle(store: &StoreManager, output_dir: &Path) -> Result<ExportSt
     };
 
     // Step 3: Serialize
-    let json_str = serde_json::to_string_pretty(&bundle).map_err(|e| BundleError::ExportFailed {
-        reason: format!("JSON serialization failed: {e}"),
-    })?;
+    let json_str =
+        serde_json::to_string_pretty(&bundle).map_err(|e| BundleError::ExportFailed {
+            reason: format!("JSON serialization failed: {e}"),
+        })?;
 
     // Step 4: Write cortex.json
     fs::create_dir_all(output_dir).map_err(|e| BundleError::ExportFailed {
@@ -119,7 +120,8 @@ pub fn export_bundle(store: &StoreManager, output_dir: &Path) -> Result<ExportSt
 
     // Step 6: Write .gitignore
     let gitignore_path = output_dir.join(".gitignore");
-    let gitignore_content = "# Cortex data files (not portable)\ngraph.db\ngraph.db-wal\ngraph.db-shm\n";
+    let gitignore_content =
+        "# Cortex data files (not portable)\ngraph.db\ngraph.db-wal\ngraph.db-shm\n";
     fs::write(&gitignore_path, gitignore_content).map_err(|e| BundleError::ExportFailed {
         reason: format!("failed to write .gitignore: {e}"),
     })?;
@@ -150,13 +152,15 @@ fn query_all_nodes(conn: &rusqlite::Connection) -> Result<Vec<Node>, BundleError
             let attrs_str: String = row.get(7)?;
             Ok(Node {
                 fqn: row.get(0)?,
-                kind: serde_json::from_str(&format!("\"{kind_str}\"")).unwrap_or(crate::store::types::NodeKind::Function),
+                kind: serde_json::from_str(&format!("\"{kind_str}\""))
+                    .unwrap_or(crate::store::types::NodeKind::Function),
                 file: row.get(2)?,
                 start_line: row.get(3)?,
                 end_line: row.get(4)?,
                 file_hash: row.get(5)?,
                 indexed_at: row.get(6)?,
-                attributes: serde_json::from_str(&attrs_str).unwrap_or(serde_json::Value::Object(Default::default())),
+                attributes: serde_json::from_str(&attrs_str)
+                    .unwrap_or(serde_json::Value::Object(Default::default())),
             })
         })
         .map_err(|e| BundleError::ExportFailed {
@@ -187,9 +191,11 @@ fn query_all_edges(conn: &rusqlite::Connection) -> Result<Vec<Edge>, BundleError
                 id: row.get(0)?,
                 source_fqn: row.get(1)?,
                 target_fqn: row.get(2)?,
-                kind: serde_json::from_str(&format!("\"{kind_str}\"")).unwrap_or(crate::store::types::EdgeKind::Calls),
+                kind: serde_json::from_str(&format!("\"{kind_str}\""))
+                    .unwrap_or(crate::store::types::EdgeKind::Calls),
                 confidence: row.get(4)?,
-                attributes: serde_json::from_str(&attrs_str).unwrap_or(serde_json::Value::Object(Default::default())),
+                attributes: serde_json::from_str(&attrs_str)
+                    .unwrap_or(serde_json::Value::Object(Default::default())),
             })
         })
         .map_err(|e| BundleError::ExportFailed {
@@ -426,7 +432,8 @@ mod tests {
         export_bundle(&store, output_dir.path()).unwrap();
 
         let json_str = fs::read_to_string(output_dir.path().join("cortex.json")).unwrap();
-        let stored_checksum = fs::read_to_string(output_dir.path().join("cortex.json.sha256")).unwrap();
+        let stored_checksum =
+            fs::read_to_string(output_dir.path().join("cortex.json.sha256")).unwrap();
 
         // Compute expected checksum
         let mut hasher = Sha256::new();

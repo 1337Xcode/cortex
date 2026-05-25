@@ -108,7 +108,6 @@ fn find_ast_node_at_line<'a>(
     None
 }
 
-
 /// Recursively collect definitions: classes, interfaces, traits, enums,
 /// functions, methods, constants, and namespaces.
 fn collect_definitions(
@@ -497,7 +496,6 @@ fn extract_constants(
     }
 }
 
-
 /// Collect members (methods, constants) inside a class/interface/trait body.
 fn collect_class_members(
     body: tree_sitter::Node,
@@ -530,12 +528,7 @@ fn collect_class_members(
 }
 
 /// Collect import statements (use declarations, require/include).
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -559,12 +552,7 @@ fn collect_imports(
 }
 
 /// Extract a use declaration into an Imports edge.
-fn extract_use_edge(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn extract_use_edge(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     // Walk children to find namespace names / qualified names
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -609,7 +597,11 @@ fn extract_use_edge(
                 let mut inner_cursor = child.walk();
                 for inner_child in child.children(&mut inner_cursor) {
                     if inner_child.kind() == "namespace_use_clause" {
-                        let text = inner_child.utf8_text(source).unwrap_or("").trim().to_string();
+                        let text = inner_child
+                            .utf8_text(source)
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
                         if !text.is_empty() {
                             let normalized = text
                                 .split_whitespace()
@@ -637,7 +629,11 @@ fn extract_use_edge(
     // Fallback: if no edges were added from children, try the full text
     // This handles cases where the grammar structure differs
     let full_text = node.utf8_text(source).unwrap_or("").trim().to_string();
-    if !full_text.is_empty() && !edges.iter().any(|e| e.source_fqn == file && full_text.contains(&e.target_fqn.replace('.', "\\"))) {
+    if !full_text.is_empty()
+        && !edges
+            .iter()
+            .any(|e| e.source_fqn == file && full_text.contains(&e.target_fqn.replace('.', "\\")))
+    {
         // Parse "use Foo\Bar\Baz;" or "use Foo\Bar as Alias;"
         let stripped = full_text
             .trim_start_matches("use ")
@@ -670,8 +666,10 @@ fn extract_require_include(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
-            "require_expression" | "require_once_expression"
-            | "include_expression" | "include_once_expression" => {
+            "require_expression"
+            | "require_once_expression"
+            | "include_expression"
+            | "include_once_expression" => {
                 // The argument is typically a string child
                 let mut inner_cursor = child.walk();
                 for inner_child in child.children(&mut inner_cursor) {
@@ -731,38 +729,36 @@ fn extract_call_edge(
     edges: &mut Vec<Edge>,
 ) {
     // The function being called is typically the first child or "function" field
-    let func_node = node.child_by_field_name("function").or_else(|| node.child(0));
+    let func_node = node
+        .child_by_field_name("function")
+        .or_else(|| node.child(0));
 
     if let Some(func) = func_node {
         let call_text = func.utf8_text(source).unwrap_or("");
 
         // Only resolve simple function calls (identifiers), not method calls
-        if func.kind() == "name" || func.kind() == "identifier" {
-            if let Some((_, target_fqn)) = defined_fqns.iter().find(|(name, _)| name == call_text) {
-                let caller_fqn = find_enclosing_function(node, file, source);
-                if let Some(caller) = caller_fqn {
-                    if caller != *target_fqn {
-                        edges.push(Edge {
-                            id: None,
-                            source_fqn: caller,
-                            target_fqn: target_fqn.clone(),
-                            kind: EdgeKind::Calls,
-                            confidence: 1.0,
-                            attributes: json!({}),
-                        });
-                    }
-                }
+        if (func.kind() == "name" || func.kind() == "identifier")
+            && let Some((_, target_fqn)) = defined_fqns.iter().find(|(name, _)| name == call_text)
+        {
+            let caller_fqn = find_enclosing_function(node, file, source);
+            if let Some(caller) = caller_fqn
+                && caller != *target_fqn
+            {
+                edges.push(Edge {
+                    id: None,
+                    source_fqn: caller,
+                    target_fqn: target_fqn.clone(),
+                    kind: EdgeKind::Calls,
+                    confidence: 1.0,
+                    attributes: json!({}),
+                });
             }
         }
     }
 }
 
 /// Find the enclosing function/method for a given node to determine the caller FQN.
-fn find_enclosing_function(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_function(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
     let mut class_name: Option<String> = None;
 
@@ -774,8 +770,10 @@ fn find_enclosing_function(
                 let mut ancestor = parent.parent();
                 while let Some(anc) = ancestor {
                     match anc.kind() {
-                        "class_declaration" | "interface_declaration"
-                        | "trait_declaration" | "enum_declaration" => {
+                        "class_declaration"
+                        | "interface_declaration"
+                        | "trait_declaration"
+                        | "enum_declaration" => {
                             let cls = get_child_name(anc, source, "name");
                             if !cls.is_empty() {
                                 class_name = Some(cls);
@@ -860,7 +858,6 @@ fn extract_names_from_clause(
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -976,12 +973,20 @@ trait Loggable {
         assert_eq!(trait_node.fqn, "app/Traits/Loggable.php::Loggable");
 
         // Trait methods
-        assert!(result.nodes.iter().any(|n| n.fqn
-            == "app/Traits/Loggable.php::Loggable::log"
-            && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn
-            == "app/Traits/Loggable.php::Loggable::error"
-            && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "app/Traits/Loggable.php::Loggable::log"
+                    && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "app/Traits/Loggable.php::Loggable::error"
+                    && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1019,21 +1024,24 @@ class HomeController {
         let result = extract(&tree, "app/Controllers/HomeController.php", source);
 
         // Should find namespace node
-        let ns_node = result
-            .nodes
-            .iter()
-            .find(|n| n.kind == NodeKind::Namespace);
+        let ns_node = result.nodes.iter().find(|n| n.kind == NodeKind::Namespace);
         assert!(
             ns_node.is_some(),
             "Should find a namespace node. Found nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
 
         // Should also find the class
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.kind == NodeKind::Class && n.fqn.contains("HomeController")));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.kind == NodeKind::Class && n.fqn.contains("HomeController"))
+        );
     }
 
     #[test]
@@ -1057,16 +1065,24 @@ class UserController {}
             .collect();
 
         assert!(
-            import_edges.iter().any(|e| e.target_fqn == "App.Models.User"),
+            import_edges
+                .iter()
+                .any(|e| e.target_fqn == "App.Models.User"),
             "Should import App.Models.User. Found: {:?}",
-            import_edges.iter().map(|e| &e.target_fqn).collect::<Vec<_>>()
+            import_edges
+                .iter()
+                .map(|e| &e.target_fqn)
+                .collect::<Vec<_>>()
         );
         assert!(
             import_edges
                 .iter()
                 .any(|e| e.target_fqn == "App.Services.AuthService"),
             "Should import App.Services.AuthService. Found: {:?}",
-            import_edges.iter().map(|e| &e.target_fqn).collect::<Vec<_>>()
+            import_edges
+                .iter()
+                .map(|e| &e.target_fqn)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1093,14 +1109,20 @@ function main() {}
                 .iter()
                 .any(|e| e.target_fqn == "vendor/autoload.php"),
             "Should find require for vendor/autoload.php. Found: {:?}",
-            import_edges.iter().map(|e| &e.target_fqn).collect::<Vec<_>>()
+            import_edges
+                .iter()
+                .map(|e| &e.target_fqn)
+                .collect::<Vec<_>>()
         );
         assert!(
             import_edges
                 .iter()
                 .any(|e| e.target_fqn == "config/database.php"),
             "Should find include for config/database.php. Found: {:?}",
-            import_edges.iter().map(|e| &e.target_fqn).collect::<Vec<_>>()
+            import_edges
+                .iter()
+                .map(|e| &e.target_fqn)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1132,8 +1154,10 @@ function transform($data) {
 
         // process calls validate
         assert!(
-            call_edges.iter().any(|e| e.source_fqn == "app/helpers.php::process"
-                && e.target_fqn == "app/helpers.php::validate"),
+            call_edges
+                .iter()
+                .any(|e| e.source_fqn == "app/helpers.php::process"
+                    && e.target_fqn == "app/helpers.php::validate"),
             "process should call validate. Found calls: {:?}",
             call_edges
                 .iter()
@@ -1143,8 +1167,10 @@ function transform($data) {
 
         // process calls transform
         assert!(
-            call_edges.iter().any(|e| e.source_fqn == "app/helpers.php::process"
-                && e.target_fqn == "app/helpers.php::transform"),
+            call_edges
+                .iter()
+                .any(|e| e.source_fqn == "app/helpers.php::process"
+                    && e.target_fqn == "app/helpers.php::transform"),
             "process should call transform. Found calls: {:?}",
             call_edges
                 .iter()
@@ -1152,8 +1178,6 @@ function transform($data) {
                 .collect::<Vec<_>>()
         );
     }
-
-
 
     #[test]
     fn test_extract_inheritance() {
@@ -1179,8 +1203,10 @@ class UserController extends BaseController {
             .collect();
 
         assert!(
-            inherits_edges.iter().any(|e| e.source_fqn == "app/Controllers.php::UserController"
-                && e.target_fqn == "BaseController"),
+            inherits_edges
+                .iter()
+                .any(|e| e.source_fqn == "app/Controllers.php::UserController"
+                    && e.target_fqn == "BaseController"),
             "UserController should inherit from BaseController. Found: {:?}",
             inherits_edges
                 .iter()
@@ -1216,8 +1242,10 @@ class Collection implements Serializable, Countable {
             .collect();
 
         assert!(
-            impl_edges.iter().any(|e| e.source_fqn == "app/Collection.php::Collection"
-                && e.target_fqn == "Serializable"),
+            impl_edges
+                .iter()
+                .any(|e| e.source_fqn == "app/Collection.php::Collection"
+                    && e.target_fqn == "Serializable"),
             "Collection should implement Serializable. Found: {:?}",
             impl_edges
                 .iter()
@@ -1225,8 +1253,10 @@ class Collection implements Serializable, Countable {
                 .collect::<Vec<_>>()
         );
         assert!(
-            impl_edges.iter().any(|e| e.source_fqn == "app/Collection.php::Collection"
-                && e.target_fqn == "Countable"),
+            impl_edges
+                .iter()
+                .any(|e| e.source_fqn == "app/Collection.php::Collection"
+                    && e.target_fqn == "Countable"),
             "Collection should implement Countable. Found: {:?}",
             impl_edges
                 .iter()
@@ -1355,10 +1385,12 @@ function another_valid(): void {}
 
         // Should not panic and should extract at least the valid definitions
         assert!(!result.nodes.is_empty());
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "broken.php::valid_function"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "broken.php::valid_function")
+        );
     }
 
     #[test]
@@ -1395,13 +1427,7 @@ function getUsers(): array {
         // Verify we have classes, functions, namespace, imports, inheritance, and calls
         assert!(result.nodes.iter().any(|n| n.kind == NodeKind::Class));
         assert!(result.nodes.iter().any(|n| n.kind == NodeKind::Function));
-        assert!(result
-            .edges
-            .iter()
-            .any(|e| e.kind == EdgeKind::Imports));
-        assert!(result
-            .edges
-            .iter()
-            .any(|e| e.kind == EdgeKind::Inherits));
+        assert!(result.edges.iter().any(|e| e.kind == EdgeKind::Imports));
+        assert!(result.edges.iter().any(|e| e.kind == EdgeKind::Inherits));
     }
 }

@@ -30,13 +30,21 @@ pub fn run(config: &Config, store: Arc<StoreManager>) -> Result<(), anyhow::Erro
 }
 
 /// Run the serve command with smart-tools option.
-pub fn run_with_options(config: &Config, store: Arc<StoreManager>, smart_tools: bool) -> Result<(), anyhow::Error> {
+pub fn run_with_options(
+    config: &Config,
+    store: Arc<StoreManager>,
+    smart_tools: bool,
+) -> Result<(), anyhow::Error> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(run_async(config, store, smart_tools))
 }
 
 /// Async implementation of the serve command.
-async fn run_async(config: &Config, store: Arc<StoreManager>, smart_tools: bool) -> Result<(), anyhow::Error> {
+async fn run_async(
+    config: &Config,
+    store: Arc<StoreManager>,
+    smart_tools: bool,
+) -> Result<(), anyhow::Error> {
     // Step 1: Initial index if auto_index is enabled
     if config.auto_index {
         info!("Running initial index on startup");
@@ -179,11 +187,7 @@ mod tests {
         std::fs::create_dir_all(&repo_dir).unwrap();
 
         // Create a Python file
-        std::fs::write(
-            repo_dir.join("hello.py"),
-            "def hello():\n    pass\n",
-        )
-        .unwrap();
+        std::fs::write(repo_dir.join("hello.py"), "def hello():\n    pass\n").unwrap();
 
         let data_dir = tmp.path().join("data");
         let store = setup_store(&data_dir);

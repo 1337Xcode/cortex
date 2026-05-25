@@ -1,4 +1,4 @@
-﻿//! Scala AST extractor (tree-sitter based).
+//! Scala AST extractor (tree-sitter based).
 //!
 //! Extracts structural nodes (objects, classes, traits, enums, functions,
 //! constants, type aliases) and edges (imports, calls, inheritance)
@@ -73,15 +73,15 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
 /// Compute cyclomatic complexity for all Function nodes.
 fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source: &[u8]) {
     for node in nodes.iter_mut() {
-        if node.kind == NodeKind::Function {
-            if let Some(ast_node) =
-                find_ast_node_at_line(root, node.start_line, "function_definition")
-                    .or_else(|| find_ast_node_at_line(root, node.start_line, "function_declaration"))
-            {
-                let c = complexity::compute_full_complexity(ast_node, source, "scala");
-                if let Some(attrs) = node.attributes.as_object_mut() {
-                    attrs.insert("complexity".to_string(), serde_json::json!(c));
-                }
+        if node.kind == NodeKind::Function
+            && let Some(ast_node) =
+                find_ast_node_at_line(root, node.start_line, "function_definition").or_else(|| {
+                    find_ast_node_at_line(root, node.start_line, "function_declaration")
+                })
+        {
+            let c = complexity::compute_full_complexity(ast_node, source, "scala");
+            if let Some(attrs) = node.attributes.as_object_mut() {
+                attrs.insert("complexity".to_string(), serde_json::json!(c));
             }
         }
     }
@@ -226,8 +226,8 @@ fn extract_object(
     extract_inheritance(node, source, &fqn, edges);
 
     // Recurse into body for methods
-    if let Some(body) = find_child_by_kind(node, "template_body")
-        .or_else(|| node.child_by_field_name("body"))
+    if let Some(body) =
+        find_child_by_kind(node, "template_body").or_else(|| node.child_by_field_name("body"))
     {
         collect_body_members(body, file, source, &name, nodes, defined_fqns, edges);
     }
@@ -268,8 +268,8 @@ fn extract_class(
     extract_inheritance(node, source, &fqn, edges);
 
     // Recurse into body for methods
-    if let Some(body) = find_child_by_kind(node, "template_body")
-        .or_else(|| node.child_by_field_name("body"))
+    if let Some(body) =
+        find_child_by_kind(node, "template_body").or_else(|| node.child_by_field_name("body"))
     {
         collect_body_members(body, file, source, &name, nodes, defined_fqns, edges);
     }
@@ -310,8 +310,8 @@ fn extract_trait(
     extract_inheritance(node, source, &fqn, edges);
 
     // Recurse into body for methods
-    if let Some(body) = find_child_by_kind(node, "template_body")
-        .or_else(|| node.child_by_field_name("body"))
+    if let Some(body) =
+        find_child_by_kind(node, "template_body").or_else(|| node.child_by_field_name("body"))
     {
         collect_body_members(body, file, source, &name, nodes, defined_fqns, edges);
     }
@@ -493,12 +493,9 @@ fn extract_inheritance(
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        match child.kind() {
-            "extends_clause" => {
-                // The extends clause contains the parent type(s)
-                extract_type_names_from_clause(child, source, source_fqn, edges);
-            }
-            _ => {}
+        if child.kind() == "extends_clause" {
+            // The extends clause contains the parent type(s)
+            extract_type_names_from_clause(child, source, source_fqn, edges);
         }
     }
 }
@@ -559,12 +556,7 @@ fn extract_type_names_from_clause(
 }
 
 /// Collect import declarations.
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -577,12 +569,7 @@ fn collect_imports(
 }
 
 /// Extract an import declaration into Imports edges.
-fn extract_import(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn extract_import(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     // Get the full import text and parse it
     let text = node.utf8_text(source).unwrap_or("").trim().to_string();
     if text.is_empty() {
@@ -590,9 +577,7 @@ fn extract_import(
     }
 
     // Strip the "import " prefix
-    let import_path = text
-        .trim_start_matches("import")
-        .trim();
+    let import_path = text.trim_start_matches("import").trim();
 
     if !import_path.is_empty() {
         edges.push(Edge {
@@ -637,40 +622,36 @@ fn extract_call_edge(
     edges: &mut Vec<Edge>,
 ) {
     // The function being called is typically the first child (the callee)
-    let func_node = node.child_by_field_name("function").or_else(|| node.child(0));
+    let func_node = node
+        .child_by_field_name("function")
+        .or_else(|| node.child(0));
 
     if let Some(func) = func_node {
         let call_text = func.utf8_text(source).unwrap_or("").trim();
 
         // Only resolve simple identifier calls (not method calls like obj.method())
-        if func.kind() == "identifier" {
-            if let Some((_, target_fqn)) =
-                defined_fqns.iter().find(|(name, _)| name == call_text)
+        if func.kind() == "identifier"
+            && let Some((_, target_fqn)) = defined_fqns.iter().find(|(name, _)| name == call_text)
+        {
+            let caller_fqn = find_enclosing_function(node, file, source);
+            if let Some(caller) = caller_fqn
+                && caller != *target_fqn
             {
-                let caller_fqn = find_enclosing_function(node, file, source);
-                if let Some(caller) = caller_fqn {
-                    if caller != *target_fqn {
-                        edges.push(Edge {
-                            id: None,
-                            source_fqn: caller,
-                            target_fqn: target_fqn.clone(),
-                            kind: EdgeKind::Calls,
-                            confidence: 1.0,
-                            attributes: json!({}),
-                        });
-                    }
-                }
+                edges.push(Edge {
+                    id: None,
+                    source_fqn: caller,
+                    target_fqn: target_fqn.clone(),
+                    kind: EdgeKind::Calls,
+                    confidence: 1.0,
+                    attributes: json!({}),
+                });
             }
         }
     }
 }
 
 /// Find the enclosing function/method for a given node to determine the caller FQN.
-fn find_enclosing_function(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_function(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
 
     while let Some(parent) = current {
@@ -683,8 +664,7 @@ fn find_enclosing_function(
                     match anc.kind() {
                         "object_definition" | "class_definition" | "trait_definition"
                         | "enum_definition" => {
-                            let cls =
-                                get_child_by_field_or_first_identifier(anc, source, "name");
+                            let cls = get_child_by_field_or_first_identifier(anc, source, "name");
                             if !cls.is_empty() {
                                 return Some(format!("{file}::{cls}::{name}"));
                             }
@@ -767,12 +747,8 @@ fn find_child_by_kind<'a>(
     kind: &str,
 ) -> Option<tree_sitter::Node<'a>> {
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == kind {
-            return Some(child);
-        }
-    }
-    None
+    node.children(&mut cursor)
+        .find(|&child| child.kind() == kind)
 }
 
 /// Find the first child of a given kind (non-recursive, first level only).
@@ -781,14 +757,9 @@ fn find_first_child_by_kind<'a>(
     kind: &str,
 ) -> Option<tree_sitter::Node<'a>> {
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == kind {
-            return Some(child);
-        }
-    }
-    None
+    node.children(&mut cursor)
+        .find(|&child| child.kind() == kind)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -820,12 +791,32 @@ case object Singleton
         let result = parse_and_extract("src/app.scala", source);
 
         // Objects
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/app.scala::Main" && n.kind == NodeKind::Module));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/app.scala::Singleton" && n.kind == NodeKind::Module));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/app.scala::Main" && n.kind == NodeKind::Module)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/app.scala::Singleton" && n.kind == NodeKind::Module)
+        );
 
         // Methods inside object
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/app.scala::Main::main" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/app.scala::Main::helper" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/app.scala::Main::main" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/app.scala::Main::helper" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -845,14 +836,47 @@ abstract class BaseService {
         let result = parse_and_extract("src/service.scala", source);
 
         // Classes
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/service.scala::OrderService" && n.kind == NodeKind::Class));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/service.scala::Point" && n.kind == NodeKind::Class));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/service.scala::BaseService" && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/service.scala::OrderService" && n.kind == NodeKind::Class)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/service.scala::Point" && n.kind == NodeKind::Class)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/service.scala::BaseService" && n.kind == NodeKind::Class)
+        );
 
         // Methods
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/service.scala::OrderService::processOrder" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/service.scala::OrderService::validate" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/service.scala::BaseService::initialize" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/service.scala::OrderService::processOrder"
+                    && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/service.scala::OrderService::validate"
+                    && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/service.scala::BaseService::initialize"
+                    && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -870,13 +894,40 @@ trait Logging {
         let result = parse_and_extract("src/traits.scala", source);
 
         // Traits
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/traits.scala::Serializable" && n.kind == NodeKind::Trait));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/traits.scala::Logging" && n.kind == NodeKind::Trait));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/traits.scala::Serializable" && n.kind == NodeKind::Trait)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/traits.scala::Logging" && n.kind == NodeKind::Trait)
+        );
 
         // Methods in traits
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/traits.scala::Serializable::serialize" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/traits.scala::Serializable::deserialize" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/traits.scala::Logging::log" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/traits.scala::Serializable::serialize"
+                    && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/traits.scala::Serializable::deserialize"
+                    && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/traits.scala::Logging::log" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -894,8 +945,18 @@ enum Planet(mass: Double, radius: Double) {
         let result = parse_and_extract("src/enums.scala", source);
 
         // Enums
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/enums.scala::Color" && n.kind == NodeKind::Enum));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/enums.scala::Planet" && n.kind == NodeKind::Enum));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/enums.scala::Color" && n.kind == NodeKind::Enum)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/enums.scala::Planet" && n.kind == NodeKind::Enum)
+        );
     }
 
     #[test]
@@ -913,8 +974,16 @@ import java.util._
             .filter(|e| e.kind == EdgeKind::Imports)
             .collect();
 
-        assert!(imports.len() >= 3, "Expected at least 3 imports, got {}", imports.len());
-        assert!(imports.iter().any(|e| e.target_fqn.contains("scala.collection.mutable")));
+        assert!(
+            imports.len() >= 3,
+            "Expected at least 3 imports, got {}",
+            imports.len()
+        );
+        assert!(
+            imports
+                .iter()
+                .any(|e| e.target_fqn.contains("scala.collection.mutable"))
+        );
         assert!(imports.iter().any(|e| e.target_fqn.contains("akka.actor")));
         assert!(imports.iter().any(|e| e.target_fqn.contains("java.util")));
     }
@@ -940,7 +1009,9 @@ object App {
 
         // main calls greet
         assert!(
-            calls.iter().any(|e| e.source_fqn.contains("main") && e.target_fqn.contains("greet")),
+            calls
+                .iter()
+                .any(|e| e.source_fqn.contains("main") && e.target_fqn.contains("greet")),
             "Expected a call from main to greet, got: {:?}",
             calls
         );
@@ -969,13 +1040,17 @@ class Dog extends Animal with Domestic {
 
         // Dog extends Animal
         assert!(
-            inherits.iter().any(|e| e.source_fqn == "src/animals.scala::Dog" && e.target_fqn == "Animal"),
+            inherits
+                .iter()
+                .any(|e| e.source_fqn == "src/animals.scala::Dog" && e.target_fqn == "Animal"),
             "Expected Dog inherits Animal, got: {:?}",
             inherits
         );
         // Dog with Domestic
         assert!(
-            inherits.iter().any(|e| e.source_fqn == "src/animals.scala::Dog" && e.target_fqn == "Domestic"),
+            inherits
+                .iter()
+                .any(|e| e.source_fqn == "src/animals.scala::Dog" && e.target_fqn == "Domestic"),
             "Expected Dog inherits Domestic, got: {:?}",
             inherits
         );
@@ -996,8 +1071,18 @@ type Callback = () => Unit
 "#;
         let result = parse_and_extract("src/types.scala", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/types.scala::StringMap" && n.kind == NodeKind::TypeAlias));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/types.scala::Callback" && n.kind == NodeKind::TypeAlias));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.scala::StringMap" && n.kind == NodeKind::TypeAlias)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.scala::Callback" && n.kind == NodeKind::TypeAlias)
+        );
     }
 
     #[test]
@@ -1008,8 +1093,19 @@ val DEFAULT_TIMEOUT = 5000
 "#;
         let result = parse_and_extract("src/config.scala", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/config.scala::MAX_RETRIES" && n.kind == NodeKind::Constant));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/config.scala::DEFAULT_TIMEOUT" && n.kind == NodeKind::Constant));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/config.scala::MAX_RETRIES" && n.kind == NodeKind::Constant)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/config.scala::DEFAULT_TIMEOUT"
+                    && n.kind == NodeKind::Constant)
+        );
     }
 
     #[test]
@@ -1022,8 +1118,18 @@ object Hello {
         #[allow(deprecated)]
         let result = extract_regex("test.scala", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "test.scala::Hello" && n.kind == NodeKind::Module));
-        assert!(result.nodes.iter().any(|n| n.fqn == "test.scala::Hello::world" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "test.scala::Hello" && n.kind == NodeKind::Module)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "test.scala::Hello::world" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1031,11 +1137,19 @@ object Hello {
         let source = "object Foo {\n  def bar(): Unit = {}\n}\n";
         let result = parse_and_extract("test.scala", source);
 
-        let foo = result.nodes.iter().find(|n| n.fqn == "test.scala::Foo").unwrap();
+        let foo = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "test.scala::Foo")
+            .unwrap();
         assert_eq!(foo.start_line, 1);
         assert_eq!(foo.end_line, 3);
 
-        let bar = result.nodes.iter().find(|n| n.fqn == "test.scala::Foo::bar").unwrap();
+        let bar = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "test.scala::Foo::bar")
+            .unwrap();
         assert_eq!(bar.start_line, 2);
         assert_eq!(bar.end_line, 2);
     }

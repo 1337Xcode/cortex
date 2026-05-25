@@ -21,7 +21,7 @@ fn test_version_flag_reports_version() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("cortex 0.1.0"));
+        .stdout(predicate::str::contains("cortex 1.0.2"));
 }
 
 #[test]
@@ -33,7 +33,10 @@ fn test_help_shows_all_subcommands() {
     // Verify all top-level subcommands are listed.
     assert!(output.contains("serve"), "missing 'serve' subcommand");
     assert!(output.contains("index"), "missing 'index' subcommand");
-    assert!(output.contains("index-file"), "missing 'index-file' subcommand");
+    assert!(
+        output.contains("index-file"),
+        "missing 'index-file' subcommand"
+    );
     assert!(output.contains("install"), "missing 'install' subcommand");
     assert!(output.contains("bundle"), "missing 'bundle' subcommand");
     assert!(output.contains("query"), "missing 'query' subcommand");
@@ -45,16 +48,16 @@ fn test_help_shows_all_subcommands() {
 }
 
 #[test]
-fn test_missing_config_exits_nonzero() {
-    // Without CORTEX_REPO_ROOT set and no config file, should fail.
+fn test_missing_config_defaults_to_cwd() {
+    // Without CORTEX_REPO_ROOT set, the binary defaults to the current directory
+    // and succeeds (stdin closes immediately so the server exits cleanly).
     cortex_cmd()
         .arg("serve")
         .env_remove("CORTEX_REPO_ROOT")
         .env_remove("CORTEX_DATA_DIR")
         .env_remove("CORTEX_LOG_LEVEL")
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("repo_root"));
+        .success();
 }
 
 #[test]
@@ -71,9 +74,9 @@ fn test_valid_config_exits_zero_with_startup_line() {
         .env_remove("CORTEX_LOG_LEVEL")
         .assert()
         .success()
-        .stdout(predicate::str::contains("cortex 0.1.0"))
-        .stdout(predicate::str::contains("repo:"))
-        .stdout(predicate::str::contains("data:"));
+        .stderr(predicate::str::contains("cortex 1.0.2"))
+        .stderr(predicate::str::contains("repo:"))
+        .stderr(predicate::str::contains("data:"));
 }
 
 #[test]
@@ -143,7 +146,6 @@ fn test_semantic_help_shows_subcommands() {
         .stdout(predicate::str::contains("status"));
 }
 
-
 // ---------------------------------------------------------------------------
 // Additional integration tests for comprehensive CLI coverage
 // ---------------------------------------------------------------------------
@@ -173,7 +175,10 @@ fn test_help_lists_all_subcommands_comprehensive() {
     assert!(output.contains("modules"), "missing 'modules' subcommand");
     assert!(output.contains("watch"), "missing 'watch' subcommand");
     assert!(output.contains("coverage"), "missing 'coverage' subcommand");
-    assert!(output.contains("hierarchy"), "missing 'hierarchy' subcommand");
+    assert!(
+        output.contains("hierarchy"),
+        "missing 'hierarchy' subcommand"
+    );
     assert!(output.contains("hotspots"), "missing 'hotspots' subcommand");
 }
 

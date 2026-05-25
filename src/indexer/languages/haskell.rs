@@ -169,12 +169,7 @@ fn collect_definitions(
 
 /// Extract a module declaration from a `header` node.
 /// Pattern: module Name where
-fn extract_module(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    nodes: &mut Vec<Node>,
-) {
+fn extract_module(node: tree_sitter::Node, file: &str, source: &[u8], nodes: &mut Vec<Node>) {
     let module_name = get_module_name(node, source);
     if module_name.is_empty() {
         return;
@@ -238,17 +233,17 @@ fn extract_signature(
             existing.start_line = start_line;
         }
         // Add type annotation to attributes
-        if !type_text.is_empty() {
-            if let Some(attrs) = existing.attributes.as_object_mut() {
-                attrs.insert("type_signature".to_string(), json!(type_text));
-            }
+        if !type_text.is_empty()
+            && let Some(attrs) = existing.attributes.as_object_mut()
+        {
+            attrs.insert("type_signature".to_string(), json!(type_text));
         }
     } else {
         let mut attributes = json!({});
-        if !type_text.is_empty() {
-            if let Some(attrs) = attributes.as_object_mut() {
-                attrs.insert("type_signature".to_string(), json!(type_text));
-            }
+        if !type_text.is_empty()
+            && let Some(attrs) = attributes.as_object_mut()
+        {
+            attrs.insert("type_signature".to_string(), json!(type_text));
         }
 
         nodes.push(Node {
@@ -501,48 +496,39 @@ fn extract_typeclass(
 /// - `import Module as Alias`
 /// - `import Module (specific, items)`
 /// - `import Module hiding (items)`
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        if child.kind() == "import" {
-            if let Some(target) = get_import_module(child, source) {
-                // Check for qualified import
-                let is_qualified = is_qualified_import(child, source);
-                let alias = get_import_alias(child, source);
+        if child.kind() == "import"
+            && let Some(target) = get_import_module(child, source)
+        {
+            // Check for qualified import
+            let is_qualified = is_qualified_import(child, source);
+            let alias = get_import_alias(child, source);
 
-                // Avoid duplicate imports
-                if !edges.iter().any(|e| {
-                    e.kind == EdgeKind::Imports
-                        && e.source_fqn == file
-                        && e.target_fqn == target
-                }) {
-                    let mut attrs = json!({});
-                    if is_qualified {
-                        if let Some(a) = attrs.as_object_mut() {
-                            a.insert("qualified".to_string(), json!(true));
-                        }
-                    }
-                    if let Some(ref al) = alias {
-                        if let Some(a) = attrs.as_object_mut() {
-                            a.insert("alias".to_string(), json!(al));
-                        }
-                    }
-
-                    edges.push(Edge {
-                        id: None,
-                        source_fqn: file.to_string(),
-                        target_fqn: target,
-                        kind: EdgeKind::Imports,
-                        confidence: 1.0,
-                        attributes: attrs,
-                    });
+            // Avoid duplicate imports
+            if !edges.iter().any(|e| {
+                e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target
+            }) {
+                let mut attrs = json!({});
+                if is_qualified && let Some(a) = attrs.as_object_mut() {
+                    a.insert("qualified".to_string(), json!(true));
                 }
+                if let Some(ref al) = alias
+                    && let Some(a) = attrs.as_object_mut()
+                {
+                    a.insert("alias".to_string(), json!(al));
+                }
+
+                edges.push(Edge {
+                    id: None,
+                    source_fqn: file.to_string(),
+                    target_fqn: target,
+                    kind: EdgeKind::Imports,
+                    confidence: 1.0,
+                    attributes: attrs,
+                });
             }
         }
 
@@ -626,23 +612,22 @@ fn collect_calls_recursive(
                     // Simple function call
                     if let Some((_, target_fqn)) =
                         defined_fqns.iter().find(|(simple, _)| simple == &call_name)
+                        && source_fqn != *target_fqn
                     {
-                        if source_fqn != *target_fqn {
-                            // Avoid duplicate edges
-                            if !edges.iter().any(|e| {
-                                e.kind == EdgeKind::Calls
-                                    && e.source_fqn == source_fqn
-                                    && e.target_fqn == *target_fqn
-                            }) {
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn,
-                                    target_fqn: target_fqn.clone(),
-                                    kind: EdgeKind::Calls,
-                                    confidence: 1.0,
-                                    attributes: json!({}),
-                                });
-                            }
+                        // Avoid duplicate edges
+                        if !edges.iter().any(|e| {
+                            e.kind == EdgeKind::Calls
+                                && e.source_fqn == source_fqn
+                                && e.target_fqn == *target_fqn
+                        }) {
+                            edges.push(Edge {
+                                id: None,
+                                source_fqn,
+                                target_fqn: target_fqn.clone(),
+                                kind: EdgeKind::Calls,
+                                confidence: 1.0,
+                                attributes: json!({}),
+                            });
                         }
                     }
                 }
@@ -677,8 +662,10 @@ fn get_module_name(node: tree_sitter::Node, source: &[u8]) -> String {
                 // Try to find a capitalized name (module names start with uppercase)
                 let text = child.utf8_text(source).unwrap_or("").trim().to_string();
                 if !text.is_empty()
-                    && text.chars().next().map_or(false, |c| c.is_uppercase())
-                    && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+                    && text.chars().next().is_some_and(|c| c.is_uppercase())
+                    && text
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
                     && text != "where"
                 {
                     return text;
@@ -722,8 +709,13 @@ fn get_signature_name(node: tree_sitter::Node, source: &[u8]) -> String {
                 // First non-empty, non-operator token that starts with lowercase
                 if !text.is_empty()
                     && text != "::"
-                    && text.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
-                    && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
+                    && text
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_lowercase() || c == '_')
+                    && text
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
                 {
                     return text;
                 }
@@ -740,7 +732,10 @@ fn get_signature_name(node: tree_sitter::Node, source: &[u8]) -> String {
     if let Some(name_end) = text.find("::") {
         let name = text[..name_end].trim();
         if !name.is_empty()
-            && name.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_lowercase() || c == '_')
         {
             // Handle parenthesized operators like (++) :: ...
             if name.starts_with('(') && name.ends_with(')') {
@@ -783,13 +778,16 @@ fn get_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
                 for inner_child in child.children(&mut inner_cursor) {
                     match inner_child.kind() {
                         "variable" | "name" | "identifier" | "prefix_id" => {
-                            let text =
-                                inner_child.utf8_text(source).unwrap_or("").trim().to_string();
+                            let text = inner_child
+                                .utf8_text(source)
+                                .unwrap_or("")
+                                .trim()
+                                .to_string();
                             if !text.is_empty()
                                 && text
                                     .chars()
                                     .next()
-                                    .map_or(false, |c| c.is_lowercase() || c == '_')
+                                    .is_some_and(|c| c.is_lowercase() || c == '_')
                             {
                                 return text;
                             }
@@ -806,8 +804,13 @@ fn get_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
                 // Check if it's a lowercase identifier
                 let text = child.utf8_text(source).unwrap_or("").trim().to_string();
                 if !text.is_empty()
-                    && text.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
-                    && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
+                    && text
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_lowercase() || c == '_')
+                    && text
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
                 {
                     return text;
                 }
@@ -829,7 +832,7 @@ fn get_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
         && first_word
             .chars()
             .next()
-            .map_or(false, |c| c.is_lowercase() || c == '_')
+            .is_some_and(|c| c.is_lowercase() || c == '_')
     {
         return first_word;
     }
@@ -855,21 +858,28 @@ fn get_type_decl_name(node: tree_sitter::Node, source: &[u8]) -> String {
         let text = child.utf8_text(source).unwrap_or("").trim().to_string();
 
         // Skip keyword nodes
-        if matches!(child_kind, "data" | "newtype" | "type") || matches!(text.as_str(), "data" | "newtype" | "type") {
+        if matches!(child_kind, "data" | "newtype" | "type")
+            || matches!(text.as_str(), "data" | "newtype" | "type")
+        {
             skip_first = false;
             continue;
         }
 
         // The `name` node contains the type name
-        if child_kind == "name" || child_kind == "type_name" || child_kind == "constructor" || child_kind == "constructor_identifier" {
-            if !text.is_empty() && text.chars().next().map_or(false, |c| c.is_uppercase()) {
-                return text;
-            }
+        if (child_kind == "name"
+            || child_kind == "type_name"
+            || child_kind == "constructor"
+            || child_kind == "constructor_identifier")
+            && !text.is_empty()
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
+        {
+            return text;
         }
 
         // Also check for any uppercase identifier that isn't a keyword
-        if !skip_first && !text.is_empty()
-            && text.chars().next().map_or(false, |c| c.is_uppercase())
+        if !skip_first
+            && !text.is_empty()
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
             && text.chars().all(|c| c.is_alphanumeric() || c == '_')
             && !matches!(text.as_str(), "where" | "deriving")
         {
@@ -886,7 +896,7 @@ fn get_type_decl_name(node: tree_sitter::Node, source: &[u8]) -> String {
                 .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
-            if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_uppercase()) {
+            if !name.is_empty() && name.chars().next().is_some_and(|c| c.is_uppercase()) {
                 return name;
             }
         }
@@ -919,16 +929,18 @@ fn get_class_name(node: tree_sitter::Node, source: &[u8]) -> String {
         }
 
         // The `name` node after the keyword is the class name
-        if found_class_keyword && child_kind == "name" {
-            if !text.is_empty() && text.chars().next().map_or(false, |c| c.is_uppercase()) {
-                return text;
-            }
+        if found_class_keyword
+            && child_kind == "name"
+            && !text.is_empty()
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
+        {
+            return text;
         }
 
         // Also check for uppercase identifiers
         if found_class_keyword
             && !text.is_empty()
-            && text.chars().next().map_or(false, |c| c.is_uppercase())
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
             && text.chars().all(|c| c.is_alphanumeric() || c == '_')
             && !matches!(text.as_str(), "where" | "class")
         {
@@ -959,7 +971,7 @@ fn get_class_name(node: tree_sitter::Node, source: &[u8]) -> String {
         .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect();
 
-    if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_uppercase()) {
+    if !name.is_empty() && name.chars().next().is_some_and(|c| c.is_uppercase()) {
         return name;
     }
 
@@ -977,7 +989,7 @@ fn get_import_module(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
                 if !text.is_empty()
                     && text != "import"
                     && text != "qualified"
-                    && text.chars().next().map_or(false, |c| c.is_uppercase())
+                    && text.chars().next().is_some_and(|c| c.is_uppercase())
                 {
                     return Some(text);
                 }
@@ -990,8 +1002,10 @@ fn get_import_module(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
                     && text != "qualified"
                     && text != "as"
                     && text != "hiding"
-                    && text.chars().next().map_or(false, |c| c.is_uppercase())
-                    && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+                    && text.chars().next().is_some_and(|c| c.is_uppercase())
+                    && text
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
                 {
                     return Some(text);
                 }
@@ -1059,7 +1073,7 @@ fn get_applied_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
                 && text
                     .chars()
                     .next()
-                    .map_or(false, |c| c.is_lowercase() || c == '_')
+                    .is_some_and(|c| c.is_lowercase() || c == '_')
                 && text
                     .chars()
                     .all(|c| c.is_alphanumeric() || c == '_' || c == '\'' || c == '.')
@@ -1112,8 +1126,7 @@ fn is_operator_name(name: &str) -> bool {
         return true;
     }
     // Pure operator symbols
-    name.chars()
-        .all(|c| "!#$%&*+./<=>?@\\^|-~:".contains(c))
+    name.chars().all(|c| "!#$%&*+./<=>?@\\^|-~:".contains(c))
 }
 
 /// Check if a name is a Haskell keyword that should not be treated as a function call.
@@ -1238,7 +1251,11 @@ data Color = Red | Green | Blue
                 .iter()
                 .any(|n| n.fqn == "src/Main.hs::User" && n.kind == NodeKind::Class),
             "Should find User data type as Class. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
             result
@@ -1246,7 +1263,11 @@ data Color = Red | Green | Blue
                 .iter()
                 .any(|n| n.fqn == "src/Main.hs::Color" && n.kind == NodeKind::Class),
             "Should find Color data type as Class. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1264,7 +1285,11 @@ newtype UserId = UserId Int
                 .iter()
                 .any(|n| n.fqn == "src/Main.hs::UserId" && n.kind == NodeKind::Class),
             "Should find UserId newtype as Class. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1283,7 +1308,11 @@ type Age = Int
                 .iter()
                 .any(|n| n.fqn == "src/Main.hs::Name" && n.kind == NodeKind::TypeAlias),
             "Should find Name type alias. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1303,7 +1332,11 @@ class Printable a where
                 .iter()
                 .any(|n| n.fqn == "src/Main.hs::Printable" && n.kind == NodeKind::Trait),
             "Should find Printable typeclass as Trait. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1322,7 +1355,11 @@ class Eq a => Ord a where
                 .iter()
                 .any(|n| n.fqn == "src/Main.hs::Ord" && n.kind == NodeKind::Trait),
             "Should find Ord typeclass with context as Trait. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1564,10 +1601,7 @@ complex x =
 "#;
         let result = parse_haskell(source);
 
-        let func = result
-            .nodes
-            .iter()
-            .find(|n| n.fqn.ends_with("::complex"));
+        let func = result.nodes.iter().find(|n| n.fqn.ends_with("::complex"));
 
         assert!(func.is_some(), "Should find complex function");
         if let Some(f) = func {

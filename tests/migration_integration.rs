@@ -354,7 +354,7 @@ fn test_migrations_are_idempotent() {
     // First run.
     let applied = cortex::store::migrations::run_migrations(&conn, &dir)
         .expect("first migration run should succeed");
-    assert_eq!(applied.len(), 5);
+    assert_eq!(applied.len(), 7);
 
     // Second run - should apply nothing.
     let applied = cortex::store::migrations::run_migrations(&conn, &dir)

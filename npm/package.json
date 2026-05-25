@@ -1,13 +1,11 @@
 {
   "name": "@1337xcode/cortex",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Code intelligence MCP server. Indexes your repository into a queryable call graph for AI coding agents.",
   "bin": {
     "cortex": "./bin/cortex.js"
   },
-  "scripts": {
-    "install": "node scripts/install.js"
-  },
+  "scripts": {},
   "repository": {
     "type": "git",
     "url": "git+https://github.com/1337Xcode/cortex.git"

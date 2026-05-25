@@ -22,7 +22,8 @@ pub fn export_html(store: &Arc<StoreManager>, output_path: &Path) -> Result<(), 
     let communities = community::detect_communities(&conn, None, 0.5)?;
 
     // Build node-to-community map
-    let mut node_community: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut node_community: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for (i, comm) in communities.communities.iter().enumerate() {
         for member in &comm.suggested_api_surface {
             node_community.insert(member.clone(), i);
@@ -48,7 +49,8 @@ pub fn export_html(store: &Arc<StoreManager>, output_path: &Path) -> Result<(), 
         .collect();
 
     // Get ALL edges (no limit)
-    let node_set: std::collections::HashSet<&str> = hotspots.iter().map(|n| n.fqn.as_str()).collect();
+    let node_set: std::collections::HashSet<&str> =
+        hotspots.iter().map(|n| n.fqn.as_str()).collect();
     let all_edges = graph::get_all_edges(&conn, 500_000)?;
     let edges_json: Vec<serde_json::Value> = all_edges
         .iter()
@@ -72,21 +74,33 @@ pub fn export_html(store: &Arc<StoreManager>, output_path: &Path) -> Result<(), 
     fs::write(output_path, &html)?;
     println!("Graph exported to {}", output_path.display());
     println!("Open in a browser to explore the interactive 3D visualization.");
-    println!("  {} nodes, {} edges, {} communities",
-        nodes_json.len(), edges_json.len(), communities.communities.len());
+    println!(
+        "  {} nodes, {} edges, {} communities",
+        nodes_json.len(),
+        edges_json.len(),
+        communities.communities.len()
+    );
 
     Ok(())
 }
 
 /// Generate a standalone HTML file with embedded 3D force graph.
 /// Obsidian-quality UI with IBM Plex font, sidebar, search, node details panel.
-fn generate_standalone_html(graph_data: &serde_json::Value, arch: &graph::ArchitectureSummary) -> String {
+fn generate_standalone_html(
+    graph_data: &serde_json::Value,
+    arch: &graph::ArchitectureSummary,
+) -> String {
     let data_json = serde_json::to_string(graph_data).unwrap_or_default();
     let node_count = graph_data["nodes"].as_array().map(|a| a.len()).unwrap_or(0);
     let edge_count = graph_data["links"].as_array().map(|a| a.len()).unwrap_or(0);
-    let project = arch.top_level_modules.first().unwrap_or(&"project".to_string()).clone();
+    let project = arch
+        .top_level_modules
+        .first()
+        .unwrap_or(&"project".to_string())
+        .clone();
 
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -401,4 +415,3 @@ lucide.createIcons();
         data = data_json,
     )
 }
-

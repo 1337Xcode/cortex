@@ -1,4 +1,4 @@
-﻿//! Swift AST extractor (tree-sitter based).
+//! Swift AST extractor (tree-sitter based).
 //!
 //! Extracts structural nodes (classes, structs, protocols, enums, functions,
 //! extensions, constants, type aliases) and edges (imports, calls, inheritance)
@@ -80,17 +80,15 @@ pub fn extract_swift(file: &str, source: &str) -> ExtractionResult {
 /// Compute cyclomatic complexity for all Function nodes.
 fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source: &[u8]) {
     for node in nodes.iter_mut() {
-        if node.kind == NodeKind::Function {
-            if let Some(ast_node) =
-                find_ast_node_at_line(root, node.start_line, "function_declaration")
-                    .or_else(|| {
-                        find_ast_node_at_line(root, node.start_line, "protocol_function_declaration")
-                    })
-            {
-                let c = complexity::compute_full_complexity(ast_node, source, "swift");
-                if let Some(attrs) = node.attributes.as_object_mut() {
-                    attrs.insert("complexity".to_string(), serde_json::json!(c));
-                }
+        if node.kind == NodeKind::Function
+            && let Some(ast_node) =
+                find_ast_node_at_line(root, node.start_line, "function_declaration").or_else(|| {
+                    find_ast_node_at_line(root, node.start_line, "protocol_function_declaration")
+                })
+        {
+            let c = complexity::compute_full_complexity(ast_node, source, "swift");
+            if let Some(attrs) = node.attributes.as_object_mut() {
+                attrs.insert("complexity".to_string(), serde_json::json!(c));
             }
         }
     }
@@ -730,12 +728,7 @@ fn extract_type_names_from_inheritance(
 }
 
 /// Collect import declarations.
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -748,12 +741,7 @@ fn collect_imports(
 }
 
 /// Extract an import declaration into Imports edges.
-fn extract_import(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn extract_import(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let text = node.utf8_text(source).unwrap_or("").trim().to_string();
     if text.is_empty() {
         return;
@@ -822,34 +810,28 @@ fn extract_call_edge(
         let call_text = func.utf8_text(source).unwrap_or("").trim();
 
         // Only resolve simple identifier calls (not method calls like obj.method())
-        if func.kind() == "simple_identifier" {
-            if let Some((_, target_fqn)) =
-                defined_fqns.iter().find(|(name, _)| name == call_text)
+        if func.kind() == "simple_identifier"
+            && let Some((_, target_fqn)) = defined_fqns.iter().find(|(name, _)| name == call_text)
+        {
+            let caller_fqn = find_enclosing_function(node, file, source);
+            if let Some(caller) = caller_fqn
+                && caller != *target_fqn
             {
-                let caller_fqn = find_enclosing_function(node, file, source);
-                if let Some(caller) = caller_fqn {
-                    if caller != *target_fqn {
-                        edges.push(Edge {
-                            id: None,
-                            source_fqn: caller,
-                            target_fqn: target_fqn.clone(),
-                            kind: EdgeKind::Calls,
-                            confidence: 1.0,
-                            attributes: json!({}),
-                        });
-                    }
-                }
+                edges.push(Edge {
+                    id: None,
+                    source_fqn: caller,
+                    target_fqn: target_fqn.clone(),
+                    kind: EdgeKind::Calls,
+                    confidence: 1.0,
+                    attributes: json!({}),
+                });
             }
         }
     }
 }
 
 /// Find the enclosing function/method for a given node to determine the caller FQN.
-fn find_enclosing_function(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_function(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
 
     while let Some(parent) = current {
@@ -1030,14 +1012,9 @@ fn find_child_by_kind<'a>(
     kind: &str,
 ) -> Option<tree_sitter::Node<'a>> {
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == kind {
-            return Some(child);
-        }
-    }
-    None
+    node.children(&mut cursor)
+        .find(|&child| child.kind() == kind)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1080,30 +1057,54 @@ final class APIClient {
 
         // Classes
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/App.swift::ViewController" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/App.swift::ViewController" && n.kind == NodeKind::Class),
             "Expected ViewController class, got nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/App.swift::APIClient" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/App.swift::APIClient" && n.kind == NodeKind::Class),
             "Expected APIClient class"
         );
 
         // Methods inside class
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/App.swift::ViewController::viewDidLoad" && n.kind == NodeKind::Function),
+            result.nodes.iter().any(
+                |n| n.fqn == "Sources/App.swift::ViewController::viewDidLoad"
+                    && n.kind == NodeKind::Function
+            ),
             "Expected viewDidLoad method"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/App.swift::ViewController::fetchData" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/App.swift::ViewController::fetchData"
+                    && n.kind == NodeKind::Function),
             "Expected fetchData method"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/App.swift::ViewController::handleError" && n.kind == NodeKind::Function),
+            result.nodes.iter().any(
+                |n| n.fqn == "Sources/App.swift::ViewController::handleError"
+                    && n.kind == NodeKind::Function
+            ),
             "Expected handleError method"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/App.swift::APIClient::request" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/App.swift::APIClient::request"
+                    && n.kind == NodeKind::Function),
             "Expected request method"
         );
     }
@@ -1126,20 +1127,45 @@ struct Point {
         let result = parse_and_extract("Sources/Models.swift", source);
 
         // Structs (use Class kind with struct attribute)
-        let config = result.nodes.iter().find(|n| n.fqn == "Sources/Models.swift::Config");
-        assert!(config.is_some(), "Expected Config struct, got: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>());
+        let config = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "Sources/Models.swift::Config");
+        assert!(
+            config.is_some(),
+            "Expected Config struct, got: {:?}",
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
+        );
         assert_eq!(config.unwrap().kind, NodeKind::Class);
         assert_eq!(config.unwrap().attributes["struct"], true);
 
-        let point = result.nodes.iter().find(|n| n.fqn == "Sources/Models.swift::Point");
+        let point = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "Sources/Models.swift::Point");
         assert!(point.is_some(), "Expected Point struct");
         assert_eq!(point.unwrap().kind, NodeKind::Class);
         assert_eq!(point.unwrap().attributes["struct"], true);
 
         // Methods
-        assert!(result.nodes.iter().any(|n| n.fqn == "Sources/Models.swift::Config::validate" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "Sources/Models.swift::Point::distance" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Models.swift::Config::validate"
+                    && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Models.swift::Point::distance"
+                    && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1158,23 +1184,49 @@ protocol Logging {
 
         // Protocols
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/Protocols.swift::DataFetchable" && n.kind == NodeKind::Interface),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Protocols.swift::DataFetchable"
+                    && n.kind == NodeKind::Interface),
             "Expected DataFetchable protocol, got: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/Protocols.swift::Logging" && n.kind == NodeKind::Interface),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Protocols.swift::Logging"
+                    && n.kind == NodeKind::Interface),
             "Expected Logging protocol"
         );
 
         // Required methods
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/Protocols.swift::DataFetchable::fetchData" && n.kind == NodeKind::Function),
+            result.nodes.iter().any(|n| n.fqn
+                == "Sources/Protocols.swift::DataFetchable::fetchData"
+                && n.kind == NodeKind::Function),
             "Expected fetchData method in protocol, got: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
-        assert!(result.nodes.iter().any(|n| n.fqn == "Sources/Protocols.swift::DataFetchable::cancel" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "Sources/Protocols.swift::Logging::log" && n.kind == NodeKind::Function));
+        assert!(result.nodes.iter().any(|n| n.fqn
+            == "Sources/Protocols.swift::DataFetchable::cancel"
+            && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Protocols.swift::Logging::log"
+                    && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1197,17 +1249,33 @@ enum Direction {
 
         // Enums
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/Enums.swift::NetworkError" && n.kind == NodeKind::Enum),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Enums.swift::NetworkError" && n.kind == NodeKind::Enum),
             "Expected NetworkError enum, got: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/Enums.swift::Direction" && n.kind == NodeKind::Enum),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Enums.swift::Direction" && n.kind == NodeKind::Enum),
             "Expected Direction enum"
         );
 
         // Method in enum
-        assert!(result.nodes.iter().any(|n| n.fqn == "Sources/Enums.swift::Direction::opposite" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Enums.swift::Direction::opposite"
+                    && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1229,18 +1297,40 @@ extension Array {
 
         // Extensions (Module kind)
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/Extensions.swift::String" && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Extensions.swift::String" && n.kind == NodeKind::Module),
             "Expected String extension, got: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "Sources/Extensions.swift::Array" && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Extensions.swift::Array" && n.kind == NodeKind::Module),
             "Expected Array extension"
         );
 
         // Methods in extensions
-        assert!(result.nodes.iter().any(|n| n.fqn == "Sources/Extensions.swift::String::trimmed" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "Sources/Extensions.swift::Array::chunked" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Extensions.swift::String::trimmed"
+                    && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Sources/Extensions.swift::Array::chunked"
+                    && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1258,7 +1348,11 @@ import struct SwiftUI.Color
             .filter(|e| e.kind == EdgeKind::Imports)
             .collect();
 
-        assert!(imports.len() >= 2, "Expected at least 2 imports, got {}", imports.len());
+        assert!(
+            imports.len() >= 2,
+            "Expected at least 2 imports, got {}",
+            imports.len()
+        );
         assert!(
             imports.iter().any(|e| e.target_fqn == "Foundation"),
             "Expected Foundation import, got: {:?}",
@@ -1291,7 +1385,9 @@ func main() {
 
         // main calls greet
         assert!(
-            calls.iter().any(|e| e.source_fqn.contains("main") && e.target_fqn.contains("greet")),
+            calls
+                .iter()
+                .any(|e| e.source_fqn.contains("main") && e.target_fqn.contains("greet")),
             "Expected a call from main to greet, got: {:?}",
             calls
         );
@@ -1320,7 +1416,9 @@ class Dog: Animal {
 
         // Dog inherits Animal
         assert!(
-            inherits.iter().any(|e| e.source_fqn == "Sources/Animals.swift::Dog" && e.target_fqn == "Animal"),
+            inherits
+                .iter()
+                .any(|e| e.source_fqn == "Sources/Animals.swift::Dog" && e.target_fqn == "Animal"),
             "Expected Dog inherits Animal, got: {:?}",
             inherits
         );
@@ -1343,8 +1441,18 @@ class Hello {
         #[allow(deprecated)]
         let result = extract_swift("test.swift", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "test.swift::Hello" && n.kind == NodeKind::Class));
-        assert!(result.nodes.iter().any(|n| n.fqn == "test.swift::Hello::world" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "test.swift::Hello" && n.kind == NodeKind::Class)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "test.swift::Hello::world" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1353,13 +1461,19 @@ class Hello {
         let result = parse_and_extract("test.swift", source);
 
         let foo = result.nodes.iter().find(|n| n.fqn == "test.swift::Foo");
-        assert!(foo.is_some(), "Expected Foo node, got: {:?}",
-            result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>());
+        assert!(
+            foo.is_some(),
+            "Expected Foo node, got: {:?}",
+            result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
+        );
         let foo = foo.unwrap();
         assert_eq!(foo.start_line, 1);
         assert_eq!(foo.end_line, 3);
 
-        let bar = result.nodes.iter().find(|n| n.fqn == "test.swift::Foo::bar");
+        let bar = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "test.swift::Foo::bar");
         assert!(bar.is_some(), "Expected bar node");
         let bar = bar.unwrap();
         assert_eq!(bar.start_line, 2);

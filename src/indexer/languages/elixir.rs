@@ -180,28 +180,14 @@ fn collect_definitions(
                     }
                     _ => {
                         // Recurse into other call nodes (they may contain nested definitions)
-                        collect_definitions(
-                            child,
-                            file,
-                            source,
-                            nodes,
-                            defined_fqns,
-                            module_stack,
-                        );
+                        collect_definitions(child, file, source, nodes, defined_fqns, module_stack);
                     }
                 }
             }
             _ => {
                 // Recurse into other node types
                 if child.child_count() > 0 {
-                    collect_definitions(
-                        child,
-                        file,
-                        source,
-                        nodes,
-                        defined_fqns,
-                        module_stack,
-                    );
+                    collect_definitions(child, file, source, nodes, defined_fqns, module_stack);
                 }
             }
         }
@@ -451,12 +437,7 @@ fn collect_definitions_in_body(
 }
 
 /// Collect import/alias/use/require edges from the AST.
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -570,17 +551,17 @@ fn extract_call_edge(
     }
 
     // Simple function call - try to resolve to a defined function
-    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == call_name) {
-        if source_fqn != *target_fqn {
-            edges.push(Edge {
-                id: None,
-                source_fqn,
-                target_fqn: target_fqn.clone(),
-                kind: EdgeKind::Calls,
-                confidence: 1.0,
-                attributes: json!({}),
-            });
-        }
+    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == call_name)
+        && source_fqn != *target_fqn
+    {
+        edges.push(Edge {
+            id: None,
+            source_fqn,
+            target_fqn: target_fqn.clone(),
+            kind: EdgeKind::Calls,
+            confidence: 1.0,
+            attributes: json!({}),
+        });
     }
 }
 
@@ -725,8 +706,10 @@ fn get_first_alias_from_args(args_node: tree_sitter::Node, source: &[u8]) -> Str
                 // Check if the child text looks like a module name (starts with uppercase)
                 let text = child.utf8_text(source).unwrap_or("").trim().to_string();
                 if !text.is_empty()
-                    && text.chars().next().map_or(false, |c| c.is_uppercase())
-                    && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+                    && text.chars().next().is_some_and(|c| c.is_uppercase())
+                    && text
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
                 {
                     return text;
                 }
@@ -761,7 +744,7 @@ fn get_function_name_from_args(args_node: tree_sitter::Node, source: &[u8]) -> S
                     match left.kind() {
                         "call" => return get_call_identifier(left, source),
                         "identifier" => {
-                            return left.utf8_text(source).unwrap_or("").trim().to_string()
+                            return left.utf8_text(source).unwrap_or("").trim().to_string();
                         }
                         _ => {}
                     }
@@ -828,11 +811,7 @@ fn extract_name_from_def_text(text: &str, keyword: &str) -> Option<String> {
         .chars()
         .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
         .collect();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    if name.is_empty() { None } else { Some(name) }
 }
 
 /// Build a fully qualified name from file, module stack, and symbol name.
@@ -948,8 +927,11 @@ end
         let result = parse_elixir(source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/my_app.ex::MyApp.UserController"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/my_app.ex::MyApp.UserController"
+                    && n.kind == NodeKind::Module),
             "Should find MyApp.UserController module"
         );
     }
@@ -1054,8 +1036,10 @@ end
         let result = parse_elixir(source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/my_app.ex::Printable"
-                && n.kind == NodeKind::Interface),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/my_app.ex::Printable" && n.kind == NodeKind::Interface),
             "Should find Printable protocol as Interface"
         );
     }
@@ -1072,8 +1056,10 @@ end
         let result = parse_elixir(source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/my_app.ex::Printable.Integer"
-                && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/my_app.ex::Printable.Integer" && n.kind == NodeKind::Class),
             "Should find Printable.Integer impl as Class"
         );
     }
@@ -1141,8 +1127,10 @@ end
 
         // get_user should call validate
         assert!(
-            calls.iter().any(|e| e.source_fqn.ends_with("::get_user")
-                && e.target_fqn.ends_with("::validate")),
+            calls
+                .iter()
+                .any(|e| e.source_fqn.ends_with("::get_user")
+                    && e.target_fqn.ends_with("::validate")),
             "get_user should call validate. Calls found: {:?}",
             calls
                 .iter()
@@ -1185,8 +1173,11 @@ end
 
         // Check module
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/my_app.ex::MyApp.UserController"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/my_app.ex::MyApp.UserController"
+                    && n.kind == NodeKind::Module),
             "Should find module"
         );
 

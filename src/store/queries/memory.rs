@@ -1,4 +1,4 @@
-﻿//! Memory store operations: CRUD for observations, ADRs, and change notes.
+//! Memory store operations: CRUD for observations, ADRs, and change notes.
 //!
 //! All functions operate on a single `rusqlite::Connection` and use the types
 //! defined in `crate::store::types`. UUID v4 is used for generating IDs and
@@ -225,10 +225,7 @@ pub fn prune_stale_observations(
 }
 
 /// Write a new change note. Generates UUID v4 id, returns the id.
-pub fn write_change_note(
-    conn: &Connection,
-    text: &str,
-) -> Result<String, StoreError> {
+pub fn write_change_note(conn: &Connection, text: &str) -> Result<String, StoreError> {
     let id = Uuid::new_v4().to_string();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -247,9 +244,7 @@ pub fn write_change_note(
 }
 
 /// Read all change notes, ordered by created_at DESC.
-pub fn read_change_notes(
-    conn: &Connection,
-) -> Result<Vec<ChangeNote>, StoreError> {
+pub fn read_change_notes(conn: &Connection) -> Result<Vec<ChangeNote>, StoreError> {
     let mut stmt = conn
         .prepare("SELECT id, text, created_at FROM change_notes ORDER BY created_at DESC")
         .map_err(|e| StoreError::QueryFailed {
@@ -480,9 +475,15 @@ mod tests {
         let adr = &adrs[0];
         assert_eq!(adr.id, id);
         assert_eq!(adr.title, "Use SQLite for storage");
-        assert_eq!(adr.body, "We chose SQLite because it is embedded and requires no server.");
+        assert_eq!(
+            adr.body,
+            "We chose SQLite because it is embedded and requires no server."
+        );
         assert_eq!(adr.status, "accepted");
-        assert_eq!(adr.linked_fqn.as_deref(), Some("src/store/mod.rs::StoreManager"));
+        assert_eq!(
+            adr.linked_fqn.as_deref(),
+            Some("src/store/mod.rs::StoreManager")
+        );
         assert!(adr.created_at > 0);
         assert_eq!(adr.created_at, adr.updated_at);
     }

@@ -13,13 +13,13 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::error::IndexError;
+use crate::indexer::http_routes;
 use crate::indexer::languages;
 use crate::indexer::parser::{self, SupportedLanguage};
 use crate::indexer::resolver;
-use crate::indexer::http_routes;
 use crate::security::secrets;
 use crate::store::db::StoreManager;
-use crate::store::queries::delta::{apply_delta, apply_deltas_batch, GraphDelta};
+use crate::store::queries::delta::{GraphDelta, apply_delta, apply_deltas_batch};
 use crate::store::types::{ExtractionResult, FileSnapshot};
 
 /// Directories to always skip during walking.
@@ -74,7 +74,13 @@ pub fn index_repository(repo_root: &Path, store: &StoreManager) -> Result<IndexS
     let parse_results: Vec<(String, ExtractionResult, String)> = files_to_process
         .par_iter()
         .filter_map(|(file_path, file_hash)| {
-            parse_and_extract(file_path, repo_root, file_hash).ok()
+            match parse_and_extract(file_path, repo_root, file_hash) {
+                Ok(result) => Some(result),
+                Err(e) => {
+                    tracing::warn!(file = %file_path, error = %e, "parse_and_extract failed");
+                    None
+                }
+            }
         })
         .collect();
 
@@ -163,7 +169,10 @@ pub fn index_repository(repo_root: &Path, store: &StoreManager) -> Result<IndexS
                 stats.files_indexed += deltas.len();
             }
             Err(e) => {
-                tracing::warn!("batch delta application failed, falling back to per-file: {}", e);
+                tracing::warn!(
+                    "batch delta application failed, falling back to per-file: {}",
+                    e
+                );
                 // Fallback: apply deltas one by one so partial progress is preserved
                 for delta in &deltas {
                     match apply_delta(&mut conn, delta) {
@@ -174,7 +183,13 @@ pub fn index_repository(repo_root: &Path, store: &StoreManager) -> Result<IndexS
                             stats.files_indexed += 1;
                         }
                         Err(_e) => {
-                            tracing::warn!("failed to apply delta for {}: {}", delta.file_snapshot.file, _e);
+                            tracing::warn!(
+                                "failed to apply delta for {}: {}",
+                                crate::telemetry::sanitize_path(Path::new(
+                                    &delta.file_snapshot.file
+                                )),
+                                _e
+                            );
                         }
                     }
                 }
@@ -220,10 +235,7 @@ fn walk_directory(
         let path = entry.path();
 
         // Only process files with recognized extensions
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if languages::language_for_extension(ext).is_none() {
             continue;
         }
@@ -281,8 +293,7 @@ fn matches_any_pattern(rel_path: &str, patterns: &[String]) -> bool {
         if pattern.ends_with('/') {
             // Directory pattern: matches if path starts with this prefix
             let dir_prefix = &pattern[..pattern.len() - 1];
-            if rel_path.starts_with(dir_prefix) || rel_path.contains(&format!("/{}/", dir_prefix))
-            {
+            if rel_path.starts_with(dir_prefix) || rel_path.contains(&format!("/{}/", dir_prefix)) {
                 return true;
             }
         } else if pattern.starts_with("*.") {
@@ -368,10 +379,34 @@ fn parse_and_extract(
 ) -> Result<(String, ExtractionResult, String), IndexError> {
     let abs_path = repo_root.join(rel_path.replace('/', std::path::MAIN_SEPARATOR_STR));
 
-    let source = fs::read_to_string(&abs_path).map_err(|e| IndexError::FileReadFailed {
-        path: rel_path.to_string(),
-        reason: e.to_string(),
-    })?;
+    // Sanitize the file path for any tracing output
+    let sanitized_path = crate::telemetry::sanitize_path(&abs_path);
+
+    // Try reading as UTF-8 string first; if that fails due to encoding,
+    // read as bytes and sanitize to valid UTF-8.
+    let source = match fs::read_to_string(&abs_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            // File contains invalid UTF-8 - read as bytes and sanitize
+            let bytes = fs::read(&abs_path).map_err(|e| IndexError::FileReadFailed {
+                path: rel_path.to_string(),
+                reason: e.to_string(),
+            })?;
+            let (sanitized_source, _replacements) = crate::telemetry::sanitize_utf8(&bytes);
+            tracing::debug!(
+                file = %sanitized_path,
+                original_byte_length = bytes.len(),
+                "Source file contained invalid UTF-8, sanitized for processing"
+            );
+            sanitized_source
+        }
+        Err(e) => {
+            return Err(IndexError::FileReadFailed {
+                path: rel_path.to_string(),
+                reason: e.to_string(),
+            });
+        }
+    };
 
     let file_hash = precomputed_hash.to_string();
 
@@ -451,19 +486,18 @@ fn parse_and_extract(
                 }
             }
             // If no containing node found, tag the module node
-            if !tagged {
-                if let Some(module_node) = result.nodes.first_mut() {
-                    if let Some(attrs) = module_node.attributes.as_object_mut() {
-                        attrs.insert(
-                            "contains_secret".to_string(),
-                            serde_json::json!(secret_match.secret_type.label()),
-                        );
-                        attrs.insert(
-                            "secret_line".to_string(),
-                            serde_json::json!(secret_match.line),
-                        );
-                    }
-                }
+            if !tagged
+                && let Some(module_node) = result.nodes.first_mut()
+                && let Some(attrs) = module_node.attributes.as_object_mut()
+            {
+                attrs.insert(
+                    "contains_secret".to_string(),
+                    serde_json::json!(secret_match.secret_type.label()),
+                );
+                attrs.insert(
+                    "secret_line".to_string(),
+                    serde_json::json!(secret_match.line),
+                );
             }
         }
     }
@@ -474,7 +508,13 @@ fn parse_and_extract(
         Err(_) => "",
     };
     if !lang_str.is_empty() {
-        http_routes::detect_routes(&mut result.nodes, &mut result.edges, rel_path, &source, lang_str);
+        http_routes::detect_routes(
+            &mut result.nodes,
+            &mut result.edges,
+            rel_path,
+            &source,
+            lang_str,
+        );
     }
 
     Ok((rel_path.to_string(), result, file_hash))
@@ -537,29 +577,43 @@ fn dispatch_regex_extractor(file: &str, source: &str) -> Option<ExtractionResult
         "php" => Some(languages::php::extract_php(file, source)),
         "sql" => Some(languages::sql::extract_sql(file, source)),
         "kt" | "kts" => Some(languages::kotlin::extract_regex(file, source)),
+        #[allow(deprecated)]
         "dart" => Some(languages::dart::extract_regex(file, source)),
+        #[allow(deprecated)]
         "ex" | "exs" => Some(languages::elixir::extract_regex(file, source)),
+        #[allow(deprecated)]
         "hs" | "lhs" => Some(languages::haskell::extract_regex(file, source)),
         #[allow(deprecated)]
         "lua" => Some(languages::lua::extract_regex(file, source)),
+        #[allow(deprecated)]
         "zig" => Some(languages::zig::extract_regex(file, source)),
-        "sh" | "bash" | "zsh" => {
+        "sh" | "bash" | "zsh" =>
+        {
             #[allow(deprecated)]
             Some(languages::bash::extract_regex(file, source))
         }
         "pl" | "pm" => Some(languages::perl::extract_regex(file, source)),
+        #[allow(deprecated)]
         "r" | "R" => Some(languages::r_lang::extract_regex(file, source)),
+        #[allow(deprecated)]
         "m" => Some(languages::objc::extract_regex(file, source)),
+        #[allow(deprecated)]
         "ml" | "mli" => Some(languages::ocaml::extract_regex(file, source)),
+        #[allow(deprecated)]
         "jl" => Some(languages::julia::extract_regex(file, source)),
+        #[allow(deprecated)]
         "tf" | "hcl" => Some(languages::terraform::extract_regex(file, source)),
+        #[allow(deprecated)]
         "yml" | "yaml" => Some(languages::yaml::extract_regex(file, source)),
         _ => None,
     }
 }
 
 /// Get all node FQNs for a given file from the database.
-fn get_nodes_for_file(conn: &std::sync::MutexGuard<'_, rusqlite::Connection>, file: &str) -> Vec<String> {
+fn get_nodes_for_file(
+    conn: &std::sync::MutexGuard<'_, rusqlite::Connection>,
+    file: &str,
+) -> Vec<String> {
     let mut stmt = match conn.prepare("SELECT fqn FROM nodes WHERE file = ?1") {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -708,10 +762,14 @@ fn generate_embeddings_for_nodes(
         Err(_) => return,
     };
 
-    // Filter to Function and Class nodes only
+    // Filter to Function, Method, and Class nodes only
     let embeddable_nodes: Vec<&crate::store::types::Node> = nodes
         .iter()
-        .filter(|n| n.kind == crate::store::types::NodeKind::Function || n.kind == crate::store::types::NodeKind::Class)
+        .filter(|n| {
+            n.kind == crate::store::types::NodeKind::Function
+                || n.kind == crate::store::types::NodeKind::Method
+                || n.kind == crate::store::types::NodeKind::Class
+        })
         .collect();
 
     if embeddable_nodes.is_empty() {
@@ -729,17 +787,17 @@ fn generate_embeddings_for_nodes(
     for node in &embeddable_nodes {
         // Read source code for the node (first few lines)
         let code_snippet = read_node_source(repo_root, &node.file, node.start_line, node.end_line);
-        let text = crate::indexer::embedder::prepare_node_text(
-            &node.fqn,
-            code_snippet.as_deref(),
-        );
+        let text = crate::indexer::embedder::prepare_node_text(&node.fqn, code_snippet.as_deref());
 
         match embedder.generate_embedding(&text) {
             Ok(embedding) => {
                 entries.push((node.fqn.clone(), embedding));
             }
             Err(e) => {
-                tracing::debug!("Failed to generate embedding for '{}': {e}", node.fqn);
+                tracing::debug!(
+                    "Failed to generate embedding for '{}': {e}",
+                    crate::telemetry::sanitize_path(Path::new(&node.fqn))
+                );
             }
         }
     }
@@ -784,7 +842,8 @@ fn read_node_source(
     } else {
         None
     }
-}#[cfg(test)]
+}
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::store::migrations::run_migrations;
@@ -916,7 +975,10 @@ def new_function():
 
         // Second run - should detect the change
         let stats2 = index_repository(&repo, &store).unwrap();
-        assert_eq!(stats2.files_indexed, 1, "only modified file should be re-indexed");
+        assert_eq!(
+            stats2.files_indexed, 1,
+            "only modified file should be re-indexed"
+        );
         assert_eq!(stats2.files_skipped, 1, "unchanged file should be skipped");
     }
 
@@ -961,7 +1023,10 @@ def new_function():
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(snap_count, 0, "file snapshot for deleted file should be removed");
+        assert_eq!(
+            snap_count, 0,
+            "file snapshot for deleted file should be removed"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1054,14 +1119,26 @@ def new_function():
         assert!(!matches_any_pattern("src/file.py", &["*.log".to_string()]));
 
         // Directory pattern
-        assert!(matches_any_pattern("build/output.js", &["build/".to_string()]));
-        assert!(!matches_any_pattern("src/build.py", &["build/".to_string()]));
+        assert!(matches_any_pattern(
+            "build/output.js",
+            &["build/".to_string()]
+        ));
+        assert!(!matches_any_pattern(
+            "src/build.py",
+            &["build/".to_string()]
+        ));
 
         // Simple name match
-        assert!(matches_any_pattern("src/temp/file.py", &["temp".to_string()]));
+        assert!(matches_any_pattern(
+            "src/temp/file.py",
+            &["temp".to_string()]
+        ));
 
         // Path pattern
-        assert!(matches_any_pattern("dist/bundle.js", &["dist/bundle.js".to_string()]));
+        assert!(matches_any_pattern(
+            "dist/bundle.js",
+            &["dist/bundle.js".to_string()]
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -1087,7 +1164,10 @@ def new_function():
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(module_count, 2, "each indexed file should have a Module node");
+        assert_eq!(
+            module_count, 2,
+            "each indexed file should have a Module node"
+        );
 
         // Verify Module node FQN equals the file path
         let module_fqn: String = conn
@@ -1097,7 +1177,10 @@ def new_function():
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(module_fqn, "main.py", "Module FQN should equal the file path");
+        assert_eq!(
+            module_fqn, "main.py",
+            "Module FQN should equal the file path"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1165,7 +1248,10 @@ def new_func():
 
         // Second run: only main.py should be re-indexed
         let stats2 = index_repository(&repo, &store).unwrap();
-        assert_eq!(stats2.files_indexed, 1, "only modified file should be re-indexed");
+        assert_eq!(
+            stats2.files_indexed, 1,
+            "only modified file should be re-indexed"
+        );
         assert_eq!(stats2.files_skipped, 1, "unchanged file should be skipped");
 
         // Verify the pipeline still produces valid edges
@@ -1187,7 +1273,10 @@ def new_func():
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(orphan_edges, 0, "no edges should have orphaned source_fqn references");
+        assert_eq!(
+            orphan_edges, 0,
+            "no edges should have orphaned source_fqn references"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1228,7 +1317,10 @@ pub fn process() -> HashMap<String, String> {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(import_count > 0, "Import edges should reference the Module node FQN");
+        assert!(
+            import_count > 0,
+            "Import edges should reference the Module node FQN"
+        );
 
         // Verify the Module node exists with matching FQN
         let module_exists: i64 = conn
@@ -1248,7 +1340,10 @@ pub fn process() -> HashMap<String, String> {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(orphan_edges, 0, "no edges should have orphaned source_fqn references");
+        assert_eq!(
+            orphan_edges, 0,
+            "no edges should have orphaned source_fqn references"
+        );
     }
 
     // -----------------------------------------------------------------------

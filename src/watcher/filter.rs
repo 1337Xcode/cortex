@@ -99,8 +99,7 @@ fn matches_any_pattern(rel_path: &str, patterns: &[String]) -> bool {
         if pattern.ends_with('/') {
             // Directory pattern: matches if path starts with this prefix
             let dir_prefix = &pattern[..pattern.len() - 1];
-            if rel_path.starts_with(dir_prefix) || rel_path.contains(&format!("/{}/", dir_prefix))
-            {
+            if rel_path.starts_with(dir_prefix) || rel_path.contains(&format!("/{}/", dir_prefix)) {
                 return true;
             }
         } else if pattern.starts_with("*.") {
@@ -170,7 +169,11 @@ mod tests {
         let repo_root = tmp.path();
 
         // Create a .cortex-ignore
-        fs::write(repo_root.join(".cortex-ignore"), "*.generated.ts\nvendor/\n").unwrap();
+        fs::write(
+            repo_root.join(".cortex-ignore"),
+            "*.generated.ts\nvendor/\n",
+        )
+        .unwrap();
 
         let filter = WatchFilter::new(repo_root);
 
@@ -186,13 +189,25 @@ mod tests {
         assert!(!matches_any_pattern("src/file.py", &["*.log".to_string()]));
 
         // Directory pattern
-        assert!(matches_any_pattern("build/output.js", &["build/".to_string()]));
-        assert!(!matches_any_pattern("src/build.py", &["build/".to_string()]));
+        assert!(matches_any_pattern(
+            "build/output.js",
+            &["build/".to_string()]
+        ));
+        assert!(!matches_any_pattern(
+            "src/build.py",
+            &["build/".to_string()]
+        ));
 
         // Simple name match
-        assert!(matches_any_pattern("src/temp/file.py", &["temp".to_string()]));
+        assert!(matches_any_pattern(
+            "src/temp/file.py",
+            &["temp".to_string()]
+        ));
 
         // Path pattern
-        assert!(matches_any_pattern("dist/bundle.js", &["dist/bundle.js".to_string()]));
+        assert!(matches_any_pattern(
+            "dist/bundle.js",
+            &["dist/bundle.js".to_string()]
+        ));
     }
 }

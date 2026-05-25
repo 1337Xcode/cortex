@@ -167,26 +167,27 @@ fn count_logical_ops_recursive(node: Node, source: &[u8], language: &str, count:
     let kind = node.kind();
 
     match language {
-        "rust" | "typescript" | "javascript" | "tsx" | "go" | "java" | "c" | "cpp" | "csharp" => {
-            if kind == "binary_expression" {
-                // Check the operator child
-                if let Some(op_node) = node.child_by_field_name("operator") {
-                    let op = op_node.utf8_text(source).unwrap_or("");
-                    if op == "&&" || op == "||" {
+        "rust" | "typescript" | "javascript" | "tsx" | "go" | "java" | "c" | "cpp" | "csharp"
+            if kind == "binary_expression" =>
+        {
+            // Check the operator child
+            if let Some(op_node) = node.child_by_field_name("operator") {
+                let op = op_node.utf8_text(source).unwrap_or("");
+                if op == "&&" || op == "||" {
+                    *count += 1;
+                }
+            } else {
+                // Some grammars embed the operator as a direct child text
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    let text = child.utf8_text(source).unwrap_or("");
+                    if text == "&&" || text == "||" {
                         *count += 1;
-                    }
-                } else {
-                    // Some grammars embed the operator as a direct child text
-                    let mut cursor = node.walk();
-                    for child in node.children(&mut cursor) {
-                        let text = child.utf8_text(source).unwrap_or("");
-                        if text == "&&" || text == "||" {
-                            *count += 1;
-                        }
                     }
                 }
             }
         }
+        "rust" | "typescript" | "javascript" | "tsx" | "go" | "java" | "c" | "cpp" | "csharp" => {}
         // Python uses "boolean_operator" which is already counted in count_python_decision_point
         "python" => {}
         _ => {}

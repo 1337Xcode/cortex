@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9e710c02ca1dec5a5688aa8d732e2a26397bee93f416adbd227611f71e236c3f # shrinks to response = AskResponse { summary: AskSummary { total_results: 1, total_token_cost: 1, budget_used_percent: 0.0244140625, intent_detected: "aAa", query_terms_extracted: [] }, results: [AskResultItem { fqn: "aa/aa.a::_a", kind: "Function", file: "aa/aa.a", start_line: 1, end_line: 2, relevance_score: 0.9070205088579365, why: "AaaaA", token_cost: 1, naive_cost_estimate: 0.0, coverage: 0.0 }] }

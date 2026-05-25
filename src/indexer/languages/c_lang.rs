@@ -28,12 +28,7 @@ pub fn extract(tree: &Tree, file: &str, source: &str) -> ExtractionResult {
 }
 
 /// Collect function and struct definitions at the top level.
-fn collect_definitions(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    nodes: &mut Vec<Node>,
-) {
+fn collect_definitions(node: tree_sitter::Node, file: &str, source: &[u8], nodes: &mut Vec<Node>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -95,27 +90,27 @@ fn collect_structs_in_declaration(
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "struct_specifier" {
-            if let Some(name_node) = child.child_by_field_name("name") {
-                let struct_name = name_node.utf8_text(source).unwrap_or("");
-                if !struct_name.is_empty() {
-                    // Check it has a body (not just a forward declaration reference)
-                    if child.child_by_field_name("body").is_some() {
-                        let fqn = format!("{file}::{struct_name}");
-                        let start_line = child.start_position().row as u32 + 1;
-                        let end_line = child.end_position().row as u32 + 1;
+        if child.kind() == "struct_specifier"
+            && let Some(name_node) = child.child_by_field_name("name")
+        {
+            let struct_name = name_node.utf8_text(source).unwrap_or("");
+            if !struct_name.is_empty() {
+                // Check it has a body (not just a forward declaration reference)
+                if child.child_by_field_name("body").is_some() {
+                    let fqn = format!("{file}::{struct_name}");
+                    let start_line = child.start_position().row as u32 + 1;
+                    let end_line = child.end_position().row as u32 + 1;
 
-                        nodes.push(Node {
-                            fqn,
-                            kind: NodeKind::Class,
-                            file: file.to_string(),
-                            start_line,
-                            end_line,
-                            file_hash: String::new(),
-                            indexed_at: 0,
-                            attributes: json!({}),
-                        });
-                    }
+                    nodes.push(Node {
+                        fqn,
+                        kind: NodeKind::Class,
+                        file: file.to_string(),
+                        start_line,
+                        end_line,
+                        file_hash: String::new(),
+                        indexed_at: 0,
+                        attributes: json!({}),
+                    });
                 }
             }
         }
@@ -173,33 +168,28 @@ fn extract_name_from_declarator(node: tree_sitter::Node, source: &[u8]) -> Optio
 }
 
 /// Collect #include directives and create Imports edges.
-fn collect_includes(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_includes(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        if child.kind() == "preproc_include" {
-            if let Some(path_node) = child.child_by_field_name("path") {
-                let raw = path_node.utf8_text(source).unwrap_or("");
-                // Strip quotes or angle brackets
-                let include_path = raw
-                    .trim_matches('"')
-                    .trim_start_matches('<')
-                    .trim_end_matches('>');
-                if !include_path.is_empty() {
-                    edges.push(Edge {
-                        id: None,
-                        source_fqn: file.to_string(),
-                        target_fqn: include_path.to_string(),
-                        kind: EdgeKind::Imports,
-                        confidence: 1.0,
-                        attributes: json!({}),
-                    });
-                }
+        if child.kind() == "preproc_include"
+            && let Some(path_node) = child.child_by_field_name("path")
+        {
+            let raw = path_node.utf8_text(source).unwrap_or("");
+            // Strip quotes or angle brackets
+            let include_path = raw
+                .trim_matches('"')
+                .trim_start_matches('<')
+                .trim_end_matches('>');
+            if !include_path.is_empty() {
+                edges.push(Edge {
+                    id: None,
+                    source_fqn: file.to_string(),
+                    target_fqn: include_path.to_string(),
+                    kind: EdgeKind::Imports,
+                    confidence: 1.0,
+                    attributes: json!({}),
+                });
             }
         }
     }
@@ -251,28 +241,38 @@ int main() {
         let result = extract(&tree, "src/main.c", source);
 
         // Check functions
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/main.c::add" && n.kind == NodeKind::Function));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/main.c::print_point" && n.kind == NodeKind::Function));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/main.c::main" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.c::add" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.c::print_point" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.c::main" && n.kind == NodeKind::Function)
+        );
 
         // Check structs
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/main.c::Point" && n.kind == NodeKind::Class));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/main.c::Config" && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.c::Point" && n.kind == NodeKind::Class)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.c::Config" && n.kind == NodeKind::Class)
+        );
 
         // Check include edges
         let import_edges: Vec<&Edge> = result
@@ -315,10 +315,7 @@ void another_valid() {}
         let result = extract(&tree, "broken.c", source);
 
         assert!(!result.nodes.is_empty());
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "broken.c::valid_func"));
+        assert!(result.nodes.iter().any(|n| n.fqn == "broken.c::valid_func"));
     }
 
     #[test]

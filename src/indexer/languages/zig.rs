@@ -1,4 +1,4 @@
-﻿//! Zig AST extractor (tree-sitter based).
+//! Zig AST extractor (tree-sitter based).
 //!
 //! Extracts structural nodes (functions, structs, enums, unions)
 //! and edges (@import calls, intra-file function calls) from a tree-sitter Zig parse tree.
@@ -65,12 +65,11 @@ fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source
         if node.kind == NodeKind::Function {
             // In tree-sitter-zig, function definitions appear as `FnProto` or
             // `Decl` nodes. We search for the function body node at the start line.
-            if let Some(ast_node) =
-                find_ast_node_at_line(root, node.start_line, "FnProto")
-                    .or_else(|| find_ast_node_at_line(root, node.start_line, "fn_decl"))
-                    .or_else(|| find_ast_node_at_line(root, node.start_line, "function_declaration"))
-                    .or_else(|| find_ast_node_at_line(root, node.start_line, "Decl"))
-                    .or_else(|| find_ast_node_at_line_fuzzy(root, node.start_line))
+            if let Some(ast_node) = find_ast_node_at_line(root, node.start_line, "FnProto")
+                .or_else(|| find_ast_node_at_line(root, node.start_line, "fn_decl"))
+                .or_else(|| find_ast_node_at_line(root, node.start_line, "function_declaration"))
+                .or_else(|| find_ast_node_at_line(root, node.start_line, "Decl"))
+                .or_else(|| find_ast_node_at_line_fuzzy(root, node.start_line))
             {
                 let c = complexity::compute_full_complexity(ast_node, source, "zig");
                 if let Some(attrs) = node.attributes.as_object_mut() {
@@ -168,11 +167,7 @@ fn collect_definitions(
 fn is_function_node(kind: &str) -> bool {
     matches!(
         kind,
-        "FnProto"
-            | "fn_decl"
-            | "function_declaration"
-            | "Decl"
-            | "TopLevelDecl"
+        "FnProto" | "fn_decl" | "function_declaration" | "Decl" | "TopLevelDecl"
     )
 }
 
@@ -506,7 +501,7 @@ fn extract_const_name_from_text(text: &str) -> String {
 }
 
 /// Get the right-hand side of a const declaration.
-fn get_const_rhs<'a>(text: &'a str, name: &str) -> String {
+fn get_const_rhs(text: &str, name: &str) -> String {
     // Find `Name = ` and return everything after the `=`
     if let Some(name_pos) = text.find(name) {
         let after_name = &text[name_pos + name.len()..];
@@ -534,7 +529,6 @@ fn is_union_rhs(rhs: &str) -> bool {
     rhs.starts_with("union") || rhs.starts_with("packed union") || rhs.starts_with("extern union")
 }
 
-
 // ─── Import Collection ──────────────────────────────────────────────────────
 
 /// Collect import edges from the AST.
@@ -544,12 +538,7 @@ fn is_union_rhs(rhs: &str) -> bool {
 /// - `const std = @import("std");`
 /// - `const mem = @import("std").mem;`
 /// - `const c = @cImport(@cInclude("header.h"));`
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     collect_imports_recursive(node, file, source, edges);
 }
 
@@ -564,10 +553,10 @@ fn collect_imports_recursive(
     // Check if this node's text contains @import
     if kind == "BUILTINIDENTIFIER" || kind == "builtin" || kind == "builtin_call_expr" {
         let text = node.utf8_text(source).unwrap_or("").trim().to_string();
-        if text.starts_with("@import") {
-            if let Some(target) = extract_import_target(&text) {
-                add_import_edge(file, &target, edges);
-            }
+        if text.starts_with("@import")
+            && let Some(target) = extract_import_target(&text)
+        {
+            add_import_edge(file, &target, edges);
         }
     }
 
@@ -640,9 +629,10 @@ fn extract_imports_from_text(text: &str, file: &str, edges: &mut Vec<Edge>) {
 
 /// Add an import edge, avoiding duplicates.
 fn add_import_edge(file: &str, target: &str, edges: &mut Vec<Edge>) {
-    if !edges.iter().any(|e| {
-        e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target
-    }) {
+    if !edges
+        .iter()
+        .any(|e| e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target)
+    {
         edges.push(Edge {
             id: None,
             source_fqn: file.to_string(),
@@ -695,11 +685,7 @@ fn collect_calls_recursive(
 fn is_call_node(kind: &str) -> bool {
     matches!(
         kind,
-        "call_expression"
-            | "function_call"
-            | "FnCallExpr"
-            | "SuffixExpr"
-            | "builtin_call_expr"
+        "call_expression" | "function_call" | "FnCallExpr" | "SuffixExpr" | "builtin_call_expr"
     )
 }
 
@@ -714,7 +700,8 @@ fn extract_call_edge(
     let text = node.utf8_text(source).unwrap_or("").trim().to_string();
 
     // Skip @import and other builtins that are handled as imports
-    if text.starts_with("@import") || text.starts_with("@cImport") || text.starts_with("@cInclude") {
+    if text.starts_with("@import") || text.starts_with("@cImport") || text.starts_with("@cInclude")
+    {
         return;
     }
 
@@ -769,17 +756,17 @@ fn extract_call_edge(
     }
 
     // Simple function call - try to resolve to a defined function
-    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == &call_name) {
-        if source_fqn != *target_fqn {
-            edges.push(Edge {
-                id: None,
-                source_fqn,
-                target_fqn: target_fqn.clone(),
-                kind: EdgeKind::Calls,
-                confidence: 1.0,
-                attributes: json!({}),
-            });
-        }
+    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == &call_name)
+        && source_fqn != *target_fqn
+    {
+        edges.push(Edge {
+            id: None,
+            source_fqn,
+            target_fqn: target_fqn.clone(),
+            kind: EdgeKind::Calls,
+            confidence: 1.0,
+            attributes: json!({}),
+        });
     }
 }
 
@@ -898,7 +885,6 @@ fn is_zig_keyword(name: &str) -> bool {
     )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,15 +918,24 @@ export fn exported_func() void {
         let result = parse_and_extract("src/main.zig", source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.zig::main" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::main" && n.kind == NodeKind::Function),
             "should extract pub fn main"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.zig::helper" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::helper" && n.kind == NodeKind::Function),
             "should extract fn helper"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.zig::exported_func" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::exported_func" && n.kind == NodeKind::Function),
             "should extract export fn exported_func"
         );
     }
@@ -971,20 +966,32 @@ const PackedData = packed struct {
         let result = parse_and_extract("src/types.zig", source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/types.zig::Point" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.zig::Point" && n.kind == NodeKind::Class),
             "should extract pub struct Point as Class"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/types.zig::InternalStruct" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.zig::InternalStruct" && n.kind == NodeKind::Class),
             "should extract InternalStruct as Class"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/types.zig::PackedData" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.zig::PackedData" && n.kind == NodeKind::Class),
             "should extract packed struct as Class"
         );
         // The distance function inside the struct should also be extracted
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/types.zig::distance" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.zig::distance" && n.kind == NodeKind::Function),
             "should extract method distance as Function"
         );
     }
@@ -1008,11 +1015,17 @@ pub const Color = enum(u8) {
         let result = parse_and_extract("src/enums.zig", source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/enums.zig::Direction" && n.kind == NodeKind::Enum),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/enums.zig::Direction" && n.kind == NodeKind::Enum),
             "should extract Direction as Enum"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/enums.zig::Color" && n.kind == NodeKind::Enum),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/enums.zig::Color" && n.kind == NodeKind::Enum),
             "should extract Color as Enum"
         );
     }
@@ -1034,11 +1047,17 @@ pub const TaggedUnion = union(enum) {
         let result = parse_and_extract("src/unions.zig", source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/unions.zig::Result" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/unions.zig::Result" && n.kind == NodeKind::Class),
             "should extract union Result as Class"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/unions.zig::TaggedUnion" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/unions.zig::TaggedUnion" && n.kind == NodeKind::Class),
             "should extract tagged union as Class"
         );
     }
@@ -1109,8 +1128,10 @@ pub fn main() !void {
 
         // main() calls process()
         assert!(
-            calls.iter().any(|e| e.source_fqn == "src/main.zig::main"
-                && e.target_fqn == "src/main.zig::process"),
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "src/main.zig::main"
+                    && e.target_fqn == "src/main.zig::process"),
             "main should call process; calls: {:?}",
             calls
         );
@@ -1198,18 +1219,48 @@ fn helper() void {
         assert!(imports.iter().any(|e| e.target_fqn == "std"));
 
         // Check struct
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/main.zig::Point" && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::Point" && n.kind == NodeKind::Class)
+        );
 
         // Check enum
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/main.zig::Direction" && n.kind == NodeKind::Enum));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::Direction" && n.kind == NodeKind::Enum)
+        );
 
         // Check union
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/main.zig::Value" && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::Value" && n.kind == NodeKind::Class)
+        );
 
         // Check functions
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/main.zig::main" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/main.zig::helper" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/main.zig::distance" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::main" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::helper" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::distance" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1224,8 +1275,18 @@ pub fn main() !void {
         #[allow(deprecated)]
         let result = extract_regex("src/main.zig", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/main.zig::main" && n.kind == NodeKind::Function));
-        assert!(result.edges.iter().any(|e| e.kind == EdgeKind::Imports && e.target_fqn == "std"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.zig::main" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::Imports && e.target_fqn == "std")
+        );
     }
 
     #[test]

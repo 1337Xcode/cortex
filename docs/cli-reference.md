@@ -3,7 +3,7 @@ title: "CLI Reference"
 description: "Complete reference for all Cortex CLI commands and options."
 order: 3
 category: "reference"
-lastModified: "2025-01-15"
+lastModified: "2025-07-14"
 ---
 
 # CLI reference
@@ -159,7 +159,7 @@ Shows files changed between branches, symbols in those files, and downstream bla
 
 ## cortex viz
 
-Interactive graph visualization.
+Interactive graph visualization. Serves a unified tabbed interface with Graph, Dashboard, and Explorer views.
 
 ```sh
 cortex viz --export graph.html
@@ -169,6 +169,11 @@ cortex viz --port 9749
 Options:
 - `--export <path>`: generate a standalone HTML file with embedded 3D graph
 - `--port`: port for the visualization server (default 9749)
+
+The web UI includes three tabs:
+- **Graph**: interactive 3D force-graph of the call graph
+- **Dashboard**: metrics overview with node counts, language distribution, and coverage summary
+- **Explorer**: symbol search and navigation with kind filtering
 
 ## cortex ci
 
@@ -348,14 +353,14 @@ Output includes:
 
 ## cortex coverage
 
-Cross-reference call graph with test coverage data.
+Cross-reference call graph with test coverage data. Populates a structured coverage field on each graph node.
 
 ```sh
 cortex coverage --lcov coverage.lcov
 cortex coverage --lcov lcov.info --limit 50
 ```
 
-Reads an LCOV coverage file and cross-references covered/uncovered lines with the call graph. Outputs a ranked list of untested functions sorted by how many other functions call them (highest-risk coverage gaps first).
+Reads an LCOV coverage file and cross-references covered/uncovered lines with the call graph. Each node gains a `coverage` field with `hit_count`, `line_coverage_pct`, and `is_covered`. Outputs a ranked list of untested functions sorted by how many other functions call them (highest-risk coverage gaps first).
 
 Options:
 - `--lcov`: path to LCOV coverage file (default: coverage.lcov)

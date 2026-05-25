@@ -1,4 +1,4 @@
-﻿//! CI command: structured output with exit codes for quality gates.
+//! CI command: structured output with exit codes for quality gates.
 //!
 //! `cortex ci --fail-on-taint --fail-on-owasp --fail-on-dead-code-above 15`
 //! runs analysis and exits non-zero if thresholds are exceeded.
@@ -76,13 +76,26 @@ pub fn run(
         println!("{}", serde_json::to_string_pretty(&json)?);
     } else {
         println!();
-        println!("CORTEX CI — {}", config.repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("project"));
+        println!(
+            "CORTEX CI: {}",
+            config
+                .repo_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project")
+        );
         println!("{}", "━".repeat(50));
         println!();
         println!("  Taint flows:       {}", result.taint_flows);
         println!("  OWASP patterns:    {}", result.owasp_findings);
-        println!("  Dead code:         {} / {} ({:.1}%)", result.dead_code_count, result.total_nodes, result.dead_code_pct);
-        println!("  Dependencies:      {} ({} known CVEs)", result.dependencies_total, result.dependency_vulns);
+        println!(
+            "  Dead code:         {} / {} ({:.1}%)",
+            result.dead_code_count, result.total_nodes, result.dead_code_pct
+        );
+        println!(
+            "  Dependencies:      {} ({} known CVEs)",
+            result.dependencies_total, result.dependency_vulns
+        );
         println!();
     }
 
@@ -98,18 +111,24 @@ pub fn run(
 
     if fail_on_owasp && result.owasp_findings > 0 {
         if format != "json" {
-            eprintln!("  FAIL: {} OWASP pattern(s) detected", result.owasp_findings);
+            eprintln!(
+                "  FAIL: {} OWASP pattern(s) detected",
+                result.owasp_findings
+            );
         }
         failed = true;
     }
 
-    if let Some(threshold) = fail_on_dead_code_above {
-        if result.dead_code_pct > threshold {
-            if format != "json" {
-                eprintln!("  FAIL: dead code {:.1}% exceeds threshold {:.1}%", result.dead_code_pct, threshold);
-            }
-            failed = true;
+    if let Some(threshold) = fail_on_dead_code_above
+        && result.dead_code_pct > threshold
+    {
+        if format != "json" {
+            eprintln!(
+                "  FAIL: dead code {:.1}% exceeds threshold {:.1}%",
+                result.dead_code_pct, threshold
+            );
         }
+        failed = true;
     }
 
     if format != "json" {

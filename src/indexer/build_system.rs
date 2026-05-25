@@ -76,8 +76,7 @@ fn detect_cargo(repo_root: &Path) -> Option<BuildSystemInfo> {
     // Check for [workspace] section
     if !content.contains("[workspace]") {
         // Single crate, not a workspace. Still report it as a single member.
-        let name = extract_cargo_package_name(&content)
-            .unwrap_or_else(|| "root".to_string());
+        let name = extract_cargo_package_name(&content).unwrap_or_else(|| "root".to_string());
         return Some(BuildSystemInfo {
             build_system: BuildSystem::Cargo,
             members: vec![WorkspaceMember {
@@ -92,50 +91,51 @@ fn detect_cargo(repo_root: &Path) -> Option<BuildSystemInfo> {
     let mut members = Vec::new();
 
     // Look for members = ["crate1", "crate2"] pattern
-    if let Some(members_start) = content.find("members") {
-        if let Some(bracket_start) = content[members_start..].find('[') {
-            let after_bracket = members_start + bracket_start + 1;
-            if let Some(bracket_end) = content[after_bracket..].find(']') {
-                let members_str = &content[after_bracket..after_bracket + bracket_end];
-                for member in members_str.split(',') {
-                    let member = member.trim().trim_matches('"').trim_matches('\'').trim();
-                    if member.is_empty() || member.contains('*') {
-                        // Handle glob patterns by scanning directories
-                        if member.contains('*') {
-                            let pattern_base = member.trim_end_matches("/*").trim_end_matches("\\*");
-                            let base_dir = repo_root.join(pattern_base);
-                            if base_dir.exists() {
-                                if let Ok(entries) = std::fs::read_dir(&base_dir) {
-                                    for entry in entries.flatten() {
-                                        if entry.path().join("Cargo.toml").exists() {
-                                            let name = entry.file_name().to_string_lossy().to_string();
-                                            let path = format!("{}/{}", pattern_base, name);
-                                            members.push(WorkspaceMember {
-                                                name,
-                                                path,
-                                                internal_deps: Vec::new(),
-                                            });
-                                        }
-                                    }
+    if let Some(members_start) = content.find("members")
+        && let Some(bracket_start) = content[members_start..].find('[')
+    {
+        let after_bracket = members_start + bracket_start + 1;
+        if let Some(bracket_end) = content[after_bracket..].find(']') {
+            let members_str = &content[after_bracket..after_bracket + bracket_end];
+            for member in members_str.split(',') {
+                let member = member.trim().trim_matches('"').trim_matches('\'').trim();
+                if member.is_empty() || member.contains('*') {
+                    // Handle glob patterns by scanning directories
+                    if member.contains('*') {
+                        let pattern_base = member.trim_end_matches("/*").trim_end_matches("\\*");
+                        let base_dir = repo_root.join(pattern_base);
+                        if base_dir.exists()
+                            && let Ok(entries) = std::fs::read_dir(&base_dir)
+                        {
+                            for entry in entries.flatten() {
+                                if entry.path().join("Cargo.toml").exists() {
+                                    let name = entry.file_name().to_string_lossy().to_string();
+                                    let path = format!("{}/{}", pattern_base, name);
+                                    members.push(WorkspaceMember {
+                                        name,
+                                        path,
+                                        internal_deps: Vec::new(),
+                                    });
                                 }
                             }
                         }
-                        continue;
                     }
-                    let member_path = repo_root.join(member);
-                    let name = if member_path.join("Cargo.toml").exists() {
-                        let member_toml = std::fs::read_to_string(member_path.join("Cargo.toml")).unwrap_or_default();
-                        extract_cargo_package_name(&member_toml)
-                            .unwrap_or_else(|| member.rsplit('/').next().unwrap_or(member).to_string())
-                    } else {
-                        member.rsplit('/').next().unwrap_or(member).to_string()
-                    };
-                    members.push(WorkspaceMember {
-                        name,
-                        path: member.to_string(),
-                        internal_deps: Vec::new(),
-                    });
+                    continue;
                 }
+                let member_path = repo_root.join(member);
+                let name = if member_path.join("Cargo.toml").exists() {
+                    let member_toml =
+                        std::fs::read_to_string(member_path.join("Cargo.toml")).unwrap_or_default();
+                    extract_cargo_package_name(&member_toml)
+                        .unwrap_or_else(|| member.rsplit('/').next().unwrap_or(member).to_string())
+                } else {
+                    member.rsplit('/').next().unwrap_or(member).to_string()
+                };
+                members.push(WorkspaceMember {
+                    name,
+                    path: member.to_string(),
+                    internal_deps: Vec::new(),
+                });
             }
         }
     }
@@ -151,7 +151,12 @@ fn extract_cargo_package_name(content: &str) -> Option<String> {
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("name") && trimmed.contains('=') {
-            let value = trimmed.split('=').nth(1)?.trim().trim_matches('"').trim_matches('\'');
+            let value = trimmed
+                .split('=')
+                .nth(1)?
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'');
             if !value.is_empty() {
                 return Some(value.to_string());
             }
@@ -192,18 +197,18 @@ fn detect_npm(repo_root: &Path) -> Option<BuildSystemInfo> {
             // Glob pattern: scan directories
             let base = pattern.trim_end_matches("/*").trim_end_matches("\\*");
             let base_dir = repo_root.join(base);
-            if base_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&base_dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().join("package.json").exists() {
-                            let name = entry.file_name().to_string_lossy().to_string();
-                            let path = format!("{}/{}", base, name);
-                            members.push(WorkspaceMember {
-                                name,
-                                path,
-                                internal_deps: Vec::new(),
-                            });
-                        }
+            if base_dir.exists()
+                && let Ok(entries) = std::fs::read_dir(&base_dir)
+            {
+                for entry in entries.flatten() {
+                    if entry.path().join("package.json").exists() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let path = format!("{}/{}", base, name);
+                        members.push(WorkspaceMember {
+                            name,
+                            path,
+                            internal_deps: Vec::new(),
+                        });
                     }
                 }
             }
@@ -252,7 +257,11 @@ fn detect_go(repo_root: &Path) -> Option<BuildSystemInfo> {
 
         if in_use_block && !trimmed.is_empty() && !trimmed.starts_with("//") {
             let module_path = trimmed.trim_start_matches("./");
-            let name = module_path.rsplit('/').next().unwrap_or(module_path).to_string();
+            let name = module_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(module_path)
+                .to_string();
             members.push(WorkspaceMember {
                 name,
                 path: module_path.to_string(),
@@ -260,8 +269,15 @@ fn detect_go(repo_root: &Path) -> Option<BuildSystemInfo> {
             });
         } else if trimmed.starts_with("use ") && !trimmed.contains('(') {
             // Single-line use directive
-            let module_path = trimmed.trim_start_matches("use ").trim().trim_start_matches("./");
-            let name = module_path.rsplit('/').next().unwrap_or(module_path).to_string();
+            let module_path = trimmed
+                .trim_start_matches("use ")
+                .trim()
+                .trim_start_matches("./");
+            let name = module_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(module_path)
+                .to_string();
             members.push(WorkspaceMember {
                 name,
                 path: module_path.to_string(),
@@ -296,9 +312,13 @@ fn detect_gradle(repo_root: &Path) -> Option<BuildSystemInfo> {
         let trimmed = line.trim();
         if trimmed.starts_with("include") {
             // Extract module names from include(':module1', ':module2') or include ":module1"
-            let after_include = trimmed.trim_start_matches("include").trim_start_matches('(').trim_end_matches(')');
+            let after_include = trimmed
+                .trim_start_matches("include")
+                .trim_start_matches('(')
+                .trim_end_matches(')');
             for part in after_include.split(',') {
-                let module = part.trim()
+                let module = part
+                    .trim()
                     .trim_matches('\'')
                     .trim_matches('"')
                     .trim_start_matches(':')
@@ -392,7 +412,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("Cargo.toml"),
             "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let info = detect(tmp.path());
         assert_eq!(info.build_system, BuildSystem::Cargo);
@@ -406,19 +427,22 @@ mod tests {
         std::fs::write(
             tmp.path().join("Cargo.toml"),
             "[workspace]\nmembers = [\"crate-a\", \"crate-b\"]\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Create member directories with Cargo.toml
         std::fs::create_dir_all(tmp.path().join("crate-a")).unwrap();
         std::fs::write(
             tmp.path().join("crate-a/Cargo.toml"),
             "[package]\nname = \"crate-a\"\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::create_dir_all(tmp.path().join("crate-b")).unwrap();
         std::fs::write(
             tmp.path().join("crate-b/Cargo.toml"),
             "[package]\nname = \"crate-b\"\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let info = detect(tmp.path());
         assert_eq!(info.build_system, BuildSystem::Cargo);
@@ -431,7 +455,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("package.json"),
             r#"{"name": "monorepo", "workspaces": ["packages/core", "packages/cli"]}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Create member directories
         std::fs::create_dir_all(tmp.path().join("packages/core")).unwrap();
@@ -450,7 +475,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("go.work"),
             "go 1.21\n\nuse (\n\t./cmd/server\n\t./pkg/auth\n)\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let info = detect(tmp.path());
         assert_eq!(info.build_system, BuildSystem::Go);
@@ -465,7 +491,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("settings.gradle"),
             "include ':app', ':core', ':data'\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let info = detect(tmp.path());
         assert_eq!(info.build_system, BuildSystem::Gradle);
@@ -490,7 +517,10 @@ mod tests {
     #[test]
     fn test_extract_cargo_package_name() {
         let content = "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\n";
-        assert_eq!(extract_cargo_package_name(content), Some("my-crate".to_string()));
+        assert_eq!(
+            extract_cargo_package_name(content),
+            Some("my-crate".to_string())
+        );
     }
 
     #[test]

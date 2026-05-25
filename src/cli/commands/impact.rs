@@ -1,4 +1,4 @@
-﻿//! Impact command: show what breaks if you change a function.
+//! Impact command: show what breaks if you change a function.
 //!
 //! `cortex impact UserService.getUser` prints every call chain that
 //! would be affected by a change to that function. Uses the existing
@@ -22,7 +22,10 @@ pub fn run(fqn: &str, depth: u32, store: &Arc<StoreManager>) -> Result<(), anyho
             let candidates = graph::find_nodes_by_pattern(&conn, &format!("*{}*", fqn), None, 5)?;
             if candidates.is_empty() {
                 eprintln!("Node not found: {}", fqn);
-                eprintln!("Try `cortex query find {}` to search for matching symbols.", fqn);
+                eprintln!(
+                    "Try `cortex query find {}` to search for matching symbols.",
+                    fqn
+                );
                 return Ok(());
             }
             eprintln!("Exact match not found. Did you mean:");
@@ -37,7 +40,7 @@ pub fn run(fqn: &str, depth: u32, store: &Arc<StoreManager>) -> Result<(), anyho
     let affected = graph::blast_radius(&conn, fqn, depth)?;
 
     println!();
-    println!("IMPACT ANALYSIS — {}", fqn);
+    println!("IMPACT ANALYSIS: {}", fqn);
     println!("{}", "━".repeat(50));
     println!();
     println!("  Location: {}:{}", node.file, node.start_line);
@@ -54,7 +57,8 @@ pub fn run(fqn: &str, depth: u32, store: &Arc<StoreManager>) -> Result<(), anyho
             by_file.entry(n.file.as_str()).or_default().push(n);
         }
 
-        println!("  {} function{} affected across {} file{}:",
+        println!(
+            "  {} function{} affected across {} file{}:",
             affected.len(),
             if affected.len() == 1 { "" } else { "s" },
             by_file.len(),

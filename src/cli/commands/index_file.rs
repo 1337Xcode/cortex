@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 
 use crate::indexer::languages;
 use crate::indexer::parser::{self, SupportedLanguage};
@@ -29,19 +29,14 @@ pub fn run(path: &Path, repo_root: &Path) -> Result<(), anyhow::Error> {
 
     // Compute repo-root-relative path for FQN construction.
     // Use the canonical paths to handle relative path resolution.
-    let abs_path = std::fs::canonicalize(path)
-        .unwrap_or_else(|_| path.to_path_buf());
-    let abs_repo_root = std::fs::canonicalize(repo_root)
-        .unwrap_or_else(|_| repo_root.to_path_buf());
+    let abs_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let abs_repo_root =
+        std::fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
 
-    let relative_path = abs_path
-        .strip_prefix(&abs_repo_root)
-        .unwrap_or(&abs_path);
+    let relative_path = abs_path.strip_prefix(&abs_repo_root).unwrap_or(&abs_path);
 
     // Normalize to forward slashes for consistent FQNs across platforms.
-    let relative_str = relative_path
-        .to_string_lossy()
-        .replace('\\', "/");
+    let relative_str = relative_path.to_string_lossy().replace('\\', "/");
 
     // Parse the file to get language and tree.
     // For regex-based languages, parser::parse() returns UnsupportedLanguage,
@@ -49,18 +44,26 @@ pub fn run(path: &Path, repo_root: &Path) -> Result<(), anyhow::Error> {
     let result = match parser::parse(path, &source) {
         Ok((language, tree)) => {
             match language {
-                SupportedLanguage::Python => languages::python::extract(&tree, &relative_str, &source),
+                SupportedLanguage::Python => {
+                    languages::python::extract(&tree, &relative_str, &source)
+                }
                 SupportedLanguage::TypeScript => {
                     languages::typescript::extract(&tree, &relative_str, &source)
                 }
-                SupportedLanguage::Tsx => languages::typescript::extract(&tree, &relative_str, &source),
+                SupportedLanguage::Tsx => {
+                    languages::typescript::extract(&tree, &relative_str, &source)
+                }
                 SupportedLanguage::JavaScript => {
                     languages::typescript::extract(&tree, &relative_str, &source)
                 }
                 SupportedLanguage::Go => languages::go::extract(&tree, &relative_str, &source),
-                SupportedLanguage::Rust => languages::rust_lang::extract(&tree, &relative_str, &source),
+                SupportedLanguage::Rust => {
+                    languages::rust_lang::extract(&tree, &relative_str, &source)
+                }
                 SupportedLanguage::Java => languages::java::extract(&tree, &relative_str, &source),
-                SupportedLanguage::CSharp => languages::csharp::extract(&tree, &relative_str, &source),
+                SupportedLanguage::CSharp => {
+                    languages::csharp::extract(&tree, &relative_str, &source)
+                }
                 SupportedLanguage::Cpp => languages::cpp::extract(&tree, &relative_str, &source),
                 SupportedLanguage::Ruby => languages::ruby::extract(&tree, &relative_str, &source),
                 SupportedLanguage::C => languages::c_lang::extract(&tree, &relative_str, &source),
@@ -91,10 +94,7 @@ fn dispatch_regex(
     source: &str,
     path: &Path,
 ) -> Result<crate::store::types::ExtractionResult, anyhow::Error> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     let result = match ext {
         #[allow(deprecated)]
@@ -105,18 +105,30 @@ fn dispatch_regex(
         "php" => languages::php::extract_php(file, source),
         "sql" => languages::sql::extract_sql(file, source),
         "kt" | "kts" => languages::kotlin::extract_regex(file, source),
+        #[allow(deprecated)]
         "dart" => languages::dart::extract_regex(file, source),
+        #[allow(deprecated)]
         "ex" | "exs" => languages::elixir::extract_regex(file, source),
+        #[allow(deprecated)]
         "hs" | "lhs" => languages::haskell::extract_regex(file, source),
+        #[allow(deprecated)]
         "lua" => languages::lua::extract_regex(file, source),
+        #[allow(deprecated)]
         "zig" => languages::zig::extract_regex(file, source),
+        #[allow(deprecated)]
         "sh" | "bash" | "zsh" => languages::bash::extract_regex(file, source),
         "pl" | "pm" => languages::perl::extract_regex(file, source),
+        #[allow(deprecated)]
         "r" | "R" => languages::r_lang::extract_regex(file, source),
+        #[allow(deprecated)]
         "m" => languages::objc::extract_regex(file, source),
+        #[allow(deprecated)]
         "ml" | "mli" => languages::ocaml::extract_regex(file, source),
+        #[allow(deprecated)]
         "jl" => languages::julia::extract_regex(file, source),
+        #[allow(deprecated)]
         "tf" | "hcl" => languages::terraform::extract_regex(file, source),
+        #[allow(deprecated)]
         "yml" | "yaml" => languages::yaml::extract_regex(file, source),
         _ => bail!("unsupported language for extension '.{}'", ext),
     };
@@ -238,7 +250,7 @@ class ValidClass:
         path: &Path,
         repo_root: &Path,
     ) -> Result<crate::store::types::ExtractionResult, anyhow::Error> {
-        use anyhow::{bail, Context as _};
+        use anyhow::{Context as _, bail};
 
         if !path.exists() {
             bail!("file not found: {}", path.display());
@@ -255,34 +267,32 @@ class ValidClass:
         let relative_str = relative_path.to_string_lossy().replace('\\', "/");
 
         let result = match parser::parse(path, &source) {
-            Ok((language, tree)) => {
-                match language {
-                    SupportedLanguage::Python => {
-                        languages::python::extract(&tree, &relative_str, &source)
-                    }
-                    SupportedLanguage::TypeScript => {
-                        languages::typescript::extract(&tree, &relative_str, &source)
-                    }
-                    SupportedLanguage::Tsx => {
-                        languages::typescript::extract(&tree, &relative_str, &source)
-                    }
-                    SupportedLanguage::JavaScript => {
-                        languages::typescript::extract(&tree, &relative_str, &source)
-                    }
-                    SupportedLanguage::Go => languages::go::extract(&tree, &relative_str, &source),
-                    SupportedLanguage::Rust => {
-                        languages::rust_lang::extract(&tree, &relative_str, &source)
-                    }
-                    SupportedLanguage::Java => languages::java::extract(&tree, &relative_str, &source),
-                    SupportedLanguage::CSharp => {
-                        languages::csharp::extract(&tree, &relative_str, &source)
-                    }
-                    SupportedLanguage::Cpp => languages::cpp::extract(&tree, &relative_str, &source),
-                    SupportedLanguage::Ruby => languages::ruby::extract(&tree, &relative_str, &source),
-                    SupportedLanguage::C => languages::c_lang::extract(&tree, &relative_str, &source),
-                    _ => dispatch_regex(&relative_str, &source, path)?,
+            Ok((language, tree)) => match language {
+                SupportedLanguage::Python => {
+                    languages::python::extract(&tree, &relative_str, &source)
                 }
-            }
+                SupportedLanguage::TypeScript => {
+                    languages::typescript::extract(&tree, &relative_str, &source)
+                }
+                SupportedLanguage::Tsx => {
+                    languages::typescript::extract(&tree, &relative_str, &source)
+                }
+                SupportedLanguage::JavaScript => {
+                    languages::typescript::extract(&tree, &relative_str, &source)
+                }
+                SupportedLanguage::Go => languages::go::extract(&tree, &relative_str, &source),
+                SupportedLanguage::Rust => {
+                    languages::rust_lang::extract(&tree, &relative_str, &source)
+                }
+                SupportedLanguage::Java => languages::java::extract(&tree, &relative_str, &source),
+                SupportedLanguage::CSharp => {
+                    languages::csharp::extract(&tree, &relative_str, &source)
+                }
+                SupportedLanguage::Cpp => languages::cpp::extract(&tree, &relative_str, &source),
+                SupportedLanguage::Ruby => languages::ruby::extract(&tree, &relative_str, &source),
+                SupportedLanguage::C => languages::c_lang::extract(&tree, &relative_str, &source),
+                _ => dispatch_regex(&relative_str, &source, path)?,
+            },
             Err(crate::error::ParseError::UnsupportedLanguage { .. }) => {
                 dispatch_regex(&relative_str, &source, path)?
             }

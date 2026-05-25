@@ -68,23 +68,24 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
 /// Compute cyclomatic complexity for all Function nodes.
 fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source: &[u8]) {
     for node in nodes.iter_mut() {
-        if node.kind == NodeKind::Function {
-            if let Some(ast_node) =
+        if node.kind == NodeKind::Function
+            && let Some(ast_node) =
                 find_ast_node_at_line(root, node.start_line, "function_declaration")
                     .or_else(|| {
                         find_ast_node_at_line(root, node.start_line, "local_function_declaration")
                     })
                     .or_else(|| {
-                        find_ast_node_at_line(root, node.start_line, "function_definition_statement")
+                        find_ast_node_at_line(
+                            root,
+                            node.start_line,
+                            "function_definition_statement",
+                        )
                     })
-                    .or_else(|| {
-                        find_ast_node_at_line(root, node.start_line, "function_statement")
-                    })
-            {
-                let c = complexity::compute_full_complexity(ast_node, source, "lua");
-                if let Some(attrs) = node.attributes.as_object_mut() {
-                    attrs.insert("complexity".to_string(), serde_json::json!(c));
-                }
+                    .or_else(|| find_ast_node_at_line(root, node.start_line, "function_statement"))
+        {
+            let c = complexity::compute_full_complexity(ast_node, source, "lua");
+            if let Some(attrs) = node.attributes.as_object_mut() {
+                attrs.insert("complexity".to_string(), serde_json::json!(c));
             }
         }
     }
@@ -184,7 +185,7 @@ fn extract_function(
 
     // Check if this is a method on a table (e.g., `function MyClass:method(...)` or `function MyClass.method(...)`)
     if name.contains(':') || name.contains('.') {
-        let parts: Vec<&str> = name.splitn(2, |c| c == ':' || c == '.').collect();
+        let parts: Vec<&str> = name.splitn(2, [':', '.']).collect();
         if parts.len() == 2 {
             let table_name = parts[0];
             let method_name = parts[1];
@@ -234,10 +235,9 @@ fn extract_function(
             if let Some(class_node) = nodes
                 .iter_mut()
                 .find(|n| n.fqn == format!("{file}::{table_name}") && n.kind == NodeKind::Class)
+                && end_line > class_node.end_line
             {
-                if end_line > class_node.end_line {
-                    class_node.end_line = end_line;
-                }
+                class_node.end_line = end_line;
             }
 
             return;
@@ -324,7 +324,7 @@ fn extract_table_or_local_assignment(
         let start_line = node.start_position().row as u32 + 1;
         let end_line = node.end_position().row as u32 + 1;
 
-        if is_table && name.chars().next().map_or(false, |c| c.is_uppercase()) {
+        if is_table && name.chars().next().is_some_and(|c| c.is_uppercase()) {
             // Table-as-class pattern
             let fqn = format!("{file}::{name}");
             if !nodes.iter().any(|n| n.fqn == fqn) {
@@ -384,7 +384,7 @@ fn extract_assignment(
     if let Some((name, rhs_is_table, rhs_is_func)) = parse_assignment_statement(node, source) {
         if name.contains('.') || name.contains(':') {
             // Method assignment: `Table.method = function(...) ... end`
-            let parts: Vec<&str> = name.splitn(2, |c| c == '.' || c == ':').collect();
+            let parts: Vec<&str> = name.splitn(2, ['.', ':']).collect();
             if parts.len() == 2 && rhs_is_func {
                 let table_name = parts[0];
                 let method_name = parts[1];
@@ -425,15 +425,15 @@ fn extract_assignment(
                 }
 
                 // Update class end_line
-                if let Some(class_node) = nodes.iter_mut().find(|n| {
-                    n.fqn == format!("{file}::{table_name}") && n.kind == NodeKind::Class
-                }) {
-                    if end_line > class_node.end_line {
-                        class_node.end_line = end_line;
-                    }
+                if let Some(class_node) = nodes
+                    .iter_mut()
+                    .find(|n| n.fqn == format!("{file}::{table_name}") && n.kind == NodeKind::Class)
+                    && end_line > class_node.end_line
+                {
+                    class_node.end_line = end_line;
                 }
             }
-        } else if rhs_is_table && name.chars().next().map_or(false, |c| c.is_uppercase()) {
+        } else if rhs_is_table && name.chars().next().is_some_and(|c| c.is_uppercase()) {
             // Global table-as-class: `ClassName = {}`
             let fqn = format!("{file}::{name}");
             if !nodes.iter().any(|n| n.fqn == fqn) {
@@ -461,12 +461,7 @@ fn extract_assignment(
 /// - `require 'module'`
 /// - `local x = require("module")`
 /// - `local x = require 'module'`
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -483,7 +478,9 @@ fn collect_imports(
                     });
                 }
             }
-            "variable_declaration" | "local_variable_declaration" | "assignment_statement"
+            "variable_declaration"
+            | "local_variable_declaration"
+            | "assignment_statement"
             | "assignment" => {
                 // Check for `local x = require("module")` patterns
                 collect_require_from_declaration(child, file, source, edges);
@@ -535,9 +532,7 @@ fn collect_require_from_declaration(
         if let Some(target) = extract_string_from_text(&format!("require{after_require}")) {
             // Avoid duplicate imports
             if !edges.iter().any(|e| {
-                e.kind == EdgeKind::Imports
-                    && e.source_fqn == file
-                    && e.target_fqn == target
+                e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target
             }) {
                 edges.push(Edge {
                     id: None,
@@ -573,15 +568,15 @@ fn extract_string_from_text(text: &str) -> Option<String> {
     let content = content.trim();
 
     // Extract the string value
-    if content.starts_with('"') {
-        let end = content[1..].find('"')?;
-        let value = &content[1..1 + end];
+    if let Some(stripped) = content.strip_prefix('"') {
+        let end = stripped.find('"')?;
+        let value = &stripped[..end];
         if !value.is_empty() {
             return Some(value.to_string());
         }
-    } else if content.starts_with('\'') {
-        let end = content[1..].find('\'')?;
-        let value = &content[1..1 + end];
+    } else if let Some(stripped) = content.strip_prefix('\'') {
+        let end = stripped.find('\'')?;
+        let value = &stripped[..end];
         if !value.is_empty() {
             return Some(value.to_string());
         }
@@ -643,15 +638,13 @@ fn extract_call_edge(
 
     // Check for method calls (e.g., `obj:method()` or `obj.method()`)
     if call_name.contains(':') || call_name.contains('.') {
-        let parts: Vec<&str> = call_name.splitn(2, |c| c == ':' || c == '.').collect();
+        let parts: Vec<&str> = call_name.splitn(2, [':', '.']).collect();
         if parts.len() == 2 {
             let receiver = parts[0];
             let method = parts[1];
 
             // Try to resolve to a defined method
-            if let Some((_, target_fqn)) = defined_fqns
-                .iter()
-                .find(|(simple, _)| simple == method)
+            if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == method)
             {
                 if source_fqn != *target_fqn {
                     edges.push(Edge {
@@ -679,17 +672,17 @@ fn extract_call_edge(
     }
 
     // Simple function call - try to resolve to a defined function
-    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == &call_name) {
-        if source_fqn != *target_fqn {
-            edges.push(Edge {
-                id: None,
-                source_fqn,
-                target_fqn: target_fqn.clone(),
-                kind: EdgeKind::Calls,
-                confidence: 1.0,
-                attributes: json!({}),
-            });
-        }
+    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == &call_name)
+        && source_fqn != *target_fqn
+    {
+        edges.push(Edge {
+            id: None,
+            source_fqn,
+            target_fqn: target_fqn.clone(),
+            kind: EdgeKind::Calls,
+            confidence: 1.0,
+            attributes: json!({}),
+        });
     }
 }
 
@@ -773,10 +766,7 @@ fn get_local_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
 
 /// Parse a local variable declaration to determine if it's a table or function assignment.
 /// Returns (name, is_table, is_function).
-fn parse_local_assignment(
-    node: tree_sitter::Node,
-    source: &[u8],
-) -> Option<(String, bool, bool)> {
+fn parse_local_assignment(node: tree_sitter::Node, source: &[u8]) -> Option<(String, bool, bool)> {
     let text = node.utf8_text(source).unwrap_or("").trim().to_string();
 
     // Pattern: `local Name = {...}` or `local name = function(...) ... end`
@@ -898,8 +888,17 @@ fn get_call_target_name(node: tree_sitter::Node, source: &[u8]) -> String {
     // Don't return keywords
     if matches!(
         name.as_str(),
-        "if" | "for" | "while" | "repeat" | "return" | "local" | "function" | "end" | "do"
-            | "then" | "else" | "elseif"
+        "if" | "for"
+            | "while"
+            | "repeat"
+            | "return"
+            | "local"
+            | "function"
+            | "end"
+            | "do"
+            | "then"
+            | "else"
+            | "elseif"
     ) {
         return String::new();
     }
@@ -921,8 +920,7 @@ fn find_enclosing_function_fqn(
                 if !name.is_empty() {
                     // Handle dotted/colon names
                     if name.contains(':') || name.contains('.') {
-                        let parts: Vec<&str> =
-                            name.splitn(2, |c| c == ':' || c == '.').collect();
+                        let parts: Vec<&str> = name.splitn(2, [':', '.']).collect();
                         if parts.len() == 2 {
                             return Some(format!("{file}::{}::{}", parts[0], parts[1]));
                         }
@@ -942,7 +940,6 @@ fn find_enclosing_function_fqn(
     }
     None
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -972,13 +969,17 @@ end
         let result = parse_lua(source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.lua::greet"
-                && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::greet" && n.kind == NodeKind::Function),
             "Should find greet function"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.lua::calculate"
-                && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::calculate" && n.kind == NodeKind::Function),
             "Should find calculate function"
         );
     }
@@ -997,9 +998,12 @@ end
         let result = parse_lua(source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.lua::validate"
-                && n.kind == NodeKind::Function
-                && n.attributes.get("local") == Some(&json!(true))),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::validate"
+                    && n.kind == NodeKind::Function
+                    && n.attributes.get("local") == Some(&json!(true))),
             "Should find local validate function"
         );
         assert!(
@@ -1033,25 +1037,34 @@ end
 
         // Should find the class node
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.lua::MyClass"
-                && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::MyClass" && n.kind == NodeKind::Class),
             "Should find MyClass as a class node"
         );
 
         // Should find methods
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.lua::MyClass::new"
-                && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::MyClass::new" && n.kind == NodeKind::Function),
             "Should find MyClass:new method"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.lua::MyClass::getName"
-                && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::MyClass::getName" && n.kind == NodeKind::Function),
             "Should find MyClass:getName method"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.lua::MyClass::staticMethod"
-                && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::MyClass::staticMethod"
+                    && n.kind == NodeKind::Function),
             "Should find MyClass.staticMethod"
         );
     }
@@ -1120,8 +1133,10 @@ end
 
         // main calls process
         assert!(
-            calls.iter().any(|e| e.source_fqn == "src/main.lua::main"
-                && e.target_fqn == "src/main.lua::process"),
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "src/main.lua::main"
+                    && e.target_fqn == "src/main.lua::process"),
             "main should call process"
         );
 
@@ -1207,20 +1222,24 @@ end
         assert!(imports.iter().any(|e| e.target_fqn == "utils.helpers"));
 
         // Check local function
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/main.lua::validate" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::validate" && n.kind == NodeKind::Function)
+        );
 
         // Check global functions - MyModule.process creates a class + method
         assert!(result
             .nodes
             .iter()
             .any(|n| n.fqn == "src/main.lua::MyModule::process" && n.kind == NodeKind::Function));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/main.lua::greet" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::greet" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1240,15 +1259,19 @@ end
 
         // Should find Handler as a class
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.lua::Handler"
-                && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::Handler" && n.kind == NodeKind::Class),
             "Should find Handler as a class"
         );
 
         // Should find methods
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "src/main.lua::Handler::process"
-                && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/main.lua::Handler::process" && n.kind == NodeKind::Function),
             "Should find Handler.process method"
         );
         assert!(

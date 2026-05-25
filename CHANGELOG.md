@@ -2,6 +2,32 @@
 
 All notable changes to Cortex are documented here.
 
+## [1.0.2] - 2026-05-25
+
+### Added
+- Configurable model pricing via `~/.cortex/pricing.toml` with longest-prefix matching
+- Ego-graph node cap at 500 with priority ordering (depth ASC, caller_count DESC)
+- Coverage field on graph nodes populated from LCOV data
+- Agent steering improvements: module boundaries, complexity hotspots, active ADRs
+- Unified tabbed UI (Graph, Dashboard, Explorer) served at visualizer root
+- `GET /api/metrics` and `GET /api/symbols` endpoints for the visualizer
+- Port documentation in `docs/ports.md`
+- Property-based tests for version comparison, pricing, ego-graph, coverage, NodeKind, steering, install, and release notes
+- Update notification on startup when newer version available
+
+### Changed
+- CI pipeline now fails on clippy warnings and formatting violations
+- Release workflow publishes to npm automatically after GitHub Release
+- npm installer supports single-command install and update via `npx @1337xcode/cortex install`
+- IDE install hardened with config validation, directory creation, and permission error reporting
+- Method vs Function NodeKind correctly assigned across Python, TypeScript, Rust, Go, Java
+- Steering generation enforces 2000-token budget
+
+### Removed
+- Obsolete files (site/_patch_mcp.py)
+- `continue-on-error: true` from CI clippy and fmt steps
+- Stale copy style inconsistencies across source and documentation
+
 ## [1.0.1] - 2026-05-19
 
 ### Added
@@ -44,7 +70,6 @@ All notable changes to Cortex are documented here.
 
 ### Changed
 - npm package version aligned with changelog (0.0.30)
-- All em dashes removed from documentation and code comments
 - Site URL set to `1337xcode.github.io/cortex`
 - Comparison table updated with accurate data from each project's docs
 

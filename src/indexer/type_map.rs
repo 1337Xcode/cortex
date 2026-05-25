@@ -37,7 +37,8 @@ impl LocalTypeMap {
     /// * `variable_name` - The variable name being typed
     /// * `type_name` - The inferred or annotated type name
     pub fn insert(&mut self, function_fqn: String, variable_name: String, type_name: String) {
-        self.bindings.insert((function_fqn, variable_name), type_name);
+        self.bindings
+            .insert((function_fqn, variable_name), type_name);
     }
 
     /// Looks up the type of a variable within a function scope.
@@ -122,7 +123,11 @@ fn extract_let_type_annotation(line: &str) -> Option<(String, String)> {
 
     // Find the colon for type annotation
     let colon_pos = rest.find(':')?;
-    let var_name = rest[..colon_pos].trim().trim_end_matches("mut ").trim().to_string();
+    let var_name = rest[..colon_pos]
+        .trim()
+        .trim_end_matches("mut ")
+        .trim()
+        .to_string();
     let after_colon = rest[colon_pos + 1..].trim();
 
     // Extract the type name (up to `=`, `;`, `<`, or whitespace)
@@ -131,7 +136,10 @@ fn extract_let_type_annotation(line: &str) -> Option<(String, String)> {
         .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect();
 
-    if var_name.is_empty() || type_name.is_empty() || !type_name.chars().next().map_or(false, |c| c.is_uppercase()) {
+    if var_name.is_empty()
+        || type_name.is_empty()
+        || !type_name.chars().next().is_some_and(|c| c.is_uppercase())
+    {
         return None;
     }
 
@@ -165,7 +173,7 @@ fn extract_constructor_assignment(line: &str) -> Option<(String, String)> {
     }
 
     // Type names start with uppercase (heuristic to avoid false positives)
-    if !type_name.chars().next().map_or(false, |c| c.is_uppercase()) {
+    if !type_name.chars().next().is_some_and(|c| c.is_uppercase()) {
         return None;
     }
 
@@ -233,7 +241,7 @@ fn extract_go_var_declaration(line: &str) -> Option<(String, String)> {
     }
 
     // Type name should start with uppercase
-    if !type_name.chars().next().map_or(false, |c| c.is_uppercase()) {
+    if !type_name.chars().next().is_some_and(|c| c.is_uppercase()) {
         return None;
     }
 
@@ -322,17 +330,34 @@ mod tests {
         map.insert(fqn.clone(), "res".to_string(), "Response".to_string());
         map.insert(fqn.clone(), "db".to_string(), "Database".to_string());
 
-        assert_eq!(map.get_type("src/app.rs::handle_request", "req"), Some("Request"));
-        assert_eq!(map.get_type("src/app.rs::handle_request", "res"), Some("Response"));
-        assert_eq!(map.get_type("src/app.rs::handle_request", "db"), Some("Database"));
+        assert_eq!(
+            map.get_type("src/app.rs::handle_request", "req"),
+            Some("Request")
+        );
+        assert_eq!(
+            map.get_type("src/app.rs::handle_request", "res"),
+            Some("Response")
+        );
+        assert_eq!(
+            map.get_type("src/app.rs::handle_request", "db"),
+            Some("Database")
+        );
     }
 
     #[test]
     fn same_variable_name_different_functions() {
         let mut map = LocalTypeMap::new();
 
-        map.insert("src/a.rs::foo".to_string(), "x".to_string(), "TypeA".to_string());
-        map.insert("src/b.rs::bar".to_string(), "x".to_string(), "TypeB".to_string());
+        map.insert(
+            "src/a.rs::foo".to_string(),
+            "x".to_string(),
+            "TypeA".to_string(),
+        );
+        map.insert(
+            "src/b.rs::bar".to_string(),
+            "x".to_string(),
+            "TypeB".to_string(),
+        );
 
         assert_eq!(map.get_type("src/a.rs::foo", "x"), Some("TypeA"));
         assert_eq!(map.get_type("src/b.rs::bar", "x"), Some("TypeB"));

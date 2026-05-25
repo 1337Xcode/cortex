@@ -286,35 +286,83 @@ mod tests {
         let mut parser = tree_sitter::Parser::new();
 
         // Original 11 languages
-        parser.set_language(&python()).expect("Python grammar should load");
-        parser.set_language(&typescript()).expect("TypeScript grammar should load");
-        parser.set_language(&tsx()).expect("TSX grammar should load");
-        parser.set_language(&javascript()).expect("JavaScript grammar should load");
+        parser
+            .set_language(&python())
+            .expect("Python grammar should load");
+        parser
+            .set_language(&typescript())
+            .expect("TypeScript grammar should load");
+        parser
+            .set_language(&tsx())
+            .expect("TSX grammar should load");
+        parser
+            .set_language(&javascript())
+            .expect("JavaScript grammar should load");
         parser.set_language(&go()).expect("Go grammar should load");
-        parser.set_language(&rust()).expect("Rust grammar should load");
-        parser.set_language(&java()).expect("Java grammar should load");
-        parser.set_language(&csharp()).expect("C# grammar should load");
-        parser.set_language(&cpp()).expect("C++ grammar should load");
-        parser.set_language(&ruby()).expect("Ruby grammar should load");
+        parser
+            .set_language(&rust())
+            .expect("Rust grammar should load");
+        parser
+            .set_language(&java())
+            .expect("Java grammar should load");
+        parser
+            .set_language(&csharp())
+            .expect("C# grammar should load");
+        parser
+            .set_language(&cpp())
+            .expect("C++ grammar should load");
+        parser
+            .set_language(&ruby())
+            .expect("Ruby grammar should load");
         parser.set_language(&c()).expect("C grammar should load");
 
         // 15 new languages
-        parser.set_language(&php()).expect("PHP grammar should load");
-        parser.set_language(&scala()).expect("Scala grammar should load");
-        parser.set_language(&swift()).expect("Swift grammar should load");
-        parser.set_language(&dart()).expect("Dart grammar should load");
-        parser.set_language(&elixir()).expect("Elixir grammar should load");
-        parser.set_language(&haskell()).expect("Haskell grammar should load");
-        parser.set_language(&lua()).expect("Lua grammar should load");
-        parser.set_language(&zig()).expect("Zig grammar should load");
-        parser.set_language(&bash()).expect("Bash grammar should load");
+        parser
+            .set_language(&php())
+            .expect("PHP grammar should load");
+        parser
+            .set_language(&scala())
+            .expect("Scala grammar should load");
+        parser
+            .set_language(&swift())
+            .expect("Swift grammar should load");
+        parser
+            .set_language(&dart())
+            .expect("Dart grammar should load");
+        parser
+            .set_language(&elixir())
+            .expect("Elixir grammar should load");
+        parser
+            .set_language(&haskell())
+            .expect("Haskell grammar should load");
+        parser
+            .set_language(&lua())
+            .expect("Lua grammar should load");
+        parser
+            .set_language(&zig())
+            .expect("Zig grammar should load");
+        parser
+            .set_language(&bash())
+            .expect("Bash grammar should load");
         parser.set_language(&r()).expect("R grammar should load");
-        parser.set_language(&objc()).expect("Objective-C grammar should load");
-        parser.set_language(&ocaml()).expect("OCaml grammar should load");
-        parser.set_language(&ocaml_interface()).expect("OCaml interface grammar should load");
-        parser.set_language(&julia()).expect("Julia grammar should load");
-        parser.set_language(&hcl()).expect("HCL grammar should load");
-        parser.set_language(&yaml()).expect("YAML grammar should load");
+        parser
+            .set_language(&objc())
+            .expect("Objective-C grammar should load");
+        parser
+            .set_language(&ocaml())
+            .expect("OCaml grammar should load");
+        parser
+            .set_language(&ocaml_interface())
+            .expect("OCaml interface grammar should load");
+        parser
+            .set_language(&julia())
+            .expect("Julia grammar should load");
+        parser
+            .set_language(&hcl())
+            .expect("HCL grammar should load");
+        parser
+            .set_language(&yaml())
+            .expect("YAML grammar should load");
     }
 
     #[test]
@@ -477,9 +525,7 @@ mod tests {
     fn test_go_parses_code() {
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&go()).unwrap();
-        let tree = parser
-            .parse("package main\nfunc main() {}", None)
-            .unwrap();
+        let tree = parser.parse("package main\nfunc main() {}", None).unwrap();
         let root = tree.root_node();
         assert_eq!(root.kind(), "source_file");
         assert!(root.child_count() > 0);

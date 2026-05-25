@@ -1,4 +1,4 @@
-﻿//! Kotlin language extractor (regex-based).
+//! Kotlin language extractor (regex-based).
 //!
 //! Extracts functions, classes, data classes, interfaces, enums, sealed classes,
 //! companion objects, extension functions, constants, and imports from Kotlin
@@ -15,7 +15,12 @@ use crate::store::types::{Edge, EdgeKind, ExtractionResult, Node, NodeKind};
 /// Estimate the end line of a block starting at `start_byte` in `source` by
 /// counting brace depth.  Returns the 1-based line number of the closing `}`.
 /// Falls back to `start_line + fallback_offset` when no matching brace is found.
-fn estimate_end_line(source: &str, start_byte: usize, start_line: u32, fallback_offset: u32) -> u32 {
+fn estimate_end_line(
+    source: &str,
+    start_byte: usize,
+    start_line: u32,
+    fallback_offset: u32,
+) -> u32 {
     let slice = &source[start_byte..];
     let mut depth: i32 = 0;
     let mut found_open = false;
@@ -53,9 +58,7 @@ fn estimate_complexity(source: &str, start_byte: usize, end_byte: usize) -> u32 
     let mut complexity: u32 = 1; // base
 
     // Count decision keywords (word-boundary aware)
-    let decision_re = regex::Regex::new(
-        r"\b(if|else\s+if|when|while|for|catch)\b"
-    ).unwrap();
+    let decision_re = regex::Regex::new(r"\b(if|else\s+if|when|while|for|catch)\b").unwrap();
     complexity += decision_re.find_iter(body).count() as u32;
 
     // Count logical operators
@@ -74,9 +77,9 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     // 1. Enum classes: enum class Name { ... }
     //    Must be matched BEFORE the generic class pattern to avoid double-emit.
     // -----------------------------------------------------------------------
-    let enum_re = Regex::new(
-        r"(?m)^\s*(?:(?:public|private|internal|protected)\s+)*enum\s+class\s+(\w+)"
-    ).unwrap();
+    let enum_re =
+        Regex::new(r"(?m)^\s*(?:(?:public|private|internal|protected)\s+)*enum\s+class\s+(\w+)")
+            .unwrap();
     for caps in enum_re.captures_iter(source) {
         let name = caps.get(1).unwrap().as_str();
         let match_start = caps.get(0).unwrap().start();
@@ -121,8 +124,9 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     // 3. Data classes: data class Name(...)
     // -----------------------------------------------------------------------
     let data_class_re = Regex::new(
-        r"(?m)^\s*(?:(?:public|private|internal|protected|open|abstract)\s+)*data\s+class\s+(\w+)"
-    ).unwrap();
+        r"(?m)^\s*(?:(?:public|private|internal|protected|open|abstract)\s+)*data\s+class\s+(\w+)",
+    )
+    .unwrap();
     for caps in data_class_re.captures_iter(source) {
         let name = caps.get(1).unwrap().as_str();
         let match_start = caps.get(0).unwrap().start();
@@ -144,8 +148,9 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     // 4. Regular classes (skip enum/sealed/data already handled above)
     // -----------------------------------------------------------------------
     let class_re = Regex::new(
-        r"(?m)^\s*(?:(?:public|private|internal|protected|open|abstract)\s+)*class\s+(\w+)"
-    ).unwrap();
+        r"(?m)^\s*(?:(?:public|private|internal|protected|open|abstract)\s+)*class\s+(\w+)",
+    )
+    .unwrap();
     for caps in class_re.captures_iter(source) {
         let full_match = caps.get(0).unwrap().as_str();
         // Skip variants already handled
@@ -176,8 +181,9 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     //    emit plain Interface for non-sealed ones)
     // -----------------------------------------------------------------------
     let iface_re = Regex::new(
-        r"(?m)^\s*(?:(?:public|private|internal|protected|functional)\s+)*interface\s+(\w+)"
-    ).unwrap();
+        r"(?m)^\s*(?:(?:public|private|internal|protected|functional)\s+)*interface\s+(\w+)",
+    )
+    .unwrap();
     for caps in iface_re.captures_iter(source) {
         // Skip sealed interfaces (already emitted as Class with sealed=true)
         let prefix_start = caps.get(0).unwrap().start();
@@ -203,9 +209,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     // -----------------------------------------------------------------------
     // 6. Companion objects: companion object [Name] { ... }
     // -----------------------------------------------------------------------
-    let companion_re = Regex::new(
-        r"(?m)^\s*companion\s+object(?:\s+(\w+))?"
-    ).unwrap();
+    let companion_re = Regex::new(r"(?m)^\s*companion\s+object(?:\s+(\w+))?").unwrap();
     for caps in companion_re.captures_iter(source) {
         let name = caps.get(1).map(|m| m.as_str()).unwrap_or("Companion");
         let match_start = caps.get(0).unwrap().start();
@@ -242,7 +246,11 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
         let match_start = caps.get(0).unwrap().start();
         let line = source[..match_start].matches('\n').count() as u32 + 1;
         let end_line = estimate_end_line(source, match_start, line, 5);
-        let end_byte = source.lines().take(end_line as usize).map(|l| l.len() + 1).sum::<usize>();
+        let end_byte = source
+            .lines()
+            .take(end_line as usize)
+            .map(|l| l.len() + 1)
+            .sum::<usize>();
         let complexity = estimate_complexity(source, match_start, end_byte);
         nodes.push(Node {
             fqn: format!("{}::{}", file, name),
@@ -276,7 +284,11 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
 
         let line = source[..match_start].matches('\n').count() as u32 + 1;
         let end_line = estimate_end_line(source, match_start, line, 5);
-        let end_byte = source.lines().take(end_line as usize).map(|l| l.len() + 1).sum::<usize>();
+        let end_byte = source
+            .lines()
+            .take(end_line as usize)
+            .map(|l| l.len() + 1)
+            .sum::<usize>();
         let complexity = estimate_complexity(source, match_start, end_byte);
         nodes.push(Node {
             fqn: format!("{}::{}", file, name),
@@ -295,9 +307,9 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     //    a) const val NAME = ...  (any name)
     //    b) val NAME = ...        (top-level, uppercase name signals a constant)
     // -----------------------------------------------------------------------
-    let const_val_re = Regex::new(
-        r"(?m)^\s*(?:(?:public|private|internal|protected)\s+)*const\s+val\s+(\w+)"
-    ).unwrap();
+    let const_val_re =
+        Regex::new(r"(?m)^\s*(?:(?:public|private|internal|protected)\s+)*const\s+val\s+(\w+)")
+            .unwrap();
     for caps in const_val_re.captures_iter(source) {
         let name = caps.get(1).unwrap().as_str();
         let match_start = caps.get(0).unwrap().start();
@@ -316,8 +328,9 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
 
     // Top-level val with SCREAMING_SNAKE_CASE name (heuristic for constants)
     let uppercase_val_re = Regex::new(
-        r"(?m)^(?:(?:public|private|internal|protected)\s+)*val\s+([A-Z][A-Z0-9_]+)\s*[=:]"
-    ).unwrap();
+        r"(?m)^(?:(?:public|private|internal|protected)\s+)*val\s+([A-Z][A-Z0-9_]+)\s*[=:]",
+    )
+    .unwrap();
     for caps in uppercase_val_re.captures_iter(source) {
         let name = caps.get(1).unwrap().as_str();
         let match_start = caps.get(0).unwrap().start();
@@ -356,13 +369,48 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     let call_re = Regex::new(r"(?m)\b([a-zA-Z_]\w*)\s*\(").unwrap();
     // Keywords to exclude from call detection
     let kotlin_keywords: std::collections::HashSet<&str> = [
-        "if", "else", "when", "while", "for", "do", "return", "throw",
-        "try", "catch", "finally", "class", "interface", "object", "fun",
-        "val", "var", "import", "package", "enum", "sealed", "data",
-        "abstract", "open", "override", "private", "protected", "internal",
-        "public", "companion", "suspend", "inline", "crossinline", "noinline",
-        "reified", "typealias", "annotation", "constructor",
-    ].iter().copied().collect();
+        "if",
+        "else",
+        "when",
+        "while",
+        "for",
+        "do",
+        "return",
+        "throw",
+        "try",
+        "catch",
+        "finally",
+        "class",
+        "interface",
+        "object",
+        "fun",
+        "val",
+        "var",
+        "import",
+        "package",
+        "enum",
+        "sealed",
+        "data",
+        "abstract",
+        "open",
+        "override",
+        "private",
+        "protected",
+        "internal",
+        "public",
+        "companion",
+        "suspend",
+        "inline",
+        "crossinline",
+        "noinline",
+        "reified",
+        "typealias",
+        "annotation",
+        "constructor",
+    ]
+    .iter()
+    .copied()
+    .collect();
 
     // Collect declared function names for context
     let _declared_fns: std::collections::HashSet<String> = nodes
@@ -385,7 +433,12 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
             continue;
         }
         // Skip constructor-like calls (PascalCase) that match class names
-        if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+        if name
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false)
+        {
             continue;
         }
 
@@ -450,23 +503,60 @@ fun main() {
         let result = extract_regex("src/UserService.kt", source);
 
         // Check imports
-        let imports: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
-        assert!(imports.iter().any(|e| e.target_fqn == "kotlinx.coroutines.flow.Flow"));
-        assert!(imports.iter().any(|e| e.target_fqn == "com.example.models.*"));
+        let imports: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
+        assert!(
+            imports
+                .iter()
+                .any(|e| e.target_fqn == "kotlinx.coroutines.flow.Flow")
+        );
+        assert!(
+            imports
+                .iter()
+                .any(|e| e.target_fqn == "com.example.models.*")
+        );
 
         // Check data class
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/UserService.kt::User" && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/UserService.kt::User" && n.kind == NodeKind::Class)
+        );
 
         // Check interface
         assert!(result.nodes.iter().any(|n| n.fqn == "src/UserService.kt::Repository" && n.kind == NodeKind::Interface));
 
         // Check class
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/UserService.kt::UserService" && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/UserService.kt::UserService" && n.kind == NodeKind::Class)
+        );
 
         // Check functions
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/UserService.kt::getUsers" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/UserService.kt::validate" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/UserService.kt::main" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/UserService.kt::getUsers" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/UserService.kt::validate" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/UserService.kt::main" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -497,7 +587,10 @@ enum class Direction(val degrees: Int) {
         assert!(color.is_some(), "Color enum not found");
         assert_eq!(color.unwrap().kind, NodeKind::Enum);
 
-        let direction = result.nodes.iter().find(|n| n.fqn == "src/Color.kt::Direction");
+        let direction = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Color.kt::Direction");
         assert!(direction.is_some(), "Direction enum not found");
         assert_eq!(direction.unwrap().kind, NodeKind::Enum);
     }
@@ -518,12 +611,18 @@ sealed interface Event {
 "#;
         let result = extract_regex("src/Result.kt", source);
 
-        let result_node = result.nodes.iter().find(|n| n.fqn == "src/Result.kt::Result");
+        let result_node = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Result.kt::Result");
         assert!(result_node.is_some(), "Result sealed class not found");
         assert_eq!(result_node.unwrap().kind, NodeKind::Class);
         assert_eq!(result_node.unwrap().attributes["sealed"], true);
 
-        let event_node = result.nodes.iter().find(|n| n.fqn == "src/Result.kt::Event");
+        let event_node = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Result.kt::Event");
         assert!(event_node.is_some(), "Event sealed interface not found");
         assert_eq!(event_node.unwrap().kind, NodeKind::Class);
         assert_eq!(event_node.unwrap().attributes["sealed"], true);
@@ -545,7 +644,10 @@ data class Point(val x: Double, val y: Double) {
         assert_eq!(user.unwrap().kind, NodeKind::Class);
         assert_eq!(user.unwrap().attributes["data_class"], true);
 
-        let point = result.nodes.iter().find(|n| n.fqn == "src/Models.kt::Point");
+        let point = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Models.kt::Point");
         assert!(point.is_some(), "Point data class not found");
         assert_eq!(point.unwrap().attributes["data_class"], true);
     }
@@ -569,14 +671,23 @@ class Factory {
         let result = extract_regex("src/MyClass.kt", source);
 
         // Anonymous companion object gets name "Companion"
-        let companion = result.nodes.iter().find(|n| n.fqn == "src/MyClass.kt::Companion");
+        let companion = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/MyClass.kt::Companion");
         assert!(companion.is_some(), "Anonymous companion object not found");
         assert_eq!(companion.unwrap().kind, NodeKind::Class);
         assert_eq!(companion.unwrap().attributes["companion"], true);
 
         // Named companion object
-        let builder = result.nodes.iter().find(|n| n.fqn == "src/MyClass.kt::Builder");
-        assert!(builder.is_some(), "Named companion object Builder not found");
+        let builder = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/MyClass.kt::Builder");
+        assert!(
+            builder.is_some(),
+            "Named companion object Builder not found"
+        );
         assert_eq!(builder.unwrap().attributes["companion"], true);
     }
 
@@ -597,17 +708,26 @@ suspend fun Flow<Int>.collectToList(): List<Int> {
 "#;
         let result = extract_regex("src/Extensions.kt", source);
 
-        let add_excl = result.nodes.iter().find(|n| n.fqn == "src/Extensions.kt::addExclamation");
+        let add_excl = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Extensions.kt::addExclamation");
         assert!(add_excl.is_some(), "addExclamation extension not found");
         assert_eq!(add_excl.unwrap().kind, NodeKind::Function);
         assert_eq!(add_excl.unwrap().attributes["extension"], true);
         assert_eq!(add_excl.unwrap().attributes["receiver_type"], "String");
 
-        let sum = result.nodes.iter().find(|n| n.fqn == "src/Extensions.kt::sum");
+        let sum = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Extensions.kt::sum");
         assert!(sum.is_some(), "sum extension not found");
         assert_eq!(sum.unwrap().attributes["extension"], true);
 
-        let collect = result.nodes.iter().find(|n| n.fqn == "src/Extensions.kt::collectToList");
+        let collect = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Extensions.kt::collectToList");
         assert!(collect.is_some(), "collectToList extension not found");
         assert_eq!(collect.unwrap().attributes["extension"], true);
     }
@@ -624,17 +744,26 @@ val API_BASE_URL = "https://api.example.com"
         let result = extract_regex("src/Constants.kt", source);
 
         // const val should always be Constant
-        let max_size = result.nodes.iter().find(|n| n.fqn == "src/Constants.kt::MAX_SIZE");
+        let max_size = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Constants.kt::MAX_SIZE");
         assert!(max_size.is_some(), "MAX_SIZE constant not found");
         assert_eq!(max_size.unwrap().kind, NodeKind::Constant);
         assert_eq!(max_size.unwrap().attributes["const"], true);
 
-        let pi = result.nodes.iter().find(|n| n.fqn == "src/Constants.kt::PI");
+        let pi = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Constants.kt::PI");
         assert!(pi.is_some(), "PI constant not found");
         assert_eq!(pi.unwrap().kind, NodeKind::Constant);
 
         // Uppercase val should be treated as constant
-        let timeout = result.nodes.iter().find(|n| n.fqn == "src/Constants.kt::TIMEOUT_MS");
+        let timeout = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/Constants.kt::TIMEOUT_MS");
         assert!(timeout.is_some(), "TIMEOUT_MS constant not found");
         assert_eq!(timeout.unwrap().kind, NodeKind::Constant);
     }
@@ -657,8 +786,10 @@ fun simple() = 42
         assert!(outer.is_some());
         // outer starts at line 2, ends at the closing brace on line 7
         assert!(outer.unwrap().end_line >= outer.unwrap().start_line);
-        assert!(outer.unwrap().end_line > outer.unwrap().start_line,
-            "end_line should be greater than start_line for multi-line function");
+        assert!(
+            outer.unwrap().end_line > outer.unwrap().start_line,
+            "end_line should be greater than start_line for multi-line function"
+        );
     }
 
     #[test]
@@ -674,7 +805,10 @@ class MyClass {
         let result = extract_regex("src/MyClass.kt", source);
 
         // Should have a Class node, not an Enum node
-        let my_class = result.nodes.iter().find(|n| n.fqn == "src/MyClass.kt::MyClass");
+        let my_class = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/MyClass.kt::MyClass");
         assert!(my_class.is_some());
         assert_eq!(my_class.unwrap().kind, NodeKind::Class);
 
@@ -724,40 +858,88 @@ fun main() {
         let result = extract_regex("src/App.kt", source);
 
         // Enum
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/App.kt::Status" && n.kind == NodeKind::Enum));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/App.kt::Status" && n.kind == NodeKind::Enum)
+        );
 
         // Sealed class
-        let api_resp = result.nodes.iter().find(|n| n.fqn == "src/App.kt::ApiResponse");
+        let api_resp = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/App.kt::ApiResponse");
         assert!(api_resp.is_some());
         assert_eq!(api_resp.unwrap().attributes["sealed"], true);
 
         // Data classes
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/App.kt::User" && n.attributes["data_class"] == true));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/App.kt::User" && n.attributes["data_class"] == true)
+        );
 
         // Interface
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/App.kt::UserRepository" && n.kind == NodeKind::Interface));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/App.kt::UserRepository" && n.kind == NodeKind::Interface)
+        );
 
         // Regular class
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/App.kt::UserRepositoryImpl" && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/App.kt::UserRepositoryImpl" && n.kind == NodeKind::Class)
+        );
 
         // Companion object
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/App.kt::Companion" && n.attributes["companion"] == true));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/App.kt::Companion" && n.attributes["companion"] == true)
+        );
 
         // Extension function
-        let to_user_id = result.nodes.iter().find(|n| n.fqn == "src/App.kt::toUserId");
+        let to_user_id = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/App.kt::toUserId");
         assert!(to_user_id.is_some());
         assert_eq!(to_user_id.unwrap().attributes["extension"], true);
         assert_eq!(to_user_id.unwrap().attributes["receiver_type"], "String");
 
         // Constants
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/App.kt::VERSION" && n.kind == NodeKind::Constant));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/App.kt::VERSION" && n.kind == NodeKind::Constant)
+        );
 
         // Regular function
-        assert!(result.nodes.iter().any(|n| n.fqn == "src/App.kt::main" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/App.kt::main" && n.kind == NodeKind::Function)
+        );
 
         // Imports
-        let imports: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
-        assert!(imports.iter().any(|e| e.target_fqn == "kotlinx.coroutines.flow.Flow"));
+        let imports: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
+        assert!(
+            imports
+                .iter()
+                .any(|e| e.target_fqn == "kotlinx.coroutines.flow.Flow")
+        );
     }
 }
-

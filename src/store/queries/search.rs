@@ -1,4 +1,4 @@
-﻿//! Full-text search queries using FTS5 with BM25 ranking.
+//! Full-text search queries using FTS5 with BM25 ranking.
 //!
 //! Provides sanitized FTS5 search over the `nodes_fts` virtual table,
 //! which mirrors the `nodes` table via sync triggers.
@@ -126,10 +126,7 @@ pub fn search_fts(
     // best rank (most negative) gets normalized value 1.0, worst gets closer to 0.0
     if !output.is_empty() {
         // Find the best (most negative) rank - this is the max absolute value
-        let best_rank = output
-            .iter()
-            .map(|r| r.rank)
-            .fold(f64::INFINITY, f64::min); // most negative
+        let best_rank = output.iter().map(|r| r.rank).fold(f64::INFINITY, f64::min); // most negative
 
         if best_rank < 0.0 {
             for result in &mut output {
@@ -141,7 +138,11 @@ pub fn search_fts(
     }
 
     // Sort by confidence descending
-    output.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    output.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(output)
 }

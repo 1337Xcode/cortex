@@ -73,9 +73,18 @@ fn test_fts5_triggers_created() {
             .collect()
     };
 
-    assert!(triggers.contains(&"nodes_ai".to_string()), "INSERT trigger missing");
-    assert!(triggers.contains(&"nodes_ad".to_string()), "DELETE trigger missing");
-    assert!(triggers.contains(&"nodes_au".to_string()), "UPDATE trigger missing");
+    assert!(
+        triggers.contains(&"nodes_ai".to_string()),
+        "INSERT trigger missing"
+    );
+    assert!(
+        triggers.contains(&"nodes_ad".to_string()),
+        "DELETE trigger missing"
+    );
+    assert!(
+        triggers.contains(&"nodes_au".to_string()),
+        "UPDATE trigger missing"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -154,13 +163,7 @@ fn test_search_respects_limit() {
 fn test_search_empty_query_returns_empty() {
     let conn = setup_db();
 
-    insert_node(
-        &conn,
-        "src/main.rs::main",
-        "Function",
-        "src/main.rs",
-        "{}",
-    );
+    insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", "{}");
 
     let results = cortex::store::queries::search::search_fts(&conn, "", 10).unwrap();
     assert!(results.is_empty());
@@ -173,13 +176,7 @@ fn test_search_empty_query_returns_empty() {
 fn test_search_no_match_returns_empty() {
     let conn = setup_db();
 
-    insert_node(
-        &conn,
-        "src/main.rs::main",
-        "Function",
-        "src/main.rs",
-        "{}",
-    );
+    insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", "{}");
 
     let results =
         cortex::store::queries::search::search_fts(&conn, "nonexistent_symbol", 10).unwrap();
@@ -343,13 +340,7 @@ fn test_sanitize_boolean_operators() {
 fn test_sanitize_quotes() {
     let conn = setup_db();
 
-    insert_node(
-        &conn,
-        "src/main.rs::main",
-        "Function",
-        "src/main.rs",
-        "{}",
-    );
+    insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", "{}");
 
     // Unbalanced quotes should not crash
     let results = cortex::store::queries::search::search_fts(&conn, "\"unbalanced", 10).unwrap();
@@ -361,88 +352,58 @@ fn test_sanitize_quotes() {
 fn test_sanitize_asterisk_wildcard() {
     let conn = setup_db();
 
-    insert_node(
-        &conn,
-        "src/main.rs::main",
-        "Function",
-        "src/main.rs",
-        "{}",
-    );
+    insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", "{}");
 
     // Asterisk alone should not crash
     let results = cortex::store::queries::search::search_fts(&conn, "*", 10).unwrap();
-    assert!(results.is_empty() || results.len() >= 1); // Just verify no crash
+    assert!(results.is_empty() || !results.is_empty()); // Just verify no crash
 }
 
 #[test]
 fn test_sanitize_parentheses() {
     let conn = setup_db();
 
-    insert_node(
-        &conn,
-        "src/main.rs::main",
-        "Function",
-        "src/main.rs",
-        "{}",
-    );
+    insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", "{}");
 
     // Unbalanced parentheses should not crash
     let results = cortex::store::queries::search::search_fts(&conn, "(unbalanced", 10).unwrap();
-    assert!(results.is_empty() || results.len() >= 1); // Just verify no crash
+    assert!(results.is_empty() || !results.is_empty()); // Just verify no crash
 }
 
 #[test]
 fn test_sanitize_near_operator() {
     let conn = setup_db();
 
-    insert_node(
-        &conn,
-        "src/main.rs::main",
-        "Function",
-        "src/main.rs",
-        "{}",
-    );
+    insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", "{}");
 
     // NEAR operator should be escaped
     let results = cortex::store::queries::search::search_fts(&conn, "NEAR main", 10).unwrap();
     // Should not crash
-    assert!(results.is_empty() || results.len() >= 1);
+    assert!(results.is_empty() || !results.is_empty());
 }
 
 #[test]
 fn test_sanitize_not_operator() {
     let conn = setup_db();
 
-    insert_node(
-        &conn,
-        "src/main.rs::main",
-        "Function",
-        "src/main.rs",
-        "{}",
-    );
+    insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", "{}");
 
     // NOT operator should be escaped
     let results = cortex::store::queries::search::search_fts(&conn, "NOT main", 10).unwrap();
     // Should not crash
-    assert!(results.is_empty() || results.len() >= 1);
+    assert!(results.is_empty() || !results.is_empty());
 }
 
 #[test]
 fn test_sanitize_column_filter_syntax() {
     let conn = setup_db();
 
-    insert_node(
-        &conn,
-        "src/main.rs::main",
-        "Function",
-        "src/main.rs",
-        "{}",
-    );
+    insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", "{}");
 
     // Column filter syntax (fqn:value) should be escaped
     let results = cortex::store::queries::search::search_fts(&conn, "fqn:main", 10).unwrap();
     // Should not crash - the colon is escaped
-    assert!(results.is_empty() || results.len() >= 1);
+    assert!(results.is_empty() || !results.is_empty());
 }
 
 // ---------------------------------------------------------------------------

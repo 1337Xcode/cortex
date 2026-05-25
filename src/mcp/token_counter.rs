@@ -123,8 +123,7 @@ fn count_component_chars(value: &serde_json::Value) -> (usize, usize, usize) {
                     }
                     // Edge fields
                     "caller_fqn" | "source_fqn" | "target_fqn" | "call_count" | "depth"
-                    | "internal_edges" | "external_edges" | "blast_radius"
-                    | "edge_attributes" => {
+                    | "internal_edges" | "external_edges" | "blast_radius" | "edge_attributes" => {
                         edges += val_len;
                     }
                     // Code fields
@@ -249,7 +248,10 @@ mod tests {
         let sum = breakdown.nodes + breakdown.edges + breakdown.code + breakdown.metadata;
         assert_eq!(sum, tokens_used, "Breakdown must sum to tokens_used");
         // Code should be a significant portion
-        assert!(breakdown.code > 0, "Expected code tokens > 0 for code-heavy response");
+        assert!(
+            breakdown.code > 0,
+            "Expected code tokens > 0 for code-heavy response"
+        );
     }
 
     #[test]
@@ -260,6 +262,9 @@ mod tests {
 
         let sum = breakdown.nodes + breakdown.edges + breakdown.code + breakdown.metadata;
         assert_eq!(sum, tokens_used, "Breakdown must sum to tokens_used");
-        assert!(breakdown.edges > 0, "Expected edge tokens > 0 for edge-heavy response");
+        assert!(
+            breakdown.edges > 0,
+            "Expected edge tokens > 0 for edge-heavy response"
+        );
     }
 }

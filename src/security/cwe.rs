@@ -134,7 +134,10 @@ pub fn classify_finding(owasp_category: &str, context: &str) -> Option<String> {
         "A01" => Some("CWE-862".to_string()),
         "A02" => Some("CWE-327".to_string()),
         "A03" => {
-            if ctx_lower.contains("command") || ctx_lower.contains("exec") || ctx_lower.contains("shell") {
+            if ctx_lower.contains("command")
+                || ctx_lower.contains("exec")
+                || ctx_lower.contains("shell")
+            {
                 Some("CWE-78".to_string())
             } else {
                 // Default to SQL injection for A03
@@ -149,7 +152,9 @@ pub fn classify_finding(owasp_category: &str, context: &str) -> Option<String> {
 /// Classify a SecurityFinding into a CweClassification.
 ///
 /// Uses the finding's owasp_category and description to determine the CWE.
-pub fn classify_security_finding(finding: &crate::store::types::SecurityFinding) -> Option<CweClassification> {
+pub fn classify_security_finding(
+    finding: &crate::store::types::SecurityFinding,
+) -> Option<CweClassification> {
     // If the finding already has a CWE ID, look it up directly
     if let Some(ref cwe_id) = finding.cwe_id {
         return get_cwe_info(cwe_id);

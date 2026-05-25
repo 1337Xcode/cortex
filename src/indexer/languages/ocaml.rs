@@ -62,15 +62,14 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
 /// Compute cyclomatic complexity for all Function nodes.
 fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source: &[u8]) {
     for node in nodes.iter_mut() {
-        if node.kind == NodeKind::Function {
-            if let Some(ast_node) = find_ast_node_at_line(root, node.start_line, "value_definition")
+        if node.kind == NodeKind::Function
+            && let Some(ast_node) = find_ast_node_at_line(root, node.start_line, "value_definition")
                 .or_else(|| find_ast_node_at_line(root, node.start_line, "let_binding"))
                 .or_else(|| find_ast_node_at_line(root, node.start_line, "binding"))
-            {
-                let c = complexity::compute_full_complexity(ast_node, source, "ocaml");
-                if let Some(attrs) = node.attributes.as_object_mut() {
-                    attrs.insert("complexity".to_string(), serde_json::json!(c));
-                }
+        {
+            let c = complexity::compute_full_complexity(ast_node, source, "ocaml");
+            if let Some(attrs) = node.attributes.as_object_mut() {
+                attrs.insert("complexity".to_string(), serde_json::json!(c));
             }
         }
     }
@@ -171,72 +170,70 @@ fn extract_let_binding(
     // Find let_binding children (there may be multiple with `and`)
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "let_binding" {
-            if let Some(name) = get_let_binding_name(child, source) {
-                if name == "_" || is_ocaml_keyword(&name) {
-                    continue;
-                }
-
-                let binding_start = child.start_position().row as u32 + 1;
-                let binding_end = child.end_position().row as u32 + 1;
-
-                let fqn = format!("{file}::{name}");
-
-                // Avoid duplicates
-                if nodes.iter().any(|n| n.fqn == fqn) {
-                    continue;
-                }
-
-                let mut attributes = json!({});
-                if is_rec {
-                    if let Some(attrs) = attributes.as_object_mut() {
-                        attrs.insert("recursive".to_string(), json!(true));
-                    }
-                }
-
-                nodes.push(Node {
-                    fqn: fqn.clone(),
-                    kind: NodeKind::Function,
-                    file: file.to_string(),
-                    start_line: binding_start,
-                    end_line: binding_end,
-                    file_hash: String::new(),
-                    indexed_at: 0,
-                    attributes,
-                });
-
-                defined_fqns.push((name, fqn));
+        if child.kind() == "let_binding"
+            && let Some(name) = get_let_binding_name(child, source)
+        {
+            if name == "_" || is_ocaml_keyword(&name) {
+                continue;
             }
+
+            let binding_start = child.start_position().row as u32 + 1;
+            let binding_end = child.end_position().row as u32 + 1;
+
+            let fqn = format!("{file}::{name}");
+
+            // Avoid duplicates
+            if nodes.iter().any(|n| n.fqn == fqn) {
+                continue;
+            }
+
+            let mut attributes = json!({});
+            if is_rec && let Some(attrs) = attributes.as_object_mut() {
+                attrs.insert("recursive".to_string(), json!(true));
+            }
+
+            nodes.push(Node {
+                fqn: fqn.clone(),
+                kind: NodeKind::Function,
+                file: file.to_string(),
+                start_line: binding_start,
+                end_line: binding_end,
+                file_hash: String::new(),
+                indexed_at: 0,
+                attributes,
+            });
+
+            defined_fqns.push((name, fqn));
         }
     }
 
     // Fallback: if no let_binding children found, try to extract name directly
-    if !node.children(&mut node.walk()).any(|c| c.kind() == "let_binding") {
-        if let Some(name) = get_value_def_name(node, source) {
-            if name != "_" && !is_ocaml_keyword(&name) {
-                let fqn = format!("{file}::{name}");
-                if !nodes.iter().any(|n| n.fqn == fqn) {
-                    let mut attributes = json!({});
-                    if is_rec {
-                        if let Some(attrs) = attributes.as_object_mut() {
-                            attrs.insert("recursive".to_string(), json!(true));
-                        }
-                    }
-
-                    nodes.push(Node {
-                        fqn: fqn.clone(),
-                        kind: NodeKind::Function,
-                        file: file.to_string(),
-                        start_line,
-                        end_line,
-                        file_hash: String::new(),
-                        indexed_at: 0,
-                        attributes,
-                    });
-
-                    defined_fqns.push((name, fqn));
-                }
+    if !node
+        .children(&mut node.walk())
+        .any(|c| c.kind() == "let_binding")
+        && let Some(name) = get_value_def_name(node, source)
+        && name != "_"
+        && !is_ocaml_keyword(&name)
+    {
+        let fqn = format!("{file}::{name}");
+        if !nodes.iter().any(|n| n.fqn == fqn) {
+            let mut attributes = json!({});
+            if is_rec && let Some(attrs) = attributes.as_object_mut() {
+                attrs.insert("recursive".to_string(), json!(true));
             }
+
+            nodes.push(Node {
+                fqn: fqn.clone(),
+                kind: NodeKind::Function,
+                file: file.to_string(),
+                start_line,
+                end_line,
+                file_hash: String::new(),
+                indexed_at: 0,
+                attributes,
+            });
+
+            defined_fqns.push((name, fqn));
         }
     }
 }
@@ -272,10 +269,8 @@ fn extract_module_definition(
     let is_functor = is_functor_definition(node, source);
 
     let mut attributes = json!({});
-    if is_functor {
-        if let Some(attrs) = attributes.as_object_mut() {
-            attrs.insert("functor".to_string(), json!(true));
-        }
+    if is_functor && let Some(attrs) = attributes.as_object_mut() {
+        attrs.insert("functor".to_string(), json!(true));
     }
 
     nodes.push(Node {
@@ -352,7 +347,10 @@ fn extract_type_definition(
     }
 
     // Fallback: try to extract directly from the node if no type_binding children
-    if !node.children(&mut node.walk()).any(|c| c.kind() == "type_binding") {
+    if !node
+        .children(&mut node.walk())
+        .any(|c| c.kind() == "type_binding")
+    {
         extract_single_type_binding(node, file, source, nodes, defined_fqns);
     }
 }
@@ -434,7 +432,7 @@ fn classify_type_definition(node: tree_sitter::Node, source: &[u8]) -> TypeDefKi
         if body.starts_with('{') {
             return TypeDefKind::Record;
         }
-        if body.contains('|') || body.chars().next().map_or(false, |c| c.is_uppercase()) {
+        if body.contains('|') || body.chars().next().is_some_and(|c| c.is_uppercase()) {
             return TypeDefKind::Variant;
         }
         return TypeDefKind::Alias;
@@ -448,50 +446,45 @@ fn classify_type_definition(node: tree_sitter::Node, source: &[u8]) -> TypeDefKi
 /// In OCaml, imports are:
 /// - `open Module` (brings module contents into scope)
 /// - `include Module` (includes module contents in current module)
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
         match child.kind() {
             "open_statement" | "open_module" => {
-                if let Some(target) = get_open_module_name(child, source) {
-                    if !edges.iter().any(|e| {
+                if let Some(target) = get_open_module_name(child, source)
+                    && !edges.iter().any(|e| {
                         e.kind == EdgeKind::Imports
                             && e.source_fqn == file
                             && e.target_fqn == target
-                    }) {
-                        edges.push(Edge {
-                            id: None,
-                            source_fqn: file.to_string(),
-                            target_fqn: target,
-                            kind: EdgeKind::Imports,
-                            confidence: 1.0,
-                            attributes: json!({}),
-                        });
-                    }
+                    })
+                {
+                    edges.push(Edge {
+                        id: None,
+                        source_fqn: file.to_string(),
+                        target_fqn: target,
+                        kind: EdgeKind::Imports,
+                        confidence: 1.0,
+                        attributes: json!({}),
+                    });
                 }
             }
             "include_statement" | "include_module" => {
-                if let Some(target) = get_include_module_name(child, source) {
-                    if !edges.iter().any(|e| {
+                if let Some(target) = get_include_module_name(child, source)
+                    && !edges.iter().any(|e| {
                         e.kind == EdgeKind::Imports
                             && e.source_fqn == file
                             && e.target_fqn == target
-                    }) {
-                        edges.push(Edge {
-                            id: None,
-                            source_fqn: file.to_string(),
-                            target_fqn: target,
-                            kind: EdgeKind::Imports,
-                            confidence: 1.0,
-                            attributes: json!({"include": true}),
-                        });
-                    }
+                    })
+                {
+                    edges.push(Edge {
+                        id: None,
+                        source_fqn: file.to_string(),
+                        target_fqn: target,
+                        kind: EdgeKind::Imports,
+                        confidence: 1.0,
+                        attributes: json!({"include": true}),
+                    });
                 }
             }
             _ => {
@@ -575,23 +568,22 @@ fn collect_calls_recursive(
                     // Simple function call
                     if let Some((_, target_fqn)) =
                         defined_fqns.iter().find(|(simple, _)| simple == &call_name)
+                        && source_fqn != *target_fqn
                     {
-                        if source_fqn != *target_fqn {
-                            // Avoid duplicate edges
-                            if !edges.iter().any(|e| {
-                                e.kind == EdgeKind::Calls
-                                    && e.source_fqn == source_fqn
-                                    && e.target_fqn == *target_fqn
-                            }) {
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn,
-                                    target_fqn: target_fqn.clone(),
-                                    kind: EdgeKind::Calls,
-                                    confidence: 1.0,
-                                    attributes: json!({}),
-                                });
-                            }
+                        // Avoid duplicate edges
+                        if !edges.iter().any(|e| {
+                            e.kind == EdgeKind::Calls
+                                && e.source_fqn == source_fqn
+                                && e.target_fqn == *target_fqn
+                        }) {
+                            edges.push(Edge {
+                                id: None,
+                                source_fqn,
+                                target_fqn: target_fqn.clone(),
+                                kind: EdgeKind::Calls,
+                                confidence: 1.0,
+                                attributes: json!({}),
+                            });
                         }
                     }
                 }
@@ -638,9 +630,17 @@ fn get_let_binding_name(node: tree_sitter::Node, source: &[u8]) -> Option<String
                 // Check if it's a lowercase identifier (OCaml value names are lowercase)
                 let text = child.utf8_text(source).unwrap_or("").trim().to_string();
                 if !text.is_empty()
-                    && text.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
-                    && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
-                    && !matches!(text.as_str(), "let" | "rec" | "and" | "in" | "=" | "fun" | "function")
+                    && text
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_lowercase() || c == '_')
+                    && text
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
+                    && !matches!(
+                        text.as_str(),
+                        "let" | "rec" | "and" | "in" | "=" | "fun" | "function"
+                    )
                 {
                     return Some(text);
                 }
@@ -725,17 +725,20 @@ fn get_module_name(node: tree_sitter::Node, source: &[u8]) -> String {
         if found_module_keyword
             && child.kind() != "="
             && !text.is_empty()
-            && text.chars().next().map_or(false, |c| c.is_uppercase())
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
             && text.chars().all(|c| c.is_alphanumeric() || c == '_')
         {
             return text;
         }
 
         // Also check for module_name or module_path nodes
-        if matches!(child.kind(), "module_name" | "module_path" | "constructor_name") {
-            if !text.is_empty() && text.chars().next().map_or(false, |c| c.is_uppercase()) {
-                return text;
-            }
+        if matches!(
+            child.kind(),
+            "module_name" | "module_path" | "constructor_name"
+        ) && !text.is_empty()
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
+        {
+            return text;
         }
     }
 
@@ -753,7 +756,7 @@ fn get_module_name(node: tree_sitter::Node, source: &[u8]) -> String {
             .chars()
             .take_while(|c| c.is_alphanumeric() || *c == '_')
             .collect();
-        if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_uppercase()) {
+        if !name.is_empty() && name.chars().next().is_some_and(|c| c.is_uppercase()) {
             return name;
         }
     }
@@ -780,16 +783,14 @@ fn get_module_type_name(node: tree_sitter::Node, source: &[u8]) -> String {
 
         if found_type_keyword
             && !child_text.is_empty()
-            && child_text.chars().next().map_or(false, |c| c.is_uppercase())
+            && child_text.chars().next().is_some_and(|c| c.is_uppercase())
             && child_text.chars().all(|c| c.is_alphanumeric() || c == '_')
         {
             return child_text;
         }
 
-        if matches!(child.kind(), "module_type_name" | "module_name") {
-            if !child_text.is_empty() {
-                return child_text;
-            }
+        if matches!(child.kind(), "module_type_name" | "module_name") && !child_text.is_empty() {
+            return child_text;
         }
     }
 
@@ -802,7 +803,7 @@ fn get_module_type_name(node: tree_sitter::Node, source: &[u8]) -> String {
                 .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
-            if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_uppercase()) {
+            if !name.is_empty() && name.chars().next().is_some_and(|c| c.is_uppercase()) {
                 return name;
             }
         }
@@ -832,21 +833,32 @@ fn get_type_name(node: tree_sitter::Node, source: &[u8]) -> String {
 
         // The type name is a lowercase identifier
         if found_type_keyword
-            && matches!(child.kind(), "type_constructor" | "type_variable" | "identifier" | "type_name")
+            && matches!(
+                child.kind(),
+                "type_constructor" | "type_variable" | "identifier" | "type_name"
+            )
+            && !text.is_empty()
+            && text
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_lowercase() || c == '_')
+            && text
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
         {
-            if !text.is_empty()
-                && text.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
-                && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
-            {
-                return text;
-            }
+            return text;
         }
 
         // Also accept lowercase identifiers directly
         if found_type_keyword
             && !text.is_empty()
-            && text.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
-            && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
+            && text
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_lowercase() || c == '_')
+            && text
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
             && !matches!(text.as_str(), "type" | "nonrec" | "and" | "of" | "mutable")
         {
             return text;
@@ -861,10 +873,7 @@ fn get_type_name(node: tree_sitter::Node, source: &[u8]) -> String {
     // Skip type parameters like 'a or ('a, 'b)
     let rest = if rest.starts_with('\'') {
         // Skip single type param
-        let after_param: &str = rest
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or("");
+        let after_param: &str = rest.split_whitespace().nth(1).unwrap_or("");
         after_param
     } else if rest.starts_with('(') {
         // Skip parenthesized type params
@@ -883,7 +892,10 @@ fn get_type_name(node: tree_sitter::Node, source: &[u8]) -> String {
         .collect();
 
     if !name.is_empty()
-        && name.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_lowercase() || c == '_')
         && !is_ocaml_keyword(&name)
     {
         name
@@ -900,8 +912,7 @@ fn is_functor_definition(node: tree_sitter::Node, source: &[u8]) -> bool {
         return true;
     }
     // Check for module_parameter in children or grandchildren (module_binding)
-    has_descendant_kind(node, "module_parameter")
-        || has_descendant_kind(node, "functor_parameter")
+    has_descendant_kind(node, "module_parameter") || has_descendant_kind(node, "functor_parameter")
 }
 
 /// Check if a node has a descendant of a given kind (up to depth 2).
@@ -935,17 +946,22 @@ fn get_open_module_name(node: tree_sitter::Node, source: &[u8]) -> Option<String
 
         // Module names start with uppercase
         if !text.is_empty()
-            && text.chars().next().map_or(false, |c| c.is_uppercase())
-            && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
+            && text
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
         {
             return Some(text);
         }
 
         // Check for module_path nodes
-        if matches!(child.kind(), "module_path" | "module_name" | "extended_module_path") {
-            if !text.is_empty() && text.chars().next().map_or(false, |c| c.is_uppercase()) {
-                return Some(text);
-            }
+        if matches!(
+            child.kind(),
+            "module_path" | "module_name" | "extended_module_path"
+        ) && !text.is_empty()
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
+        {
+            return Some(text);
         }
     }
 
@@ -960,7 +976,7 @@ fn get_open_module_name(node: tree_sitter::Node, source: &[u8]) -> Option<String
         .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
         .collect();
 
-    if module_name.is_empty() || !module_name.chars().next().map_or(false, |c| c.is_uppercase()) {
+    if module_name.is_empty() || !module_name.chars().next().is_some_and(|c| c.is_uppercase()) {
         None
     } else {
         Some(module_name)
@@ -980,8 +996,10 @@ fn get_include_module_name(node: tree_sitter::Node, source: &[u8]) -> Option<Str
 
         // Module names start with uppercase
         if !text.is_empty()
-            && text.chars().next().map_or(false, |c| c.is_uppercase())
-            && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
+            && text
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
         {
             return Some(text);
         }
@@ -996,7 +1014,7 @@ fn get_include_module_name(node: tree_sitter::Node, source: &[u8]) -> Option<Str
         .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
         .collect();
 
-    if module_name.is_empty() || !module_name.chars().next().map_or(false, |c| c.is_uppercase()) {
+    if module_name.is_empty() || !module_name.chars().next().is_some_and(|c| c.is_uppercase()) {
         None
     } else {
         Some(module_name)
@@ -1010,9 +1028,7 @@ fn get_applied_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
             node.utf8_text(source).unwrap_or("").trim().to_string()
         }
         // value_path contains module_path.value_name or just value_name
-        "value_path" => {
-            node.utf8_text(source).unwrap_or("").trim().to_string()
-        }
+        "value_path" => node.utf8_text(source).unwrap_or("").trim().to_string(),
         // Qualified name: Module.function
         "field_get_expression" | "dot_expression" | "module_path" => {
             node.utf8_text(source).unwrap_or("").trim().to_string()
@@ -1024,7 +1040,7 @@ fn get_applied_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
                 && text
                     .chars()
                     .next()
-                    .map_or(false, |c| c.is_lowercase() || c == '_' || c.is_uppercase())
+                    .is_some_and(|c| c.is_lowercase() || c == '_' || c.is_uppercase())
                 && text
                     .chars()
                     .all(|c| c.is_alphanumeric() || c == '_' || c == '\'' || c == '.')
@@ -1049,39 +1065,41 @@ fn find_enclosing_function_fqn(
         match parent.kind() {
             "let_binding" => {
                 // Check if this is a top-level binding (parent is value_definition at top level)
-                if let Some(name) = get_let_binding_name(parent, source) {
-                    if !name.is_empty() && !is_ocaml_keyword(&name) && name != "_" {
-                        // Verify this is a top-level definition (not a local let)
-                        if let Some(grandparent) = parent.parent() {
-                            if grandparent.kind() == "value_definition" {
-                                if let Some(great_grandparent) = grandparent.parent() {
-                                    // Top-level if parent is compilation_unit, structure, or similar
-                                    if matches!(
-                                        great_grandparent.kind(),
-                                        "compilation_unit" | "structure" | "structure_item"
-                                    ) || great_grandparent.parent().is_none()
-                                    {
-                                        return Some(format!("{file}::{name}"));
-                                    }
-                                }
-                            }
+                if let Some(name) = get_let_binding_name(parent, source)
+                    && !name.is_empty()
+                    && !is_ocaml_keyword(&name)
+                    && name != "_"
+                {
+                    // Verify this is a top-level definition (not a local let)
+                    if let Some(grandparent) = parent.parent()
+                        && grandparent.kind() == "value_definition"
+                        && let Some(great_grandparent) = grandparent.parent()
+                    {
+                        // Top-level if parent is compilation_unit, structure, or similar
+                        if matches!(
+                            great_grandparent.kind(),
+                            "compilation_unit" | "structure" | "structure_item"
+                        ) || great_grandparent.parent().is_none()
+                        {
+                            return Some(format!("{file}::{name}"));
                         }
                     }
                 }
             }
             "value_definition" => {
-                if let Some(name) = get_value_def_name(parent, source) {
-                    if !name.is_empty() && !is_ocaml_keyword(&name) && name != "_" {
-                        // Check if this is top-level
-                        if let Some(grandparent) = parent.parent() {
-                            if matches!(
-                                grandparent.kind(),
-                                "compilation_unit" | "structure" | "structure_item"
-                            ) || grandparent.parent().is_none()
-                            {
-                                return Some(format!("{file}::{name}"));
-                            }
-                        }
+                if let Some(name) = get_value_def_name(parent, source)
+                    && !name.is_empty()
+                    && !is_ocaml_keyword(&name)
+                    && name != "_"
+                {
+                    // Check if this is top-level
+                    if let Some(grandparent) = parent.parent()
+                        && (matches!(
+                            grandparent.kind(),
+                            "compilation_unit" | "structure" | "structure_item"
+                        ) || grandparent.parent().is_none())
+                    {
+                        return Some(format!("{file}::{name}"));
                     }
                 }
             }
@@ -1164,7 +1182,6 @@ fn is_ocaml_keyword(name: &str) -> bool {
     )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1195,23 +1212,36 @@ let main () =
         let result = parse_ocaml(source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/server.ml::validate_user" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::validate_user" && n.kind == NodeKind::Function),
             "Should find validate_user function. Nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/server.ml::fibonacci" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::fibonacci" && n.kind == NodeKind::Function),
             "Should find fibonacci function. Nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/server.ml::main" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::main" && n.kind == NodeKind::Function),
             "Should find main function. Nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
 
         // Check recursive attribute
-        let fib = result.nodes.iter().find(|n| n.fqn.ends_with("::fibonacci")).unwrap();
+        let fib = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::fibonacci"))
+            .unwrap();
         assert_eq!(
             fib.attributes.get("recursive").and_then(|v| v.as_bool()),
             Some(true),
@@ -1235,14 +1265,28 @@ end
         let result = parse_ocaml(source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/server.ml::Config" && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::Config" && n.kind == NodeKind::Module),
             "Should find Config module. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/server.ml::STORAGE" && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::STORAGE" && n.kind == NodeKind::Module),
             "Should find STORAGE module type. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1262,23 +1306,44 @@ type id = int
 
         // Variant type → Class
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/server.ml::color" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::color" && n.kind == NodeKind::Class),
             "Should find color as Class (variant type). Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
 
         // Record type → Class
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/server.ml::user" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::user" && n.kind == NodeKind::Class),
             "Should find user as Class (record type). Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
 
         // Type alias → TypeAlias
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/server.ml::id" && n.kind == NodeKind::TypeAlias),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::id" && n.kind == NodeKind::TypeAlias),
             "Should find id as TypeAlias. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1291,7 +1356,11 @@ open! Core
 "#;
         let result = parse_ocaml(source);
 
-        let imports: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
+        let imports: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
 
         assert!(
             imports.iter().any(|e| e.target_fqn == "Printf"),
@@ -1318,12 +1387,20 @@ include Sexplib.Std
 "#;
         let result = parse_ocaml(source);
 
-        let imports: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
+        let imports: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
 
         assert!(
-            imports.iter().any(|e| e.target_fqn == "Base" && e.attributes.get("include").and_then(|v| v.as_bool()) == Some(true)),
+            imports.iter().any(|e| e.target_fqn == "Base"
+                && e.attributes.get("include").and_then(|v| v.as_bool()) == Some(true)),
             "Should find Base include import. Imports: {:?}",
-            imports.iter().map(|e| (&e.target_fqn, &e.attributes)).collect::<Vec<_>>()
+            imports
+                .iter()
+                .map(|e| (&e.target_fqn, &e.attributes))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1364,13 +1441,22 @@ let main () =
 "#;
         let result = parse_ocaml(source);
 
-        let calls: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Calls).collect();
+        let calls: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Calls)
+            .collect();
 
         // main should call helper
         assert!(
-            calls.iter().any(|e| e.source_fqn.ends_with("::main") && e.target_fqn.ends_with("::helper")),
+            calls
+                .iter()
+                .any(|e| e.source_fqn.ends_with("::main") && e.target_fqn.ends_with("::helper")),
             "main should call helper. Calls found: {:?}",
-            calls.iter().map(|e| format!("{} -> {}", e.source_fqn, e.target_fqn)).collect::<Vec<_>>()
+            calls
+                .iter()
+                .map(|e| format!("{} -> {}", e.source_fqn, e.target_fqn))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1414,22 +1500,61 @@ let main () =
         let result = parse_ocaml(source);
 
         // Check imports
-        let imports: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
+        let imports: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
         assert!(imports.iter().any(|e| e.target_fqn == "Printf"));
         assert!(imports.iter().any(|e| e.target_fqn == "Lwt.Infix"));
 
         // Check module
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/server.ml::Config" && n.kind == NodeKind::Module));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::Config" && n.kind == NodeKind::Module)
+        );
 
         // Check types
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/server.ml::user" && n.kind == NodeKind::Class));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/server.ml::color" && n.kind == NodeKind::Class));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/server.ml::id" && n.kind == NodeKind::TypeAlias));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::user" && n.kind == NodeKind::Class)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::color" && n.kind == NodeKind::Class)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::id" && n.kind == NodeKind::TypeAlias)
+        );
 
         // Check functions
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/server.ml::validate_user" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/server.ml::fibonacci" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/server.ml::main" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::validate_user" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::fibonacci" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/server.ml::main" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1474,7 +1599,10 @@ let main () =
         let result = extract_regex("lib/main.ml", source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/main.ml::greet" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/main.ml::greet" && n.kind == NodeKind::Function),
             "extract_regex should still work for backward compatibility. Nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
@@ -1489,12 +1617,18 @@ and odd n = n mod 2 = 1
         let result = parse_ocaml(source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn.ends_with("::even") && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn.ends_with("::even") && n.kind == NodeKind::Function),
             "Should find even function. Nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn.ends_with("::odd") && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn.ends_with("::odd") && n.kind == NodeKind::Function),
             "Should find odd function. Nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );

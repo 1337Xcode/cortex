@@ -76,7 +76,9 @@ fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source
             // or `assignment` (short-form). Try both node kinds.
             if let Some(ast_node) =
                 find_ast_node_at_line(root, node.start_line, "function_definition")
-                    .or_else(|| find_ast_node_at_line(root, node.start_line, "short_function_definition"))
+                    .or_else(|| {
+                        find_ast_node_at_line(root, node.start_line, "short_function_definition")
+                    })
                     .or_else(|| find_ast_node_at_line(root, node.start_line, "assignment"))
                     .or_else(|| find_ast_node_at_line(root, node.start_line, "macro_definition"))
             {
@@ -361,33 +363,32 @@ fn maybe_extract_assignment_function(
         }
     } else {
         // Fallback: check text pattern
-        if let Some(paren_pos) = text.find('(') {
-            if let Some(eq_pos) = text.find('=') {
-                if paren_pos < eq_pos {
-                    let name: String = text[..paren_pos]
-                        .trim()
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                        .collect();
-                    if !name.is_empty() && !is_julia_keyword(&name) {
-                        let start_line = node.start_position().row as u32 + 1;
-                        let end_line = node.end_position().row as u32 + 1;
-                        let fqn = build_fqn(file, module_stack, &name);
+        if let Some(paren_pos) = text.find('(')
+            && let Some(eq_pos) = text.find('=')
+            && paren_pos < eq_pos
+        {
+            let name: String = text[..paren_pos]
+                .trim()
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() && !is_julia_keyword(&name) {
+                let start_line = node.start_position().row as u32 + 1;
+                let end_line = node.end_position().row as u32 + 1;
+                let fqn = build_fqn(file, module_stack, &name);
 
-                        if !nodes.iter().any(|n| n.fqn == fqn) {
-                            nodes.push(Node {
-                                fqn: fqn.clone(),
-                                kind: NodeKind::Function,
-                                file: file.to_string(),
-                                start_line,
-                                end_line,
-                                file_hash: String::new(),
-                                indexed_at: 0,
-                                attributes: json!({"short_form": true}),
-                            });
-                            defined_fqns.push((name, fqn));
-                        }
-                    }
+                if !nodes.iter().any(|n| n.fqn == fqn) {
+                    nodes.push(Node {
+                        fqn: fqn.clone(),
+                        kind: NodeKind::Function,
+                        file: file.to_string(),
+                        start_line,
+                        end_line,
+                        file_hash: String::new(),
+                        indexed_at: 0,
+                        attributes: json!({"short_form": true}),
+                    });
+                    defined_fqns.push((name, fqn));
                 }
             }
         }
@@ -422,10 +423,8 @@ fn extract_struct(
     let is_mutable = text.trim_start().starts_with("mutable");
 
     let mut attributes = json!({});
-    if is_mutable {
-        if let Some(attrs) = attributes.as_object_mut() {
-            attrs.insert("mutable".to_string(), json!(true));
-        }
+    if is_mutable && let Some(attrs) = attributes.as_object_mut() {
+        attrs.insert("mutable".to_string(), json!(true));
     }
 
     nodes.push(Node {
@@ -576,12 +575,7 @@ fn collect_definitions_in_body(
 /// - `import Module` (brings module into scope)
 /// - `import Module: name1, name2` (selective import)
 /// - `export name1, name2` (marks symbols for export)
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -604,12 +598,7 @@ fn collect_imports(
 }
 
 /// Extract import edges from a using/import statement node.
-fn extract_import_edges(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn extract_import_edges(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let text = node.utf8_text(source).unwrap_or("").trim();
 
     // Determine import type from the keyword
@@ -627,10 +616,7 @@ fn extract_import_edges(
             // Simple import: `using LinearAlgebra` or `import Statistics`
             "identifier" => {
                 let target = child.utf8_text(source).unwrap_or("").trim().to_string();
-                if !target.is_empty()
-                    && target != "using"
-                    && target != "import"
-                {
+                if !target.is_empty() && target != "using" && target != "import" {
                     add_import_edge(file, &target, import_type, edges);
                     found_targets = true;
                 }
@@ -672,7 +658,8 @@ fn extract_import_edges(
                             let mut si_cursor = item.walk();
                             for si_child in item.children(&mut si_cursor) {
                                 if si_child.kind() == "identifier" {
-                                    let target = si_child.utf8_text(source).unwrap_or("").trim().to_string();
+                                    let target =
+                                        si_child.utf8_text(source).unwrap_or("").trim().to_string();
                                     if !target.is_empty() {
                                         add_import_edge(file, &target, import_type, edges);
                                         found_targets = true;
@@ -730,9 +717,10 @@ fn extract_import_edges(
 
 /// Add an import edge, avoiding duplicates.
 fn add_import_edge(file: &str, target: &str, import_type: &str, edges: &mut Vec<Edge>) {
-    if !edges.iter().any(|e| {
-        e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target
-    }) {
+    if !edges
+        .iter()
+        .any(|e| e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target)
+    {
         edges.push(Edge {
             id: None,
             source_fqn: file.to_string(),
@@ -836,23 +824,21 @@ fn extract_call_edge(
     }
 
     // Simple function call - try to resolve to a defined function
-    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == &call_name) {
-        if source_fqn != *target_fqn {
-            // Avoid duplicate edges
-            if !edges.iter().any(|e| {
-                e.kind == EdgeKind::Calls
-                    && e.source_fqn == source_fqn
-                    && e.target_fqn == *target_fqn
-            }) {
-                edges.push(Edge {
-                    id: None,
-                    source_fqn,
-                    target_fqn: target_fqn.clone(),
-                    kind: EdgeKind::Calls,
-                    confidence: 1.0,
-                    attributes: json!({}),
-                });
-            }
+    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == &call_name)
+        && source_fqn != *target_fqn
+    {
+        // Avoid duplicate edges
+        if !edges.iter().any(|e| {
+            e.kind == EdgeKind::Calls && e.source_fqn == source_fqn && e.target_fqn == *target_fqn
+        }) {
+            edges.push(Edge {
+                id: None,
+                source_fqn,
+                target_fqn: target_fqn.clone(),
+                kind: EdgeKind::Calls,
+                confidence: 1.0,
+                attributes: json!({}),
+            });
         }
     }
 }
@@ -897,17 +883,19 @@ fn extract_macro_call_edge(
         find_enclosing_function_fqn(node, file, source).unwrap_or_else(|| file.to_string());
 
     // Try to resolve to a defined macro
-    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == &macro_name) {
-        if source_fqn != *target_fqn {
-            edges.push(Edge {
-                id: None,
-                source_fqn,
-                target_fqn: target_fqn.clone(),
-                kind: EdgeKind::Calls,
-                confidence: 1.0,
-                attributes: json!({"call_type": "macro"}),
-            });
-        }
+    if let Some((_, target_fqn)) = defined_fqns
+        .iter()
+        .find(|(simple, _)| simple == &macro_name)
+        && source_fqn != *target_fqn
+    {
+        edges.push(Edge {
+            id: None,
+            source_fqn,
+            target_fqn: target_fqn.clone(),
+            kind: EdgeKind::Calls,
+            confidence: 1.0,
+            attributes: json!({"call_type": "macro"}),
+        });
     }
 }
 
@@ -944,7 +932,7 @@ fn get_module_name(node: tree_sitter::Node, source: &[u8]) -> String {
         // Also accept if the child is an identifier and comes after position 0
         if found_module_keyword
             && !text.is_empty()
-            && text.chars().next().map_or(false, |c| c.is_uppercase())
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
             && text.chars().all(|c| c.is_alphanumeric() || c == '_')
         {
             return text;
@@ -953,7 +941,10 @@ fn get_module_name(node: tree_sitter::Node, source: &[u8]) -> String {
 
     // Last resort: parse from text
     let text = node.utf8_text(source).unwrap_or("").trim().to_string();
-    if let Some(after) = text.strip_prefix("module").or_else(|| text.strip_prefix("baremodule")) {
+    if let Some(after) = text
+        .strip_prefix("module")
+        .or_else(|| text.strip_prefix("baremodule"))
+    {
         let name: String = after
             .trim()
             .chars()
@@ -1112,14 +1103,18 @@ fn get_short_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
             "call_expression" => return get_call_expression_name(first_child, source),
             "typed_expression" => {
                 // name(args)::Type = expr
-                if let Some(inner) = first_child.child(0) {
-                    if inner.kind() == "call_expression" {
-                        return get_call_expression_name(inner, source);
-                    }
+                if let Some(inner) = first_child.child(0)
+                    && inner.kind() == "call_expression"
+                {
+                    return get_call_expression_name(inner, source);
                 }
             }
             "identifier" => {
-                return first_child.utf8_text(source).unwrap_or("").trim().to_string();
+                return first_child
+                    .utf8_text(source)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             }
             _ => {}
         }
@@ -1170,13 +1165,25 @@ fn get_call_expression_name(node: tree_sitter::Node, source: &[u8]) -> String {
     if let Some(first_child) = node.child(0) {
         match first_child.kind() {
             "identifier" => {
-                return first_child.utf8_text(source).unwrap_or("").trim().to_string();
+                return first_child
+                    .utf8_text(source)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             }
             "field_expression" => {
-                return first_child.utf8_text(source).unwrap_or("").trim().to_string();
+                return first_child
+                    .utf8_text(source)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             }
             _ => {
-                let text = first_child.utf8_text(source).unwrap_or("").trim().to_string();
+                let text = first_child
+                    .utf8_text(source)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
                 let name: String = text
                     .chars()
                     .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
@@ -1236,7 +1243,7 @@ fn get_struct_name(node: tree_sitter::Node, source: &[u8]) -> String {
 
         if found_struct_keyword
             && !text.is_empty()
-            && text.chars().next().map_or(false, |c| c.is_uppercase())
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
         {
             let name: String = text
                 .chars()
@@ -1323,7 +1330,7 @@ fn get_abstract_type_name(node: tree_sitter::Node, source: &[u8]) -> String {
 
         if found_type_keyword
             && !text.is_empty()
-            && text.chars().next().map_or(false, |c| c.is_uppercase())
+            && text.chars().next().is_some_and(|c| c.is_uppercase())
         {
             let name: String = text
                 .chars()
@@ -1522,10 +1529,12 @@ module MyPackage
 end
 "#;
         let result = parse_and_extract("src/MyPackage.jl", source);
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/MyPackage.jl::MyPackage" && n.kind == NodeKind::Module));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/MyPackage.jl::MyPackage" && n.kind == NodeKind::Module)
+        );
     }
 
     #[test]
@@ -1541,14 +1550,18 @@ function main()
 end
 "#;
         let result = parse_and_extract("src/shapes.jl", source);
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/shapes.jl::area" && n.kind == NodeKind::Function));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/shapes.jl::main" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/shapes.jl::area" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/shapes.jl::main" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1557,10 +1570,12 @@ end
 distance(p1::Point, p2::Point) = sqrt((p1.x - p2.x)^2 + (p1.y - p2.y)^2)
 "#;
         let result = parse_and_extract("src/utils.jl", source);
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/utils.jl::distance" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/utils.jl::distance" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1576,17 +1591,25 @@ mutable struct Point
 end
 "#;
         let result = parse_and_extract("src/types.jl", source);
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/types.jl::Circle" && n.kind == NodeKind::Class));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/types.jl::Point" && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.jl::Circle" && n.kind == NodeKind::Class)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.jl::Point" && n.kind == NodeKind::Class)
+        );
 
         // Check mutable attribute
-        let point = result.nodes.iter().find(|n| n.fqn == "src/types.jl::Point").unwrap();
+        let point = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "src/types.jl::Point")
+            .unwrap();
         assert_eq!(point.attributes["mutable"], true);
     }
 
@@ -1597,14 +1620,18 @@ abstract type Shape end
 abstract type Animal <: LivingThing end
 "#;
         let result = parse_and_extract("src/types.jl", source);
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/types.jl::Shape" && n.kind == NodeKind::Type));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/types.jl::Animal" && n.kind == NodeKind::Type));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.jl::Shape" && n.kind == NodeKind::Type)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/types.jl::Animal" && n.kind == NodeKind::Type)
+        );
     }
 
     #[test]
@@ -1615,10 +1642,12 @@ macro assert_equal(a, b)
 end
 "#;
         let result = parse_and_extract("src/macros.jl", source);
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/macros.jl::assert_equal" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/macros.jl::assert_equal" && n.kind == NodeKind::Function)
+        );
 
         // Check macro attribute
         let macro_node = result
@@ -1666,8 +1695,12 @@ end
             .filter(|e| e.kind == EdgeKind::Calls)
             .collect();
         // main should call helper
-        assert!(calls.iter().any(|e| e.source_fqn == "src/main.jl::main"
-            && e.target_fqn == "src/main.jl::helper"));
+        assert!(
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "src/main.jl::main"
+                    && e.target_fqn == "src/main.jl::helper")
+        );
     }
 
     #[test]
@@ -1711,10 +1744,12 @@ end # module
         let result = parse_and_extract("src/MyPackage.jl", source);
 
         // Check module
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/MyPackage.jl::MyPackage" && n.kind == NodeKind::Module));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/MyPackage.jl::MyPackage" && n.kind == NodeKind::Module)
+        );
 
         // Check imports
         let imports: Vec<&Edge> = result
@@ -1726,40 +1761,54 @@ end # module
         assert!(imports.iter().any(|e| e.target_fqn == "Statistics"));
 
         // Check abstract type
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn.contains("Shape") && n.kind == NodeKind::Type));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn.contains("Shape") && n.kind == NodeKind::Type)
+        );
 
         // Check structs
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn.contains("Circle") && n.kind == NodeKind::Class));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn.contains("Point") && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn.contains("Circle") && n.kind == NodeKind::Class)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn.contains("Point") && n.kind == NodeKind::Class)
+        );
 
         // Check functions
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn.contains("area") && n.kind == NodeKind::Function));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn.contains("distance") && n.kind == NodeKind::Function));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn.contains("main") && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn.contains("area") && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn.contains("distance") && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn.contains("main") && n.kind == NodeKind::Function)
+        );
 
         // Check macro
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn.contains("debug") && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn.contains("debug") && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -1783,18 +1832,23 @@ end
 end
 "#;
         let result = parse_and_extract("src/nested.jl", source);
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/nested.jl::Outer" && n.kind == NodeKind::Module));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/nested.jl::Outer::Inner" && n.kind == NodeKind::Module));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/nested.jl::Outer::Inner::foo" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/nested.jl::Outer" && n.kind == NodeKind::Module)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/nested.jl::Outer::Inner" && n.kind == NodeKind::Module)
+        );
+        assert!(
+            result.nodes.iter().any(
+                |n| n.fqn == "src/nested.jl::Outer::Inner::foo" && n.kind == NodeKind::Function
+            )
+        );
     }
 
     #[test]

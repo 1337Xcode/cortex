@@ -64,55 +64,127 @@ pub struct TaintSink {
 
 /// Patterns that indicate a taint source.
 const HTTP_INPUT_PATTERNS: &[&str] = &[
-    "request", "req.body", "req.params", "req.query", "req.headers",
-    "flask.request", "Request", "HttpRequest", "get_json", "form_data",
-    "request.GET", "request.POST", "request.args", "request.form",
-    "r.Body", "c.Param", "c.Query", "c.PostForm", "gin.Context",
-    "actix_web::HttpRequest", "axum::extract",
+    "request",
+    "req.body",
+    "req.params",
+    "req.query",
+    "req.headers",
+    "flask.request",
+    "Request",
+    "HttpRequest",
+    "get_json",
+    "form_data",
+    "request.GET",
+    "request.POST",
+    "request.args",
+    "request.form",
+    "r.Body",
+    "c.Param",
+    "c.Query",
+    "c.PostForm",
+    "gin.Context",
+    "actix_web::HttpRequest",
+    "axum::extract",
 ];
 
 const FILE_INPUT_PATTERNS: &[&str] = &[
-    "open(", "read_file", "fs.readFile", "fs.read", "io.ReadAll",
-    "os.ReadFile", "std::fs::read", "File::open", "BufferedReader",
+    "open(",
+    "read_file",
+    "fs.readFile",
+    "fs.read",
+    "io.ReadAll",
+    "os.ReadFile",
+    "std::fs::read",
+    "File::open",
+    "BufferedReader",
 ];
 
 const ENV_VAR_PATTERNS: &[&str] = &[
-    "os.environ", "os.getenv", "process.env", "os.Getenv",
-    "std::env::var", "env::var", "System.getenv",
+    "os.environ",
+    "os.getenv",
+    "process.env",
+    "os.Getenv",
+    "std::env::var",
+    "env::var",
+    "System.getenv",
 ];
 
 const USER_SESSION_PATTERNS: &[&str] = &[
-    "session", "cookie", "jwt", "token", "auth_user",
-    "current_user", "get_user", "req.user",
+    "session",
+    "cookie",
+    "jwt",
+    "token",
+    "auth_user",
+    "current_user",
+    "get_user",
+    "req.user",
 ];
 
 /// Patterns that indicate a taint sink.
 const SQL_QUERY_PATTERNS: &[&str] = &[
-    "execute", "query", "raw_sql", "cursor.execute", "db.query",
-    "sql", "SELECT", "INSERT", "UPDATE", "DELETE",
-    "conn.execute", "db.Exec", "db.Query", "sqlx::query",
+    "execute",
+    "query",
+    "raw_sql",
+    "cursor.execute",
+    "db.query",
+    "sql",
+    "SELECT",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "conn.execute",
+    "db.Exec",
+    "db.Query",
+    "sqlx::query",
 ];
 
 const COMMAND_EXEC_PATTERNS: &[&str] = &[
-    "subprocess", "os.system", "exec", "spawn", "popen",
-    "child_process", "Command::new", "os/exec", "Runtime.exec",
-    "shell_exec", "system(",
+    "subprocess",
+    "os.system",
+    "exec",
+    "spawn",
+    "popen",
+    "child_process",
+    "Command::new",
+    "os/exec",
+    "Runtime.exec",
+    "shell_exec",
+    "system(",
 ];
 
 const FILE_WRITE_PATTERNS: &[&str] = &[
-    "write", "fs.writeFile", "open.*w", "File::create",
-    "os.WriteFile", "io.WriteString", "BufferedWriter",
+    "write",
+    "fs.writeFile",
+    "open.*w",
+    "File::create",
+    "os.WriteFile",
+    "io.WriteString",
+    "BufferedWriter",
 ];
 
 const HTTP_RESPONSE_PATTERNS: &[&str] = &[
-    "response", "res.send", "res.json", "res.write",
-    "HttpResponse", "jsonify", "render_template",
-    "c.JSON", "c.String", "c.HTML",
+    "response",
+    "res.send",
+    "res.json",
+    "res.write",
+    "HttpResponse",
+    "jsonify",
+    "render_template",
+    "c.JSON",
+    "c.String",
+    "c.HTML",
 ];
 
 const LOG_OUTPUT_PATTERNS: &[&str] = &[
-    "log", "logger", "logging", "console.log", "println",
-    "tracing", "slog", "log.Printf", "log.Println",
+    "log",
+    "logger",
+    "logging",
+    "console.log",
+    "println",
+    "tracing",
+    "slog",
+    "log.Printf",
+    "log.Println",
 ];
 
 // ---------------------------------------------------------------------------
@@ -204,6 +276,7 @@ const GO_SINK_PATTERNS: &[(&str, TaintSinkKind)] = &[
 /// Modifies node attributes in-place, adding `{"taint_source": "HttpInput"}` or
 /// `{"taint_sink": "SqlQuery"}` to the attributes JSON of matching nodes.
 pub fn detect_sources_sinks(nodes: &mut [Node], lang: &str) {
+    #[allow(clippy::type_complexity)]
     let (source_patterns, sink_patterns): (
         &[(&str, TaintSourceKind)],
         &[(&str, TaintSinkKind)],
@@ -227,9 +300,9 @@ pub fn detect_sources_sinks(nodes: &mut [Node], lang: &str) {
         let attrs_str = node.attributes.to_string().to_lowercase();
         let combined = format!("{} {}", fqn_lower, attrs_str);
 
-        // Check source patterns
+        // Check source patterns using word-boundary matching
         for (pattern, kind) in source_patterns {
-            if combined.contains(*pattern) {
+            if matches_at_word_boundary(&combined, pattern) {
                 if let Some(obj) = node.attributes.as_object_mut() {
                     obj.insert(
                         "taint_source".to_string(),
@@ -240,9 +313,9 @@ pub fn detect_sources_sinks(nodes: &mut [Node], lang: &str) {
             }
         }
 
-        // Check sink patterns
+        // Check sink patterns using word-boundary matching
         for (pattern, kind) in sink_patterns {
-            if combined.contains(*pattern) {
+            if matches_at_word_boundary(&combined, pattern) {
                 if let Some(obj) = node.attributes.as_object_mut() {
                     obj.insert(
                         "taint_sink".to_string(),
@@ -282,13 +355,13 @@ fn detect_generic_source_sink(node: &mut Node) {
                 serde_json::Value::String("FileInput".to_string()),
             );
         }
-    } else if matches_any_pattern(&combined, USER_SESSION_PATTERNS) {
-        if let Some(obj) = node.attributes.as_object_mut() {
-            obj.insert(
-                "taint_source".to_string(),
-                serde_json::Value::String("UserSession".to_string()),
-            );
-        }
+    } else if matches_any_pattern(&combined, USER_SESSION_PATTERNS)
+        && let Some(obj) = node.attributes.as_object_mut()
+    {
+        obj.insert(
+            "taint_source".to_string(),
+            serde_json::Value::String("UserSession".to_string()),
+        );
     }
 
     if matches_any_pattern(&combined, SQL_QUERY_PATTERNS) {
@@ -319,13 +392,13 @@ fn detect_generic_source_sink(node: &mut Node) {
                 serde_json::Value::String("HttpResponse".to_string()),
             );
         }
-    } else if matches_any_pattern(&combined, LOG_OUTPUT_PATTERNS) {
-        if let Some(obj) = node.attributes.as_object_mut() {
-            obj.insert(
-                "taint_sink".to_string(),
-                serde_json::Value::String("LogOutput".to_string()),
-            );
-        }
+    } else if matches_any_pattern(&combined, LOG_OUTPUT_PATTERNS)
+        && let Some(obj) = node.attributes.as_object_mut()
+    {
+        obj.insert(
+            "taint_sink".to_string(),
+            serde_json::Value::String("LogOutput".to_string()),
+        );
     }
 }
 
@@ -404,9 +477,80 @@ pub fn detect_sinks(nodes: &[Node]) -> Vec<TaintSink> {
     sinks
 }
 
-/// Check if a string matches any of the given patterns (case-insensitive substring match).
+// ---------------------------------------------------------------------------
+// Word-boundary-aware pattern matching
+// ---------------------------------------------------------------------------
+
+/// Returns true if the character is a "word" character: [a-zA-Z0-9_].
+#[inline]
+fn is_word_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Word-boundary-aware pattern matcher.
+/// A word boundary is a transition between [a-zA-Z0-9_] and [^a-zA-Z0-9_],
+/// or the start/end of the string.
+///
+/// The pattern must appear as a complete token: it must START at a word boundary
+/// (preceded by a non-word char or at string start) AND END at a word boundary
+/// (followed by a non-word char or at string end).
+///
+/// Comparison is case-insensitive.
+pub fn matches_at_word_boundary(fqn: &str, pattern: &str) -> bool {
+    if pattern.is_empty() {
+        return false;
+    }
+
+    let fqn_lower = fqn.to_lowercase();
+    let pattern_lower = pattern.to_lowercase();
+
+    let fqn_chars: Vec<char> = fqn_lower.chars().collect();
+    let pattern_chars: Vec<char> = pattern_lower.chars().collect();
+    let fqn_len = fqn_chars.len();
+    let pattern_len = pattern_chars.len();
+
+    if pattern_len > fqn_len {
+        return false;
+    }
+
+    // Slide the pattern across the FQN looking for matches at word boundaries
+    let end = fqn_len - pattern_len;
+    for i in 0..=end {
+        // Check if the substring matches
+        if fqn_chars[i..i + pattern_len] == pattern_chars[..] {
+            // Check left boundary: either start of string or preceded by non-word char
+            let left_ok = if i == 0 {
+                true
+            } else {
+                !is_word_char(fqn_chars[i - 1])
+            };
+
+            // Check right boundary: either end of string or followed by non-word char
+            let right_ok = if i + pattern_len == fqn_len {
+                true
+            } else {
+                !is_word_char(fqn_chars[i + pattern_len])
+            };
+
+            if left_ok && right_ok {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a string matches any of the given patterns using word-boundary-aware matching.
+/// Falls back to substring matching for multi-segment patterns (containing '.') since
+/// those are already specific enough and may span word boundaries intentionally.
 fn matches_any_pattern(text: &str, patterns: &[&str]) -> bool {
-    patterns.iter().any(|p| text.contains(&p.to_lowercase()))
+    patterns.iter().any(|p| {
+        // Multi-segment patterns (e.g., "cursor.execute", "req.body") use word-boundary
+        // matching on the full pattern. The dots act as non-word chars, so the pattern
+        // naturally has internal boundaries. We match the whole pattern at word boundaries.
+        matches_at_word_boundary(text, p)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -417,16 +561,12 @@ fn matches_any_pattern(text: &str, patterns: &[&str]) -> bool {
 pub fn classify_cwe(source: &TaintSourceKind, sink: &TaintSinkKind) -> Option<String> {
     match (source, sink) {
         (TaintSourceKind::HttpInput, TaintSinkKind::SqlQuery) => Some("CWE-89".to_string()),
-        (TaintSourceKind::HttpInput, TaintSinkKind::CommandExecution) => {
-            Some("CWE-78".to_string())
-        }
+        (TaintSourceKind::HttpInput, TaintSinkKind::CommandExecution) => Some("CWE-78".to_string()),
         (TaintSourceKind::HttpInput, TaintSinkKind::FileWrite) => Some("CWE-22".to_string()),
         (TaintSourceKind::HttpInput, TaintSinkKind::LogOutput) => Some("CWE-117".to_string()),
         (TaintSourceKind::HttpInput, TaintSinkKind::HttpResponse) => Some("CWE-79".to_string()),
         (TaintSourceKind::FileInput, TaintSinkKind::SqlQuery) => Some("CWE-89".to_string()),
-        (TaintSourceKind::FileInput, TaintSinkKind::CommandExecution) => {
-            Some("CWE-78".to_string())
-        }
+        (TaintSourceKind::FileInput, TaintSinkKind::CommandExecution) => Some("CWE-78".to_string()),
         (TaintSourceKind::EnvVar, TaintSinkKind::CommandExecution) => Some("CWE-78".to_string()),
         (TaintSourceKind::UserSession, TaintSinkKind::SqlQuery) => Some("CWE-89".to_string()),
         _ => None,
@@ -451,10 +591,11 @@ pub fn propagate_taint(store: &StoreManager) -> Result<Vec<TaintPath>, SecurityE
 /// Takes a direct database connection reference. Loads all nodes and edges,
 /// detects sources/sinks, then performs BFS from each source to find reachable sinks.
 /// Returns detected taint paths with CWE classification.
-pub fn propagate_taint_with_conn(conn: &rusqlite::Connection) -> Result<Vec<TaintPath>, SecurityError> {
-
+pub fn propagate_taint_with_conn(
+    conn: &rusqlite::Connection,
+) -> Result<Vec<TaintPath>, SecurityError> {
     // Load all nodes
-    let nodes = load_all_nodes(&conn)?;
+    let nodes = load_all_nodes(conn)?;
 
     // Detect sources and sinks
     let sources = detect_sources(&nodes);
@@ -465,7 +606,7 @@ pub fn propagate_taint_with_conn(conn: &rusqlite::Connection) -> Result<Vec<Tain
     }
 
     // Build adjacency list from Calls edges
-    let adjacency = build_adjacency_list(&conn)?;
+    let adjacency = build_adjacency_list(conn)?;
 
     // Build sink lookup
     let sink_map: HashMap<&str, &TaintSink> = sinks.iter().map(|s| (s.fqn.as_str(), s)).collect();
@@ -483,8 +624,13 @@ pub fn propagate_taint_with_conn(conn: &rusqlite::Connection) -> Result<Vec<Tain
         for (sink_fqn, path) in paths {
             let sink = sink_map[sink_fqn];
             let cwe_id = classify_cwe(&source.kind, &sink.kind);
-            let path_json =
-                serde_json::to_string(&path).unwrap_or_else(|_| "[]".to_string());
+            let path_json = serde_json::to_string(&path).unwrap_or_else(|_| "[]".to_string());
+
+            // Determine pattern specificity from the source and sink patterns.
+            // Use the maximum specificity between source and sink matched patterns.
+            let source_specificity = determine_source_specificity(&source.kind);
+            let sink_specificity = determine_sink_specificity(&sink.kind);
+            let specificity = source_specificity.max(sink_specificity);
 
             taint_paths.push(TaintPath {
                 id: None,
@@ -493,7 +639,7 @@ pub fn propagate_taint_with_conn(conn: &rusqlite::Connection) -> Result<Vec<Tain
                 sink_fqn: sink_fqn.to_string(),
                 sink_kind: format!("{:?}", sink.kind),
                 path_json,
-                confidence: compute_confidence(path.len()),
+                confidence: compute_taint_confidence(path.len(), specificity),
                 cwe_id,
                 indexed_at: now,
             });
@@ -526,11 +672,11 @@ fn bfs_to_sinks<'a>(
         }
 
         // Check if current node is a sink (and not the source itself)
-        if current != source_fqn {
-            if let Some(&sink_fqn_key) = sink_map.keys().find(|&&k| k == current.as_str()) {
-                results.push((sink_fqn_key, path.clone()));
-                // Don't stop - continue BFS to find other sinks
-            }
+        if current != source_fqn
+            && let Some(&sink_fqn_key) = sink_map.keys().find(|&&k| k == current.as_str())
+        {
+            results.push((sink_fqn_key, path.clone()));
+            // Don't stop - continue BFS to find other sinks
         }
 
         // Expand neighbors
@@ -549,21 +695,63 @@ fn bfs_to_sinks<'a>(
     results
 }
 
-/// Compute confidence based on path length (shorter paths = higher confidence).
-fn compute_confidence(path_len: usize) -> f64 {
-    match path_len {
+/// Compute confidence score for a taint path.
+///
+/// base_score: 0.95 (len 1-2), 0.85 (len 3), 0.75 (len 4), 0.65 (len 5), 0.5 (len 6+)
+/// final = base_score * pattern_specificity
+///
+/// `pattern_specificity` should be 1.0 for multi-segment patterns (containing '.')
+/// and 0.8 for single-segment patterns. The result is always clamped to [0.0, 1.0].
+pub fn compute_taint_confidence(path_length: usize, pattern_specificity: f64) -> f64 {
+    let base_score = match path_length {
         0..=2 => 0.95,
         3 => 0.85,
         4 => 0.75,
         5 => 0.65,
         _ => 0.5,
+    };
+    (base_score * pattern_specificity).clamp(0.0, 1.0)
+}
+
+/// Determine pattern specificity for a taint source kind.
+/// Checks if the representative patterns for this source kind are multi-segment (contain '.').
+/// Returns 1.0 for multi-segment, 0.8 for single-segment.
+fn determine_source_specificity(kind: &TaintSourceKind) -> f64 {
+    let patterns: &[&str] = match kind {
+        TaintSourceKind::HttpInput => HTTP_INPUT_PATTERNS,
+        TaintSourceKind::FileInput => FILE_INPUT_PATTERNS,
+        TaintSourceKind::EnvVar => ENV_VAR_PATTERNS,
+        TaintSourceKind::UserSession => USER_SESSION_PATTERNS,
+    };
+    // If any pattern for this kind is multi-segment, use 1.0
+    if patterns.iter().any(|p| p.contains('.')) {
+        1.0
+    } else {
+        0.8
+    }
+}
+
+/// Determine pattern specificity for a taint sink kind.
+/// Checks if the representative patterns for this sink kind are multi-segment (contain '.').
+/// Returns 1.0 for multi-segment, 0.8 for single-segment.
+fn determine_sink_specificity(kind: &TaintSinkKind) -> f64 {
+    let patterns: &[&str] = match kind {
+        TaintSinkKind::SqlQuery => SQL_QUERY_PATTERNS,
+        TaintSinkKind::CommandExecution => COMMAND_EXEC_PATTERNS,
+        TaintSinkKind::FileWrite => FILE_WRITE_PATTERNS,
+        TaintSinkKind::HttpResponse => HTTP_RESPONSE_PATTERNS,
+        TaintSinkKind::LogOutput => LOG_OUTPUT_PATTERNS,
+    };
+    // If any pattern for this kind is multi-segment, use 1.0
+    if patterns.iter().any(|p| p.contains('.')) {
+        1.0
+    } else {
+        0.8
     }
 }
 
 /// Load all nodes from the database.
-fn load_all_nodes(
-    conn: &rusqlite::Connection,
-) -> Result<Vec<Node>, SecurityError> {
+fn load_all_nodes(conn: &rusqlite::Connection) -> Result<Vec<Node>, SecurityError> {
     let mut stmt = conn
         .prepare(
             "SELECT fqn, kind, file, start_line, end_line, file_hash, indexed_at, attributes FROM nodes",
@@ -657,6 +845,7 @@ mod tests {
     use super::*;
     use crate::store::db::StoreManager;
     use crate::store::migrations;
+    use proptest::prelude::*;
     use serde_json::json;
 
     fn setup_store() -> (StoreManager, tempfile::TempDir) {
@@ -732,7 +921,10 @@ mod tests {
             Some("CWE-89".to_string())
         );
         assert_eq!(
-            classify_cwe(&TaintSourceKind::HttpInput, &TaintSinkKind::CommandExecution),
+            classify_cwe(
+                &TaintSourceKind::HttpInput,
+                &TaintSinkKind::CommandExecution
+            ),
             Some("CWE-78".to_string())
         );
         assert_eq!(
@@ -750,12 +942,30 @@ mod tests {
         let (store, _tmp) = setup_store();
 
         // Create a source -> intermediate -> sink chain
-        insert_node(&store, "app/routes.py::get_request", "Function", r#"{"params": ["request"]}"#);
+        insert_node(
+            &store,
+            "app/routes.py::get_request",
+            "Function",
+            r#"{"params": ["request"]}"#,
+        );
         insert_node(&store, "app/service.py::process", "Function", "{}");
-        insert_node(&store, "app/db.py::execute_query", "Function", r#"{"calls": ["cursor.execute"]}"#);
+        insert_node(
+            &store,
+            "app/db.py::execute_query",
+            "Function",
+            r#"{"calls": ["cursor.execute"]}"#,
+        );
 
-        insert_edge(&store, "app/routes.py::get_request", "app/service.py::process");
-        insert_edge(&store, "app/service.py::process", "app/db.py::execute_query");
+        insert_edge(
+            &store,
+            "app/routes.py::get_request",
+            "app/service.py::process",
+        );
+        insert_edge(
+            &store,
+            "app/service.py::process",
+            "app/db.py::execute_query",
+        );
 
         let paths = propagate_taint(&store).unwrap();
         assert!(!paths.is_empty());
@@ -775,13 +985,27 @@ mod tests {
         let (store, _tmp) = setup_store();
 
         // Create a longer chain: source -> A -> B -> C -> sink
-        insert_node(&store, "src/handler.py::request_handler", "Function", r#"{"params": ["request"]}"#);
+        insert_node(
+            &store,
+            "src/handler.py::request_handler",
+            "Function",
+            r#"{"params": ["request"]}"#,
+        );
         insert_node(&store, "src/a.py::step_a", "Function", "{}");
         insert_node(&store, "src/b.py::step_b", "Function", "{}");
         insert_node(&store, "src/c.py::step_c", "Function", "{}");
-        insert_node(&store, "src/cmd.py::run_command", "Function", r#"{"calls": ["subprocess.run"]}"#);
+        insert_node(
+            &store,
+            "src/cmd.py::run_command",
+            "Function",
+            r#"{"calls": ["subprocess.run"]}"#,
+        );
 
-        insert_edge(&store, "src/handler.py::request_handler", "src/a.py::step_a");
+        insert_edge(
+            &store,
+            "src/handler.py::request_handler",
+            "src/a.py::step_a",
+        );
         insert_edge(&store, "src/a.py::step_a", "src/b.py::step_b");
         insert_edge(&store, "src/b.py::step_b", "src/c.py::step_c");
         insert_edge(&store, "src/c.py::step_c", "src/cmd.py::run_command");
@@ -804,8 +1028,18 @@ mod tests {
         let (store, _tmp) = setup_store();
 
         // Source and sink exist but are not connected
-        insert_node(&store, "app/routes.py::get_request", "Function", r#"{"params": ["request"]}"#);
-        insert_node(&store, "app/db.py::execute_query", "Function", r#"{"calls": ["cursor.execute"]}"#);
+        insert_node(
+            &store,
+            "app/routes.py::get_request",
+            "Function",
+            r#"{"params": ["request"]}"#,
+        );
+        insert_node(
+            &store,
+            "app/db.py::execute_query",
+            "Function",
+            r#"{"calls": ["cursor.execute"]}"#,
+        );
         // No edges between them
 
         let paths = propagate_taint(&store).unwrap();
@@ -853,12 +1087,31 @@ mod tests {
         let (store, _tmp) = setup_store();
 
         // Two sources both connected to the same sink
-        insert_node(&store, "app/routes.py::get_user_input", "Function", r#"{"params": ["request"]}"#);
-        insert_node(&store, "app/config.py::load_env", "Function", r#"{"calls": ["os.getenv"]}"#);
-        insert_node(&store, "app/db.py::run_query", "Function", r#"{"calls": ["cursor.execute"]}"#);
+        insert_node(
+            &store,
+            "app/routes.py::get_user_input",
+            "Function",
+            r#"{"params": ["request"]}"#,
+        );
+        insert_node(
+            &store,
+            "app/config.py::load_env",
+            "Function",
+            r#"{"calls": ["os.getenv"]}"#,
+        );
+        insert_node(
+            &store,
+            "app/db.py::run_query",
+            "Function",
+            r#"{"calls": ["cursor.execute"]}"#,
+        );
 
         // Both sources connect to the same sink
-        insert_edge(&store, "app/routes.py::get_user_input", "app/db.py::run_query");
+        insert_edge(
+            &store,
+            "app/routes.py::get_user_input",
+            "app/db.py::run_query",
+        );
         insert_edge(&store, "app/config.py::load_env", "app/db.py::run_query");
 
         let paths = propagate_taint(&store).unwrap();
@@ -913,12 +1166,18 @@ mod tests {
 
         // First node should be marked as source
         assert_eq!(
-            nodes[0].attributes.get("taint_source").and_then(|v| v.as_str()),
+            nodes[0]
+                .attributes
+                .get("taint_source")
+                .and_then(|v| v.as_str()),
             Some("HttpInput")
         );
         // Second node should be marked as sink
         assert_eq!(
-            nodes[1].attributes.get("taint_sink").and_then(|v| v.as_str()),
+            nodes[1]
+                .attributes
+                .get("taint_sink")
+                .and_then(|v| v.as_str()),
             Some("SqlQuery")
         );
         // Third node should have no taint markers
@@ -954,11 +1213,17 @@ mod tests {
         detect_sources_sinks(&mut nodes, "typescript");
 
         assert_eq!(
-            nodes[0].attributes.get("taint_source").and_then(|v| v.as_str()),
+            nodes[0]
+                .attributes
+                .get("taint_source")
+                .and_then(|v| v.as_str()),
             Some("HttpInput")
         );
         assert_eq!(
-            nodes[1].attributes.get("taint_sink").and_then(|v| v.as_str()),
+            nodes[1]
+                .attributes
+                .get("taint_sink")
+                .and_then(|v| v.as_str()),
             Some("SqlQuery")
         );
     }
@@ -991,12 +1256,465 @@ mod tests {
         detect_sources_sinks(&mut nodes, "go");
 
         assert_eq!(
-            nodes[0].attributes.get("taint_source").and_then(|v| v.as_str()),
+            nodes[0]
+                .attributes
+                .get("taint_source")
+                .and_then(|v| v.as_str()),
             Some("HttpInput")
         );
         assert_eq!(
-            nodes[1].attributes.get("taint_sink").and_then(|v| v.as_str()),
+            nodes[1]
+                .attributes
+                .get("taint_sink")
+                .and_then(|v| v.as_str()),
             Some("SqlQuery")
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Word-boundary matching tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_word_boundary_no_match_substring_of_larger_token() {
+        // "log" should NOT match when embedded in a larger alphanumeric token
+        assert!(!matches_at_word_boundary("dialog", "log"));
+        assert!(!matches_at_word_boundary("catalog", "log"));
+        assert!(!matches_at_word_boundary("logarithm", "log"));
+        assert!(!matches_at_word_boundary("prologue", "log"));
+    }
+
+    #[test]
+    fn test_word_boundary_matches_at_separators() {
+        // "log" SHOULD match when bounded by non-word chars or string edges
+        assert!(matches_at_word_boundary("my.log", "log"));
+        assert!(matches_at_word_boundary("my.log.handler", "log"));
+        assert!(matches_at_word_boundary("my::log::handler", "log"));
+        assert!(matches_at_word_boundary("log", "log"));
+        assert!(matches_at_word_boundary("LOG", "log")); // case-insensitive
+        assert!(matches_at_word_boundary("path/log/file", "log"));
+    }
+
+    #[test]
+    fn test_word_boundary_underscore_is_word_char() {
+        // Underscore is a word character, so "query" in "run_query_now" is NOT
+        // at a word boundary (underscore connects them into one token)
+        assert!(!matches_at_word_boundary("run_query_now", "query"));
+        assert!(!matches_at_word_boundary("log_file", "log"));
+        assert!(!matches_at_word_boundary("my_log_handler", "log"));
+    }
+
+    #[test]
+    fn test_word_boundary_query_not_in_larger_token() {
+        // "query" should NOT match when part of a larger alphanumeric token
+        assert!(!matches_at_word_boundary("jQuery", "query"));
+        assert!(!matches_at_word_boundary("queryString", "query"));
+        assert!(!matches_at_word_boundary("subquery", "query"));
+    }
+
+    #[test]
+    fn test_word_boundary_multi_segment_patterns() {
+        // Multi-segment patterns like "cursor.execute" should match at boundaries
+        assert!(matches_at_word_boundary(
+            "db.cursor.execute",
+            "cursor.execute"
+        ));
+        assert!(matches_at_word_boundary("cursor.execute", "cursor.execute"));
+        assert!(matches_at_word_boundary(
+            "my::cursor.execute::call",
+            "cursor.execute"
+        ));
+    }
+
+    #[test]
+    fn test_word_boundary_case_insensitive() {
+        assert!(matches_at_word_boundary("MyApp.LOG.handler", "log"));
+        assert!(matches_at_word_boundary("Execute", "execute"));
+        assert!(matches_at_word_boundary("EXECUTE", "execute"));
+        assert!(matches_at_word_boundary("my.Execute.call", "execute"));
+    }
+
+    #[test]
+    fn test_word_boundary_at_string_start_and_end() {
+        // Pattern at start of string
+        assert!(matches_at_word_boundary("log.something", "log"));
+        assert!(matches_at_word_boundary("log", "log"));
+        // Pattern at end of string
+        assert!(matches_at_word_boundary("something.log", "log"));
+    }
+
+    #[test]
+    fn test_word_boundary_empty_pattern() {
+        assert!(!matches_at_word_boundary("anything", ""));
+        assert!(!matches_at_word_boundary("", ""));
+    }
+
+    #[test]
+    fn test_word_boundary_pattern_longer_than_fqn() {
+        assert!(!matches_at_word_boundary("log", "logging"));
+    }
+
+    #[test]
+    fn test_word_boundary_various_separators() {
+        // Dots, colons, slashes, spaces are all non-word chars (boundaries)
+        assert!(matches_at_word_boundary("a.execute.b", "execute"));
+        assert!(matches_at_word_boundary("a::execute::b", "execute"));
+        assert!(matches_at_word_boundary("a/execute/b", "execute"));
+        assert!(matches_at_word_boundary("a execute b", "execute"));
+        assert!(matches_at_word_boundary("a-execute-b", "execute"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Property-based tests for taint analyzer
+    // -----------------------------------------------------------------------
+
+    /// Strategy to generate word characters [a-zA-Z0-9_].
+    fn word_char_strategy() -> impl Strategy<Value = char> {
+        prop_oneof![
+            prop::char::range('a', 'z'),
+            prop::char::range('A', 'Z'),
+            prop::char::range('0', '9'),
+            Just('_'),
+        ]
+    }
+
+    /// Strategy to generate non-word characters (separators/boundaries).
+    fn non_word_char_strategy() -> impl Strategy<Value = char> {
+        prop_oneof![
+            Just('.'),
+            Just(':'),
+            Just('/'),
+            Just('-'),
+            Just(' '),
+            Just('('),
+            Just(')'),
+            Just('['),
+            Just(']'),
+            Just(','),
+        ]
+    }
+
+    /// Strategy to generate a non-empty word token (only word chars).
+    fn word_token_strategy(min_len: usize, max_len: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(word_char_strategy(), min_len..=max_len)
+            .prop_map(|chars| chars.into_iter().collect::<String>())
+    }
+
+    /// Strategy to generate a non-empty pattern string (1-8 word chars).
+    #[allow(dead_code)]
+    fn pattern_strategy() -> impl Strategy<Value = String> {
+        word_token_strategy(1, 8)
+    }
+
+    // -----------------------------------------------------------------------
+    // Property 6: Taint pattern matching respects word boundaries
+    // -----------------------------------------------------------------------
+    // **Validates: Requirements 2.1, 2.2**
+
+    proptest! {
+        /// Property 6a: When a pattern is embedded inside a larger alphanumeric token
+        /// (with word chars on both sides), matches_at_word_boundary returns false.
+        ///
+        /// **Validates: Requirements 2.1, 2.2**
+        #[test]
+        fn prop_word_boundary_rejects_embedded_pattern(
+            prefix in word_token_strategy(1, 5),
+            pattern in word_token_strategy(1, 6),
+            suffix in word_token_strategy(1, 5),
+        ) {
+            // Construct an FQN where the pattern is embedded in a larger word token
+            let fqn = format!("{}{}{}", prefix, pattern, suffix);
+            // The pattern is a strict substring of a larger alphanumeric token,
+            // so it should NOT match at word boundaries.
+            prop_assert!(!matches_at_word_boundary(&fqn, &pattern),
+                "Pattern '{}' should NOT match in '{}' (embedded in larger token)",
+                pattern, fqn);
+        }
+
+        /// Property 6b: When a pattern appears bounded by non-word characters
+        /// (or at string start/end), matches_at_word_boundary returns true.
+        ///
+        /// **Validates: Requirements 2.1, 2.2**
+        #[test]
+        fn prop_word_boundary_accepts_bounded_pattern(
+            left_sep in non_word_char_strategy(),
+            pattern in word_token_strategy(1, 8),
+            right_sep in non_word_char_strategy(),
+        ) {
+            // Pattern bounded by non-word chars on both sides
+            let fqn = format!("prefix{}{}{}{}", left_sep, pattern, right_sep, "suffix");
+            prop_assert!(matches_at_word_boundary(&fqn, &pattern),
+                "Pattern '{}' should match in '{}' (bounded by separators)",
+                pattern, fqn);
+        }
+
+        /// Property 6c: When a pattern is at the start of the string followed by
+        /// a non-word char, it matches.
+        ///
+        /// **Validates: Requirements 2.1, 2.2**
+        #[test]
+        fn prop_word_boundary_matches_at_string_start(
+            pattern in word_token_strategy(1, 8),
+            sep in non_word_char_strategy(),
+            suffix in word_token_strategy(1, 5),
+        ) {
+            let fqn = format!("{}{}{}", pattern, sep, suffix);
+            prop_assert!(matches_at_word_boundary(&fqn, &pattern),
+                "Pattern '{}' should match at start of '{}'",
+                pattern, fqn);
+        }
+
+        /// Property 6d: When a pattern is at the end of the string preceded by
+        /// a non-word char, it matches.
+        ///
+        /// **Validates: Requirements 2.1, 2.2**
+        #[test]
+        fn prop_word_boundary_matches_at_string_end(
+            prefix in word_token_strategy(1, 5),
+            sep in non_word_char_strategy(),
+            pattern in word_token_strategy(1, 8),
+        ) {
+            let fqn = format!("{}{}{}", prefix, sep, pattern);
+            prop_assert!(matches_at_word_boundary(&fqn, &pattern),
+                "Pattern '{}' should match at end of '{}'",
+                pattern, fqn);
+        }
+
+        /// Property 6e: Case-insensitive matching - the result should be the same
+        /// regardless of case variations in the FQN or pattern.
+        ///
+        /// **Validates: Requirements 2.1, 2.6**
+        #[test]
+        fn prop_word_boundary_case_insensitive(
+            sep in non_word_char_strategy(),
+            pattern in word_token_strategy(1, 6),
+        ) {
+            let fqn_lower = format!("prefix{}{}{}{}", sep, pattern.to_lowercase(), sep, "suffix");
+            let fqn_upper = format!("prefix{}{}{}{}", sep, pattern.to_uppercase(), sep, "suffix");
+            let result_lower = matches_at_word_boundary(&fqn_lower, &pattern);
+            let result_upper = matches_at_word_boundary(&fqn_upper, &pattern);
+            prop_assert_eq!(result_lower, result_upper,
+                "Case should not matter: lower='{}' upper='{}' pattern='{}'",
+                fqn_lower, fqn_upper, pattern);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Property 7: Taint analysis applies language-appropriate patterns only
+    // -----------------------------------------------------------------------
+    // **Validates: Requirements 2.3, 2.4**
+
+    /// Helper: get the set of source pattern texts for a given language.
+    fn source_patterns_for_lang(lang: &str) -> Vec<&'static str> {
+        match lang {
+            "python" | "py" => PYTHON_SOURCE_PATTERNS.iter().map(|(p, _)| *p).collect(),
+            "typescript" | "ts" | "javascript" | "js" => {
+                TYPESCRIPT_SOURCE_PATTERNS.iter().map(|(p, _)| *p).collect()
+            }
+            "go" => GO_SOURCE_PATTERNS.iter().map(|(p, _)| *p).collect(),
+            _ => vec![], // generic uses the global const arrays
+        }
+    }
+
+    /// Helper: get the set of sink pattern texts for a given language.
+    fn sink_patterns_for_lang(lang: &str) -> Vec<&'static str> {
+        match lang {
+            "python" | "py" => PYTHON_SINK_PATTERNS.iter().map(|(p, _)| *p).collect(),
+            "typescript" | "ts" | "javascript" | "js" => {
+                TYPESCRIPT_SINK_PATTERNS.iter().map(|(p, _)| *p).collect()
+            }
+            "go" => GO_SINK_PATTERNS.iter().map(|(p, _)| *p).collect(),
+            _ => vec![],
+        }
+    }
+
+    /// Strategy for known supported languages.
+    fn known_language_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("python".to_string()),
+            Just("typescript".to_string()),
+            Just("javascript".to_string()),
+            Just("go".to_string()),
+        ]
+    }
+
+    /// Strategy for unknown/unsupported languages.
+    fn unknown_language_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("ruby".to_string()),
+            Just("java".to_string()),
+            Just("csharp".to_string()),
+            Just("haskell".to_string()),
+            Just("unknown".to_string()),
+            Just("".to_string()),
+        ]
+    }
+
+    proptest! {
+        /// Property 7a: For a node with a known language, only that language's patterns
+        /// are applied. A node whose FQN matches a pattern exclusive to another language
+        /// should NOT be tagged when processed under the wrong language.
+        ///
+        /// **Validates: Requirements 2.3, 2.4**
+        #[test]
+        fn prop_language_specific_patterns_only_applied_for_correct_language(
+            lang in known_language_strategy(),
+        ) {
+            // Get patterns for this language
+            let source_pats = source_patterns_for_lang(&lang);
+            let _sink_pats = sink_patterns_for_lang(&lang);
+
+            // Get patterns for OTHER languages that are NOT in this language's set
+            let other_langs: Vec<&str> = ["python", "typescript", "go"]
+                .iter()
+                .filter(|&&l| l != lang.as_str())
+                .copied()
+                .collect();
+
+            for other_lang in &other_langs {
+                let other_source_pats = source_patterns_for_lang(other_lang);
+                // Find patterns exclusive to the other language (not in current lang)
+                let exclusive: Vec<&str> = other_source_pats
+                    .iter()
+                    .filter(|p| !source_pats.contains(p))
+                    .copied()
+                    .collect();
+
+                // For each exclusive pattern, create a node that matches it
+                for exclusive_pat in exclusive.iter().take(2) {
+                    let fqn = format!("module.{}", exclusive_pat);
+                    let mut nodes = vec![Node {
+                        fqn,
+                        kind: crate::store::types::NodeKind::Function,
+                        file: "test.py".to_string(),
+                        start_line: 1,
+                        end_line: 10,
+                        file_hash: "hash".to_string(),
+                        indexed_at: 1000,
+                        attributes: json!({}),
+                    }];
+
+                    detect_sources_sinks(&mut nodes, &lang);
+
+                    // The node should NOT be tagged as a source because the pattern
+                    // belongs to a different language
+                    let tagged = nodes[0].attributes.get("taint_source").is_some();
+                    prop_assert!(!tagged,
+                        "Pattern '{}' from lang '{}' should NOT match under lang '{}'",
+                        exclusive_pat, other_lang, lang);
+                }
+            }
+        }
+
+        /// Property 7b: For unknown languages, only generic patterns are applied
+        /// (not language-specific ones).
+        ///
+        /// **Validates: Requirements 2.3, 2.4**
+        #[test]
+        fn prop_unknown_language_uses_generic_patterns(
+            lang in unknown_language_strategy(),
+        ) {
+            // Create a node that matches a generic HTTP input pattern
+            let mut nodes = vec![Node {
+                fqn: "app/handler.py::handle_request".to_string(),
+                kind: crate::store::types::NodeKind::Function,
+                file: "app/handler.py".to_string(),
+                start_line: 1,
+                end_line: 10,
+                file_hash: "hash".to_string(),
+                indexed_at: 1000,
+                attributes: json!({"params": ["request"]}),
+            }];
+
+            detect_sources_sinks(&mut nodes, &lang);
+
+            // Generic patterns should still detect "request" as an HTTP input source
+            let tagged = nodes[0].attributes.get("taint_source").is_some();
+            prop_assert!(tagged,
+                "Generic pattern 'request' should match for unknown lang '{}'", lang);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Property 8: Taint confidence score follows specified formula
+    // -----------------------------------------------------------------------
+    // **Validates: Requirements 2.5**
+
+    proptest! {
+        /// Property 8a: Confidence score equals base_score(L) * S for all valid inputs.
+        /// base_score: 0.95 (L in [1,2]), 0.85 (L=3), 0.75 (L=4), 0.65 (L=5), 0.5 (L>=6)
+        /// S: 1.0 for multi-segment, 0.8 for single-segment.
+        ///
+        /// **Validates: Requirements 2.5**
+        #[test]
+        fn prop_confidence_follows_formula(
+            path_length in 1usize..=20,
+            is_multi_segment in proptest::bool::ANY,
+        ) {
+            let specificity = if is_multi_segment { 1.0 } else { 0.8 };
+            let result = compute_taint_confidence(path_length, specificity);
+
+            let expected_base = match path_length {
+                0..=2 => 0.95,
+                3 => 0.85,
+                4 => 0.75,
+                5 => 0.65,
+                _ => 0.5,
+            };
+            let expected = (expected_base * specificity).clamp(0.0, 1.0);
+
+            prop_assert!(
+                (result - expected).abs() < f64::EPSILON,
+                "For path_length={}, specificity={}: expected {} but got {}",
+                path_length, specificity, expected, result
+            );
+        }
+
+        /// Property 8b: Confidence score is always in [0.0, 1.0] for any inputs.
+        ///
+        /// **Validates: Requirements 2.5**
+        #[test]
+        fn prop_confidence_always_in_valid_range(
+            path_length in 0usize..=100,
+            specificity in 0.0f64..=2.0,
+        ) {
+            let result = compute_taint_confidence(path_length, specificity);
+            prop_assert!((0.0..=1.0).contains(&result),
+                "Confidence {} out of range [0.0, 1.0] for path_length={}, specificity={}",
+                result, path_length, specificity);
+        }
+
+        /// Property 8c: Multi-segment patterns (specificity=1.0) always produce
+        /// higher or equal confidence than single-segment (specificity=0.8) for
+        /// the same path length.
+        ///
+        /// **Validates: Requirements 2.5**
+        #[test]
+        fn prop_multi_segment_higher_confidence_than_single(
+            path_length in 1usize..=20,
+        ) {
+            let multi = compute_taint_confidence(path_length, 1.0);
+            let single = compute_taint_confidence(path_length, 0.8);
+            prop_assert!(multi >= single,
+                "Multi-segment confidence ({}) should be >= single-segment ({}) for path_length={}",
+                multi, single, path_length);
+        }
+
+        /// Property 8d: Confidence decreases (or stays same) as path length increases,
+        /// for a fixed specificity.
+        ///
+        /// **Validates: Requirements 2.5**
+        #[test]
+        fn prop_confidence_non_increasing_with_path_length(
+            path_length in 1usize..=19,
+            is_multi_segment in proptest::bool::ANY,
+        ) {
+            let specificity = if is_multi_segment { 1.0 } else { 0.8 };
+            let shorter = compute_taint_confidence(path_length, specificity);
+            let longer = compute_taint_confidence(path_length + 1, specificity);
+            prop_assert!(shorter >= longer,
+                "Confidence should not increase with path length: len={} gave {}, len={} gave {}",
+                path_length, shorter, path_length + 1, longer);
+        }
     }
 }

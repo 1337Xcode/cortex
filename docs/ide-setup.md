@@ -3,7 +3,7 @@ title: "IDE Setup"
 description: "Configure your AI coding agent to use Cortex as an MCP server."
 order: 2
 category: "guides"
-lastModified: "2026-05-19"
+lastModified: "2025-07-14"
 ---
 
 # IDE setup

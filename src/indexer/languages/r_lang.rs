@@ -1,4 +1,4 @@
-﻿//! R AST extractor (tree-sitter based).
+//! R AST extractor (tree-sitter based).
 //!
 //! Extracts structural nodes (functions, S4 classes, R6 classes)
 //! and edges (library/require/source imports, intra-file calls) from a tree-sitter R parse tree.
@@ -69,9 +69,7 @@ fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source
                 find_ast_node_at_line(root, node.start_line, "function_definition")
                     .or_else(|| find_ast_node_at_line(root, node.start_line, "binary_operator"))
                     .or_else(|| find_ast_node_at_line(root, node.start_line, "equals_assignment"))
-                    .or_else(|| {
-                        find_ast_node_at_line(root, node.start_line, "left_assignment")
-                    })
+                    .or_else(|| find_ast_node_at_line(root, node.start_line, "left_assignment"))
             {
                 let c = complexity::compute_full_complexity(ast_node, source, "r");
                 if let Some(attrs) = node.attributes.as_object_mut() {
@@ -240,8 +238,8 @@ fn try_extract_assignment(
         }
         if callee == "setClass" {
             // S4 class via assignment: extract class name from first string argument
-            let class_name = get_first_string_arg(value_node, source)
-                .unwrap_or_else(|| name.clone());
+            let class_name =
+                get_first_string_arg(value_node, source).unwrap_or_else(|| name.clone());
             let fqn = format!("{file}::{class_name}");
             if !nodes.iter().any(|n| n.fqn == fqn) {
                 nodes.push(Node {
@@ -326,18 +324,16 @@ fn get_assignment_parts<'a>(
     match node.kind() {
         "left_assignment" | "equals_assignment" => {
             // These have named fields: name and value
-            let name_node = node.child_by_field_name("name")
-                .or_else(|| node.child(0))?;
-            let value_node = node.child_by_field_name("value")
-                .or_else(|| {
-                    // Fallback: last child is the value
-                    let count = node.child_count();
-                    if count >= 2 {
-                        node.child(count - 1)
-                    } else {
-                        None
-                    }
-                })?;
+            let name_node = node.child_by_field_name("name").or_else(|| node.child(0))?;
+            let value_node = node.child_by_field_name("value").or_else(|| {
+                // Fallback: last child is the value
+                let count = node.child_count();
+                if count >= 2 {
+                    node.child(count - 1)
+                } else {
+                    None
+                }
+            })?;
 
             // Name must be an identifier
             if name_node.kind() == "identifier" {
@@ -404,13 +400,25 @@ fn get_call_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
     if let Some(first_child) = node.child(0) {
         match first_child.kind() {
             "identifier" => {
-                return first_child.utf8_text(source).unwrap_or("").trim().to_string();
+                return first_child
+                    .utf8_text(source)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             }
             "namespace_operator" => {
-                return first_child.utf8_text(source).unwrap_or("").trim().to_string();
+                return first_child
+                    .utf8_text(source)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             }
             _ => {
-                let text = first_child.utf8_text(source).unwrap_or("").trim().to_string();
+                let text = first_child
+                    .utf8_text(source)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
                 let name: String = text
                     .chars()
                     .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.' || *c == ':')
@@ -428,12 +436,10 @@ fn get_call_function_name(node: tree_sitter::Node, source: &[u8]) -> String {
 /// Used to extract class names from `setClass("ClassName", ...)` and `R6Class("ClassName", ...)`.
 fn get_first_string_arg(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
     // Find the arguments node
-    let args_node = node.child_by_field_name("arguments")
-        .or_else(|| {
-            let mut cursor = node.walk();
-            node.children(&mut cursor)
-                .find(|c| c.kind() == "arguments")
-        })?;
+    let args_node = node.child_by_field_name("arguments").or_else(|| {
+        let mut cursor = node.walk();
+        node.children(&mut cursor).find(|c| c.kind() == "arguments")
+    })?;
 
     // Look for the first string argument
     let mut cursor = args_node.walk();
@@ -498,12 +504,7 @@ fn extract_string_content(node: tree_sitter::Node, source: &[u8]) -> Option<Stri
 /// - `library(pkg)` - load a package
 /// - `require(pkg)` - conditionally load a package
 /// - `source("file.R")` - source a file
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     collect_imports_recursive(node, file, source, edges);
 }
 
@@ -541,12 +542,10 @@ fn collect_imports_recursive(
 ///
 /// In R, `library(dplyr)` uses an unquoted identifier, while `library("dplyr")` uses a string.
 fn get_first_identifier_or_string_arg(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
-    let args_node = node.child_by_field_name("arguments")
-        .or_else(|| {
-            let mut cursor = node.walk();
-            node.children(&mut cursor)
-                .find(|c| c.kind() == "arguments")
-        })?;
+    let args_node = node.child_by_field_name("arguments").or_else(|| {
+        let mut cursor = node.walk();
+        node.children(&mut cursor).find(|c| c.kind() == "arguments")
+    })?;
 
     let mut cursor = args_node.walk();
     for child in args_node.children(&mut cursor) {
@@ -587,9 +586,10 @@ fn get_first_identifier_or_string_arg(node: tree_sitter::Node, source: &[u8]) ->
 
 /// Add an import edge, avoiding duplicates.
 fn add_import_edge(file: &str, target: &str, import_type: &str, edges: &mut Vec<Edge>) {
-    if !edges.iter().any(|e| {
-        e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target
-    }) {
+    if !edges
+        .iter()
+        .any(|e| e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target)
+    {
         edges.push(Edge {
             id: None,
             source_fqn: file.to_string(),
@@ -691,10 +691,10 @@ fn extract_call_edge(
     }
 
     // Simple function call - try to resolve to a defined function
-    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == &call_name) {
-        if source_fqn != *target_fqn {
-            add_call_edge(&source_fqn, target_fqn, None, edges);
-        }
+    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(simple, _)| simple == &call_name)
+        && source_fqn != *target_fqn
+    {
+        add_call_edge(&source_fqn, target_fqn, None, edges);
     }
 }
 
@@ -738,12 +738,12 @@ fn find_enclosing_function_fqn(
         match parent.kind() {
             "left_assignment" | "equals_assignment" | "binary_operator" => {
                 // Check if this assignment defines a function
-                if let Some((name_node, value_node)) = get_assignment_parts(parent, source) {
-                    if value_node.kind() == "function_definition" {
-                        let name = name_node.utf8_text(source).unwrap_or("").trim().to_string();
-                        if !name.is_empty() {
-                            return Some(format!("{file}::{name}"));
-                        }
+                if let Some((name_node, value_node)) = get_assignment_parts(parent, source)
+                    && value_node.kind() == "function_definition"
+                {
+                    let name = name_node.utf8_text(source).unwrap_or("").trim().to_string();
+                    if !name.is_empty() {
+                        return Some(format!("{file}::{name}"));
                     }
                 }
             }
@@ -813,12 +813,24 @@ validate.input <- function(x) {
 "#;
         let result = parse_and_extract("R/analysis.R", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/analysis.R::clean_data"
-            && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/analysis.R::plot_results"
-            && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/analysis.R::validate.input"
-            && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/analysis.R::clean_data" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/analysis.R::plot_results" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/analysis.R::validate.input" && n.kind == NodeKind::Function)
+        );
     }
 
     #[test]
@@ -833,10 +845,18 @@ setClass("Person",
 "#;
         let result = parse_and_extract("R/classes.R", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/classes.R::Person"
-            && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/classes.R::Person" && n.kind == NodeKind::Class)
+        );
 
-        let person = result.nodes.iter().find(|n| n.fqn == "R/classes.R::Person").unwrap();
+        let person = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "R/classes.R::Person")
+            .unwrap();
         assert_eq!(person.attributes["class_system"], "S4");
     }
 
@@ -857,10 +877,18 @@ Animal <- R6Class("Animal",
 "#;
         let result = parse_and_extract("R/animal.R", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/animal.R::Animal"
-            && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/animal.R::Animal" && n.kind == NodeKind::Class)
+        );
 
-        let animal = result.nodes.iter().find(|n| n.fqn == "R/animal.R::Animal").unwrap();
+        let animal = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "R/animal.R::Animal")
+            .unwrap();
         assert_eq!(animal.attributes["class_system"], "R6");
     }
 
@@ -907,8 +935,11 @@ main <- function() {
             .collect();
 
         // main should call helper
-        assert!(calls.iter().any(|e| e.source_fqn == "R/main.R::main"
-            && e.target_fqn == "R/main.R::helper"));
+        assert!(
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "R/main.R::main" && e.target_fqn == "R/main.R::helper")
+        );
     }
 
     #[test]
@@ -927,8 +958,11 @@ process <- function(df) {
             .collect();
 
         // Should have a qualified call to dplyr::filter
-        assert!(calls.iter().any(|e| e.source_fqn == "R/process.R::process"
-            && e.target_fqn == "dplyr::filter"));
+        assert!(
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "R/process.R::process" && e.target_fqn == "dplyr::filter")
+        );
     }
 
     #[test]
@@ -990,20 +1024,40 @@ main <- function() {
         assert!(imports.iter().any(|e| e.target_fqn == "utils/helpers.R"));
 
         // Check S4 class
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/analysis.R::DataModel"
-            && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/analysis.R::DataModel" && n.kind == NodeKind::Class)
+        );
 
         // Check R6 class
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/analysis.R::Processor"
-            && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/analysis.R::Processor" && n.kind == NodeKind::Class)
+        );
 
         // Check functions
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/analysis.R::clean_data"
-            && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/analysis.R::plot_results"
-            && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/analysis.R::main"
-            && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/analysis.R::clean_data" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/analysis.R::plot_results" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/analysis.R::main" && n.kind == NodeKind::Function)
+        );
 
         // Check calls from main
         let calls: Vec<&Edge> = result
@@ -1011,8 +1065,10 @@ main <- function() {
             .iter()
             .filter(|e| e.kind == EdgeKind::Calls)
             .collect();
-        assert!(calls.iter().any(|e| e.source_fqn == "R/analysis.R::main"
-            && e.target_fqn == "R/analysis.R::clean_data"));
+        assert!(
+            calls.iter().any(|e| e.source_fqn == "R/analysis.R::main"
+                && e.target_fqn == "R/analysis.R::clean_data")
+        );
         assert!(calls.iter().any(|e| e.source_fqn == "R/analysis.R::main"
             && e.target_fqn == "R/analysis.R::plot_results"));
     }
@@ -1075,9 +1131,17 @@ clean_data <- function(df) {
         #[allow(deprecated)]
         let result = extract_regex("R/test.R", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "R/test.R::clean_data"
-            && n.kind == NodeKind::Function));
-        assert!(result.edges.iter().any(|e| e.kind == EdgeKind::Imports
-            && e.target_fqn == "dplyr"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "R/test.R::clean_data" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::Imports && e.target_fqn == "dplyr")
+        );
     }
 }

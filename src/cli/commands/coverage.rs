@@ -3,6 +3,10 @@
 //! `cortex coverage --lcov coverage.lcov` reads LCOV/gcov output and ranks
 //! untested functions by how many other functions call them. The most-called
 //! untested function is your highest-risk coverage gap.
+//!
+//! Additionally, coverage data is written into each node's `attributes` JSON
+//! under a `"coverage"` key containing `hit_count`, `line_coverage_pct`, and
+//! `is_covered` fields.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -10,6 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::store::db::StoreManager;
+use crate::store::types::CoverageData;
 
 /// A single coverage gap entry for display.
 struct CoverageGap {
@@ -20,13 +25,21 @@ struct CoverageGap {
     status: String,
 }
 
-/// Parse an LCOV file and return a map of file -> set of uncovered line numbers.
+/// Per-line coverage information from LCOV.
+struct LineCoverage {
+    /// Lines with zero execution count (uncovered).
+    uncovered: HashSet<u32>,
+    /// Lines with non-zero execution count (covered), mapped to hit count.
+    covered: HashMap<u32, u64>,
+}
+
+/// Parse an LCOV file and return a map of file -> line coverage data.
 ///
 /// LCOV format:
 ///   SF:<source file path>
 ///   DA:<line number>,<execution count>
 ///   end_of_record
-fn parse_lcov(path: &Path) -> Result<HashMap<String, HashSet<u32>>, anyhow::Error> {
+fn parse_lcov(path: &Path) -> Result<HashMap<String, LineCoverage>, anyhow::Error> {
     let content = fs::read_to_string(path).map_err(|e| {
         anyhow::anyhow!(
             "Cannot read LCOV file '{}': {}. \
@@ -38,7 +51,7 @@ fn parse_lcov(path: &Path) -> Result<HashMap<String, HashSet<u32>>, anyhow::Erro
         )
     })?;
 
-    let mut file_coverage: HashMap<String, HashSet<u32>> = HashMap::new();
+    let mut file_coverage: HashMap<String, LineCoverage> = HashMap::new();
     let mut current_file: Option<String> = None;
 
     for line in content.lines() {
@@ -46,20 +59,24 @@ fn parse_lcov(path: &Path) -> Result<HashMap<String, HashSet<u32>>, anyhow::Erro
 
         if let Some(sf) = line.strip_prefix("SF:") {
             current_file = Some(sf.to_string());
-        } else if line.starts_with("DA:") {
+        } else if let Some(da_content) = line.strip_prefix("DA:") {
             if let Some(ref file) = current_file {
                 // DA:line_number,execution_count
-                let parts: Vec<&str> = line[3..].splitn(2, ',').collect();
-                if parts.len() == 2 {
-                    if let (Ok(line_num), Ok(count)) =
+                let parts: Vec<&str> = da_content.splitn(2, ',').collect();
+                if parts.len() == 2
+                    && let (Ok(line_num), Ok(count)) =
                         (parts[0].parse::<u32>(), parts[1].parse::<u64>())
-                    {
-                        if count == 0 {
-                            file_coverage
-                                .entry(file.clone())
-                                .or_default()
-                                .insert(line_num);
-                        }
+                {
+                    let entry = file_coverage
+                        .entry(file.clone())
+                        .or_insert_with(|| LineCoverage {
+                            uncovered: HashSet::new(),
+                            covered: HashMap::new(),
+                        });
+                    if count == 0 {
+                        entry.uncovered.insert(line_num);
+                    } else {
+                        entry.covered.insert(line_num, count);
                     }
                 }
             }
@@ -80,10 +97,10 @@ fn normalize_path(p: &str) -> String {
 /// Run the coverage analysis and print results.
 pub fn run(store: &Arc<StoreManager>, lcov_path: &Path, limit: usize) -> Result<(), anyhow::Error> {
     // Parse LCOV data
-    let uncovered_lines = parse_lcov(lcov_path)?;
+    let file_coverage = parse_lcov(lcov_path)?;
 
-    if uncovered_lines.is_empty() {
-        println!("No uncovered lines found in LCOV data. All lines appear covered.");
+    if file_coverage.is_empty() {
+        println!("No coverage data found in LCOV file.");
         return Ok(());
     }
 
@@ -107,35 +124,64 @@ pub fn run(store: &Arc<StoreManager>, lcov_path: &Path, limit: usize) -> Result<
         .filter_map(|r| r.ok())
         .collect();
 
-    // For each node, check if any of its lines are uncovered
+    // For each node, compute coverage data and collect gaps
     let mut gaps: Vec<CoverageGap> = Vec::new();
+    let mut coverage_updates: Vec<(String, CoverageData)> = Vec::new();
 
     for (fqn, _kind, file, start_line, end_line) in &nodes {
         let norm_file = normalize_path(file);
 
-        // Check if this file has any uncovered lines in the LCOV data
-        let uncovered = uncovered_lines.iter().find_map(|(lcov_file, lines)| {
+        // Find matching LCOV file entry
+        let lcov_entry = file_coverage.iter().find_map(|(lcov_file, line_cov)| {
             let norm_lcov = normalize_path(lcov_file);
-            if norm_lcov == norm_file || norm_lcov.ends_with(&norm_file) || norm_file.ends_with(&norm_lcov) {
-                Some(lines)
+            if norm_lcov == norm_file
+                || norm_lcov.ends_with(&norm_file)
+                || norm_file.ends_with(&norm_lcov)
+            {
+                Some(line_cov)
             } else {
                 None
             }
         });
 
-        if let Some(uncovered_set) = uncovered {
-            // Check if any line in the node's range is uncovered
-            let has_uncovered = (*start_line..=*end_line).any(|l| uncovered_set.contains(&l));
+        if let Some(line_cov) = lcov_entry {
+            // Compute coverage data for this node
+            let total_lines = (end_line - start_line + 1) as usize;
+            let mut covered_lines = 0usize;
+            let mut total_hits: u64 = 0;
+
+            for line_num in *start_line..=*end_line {
+                if let Some(&hits) = line_cov.covered.get(&line_num) {
+                    covered_lines += 1;
+                    total_hits += hits;
+                }
+            }
+
+            let line_coverage_pct = if total_lines > 0 {
+                (covered_lines as f64 / total_lines as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let hit_count = total_hits.min(u32::MAX as u64) as u32;
+            let is_covered = hit_count > 0;
+
+            let coverage_data = CoverageData {
+                hit_count,
+                line_coverage_pct,
+                is_covered,
+            };
+
+            coverage_updates.push((fqn.clone(), coverage_data));
+
+            // Check if any line in the node's range is uncovered (for gap reporting)
+            let has_uncovered = (*start_line..=*end_line).any(|l| line_cov.uncovered.contains(&l));
 
             if has_uncovered {
-                let covered_count = (*start_line..=*end_line)
-                    .filter(|l| !uncovered_set.contains(l))
-                    .count();
-                let total_lines = (end_line - start_line + 1) as usize;
-                let status = if covered_count == 0 {
+                let status = if covered_lines == 0 {
                     "UNCOVERED".to_string()
                 } else {
-                    format!("PARTIAL ({}/{})", covered_count, total_lines)
+                    format!("PARTIAL ({}/{})", covered_lines, total_lines)
                 };
 
                 gaps.push(CoverageGap {
@@ -149,12 +195,18 @@ pub fn run(store: &Arc<StoreManager>, lcov_path: &Path, limit: usize) -> Result<
         }
     }
 
+    // Write coverage data into node attributes
+    drop(stmt); // Release statement before dropping connection
+    drop(conn); // Release read connection before writing
+    write_coverage_to_store(store, &coverage_updates)?;
+
     if gaps.is_empty() {
         println!("All indexed functions have full test coverage. No gaps found.");
         return Ok(());
     }
 
     // Count callers for each gap node
+    let conn = store.read_conn();
     let mut caller_counts: HashMap<String, u32> = HashMap::new();
     let mut count_stmt = conn.prepare(
         "SELECT target_fqn, COUNT(*) FROM edges WHERE kind = 'Calls' GROUP BY target_fqn",
@@ -164,10 +216,8 @@ pub fn run(store: &Arc<StoreManager>, lcov_path: &Path, limit: usize) -> Result<
         Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
     })?;
 
-    for row in rows {
-        if let Ok((fqn, count)) = row {
-            caller_counts.insert(fqn, count);
-        }
+    for (fqn, count) in rows.flatten() {
+        caller_counts.insert(fqn, count);
     }
 
     // Assign caller counts to gaps
@@ -176,7 +226,7 @@ pub fn run(store: &Arc<StoreManager>, lcov_path: &Path, limit: usize) -> Result<
     }
 
     // Sort by caller count descending (highest risk first)
-    gaps.sort_by(|a, b| b.caller_count.cmp(&a.caller_count));
+    gaps.sort_by_key(|g| std::cmp::Reverse(g.caller_count));
 
     // Limit results
     gaps.truncate(limit);
@@ -187,12 +237,12 @@ pub fn run(store: &Arc<StoreManager>, lcov_path: &Path, limit: usize) -> Result<
     println!("{}", "━".repeat(90));
     println!();
     println!(
-        "  {:<40} {:<25} {:>5} {:>8} {}",
-        "Function", "File", "Line", "Callers", "Coverage"
+        "  {:<40} {:<25} {:>5} {:>8} Coverage",
+        "Function", "File", "Line", "Callers"
     );
     println!(
-        "  {:<40} {:<25} {:>5} {:>8} {}",
-        "────────", "────", "────", "───────", "────────"
+        "  {:<40} {:<25} {:>5} {:>8} ────────",
+        "────────", "────", "────", "───────"
     );
 
     for gap in &gaps {
@@ -221,7 +271,52 @@ pub fn run(store: &Arc<StoreManager>, lcov_path: &Path, limit: usize) -> Result<
         gaps.len(),
         if gaps.len() == 1 { "" } else { "s" }
     );
+    println!(
+        "  Coverage data written to {} node attributes.",
+        coverage_updates.len()
+    );
     println!();
+
+    Ok(())
+}
+
+/// Write coverage data into node attributes in the store.
+///
+/// For each node, reads the current `attributes` JSON, inserts/updates the
+/// `"coverage"` key with the `CoverageData`, and writes it back.
+fn write_coverage_to_store(
+    store: &Arc<StoreManager>,
+    updates: &[(String, CoverageData)],
+) -> Result<(), anyhow::Error> {
+    let conn = store.write_conn();
+
+    let mut read_stmt = conn.prepare("SELECT attributes FROM nodes WHERE fqn = ?1")?;
+    let mut write_stmt = conn.prepare("UPDATE nodes SET attributes = ?1 WHERE fqn = ?2")?;
+
+    for (fqn, coverage_data) in updates {
+        // Read current attributes
+        let current_attrs: String =
+            match read_stmt.query_row(rusqlite::params![fqn], |row| row.get::<_, String>(0)) {
+                Ok(attrs) => attrs,
+                Err(_) => continue, // Node not found, skip
+            };
+
+        // Parse current attributes JSON
+        let mut attrs: serde_json::Value =
+            serde_json::from_str(&current_attrs).unwrap_or_else(|_| serde_json::json!({}));
+
+        // Insert coverage data under the "coverage" key
+        if let Some(obj) = attrs.as_object_mut() {
+            obj.insert(
+                "coverage".to_string(),
+                serde_json::to_value(coverage_data).unwrap_or(serde_json::Value::Null),
+            );
+        }
+
+        // Write back updated attributes
+        let attrs_str = serde_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+        write_stmt.execute(rusqlite::params![attrs_str, fqn])?;
+    }
 
     Ok(())
 }

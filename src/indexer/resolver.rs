@@ -1,4 +1,4 @@
-﻿//! Cross-file FQN resolver.
+//! Cross-file FQN resolver.
 //!
 //! Two-pass resolution linking cross-file call edges with confidence levels:
 //! - Pass 1: Build an FqnIndex mapping short names to full FQNs.
@@ -35,11 +35,7 @@ pub fn build_fqn_index(nodes: &[Node]) -> FqnIndex {
 
     for node in nodes {
         // Extract the short name: last segment after `::`
-        let short_name = node
-            .fqn
-            .rsplit("::")
-            .next()
-            .unwrap_or(&node.fqn);
+        let short_name = node.fqn.rsplit("::").next().unwrap_or(&node.fqn);
 
         index.insert(short_name.to_string(), node.fqn.clone());
 
@@ -97,9 +93,7 @@ pub fn resolve_cross_file_edges_incremental_with_types(
                 let source_file = file_prefix(&edge.source_fqn)
                     .unwrap_or(&edge.source_fqn)
                     .to_string();
-                let target_file = file_prefix(&edge.target_fqn)
-                    .unwrap_or("")
-                    .to_string();
+                let target_file = file_prefix(&edge.target_fqn).unwrap_or("").to_string();
                 let needs_resolution = changed.contains(&source_file)
                     || (!target_file.is_empty() && changed.contains(&target_file));
 
@@ -144,28 +138,34 @@ fn resolve_cross_file_edges_impl(
     let mut reexport_map: HashMap<String, Vec<String>> = HashMap::new();
 
     for edge in edges.iter() {
-        if edge.kind == EdgeKind::Imports {
-            if let Some(source_file) = file_prefix(&edge.source_fqn) {
-                let entry = ImportEntry {
-                    target: edge.target_fqn.clone(),
-                    alias: extract_alias(&edge.attributes),
-                    is_reexport: edge.attributes
-                        .get("reexport")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
-                };
-                import_map
-                    .entry(source_file.to_string())
-                    .or_default()
-                    .push(entry);
+        if edge.kind == EdgeKind::Imports
+            && let Some(source_file) = file_prefix(&edge.source_fqn)
+        {
+            let entry = ImportEntry {
+                target: edge.target_fqn.clone(),
+                alias: extract_alias(&edge.attributes),
+                is_reexport: edge
+                    .attributes
+                    .get("reexport")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            };
+            import_map
+                .entry(source_file.to_string())
+                .or_default()
+                .push(entry);
 
-                // Track re-exports for chain resolution
-                if edge.attributes.get("reexport").and_then(|v| v.as_bool()).unwrap_or(false) {
-                    reexport_map
-                        .entry(edge.target_fqn.clone())
-                        .or_default()
-                        .push(edge.source_fqn.clone());
-                }
+            // Track re-exports for chain resolution
+            if edge
+                .attributes
+                .get("reexport")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                reexport_map
+                    .entry(edge.target_fqn.clone())
+                    .or_default()
+                    .push(edge.source_fqn.clone());
             }
         }
     }
@@ -183,19 +183,23 @@ fn resolve_cross_file_edges_impl(
         let source_file = file_prefix(&edge.source_fqn).unwrap_or("").to_string();
 
         // Strategy 1: Qualified lookup (target contains :: or .)
-        if target.contains("::") || (target.contains('.') && !target.starts_with('.')) {
-            if let Some(resolved) = try_resolve_qualified(&target, fqn_index) {
-                let confidence = if fqn_index.get(&target).map(|v| v == &target).unwrap_or(false) {
-                    1.0
-                } else {
-                    0.6
-                };
-                edge.target_fqn = resolved;
-                edge.confidence = confidence;
-                stats.resolved_direct += 1;
-                keep.push(edge);
-                continue;
-            }
+        if (target.contains("::") || (target.contains('.') && !target.starts_with('.')))
+            && let Some(resolved) = try_resolve_qualified(&target, fqn_index)
+        {
+            let confidence = if fqn_index
+                .get(&target)
+                .map(|v| v == &target)
+                .unwrap_or(false)
+            {
+                1.0
+            } else {
+                0.6
+            };
+            edge.target_fqn = resolved;
+            edge.confidence = confidence;
+            stats.resolved_direct += 1;
+            keep.push(edge);
+            continue;
         }
 
         // Strategy 2: Direct import resolution
@@ -217,7 +221,14 @@ fn resolve_cross_file_edges_impl(
         }
 
         // Strategy 4: Re-export chain resolution (max depth 3)
-        if let Some((resolved, depth)) = try_resolve_reexport(&target, &source_file, &import_map, &reexport_map, fqn_index, 0) {
+        if let Some((resolved, depth)) = try_resolve_reexport(
+            &target,
+            &source_file,
+            &import_map,
+            &reexport_map,
+            fqn_index,
+            0,
+        ) {
             let confidence = (0.85 - depth as f64 * 0.05).max(0.6);
             edge.target_fqn = resolved;
             edge.confidence = confidence;
@@ -227,45 +238,47 @@ fn resolve_cross_file_edges_impl(
         }
 
         // Strategy 4.5: Type-aware method resolution via LocalTypeMap (confidence 0.9)
-        if let Some(type_map) = type_map {
-            if let Some(receiver) = edge.attributes.get("receiver").and_then(|v| v.as_str()) {
-                let source_fqn = &edge.source_fqn;
-                if let Some(receiver_type) = type_map.get_type(source_fqn, receiver) {
-                    // Look for file::ReceiverType::method_name
-                    let method_name = &target;
-                    let type_method_key = format!("{receiver_type}::{method_name}");
-                    if let Some(resolved) = fqn_index.get(&type_method_key)
-                        .or_else(|| {
-                            // Try any FQN ending with ReceiverType::method
-                            fqn_index.values().find(|fqn| {
-                                fqn.ends_with(&format!("::{receiver_type}::{method_name}"))
-                            })
-                        })
-                    {
-                        edge.target_fqn = resolved.clone();
-                        edge.confidence = 0.9;
-                        stats.resolved_direct += 1;
-                        keep.push(edge);
-                        continue;
-                    }
+        if let Some(type_map) = type_map
+            && let Some(receiver) = edge.attributes.get("receiver").and_then(|v| v.as_str())
+        {
+            let source_fqn = &edge.source_fqn;
+            if let Some(receiver_type) = type_map.get_type(source_fqn, receiver) {
+                // Look for file::ReceiverType::method_name
+                let method_name = &target;
+                let type_method_key = format!("{receiver_type}::{method_name}");
+                if let Some(resolved) = fqn_index.get(&type_method_key).or_else(|| {
+                    // Try any FQN ending with ReceiverType::method
+                    fqn_index
+                        .values()
+                        .find(|fqn| fqn.ends_with(&format!("::{receiver_type}::{method_name}")))
+                }) {
+                    edge.target_fqn = resolved.clone();
+                    edge.confidence = 0.9;
+                    stats.resolved_direct += 1;
+                    keep.push(edge);
+                    continue;
                 }
             }
         }
 
         // Strategy 5: Pattern match
-        if let Some(resolved) = fqn_index.get(&target) {
-            if resolved != &target {
-                edge.target_fqn = resolved.clone();
-                edge.confidence = 0.5;
-                stats.resolved_pattern += 1;
-                keep.push(edge);
-                continue;
-            }
+        if let Some(resolved) = fqn_index.get(&target)
+            && resolved != &target
+        {
+            edge.target_fqn = resolved.clone();
+            edge.confidence = 0.5;
+            stats.resolved_pattern += 1;
+            keep.push(edge);
+            continue;
         }
 
         // Strategy 6: Receiver-based pattern match for method calls
         let has_receiver = edge.attributes.get("receiver").is_some();
-        let chain_pos = edge.attributes.get("chain_position").and_then(|v| v.as_u64()).unwrap_or(0);
+        let chain_pos = edge
+            .attributes
+            .get("chain_position")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
 
         if has_receiver && chain_pos == 0 {
             // Untyped method call - keep with low confidence
@@ -332,8 +345,8 @@ fn try_resolve_direct(
     // Check if any import from this source file points to the target's module
     for import_entry in imports {
         // The import target might be the module path directly
-        let import_target_module = file_prefix(&import_entry.target)
-            .unwrap_or(&import_entry.target);
+        let import_target_module =
+            file_prefix(&import_entry.target).unwrap_or(&import_entry.target);
 
         if import_target_module == target_module || import_entry.target.contains(target_module) {
             // Direct import: source file imports the module containing the target
@@ -357,23 +370,23 @@ fn try_resolve_aliased(
     let imports = import_map.get(source_file)?;
 
     for import_entry in imports {
-        if let Some(ref alias) = import_entry.alias {
-            if alias == target_short_name {
-                // The alias matches the target name. Resolve the import target
-                // to its full FQN.
-                let import_short = import_entry
-                    .target
-                    .rsplit("::")
-                    .next()
-                    .unwrap_or(&import_entry.target);
+        if let Some(ref alias) = import_entry.alias
+            && alias == target_short_name
+        {
+            // The alias matches the target name. Resolve the import target
+            // to its full FQN.
+            let import_short = import_entry
+                .target
+                .rsplit("::")
+                .next()
+                .unwrap_or(&import_entry.target);
 
-                if let Some(full_fqn) = fqn_index.get(import_short) {
-                    return Some(full_fqn.clone());
-                }
-                // If the import target itself is in the index
-                if let Some(full_fqn) = fqn_index.get(&import_entry.target) {
-                    return Some(full_fqn.clone());
-                }
+            if let Some(full_fqn) = fqn_index.get(import_short) {
+                return Some(full_fqn.clone());
+            }
+            // If the import target itself is in the index
+            if let Some(full_fqn) = fqn_index.get(&import_entry.target) {
+                return Some(full_fqn.clone());
             }
         }
     }
@@ -397,12 +410,11 @@ fn try_resolve_qualified(target: &str, fqn_index: &FqnIndex) -> Option<String> {
         target.rsplit('.').next()
     };
 
-    if let Some(seg) = last_segment {
-        if let Some(resolved) = fqn_index.get(seg) {
-            if resolved != seg {
-                return Some(resolved.clone());
-            }
-        }
+    if let Some(seg) = last_segment
+        && let Some(resolved) = fqn_index.get(seg)
+        && resolved != seg
+    {
+        return Some(resolved.clone());
     }
 
     None
@@ -411,6 +423,7 @@ fn try_resolve_qualified(target: &str, fqn_index: &FqnIndex) -> Option<String> {
 /// Try to resolve via re-export chain (max depth 3, cycle detection).
 ///
 /// Follows `reexport: true` Imports edges to find the original definition.
+#[allow(clippy::only_used_in_recursion)]
 fn try_resolve_reexport(
     target: &str,
     source_file: &str,
@@ -527,16 +540,21 @@ mod tests {
 
         let index = build_fqn_index(&nodes);
 
-        assert_eq!(index.get("validate"), Some(&"src/utils.py::validate".to_string()));
+        assert_eq!(
+            index.get("validate"),
+            Some(&"src/utils.py::validate".to_string())
+        );
         assert_eq!(index.get("login"), Some(&"src/auth.py::login".to_string()));
         assert_eq!(index.get("User"), Some(&"src/models.py::User".to_string()));
     }
 
     #[test]
     fn test_build_fqn_index_maps_full_fqns() {
-        let nodes = vec![
-            make_node("src/utils.py::validate", "src/utils.py", NodeKind::Function),
-        ];
+        let nodes = vec![make_node(
+            "src/utils.py::validate",
+            "src/utils.py",
+            NodeKind::Function,
+        )];
 
         let index = build_fqn_index(&nodes);
 
@@ -549,13 +567,11 @@ mod tests {
 
     #[test]
     fn test_build_fqn_index_nested_class_method() {
-        let nodes = vec![
-            make_node(
-                "src/auth.py::AuthService::authenticate",
-                "src/auth.py",
-                NodeKind::Function,
-            ),
-        ];
+        let nodes = vec![make_node(
+            "src/auth.py::AuthService::authenticate",
+            "src/auth.py",
+            NodeKind::Function,
+        )];
 
         let index = build_fqn_index(&nodes);
 
@@ -669,15 +685,15 @@ mod tests {
     #[test]
     fn test_dropped_edges() {
         // Setup: file A calls "nonexistent" which is not in the index at all
-        let nodes = vec![
-            make_node("src/main.py::main", "src/main.py", NodeKind::Function),
-        ];
+        let nodes = vec![make_node(
+            "src/main.py::main",
+            "src/main.py",
+            NodeKind::Function,
+        )];
 
         let fqn_index = build_fqn_index(&nodes);
 
-        let mut edges = vec![
-            make_call_edge("src/main.py::main", "nonexistent"),
-        ];
+        let mut edges = vec![make_call_edge("src/main.py::main", "nonexistent")];
 
         let stats = resolve_cross_file_edges(&nodes, &mut edges, &fqn_index);
 
@@ -701,9 +717,10 @@ mod tests {
 
         let fqn_index = build_fqn_index(&nodes);
 
-        let mut edges = vec![
-            make_call_edge("src/main.py::main", "src/utils.py::validate"),
-        ];
+        let mut edges = vec![make_call_edge(
+            "src/main.py::main",
+            "src/utils.py::validate",
+        )];
 
         // Set original confidence
         edges[0].confidence = 1.0;
@@ -840,7 +857,10 @@ mod tests {
         );
 
         // Only the edge from src/main.py should have been resolved
-        assert_eq!(stats.resolved_pattern, 1, "only changed file's edge should be resolved");
+        assert_eq!(
+            stats.resolved_pattern, 1,
+            "only changed file's edge should be resolved"
+        );
 
         // Find the edge from main.py - it should be resolved
         let main_edge = edges
@@ -855,8 +875,14 @@ mod tests {
             .iter()
             .find(|e| e.source_fqn == "src/other.py::helper" && e.kind == EdgeKind::Calls)
             .unwrap();
-        assert_eq!(other_edge.target_fqn, "validate", "unchanged file's edge should not be resolved");
-        assert_eq!(other_edge.confidence, 0.0, "unchanged file's edge confidence should remain 0");
+        assert_eq!(
+            other_edge.target_fqn, "validate",
+            "unchanged file's edge should not be resolved"
+        );
+        assert_eq!(
+            other_edge.confidence, 0.0,
+            "unchanged file's edge confidence should remain 0"
+        );
     }
 
     #[test]
@@ -876,10 +902,7 @@ mod tests {
         ];
 
         let stats = resolve_cross_file_edges_incremental(
-            &nodes,
-            &mut edges,
-            &fqn_index,
-            None, // Full resolution
+            &nodes, &mut edges, &fqn_index, None, // Full resolution
         );
 
         // Both edges should be resolved
@@ -898,9 +921,11 @@ mod tests {
 
     #[test]
     fn test_qualified_call_resolution_double_colon() {
-        let nodes = vec![
-            make_node("src/utils.rs::validate", "src/utils.rs", NodeKind::Function),
-        ];
+        let nodes = vec![make_node(
+            "src/utils.rs::validate",
+            "src/utils.rs",
+            NodeKind::Function,
+        )];
         let fqn_index = build_fqn_index(&nodes);
 
         let mut edges = vec![
@@ -918,9 +943,11 @@ mod tests {
 
     #[test]
     fn test_receiver_based_fallback_confidence_0_4() {
-        let nodes = vec![
-            make_node("src/main.py::main", "src/main.py", NodeKind::Function),
-        ];
+        let nodes = vec![make_node(
+            "src/main.py::main",
+            "src/main.py",
+            NodeKind::Function,
+        )];
         let fqn_index = build_fqn_index(&nodes);
 
         let mut edges = vec![
@@ -945,9 +972,11 @@ mod tests {
 
     #[test]
     fn test_chained_call_confidence_0_3() {
-        let nodes = vec![
-            make_node("src/main.py::main", "src/main.py", NodeKind::Function),
-        ];
+        let nodes = vec![make_node(
+            "src/main.py::main",
+            "src/main.py",
+            NodeKind::Function,
+        )];
         let fqn_index = build_fqn_index(&nodes);
 
         let mut edges = vec![
@@ -990,9 +1019,11 @@ mod tests {
     fn test_type_aware_resolution() {
         use crate::indexer::type_map::LocalTypeMap;
 
-        let nodes = vec![
-            make_node("src/service.py::UserService::get_user", "src/service.py", NodeKind::Function),
-        ];
+        let nodes = vec![make_node(
+            "src/service.py::UserService::get_user",
+            "src/service.py",
+            NodeKind::Function,
+        )];
         let fqn_index = build_fqn_index(&nodes);
 
         let mut type_map = LocalTypeMap::new();
@@ -1002,16 +1033,14 @@ mod tests {
             "UserService".to_string(),
         );
 
-        let mut edges = vec![
-            Edge {
-                id: None,
-                source_fqn: "src/main.py::main".to_string(),
-                target_fqn: "get_user".to_string(),
-                kind: EdgeKind::Calls,
-                confidence: 0.0,
-                attributes: json!({"receiver": "svc", "call_type": "method"}),
-            },
-        ];
+        let mut edges = vec![Edge {
+            id: None,
+            source_fqn: "src/main.py::main".to_string(),
+            target_fqn: "get_user".to_string(),
+            kind: EdgeKind::Calls,
+            confidence: 0.0,
+            attributes: json!({"receiver": "svc", "call_type": "method"}),
+        }];
 
         resolve_cross_file_edges_impl(&nodes, &mut edges, &fqn_index, Some(&type_map));
 
@@ -1035,9 +1064,9 @@ mod tests {
         let mut edges = vec![
             make_import_edge("src/main.py", "src/utils.py::validate"),
             make_aliased_import_edge("src/main.py", "src/auth.py::login", "auth"),
-            make_call_edge("src/main.py::main", "validate"),       // direct
-            make_call_edge("src/main.py::main", "auth"),           // aliased
-            make_call_edge("src/main.py::main", "connect"),        // pattern
+            make_call_edge("src/main.py::main", "validate"), // direct
+            make_call_edge("src/main.py::main", "auth"),     // aliased
+            make_call_edge("src/main.py::main", "connect"),  // pattern
             Edge {
                 id: None,
                 source_fqn: "src/main.py::main".to_string(),
@@ -1060,17 +1089,34 @@ mod tests {
 
         // At least 4 of the 5 calls should be resolved (one may be dropped if receiver fallback
         // doesn't fire due to the edge being dropped before reaching that strategy)
-        let total_resolved = stats.resolved_direct + stats.resolved_aliased + stats.resolved_pattern;
-        assert!(total_resolved >= 3, "Expected at least 3 resolved, got {}", total_resolved);
+        let total_resolved =
+            stats.resolved_direct + stats.resolved_aliased + stats.resolved_pattern;
+        assert!(
+            total_resolved >= 3,
+            "Expected at least 3 resolved, got {}",
+            total_resolved
+        );
 
         let call_edges: Vec<_> = edges.iter().filter(|e| e.kind == EdgeKind::Calls).collect();
-        assert!(call_edges.len() >= 3, "Expected at least 3 call edges, got {}", call_edges.len());
+        assert!(
+            call_edges.len() >= 3,
+            "Expected at least 3 call edges, got {}",
+            call_edges.len()
+        );
 
         // Verify that at least some resolution happened
-        assert!(call_edges.iter().any(|e| e.target_fqn == "src/utils.py::validate"),
-            "validate should be resolved");
-        assert!(call_edges.iter().any(|e| e.target_fqn == "src/db.py::connect"),
-            "connect should be resolved via pattern match");
+        assert!(
+            call_edges
+                .iter()
+                .any(|e| e.target_fqn == "src/utils.py::validate"),
+            "validate should be resolved"
+        );
+        assert!(
+            call_edges
+                .iter()
+                .any(|e| e.target_fqn == "src/db.py::connect"),
+            "connect should be resolved via pattern match"
+        );
     }
 
     #[test]
@@ -1100,10 +1146,7 @@ mod tests {
         );
 
         // The edge should still be present (already qualified, passes through)
-        let call_edge = edges
-            .iter()
-            .find(|e| e.kind == EdgeKind::Calls)
-            .unwrap();
+        let call_edge = edges.iter().find(|e| e.kind == EdgeKind::Calls).unwrap();
         assert_eq!(call_edge.target_fqn, "src/utils.py::validate");
     }
 }

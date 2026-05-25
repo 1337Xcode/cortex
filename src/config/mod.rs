@@ -1,8 +1,10 @@
-// Configuration loading and management
+﻿// Configuration loading and management
 //
 // Loads configuration from environment variables (prefix: CORTEX_) with
 // fallback to `.cortex/config.toml` in the repository root. Returns typed
 // errors naming the specific missing field.
+
+pub mod pricing;
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -159,7 +161,11 @@ impl Config {
         // If env didn't provide repo_root, try TOML, then fall back to current directory.
         let repo_root_str = env_repo_root
             .or(toml_cfg.repo_root.clone())
-            .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().to_string()))
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
             .ok_or_else(|| ConfigError::MissingField {
                 field: "repo_root".to_string(),
             })?;
@@ -200,12 +206,9 @@ impl Config {
         .unwrap_or(MAX_GRAPH_QUERY_RESULTS);
 
         // auto_index
-        let auto_index = parse_env_or_toml::<bool>(
-            "CORTEX_AUTO_INDEX",
-            toml_cfg.auto_index,
-            "auto_index",
-        )?
-        .unwrap_or(true);
+        let auto_index =
+            parse_env_or_toml::<bool>("CORTEX_AUTO_INDEX", toml_cfg.auto_index, "auto_index")?
+                .unwrap_or(true);
 
         // update_check
         let update_check = parse_env_or_toml::<bool>(
@@ -239,21 +242,15 @@ impl Config {
             .unwrap_or_default();
 
         // ui_enabled
-        let ui_enabled = parse_env_or_toml::<bool>(
-            "CORTEX_UI_ENABLED",
-            toml_cfg.ui_enabled,
-            "ui_enabled",
-        )?
-        .unwrap_or(false);
+        let ui_enabled =
+            parse_env_or_toml::<bool>("CORTEX_UI_ENABLED", toml_cfg.ui_enabled, "ui_enabled")?
+                .unwrap_or(false);
 
         // pool_size (default 4, clamped to max 16)
-        let pool_size = parse_env_or_toml::<usize>(
-            "CORTEX_POOL_SIZE",
-            toml_cfg.pool_size,
-            "pool_size",
-        )?
-        .unwrap_or(DEFAULT_READ_POOL_SIZE)
-        .min(MAX_READ_POOL_SIZE);
+        let pool_size =
+            parse_env_or_toml::<usize>("CORTEX_POOL_SIZE", toml_cfg.pool_size, "pool_size")?
+                .unwrap_or(DEFAULT_READ_POOL_SIZE)
+                .min(MAX_READ_POOL_SIZE);
 
         Ok(Config {
             repo_root,
@@ -309,12 +306,9 @@ impl Config {
         .unwrap_or(MAX_GRAPH_QUERY_RESULTS);
 
         // auto_index
-        let auto_index = parse_env_or_toml::<bool>(
-            "CORTEX_AUTO_INDEX",
-            toml_cfg.auto_index,
-            "auto_index",
-        )?
-        .unwrap_or(true);
+        let auto_index =
+            parse_env_or_toml::<bool>("CORTEX_AUTO_INDEX", toml_cfg.auto_index, "auto_index")?
+                .unwrap_or(true);
 
         // update_check
         let update_check = parse_env_or_toml::<bool>(
@@ -348,21 +342,15 @@ impl Config {
             .unwrap_or_default();
 
         // ui_enabled
-        let ui_enabled = parse_env_or_toml::<bool>(
-            "CORTEX_UI_ENABLED",
-            toml_cfg.ui_enabled,
-            "ui_enabled",
-        )?
-        .unwrap_or(false);
+        let ui_enabled =
+            parse_env_or_toml::<bool>("CORTEX_UI_ENABLED", toml_cfg.ui_enabled, "ui_enabled")?
+                .unwrap_or(false);
 
         // pool_size (default 4, clamped to max 16)
-        let pool_size = parse_env_or_toml::<usize>(
-            "CORTEX_POOL_SIZE",
-            toml_cfg.pool_size,
-            "pool_size",
-        )?
-        .unwrap_or(DEFAULT_READ_POOL_SIZE)
-        .min(MAX_READ_POOL_SIZE);
+        let pool_size =
+            parse_env_or_toml::<usize>("CORTEX_POOL_SIZE", toml_cfg.pool_size, "pool_size")?
+                .unwrap_or(DEFAULT_READ_POOL_SIZE)
+                .min(MAX_READ_POOL_SIZE);
 
         Ok(Config {
             repo_root: repo_root_path,
@@ -396,11 +384,10 @@ fn load_toml_config(repo_root: &Path) -> Result<TomlConfig, ConfigError> {
         path: config_path.display().to_string(),
         source: e,
     })?;
-    let cfg: TomlConfig =
-        toml::from_str(&contents).map_err(|e| ConfigError::FileParse {
-            path: config_path.display().to_string(),
-            source: e,
-        })?;
+    let cfg: TomlConfig = toml::from_str(&contents).map_err(|e| ConfigError::FileParse {
+        path: config_path.display().to_string(),
+        source: e,
+    })?;
     Ok(cfg)
 }
 
@@ -416,10 +403,12 @@ where
     T::Err: std::fmt::Display,
 {
     if let Some(val_str) = env_var(env_name) {
-        let parsed = val_str.parse::<T>().map_err(|e| ConfigError::InvalidValue {
-            field: field_name.to_string(),
-            reason: e.to_string(),
-        })?;
+        let parsed = val_str
+            .parse::<T>()
+            .map_err(|e| ConfigError::InvalidValue {
+                field: field_name.to_string(),
+                reason: e.to_string(),
+            })?;
         Ok(Some(parsed))
     } else {
         Ok(toml_value)
@@ -527,7 +516,10 @@ mod tests {
         // When CORTEX_REPO_ROOT is not set, Config::load() falls back to
         // std::env::current_dir(). This should succeed in any normal environment.
         let result = Config::load();
-        assert!(result.is_ok(), "Config::load() should fall back to current_dir when CORTEX_REPO_ROOT is unset");
+        assert!(
+            result.is_ok(),
+            "Config::load() should fall back to current_dir when CORTEX_REPO_ROOT is unset"
+        );
 
         let config = result.unwrap();
         // The repo_root should be the current working directory.
@@ -553,10 +545,7 @@ mod tests {
         let cfg = Config::load().expect("should load with defaults");
 
         assert_eq!(cfg.repo_root, PathBuf::from("/tmp/defaults-test"));
-        assert_eq!(
-            cfg.data_dir,
-            PathBuf::from("/tmp/defaults-test/.cortex")
-        );
+        assert_eq!(cfg.data_dir, PathBuf::from("/tmp/defaults-test/.cortex"));
         assert_eq!(cfg.log_level, "info");
         assert_eq!(cfg.max_traversal_depth, MAX_TRAVERSAL_DEPTH);
         assert_eq!(cfg.max_graph_query_results, MAX_GRAPH_QUERY_RESULTS);

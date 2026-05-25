@@ -1,4 +1,4 @@
-﻿//! Embedder module for generating code embeddings.
+//! Embedder module for generating code embeddings.
 //!
 //! When the `semantic` feature is enabled, uses the `ort` ONNX runtime with
 //! [Nomic Embed Text v1](https://huggingface.co/nomic-ai/nomic-embed-text-v1)
@@ -39,7 +39,9 @@ fn hf_resolve_url(repo: &str, file_path: &str) -> String {
 #[derive(Debug, thiserror::Error)]
 pub enum EmbedError {
     /// Semantic search is not enabled (model not downloaded or feature not compiled).
-    #[error("semantic search is not enabled. Run `cortex semantic enable` to download the model (requires building with --features semantic).")]
+    #[error(
+        "semantic search is not enabled. Run `cortex semantic enable` to download the model (requires building with --features semantic)."
+    )]
     NotEnabled,
 
     /// Model loading failed.
@@ -134,18 +136,14 @@ mod inner {
             let seq_len = input_ids.len();
 
             // Create 2D arrays [1, seq_len]
-            let input_ids_arr =
-                Array2::from_shape_vec((1, seq_len), input_ids).map_err(|e| {
-                    EmbedError::GenerationFailed(format!("shape input_ids: {e}"))
-                })?;
-            let attention_mask_arr =
-                Array2::from_shape_vec((1, seq_len), attention_mask.clone()).map_err(|e| {
-                    EmbedError::GenerationFailed(format!("shape attention_mask: {e}"))
-                })?;
-            let token_type_ids_arr =
-                Array2::from_shape_vec((1, seq_len), token_type_ids).map_err(|e| {
-                    EmbedError::GenerationFailed(format!("shape token_type_ids: {e}"))
-                })?;
+            let input_ids_arr = Array2::from_shape_vec((1, seq_len), input_ids)
+                .map_err(|e| EmbedError::GenerationFailed(format!("shape input_ids: {e}")))?;
+            let attention_mask_arr = Array2::from_shape_vec((1, seq_len), attention_mask.clone())
+                .map_err(|e| {
+                EmbedError::GenerationFailed(format!("shape attention_mask: {e}"))
+            })?;
+            let token_type_ids_arr = Array2::from_shape_vec((1, seq_len), token_type_ids)
+                .map_err(|e| EmbedError::GenerationFailed(format!("shape token_type_ids: {e}")))?;
 
             // Run inference
             let outputs = self
@@ -211,10 +209,7 @@ mod inner {
         }
 
         /// Generate embeddings for multiple code snippets (batched for efficiency).
-        pub fn generate_embeddings(
-            &self,
-            snippets: &[&str],
-        ) -> Result<Vec<Vec<f32>>, EmbedError> {
+        pub fn generate_embeddings(&self, snippets: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
             // For simplicity, process one at a time. Batching can be added later.
             snippets
                 .iter()
@@ -261,10 +256,7 @@ mod inner {
         }
 
         /// Generate embeddings for multiple snippets (stub).
-        pub fn generate_embeddings(
-            &self,
-            _snippets: &[&str],
-        ) -> Result<Vec<Vec<f32>>, EmbedError> {
+        pub fn generate_embeddings(&self, _snippets: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
             Err(EmbedError::NotEnabled)
         }
     }
@@ -340,14 +332,12 @@ pub fn disable(data_dir: &Path) -> Result<(), EmbedError> {
     let tp = tokenizer_path(data_dir);
 
     if mp.exists() {
-        std::fs::remove_file(&mp).map_err(|e| {
-            EmbedError::ModelLoadFailed(format!("failed to remove model: {e}"))
-        })?;
+        std::fs::remove_file(&mp)
+            .map_err(|e| EmbedError::ModelLoadFailed(format!("failed to remove model: {e}")))?;
     }
     if tp.exists() {
-        std::fs::remove_file(&tp).map_err(|e| {
-            EmbedError::ModelLoadFailed(format!("failed to remove tokenizer: {e}"))
-        })?;
+        std::fs::remove_file(&tp)
+            .map_err(|e| EmbedError::ModelLoadFailed(format!("failed to remove tokenizer: {e}")))?;
     }
 
     println!("Semantic search disabled.");
@@ -359,7 +349,8 @@ pub fn status(data_dir: &Path) -> String {
     if is_model_available(data_dir) {
         "Semantic search: enabled (model present)".to_string()
     } else {
-        "Semantic search: disabled (model not present). Run `cortex semantic enable` to download.".to_string()
+        "Semantic search: disabled (model not present). Run `cortex semantic enable` to download."
+            .to_string()
     }
 }
 
@@ -373,9 +364,7 @@ fn download_file(url: &str, dest: &Path) -> Result<(), EmbedError> {
         .arg(url)
         .status()
         .map_err(|e| {
-            EmbedError::DownloadFailed(format!(
-                "failed to execute curl (is curl installed?): {e}"
-            ))
+            EmbedError::DownloadFailed(format!("failed to execute curl (is curl installed?): {e}"))
         })?;
 
     if !status.success() {
@@ -493,7 +482,10 @@ mod tests {
 
     #[test]
     fn test_prepare_node_text_with_code() {
-        let text = prepare_node_text("src/auth.rs::validate_user", Some("fn validate_user(input: &str) -> bool {\n    !input.is_empty()\n}"));
+        let text = prepare_node_text(
+            "src/auth.rs::validate_user",
+            Some("fn validate_user(input: &str) -> bool {\n    !input.is_empty()\n}"),
+        );
         assert!(text.contains("src/auth.rs::validate_user"));
         assert!(text.contains("fn validate_user"));
     }

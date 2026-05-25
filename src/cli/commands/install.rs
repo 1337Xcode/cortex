@@ -1,82 +1,142 @@
 //! Install command: configures AI coding agents to use Cortex.
 //!
-//! Basic version detects Claude Code and Cursor, writing MCP server
-//! configuration to their respective config files. Idempotent: running
-//! twice produces identical config without duplication.
+//! Detects all 25 supported AI coding agents and writes MCP server
+//! configuration for each. The hardened flow:
+//! 1. Detect installed agents via detect.rs (or use --platform flag)
+//! 2. For each agent: create config dir, generate config, validate, write
+//! 3. On permission error: report specific path and permissions
+//! 4. Report success only after validation passes
+//!
+//! Idempotent: running twice produces identical config without duplication.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::agents::configure::configure_agent;
+use crate::agents::detect::detect_installed_agents;
+use crate::agents::steering::{STEERING_TEMPLATE, write_steering_file};
 use crate::config::Config;
+use crate::error::AgentError;
 
 /// Run the install command: detect and configure AI agents.
+///
+/// Uses the hardened configure_agent flow that:
+/// - Creates config directories with fs::create_dir_all
+/// - Validates generated config by parsing back
+/// - Reports permission errors with specific file paths
+/// - Reports success only after validation passes
 pub fn run(config: &Config) -> Result<(), anyhow::Error> {
     let mut configured = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
 
     println!("Detecting AI coding agents...");
     println!();
 
-    // Detect and configure Claude Code
-    if let Some(claude_dir) = detect_claude_code() {
-        configure_claude_code(&claude_dir, &config.repo_root)?;
-        configured.push("Claude Code");
-    }
+    let binary = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cortex"));
 
-    // Detect and configure Cursor
-    let cursor_dir = config.repo_root.join(".cursor");
-    if detect_cursor(&config.repo_root) {
-        configure_cursor(&cursor_dir, &config.repo_root)?;
-        configured.push("Cursor");
+    // Detect all installed agents
+    let agents = detect_installed_agents(&config.repo_root);
+
+    if agents.is_empty() {
+        // If no agents detected, at minimum configure Cursor (common default)
+        let cursor_agent = crate::agents::detect::DetectedAgent {
+            name: "cursor".to_string(),
+            display_name: "Cursor".to_string(),
+            root_key: "mcpServers".to_string(),
+            config_path: config.repo_root.join(".cursor"),
+        };
+        match configure_agent(&cursor_agent, &binary) {
+            Ok(()) => configured.push("Cursor (created .cursor/)".to_string()),
+            Err(e) => errors.push(format!("Cursor: {}", e)),
+        }
     } else {
-        // Create .cursor directory and configure anyway if user runs install
-        fs::create_dir_all(&cursor_dir)?;
-        configure_cursor(&cursor_dir, &config.repo_root)?;
-        configured.push("Cursor (created .cursor/)");
+        // Configure each detected agent
+        for agent in &agents {
+            match configure_agent(agent, &binary) {
+                Ok(()) => configured.push(agent.display_name.clone()),
+                Err(AgentError::PermissionDenied { ref path }) => {
+                    errors.push(format!(
+                        "{}: Permission denied writing {}. Required: write access to {}",
+                        agent.display_name, path, path
+                    ));
+                }
+                Err(AgentError::ValidationFailed {
+                    agent: ref agent_name,
+                    ref reason,
+                }) => {
+                    errors.push(format!(
+                        "{}: Generated config failed validation: {}",
+                        agent_name, reason
+                    ));
+                }
+                Err(e) => {
+                    errors.push(format!("{}: {}", agent.display_name, e));
+                }
+            }
+        }
     }
 
-    if configured.is_empty() {
+    if configured.is_empty() && errors.is_empty() {
         println!("No supported AI agents detected.");
-    } else {
+    } else if !configured.is_empty() {
         println!("Configured Cortex MCP server for:");
         for agent in &configured {
-            println!("  ✓ {}", agent);
+            println!("  \u{2713} {}", agent);
+        }
+    }
+
+    // Report any errors
+    if !errors.is_empty() {
+        println!();
+        println!("Errors:");
+        for err in &errors {
+            println!("  \u{2717} {}", err);
         }
     }
 
     println!();
     println!("Supported platforms:");
-    println!("  • Claude Code       ~/.claude/settings.json");
-    println!("  • Cursor            .cursor/mcp.json                  (or: cortex cursor install)");
-    println!("  • Windsurf          .windsurf/mcp.json");
-    println!("  • VS Code           .vscode/mcp.json");
-    println!("  • Kiro              .kiro/settings/mcp.json           (or: cortex kiro install)");
-    println!("  • Zed               .zed/settings.json");
-    println!("  • JetBrains         .idea/mcp.json");
-    println!("  • Cline/Roo         .vscode/mcp.json");
-    println!("  • Aider             .aider.mcp.json");
-    println!("  • Continue.dev      .continue/config.json");
-    println!("  • GitHub Copilot    .github/copilot-mcp.json");
-    println!("  • Codex CLI         .codex/mcp.json");
-    println!("  • OpenCode          .opencode/mcp.json");
-    println!("  • OpenClaw          .openclaw/mcp.json");
-    println!("  • Factory Droid     .droid/mcp.json");
-    println!("  • Trae              .trae/mcp.json");
-    println!("  • Trae CN           .trae-cn/mcp.json");
-    println!("  • Gemini CLI        .gemini/settings.json");
-    println!("  • Hermes            .hermes/mcp.json");
-    println!("  • Kimi Code         .kimi/mcp.json");
-    println!("  • Pi                .pi/mcp.json");
-    println!("  • Google Antigravity ~/.antigravity/mcp.json          (or: cortex antigravity install)");
-    println!("  • Supermaven        .supermaven/mcp.json");
-    println!("  • Codeium           .codeium/mcp.json");
-    println!("  • Tabnine           .tabnine/mcp.json");
+    println!("  \u{2022} Claude Code       ~/.claude/settings.json");
+    println!(
+        "  \u{2022} Cursor            .cursor/mcp.json                  (or: cortex cursor install)"
+    );
+    println!("  \u{2022} Windsurf          .windsurf/mcp.json");
+    println!("  \u{2022} VS Code           .vscode/mcp.json");
+    println!(
+        "  \u{2022} Kiro              .kiro/settings/mcp.json           (or: cortex kiro install)"
+    );
+    println!("  \u{2022} Zed               .zed/settings.json");
+    println!("  \u{2022} JetBrains         .idea/mcp.json");
+    println!("  \u{2022} Cline/Roo         .vscode/mcp.json");
+    println!("  \u{2022} Aider             .aider.mcp.json");
+    println!("  \u{2022} Continue.dev      .continue/config.json");
+    println!("  \u{2022} GitHub Copilot    .github/copilot-mcp.json");
+    println!("  \u{2022} Codex CLI         .codex/mcp.json");
+    println!("  \u{2022} OpenCode          .opencode/mcp.json");
+    println!("  \u{2022} OpenClaw          .openclaw/mcp.json");
+    println!("  \u{2022} Factory Droid     .droid/mcp.json");
+    println!("  \u{2022} Trae              .trae/mcp.json");
+    println!("  \u{2022} Trae CN           .trae-cn/mcp.json");
+    println!("  \u{2022} Gemini CLI        .gemini/settings.json");
+    println!("  \u{2022} Hermes            .hermes/mcp.json");
+    println!("  \u{2022} Kimi Code         .kimi/mcp.json");
+    println!("  \u{2022} Pi                .pi/mcp.json");
+    println!(
+        "  \u{2022} Google Antigravity ~/.antigravity/mcp.json          (or: cortex antigravity install)"
+    );
+    println!("  \u{2022} Supermaven        .supermaven/mcp.json");
+    println!("  \u{2022} Codeium           .codeium/mcp.json");
+    println!("  \u{2022} Tabnine           .tabnine/mcp.json");
     println!();
     println!("Use --platform <name> to configure a specific agent.");
 
     // Write workspace-level .cortex/mcp.json for VS Code, Cursor, and Kiro auto-discovery
     write_workspace_mcp_config(&config.repo_root)?;
+
+    // Generate agent steering file after successful install
+    generate_agent_steering(&config.repo_root);
 
     Ok(())
 }
@@ -100,96 +160,82 @@ fn write_workspace_mcp_config(repo_root: &Path) -> Result<(), anyhow::Error> {
     });
 
     let mcp_path = cortex_dir.join("mcp.json");
+
+    // Generate and validate before writing
+    let content = serde_json::to_string_pretty(&mcp_config)?;
+    let _: Value = serde_json::from_str(&content)?;
+
     write_json_file(&mcp_path, &mcp_config)?;
-    println!("  ✓ Wrote .cortex/mcp.json (workspace-level MCP config)");
+    println!("  \u{2713} Wrote .cortex/mcp.json (workspace-level MCP config)");
     Ok(())
 }
 
-/// Build the MCP server configuration JSON for Cortex.
-fn build_cortex_mcp_config(repo_root: &Path) -> Value {
-    serde_json::json!({
-        "command": "cortex",
-        "args": ["serve"],
-        "env": {
-            "CORTEX_REPO_ROOT": repo_root.to_string_lossy()
-        }
-    })
+/// Detect the active AI agent environment by checking for agent-specific
+/// directories and files in the repo root.
+///
+/// Returns the agent name if detected, or `None` for fallback.
+fn detect_active_agent(repo_root: &Path) -> Option<&'static str> {
+    // Check in priority order (most specific first)
+    if repo_root.join(".cursor").is_dir() {
+        return Some("cursor");
+    }
+    if repo_root.join(".claude").is_dir() {
+        return Some("claude code");
+    }
+    if repo_root.join(".kiro").is_dir() {
+        return Some("kiro");
+    }
+    if repo_root.join(".windsurfrules").exists() {
+        return Some("windsurf");
+    }
+    if repo_root
+        .join(".github")
+        .join("copilot-instructions.md")
+        .exists()
+    {
+        return Some("copilot");
+    }
+    None
 }
 
-/// Detect Claude Code by checking for ~/.claude/ directory.
-fn detect_claude_code() -> Option<PathBuf> {
-    let home = dirs_path()?;
-    let claude_dir = home.join(".claude");
-    if claude_dir.exists() {
-        Some(claude_dir)
-    } else {
-        None
-    }
-}
+/// Generate an agent steering file after successful install.
+///
+/// Detects the active agent environment and writes the Cortex MCP tool
+/// preference guide to the appropriate location. If no known agent is
+/// detected, writes to the fallback path and informs the user.
+fn generate_agent_steering(repo_root: &Path) {
+    println!();
+    println!("Writing agent steering file...");
 
-/// Detect Cursor by checking for .cursor/ in repo root.
-fn detect_cursor(repo_root: &Path) -> bool {
-    repo_root.join(".cursor").exists()
-}
+    let agent_name = detect_active_agent(repo_root);
 
-/// Configure Claude Code by writing to ~/.claude/settings.json.
-fn configure_claude_code(claude_dir: &Path, repo_root: &Path) -> Result<(), anyhow::Error> {
-    let settings_path = claude_dir.join("settings.json");
-    let mut settings = load_json_file(&settings_path)?;
+    let effective_agent = agent_name.unwrap_or("fallback");
 
-    // Ensure mcpServers key exists
-    if !settings.is_object() {
-        settings = serde_json::json!({});
-    }
-    let obj = settings.as_object_mut().unwrap();
-    if !obj.contains_key("mcpServers") {
-        obj.insert("mcpServers".to_string(), serde_json::json!({}));
-    }
-
-    // Set the cortex entry (idempotent: overwrites if exists)
-    let mcp_servers = obj.get_mut("mcpServers").unwrap().as_object_mut().unwrap();
-    mcp_servers.insert("cortex".to_string(), build_cortex_mcp_config(repo_root));
-
-    // Write back
-    write_json_file(&settings_path, &settings)?;
-    Ok(())
-}
-
-/// Configure Cursor by writing to .cursor/mcp.json.
-fn configure_cursor(cursor_dir: &Path, repo_root: &Path) -> Result<(), anyhow::Error> {
-    let mcp_path = cursor_dir.join("mcp.json");
-    let mut config = load_json_file(&mcp_path)?;
-
-    // Ensure mcpServers key exists
-    if !config.is_object() {
-        config = serde_json::json!({});
-    }
-    let obj = config.as_object_mut().unwrap();
-    if !obj.contains_key("mcpServers") {
-        obj.insert("mcpServers".to_string(), serde_json::json!({}));
-    }
-
-    // Set the cortex entry (idempotent: overwrites if exists)
-    let mcp_servers = obj.get_mut("mcpServers").unwrap().as_object_mut().unwrap();
-    mcp_servers.insert("cortex".to_string(), build_cortex_mcp_config(repo_root));
-
-    // Write back
-    write_json_file(&mcp_path, &config)?;
-    Ok(())
-}
-
-/// Load a JSON file, returning an empty object if the file doesn't exist.
-fn load_json_file(path: &Path) -> Result<Value, anyhow::Error> {
-    match fs::read_to_string(path) {
-        Ok(content) => {
-            if content.trim().is_empty() {
-                Ok(serde_json::json!({}))
+    match write_steering_file(effective_agent, repo_root, STEERING_TEMPLATE) {
+        Ok(()) => {
+            let path = crate::agents::steering::steering_file_path(effective_agent, repo_root);
+            if agent_name.is_some() {
+                println!(
+                    "  \u{2713} Wrote steering file for {} \u{2192} {}",
+                    effective_agent,
+                    path.display()
+                );
             } else {
-                Ok(serde_json::from_str(&content)?)
+                println!(
+                    "  \u{2713} Wrote generic steering file \u{2192} {}",
+                    path.display()
+                );
+                println!(
+                    "    No known agent environment detected (Cursor, Claude Code, Kiro, Windsurf, Copilot)."
+                );
+                println!(
+                    "    You can manually copy .cortex/steering.md to your agent's rules directory."
+                );
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::json!({})),
-        Err(e) => Err(e.into()),
+        Err(e) => {
+            eprintln!("  \u{26a0} Failed to write steering file: {}", e);
+        }
     }
 }
 
@@ -203,158 +249,102 @@ fn write_json_file(path: &Path, value: &Value) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Get the user's home directory.
-fn dirs_path() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        std::env::var("USERPROFILE").ok().map(PathBuf::from)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::env::var("HOME").ok().map(PathBuf::from)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
     #[test]
-    fn test_build_cortex_mcp_config() {
-        let repo_root = Path::new("/tmp/my-repo");
-        let config = build_cortex_mcp_config(repo_root);
-
-        assert_eq!(config["command"], "cortex");
-        assert_eq!(config["args"][0], "serve");
-        assert_eq!(config["env"]["CORTEX_REPO_ROOT"], "/tmp/my-repo");
-    }
-
-    #[test]
-    fn test_configure_cursor_creates_mcp_json() {
+    fn test_detect_active_agent_cursor() {
         let tmp = TempDir::new().unwrap();
-        let cursor_dir = tmp.path().join(".cursor");
-        fs::create_dir_all(&cursor_dir).unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join(".cursor")).unwrap();
 
-        let repo_root = tmp.path();
-        configure_cursor(&cursor_dir, repo_root).unwrap();
-
-        let mcp_path = cursor_dir.join("mcp.json");
-        assert!(mcp_path.exists());
-
-        let content: Value = serde_json::from_str(&fs::read_to_string(&mcp_path).unwrap()).unwrap();
-        assert!(content["mcpServers"]["cortex"].is_object());
-        assert_eq!(content["mcpServers"]["cortex"]["command"], "cortex");
-        assert_eq!(content["mcpServers"]["cortex"]["args"][0], "serve");
+        assert_eq!(detect_active_agent(root), Some("cursor"));
     }
 
     #[test]
-    fn test_configure_cursor_idempotent() {
+    fn test_detect_active_agent_claude_code() {
         let tmp = TempDir::new().unwrap();
-        let cursor_dir = tmp.path().join(".cursor");
-        fs::create_dir_all(&cursor_dir).unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join(".claude")).unwrap();
 
-        let repo_root = tmp.path();
-
-        // Run twice
-        configure_cursor(&cursor_dir, repo_root).unwrap();
-        configure_cursor(&cursor_dir, repo_root).unwrap();
-
-        let mcp_path = cursor_dir.join("mcp.json");
-        let content: Value = serde_json::from_str(&fs::read_to_string(&mcp_path).unwrap()).unwrap();
-
-        // Should have exactly one cortex entry
-        let mcp_servers = content["mcpServers"].as_object().unwrap();
-        assert_eq!(mcp_servers.len(), 1);
-        assert!(mcp_servers.contains_key("cortex"));
+        assert_eq!(detect_active_agent(root), Some("claude code"));
     }
 
     #[test]
-    fn test_configure_cursor_preserves_existing_entries() {
+    fn test_detect_active_agent_kiro() {
         let tmp = TempDir::new().unwrap();
-        let cursor_dir = tmp.path().join(".cursor");
-        fs::create_dir_all(&cursor_dir).unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join(".kiro")).unwrap();
 
-        // Write an existing mcp.json with another server
-        let existing = serde_json::json!({
-            "mcpServers": {
-                "other-server": {
-                    "command": "other",
-                    "args": []
-                }
-            }
-        });
-        fs::write(
-            cursor_dir.join("mcp.json"),
-            serde_json::to_string_pretty(&existing).unwrap(),
-        )
-        .unwrap();
-
-        let repo_root = tmp.path();
-        configure_cursor(&cursor_dir, repo_root).unwrap();
-
-        let mcp_path = cursor_dir.join("mcp.json");
-        let content: Value = serde_json::from_str(&fs::read_to_string(&mcp_path).unwrap()).unwrap();
-
-        // Should have both entries
-        let mcp_servers = content["mcpServers"].as_object().unwrap();
-        assert_eq!(mcp_servers.len(), 2);
-        assert!(mcp_servers.contains_key("cortex"));
-        assert!(mcp_servers.contains_key("other-server"));
+        assert_eq!(detect_active_agent(root), Some("kiro"));
     }
 
     #[test]
-    fn test_configure_claude_code() {
+    fn test_detect_active_agent_windsurf() {
         let tmp = TempDir::new().unwrap();
-        let claude_dir = tmp.path().join(".claude");
-        fs::create_dir_all(&claude_dir).unwrap();
+        let root = tmp.path();
+        fs::write(root.join(".windsurfrules"), "rules").unwrap();
 
-        let repo_root = tmp.path();
-        configure_claude_code(&claude_dir, repo_root).unwrap();
-
-        let settings_path = claude_dir.join("settings.json");
-        assert!(settings_path.exists());
-
-        let content: Value =
-            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
-        assert!(content["mcpServers"]["cortex"].is_object());
-        assert_eq!(content["mcpServers"]["cortex"]["command"], "cortex");
+        assert_eq!(detect_active_agent(root), Some("windsurf"));
     }
 
     #[test]
-    fn test_configure_claude_code_idempotent() {
+    fn test_detect_active_agent_copilot() {
         let tmp = TempDir::new().unwrap();
-        let claude_dir = tmp.path().join(".claude");
-        fs::create_dir_all(&claude_dir).unwrap();
+        let root = tmp.path();
+        let github_dir = root.join(".github");
+        fs::create_dir_all(&github_dir).unwrap();
+        fs::write(github_dir.join("copilot-instructions.md"), "instructions").unwrap();
 
-        let repo_root = tmp.path();
-
-        // Run twice
-        configure_claude_code(&claude_dir, repo_root).unwrap();
-        configure_claude_code(&claude_dir, repo_root).unwrap();
-
-        let settings_path = claude_dir.join("settings.json");
-        let content: Value =
-            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
-
-        let mcp_servers = content["mcpServers"].as_object().unwrap();
-        assert_eq!(mcp_servers.len(), 1);
-        assert!(mcp_servers.contains_key("cortex"));
+        assert_eq!(detect_active_agent(root), Some("copilot"));
     }
 
     #[test]
-    fn test_load_json_file_nonexistent() {
-        let result = load_json_file(Path::new("/nonexistent/file.json")).unwrap();
-        assert_eq!(result, serde_json::json!({}));
-    }
-
-    #[test]
-    fn test_load_json_file_empty() {
+    fn test_detect_active_agent_none() {
         let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("empty.json");
-        fs::write(&path, "").unwrap();
+        let root = tmp.path();
 
-        let result = load_json_file(&path).unwrap();
-        assert_eq!(result, serde_json::json!({}));
+        assert_eq!(detect_active_agent(root), None);
+    }
+
+    #[test]
+    fn test_detect_active_agent_priority_cursor_over_claude() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        // Both present, cursor should win (checked first)
+        fs::create_dir_all(root.join(".cursor")).unwrap();
+        fs::create_dir_all(root.join(".claude")).unwrap();
+
+        assert_eq!(detect_active_agent(root), Some("cursor"));
+    }
+
+    #[test]
+    fn test_generate_agent_steering_writes_file() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join(".cursor")).unwrap();
+
+        generate_agent_steering(root);
+
+        let steering_path = root.join(".cursor").join("rules").join("cortex.mdc");
+        assert!(steering_path.exists());
+        let content = fs::read_to_string(&steering_path).unwrap();
+        assert!(content.contains("Cortex MCP Tools"));
+    }
+
+    #[test]
+    fn test_generate_agent_steering_fallback() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        // No agent directories present
+
+        generate_agent_steering(root);
+
+        let steering_path = root.join(".cortex").join("steering.md");
+        assert!(steering_path.exists());
+        let content = fs::read_to_string(&steering_path).unwrap();
+        assert!(content.contains("Cortex MCP Tools"));
     }
 }

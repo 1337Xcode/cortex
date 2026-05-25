@@ -26,7 +26,14 @@ pub fn extract(tree: &Tree, file: &str, source: &str) -> ExtractionResult {
     // First pass: collect all definitions
     let mut defined_fqns: Vec<(String, String)> = Vec::new(); // (simple_name, fqn)
 
-    collect_definitions(root, file, source_bytes, None, &mut nodes, &mut defined_fqns);
+    collect_definitions(
+        root,
+        file,
+        source_bytes,
+        None,
+        &mut nodes,
+        &mut defined_fqns,
+    );
 
     // Second pass: collect imports and calls
     collect_imports(root, file, source_bytes, &mut edges);
@@ -121,12 +128,17 @@ fn collect_definitions(
                         Some(cls) => format!("{file}::{cls}::{method_name}"),
                         None => format!("{file}::{method_name}"),
                     };
+                    let kind = if class_name.is_some() {
+                        NodeKind::Method
+                    } else {
+                        NodeKind::Function
+                    };
                     let start_line = child.start_position().row as u32 + 1;
                     let end_line = child.end_position().row as u32 + 1;
 
                     nodes.push(Node {
                         fqn: fqn.clone(),
-                        kind: NodeKind::Function,
+                        kind,
                         file: file.to_string(),
                         start_line,
                         end_line,
@@ -145,12 +157,17 @@ fn collect_definitions(
                         Some(cls) => format!("{file}::{cls}::{ctor_name}"),
                         None => format!("{file}::{ctor_name}"),
                     };
+                    let kind = if class_name.is_some() {
+                        NodeKind::Method
+                    } else {
+                        NodeKind::Function
+                    };
                     let start_line = child.start_position().row as u32 + 1;
                     let end_line = child.end_position().row as u32 + 1;
 
                     nodes.push(Node {
                         fqn: fqn.clone(),
-                        kind: NodeKind::Function,
+                        kind,
                         file: file.to_string(),
                         start_line,
                         end_line,
@@ -168,12 +185,7 @@ fn collect_definitions(
 }
 
 /// Collect import declarations and create Imports edges.
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -213,55 +225,52 @@ fn collect_calls(
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        if child.kind() == "method_invocation" {
-            if let Some(name_node) = child.child_by_field_name("name") {
-                let call_name = name_node.utf8_text(source).unwrap_or("");
-                let caller_fqn = find_enclosing_method(child, file, source)
-                    .unwrap_or_else(|| file.to_string());
+        if child.kind() == "method_invocation"
+            && let Some(name_node) = child.child_by_field_name("name")
+        {
+            let call_name = name_node.utf8_text(source).unwrap_or("");
+            let caller_fqn =
+                find_enclosing_method(child, file, source).unwrap_or_else(|| file.to_string());
 
-                let object_node = child.child_by_field_name("object");
+            let object_node = child.child_by_field_name("object");
 
-                if let Some(obj_node) = object_node {
-                    // Method call with receiver: obj.method()
-                    let receiver = obj_node.utf8_text(source).unwrap_or("");
-                    let (target_fqn, confidence) =
-                        if let Some((_, fqn)) = defined_fqns
-                            .iter()
-                            .find(|(name, _)| name == call_name)
-                        {
-                            (fqn.clone(), 1.0_f64)
-                        } else {
-                            (call_name.to_string(), 0.0_f64)
-                        };
-                    if caller_fqn != target_fqn {
-                        edges.push(Edge {
-                            id: None,
-                            source_fqn: caller_fqn,
-                            target_fqn,
-                            kind: EdgeKind::Calls,
-                            confidence,
-                            attributes: json!({
-                                "receiver": receiver,
-                                "call_type": "method"
-                            }),
-                        });
-                    }
+            if let Some(obj_node) = object_node {
+                // Method call with receiver: obj.method()
+                let receiver = obj_node.utf8_text(source).unwrap_or("");
+                let (target_fqn, confidence) = if let Some((_, fqn)) =
+                    defined_fqns.iter().find(|(name, _)| name == call_name)
+                {
+                    (fqn.clone(), 1.0_f64)
                 } else {
-                    // Simple call within same class
-                    if let Some((_, target_fqn)) =
-                        defined_fqns.iter().find(|(name, _)| name == call_name)
-                    {
-                        if caller_fqn != *target_fqn {
-                            edges.push(Edge {
-                                id: None,
-                                source_fqn: caller_fqn,
-                                target_fqn: target_fqn.clone(),
-                                kind: EdgeKind::Calls,
-                                confidence: 1.0,
-                                attributes: json!({}),
-                            });
-                        }
-                    }
+                    (call_name.to_string(), 0.0_f64)
+                };
+                if caller_fqn != target_fqn {
+                    edges.push(Edge {
+                        id: None,
+                        source_fqn: caller_fqn,
+                        target_fqn,
+                        kind: EdgeKind::Calls,
+                        confidence,
+                        attributes: json!({
+                            "receiver": receiver,
+                            "call_type": "method"
+                        }),
+                    });
+                }
+            } else {
+                // Simple call within same class
+                if let Some((_, target_fqn)) =
+                    defined_fqns.iter().find(|(name, _)| name == call_name)
+                    && caller_fqn != *target_fqn
+                {
+                    edges.push(Edge {
+                        id: None,
+                        source_fqn: caller_fqn,
+                        target_fqn: target_fqn.clone(),
+                        kind: EdgeKind::Calls,
+                        confidence: 1.0,
+                        attributes: json!({}),
+                    });
                 }
             }
         }
@@ -272,11 +281,7 @@ fn collect_calls(
 }
 
 /// Find the enclosing method for a given node to determine the caller FQN.
-fn find_enclosing_method(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_method(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
 
     while let Some(parent) = current {
@@ -303,10 +308,10 @@ fn find_enclosing_method(
 fn find_enclosing_class(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
     while let Some(parent) = current {
-        if parent.kind() == "class_declaration" || parent.kind() == "interface_declaration" {
-            if let Some(name_node) = parent.child_by_field_name("name") {
-                return Some(name_node.utf8_text(source).unwrap_or("").to_string());
-            }
+        if (parent.kind() == "class_declaration" || parent.kind() == "interface_declaration")
+            && let Some(name_node) = parent.child_by_field_name("name")
+        {
+            return Some(name_node.utf8_text(source).unwrap_or("").to_string());
         }
         current = parent.parent();
     }
@@ -362,7 +367,11 @@ public class OrderService {
 }
 "#;
         let tree = parse_java(source);
-        let result = extract(&tree, "src/main/java/com/example/service/OrderService.java", source);
+        let result = extract(
+            &tree,
+            "src/main/java/com/example/service/OrderService.java",
+            source,
+        );
 
         // Nodes: OrderRepository interface + findById + findAll (interface methods)
         //        + OrderService class + OrderService constructor + getOrder + listOrders + findById + findAll
@@ -404,12 +413,16 @@ public class OrderService {
             .filter(|e| e.kind == EdgeKind::Imports)
             .collect();
         assert_eq!(import_edges.len(), 2);
-        assert!(import_edges
-            .iter()
-            .any(|e| e.target_fqn == "java.util.List"));
-        assert!(import_edges
-            .iter()
-            .any(|e| e.target_fqn == "java.util.Optional"));
+        assert!(
+            import_edges
+                .iter()
+                .any(|e| e.target_fqn == "java.util.List")
+        );
+        assert!(
+            import_edges
+                .iter()
+                .any(|e| e.target_fqn == "java.util.Optional")
+        );
 
         // Check call edges: getOrder calls findById
         let call_edges: Vec<&Edge> = result
@@ -464,10 +477,12 @@ public class AnotherValid {
 
         // Should not panic and should extract at least the valid definitions
         assert!(!result.nodes.is_empty());
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "Broken.java::ValidClass"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Broken.java::ValidClass")
+        );
     }
 
     #[test]
@@ -488,14 +503,18 @@ public class Person {
         let tree = parse_java(source);
         let result = extract(&tree, "Person.java", source);
 
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "Person.java::Person::Person"));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "Person.java::Person::getName"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Person.java::Person::Person")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Person.java::Person::getName")
+        );
     }
 
     #[test]
@@ -505,5 +524,106 @@ public class Person {
         let result = extract(&tree, "Empty.java", source);
         assert!(result.nodes.is_empty());
         assert!(result.edges.is_empty());
+    }
+
+    /// Validates: Requirements 9.4
+    /// Verify that methods inside classes get NodeKind::Method.
+    /// Note: Java does not have standalone functions; all methods are inside classes.
+    #[test]
+    fn test_nodekind_method_vs_function() {
+        let source = r#"
+public class Calculator {
+    public int add(int a, int b) {
+        return a + b;
+    }
+
+    public int subtract(int a, int b) {
+        return a - b;
+    }
+}
+"#;
+        let tree = parse_java(source);
+        let result = extract(&tree, "test_nodekind/Calculator.java", source);
+
+        // Methods inside class should be NodeKind::Method
+        let add_method = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::Calculator::add"))
+            .expect("Calculator.add should be extracted");
+        assert_eq!(
+            add_method.kind,
+            NodeKind::Method,
+            "Method inside class should have NodeKind::Method"
+        );
+
+        let subtract_method = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::Calculator::subtract"))
+            .expect("Calculator.subtract should be extracted");
+        assert_eq!(
+            subtract_method.kind,
+            NodeKind::Method,
+            "Method inside class should have NodeKind::Method"
+        );
+
+        // Class itself should be NodeKind::Class
+        let class_node = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::Calculator") && n.kind == NodeKind::Class)
+            .expect("Calculator class should be extracted");
+        assert_eq!(class_node.kind, NodeKind::Class);
+    }
+
+    /// Validates: Requirements 9.4
+    /// Verify that method FQNs include the parent type name in the format file::ClassName::method_name.
+    #[test]
+    fn test_method_fqn_includes_parent_type() {
+        let source = r#"
+public class UserService {
+    public void getUser(String id) {}
+    public void deleteUser(String id) {}
+}
+
+public interface UserRepository {
+    void findById(String id);
+}
+"#;
+        let tree = parse_java(source);
+        let result = extract(&tree, "src/UserService.java", source);
+
+        // Method FQNs should include parent class
+        let get_user = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Method && n.fqn.contains("getUser"))
+            .expect("getUser method should be extracted");
+        assert_eq!(
+            get_user.fqn, "src/UserService.java::UserService::getUser",
+            "Method FQN should be file::ClassName::method_name"
+        );
+
+        let delete_user = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Method && n.fqn.contains("deleteUser"))
+            .expect("deleteUser method should be extracted");
+        assert_eq!(
+            delete_user.fqn, "src/UserService.java::UserService::deleteUser",
+            "Method FQN should be file::ClassName::method_name"
+        );
+
+        // Interface method FQNs should include parent interface
+        let find_by_id = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Method && n.fqn.contains("findById"))
+            .expect("findById method should be extracted");
+        assert_eq!(
+            find_by_id.fqn, "src/UserService.java::UserRepository::findById",
+            "Interface method FQN should be file::InterfaceName::method_name"
+        );
     }
 }

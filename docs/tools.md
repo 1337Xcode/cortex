@@ -3,7 +3,7 @@ title: "MCP Tools"
 description: "Documentation for all 32 MCP tools exposed by the Cortex server."
 order: 4
 category: "reference"
-lastModified: "2025-01-15"
+lastModified: "2025-07-14"
 ---
 
 # MCP tools
@@ -38,11 +38,11 @@ Single-call code intelligence. Pass a natural language question and Cortex auto-
 
 ### search_symbols
 
-Find nodes by name pattern with optional kind filter.
+Find nodes by name pattern with optional kind filter. Includes coverage data when LCOV has been loaded.
 
 **Arguments:**
 - `pattern` (required): glob pattern to match against FQN (e.g., `*UserService*`, `src/auth*`)
-- `kind` (optional): filter by node kind (Function, Class, Module, Route, Interface, Enum, Constant)
+- `kind` (optional): filter by node kind (Function, Class, Module, Route, Interface, Enum, Constant, Method)
 - `limit` (optional): max results, default 50
 
 **Behavior:** Searches the graph index first. If fewer than 3 results, automatically falls back to FTS5 BM25 search. Results are merged and deduplicated by FQN.
@@ -67,7 +67,7 @@ BFS over outbound call edges. Answers "what does this function call?"
 
 ### get_file_context
 
-Compressed structural summary of a file. Returns all symbols defined in it and their edges.
+Compressed structural summary of a file. Returns all symbols defined in it and their edges. Includes coverage data when LCOV has been loaded.
 
 **Arguments:**
 - `file` (required): relative file path
@@ -270,11 +270,11 @@ Focused subgraph relevant to a described task.
 
 ### generate_steering
 
-Generate CLAUDE.md/AGENTS.md content from graph analysis.
+Generate CLAUDE.md/AGENTS.md content from graph analysis. Includes module boundaries from Leiden community detection, top complexity hotspots, and active architectural decision records.
 
 **Arguments:** none
 
-**Returns:** markdown content suitable for steering files, derived from module boundaries and architectural patterns.
+**Returns:** markdown content suitable for steering files, derived from module boundaries, complexity hotspots, and accepted ADRs. Output is kept under 2000 tokens; if exceeded, hotspots are truncated to top 5 and ADR summaries are reduced to title-only.
 
 ### get_class_hierarchy
 

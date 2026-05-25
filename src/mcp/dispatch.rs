@@ -6,20 +6,25 @@
 use std::time::Instant;
 
 use serde_json::Value;
+use tracing::warn;
 
+use crate::agents::steering;
 use crate::error::McpError;
+use crate::indexer::context_budget;
+use crate::security::secrets;
+use crate::security::{owasp, sbom, taint, vuln};
 use crate::store::db::StoreManager;
 use crate::store::queries::community;
+use crate::store::queries::dead_code;
 use crate::store::queries::graph;
 use crate::store::queries::memory;
 use crate::store::queries::search;
 use crate::store::types::NodeKind;
-use crate::security::{owasp, sbom, taint, vuln};
-use crate::security::secrets;
-use crate::agents::steering;
-use crate::indexer::context_budget;
 
-use super::token_counter::{compute_token_breakdown, estimate_tokens_saved, estimate_tokens_used, TokenMeta};
+use super::savings_store;
+use super::token_counter::{
+    TokenMeta, compute_token_breakdown, estimate_tokens_saved, estimate_tokens_used,
+};
 use super::types::{ToolCallResult, ToolContent};
 
 /// Dispatch a tool call to the appropriate store/memory method.
@@ -39,42 +44,42 @@ pub fn dispatch_tool(
         (json, files, Some(method))
     } else {
         let (json, files) = match tool_name {
-        "trace_callers" => dispatch_trace_callers(store, arguments)?,
-        "trace_callees" => dispatch_trace_callees(store, arguments)?,
-        "get_file_context" => dispatch_get_file_context(store, arguments)?,
-        "get_architecture" => dispatch_get_architecture(store)?,
-        "find_dead_code" => dispatch_find_dead_code(store, arguments)?,
-        "blast_radius" => dispatch_blast_radius(store, arguments)?,
-        "write_observation" => dispatch_write_observation(store, arguments)?,
-        "read_observations" => dispatch_read_observations(store, arguments)?,
-        "write_adr" => dispatch_write_adr(store, arguments)?,
-        "read_adrs" => dispatch_read_adrs(store, arguments)?,
-        "prune_observations" => dispatch_prune_observations(store, arguments)?,
-        "detect_changes" => dispatch_detect_changes(store, arguments)?,
-        "semantic_search" => dispatch_semantic_search(store, arguments)?,
-        "search_text" => dispatch_search_text(store, arguments)?,
-        "get_code_snippet" => dispatch_get_code_snippet(store, arguments)?,
-        "query_graph" => dispatch_query_graph(store, arguments)?,
-        "get_http_routes" => dispatch_get_http_routes(store, arguments)?,
-        "trace_http_call" => dispatch_trace_http_call(store, arguments)?,
-        "find_taint_paths" => dispatch_find_taint_paths(store, arguments)?,
-        "scan_owasp" => dispatch_scan_owasp(store)?,
-        "generate_sbom" => dispatch_generate_sbom(store, arguments)?,
-        "check_dependencies" => dispatch_check_dependencies(store, arguments)?,
-        "generate_steering" => dispatch_generate_steering(store)?,
-        "decompose_boundaries" => dispatch_decompose_boundaries(store, arguments)?,
-        "get_complexity_hotspots" => dispatch_get_complexity_hotspots(store, arguments)?,
-        "get_task_context" => dispatch_get_task_context(store, arguments)?,
-        "get_class_hierarchy" => dispatch_get_class_hierarchy(store, arguments)?,
-        "get_git_hotspots" => dispatch_get_git_hotspots(store, arguments)?,
-        "get_import_graph" => dispatch_get_import_graph(store, arguments)?,
-        "find_similar_functions" => dispatch_find_similar_functions(store, arguments)?,
-        "ask" => super::ask::dispatch_ask(store, arguments)?,
-        _ => {
-            return Err(McpError::DispatchError {
-                reason: format!("unknown tool: {}", tool_name),
-            });
-        }
+            "trace_callers" => dispatch_trace_callers(store, arguments)?,
+            "trace_callees" => dispatch_trace_callees(store, arguments)?,
+            "get_file_context" => dispatch_get_file_context(store, arguments)?,
+            "get_architecture" => dispatch_get_architecture(store)?,
+            "find_dead_code" => dispatch_find_dead_code(store, arguments)?,
+            "blast_radius" => dispatch_blast_radius(store, arguments)?,
+            "write_observation" => dispatch_write_observation(store, arguments)?,
+            "read_observations" => dispatch_read_observations(store, arguments)?,
+            "write_adr" => dispatch_write_adr(store, arguments)?,
+            "read_adrs" => dispatch_read_adrs(store, arguments)?,
+            "prune_observations" => dispatch_prune_observations(store, arguments)?,
+            "detect_changes" => dispatch_detect_changes(store, arguments)?,
+            "semantic_search" => dispatch_semantic_search(store, arguments)?,
+            "search_text" => dispatch_search_text(store, arguments)?,
+            "get_code_snippet" => dispatch_get_code_snippet(store, arguments)?,
+            "query_graph" => dispatch_query_graph(store, arguments)?,
+            "get_http_routes" => dispatch_get_http_routes(store, arguments)?,
+            "trace_http_call" => dispatch_trace_http_call(store, arguments)?,
+            "find_taint_paths" => dispatch_find_taint_paths(store, arguments)?,
+            "scan_owasp" => dispatch_scan_owasp(store)?,
+            "generate_sbom" => dispatch_generate_sbom(store, arguments)?,
+            "check_dependencies" => dispatch_check_dependencies(store, arguments)?,
+            "generate_steering" => dispatch_generate_steering(store)?,
+            "decompose_boundaries" => dispatch_decompose_boundaries(store, arguments)?,
+            "get_complexity_hotspots" => dispatch_get_complexity_hotspots(store, arguments)?,
+            "get_task_context" => dispatch_get_task_context(store, arguments)?,
+            "get_class_hierarchy" => dispatch_get_class_hierarchy(store, arguments)?,
+            "get_git_hotspots" => dispatch_get_git_hotspots(store, arguments)?,
+            "get_import_graph" => dispatch_get_import_graph(store, arguments)?,
+            "find_similar_functions" => dispatch_find_similar_functions(store, arguments)?,
+            "ask" => super::ask::dispatch_ask(store, arguments)?,
+            _ => {
+                return Err(McpError::DispatchError {
+                    reason: format!("unknown tool: {}", tool_name),
+                });
+            }
         };
         (json, files, None)
     };
@@ -90,6 +95,34 @@ pub fn dispatch_tool(
         query_time_ms,
         token_breakdown,
     };
+
+    // Record token savings to the persistent store (best-effort, never propagates errors)
+    {
+        let agent_id = arguments
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let model_name = arguments
+            .get("model_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let conn = store.write_conn();
+        if let Err(e) = savings_store::record_savings(
+            &conn,
+            tool_name,
+            tokens_used,
+            tokens_saved,
+            agent_id,
+            model_name,
+        ) {
+            warn!(
+                tool = %tool_name,
+                error = %e,
+                "failed to record token savings"
+            );
+        }
+    }
 
     let tool_result = ToolCallResult {
         content: vec![ToolContent {
@@ -110,10 +143,10 @@ pub fn dispatch_tool(
 
     // Include retrieval_method in _meta if present (from search_symbols)
     if let Some(method) = retrieval_method {
-        meta_value.as_object_mut().unwrap().insert(
-            "retrieval_method".to_string(),
-            serde_json::json!(method),
-        );
+        meta_value
+            .as_object_mut()
+            .unwrap()
+            .insert("retrieval_method".to_string(), serde_json::json!(method));
     }
 
     response
@@ -146,12 +179,12 @@ fn dispatch_search_symbols(
             reason: "missing required argument: pattern".to_string(),
         })?;
 
-    let kind = args.get("kind").and_then(|v| v.as_str()).and_then(parse_node_kind);
+    let kind = args
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .and_then(parse_node_kind);
 
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(50) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
     let conn = store.read_conn();
     let nodes = graph::find_nodes_by_pattern(&conn, pattern, kind, limit).map_err(|e| {
@@ -162,13 +195,22 @@ fn dispatch_search_symbols(
 
     let graph_count = nodes.len();
 
-    // Wrap graph nodes with confidence 1.0
+    // Wrap graph nodes with confidence 1.0 and extract coverage field
     let mut results_with_confidence: Vec<serde_json::Value> = nodes
         .iter()
         .map(|n| {
             let mut v = serde_json::to_value(n).unwrap_or_default();
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("confidence".to_string(), serde_json::json!(1.0));
+                // Extract coverage from attributes and surface as top-level field
+                let coverage = obj
+                    .get("attributes")
+                    .and_then(|attrs| attrs.get("coverage"))
+                    .cloned();
+                obj.insert(
+                    "coverage".to_string(),
+                    coverage.unwrap_or(serde_json::Value::Null),
+                );
             }
             v
         })
@@ -210,11 +252,7 @@ fn dispatch_search_symbols(
                     cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
                 });
 
-                if graph_count == 0 {
-                    "fts5"
-                } else {
-                    "hybrid"
-                }
+                if graph_count == 0 { "fts5" } else { "hybrid" }
             } else if graph_count == 0 {
                 "fts5"
             } else {
@@ -242,9 +280,10 @@ fn dispatch_search_symbols(
         files.len()
     };
 
-    let json = serde_json::to_string(&results_with_confidence).map_err(|e| McpError::DispatchError {
-        reason: format!("failed to serialize search results: {}", e),
-    })?;
+    let json =
+        serde_json::to_string(&results_with_confidence).map_err(|e| McpError::DispatchError {
+            reason: format!("failed to serialize search results: {}", e),
+        })?;
 
     Ok((json, files_touched, retrieval_method))
 }
@@ -255,11 +294,21 @@ fn deduplicate_by_fqn(results: Vec<serde_json::Value>) -> Vec<serde_json::Value>
     let mut seen: HashMap<String, serde_json::Value> = HashMap::new();
 
     for item in results {
-        let fqn = item.get("fqn").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let fqn = item
+            .get("fqn")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let confidence = item
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
 
         if let Some(existing) = seen.get(&fqn) {
-            let existing_confidence = existing.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let existing_confidence = existing
+                .get("confidence")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
             if confidence > existing_confidence {
                 seen.insert(fqn, item);
             }
@@ -272,10 +321,7 @@ fn deduplicate_by_fqn(results: Vec<serde_json::Value>) -> Vec<serde_json::Value>
 }
 
 /// trace_callers: calls graph::trace_callers
-fn dispatch_trace_callers(
-    store: &StoreManager,
-    args: &Value,
-) -> Result<(String, usize), McpError> {
+fn dispatch_trace_callers(store: &StoreManager, args: &Value) -> Result<(String, usize), McpError> {
     let fqn = args
         .get("fqn")
         .and_then(|v| v.as_str())
@@ -283,10 +329,7 @@ fn dispatch_trace_callers(
             reason: "missing required argument: fqn".to_string(),
         })?;
 
-    let depth = args
-        .get("depth")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(3) as u32;
+    let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
 
     let conn = store.read_conn();
     let callers = graph::trace_callers(&conn, fqn, depth).map_err(|e| McpError::DispatchError {
@@ -304,10 +347,7 @@ fn dispatch_trace_callers(
 }
 
 /// trace_callees: calls graph::trace_callees
-fn dispatch_trace_callees(
-    store: &StoreManager,
-    args: &Value,
-) -> Result<(String, usize), McpError> {
+fn dispatch_trace_callees(store: &StoreManager, args: &Value) -> Result<(String, usize), McpError> {
     let fqn = args
         .get("fqn")
         .and_then(|v| v.as_str())
@@ -315,10 +355,7 @@ fn dispatch_trace_callees(
             reason: "missing required argument: fqn".to_string(),
         })?;
 
-    let depth = args
-        .get("depth")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(3) as u32;
+    let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
 
     let conn = store.read_conn();
     let callees = graph::trace_callees(&conn, fqn, depth).map_err(|e| McpError::DispatchError {
@@ -340,40 +377,49 @@ fn dispatch_get_file_context(
     store: &StoreManager,
     args: &Value,
 ) -> Result<(String, usize), McpError> {
-    let file = args
-        .get("file")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| McpError::DispatchError {
-            reason: "missing required argument: file".to_string(),
-        })?;
+    let file =
+        args.get("file")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::DispatchError {
+                reason: "missing required argument: file".to_string(),
+            })?;
 
     // Use file path as pattern prefix to find all nodes in that file
     let pattern = format!("{}::*", file);
     let conn = store.read_conn();
-    let nodes =
-        graph::find_nodes_by_pattern(&conn, &pattern, None, 500).map_err(|e| {
-            McpError::DispatchError {
-                reason: format!("get_file_context failed: {}", e),
-            }
-        })?;
+    let nodes = graph::find_nodes_by_pattern(&conn, &pattern, None, 500).map_err(|e| {
+        McpError::DispatchError {
+            reason: format!("get_file_context failed: {}", e),
+        }
+    })?;
 
     let files_touched = 1; // Single file context
 
-    // Wrap nodes with confidence 1.0 (graph-resolved results)
+    // Wrap nodes with confidence 1.0 and extract coverage field
     let results_with_confidence: Vec<serde_json::Value> = nodes
         .iter()
         .map(|n| {
             let mut v = serde_json::to_value(n).unwrap_or_default();
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("confidence".to_string(), serde_json::json!(1.0));
+                // Extract coverage from attributes and surface as top-level field
+                let coverage = obj
+                    .get("attributes")
+                    .and_then(|attrs| attrs.get("coverage"))
+                    .cloned();
+                obj.insert(
+                    "coverage".to_string(),
+                    coverage.unwrap_or(serde_json::Value::Null),
+                );
             }
             v
         })
         .collect();
 
-    let json = serde_json::to_string(&results_with_confidence).map_err(|e| McpError::DispatchError {
-        reason: format!("failed to serialize file context: {}", e),
-    })?;
+    let json =
+        serde_json::to_string(&results_with_confidence).map_err(|e| McpError::DispatchError {
+            reason: format!("failed to serialize file context: {}", e),
+        })?;
 
     Ok((json, files_touched))
 }
@@ -393,36 +439,55 @@ fn dispatch_get_architecture(store: &StoreManager) -> Result<(String, usize), Mc
     Ok((json, files_touched))
 }
 
-/// find_dead_code: calls graph::find_dead_code
+/// find_dead_code: uses the new dead_code module with multi-stage filtering
 fn dispatch_find_dead_code(
     store: &StoreManager,
     args: &Value,
 ) -> Result<(String, usize), McpError> {
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(50) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
 
     let conn = store.read_conn();
-    let nodes = graph::find_dead_code(&conn, limit).map_err(|e| McpError::DispatchError {
-        reason: format!("find_dead_code failed: {}", e),
-    })?;
 
-    let files_touched = count_unique_files_from_nodes(&nodes);
+    let config = dead_code::DeadCodeConfig {
+        limit,
+        ..Default::default()
+    };
 
-    // Wrap nodes with confidence 1.0 (graph-resolved results)
-    let results_with_confidence: Vec<serde_json::Value> = nodes
+    let result =
+        dead_code::find_dead_code(&conn, &config).map_err(|e| McpError::DispatchError {
+            reason: format!("find_dead_code failed: {}", e),
+        })?;
+
+    // Convert DeadCodeCandidate to serializable JSON
+    let results_json: Vec<serde_json::Value> = result
+        .candidates
         .iter()
-        .map(|n| {
-            let mut v = serde_json::to_value(n).unwrap_or_default();
-            if let Some(obj) = v.as_object_mut() {
-                obj.insert("confidence".to_string(), serde_json::json!(1.0));
-            }
-            v
+        .map(|c| {
+            serde_json::json!({
+                "fqn": c.fqn,
+                "kind": c.kind,
+                "file": c.file,
+                "start_line": c.start_line,
+                "end_line": c.end_line,
+                "confidence": 1.0,
+            })
         })
         .collect();
 
-    let json = serde_json::to_string(&results_with_confidence).map_err(|e| McpError::DispatchError {
+    let files_touched = {
+        let mut files: Vec<&str> = result.candidates.iter().map(|c| c.file.as_str()).collect();
+        files.sort_unstable();
+        files.dedup();
+        files.len()
+    };
+
+    let response = serde_json::json!({
+        "candidates": results_json,
+        "total_scanned": result.total_scanned,
+        "filters_applied": result.filters_applied,
+    });
+
+    let json = serde_json::to_string(&response).map_err(|e| McpError::DispatchError {
         reason: format!("failed to serialize dead code: {}", e),
     })?;
 
@@ -430,10 +495,7 @@ fn dispatch_find_dead_code(
 }
 
 /// blast_radius: calls graph::blast_radius
-fn dispatch_blast_radius(
-    store: &StoreManager,
-    args: &Value,
-) -> Result<(String, usize), McpError> {
+fn dispatch_blast_radius(store: &StoreManager, args: &Value) -> Result<(String, usize), McpError> {
     let fqn = args
         .get("fqn")
         .and_then(|v| v.as_str())
@@ -441,10 +503,7 @@ fn dispatch_blast_radius(
             reason: "missing required argument: fqn".to_string(),
         })?;
 
-    let depth = args
-        .get("depth")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(3) as u32;
+    let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
 
     let conn = store.read_conn();
     let nodes = graph::blast_radius(&conn, fqn, depth).map_err(|e| McpError::DispatchError {
@@ -465,29 +524,24 @@ fn dispatch_blast_radius(
         })
         .collect();
 
-    let json = serde_json::to_string(&results_with_confidence).map_err(|e| McpError::DispatchError {
-        reason: format!("failed to serialize blast radius: {}", e),
-    })?;
+    let json =
+        serde_json::to_string(&results_with_confidence).map_err(|e| McpError::DispatchError {
+            reason: format!("failed to serialize blast radius: {}", e),
+        })?;
 
     Ok((json, files_touched))
 }
 
 /// search_text: calls search::search_fts with BM25 ranking
-fn dispatch_search_text(
-    store: &StoreManager,
-    args: &Value,
-) -> Result<(String, usize), McpError> {
-    let query = args
-        .get("query")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| McpError::DispatchError {
-            reason: "missing required argument: query".to_string(),
-        })?;
+fn dispatch_search_text(store: &StoreManager, args: &Value) -> Result<(String, usize), McpError> {
+    let query =
+        args.get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::DispatchError {
+                reason: "missing required argument: query".to_string(),
+            })?;
 
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(20) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
     let conn = store.read_conn();
     let results = search::search_fts(&conn, query, limit).map_err(|e| McpError::DispatchError {
@@ -534,10 +588,11 @@ fn dispatch_write_observation(
         .unwrap_or("unknown");
 
     let conn = store.write_conn();
-    let id = memory::write_observation(&conn, node_fqn, observation_text, agent_id, "")
-        .map_err(|e| McpError::DispatchError {
+    let id = memory::write_observation(&conn, node_fqn, observation_text, agent_id, "").map_err(
+        |e| McpError::DispatchError {
             reason: format!("write_observation failed: {}", e),
-        })?;
+        },
+    )?;
 
     let result = serde_json::json!({ "id": id });
     let json = serde_json::to_string(&result).map_err(|e| McpError::DispatchError {
@@ -565,12 +620,11 @@ fn dispatch_read_observations(
         .unwrap_or(false);
 
     let conn = store.read_conn();
-    let observations =
-        memory::read_observations(&conn, fqn, include_stale).map_err(|e| {
-            McpError::DispatchError {
-                reason: format!("read_observations failed: {}", e),
-            }
-        })?;
+    let observations = memory::read_observations(&conn, fqn, include_stale).map_err(|e| {
+        McpError::DispatchError {
+            reason: format!("read_observations failed: {}", e),
+        }
+    })?;
 
     let json = serde_json::to_string(&observations).map_err(|e| McpError::DispatchError {
         reason: format!("failed to serialize observations: {}", e),
@@ -581,19 +635,19 @@ fn dispatch_read_observations(
 
 /// write_adr: calls memory::write_adr
 fn dispatch_write_adr(store: &StoreManager, args: &Value) -> Result<(String, usize), McpError> {
-    let title = args
-        .get("title")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| McpError::DispatchError {
-            reason: "missing required argument: title".to_string(),
-        })?;
+    let title =
+        args.get("title")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::DispatchError {
+                reason: "missing required argument: title".to_string(),
+            })?;
 
-    let body = args
-        .get("body")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| McpError::DispatchError {
-            reason: "missing required argument: body".to_string(),
-        })?;
+    let body =
+        args.get("body")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::DispatchError {
+                reason: "missing required argument: body".to_string(),
+            })?;
 
     let status = args
         .get("status")
@@ -645,12 +699,11 @@ fn dispatch_prune_observations(
         .map(|d| d as u32);
 
     let conn = store.write_conn();
-    let count =
-        memory::prune_stale_observations(&conn, older_than_days).map_err(|e| {
-            McpError::DispatchError {
-                reason: format!("prune_observations failed: {}", e),
-            }
-        })?;
+    let count = memory::prune_stale_observations(&conn, older_than_days).map_err(|e| {
+        McpError::DispatchError {
+            reason: format!("prune_observations failed: {}", e),
+        }
+    })?;
 
     let result = serde_json::json!({ "pruned": count });
     let json = serde_json::to_string(&result).map_err(|e| McpError::DispatchError {
@@ -690,7 +743,10 @@ fn dispatch_scan_owasp(store: &StoreManager) -> Result<(String, usize), McpError
     })?;
 
     let files_touched = {
-        let mut files: Vec<&str> = findings.iter().map(|f| f.node_fqn.as_str()).collect();
+        let mut files: Vec<&str> = findings
+            .iter()
+            .map(|f| f.finding.node_fqn.as_str())
+            .collect();
         files.sort_unstable();
         files.dedup();
         files.len()
@@ -704,10 +760,7 @@ fn dispatch_scan_owasp(store: &StoreManager) -> Result<(String, usize), McpError
 }
 
 /// generate_sbom: generates SBOM and returns SPDX JSON
-fn dispatch_generate_sbom(
-    store: &StoreManager,
-    args: &Value,
-) -> Result<(String, usize), McpError> {
+fn dispatch_generate_sbom(store: &StoreManager, args: &Value) -> Result<(String, usize), McpError> {
     let repo_root = args
         .get("repo_root")
         .and_then(|v| v.as_str())
@@ -879,15 +932,9 @@ fn dispatch_get_complexity_hotspots(
     store: &StoreManager,
     args: &Value,
 ) -> Result<(String, usize), McpError> {
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(20) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
-    let threshold = args
-        .get("threshold")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(5) as i64;
+    let threshold = args.get("threshold").and_then(|v| v.as_u64()).unwrap_or(5) as i64;
 
     let conn = store.read_conn();
 
@@ -912,8 +959,7 @@ fn dispatch_get_complexity_hotspots(
             let start_line: u32 = row.get(3)?;
             let end_line: u32 = row.get(4)?;
             let attrs_str: String = row.get(5)?;
-            let attrs: serde_json::Value =
-                serde_json::from_str(&attrs_str).unwrap_or_default();
+            let attrs: serde_json::Value = serde_json::from_str(&attrs_str).unwrap_or_default();
             let complexity = attrs
                 .get("complexity")
                 .and_then(|v| v.as_u64())
@@ -982,9 +1028,8 @@ fn dispatch_get_http_routes(
     let conn = store.read_conn();
 
     // Query all Route nodes; optionally filter by method in attributes
-    let mut sql = String::from(
-        "SELECT fqn, file, start_line, attributes FROM nodes WHERE kind = 'Route'",
-    );
+    let mut sql =
+        String::from("SELECT fqn, file, start_line, attributes FROM nodes WHERE kind = 'Route'");
     let mut params: Vec<String> = Vec::new();
 
     if let Some(m) = method {
@@ -1001,8 +1046,10 @@ fn dispatch_get_http_routes(
         reason: format!("failed to prepare route query: {}", e),
     })?;
 
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params.iter().map(|p| p as &dyn rusqlite::types::ToSql).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
+        .iter()
+        .map(|p| p as &dyn rusqlite::types::ToSql)
+        .collect();
 
     let routes: Vec<serde_json::Value> = stmt
         .query_map(param_refs.as_slice(), |row| {
@@ -1010,8 +1057,7 @@ fn dispatch_get_http_routes(
             let file: String = row.get(1)?;
             let start_line: i64 = row.get(2)?;
             let attrs_str: String = row.get(3)?;
-            let attrs: serde_json::Value =
-                serde_json::from_str(&attrs_str).unwrap_or_default();
+            let attrs: serde_json::Value = serde_json::from_str(&attrs_str).unwrap_or_default();
             Ok(serde_json::json!({
                 "fqn": fqn,
                 "file": file,
@@ -1031,19 +1077,17 @@ fn dispatch_get_http_routes(
     let filtered: Vec<&serde_json::Value> = routes
         .iter()
         .filter(|r| {
-            if let Some(prefix) = path_prefix {
-                if let Some(path) = r.get("path").and_then(|v| v.as_str()) {
-                    if !path.starts_with(prefix) {
-                        return false;
-                    }
-                }
+            if let Some(prefix) = path_prefix
+                && let Some(path) = r.get("path").and_then(|v| v.as_str())
+                && !path.starts_with(prefix)
+            {
+                return false;
             }
-            if let Some(svc) = service {
-                if let Some(file) = r.get("file").and_then(|v| v.as_str()) {
-                    if !file.contains(svc) {
-                        return false;
-                    }
-                }
+            if let Some(svc) = service
+                && let Some(file) = r.get("file").and_then(|v| v.as_str())
+                && !file.contains(svc)
+            {
+                return false;
             }
             true
         })
@@ -1083,8 +1127,7 @@ fn dispatch_trace_http_call(
             let file: String = row.get(1)?;
             let line: i64 = row.get(2)?;
             let attrs_str: String = row.get(3)?;
-            let attrs: serde_json::Value =
-                serde_json::from_str(&attrs_str).unwrap_or_default();
+            let attrs: serde_json::Value = serde_json::from_str(&attrs_str).unwrap_or_default();
             Ok((fqn, file, line, attrs))
         })
         .map_err(|e| McpError::DispatchError {
@@ -1162,16 +1205,13 @@ fn dispatch_trace_http_call(
 }
 
 /// query_graph: basic Cypher-like query subset (MATCH/WHERE/RETURN/LIMIT)
-fn dispatch_query_graph(
-    store: &StoreManager,
-    args: &Value,
-) -> Result<(String, usize), McpError> {
-    let query = args
-        .get("query")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| McpError::DispatchError {
-            reason: "missing required argument: query".to_string(),
-        })?;
+fn dispatch_query_graph(store: &StoreManager, args: &Value) -> Result<(String, usize), McpError> {
+    let query =
+        args.get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::DispatchError {
+                reason: "missing required argument: query".to_string(),
+            })?;
 
     let conn = store.read_conn();
 
@@ -1210,27 +1250,27 @@ fn dispatch_query_graph(
         let condition = where_clause[..where_end].trim();
 
         // Support: n.fqn LIKE '%pattern%' or n.file LIKE '%pattern%'
-        if condition.to_uppercase().contains("LIKE") {
-            if let Some(like_pos) = condition.to_uppercase().find("LIKE") {
-                let field_part = condition[..like_pos].trim();
-                let value_part = condition[like_pos + 4..]
-                    .trim()
-                    .trim_matches('\'')
-                    .trim_matches('"');
+        if condition.to_uppercase().contains("LIKE")
+            && let Some(like_pos) = condition.to_uppercase().find("LIKE")
+        {
+            let field_part = condition[..like_pos].trim();
+            let value_part = condition[like_pos + 4..]
+                .trim()
+                .trim_matches('\'')
+                .trim_matches('"');
 
-                let field = if field_part.contains("fqn") {
-                    "fqn"
-                } else if field_part.contains("file") {
-                    "file"
-                } else if field_part.contains("kind") {
-                    "kind"
-                } else {
-                    "fqn"
-                };
+            let field = if field_part.contains("fqn") {
+                "fqn"
+            } else if field_part.contains("file") {
+                "file"
+            } else if field_part.contains("kind") {
+                "kind"
+            } else {
+                "fqn"
+            };
 
-                sql.push_str(&format!(" AND {} LIKE ?{}", field, params.len() + 1));
-                params.push(value_part.to_string());
-            }
+            sql.push_str(&format!(" AND {} LIKE ?{}", field, params.len() + 1));
+            params.push(value_part.to_string());
         }
     }
 
@@ -1252,8 +1292,10 @@ fn dispatch_query_graph(
         reason: format!("query_graph SQL error: {} (generated: {})", e, sql),
     })?;
 
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params.iter().map(|p| p as &dyn rusqlite::types::ToSql).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
+        .iter()
+        .map(|p| p as &dyn rusqlite::types::ToSql)
+        .collect();
 
     let results: Vec<serde_json::Value> = stmt
         .query_map(param_refs.as_slice(), |row| {
@@ -1283,10 +1325,7 @@ fn dispatch_detect_changes(
     store: &StoreManager,
     args: &Value,
 ) -> Result<(String, usize), McpError> {
-    let since = args
-        .get("since")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let since = args.get("since").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let conn = store.read_conn();
 
@@ -1341,7 +1380,8 @@ fn dispatch_detect_changes(
     });
 
     let files_touched = {
-        let mut files: Vec<&str> = rows.iter()
+        let mut files: Vec<&str> = rows
+            .iter()
             .filter_map(|r| r.get("file").and_then(|f| f.as_str()))
             .collect();
         files.sort_unstable();
@@ -1365,22 +1405,18 @@ fn dispatch_semantic_search(
     store: &StoreManager,
     args: &Value,
 ) -> Result<(String, usize), McpError> {
-    let query = args
-        .get("query")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| McpError::DispatchError {
-            reason: "missing required argument: query".to_string(),
-        })?;
+    let query =
+        args.get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::DispatchError {
+                reason: "missing required argument: query".to_string(),
+            })?;
 
-    let top_k = args
-        .get("top_k")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(10) as usize;
+    let top_k = args.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
     // Check if we have any embeddings stored
     let conn = store.read_conn();
-    let embedding_count = crate::store::queries::embeddings::embedding_count(&conn)
-        .unwrap_or(0);
+    let embedding_count = crate::store::queries::embeddings::embedding_count(&conn).unwrap_or(0);
 
     if embedding_count == 0 {
         let result = serde_json::json!({
@@ -1405,11 +1441,12 @@ fn dispatch_semantic_search(
     // Try to generate query embedding using the embedder
     match crate::indexer::embedder::Embedder::new(&data_dir) {
         Ok(embedder) => {
-            let query_embedding = embedder.generate_embedding(query).map_err(|e| {
-                McpError::DispatchError {
-                    reason: format!("failed to generate query embedding: {e}"),
-                }
-            })?;
+            let query_embedding =
+                embedder
+                    .generate_embedding(query)
+                    .map_err(|e| McpError::DispatchError {
+                        reason: format!("failed to generate query embedding: {e}"),
+                    })?;
 
             let results =
                 crate::store::queries::embeddings::semantic_search(&conn, &query_embedding, top_k)
@@ -1418,30 +1455,26 @@ fn dispatch_semantic_search(
                     })?;
 
             let files_touched = {
-                let mut files: Vec<&str> = results
-                    .iter()
-                    .filter_map(|r| r.file.as_deref())
-                    .collect();
+                let mut files: Vec<&str> =
+                    results.iter().filter_map(|r| r.file.as_deref()).collect();
                 files.sort_unstable();
                 files.dedup();
                 files.len()
             };
 
-            let json =
-                serde_json::to_string(&results).map_err(|e| McpError::DispatchError {
-                    reason: format!("failed to serialize semantic search results: {e}"),
-                })?;
+            let json = serde_json::to_string(&results).map_err(|e| McpError::DispatchError {
+                reason: format!("failed to serialize semantic search results: {e}"),
+            })?;
 
             Ok((json, files_touched))
         }
         Err(_) => {
             // Embedder not available - fall back to FTS5-based approximate semantic search
             // Use the query text directly with FTS5 as a reasonable approximation
-            let fts_results = search::search_fts(&conn, query, top_k).map_err(|e| {
-                McpError::DispatchError {
+            let fts_results =
+                search::search_fts(&conn, query, top_k).map_err(|e| McpError::DispatchError {
                     reason: format!("semantic search FTS5 fallback failed: {e}"),
-                }
-            })?;
+                })?;
 
             let result = serde_json::json!({
                 "status": "fallback_fts5",
@@ -1456,10 +1489,9 @@ fn dispatch_semantic_search(
                 files.len()
             };
 
-            let json =
-                serde_json::to_string(&result).map_err(|e| McpError::DispatchError {
-                    reason: format!("failed to serialize semantic search fallback: {e}"),
-                })?;
+            let json = serde_json::to_string(&result).map_err(|e| McpError::DispatchError {
+                reason: format!("failed to serialize semantic search fallback: {e}"),
+            })?;
 
             Ok((json, files_touched))
         }
@@ -1503,11 +1535,10 @@ fn dispatch_get_task_context(
     };
 
     let conn = store.read_conn();
-    let response = context_budget::build_context(&conn, &request).map_err(|e| {
-        McpError::DispatchError {
+    let response =
+        context_budget::build_context(&conn, &request).map_err(|e| McpError::DispatchError {
             reason: format!("get_task_context failed: {}", e),
-        }
-    })?;
+        })?;
 
     let files_touched = {
         let mut files: Vec<&str> = response.symbols.iter().map(|s| s.file.as_str()).collect();
@@ -1705,11 +1736,19 @@ fn dispatch_get_class_hierarchy(
 }
 
 /// Inline git churn computation (avoids circular dependency on CLI module).
-fn get_git_churn_inline(months: u32) -> Result<std::collections::HashMap<String, u32>, anyhow::Error> {
+fn get_git_churn_inline(
+    months: u32,
+) -> Result<std::collections::HashMap<String, u32>, anyhow::Error> {
     let since_arg = format!("{} months ago", months);
 
     let output = std::process::Command::new("git")
-        .args(["log", "--format=format:", "--name-only", "--since", &since_arg])
+        .args([
+            "log",
+            "--format=format:",
+            "--name-only",
+            "--since",
+            &since_arg,
+        ])
         .output()
         .map_err(|e| anyhow::anyhow!("failed to run git: {}", e))?;
 
@@ -1738,10 +1777,7 @@ fn dispatch_get_git_hotspots(
     store: &StoreManager,
     args: &Value,
 ) -> Result<(String, usize), McpError> {
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(20) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
     let since_months = args
         .get("since_months")
@@ -1749,19 +1785,16 @@ fn dispatch_get_git_hotspots(
         .unwrap_or(6) as u32;
 
     // Get git churn data.
-    let churn_map = get_git_churn_inline(since_months).map_err(|e| {
-        McpError::DispatchError {
-            reason: format!("get_git_hotspots: git churn failed: {}", e),
-        }
+    let churn_map = get_git_churn_inline(since_months).map_err(|e| McpError::DispatchError {
+        reason: format!("get_git_hotspots: git churn failed: {}", e),
     })?;
 
     // Get hotspot nodes from the graph.
     let conn = store.read_conn();
-    let hotspot_nodes = graph::get_hotspot_nodes(&conn, 500).map_err(|e| {
-        McpError::DispatchError {
+    let hotspot_nodes =
+        graph::get_hotspot_nodes(&conn, 500).map_err(|e| McpError::DispatchError {
             reason: format!("get_git_hotspots: hotspot query failed: {}", e),
-        }
-    })?;
+        })?;
 
     // Join churn with caller counts.
     let mut results: Vec<serde_json::Value> = Vec::new();
@@ -1926,18 +1959,13 @@ fn dispatch_find_similar_functions(
             reason: "missing required argument: fqn".to_string(),
         })?;
 
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(5) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
     let conn = store.read_conn();
 
     // Step 1: Get all callees of the target function.
     let mut callee_stmt = conn
-        .prepare(
-            "SELECT target_fqn FROM edges WHERE source_fqn = ?1 AND kind = 'Calls'",
-        )
+        .prepare("SELECT target_fqn FROM edges WHERE source_fqn = ?1 AND kind = 'Calls'")
         .map_err(|e| McpError::DispatchError {
             reason: format!("find_similar_functions callee query failed: {}", e),
         })?;
@@ -1963,13 +1991,20 @@ fn dispatch_find_similar_functions(
     }
 
     // Step 2: For each callee, find other callers. Count overlap.
-    let callee_set: std::collections::HashSet<&str> =
-        callees.iter().map(|s| s.as_str()).collect();
+    let callee_set: std::collections::HashSet<&str> = callees.iter().map(|s| s.as_str()).collect();
 
     // Find all functions that call at least one of the same callees.
-    let placeholders: String = callees.iter().enumerate().map(|(i, _)| {
-        if i == 0 { format!("?{}", i + 1) } else { format!(", ?{}", i + 1) }
-    }).collect();
+    let placeholders: String = callees
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            if i == 0 {
+                format!("?{}", i + 1)
+            } else {
+                format!(", ?{}", i + 1)
+            }
+        })
+        .collect();
 
     let sql = format!(
         "SELECT source_fqn, target_fqn FROM edges \
@@ -1988,8 +2023,7 @@ fn dispatch_find_similar_functions(
         .collect();
     params.push(Box::new(fqn.to_string()));
 
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params.iter().map(|p| p.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
     let rows: Vec<(String, String)> = stmt
         .query_map(param_refs.as_slice(), |row| {
@@ -2012,7 +2046,7 @@ fn dispatch_find_similar_functions(
 
     // Sort by overlap count descending.
     let mut candidates: Vec<(String, usize)> = overlap_counts.into_iter().collect();
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
     candidates.truncate(limit);
 
     // Compute similarity as overlap / total callees.
@@ -2061,11 +2095,8 @@ mod tests {
         let store = StoreManager::new(tmp.path()).expect("failed to create store");
         // Apply migrations
         let conn = store.write_conn();
-        migrations::run_migrations(
-            &conn,
-            std::path::Path::new("migrations"),
-        )
-        .expect("failed to run migrations");
+        migrations::run_migrations(&conn, std::path::Path::new("migrations"))
+            .expect("failed to run migrations");
         drop(conn);
         (store, tmp)
     }
@@ -2118,7 +2149,8 @@ mod tests {
                 "INSERT INTO edges (source_fqn, target_fqn, kind, confidence, attributes) \
                  VALUES ('src/a.rs::caller', 'src/b.rs::callee', 'Calls', 1.0, '{}')",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let args = serde_json::json!({ "fqn": "src/b.rs::callee", "depth": 3 });
@@ -2165,7 +2197,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("missing required argument: pattern"));
+        assert!(
+            err.to_string()
+                .contains("missing required argument: pattern")
+        );
     }
 
     #[test]
@@ -2301,7 +2336,12 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
         // With no embeddings stored, should indicate no_embeddings status
         assert_eq!(parsed["status"], "no_embeddings");
-        assert!(parsed["message"].as_str().unwrap().contains("No embeddings"));
+        assert!(
+            parsed["message"]
+                .as_str()
+                .unwrap()
+                .contains("No embeddings")
+        );
     }
 
     #[test]
@@ -2315,7 +2355,8 @@ mod tests {
                 "INSERT INTO file_snapshots (file, file_hash, node_count, indexed_at) \
                  VALUES ('src/main.rs', 'hash123', 1, 2000)",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO nodes (fqn, kind, file, start_line, end_line, file_hash, indexed_at, attributes) \
                  VALUES ('src/main.rs::main', 'Function', 'src/main.rs', 1, 10, 'hash123', 2000, '{}')",
@@ -2348,7 +2389,8 @@ mod tests {
                 "INSERT INTO file_snapshots (file, file_hash, node_count, indexed_at) \
                  VALUES ('src/main.rs', 'hash123', 1, 1000)",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO nodes (fqn, kind, file, start_line, end_line, file_hash, indexed_at, attributes) \
                  VALUES ('src/main.rs::main', 'Function', 'src/main.rs', 1, 10, 'hash123', 1000, '{}')",
@@ -2401,7 +2443,10 @@ mod tests {
 
         let meta = result.get("_meta").unwrap();
         // retrieval_method should be "fts5" or "hybrid" since graph returned <3 results
-        let retrieval_method = meta.get("retrieval_method").and_then(|v| v.as_str()).unwrap();
+        let retrieval_method = meta
+            .get("retrieval_method")
+            .and_then(|v| v.as_str())
+            .unwrap();
         assert!(
             retrieval_method == "fts5" || retrieval_method == "hybrid",
             "Expected retrieval_method to be 'fts5' or 'hybrid', got '{}'",
@@ -2418,9 +2463,16 @@ mod tests {
 
         // Verify results have confidence field
         for r in &results {
-            assert!(r.get("confidence").is_some(), "Result missing confidence field");
+            assert!(
+                r.get("confidence").is_some(),
+                "Result missing confidence field"
+            );
             let confidence = r["confidence"].as_f64().unwrap();
-            assert!(confidence > 0.0 && confidence <= 1.0, "Confidence out of range: {}", confidence);
+            assert!(
+                confidence > 0.0 && confidence <= 1.0,
+                "Confidence out of range: {}",
+                confidence
+            );
         }
     }
 
@@ -2448,8 +2500,14 @@ mod tests {
         let result = dispatch_tool(&store, "search_symbols", &args).unwrap();
 
         let meta = result.get("_meta").unwrap();
-        let retrieval_method = meta.get("retrieval_method").and_then(|v| v.as_str()).unwrap();
-        assert_eq!(retrieval_method, "graph", "Expected 'graph' when >=3 results from graph");
+        let retrieval_method = meta
+            .get("retrieval_method")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert_eq!(
+            retrieval_method, "graph",
+            "Expected 'graph' when >=3 results from graph"
+        );
 
         // Verify all results have confidence 1.0 (graph-only)
         let content = result["content"][0]["text"].as_str().unwrap();
@@ -2488,7 +2546,10 @@ mod tests {
             .iter()
             .filter(|r| r["fqn"].as_str() == Some("src/utils.rs::helper_func"))
             .count();
-        assert_eq!(helper_count, 1, "Expected deduplication to keep only one entry per FQN");
+        assert_eq!(
+            helper_count, 1,
+            "Expected deduplication to keep only one entry per FQN"
+        );
 
         // The kept entry should have confidence 1.0 (graph result preferred over FTS5)
         let helper = results
@@ -2619,7 +2680,9 @@ mod tests {
 
         let meta = result.get("_meta").unwrap();
         let tokens_used = meta["tokens_used"].as_u64().unwrap();
-        let breakdown = meta.get("token_breakdown").expect("_meta must have token_breakdown");
+        let breakdown = meta
+            .get("token_breakdown")
+            .expect("_meta must have token_breakdown");
 
         let nodes = breakdown["nodes"].as_u64().unwrap();
         let edges = breakdown["edges"].as_u64().unwrap();
@@ -2664,7 +2727,8 @@ mod tests {
                 "INSERT INTO edges (source_fqn, target_fqn, kind, confidence, attributes) \
                  VALUES ('src/auth.rs::validate_token', 'src/db.rs::get_user', 'Calls', 1.0, '{}')",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO edges (source_fqn, target_fqn, kind, confidence, attributes) \
                  VALUES ('src/auth.rs::validate_token', 'src/auth.rs::check_expiry', 'Calls', 1.0, '{}')",

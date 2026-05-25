@@ -8,8 +8,7 @@ use std::path::Path;
 /// Helper to create a StoreManager with migrations applied.
 fn setup_store() -> (cortex::store::db::StoreManager, tempfile::TempDir) {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
-    let store =
-        cortex::store::db::StoreManager::new(tmp.path()).expect("failed to create store");
+    let store = cortex::store::db::StoreManager::new(tmp.path()).expect("failed to create store");
     let conn = store.write_conn();
     cortex::store::migrations::run_migrations(&conn, Path::new("migrations"))
         .expect("failed to run migrations");
@@ -24,10 +23,26 @@ fn test_semantic_search_validates_user_input_returns_validation_functions() {
 
     // Insert test nodes representing various functions
     let nodes = vec![
-        ("src/auth.rs::validate_user_input", "Function", "src/auth.rs"),
-        ("src/auth.rs::check_password_strength", "Function", "src/auth.rs"),
-        ("src/validation.rs::validate_email", "Function", "src/validation.rs"),
-        ("src/validation.rs::sanitize_input", "Function", "src/validation.rs"),
+        (
+            "src/auth.rs::validate_user_input",
+            "Function",
+            "src/auth.rs",
+        ),
+        (
+            "src/auth.rs::check_password_strength",
+            "Function",
+            "src/auth.rs",
+        ),
+        (
+            "src/validation.rs::validate_email",
+            "Function",
+            "src/validation.rs",
+        ),
+        (
+            "src/validation.rs::sanitize_input",
+            "Function",
+            "src/validation.rs",
+        ),
         ("src/db.rs::connect_database", "Function", "src/db.rs"),
         ("src/db.rs::execute_query", "Function", "src/db.rs"),
         ("src/http.rs::handle_request", "Function", "src/http.rs"),
@@ -172,7 +187,10 @@ fn test_semantic_search_with_no_embeddings_returns_empty() {
     let results =
         cortex::store::queries::embeddings::semantic_search(&conn, &query_emb, 10).unwrap();
 
-    assert!(results.is_empty(), "should return empty when no embeddings stored");
+    assert!(
+        results.is_empty(),
+        "should return empty when no embeddings stored"
+    );
 }
 
 #[test]
@@ -210,18 +228,27 @@ fn test_cosine_similarity_correctness() {
     let a = vec![1.0f32, 0.0, 0.0];
     let b = vec![1.0f32, 0.0, 0.0];
     let sim = cortex::indexer::embedder::cosine_similarity(&a, &b);
-    assert!((sim - 1.0).abs() < 1e-6, "identical vectors should have similarity 1.0");
+    assert!(
+        (sim - 1.0).abs() < 1e-6,
+        "identical vectors should have similarity 1.0"
+    );
 
     let a = vec![1.0f32, 0.0, 0.0];
     let b = vec![0.0f32, 1.0, 0.0];
     let sim = cortex::indexer::embedder::cosine_similarity(&a, &b);
-    assert!(sim.abs() < 1e-6, "orthogonal vectors should have similarity 0.0");
+    assert!(
+        sim.abs() < 1e-6,
+        "orthogonal vectors should have similarity 0.0"
+    );
 
     let a = vec![1.0f32, 1.0, 0.0];
     let b = vec![1.0f32, 0.0, 0.0];
     let sim = cortex::indexer::embedder::cosine_similarity(&a, &b);
     // cos(45°) ≈ 0.707
-    assert!((sim - 0.7071).abs() < 0.01, "45-degree angle should be ~0.707, got {sim}");
+    assert!(
+        (sim - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01,
+        "45-degree angle should be ~0.707, got {sim}"
+    );
 }
 
 #[test]

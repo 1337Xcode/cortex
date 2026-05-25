@@ -29,7 +29,14 @@ pub fn extract(tree: &Tree, file: &str, source: &str) -> ExtractionResult {
     // First pass: collect all definitions
     let mut defined_fqns: Vec<(String, String)> = Vec::new(); // (simple_name, fqn)
 
-    collect_definitions(root, file, source_bytes, None, &mut nodes, &mut defined_fqns);
+    collect_definitions(
+        root,
+        file,
+        source_bytes,
+        None,
+        &mut nodes,
+        &mut defined_fqns,
+    );
 
     // Compute cyclomatic complexity for Function nodes
     compute_node_complexities(&mut nodes, root, source_bytes);
@@ -43,17 +50,11 @@ pub fn extract(tree: &Tree, file: &str, source: &str) -> ExtractionResult {
 
 /// Compute cyclomatic complexity for all Function nodes by finding their
 /// corresponding AST nodes and walking the subtree.
-fn compute_node_complexities(
-    nodes: &mut [Node],
-    root: tree_sitter::Node,
-    source: &[u8],
-) {
+fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source: &[u8]) {
     for node in nodes.iter_mut() {
-        if node.kind == NodeKind::Function {
+        if node.kind == NodeKind::Function || node.kind == NodeKind::Method {
             // Find the AST node matching this function's line range
-            if let Some(ast_node) =
-                find_ast_node_at_line(root, node.start_line, "function_item")
-            {
+            if let Some(ast_node) = find_ast_node_at_line(root, node.start_line, "function_item") {
                 let c = complexity::compute_full_complexity(ast_node, source, "rust");
                 if let Some(attrs) = node.attributes.as_object_mut() {
                     attrs.insert("complexity".to_string(), serde_json::json!(c));
@@ -64,7 +65,11 @@ fn compute_node_complexities(
 }
 
 /// Find an AST node of a given kind at a specific start line (1-indexed).
-fn find_ast_node_at_line<'a>(node: tree_sitter::Node<'a>, target_line: u32, kind: &str) -> Option<tree_sitter::Node<'a>> {
+fn find_ast_node_at_line<'a>(
+    node: tree_sitter::Node<'a>,
+    target_line: u32,
+    kind: &str,
+) -> Option<tree_sitter::Node<'a>> {
     let node_start_line = node.start_position().row as u32 + 1;
     if node.kind() == kind && node_start_line == target_line {
         return Some(node);
@@ -98,12 +103,17 @@ fn collect_definitions(
                         Some(type_name) => format!("{file}::{type_name}::{name}"),
                         None => format!("{file}::{name}"),
                     };
+                    let kind = if impl_type.is_some() {
+                        NodeKind::Method
+                    } else {
+                        NodeKind::Function
+                    };
                     let start_line = child.start_position().row as u32 + 1;
                     let end_line = child.end_position().row as u32 + 1;
 
                     nodes.push(Node {
                         fqn: fqn.clone(),
-                        kind: NodeKind::Function,
+                        kind,
                         file: file.to_string(),
                         start_line,
                         end_line,
@@ -225,26 +235,26 @@ fn collect_use_statements(
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        if child.kind() == "use_declaration" {
-            if let Some(arg_node) = child.child_by_field_name("argument") {
-                let use_path = arg_node.utf8_text(source).unwrap_or("");
-                if !use_path.is_empty() {
-                    // Check if this is a `pub use` re-export
-                    let full_text = child.utf8_text(source).unwrap_or("");
-                    let is_reexport = full_text.trim_start().starts_with("pub use");
-                    edges.push(Edge {
-                        id: None,
-                        source_fqn: file.to_string(),
-                        target_fqn: use_path.to_string(),
-                        kind: EdgeKind::Imports,
-                        confidence: 1.0,
-                        attributes: if is_reexport {
-                            json!({"reexport": true})
-                        } else {
-                            json!({})
-                        },
-                    });
-                }
+        if child.kind() == "use_declaration"
+            && let Some(arg_node) = child.child_by_field_name("argument")
+        {
+            let use_path = arg_node.utf8_text(source).unwrap_or("");
+            if !use_path.is_empty() {
+                // Check if this is a `pub use` re-export
+                let full_text = child.utf8_text(source).unwrap_or("");
+                let is_reexport = full_text.trim_start().starts_with("pub use");
+                edges.push(Edge {
+                    id: None,
+                    source_fqn: file.to_string(),
+                    target_fqn: use_path.to_string(),
+                    kind: EdgeKind::Imports,
+                    confidence: 1.0,
+                    attributes: if is_reexport {
+                        json!({"reexport": true})
+                    } else {
+                        json!({})
+                    },
+                });
             }
         }
     }
@@ -263,94 +273,90 @@ fn collect_calls(
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        if child.kind() == "call_expression" {
-            if let Some(func_node) = child.child_by_field_name("function") {
-                let caller_fqn = find_enclosing_function(child, file, source)
-                    .unwrap_or_else(|| file.to_string());
+        if child.kind() == "call_expression"
+            && let Some(func_node) = child.child_by_field_name("function")
+        {
+            let caller_fqn =
+                find_enclosing_function(child, file, source).unwrap_or_else(|| file.to_string());
 
-                match func_node.kind() {
-                    "identifier" => {
-                        let call_name = func_node.utf8_text(source).unwrap_or("");
-                        if let Some((_, target_fqn)) =
-                            defined_fqns.iter().find(|(name, _)| name == call_name)
-                        {
-                            if caller_fqn != *target_fqn {
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn: target_fqn.clone(),
-                                    kind: EdgeKind::Calls,
-                                    confidence: 1.0,
-                                    attributes: json!({}),
-                                });
-                            }
-                        }
+            match func_node.kind() {
+                "identifier" => {
+                    let call_name = func_node.utf8_text(source).unwrap_or("");
+                    if let Some((_, target_fqn)) =
+                        defined_fqns.iter().find(|(name, _)| name == call_name)
+                        && caller_fqn != *target_fqn
+                    {
+                        edges.push(Edge {
+                            id: None,
+                            source_fqn: caller_fqn,
+                            target_fqn: target_fqn.clone(),
+                            kind: EdgeKind::Calls,
+                            confidence: 1.0,
+                            attributes: json!({}),
+                        });
                     }
-                    "scoped_identifier" | "path_expression" => {
-                        // Qualified call: module::function() or Type::method()
-                        let full_text = func_node.utf8_text(source).unwrap_or("");
-                        if let Some(sep_pos) = full_text.rfind("::") {
-                            let qualifier = &full_text[..sep_pos];
-                            let func_name = &full_text[sep_pos + 2..];
-                            if !func_name.is_empty() {
-                                // Try exact FQN match first, then short name
-                                let (target_fqn, confidence) =
-                                    if let Some((_, fqn)) = defined_fqns
-                                        .iter()
-                                        .find(|(_, fqn)| fqn.ends_with(&format!("::{func_name}")))
-                                    {
-                                        (fqn.clone(), 1.0_f64)
-                                    } else {
-                                        (full_text.to_string(), 0.6_f64)
-                                    };
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn,
-                                    kind: EdgeKind::Calls,
-                                    confidence,
-                                    attributes: json!({
-                                        "receiver": qualifier,
-                                        "call_type": "qualified"
-                                    }),
-                                });
-                            }
-                        }
-                    }
-                    "field_expression" => {
-                        // self.method() or obj.method()
-                        let full_text = func_node.utf8_text(source).unwrap_or("");
-                        if let Some(dot_pos) = full_text.rfind('.') {
-                            let receiver = &full_text[..dot_pos];
-                            let method_name = &full_text[dot_pos + 1..];
-                            if !method_name.is_empty() {
-                                let chain_position = count_chain_depth_rs(func_node);
-                                let (target_fqn, confidence) =
-                                    if let Some((_, fqn)) = defined_fqns
-                                        .iter()
-                                        .find(|(name, _)| name == method_name)
-                                    {
-                                        (fqn.clone(), 1.0_f64)
-                                    } else {
-                                        (method_name.to_string(), 0.0_f64)
-                                    };
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn,
-                                    kind: EdgeKind::Calls,
-                                    confidence,
-                                    attributes: json!({
-                                        "receiver": receiver,
-                                        "call_type": "method",
-                                        "chain_position": chain_position
-                                    }),
-                                });
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                "scoped_identifier" | "path_expression" => {
+                    // Qualified call: module::function() or Type::method()
+                    let full_text = func_node.utf8_text(source).unwrap_or("");
+                    if let Some(sep_pos) = full_text.rfind("::") {
+                        let qualifier = &full_text[..sep_pos];
+                        let func_name = &full_text[sep_pos + 2..];
+                        if !func_name.is_empty() {
+                            // Try exact FQN match first, then short name
+                            let (target_fqn, confidence) = if let Some((_, fqn)) = defined_fqns
+                                .iter()
+                                .find(|(_, fqn)| fqn.ends_with(&format!("::{func_name}")))
+                            {
+                                (fqn.clone(), 1.0_f64)
+                            } else {
+                                (full_text.to_string(), 0.6_f64)
+                            };
+                            edges.push(Edge {
+                                id: None,
+                                source_fqn: caller_fqn,
+                                target_fqn,
+                                kind: EdgeKind::Calls,
+                                confidence,
+                                attributes: json!({
+                                    "receiver": qualifier,
+                                    "call_type": "qualified"
+                                }),
+                            });
+                        }
+                    }
+                }
+                "field_expression" => {
+                    // self.method() or obj.method()
+                    let full_text = func_node.utf8_text(source).unwrap_or("");
+                    if let Some(dot_pos) = full_text.rfind('.') {
+                        let receiver = &full_text[..dot_pos];
+                        let method_name = &full_text[dot_pos + 1..];
+                        if !method_name.is_empty() {
+                            let chain_position = count_chain_depth_rs(func_node);
+                            let (target_fqn, confidence) = if let Some((_, fqn)) =
+                                defined_fqns.iter().find(|(name, _)| name == method_name)
+                            {
+                                (fqn.clone(), 1.0_f64)
+                            } else {
+                                (method_name.to_string(), 0.0_f64)
+                            };
+                            edges.push(Edge {
+                                id: None,
+                                source_fqn: caller_fqn,
+                                target_fqn,
+                                kind: EdgeKind::Calls,
+                                confidence,
+                                attributes: json!({
+                                    "receiver": receiver,
+                                    "call_type": "method",
+                                    "chain_position": chain_position
+                                }),
+                            });
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -360,24 +366,20 @@ fn collect_calls(
 }
 
 /// Find the enclosing function for a given node to determine the caller FQN.
-fn find_enclosing_function(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_function(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
 
     while let Some(parent) = current {
-        if parent.kind() == "function_item" {
-            if let Some(name_node) = parent.child_by_field_name("name") {
-                let func_name = name_node.utf8_text(source).unwrap_or("");
-                // Check if this function is inside an impl block
-                let impl_type = find_enclosing_impl(parent, source);
-                return match impl_type {
-                    Some(type_name) => Some(format!("{file}::{type_name}::{func_name}")),
-                    None => Some(format!("{file}::{func_name}")),
-                };
-            }
+        if parent.kind() == "function_item"
+            && let Some(name_node) = parent.child_by_field_name("name")
+        {
+            let func_name = name_node.utf8_text(source).unwrap_or("");
+            // Check if this function is inside an impl block
+            let impl_type = find_enclosing_impl(parent, source);
+            return match impl_type {
+                Some(type_name) => Some(format!("{file}::{type_name}::{func_name}")),
+                None => Some(format!("{file}::{func_name}")),
+            };
         }
         current = parent.parent();
     }
@@ -408,10 +410,10 @@ fn count_chain_depth_rs(func_node: tree_sitter::Node) -> u32 {
 }
 
 fn count_chain_depth_in_call_rs(call_node: tree_sitter::Node) -> u32 {
-    if let Some(func) = call_node.child_by_field_name("function") {
-        if func.kind() == "field_expression" {
-            return count_chain_depth_rs(func);
-        }
+    if let Some(func) = call_node.child_by_field_name("function")
+        && func.kind() == "field_expression"
+    {
+        return count_chain_depth_rs(func);
     }
     0
 }
@@ -497,20 +499,26 @@ pub fn create_config(name: &str) -> Config {
         assert_eq!(enum_node.kind, NodeKind::Type);
 
         // Check impl methods
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/config.rs::Config::new"));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/config.rs::Config::get"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/config.rs::Config::new")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/config.rs::Config::get")
+        );
 
         // Check top-level function
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "src/config.rs::create_config"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "src/config.rs::create_config")
+        );
 
         // Check use/import edges
         let import_edges: Vec<&Edge> = result
@@ -519,12 +527,16 @@ pub fn create_config(name: &str) -> Config {
             .filter(|e| e.kind == EdgeKind::Imports)
             .collect();
         assert_eq!(import_edges.len(), 2);
-        assert!(import_edges
-            .iter()
-            .any(|e| e.target_fqn == "std::collections::HashMap"));
-        assert!(import_edges
-            .iter()
-            .any(|e| e.target_fqn == "serde::{Serialize, Deserialize}"));
+        assert!(
+            import_edges
+                .iter()
+                .any(|e| e.target_fqn == "std::collections::HashMap")
+        );
+        assert!(
+            import_edges
+                .iter()
+                .any(|e| e.target_fqn == "serde::{Serialize, Deserialize}")
+        );
     }
 
     #[test]
@@ -563,10 +575,12 @@ fn another_valid() {}
 
         // Should not panic and should extract at least the valid definitions
         assert!(!result.nodes.is_empty());
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "broken.rs::valid_function"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "broken.rs::valid_function")
+        );
     }
 
     #[test]
@@ -601,5 +615,119 @@ fn main() {
         let result = extract(&tree, "empty.rs", source);
         assert!(result.nodes.is_empty());
         assert!(result.edges.is_empty());
+    }
+
+    /// Validates: Requirements 9.4
+    /// Verify that standalone functions get NodeKind::Function and methods get NodeKind::Method.
+    #[test]
+    fn test_nodekind_method_vs_function() {
+        let source = r#"
+struct Calculator {
+    value: i32,
+}
+
+impl Calculator {
+    fn add(&self, a: i32, b: i32) -> i32 {
+        a + b
+    }
+
+    fn subtract(&self, a: i32, b: i32) -> i32 {
+        a - b
+    }
+}
+
+fn standalone_helper() -> i32 {
+    42
+}
+"#;
+        let tree = parse_rust(source);
+        let result = extract(&tree, "test_nodekind.rs", source);
+
+        // Standalone function should be NodeKind::Function
+        let helper = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::standalone_helper"))
+            .expect("standalone_helper should be extracted");
+        assert_eq!(
+            helper.kind,
+            NodeKind::Function,
+            "Standalone function should have NodeKind::Function"
+        );
+
+        // Methods inside impl should be NodeKind::Method
+        let add_method = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::Calculator::add"))
+            .expect("Calculator::add should be extracted");
+        assert_eq!(
+            add_method.kind,
+            NodeKind::Method,
+            "Method inside impl should have NodeKind::Method"
+        );
+
+        let subtract_method = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::Calculator::subtract"))
+            .expect("Calculator::subtract should be extracted");
+        assert_eq!(
+            subtract_method.kind,
+            NodeKind::Method,
+            "Method inside impl should have NodeKind::Method"
+        );
+    }
+
+    /// Validates: Requirements 9.4
+    /// Verify that method FQNs include the parent type name in the format file::TypeName::method_name.
+    #[test]
+    fn test_method_fqn_includes_parent_type() {
+        let source = r#"
+struct MyService {
+    data: Vec<String>,
+}
+
+impl MyService {
+    fn process(&self) {}
+    fn validate(&self) -> bool { true }
+}
+
+fn free_function() {}
+"#;
+        let tree = parse_rust(source);
+        let result = extract(&tree, "src/service.rs", source);
+
+        // Method FQNs should include parent type
+        let process = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Method && n.fqn.contains("process"))
+            .expect("process method should be extracted");
+        assert_eq!(
+            process.fqn, "src/service.rs::MyService::process",
+            "Method FQN should be file::TypeName::method_name"
+        );
+
+        let validate = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Method && n.fqn.contains("validate"))
+            .expect("validate method should be extracted");
+        assert_eq!(
+            validate.fqn, "src/service.rs::MyService::validate",
+            "Method FQN should be file::TypeName::method_name"
+        );
+
+        // Standalone function FQN should NOT include a type name
+        let free_fn = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Function && n.fqn.contains("free_function"))
+            .expect("free_function should be extracted");
+        assert_eq!(
+            free_fn.fqn, "src/service.rs::free_function",
+            "Function FQN should be file::function_name without type"
+        );
     }
 }

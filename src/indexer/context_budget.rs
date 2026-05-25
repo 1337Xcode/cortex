@@ -150,11 +150,14 @@ fn fts5_relevance_search(
     )?;
 
     let rows: Vec<(String, f64)> = stmt
-        .query_map(rusqlite::params![sanitized, MAX_FTS_RESULTS as i64], |row| {
-            let fqn: String = row.get(0)?;
-            let rank: f64 = row.get(3)?;
-            Ok((fqn, rank))
-        })?
+        .query_map(
+            rusqlite::params![sanitized, MAX_FTS_RESULTS as i64],
+            |row| {
+                let fqn: String = row.get(0)?;
+                let rank: f64 = row.get(3)?;
+                Ok((fqn, rank))
+            },
+        )?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -165,7 +168,10 @@ fn fts5_relevance_search(
     // Normalize BM25 ranks to 0.6–1.0 range.
     // FTS5 rank is negative (more negative = better match).
     let best_rank = rows.iter().map(|(_, r)| *r).fold(f64::INFINITY, f64::min);
-    let worst_rank = rows.iter().map(|(_, r)| *r).fold(f64::NEG_INFINITY, f64::max);
+    let worst_rank = rows
+        .iter()
+        .map(|(_, r)| *r)
+        .fold(f64::NEG_INFINITY, f64::max);
 
     let mut results = HashMap::new();
     for (fqn, rank) in rows {
@@ -307,10 +313,7 @@ fn estimate_token_cost(start_line: u32, end_line: u32, include_code: bool) -> us
 
 /// Pack candidates into the token budget using greedy knapsack (sort by value density).
 /// Returns the selected candidates and whether truncation occurred.
-fn greedy_knapsack(
-    candidates: &mut [Candidate],
-    token_budget: usize,
-) -> (Vec<Candidate>, bool) {
+fn greedy_knapsack(candidates: &mut [Candidate], token_budget: usize) -> (Vec<Candidate>, bool) {
     // Sort by value density (relevance / token_cost) descending
     candidates.sort_by(|a, b| {
         b.value_density()
@@ -354,10 +357,7 @@ fn apply_scope_filter(candidates: Vec<Candidate>, scope: &Option<String>) -> Vec
 // ---------------------------------------------------------------------------
 
 /// Read source code snippets for selected symbols.
-fn include_code_snippets(
-    symbols: &mut [ContextSymbol],
-    conn: &Connection,
-) {
+fn include_code_snippets(symbols: &mut [ContextSymbol], conn: &Connection) {
     let repo_root = std::env::var("CORTEX_REPO_ROOT").unwrap_or_else(|_| ".".to_string());
 
     for symbol in symbols.iter_mut() {
@@ -420,9 +420,8 @@ pub fn build_context(
     // Fetch node metadata for all candidates
     let mut candidates: Vec<Candidate> = Vec::new();
     for (fqn, relevance) in &all_scores {
-        let mut stmt = conn.prepare(
-            "SELECT kind, file, start_line, end_line FROM nodes WHERE fqn = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT kind, file, start_line, end_line FROM nodes WHERE fqn = ?1")?;
         let result = stmt.query_row(rusqlite::params![fqn], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -460,7 +459,9 @@ pub fn build_context(
 
     // Reserve some budget for relationships metadata
     let relationship_budget_reserve = (request.token_budget / 10).min(200);
-    let symbol_budget = request.token_budget.saturating_sub(relationship_budget_reserve);
+    let symbol_budget = request
+        .token_budget
+        .saturating_sub(relationship_budget_reserve);
 
     // Step 4: Greedy knapsack
     let (selected, truncated) = greedy_knapsack(&mut candidates, symbol_budget);
@@ -496,10 +497,7 @@ pub fn build_context(
     let relationships = fetch_relationships(conn, &selected_fqns)?;
 
     // Compute relevance cutoff
-    let relevance_cutoff = symbols
-        .last()
-        .map(|s| s.relevance)
-        .unwrap_or(0.0);
+    let relevance_cutoff = symbols.last().map(|s| s.relevance).unwrap_or(0.0);
 
     Ok(ContextResponse {
         symbols,
@@ -673,12 +671,38 @@ mod tests {
     #[test]
     fn test_budget_adherence_within_limit() {
         let conn = setup_db();
-        insert_node(&conn, "src/auth.rs::validate_token", "Function", "src/auth.rs", 10, 30);
-        insert_node(&conn, "src/auth.rs::check_expiry", "Function", "src/auth.rs", 35, 50);
+        insert_node(
+            &conn,
+            "src/auth.rs::validate_token",
+            "Function",
+            "src/auth.rs",
+            10,
+            30,
+        );
+        insert_node(
+            &conn,
+            "src/auth.rs::check_expiry",
+            "Function",
+            "src/auth.rs",
+            35,
+            50,
+        );
         insert_node(&conn, "src/db.rs::get_user", "Function", "src/db.rs", 1, 20);
 
-        insert_edge(&conn, "src/auth.rs::validate_token", "src/db.rs::get_user", "Calls", 1.0);
-        insert_edge(&conn, "src/auth.rs::validate_token", "src/auth.rs::check_expiry", "Calls", 1.0);
+        insert_edge(
+            &conn,
+            "src/auth.rs::validate_token",
+            "src/db.rs::get_user",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/auth.rs::validate_token",
+            "src/auth.rs::check_expiry",
+            "Calls",
+            1.0,
+        );
 
         let request = ContextRequest {
             task_description: "validate token auth".to_string(),
@@ -723,9 +747,30 @@ mod tests {
     #[test]
     fn test_relevance_ordering() {
         let conn = setup_db();
-        insert_node(&conn, "src/auth.rs::login", "Function", "src/auth.rs", 1, 20);
-        insert_node(&conn, "src/auth.rs::logout", "Function", "src/auth.rs", 25, 40);
-        insert_node(&conn, "src/utils.rs::helper", "Function", "src/utils.rs", 1, 10);
+        insert_node(
+            &conn,
+            "src/auth.rs::login",
+            "Function",
+            "src/auth.rs",
+            1,
+            20,
+        );
+        insert_node(
+            &conn,
+            "src/auth.rs::logout",
+            "Function",
+            "src/auth.rs",
+            25,
+            40,
+        );
+        insert_node(
+            &conn,
+            "src/utils.rs::helper",
+            "Function",
+            "src/utils.rs",
+            1,
+            10,
+        );
 
         let request = ContextRequest {
             task_description: "auth login".to_string(),
@@ -744,8 +789,22 @@ mod tests {
     #[test]
     fn test_scope_filtering() {
         let conn = setup_db();
-        insert_node(&conn, "src/auth/login.rs::login", "Function", "src/auth/login.rs", 1, 20);
-        insert_node(&conn, "src/db/users.rs::get_user", "Function", "src/db/users.rs", 1, 15);
+        insert_node(
+            &conn,
+            "src/auth/login.rs::login",
+            "Function",
+            "src/auth/login.rs",
+            1,
+            20,
+        );
+        insert_node(
+            &conn,
+            "src/db/users.rs::get_user",
+            "Function",
+            "src/db/users.rs",
+            1,
+            15,
+        );
 
         let request = ContextRequest {
             task_description: "login get_user".to_string(),
@@ -769,12 +828,45 @@ mod tests {
     #[test]
     fn test_graph_expansion_includes_callees() {
         let conn = setup_db();
-        insert_node(&conn, "src/auth.rs::validate", "Function", "src/auth.rs", 1, 20);
-        insert_node(&conn, "src/db.rs::query_user", "Function", "src/db.rs", 1, 15);
-        insert_node(&conn, "src/cache.rs::get_cached", "Function", "src/cache.rs", 1, 10);
+        insert_node(
+            &conn,
+            "src/auth.rs::validate",
+            "Function",
+            "src/auth.rs",
+            1,
+            20,
+        );
+        insert_node(
+            &conn,
+            "src/db.rs::query_user",
+            "Function",
+            "src/db.rs",
+            1,
+            15,
+        );
+        insert_node(
+            &conn,
+            "src/cache.rs::get_cached",
+            "Function",
+            "src/cache.rs",
+            1,
+            10,
+        );
 
-        insert_edge(&conn, "src/auth.rs::validate", "src/db.rs::query_user", "Calls", 1.0);
-        insert_edge(&conn, "src/auth.rs::validate", "src/cache.rs::get_cached", "Calls", 0.9);
+        insert_edge(
+            &conn,
+            "src/auth.rs::validate",
+            "src/db.rs::query_user",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/auth.rs::validate",
+            "src/cache.rs::get_cached",
+            "Calls",
+            0.9,
+        );
 
         let request = ContextRequest {
             task_description: "validate auth".to_string(),
@@ -814,9 +906,10 @@ mod tests {
         let has_foo = response.symbols.iter().any(|s| s.fqn == "src/a.rs::foo");
         let has_bar = response.symbols.iter().any(|s| s.fqn == "src/b.rs::bar");
         if has_foo && has_bar {
-            let has_edge = response.relationships.iter().any(|r| {
-                r.source == "src/a.rs::foo" && r.target == "src/b.rs::bar"
-            });
+            let has_edge = response
+                .relationships
+                .iter()
+                .any(|r| r.source == "src/a.rs::foo" && r.target == "src/b.rs::bar");
             assert!(has_edge, "Expected edge between foo and bar");
         }
     }

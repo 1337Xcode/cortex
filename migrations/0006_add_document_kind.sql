@@ -19,3 +19,23 @@ ALTER TABLE nodes_new RENAME TO nodes;
 
 CREATE INDEX idx_nodes_file ON nodes(file);
 CREATE INDEX idx_nodes_kind ON nodes(kind);
+
+-- Recreate FTS5 triggers (DROP TABLE nodes cascaded them)
+DROP TRIGGER IF EXISTS nodes_ai;
+DROP TRIGGER IF EXISTS nodes_ad;
+DROP TRIGGER IF EXISTS nodes_au;
+
+CREATE TRIGGER nodes_ai AFTER INSERT ON nodes BEGIN
+    INSERT INTO nodes_fts(rowid, fqn, kind, file, attributes)
+    VALUES (new.rowid, new.fqn, new.kind, new.file, new.attributes);
+END;
+CREATE TRIGGER nodes_ad AFTER DELETE ON nodes BEGIN
+    INSERT INTO nodes_fts(nodes_fts, rowid, fqn, kind, file, attributes)
+    VALUES('delete', old.rowid, old.fqn, old.kind, old.file, old.attributes);
+END;
+CREATE TRIGGER nodes_au AFTER UPDATE ON nodes BEGIN
+    INSERT INTO nodes_fts(nodes_fts, rowid, fqn, kind, file, attributes)
+    VALUES('delete', old.rowid, old.fqn, old.kind, old.file, old.attributes);
+    INSERT INTO nodes_fts(rowid, fqn, kind, file, attributes)
+    VALUES (new.rowid, new.fqn, new.kind, new.file, new.attributes);
+END;

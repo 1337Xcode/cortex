@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::error::BundleError;
 use crate::store::db::StoreManager;
 
-use super::format::{validate_version, CortexBundle};
+use super::format::{CortexBundle, validate_version};
 
 // ---------------------------------------------------------------------------
 // Import stats
@@ -42,7 +42,10 @@ pub struct ImportStats {
 pub fn import_bundle(store: &StoreManager, bundle_path: &Path) -> Result<ImportStats, BundleError> {
     // Step 1: Read files
     let json_str = fs::read_to_string(bundle_path).map_err(|e| BundleError::ImportFailed {
-        reason: format!("failed to read bundle file '{}': {e}", bundle_path.display()),
+        reason: format!(
+            "failed to read bundle file '{}': {e}",
+            bundle_path.display()
+        ),
     })?;
 
     let checksum_path = bundle_path.with_extension("json.sha256");
@@ -107,10 +110,11 @@ pub fn import_bundle(store: &StoreManager, bundle_path: &Path) -> Result<ImportS
     // Insert nodes
     let insert_result = (|| -> Result<ImportStats, BundleError> {
         for node in &bundle.nodes {
-            let kind_str = serde_json::to_string(&node.kind)
-                .unwrap_or_else(|_| "\"Function\"".to_string());
+            let kind_str =
+                serde_json::to_string(&node.kind).unwrap_or_else(|_| "\"Function\"".to_string());
             let kind_str = kind_str.trim_matches('"');
-            let attrs_str = serde_json::to_string(&node.attributes).unwrap_or_else(|_| "{}".to_string());
+            let attrs_str =
+                serde_json::to_string(&node.attributes).unwrap_or_else(|_| "{}".to_string());
 
             conn.execute(
                 "INSERT INTO nodes (fqn, kind, file, start_line, end_line, file_hash, indexed_at, attributes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -122,10 +126,11 @@ pub fn import_bundle(store: &StoreManager, bundle_path: &Path) -> Result<ImportS
 
         // Insert edges
         for edge in &bundle.edges {
-            let kind_str = serde_json::to_string(&edge.kind)
-                .unwrap_or_else(|_| "\"Calls\"".to_string());
+            let kind_str =
+                serde_json::to_string(&edge.kind).unwrap_or_else(|_| "\"Calls\"".to_string());
             let kind_str = kind_str.trim_matches('"');
-            let attrs_str = serde_json::to_string(&edge.attributes).unwrap_or_else(|_| "{}".to_string());
+            let attrs_str =
+                serde_json::to_string(&edge.attributes).unwrap_or_else(|_| "{}".to_string());
 
             conn.execute(
                 "INSERT INTO edges (source_fqn, target_fqn, kind, confidence, attributes) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -259,7 +264,8 @@ mod tests {
         // Clear the store manually to simulate fresh import
         {
             let conn = store.write_conn();
-            conn.execute_batch("DELETE FROM edges; DELETE FROM nodes;").unwrap();
+            conn.execute_batch("DELETE FROM edges; DELETE FROM nodes;")
+                .unwrap();
         }
 
         // Import

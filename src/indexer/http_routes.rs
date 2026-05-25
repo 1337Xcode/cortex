@@ -79,10 +79,8 @@ fn detect_python_routes(file: &str, source: &str) -> Vec<Node> {
     let mut routes = Vec::new();
 
     // FastAPI patterns: @app.get("/path"), @app.post("/path"), @router.get("/path"), etc.
-    let fastapi_re = Regex::new(
-        r#"@(?:app|router)\.(get|post|put|delete|patch)\(\s*["']([^"']+)["']"#,
-    )
-    .unwrap();
+    let fastapi_re =
+        Regex::new(r#"@(?:app|router)\.(get|post|put|delete|patch)\(\s*["']([^"']+)["']"#).unwrap();
 
     // Flask patterns: @app.route("/path", methods=["GET"]), @blueprint.route(...)
     let flask_route_re = Regex::new(
@@ -163,17 +161,13 @@ fn detect_python_routes(file: &str, source: &str) -> Vec<Node> {
 fn detect_express_routes(file: &str, source: &str) -> Vec<Node> {
     let mut routes = Vec::new();
 
-    let express_re = Regex::new(
-        r#"(?:app|router)\.(get|post|put|delete|patch)\(\s*["']([^"']+)["']"#,
-    )
-    .unwrap();
+    let express_re =
+        Regex::new(r#"(?:app|router)\.(get|post|put|delete|patch)\(\s*["']([^"']+)["']"#).unwrap();
 
     // Vercel/Next.js: export default (async) function handler(req, res)
     // Route path derived from file path (api/chat.ts -> /api/chat)
-    let vercel_re = Regex::new(
-        r#"export\s+default\s+(?:async\s+)?function\s+\w*handler\b"#,
-    )
-    .unwrap();
+    let vercel_re =
+        Regex::new(r#"export\s+default\s+(?:async\s+)?function\s+\w*handler\b"#).unwrap();
 
     let lines: Vec<&str> = source.lines().collect();
 
@@ -229,10 +223,7 @@ fn detect_go_routes(file: &str, source: &str) -> Vec<Node> {
 
     // Gin/Echo patterns: variable.METHOD("/path", handler)
     // Methods are uppercase in Go: GET, POST, PUT, DELETE, PATCH
-    let go_route_re = Regex::new(
-        r#"\w+\.(GET|POST|PUT|DELETE|PATCH)\(\s*"([^"]+)""#,
-    )
-    .unwrap();
+    let go_route_re = Regex::new(r#"\w+\.(GET|POST|PUT|DELETE|PATCH)\(\s*"([^"]+)""#).unwrap();
 
     let lines: Vec<&str> = source.lines().collect();
 
@@ -276,10 +267,7 @@ fn detect_django_routes(file: &str, source: &str) -> Vec<Node> {
     let mut routes = Vec::new();
 
     // Django path() patterns: path("api/users/", views.user_list, name="user-list")
-    let path_re = Regex::new(
-        r#"path\(\s*["']([^"']+)["']"#,
-    )
-    .unwrap();
+    let path_re = Regex::new(r#"path\(\s*["']([^"']+)["']"#).unwrap();
 
     let lines: Vec<&str> = source.lines().collect();
 
@@ -322,10 +310,9 @@ fn detect_spring_routes(file: &str, source: &str) -> Vec<Node> {
     let mut routes = Vec::new();
 
     // @GetMapping, @PostMapping, @PutMapping, @DeleteMapping, @PatchMapping
-    let mapping_re = Regex::new(
-        r#"@(Get|Post|Put|Delete|Patch)Mapping\(\s*(?:value\s*=\s*)?["']([^"']+)["']"#,
-    )
-    .unwrap();
+    let mapping_re =
+        Regex::new(r#"@(Get|Post|Put|Delete|Patch)Mapping\(\s*(?:value\s*=\s*)?["']([^"']+)["']"#)
+            .unwrap();
 
     // @RequestMapping with method
     let request_mapping_re = Regex::new(
@@ -388,16 +375,10 @@ fn detect_rails_routes(file: &str, source: &str) -> Vec<Node> {
     let mut routes = Vec::new();
 
     // resources :name
-    let resources_re = Regex::new(
-        r#"resources\s+:(\w+)"#,
-    )
-    .unwrap();
+    let resources_re = Regex::new(r#"resources\s+:(\w+)"#).unwrap();
 
     // get/post/put/delete/patch "/path", to: "controller#action"
-    let verb_route_re = Regex::new(
-        r#"(get|post|put|delete|patch)\s+["']([^"']+)["']"#,
-    )
-    .unwrap();
+    let verb_route_re = Regex::new(r#"(get|post|put|delete|patch)\s+["']([^"']+)["']"#).unwrap();
 
     let lines: Vec<&str> = source.lines().collect();
 
@@ -458,10 +439,8 @@ fn detect_rails_routes(file: &str, source: &str) -> Vec<Node> {
 fn detect_python_http_clients(file: &str, source: &str) -> Vec<(String, String, u32)> {
     let mut calls = Vec::new();
 
-    let requests_re = Regex::new(
-        r#"requests\.(get|post|put|delete|patch)\(\s*["']([^"']+)["']"#,
-    )
-    .unwrap();
+    let requests_re =
+        Regex::new(r#"requests\.(get|post|put|delete|patch)\(\s*["']([^"']+)["']"#).unwrap();
 
     let lines: Vec<&str> = source.lines().collect();
 
@@ -485,10 +464,8 @@ fn detect_js_http_clients(file: &str, source: &str) -> Vec<(String, String, u32)
     let mut calls = Vec::new();
 
     let fetch_re = Regex::new(r#"fetch\(\s*["']([^"']+)["']"#).unwrap();
-    let axios_re = Regex::new(
-        r#"axios\.(get|post|put|delete|patch)\(\s*["']([^"']+)["']"#,
-    )
-    .unwrap();
+    let axios_re =
+        Regex::new(r#"axios\.(get|post|put|delete|patch)\(\s*["']([^"']+)["']"#).unwrap();
 
     let lines: Vec<&str> = source.lines().collect();
 
@@ -580,11 +557,7 @@ fn find_enclosing_js_function(lines: &[&str], line_idx: usize, file: &str) -> St
 
     for i in (0..line_idx).rev() {
         if let Some(caps) = func_re.captures(lines[i]) {
-            let name = caps
-                .get(1)
-                .or_else(|| caps.get(2))
-                .unwrap()
-                .as_str();
+            let name = caps.get(1).or_else(|| caps.get(2)).unwrap().as_str();
             return format!("{file}::{name}");
         }
     }
@@ -609,29 +582,29 @@ fn find_enclosing_go_function(lines: &[&str], line_idx: usize, file: &str) -> St
 fn find_matching_route(routes: &[&Node], url_path: &str) -> Option<(String, f64)> {
     // Try exact match first (confidence 1.0)
     for route in routes {
-        if let Some(route_path) = route.attributes.get("path").and_then(|v| v.as_str()) {
-            if route_path == url_path {
-                return Some((route.fqn.clone(), 1.0));
-            }
+        if let Some(route_path) = route.attributes.get("path").and_then(|v| v.as_str())
+            && route_path == url_path
+        {
+            return Some((route.fqn.clone(), 1.0));
         }
     }
 
     // Try parameterized match (confidence 0.8)
     // e.g., route "/users/:id" matches client call "/users/123"
     for route in routes {
-        if let Some(route_path) = route.attributes.get("path").and_then(|v| v.as_str()) {
-            if paths_match_parameterized(route_path, url_path) {
-                return Some((route.fqn.clone(), 0.8));
-            }
+        if let Some(route_path) = route.attributes.get("path").and_then(|v| v.as_str())
+            && paths_match_parameterized(route_path, url_path)
+        {
+            return Some((route.fqn.clone(), 0.8));
         }
     }
 
     // Try partial/prefix match (confidence 0.5)
     for route in routes {
-        if let Some(route_path) = route.attributes.get("path").and_then(|v| v.as_str()) {
-            if url_path.starts_with(route_path) || route_path.starts_with(url_path) {
-                return Some((route.fqn.clone(), 0.5));
-            }
+        if let Some(route_path) = route.attributes.get("path").and_then(|v| v.as_str())
+            && (url_path.starts_with(route_path) || route_path.starts_with(url_path))
+        {
+            return Some((route.fqn.clone(), 0.5));
         }
     }
 
@@ -650,10 +623,7 @@ fn paths_match_parameterized(route_path: &str, url_path: &str) -> bool {
     }
 
     for (route_seg, url_seg) in route_segments.iter().zip(url_segments.iter()) {
-        if route_seg.starts_with(':')
-            || route_seg.starts_with('{')
-            || *route_seg == *url_seg
-        {
+        if route_seg.starts_with(':') || route_seg.starts_with('{') || *route_seg == *url_seg {
             continue;
         }
         return false;
@@ -664,7 +634,6 @@ fn paths_match_parameterized(route_path: &str, url_path: &str) -> bool {
         .iter()
         .any(|s| s.starts_with(':') || s.starts_with('{'))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -709,7 +678,10 @@ def create_order():
             Some("/orders")
         );
         assert_eq!(
-            get_route.attributes.get("framework").and_then(|v| v.as_str()),
+            get_route
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("flask")
         );
         assert_eq!(
@@ -728,7 +700,10 @@ def create_order():
             Some("/orders")
         );
         assert_eq!(
-            post_route.attributes.get("framework").and_then(|v| v.as_str()),
+            post_route
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("flask")
         );
     }
@@ -772,7 +747,10 @@ async def list_items():
             })
             .expect("GET /api/users should be detected");
         assert_eq!(
-            get_users.attributes.get("framework").and_then(|v| v.as_str()),
+            get_users
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("fastapi")
         );
         assert_eq!(
@@ -816,7 +794,10 @@ router.get("/products", listProducts);
             .expect("GET /users should be detected");
         assert_eq!(get_users.kind, NodeKind::Route);
         assert_eq!(
-            get_users.attributes.get("framework").and_then(|v| v.as_str()),
+            get_users
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("express")
         );
 
@@ -871,7 +852,10 @@ func main() {
             Some("GET")
         );
         assert_eq!(
-            get_health.attributes.get("framework").and_then(|v| v.as_str()),
+            get_health
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("gin")
         );
     }
@@ -906,7 +890,10 @@ func main() {
             .find(|n| n.attributes.get("path").and_then(|v| v.as_str()) == Some("/users"))
             .expect("GET /users should be detected");
         assert_eq!(
-            get_users.attributes.get("framework").and_then(|v| v.as_str()),
+            get_users
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("echo")
         );
     }
@@ -965,10 +952,7 @@ def create_order(data):
             .iter()
             .find(|e| e.source_fqn == "src/client.py::fetch_orders")
             .expect("HttpLink from fetch_orders should exist");
-        assert_eq!(
-            link.target_fqn,
-            "src/routes/orders.py::route::GET:/orders"
-        );
+        assert_eq!(link.target_fqn, "src/routes/orders.py::route::GET:/orders");
         assert_eq!(link.confidence, 1.0); // Exact path match
     }
 
@@ -1169,10 +1153,7 @@ func fetchData() {
 
         let link = &http_links[0];
         assert_eq!(link.source_fqn, "cmd/client/main.go::fetchData");
-        assert_eq!(
-            link.target_fqn,
-            "cmd/server/main.go::route::GET:/api/data"
-        );
+        assert_eq!(link.target_fqn, "cmd/server/main.go::route::GET:/api/data");
         assert_eq!(link.confidence, 1.0);
     }
 
@@ -1274,7 +1255,10 @@ public class UserController {
             })
             .expect("GET /users should be detected");
         assert_eq!(
-            get_route.attributes.get("framework").and_then(|v| v.as_str()),
+            get_route
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("spring")
         );
 
@@ -1287,19 +1271,23 @@ public class UserController {
             })
             .expect("POST /users should be detected");
         assert_eq!(
-            post_route.attributes.get("framework").and_then(|v| v.as_str()),
+            post_route
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("spring")
         );
 
         // Check DELETE route
         let delete_route = nodes
             .iter()
-            .find(|n| {
-                n.attributes.get("method").and_then(|v| v.as_str()) == Some("DELETE")
-            })
+            .find(|n| n.attributes.get("method").and_then(|v| v.as_str()) == Some("DELETE"))
             .expect("DELETE route should be detected");
         assert_eq!(
-            delete_route.attributes.get("framework").and_then(|v| v.as_str()),
+            delete_route
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("spring")
         );
     }
@@ -1334,24 +1322,26 @@ end
         // Check resources route
         let orders_route = nodes
             .iter()
-            .find(|n| {
-                n.attributes.get("path").and_then(|v| v.as_str()) == Some("/orders")
-            })
+            .find(|n| n.attributes.get("path").and_then(|v| v.as_str()) == Some("/orders"))
             .expect("resources :orders should be detected");
         assert_eq!(
-            orders_route.attributes.get("framework").and_then(|v| v.as_str()),
+            orders_route
+                .attributes
+                .get("framework")
+                .and_then(|v| v.as_str()),
             Some("rails")
         );
 
         // Check verb route
         let health_route = nodes
             .iter()
-            .find(|n| {
-                n.attributes.get("path").and_then(|v| v.as_str()) == Some("/health")
-            })
+            .find(|n| n.attributes.get("path").and_then(|v| v.as_str()) == Some("/health"))
             .expect("get '/health' should be detected");
         assert_eq!(
-            health_route.attributes.get("method").and_then(|v| v.as_str()),
+            health_route
+                .attributes
+                .get("method")
+                .and_then(|v| v.as_str()),
             Some("GET")
         );
     }

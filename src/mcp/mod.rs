@@ -5,6 +5,7 @@
 
 pub mod ask;
 pub mod dispatch;
+pub mod savings_store;
 pub mod server;
 pub mod token_counter;
 pub mod types;

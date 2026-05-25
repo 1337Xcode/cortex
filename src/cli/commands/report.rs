@@ -37,18 +37,9 @@ pub fn run(store: &Arc<StoreManager>, output_path: &Path) -> Result<(), anyhow::
         "- **Languages detected:** {}\n",
         arch.languages.join(", ")
     ));
-    report.push_str(&format!(
-        "- **Total nodes:** {}\n",
-        arch.total_nodes
-    ));
-    report.push_str(&format!(
-        "- **Total edges:** {}\n",
-        arch.total_edges
-    ));
-    report.push_str(&format!(
-        "- **Files indexed:** {}\n",
-        arch.files_indexed
-    ));
+    report.push_str(&format!("- **Total nodes:** {}\n", arch.total_nodes));
+    report.push_str(&format!("- **Total edges:** {}\n", arch.total_edges));
+    report.push_str(&format!("- **Files indexed:** {}\n", arch.files_indexed));
     report.push_str(&format!(
         "- **Top-level modules:** {}\n\n",
         arch.top_level_modules.join(", ")
@@ -74,7 +65,9 @@ pub fn run(store: &Arc<StoreManager>, output_path: &Path) -> Result<(), anyhow::
 
     // Dead code candidates
     report.push_str("## Dead code candidates\n\n");
-    report.push_str("Nodes with zero inbound call edges (excluding entry points and test functions).\n\n");
+    report.push_str(
+        "Nodes with zero inbound call edges (excluding entry points and test functions).\n\n",
+    );
 
     let dead_code = graph::find_dead_code(&conn, 20)?;
     if dead_code.is_empty() {
@@ -109,14 +102,13 @@ pub fn run(store: &Arc<StoreManager>, output_path: &Path) -> Result<(), anyhow::
             for path in taint_paths.iter().take(10) {
                 report.push_str(&format!(
                     "- `{}` -> `{}` (confidence: {:.0}%)\n",
-                    path.source_fqn, path.sink_fqn, path.confidence * 100.0
+                    path.source_fqn,
+                    path.sink_fqn,
+                    path.confidence * 100.0
                 ));
             }
             if taint_paths.len() > 10 {
-                report.push_str(&format!(
-                    "- ... and {} more\n",
-                    taint_paths.len() - 10
-                ));
+                report.push_str(&format!("- ... and {} more\n", taint_paths.len() - 10));
             }
             report.push('\n');
         }
@@ -129,14 +121,17 @@ pub fn run(store: &Arc<StoreManager>, output_path: &Path) -> Result<(), anyhow::
             for finding in owasp_findings.iter().take(10) {
                 report.push_str(&format!(
                     "- **{}** in `{}` ({})\n",
-                    finding.owasp_category.as_deref().unwrap_or("Unknown"), finding.node_fqn, finding.description
+                    finding
+                        .finding
+                        .owasp_category
+                        .as_deref()
+                        .unwrap_or("Unknown"),
+                    finding.finding.node_fqn,
+                    finding.finding.description
                 ));
             }
             if owasp_findings.len() > 10 {
-                report.push_str(&format!(
-                    "- ... and {} more\n",
-                    owasp_findings.len() - 10
-                ));
+                report.push_str(&format!("- ... and {} more\n", owasp_findings.len() - 10));
             }
             report.push('\n');
         }

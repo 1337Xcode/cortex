@@ -1,6 +1,6 @@
 [package]
 name = "cortex"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2024"
 license = "MIT"
 
@@ -60,6 +60,9 @@ notify = "7"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 
+# HTTP client for update checks
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # Optional: visualizer HTTP server
 axum = { version = "0.7", optional = true }
 tower-http = { version = "0.5", features = ["cors"], optional = true }
@@ -70,7 +73,7 @@ tokenizers = { version = "0.21", optional = true }
 ndarray = { version = "0.16", optional = true }
 
 [features]
-default = []
+default = ["visualizer"]
 visualizer = ["axum", "tower-http"]
 semantic = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
 
@@ -78,3 +81,7 @@ semantic = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
 tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
+proptest = "1"
+reqwest = { version = "0.12", features = ["json"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

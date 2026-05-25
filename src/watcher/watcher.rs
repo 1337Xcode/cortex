@@ -65,7 +65,8 @@ impl FileWatcher {
     /// This method runs until the channel is closed or an unrecoverable error occurs.
     /// It blocks the current async task, so it should be spawned in its own tokio task.
     pub async fn watch(&self, tx: mpsc::Sender<FileEvent>) -> Result<(), WatchError> {
-        let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<Result<Event, notify::Error>>(256);
+        let (notify_tx, mut notify_rx) =
+            tokio::sync::mpsc::channel::<Result<Event, notify::Error>>(256);
 
         // Create the watcher with a channel-based event handler
         let mut watcher = {
@@ -86,11 +87,7 @@ impl FileWatcher {
         watcher
             .watch(&self.repo_root, RecursiveMode::Recursive)
             .map_err(|e| WatchError::InitFailed {
-                reason: format!(
-                    "failed to watch '{}': {}",
-                    self.repo_root.display(),
-                    e
-                ),
+                reason: format!("failed to watch '{}': {}", self.repo_root.display(), e),
             })?;
 
         // Drop the sender clone so the channel closes when the watcher is dropped
@@ -158,10 +155,16 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     /// Helper to create a watcher and channel for testing.
-    fn setup_watcher(repo_root: &Path) -> (FileWatcher, mpsc::Sender<FileEvent>, mpsc::Receiver<FileEvent>) {
+    fn setup_watcher(
+        repo_root: &Path,
+    ) -> (
+        FileWatcher,
+        mpsc::Sender<FileEvent>,
+        mpsc::Receiver<FileEvent>,
+    ) {
         let filter = WatchFilter::new(repo_root);
         let watcher = FileWatcher::new(repo_root, filter).unwrap();
         let (tx, rx) = mpsc::channel(100);
@@ -358,11 +361,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Create a file in node_modules (should be filtered)
-        fs::write(
-            repo_root.join("node_modules").join("package.json"),
-            "{}",
-        )
-        .unwrap();
+        fs::write(repo_root.join("node_modules").join("package.json"), "{}").unwrap();
 
         // Create a normal file (should NOT be filtered)
         tokio::time::sleep(Duration::from_millis(100)).await;

@@ -51,13 +51,18 @@ pub struct CcgDocument {
 /// Export the graph in CCG format.
 ///
 /// Maps Cortex nodes and edges to the CCG JSON schema.
-pub fn export_ccg(store: &StoreManager, output_dir: &std::path::Path) -> Result<CcgExportStats, BundleError> {
+pub fn export_ccg(
+    store: &StoreManager,
+    output_dir: &std::path::Path,
+) -> Result<CcgExportStats, BundleError> {
     let conn = store.read_conn();
 
     // Query all nodes
     let mut node_stmt = conn
         .prepare("SELECT fqn, kind, file, start_line, end_line, attributes FROM nodes")
-        .map_err(|e| BundleError::ExportFailed { reason: format!("failed to query nodes: {}", e) })?;
+        .map_err(|e| BundleError::ExportFailed {
+            reason: format!("failed to query nodes: {}", e),
+        })?;
 
     let ccg_nodes: Vec<CcgNode> = node_stmt
         .query_map([], |row| {
@@ -78,14 +83,18 @@ pub fn export_ccg(store: &StoreManager, output_dir: &std::path::Path) -> Result<
                 metadata: serde_json::from_str(&attrs).unwrap_or(serde_json::json!({})),
             })
         })
-        .map_err(|e| BundleError::ExportFailed { reason: format!("failed to read nodes: {}", e) })?
+        .map_err(|e| BundleError::ExportFailed {
+            reason: format!("failed to read nodes: {}", e),
+        })?
         .filter_map(|r| r.ok())
         .collect();
 
     // Query all edges
     let mut edge_stmt = conn
         .prepare("SELECT source_fqn, target_fqn, kind, confidence FROM edges")
-        .map_err(|e| BundleError::ExportFailed { reason: format!("failed to query edges: {}", e) })?;
+        .map_err(|e| BundleError::ExportFailed {
+            reason: format!("failed to query edges: {}", e),
+        })?;
 
     let ccg_edges: Vec<CcgEdge> = edge_stmt
         .query_map([], |row| {
@@ -101,7 +110,9 @@ pub fn export_ccg(store: &StoreManager, output_dir: &std::path::Path) -> Result<
                 weight: confidence,
             })
         })
-        .map_err(|e| BundleError::ExportFailed { reason: format!("failed to read edges: {}", e) })?
+        .map_err(|e| BundleError::ExportFailed {
+            reason: format!("failed to read edges: {}", e),
+        })?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -114,11 +125,13 @@ pub fn export_ccg(store: &StoreManager, output_dir: &std::path::Path) -> Result<
 
     // Write to file
     let output_path = output_dir.join("cortex.ccg.json");
-    let json = serde_json::to_string_pretty(&doc)
-        .map_err(|e| BundleError::ExportFailed { reason: format!("failed to serialize CCG: {}", e) })?;
+    let json = serde_json::to_string_pretty(&doc).map_err(|e| BundleError::ExportFailed {
+        reason: format!("failed to serialize CCG: {}", e),
+    })?;
 
-    std::fs::write(&output_path, &json)
-        .map_err(|e| BundleError::ExportFailed { reason: format!("failed to write CCG file: {}", e) })?;
+    std::fs::write(&output_path, &json).map_err(|e| BundleError::ExportFailed {
+        reason: format!("failed to write CCG file: {}", e),
+    })?;
 
     Ok(CcgExportStats {
         nodes_exported: ccg_nodes.len(),
@@ -197,7 +210,8 @@ mod tests {
                 "INSERT INTO edges (source_fqn, target_fqn, kind, confidence, attributes) \
                  VALUES ('src/main.rs::main', 'src/lib.rs::helper', 'Calls', 1.0, '{}')",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let stats = export_ccg(&store, output_dir.path()).unwrap();
@@ -214,7 +228,11 @@ mod tests {
         assert_eq!(doc.edges.len(), 1);
 
         // Verify node structure
-        let main_node = doc.nodes.iter().find(|n| n.id == "src/main.rs::main").unwrap();
+        let main_node = doc
+            .nodes
+            .iter()
+            .find(|n| n.id == "src/main.rs::main")
+            .unwrap();
         assert_eq!(main_node.node_type, "function");
         assert_eq!(main_node.label, "main");
         assert_eq!(main_node.file, "src/main.rs");

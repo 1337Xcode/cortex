@@ -6,7 +6,7 @@
 use rusqlite::Connection;
 
 use crate::error::StoreError;
-use crate::indexer::embedder::{cosine_similarity, EMBEDDING_DIM};
+use crate::indexer::embedder::{EMBEDDING_DIM, cosine_similarity};
 
 /// A semantic search result with similarity score.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -21,11 +21,7 @@ pub struct SemanticResult {
 ///
 /// Inserts or replaces the embedding for the given FQN.
 /// The embedding is stored as a raw byte blob (768 * 4 = 3072 bytes).
-pub fn store_embedding(
-    conn: &Connection,
-    fqn: &str,
-    embedding: &[f32],
-) -> Result<(), StoreError> {
+pub fn store_embedding(conn: &Connection, fqn: &str, embedding: &[f32]) -> Result<(), StoreError> {
     if embedding.len() != EMBEDDING_DIM {
         return Err(StoreError::QueryFailed {
             reason: format!(
@@ -174,10 +170,7 @@ pub fn remove_embedding(conn: &Connection, fqn: &str) -> Result<(), StoreError> 
 
 /// Convert an f32 embedding to raw bytes.
 fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
-    embedding
-        .iter()
-        .flat_map(|f| f.to_le_bytes())
-        .collect()
+    embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
 
 /// Convert raw bytes back to an f32 embedding.
@@ -307,10 +300,7 @@ mod tests {
         let emb1 = vec![0.1f32; EMBEDDING_DIM];
         let emb2 = vec![0.2f32; EMBEDDING_DIM];
 
-        let entries: Vec<(&str, &[f32])> = vec![
-            ("node1", &emb1),
-            ("node2", &emb2),
-        ];
+        let entries: Vec<(&str, &[f32])> = vec![("node1", &emb1), ("node2", &emb2)];
 
         let count = store_embeddings_batch(&conn, &entries).unwrap();
         assert_eq!(count, 2);
@@ -342,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_bytes_roundtrip() {
-        let original = vec![1.0f32, -0.5, 0.0, 3.14];
+        let original = vec![1.0f32, -0.5, 0.0, 3.15];
         let bytes = embedding_to_bytes(&original);
         // Can't use bytes_to_embedding directly since it expects EMBEDDING_DIM
         // but we can verify the byte conversion logic

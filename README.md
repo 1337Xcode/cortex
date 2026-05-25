@@ -112,10 +112,11 @@ cortex impact UserService.getUser       # blast radius: what breaks if I change 
 cortex explain DatabasePool.acquire     # offline function explanation, zero LLM calls
 cortex security report                  # taint flows, OWASP patterns, dependency vulns
 cortex diff main feature-branch         # call graph diff between branches
+cortex viz --port 9749                  # unified tabbed UI (Graph, Dashboard, Explorer)
 cortex viz --export graph.html          # interactive 3D graph in a standalone HTML file
 cortex ci --fail-on-taint               # CI quality gate with exit codes
 cortex hotspots --months 6              # high-churn risky code ranked by risk score
-cortex coverage --lcov coverage.lcov    # untested functions ranked by caller count
+cortex coverage --lcov coverage.lcov    # populate coverage field, rank untested functions
 cortex modules                          # Leiden community detection module boundaries
 cortex federate add ../auth-service     # query across repos with unified graph
 ```
@@ -125,6 +126,13 @@ cortex federate add ../auth-service     # query across repos with unified graph
 - **29 languages** parsed via tree-sitter
 - **32 MCP tools** exposed over stdio, or 5 in smart mode (the `ask` meta-tool routes internally)
 - **Sub-second incremental re-indexing** via native OS file watcher (inotify, FSEvents, ReadDirectoryChangesW)
+- **Configurable model pricing** via `~/.cortex/pricing.toml` with longest-prefix matching
+- **Ego-graph capping** at 500 nodes with priority ordering (depth first, then caller count)
+- **Unified tabbed UI** with Graph, Dashboard, and Explorer views served at a single endpoint
+- **Coverage field on graph nodes** populated from LCOV data, surfaced in MCP tool responses
+- **Method vs Function classification** verified across Python, TypeScript, Rust, Go, and Java
+- **Agent steering generation** with module boundaries, complexity hotspots, and active ADRs
+- **IDE install hardening** across 25 platforms with config validation and error reporting
 - **Taint flow analysis, OWASP Top 10 detection, SBOM generation** all running locally, no cloud
 - **Cross-session memory** that marks observations stale when linked code changes
 - **Multi-repo federation** for querying across repositories with a unified graph
@@ -191,6 +199,10 @@ graph TD
 | Git intelligence | Hotspots, churn | Commit-aware delta | git blame | No | No |
 | Community detection | Leiden algorithm | No | Leiden | No | No |
 | Coverage gap analysis | Yes (LCOV cross-ref) | No | No | No | No |
+| Configurable pricing | Yes (TOML) | No | No | No | No |
+| Ego-graph capping | Yes (500 nodes) | No | No | No | No |
+| Unified tabbed UI | Yes (Graph/Dashboard/Explorer) | No | No | No | No |
+| Agent steering generation | Yes (boundaries, hotspots, ADRs) | No | No | No | No |
 | CI quality gates | Yes (exit codes) | No | No | No | No |
 | Single binary, zero deps | Yes | Yes | No (Python) | No (Python+LSP) | No (Python) |
 | Auto IDE config | 25 agents | No | No | No | No |

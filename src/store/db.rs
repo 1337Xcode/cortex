@@ -1,4 +1,4 @@
-﻿//! Database connection manager for the Cortex graph store.
+//! Database connection manager for the Cortex graph store.
 //!
 //! Manages one exclusive write connection and a configurable pool of read-only
 //! connections (default 4, max 16). All connections are configured with WAL mode,
@@ -43,10 +43,14 @@ impl StoreManager {
     ///
     /// `pool_size` is clamped to a minimum of 1 and maximum of 16.
     pub fn with_pool_size(data_dir: &Path, pool_size: usize) -> Result<Self, StoreError> {
-        let pool_size = pool_size.max(1).min(16);
+        let pool_size = pool_size.clamp(1, 16);
 
         std::fs::create_dir_all(data_dir).map_err(|e| StoreError::ConnectionFailed {
-            reason: format!("failed to create data directory '{}': {}", data_dir.display(), e),
+            reason: format!(
+                "failed to create data directory '{}': {}",
+                data_dir.display(),
+                e
+            ),
         })?;
 
         let db_path = data_dir.join(DB_FILENAME);
@@ -200,8 +204,11 @@ mod tests {
             let conn = store.write_conn();
             conn.execute_batch("CREATE TABLE test_table (id INTEGER PRIMARY KEY, value TEXT);")
                 .expect("failed to create table");
-            conn.execute("INSERT INTO test_table (id, value) VALUES (1, 'hello');", [])
-                .expect("failed to insert");
+            conn.execute(
+                "INSERT INTO test_table (id, value) VALUES (1, 'hello');",
+                [],
+            )
+            .expect("failed to insert");
         }
 
         // Spawn multiple reader threads that all query concurrently.

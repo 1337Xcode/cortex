@@ -50,7 +50,11 @@ pub fn run(store: &StoreManager, path: &Path, types: &str) -> Result<(), anyhow:
                 Ok(true) => ingested += 1,
                 Ok(false) => skipped += 1,
                 Err(e) => {
-                    eprintln!("warning: failed to ingest '{}': {}", entry.path().display(), e);
+                    eprintln!(
+                        "warning: failed to ingest '{}': {}",
+                        entry.path().display(),
+                        e
+                    );
                     errors += 1;
                 }
             }
@@ -71,10 +75,7 @@ fn ingest_file(
     file_path: &Path,
     allowed_types: &[&str],
 ) -> Result<bool, anyhow::Error> {
-    let extension = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let extension = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     // Check if extension is supported and allowed
     if !SUPPORTED_EXTENSIONS.contains(&extension) {
@@ -127,7 +128,10 @@ fn ingest_file(
 }
 
 /// Extract text content from a file based on its extension.
-fn extract_content(file_path: &Path, extension: &str) -> Result<(String, &'static str), anyhow::Error> {
+fn extract_content(
+    file_path: &Path,
+    extension: &str,
+) -> Result<(String, &'static str), anyhow::Error> {
     match extension {
         "md" | "txt" | "rst" | "html" => {
             let content = std::fs::read_to_string(file_path)?;
@@ -144,7 +148,11 @@ fn extract_content(file_path: &Path, extension: &str) -> Result<(String, &'stati
             let content = std::fs::read_to_string(file_path)?;
             // Parse headers as a summary
             let first_line = content.lines().next().unwrap_or("");
-            let summary = format!("CSV headers: {}\nRows: {}", first_line, content.lines().count().saturating_sub(1));
+            let summary = format!(
+                "CSV headers: {}\nRows: {}",
+                first_line,
+                content.lines().count().saturating_sub(1)
+            );
             Ok((summary, "csv"))
         }
         "yaml" | "json" => {
@@ -157,7 +165,10 @@ fn extract_content(file_path: &Path, extension: &str) -> Result<(String, &'stati
             let metadata = std::fs::metadata(file_path)?;
             let content = format!(
                 "PDF reference: {} ({} bytes)",
-                file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+                file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown"),
                 metadata.len()
             );
             Ok((content, "pdf_reference"))
@@ -183,7 +194,7 @@ fn link_document_to_code(
 ) -> Result<(), anyhow::Error> {
     // Get all known symbol names (just the short name, not the full FQN)
     let mut stmt = conn.prepare(
-        "SELECT fqn FROM nodes WHERE kind IN ('Function', 'Class', 'Method') LIMIT 1000"
+        "SELECT fqn FROM nodes WHERE kind IN ('Function', 'Class', 'Method') LIMIT 1000",
     )?;
 
     let fqns: Vec<String> = stmt

@@ -1,4 +1,4 @@
-﻿//! Bash/Shell AST extractor (tree-sitter based).
+//! Bash/Shell AST extractor (tree-sitter based).
 //!
 //! Extracts structural nodes (functions, aliases) and edges (imports via source/dot,
 //! intra-file calls) from a tree-sitter Bash parse tree.
@@ -58,14 +58,13 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
 /// Compute cyclomatic complexity for all Function nodes.
 fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source: &[u8]) {
     for node in nodes.iter_mut() {
-        if node.kind == NodeKind::Function {
-            if let Some(ast_node) =
+        if node.kind == NodeKind::Function
+            && let Some(ast_node) =
                 find_ast_node_at_line(root, node.start_line, "function_definition")
-            {
-                let c = complexity::compute_full_complexity(ast_node, source, "bash");
-                if let Some(attrs) = node.attributes.as_object_mut() {
-                    attrs.insert("complexity".to_string(), serde_json::json!(c));
-                }
+        {
+            let c = complexity::compute_full_complexity(ast_node, source, "bash");
+            if let Some(attrs) = node.attributes.as_object_mut() {
+                attrs.insert("complexity".to_string(), serde_json::json!(c));
             }
         }
     }
@@ -316,12 +315,7 @@ fn split_alias_args(input: &str) -> Vec<&str> {
 }
 
 /// Collect source/dot import commands from the AST.
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -329,17 +323,17 @@ fn collect_imports(
             let cmd_name = get_command_name(child, source);
             if cmd_name == "source" || cmd_name == "." {
                 // Get the argument (the file being sourced)
-                if let Some(target) = get_command_first_arg(child, source) {
-                    if !target.is_empty() {
-                        edges.push(Edge {
-                            id: None,
-                            source_fqn: file.to_string(),
-                            target_fqn: target,
-                            kind: EdgeKind::Imports,
-                            confidence: 1.0,
-                            attributes: json!({}),
-                        });
-                    }
+                if let Some(target) = get_command_first_arg(child, source)
+                    && !target.is_empty()
+                {
+                    edges.push(Edge {
+                        id: None,
+                        source_fqn: file.to_string(),
+                        target_fqn: target,
+                        kind: EdgeKind::Imports,
+                        confidence: 1.0,
+                        attributes: json!({}),
+                    });
                 }
             }
         }
@@ -440,20 +434,14 @@ fn get_command_first_arg(node: tree_sitter::Node, source: &[u8]) -> Option<Strin
             {
                 let text = child.utf8_text(source).unwrap_or("").trim().to_string();
                 // Strip surrounding quotes if present
-                let cleaned = text
-                    .trim_matches('\'')
-                    .trim_matches('"')
-                    .to_string();
+                let cleaned = text.trim_matches('\'').trim_matches('"').to_string();
                 return Some(cleaned);
             }
             _ if found_name && child.kind() != "comment" => {
                 // Any other argument node after the command name
                 let text = child.utf8_text(source).unwrap_or("").trim().to_string();
                 if !text.is_empty() {
-                    let cleaned = text
-                        .trim_matches('\'')
-                        .trim_matches('"')
-                        .to_string();
+                    let cleaned = text.trim_matches('\'').trim_matches('"').to_string();
                     return Some(cleaned);
                 }
             }
@@ -645,22 +633,28 @@ main "$@"
 
         // deploy calls setup_env
         assert!(
-            calls.iter().any(|e| e.source_fqn == "scripts/deploy.sh::deploy"
-                && e.target_fqn == "scripts/deploy.sh::setup_env"),
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "scripts/deploy.sh::deploy"
+                    && e.target_fqn == "scripts/deploy.sh::setup_env"),
             "deploy should call setup_env"
         );
 
         // main calls setup_env
         assert!(
-            calls.iter().any(|e| e.source_fqn == "scripts/deploy.sh::main"
-                && e.target_fqn == "scripts/deploy.sh::setup_env"),
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "scripts/deploy.sh::main"
+                    && e.target_fqn == "scripts/deploy.sh::setup_env"),
             "main should call setup_env"
         );
 
         // main calls deploy
         assert!(
-            calls.iter().any(|e| e.source_fqn == "scripts/deploy.sh::main"
-                && e.target_fqn == "scripts/deploy.sh::deploy"),
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "scripts/deploy.sh::main"
+                    && e.target_fqn == "scripts/deploy.sh::deploy"),
             "main should call deploy"
         );
 
@@ -725,28 +719,38 @@ main "$@"
         );
 
         // Check functions
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "scripts/deploy.sh::setup_env" && n.kind == NodeKind::Function));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "scripts/deploy.sh::cleanup" && n.kind == NodeKind::Function));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "scripts/deploy.sh::deploy" && n.kind == NodeKind::Function));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "scripts/deploy.sh::main" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "scripts/deploy.sh::setup_env" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "scripts/deploy.sh::cleanup" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "scripts/deploy.sh::deploy" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "scripts/deploy.sh::main" && n.kind == NodeKind::Function)
+        );
 
         // Check alias
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "scripts/deploy.sh::ll" && n.kind == NodeKind::Constant));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "scripts/deploy.sh::ll" && n.kind == NodeKind::Constant)
+        );
 
         // Check calls
         let calls: Vec<&Edge> = result
@@ -754,9 +758,17 @@ main "$@"
             .iter()
             .filter(|e| e.kind == EdgeKind::Calls)
             .collect();
-        assert!(calls.iter().any(|e| e.source_fqn == "scripts/deploy.sh::deploy"
-            && e.target_fqn == "scripts/deploy.sh::setup_env"));
-        assert!(calls.iter().any(|e| e.source_fqn == "scripts/deploy.sh::main"
-            && e.target_fqn == "scripts/deploy.sh::deploy"));
+        assert!(
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "scripts/deploy.sh::deploy"
+                    && e.target_fqn == "scripts/deploy.sh::setup_env")
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|e| e.source_fqn == "scripts/deploy.sh::main"
+                    && e.target_fqn == "scripts/deploy.sh::deploy")
+        );
     }
 }

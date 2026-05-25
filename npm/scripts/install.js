@@ -1,51 +1,65 @@
 #!/usr/bin/env node
 
-const { execSync } = require("node:child_process");
+/**
+ * Cortex installer script.
+ *
+ * Downloads the correct platform binary from GitHub releases, places it in
+ * ~/.cortex/bin/, and runs `cortex install` to configure detected AI agents.
+ *
+ * Handles fresh installs and updates: overwrites any existing binary in place.
+ *
+ * Usage: npx @1337xcode/cortex install
+ */
+
+const { execFileSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const https = require("node:https");
 
 const REPO = "1337Xcode/cortex";
-const VENDOR_DIR = path.join(__dirname, "..", "vendor");
+const INSTALL_DIR = path.join(os.homedir(), ".cortex", "bin");
 
-// If binary already bundled in the package, skip download
-const bundledBinary = path.join(VENDOR_DIR, process.platform === "win32" ? "cortex.exe" : "cortex");
-if (fs.existsSync(bundledBinary)) {
-  console.log(`cortex binary found at ${bundledBinary} (bundled)`);
-  process.exit(0);
-}
-
-function getPlatform() {
+function getPlatformTarget() {
   const platform = process.platform;
-  if (platform === "darwin" || platform === "linux" || platform === "win32") {
-    return platform;
-  }
-  throw new Error(`Unsupported platform: ${platform}`);
-}
-
-function getArch() {
   const arch = process.arch;
-  if (arch === "x64" || arch === "arm64") {
-    return arch;
+
+  const supported = {
+    "darwin-x64": "cortex-darwin-x64.tar.gz",
+    "darwin-arm64": "cortex-darwin-arm64.tar.gz",
+    "linux-x64": "cortex-linux-x64.tar.gz",
+    "win32-x64": "cortex-win32-x64.tar.gz",
+  };
+
+  const key = `${platform}-${arch}`;
+  const archive = supported[key];
+  if (!archive) {
+    throw new Error(
+      `Unsupported platform: ${key}\n` +
+      `Supported: ${Object.keys(supported).join(", ")}`
+    );
   }
-  throw new Error(`Unsupported architecture: ${arch}`);
+  return { platform, arch, archive };
 }
 
 function download(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      if (res.statusCode === 302 || res.statusCode === 301) {
-        return download(res.headers.location).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        return reject(new Error(`Download failed with status ${res.statusCode}: ${url}`));
-      }
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => resolve(Buffer.concat(chunks)));
-      res.on("error", reject);
-    }).on("error", reject);
+    const get = (targetUrl) => {
+      https.get(targetUrl, { headers: { "User-Agent": "cortex-installer" } }, (res) => {
+        if (res.statusCode === 302 || res.statusCode === 301) {
+          return get(res.headers.location);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Download failed (HTTP ${res.statusCode}): ${targetUrl}`));
+        }
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+        res.on("error", reject);
+      }).on("error", reject);
+    };
+    get(url);
   });
 }
 
@@ -56,95 +70,135 @@ function verifySha256(buffer, expectedHash, archiveName) {
       `SHA256 checksum mismatch for ${archiveName}!\n` +
       `  Expected: ${expectedHash}\n` +
       `  Actual:   ${actualHash}\n` +
-      `The downloaded binary may have been tampered with. Aborting installation.`
+      `The downloaded binary may have been tampered with. Aborting.`
     );
   }
-  console.log(`SHA256 verified: ${actualHash}`);
+  return actualHash;
 }
 
-async function downloadAndVerifyChecksum(archiveBuffer, archiveName, baseUrl) {
+async function downloadChecksum(archiveName, baseUrl) {
   const checksumUrl = `${baseUrl}/${archiveName}.sha256`;
   try {
-    const checksumBuffer = await download(checksumUrl);
-    const checksumContent = checksumBuffer.toString("utf8").trim();
-    // Format is: "<hash>  <filename>" (two spaces between hash and filename)
-    const expectedHash = checksumContent.split(/\s+/)[0].toLowerCase();
-    if (!expectedHash || expectedHash.length !== 64) {
-      console.warn(`Warning: Invalid checksum format in ${archiveName}.sha256, skipping verification.`);
-      return;
+    const buf = await download(checksumUrl);
+    const content = buf.toString("utf8").trim();
+    const hash = content.split(/\s+/)[0].toLowerCase();
+    if (!hash || hash.length !== 64) {
+      return null;
     }
-    verifySha256(archiveBuffer, expectedHash, archiveName);
-  } catch (err) {
-    if (err.message && err.message.includes("checksum mismatch")) {
-      // Verification failed - this is a security issue, abort
-      throw err;
-    }
-    // Could not download checksum file (e.g., older release without checksums)
-    console.warn(`Warning: Could not download checksum file (${err.message}).`);
-    console.warn("Skipping SHA256 verification. Binary integrity cannot be confirmed.");
+    return hash;
+  } catch {
+    return null;
   }
 }
 
 async function extractTarGz(buffer, destDir) {
   const tmpFile = path.join(destDir, "_cortex_download.tar.gz");
   fs.writeFileSync(tmpFile, buffer);
-
   try {
-    execSync(`tar -xzf "${tmpFile}" -C "${destDir}"`, { stdio: "ignore" });
+    execFileSync("tar", ["-xzf", tmpFile, "-C", destDir], { stdio: "ignore" });
   } catch (e) {
     throw new Error(
-      `Failed to extract archive. Ensure tar is available on your system.\n${e.message}`
+      `Failed to extract archive. Ensure tar is available.\n${e.message}`
     );
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch { /* cleanup best-effort */ }
+    try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
+  }
+}
+
+function runCortexInstall(binaryPath) {
+  console.log("\nConfiguring AI agents...");
+  try {
+    execFileSync(binaryPath, ["install"], { stdio: "inherit" });
+  } catch (e) {
+    // Non-fatal: binary is installed even if agent config fails
+    console.warn("Warning: `cortex install` exited with an error.");
+    console.warn("You can run it manually later: cortex install");
   }
 }
 
 async function main() {
-  const platform = getPlatform();
-  const arch = getArch();
-
+  const { platform, arch, archive } = getPlatformTarget();
   const binaryName = platform === "win32" ? "cortex.exe" : "cortex";
-  const archiveName = `cortex-${platform}-${arch}.tar.gz`;
   const baseUrl = `https://github.com/${REPO}/releases/latest/download`;
-  const url = `${baseUrl}/${archiveName}`;
+  const url = `${baseUrl}/${archive}`;
 
-  console.log(`Downloading cortex for ${platform}-${arch}...`);
+  console.log(`Installing cortex for ${platform}-${arch}...`);
 
-  // Ensure vendor directory exists
-  fs.mkdirSync(VENDOR_DIR, { recursive: true });
+  // Create install directory (handles fresh installs)
+  fs.mkdirSync(INSTALL_DIR, { recursive: true });
 
-  try {
-    const buffer = await download(url);
-
-    // Verify SHA256 checksum before extracting
-    await downloadAndVerifyChecksum(buffer, archiveName, baseUrl);
-
-    await extractTarGz(buffer, VENDOR_DIR);
-
-    // Make binary executable on Unix
-    if (platform !== "win32") {
-      const binPath = path.join(VENDOR_DIR, binaryName);
-      if (fs.existsSync(binPath)) {
-        fs.chmodSync(binPath, 0o755);
-      }
+  // Remove existing binary if present (handles updates)
+  const binaryPath = path.join(INSTALL_DIR, binaryName);
+  if (fs.existsSync(binaryPath)) {
+    console.log("Existing installation detected, updating...");
+    try {
+      fs.unlinkSync(binaryPath);
+    } catch (e) {
+      throw new Error(
+        `Cannot replace existing binary at ${binaryPath}: ${e.message}\n` +
+        `Close any running cortex processes and try again.`
+      );
     }
-
-    console.log(`Installed cortex to ${path.join(VENDOR_DIR, binaryName)}`);
-  } catch (err) {
-    if (err.message && err.message.includes("checksum mismatch")) {
-      console.error(`\nSECURITY ERROR: ${err.message}`);
-      console.error("Installation aborted for your safety.");
-      process.exit(1);
-    }
-    console.warn(`Note: Could not download pre-built cortex binary: ${err.message}`);
-    console.warn("The cortex command will not be available until you either:");
-    console.warn("  1. Wait for release binaries at https://github.com/1337Xcode/cortex/releases");
-    console.warn("  2. Build from source: git clone https://github.com/1337Xcode/cortex && cd cortex && cargo build --release");
-    console.warn("");
-    console.warn("This is not a fatal error. The package installed successfully.");
-    // Don't exit with error code so npm install succeeds
   }
+
+  // Download the archive
+  console.log(`Downloading from GitHub releases...`);
+  const buffer = await download(url);
+
+  // Verify checksum if available
+  const expectedHash = await downloadChecksum(archive, baseUrl);
+  if (expectedHash) {
+    const actualHash = verifySha256(buffer, expectedHash, archive);
+    console.log(`SHA256 verified: ${actualHash.slice(0, 12)}...`);
+  } else {
+    console.warn("Warning: Checksum file not available, skipping verification.");
+  }
+
+  // Extract
+  await extractTarGz(buffer, INSTALL_DIR);
+
+  // Make executable on Unix
+  if (platform !== "win32" && fs.existsSync(binaryPath)) {
+    fs.chmodSync(binaryPath, 0o755);
+  }
+
+  if (!fs.existsSync(binaryPath)) {
+    throw new Error(
+      `Binary not found after extraction. Expected: ${binaryPath}\n` +
+      `The release archive may have a different structure.`
+    );
+  }
+
+  console.log(`\nInstalled cortex to ${binaryPath}`);
+
+  // Add PATH hint if not already on PATH
+  const pathDirs = (process.env.PATH || "").split(path.delimiter);
+  const onPath = pathDirs.some((dir) => {
+    try {
+      return fs.realpathSync(dir) === fs.realpathSync(INSTALL_DIR);
+    } catch {
+      return dir === INSTALL_DIR;
+    }
+  });
+
+  if (!onPath) {
+    console.log("");
+    console.log("Add cortex to your PATH:");
+    if (platform === "win32") {
+      console.log(`  setx PATH "%PATH%;${INSTALL_DIR}"`);
+    } else {
+      console.log(`  export PATH="${INSTALL_DIR}:$PATH"`);
+      console.log(`  # Add to ~/.bashrc or ~/.zshrc to persist`);
+    }
+  }
+
+  // Run cortex install to configure agents
+  runCortexInstall(binaryPath);
+
+  console.log("\nDone. Run `cortex serve` to start the MCP server.");
 }
 
-main();
+main().catch((err) => {
+  console.error(`\nInstallation failed: ${err.message}`);
+  process.exit(1);
+});

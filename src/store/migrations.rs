@@ -1,4 +1,4 @@
-﻿//! Schema migration runner for the Cortex graph store.
+//! Schema migration runner for the Cortex graph store.
 //!
 //! Applies numbered SQL migration files idempotently on startup. Each migration
 //! runs in its own transaction. The `schema_versions` table tracks which
@@ -112,19 +112,18 @@ pub fn run_migrations(
         })?;
 
         // Execute the migration in its own transaction.
-        let tx = conn.unchecked_transaction().map_err(|e| {
-            MigrationError::SqlExecutionFailed {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| MigrationError::SqlExecutionFailed {
                 file: filename.clone(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
-        tx.execute_batch(&sql).map_err(|e| {
-            MigrationError::SqlExecutionFailed {
+        tx.execute_batch(&sql)
+            .map_err(|e| MigrationError::SqlExecutionFailed {
                 file: filename.clone(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         // Record the migration as applied.
         let now = std::time::SystemTime::now()
@@ -141,10 +140,11 @@ pub fn run_migrations(
             reason: e.to_string(),
         })?;
 
-        tx.commit().map_err(|e| MigrationError::SqlExecutionFailed {
-            file: filename.clone(),
-            reason: e.to_string(),
-        })?;
+        tx.commit()
+            .map_err(|e| MigrationError::SqlExecutionFailed {
+                file: filename.clone(),
+                reason: e.to_string(),
+            })?;
 
         newly_applied.push(filename.clone());
     }
@@ -155,12 +155,30 @@ pub fn run_migrations(
 /// Embedded migration SQL files compiled into the binary.
 /// This ensures migrations work regardless of the working directory.
 static EMBEDDED_MIGRATIONS: &[(&str, &str)] = &[
-    ("0001_initial_schema.sql", include_str!("../../migrations/0001_initial_schema.sql")),
-    ("0002_security_tables.sql", include_str!("../../migrations/0002_security_tables.sql")),
-    ("0003_memory_tables.sql", include_str!("../../migrations/0003_memory_tables.sql")),
-    ("0004_fts5_index.sql", include_str!("../../migrations/0004_fts5_index.sql")),
-    ("0005_vector_index.sql", include_str!("../../migrations/0005_vector_index.sql")),
-    ("0006_add_document_kind.sql", include_str!("../../migrations/0006_add_document_kind.sql")),
+    (
+        "0001_initial_schema.sql",
+        include_str!("../../migrations/0001_initial_schema.sql"),
+    ),
+    (
+        "0002_security_tables.sql",
+        include_str!("../../migrations/0002_security_tables.sql"),
+    ),
+    (
+        "0003_memory_tables.sql",
+        include_str!("../../migrations/0003_memory_tables.sql"),
+    ),
+    (
+        "0004_fts5_index.sql",
+        include_str!("../../migrations/0004_fts5_index.sql"),
+    ),
+    (
+        "0005_vector_index.sql",
+        include_str!("../../migrations/0005_vector_index.sql"),
+    ),
+    (
+        "0006_add_document_kind.sql",
+        include_str!("../../migrations/0006_add_document_kind.sql"),
+    ),
 ];
 
 /// Run embedded migrations that are compiled into the binary.
@@ -201,19 +219,18 @@ pub fn run_embedded_migrations(conn: &Connection) -> Result<Vec<String>, Migrati
         }
 
         // Execute the migration in its own transaction.
-        let tx = conn.unchecked_transaction().map_err(|e| {
-            MigrationError::SqlExecutionFailed {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| MigrationError::SqlExecutionFailed {
                 file: filename.to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
-        tx.execute_batch(sql).map_err(|e| {
-            MigrationError::SqlExecutionFailed {
+        tx.execute_batch(sql)
+            .map_err(|e| MigrationError::SqlExecutionFailed {
                 file: filename.to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         // Record the migration as applied.
         let now = std::time::SystemTime::now()
@@ -230,10 +247,11 @@ pub fn run_embedded_migrations(conn: &Connection) -> Result<Vec<String>, Migrati
             reason: e.to_string(),
         })?;
 
-        tx.commit().map_err(|e| MigrationError::SqlExecutionFailed {
-            file: filename.to_string(),
-            reason: e.to_string(),
-        })?;
+        tx.commit()
+            .map_err(|e| MigrationError::SqlExecutionFailed {
+                file: filename.to_string(),
+                reason: e.to_string(),
+            })?;
 
         newly_applied.push(filename.to_string());
     }
@@ -252,15 +270,12 @@ mod tests {
     use std::fs;
 
     /// Helper: create an in-memory connection and a temp directory with migration files.
-    fn setup_test_env(
-        migrations: &[(&str, &str)],
-    ) -> (Connection, tempfile::TempDir) {
+    fn setup_test_env(migrations: &[(&str, &str)]) -> (Connection, tempfile::TempDir) {
         let conn = Connection::open_in_memory().expect("failed to open in-memory db");
         let tmp = tempfile::tempdir().expect("failed to create temp dir");
 
         for (filename, content) in migrations {
-            fs::write(tmp.path().join(filename), content)
-                .expect("failed to write migration file");
+            fs::write(tmp.path().join(filename), content).expect("failed to write migration file");
         }
 
         (conn, tmp)
@@ -325,9 +340,7 @@ mod tests {
 
         // Verify schema_versions has exactly one entry.
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM schema_versions", [], |row| {
-                row.get(0)
-            })
+            .query_row("SELECT COUNT(*) FROM schema_versions", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
     }
@@ -339,10 +352,7 @@ mod tests {
                 "0001_good.sql",
                 "CREATE TABLE good_table (id INTEGER PRIMARY KEY);",
             ),
-            (
-                "0002_bad.sql",
-                "THIS IS NOT VALID SQL;",
-            ),
+            ("0002_bad.sql", "THIS IS NOT VALID SQL;"),
         ];
 
         let (conn, tmp) = setup_test_env(migrations);

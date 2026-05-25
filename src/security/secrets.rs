@@ -53,8 +53,7 @@ pub struct SecretMatch {
 // Regex patterns (compiled once via LazyLock)
 // ---------------------------------------------------------------------------
 
-static AWS_KEY_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"AKIA[0-9A-Z]{16}").unwrap());
+static AWS_KEY_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"AKIA[0-9A-Z]{16}").unwrap());
 
 static GITHUB_TOKEN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(ghp_|gho_|ghs_|ghr_)[A-Za-z0-9_]{36,}").unwrap());
@@ -119,9 +118,7 @@ pub fn detect_secrets(source: &str) -> Vec<SecretMatch> {
     let mut matches: Vec<SecretMatch> = Vec::new();
 
     // Helper: compute 1-based line number from byte offset
-    let line_of = |offset: usize| -> u32 {
-        source[..offset].matches('\n').count() as u32 + 1
-    };
+    let line_of = |offset: usize| -> u32 { source[..offset].matches('\n').count() as u32 + 1 };
 
     // AWS access keys
     for m in AWS_KEY_RE.find_iter(source) {
@@ -183,15 +180,14 @@ pub fn detect_secrets(source: &str) -> Vec<SecretMatch> {
     }
 
     // High-entropy strings: scan for quoted string literals
-    let string_literal_re: Regex =
-        Regex::new(r#"["']([^"']{21,})["']"#).unwrap();
+    let string_literal_re: Regex = Regex::new(r#"["']([^"']{21,})["']"#).unwrap();
     for caps in string_literal_re.captures_iter(source) {
         if let Some(inner) = caps.get(1) {
             let text = inner.as_str();
             // Skip if already matched by another pattern
-            let already_matched = matches.iter().any(|existing| {
-                existing.start <= inner.start() && existing.end >= inner.end()
-            });
+            let already_matched = matches
+                .iter()
+                .any(|existing| existing.start <= inner.start() && existing.end >= inner.end());
             if !already_matched && is_high_entropy(text) {
                 let full = caps.get(0).unwrap();
                 matches.push(SecretMatch {
@@ -267,28 +263,44 @@ mod tests {
     fn test_detect_github_token() {
         let source = r#"token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij""#;
         let matches = detect_secrets(source);
-        assert!(matches.iter().any(|m| m.secret_type == SecretType::GitHubToken));
+        assert!(
+            matches
+                .iter()
+                .any(|m| m.secret_type == SecretType::GitHubToken)
+        );
     }
 
     #[test]
     fn test_detect_generic_password() {
         let source = r#"password = "super_secret_value_123""#;
         let matches = detect_secrets(source);
-        assert!(matches.iter().any(|m| m.secret_type == SecretType::GenericPassword));
+        assert!(
+            matches
+                .iter()
+                .any(|m| m.secret_type == SecretType::GenericPassword)
+        );
     }
 
     #[test]
     fn test_detect_connection_string() {
         let source = r#"db_url = "postgres://user:pass@host:5432/db""#;
         let matches = detect_secrets(source);
-        assert!(matches.iter().any(|m| m.secret_type == SecretType::ConnectionString));
+        assert!(
+            matches
+                .iter()
+                .any(|m| m.secret_type == SecretType::ConnectionString)
+        );
     }
 
     #[test]
     fn test_detect_private_key() {
         let source = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQ...";
         let matches = detect_secrets(source);
-        assert!(matches.iter().any(|m| m.secret_type == SecretType::PrivateKey));
+        assert!(
+            matches
+                .iter()
+                .any(|m| m.secret_type == SecretType::PrivateKey)
+        );
     }
 
     #[test]

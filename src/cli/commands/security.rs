@@ -1,4 +1,4 @@
-﻿//! Security CLI command implementations.
+//! Security CLI command implementations.
 //!
 //! Implements `cortex security scan`, `cortex security sbom`,
 //! `cortex security vulns`, and `cortex security report` commands.
@@ -71,7 +71,7 @@ pub fn run_report(config: &Config, store: &Arc<StoreManager>) -> Result<(), anyh
         .unwrap_or("unknown");
 
     println!();
-    println!("CORTEX SECURITY REPORT — {}", project_name);
+    println!("CORTEX SECURITY REPORT: {}", project_name);
     println!("{}", "━".repeat(50));
     println!();
 
@@ -86,10 +86,7 @@ pub fn run_report(config: &Config, store: &Arc<StoreManager>) -> Result<(), anyh
             if taint_paths.len() == 1 { "" } else { "s" }
         );
         for path in taint_paths.iter().take(5) {
-            println!(
-                "     └─ {} → {}",
-                path.source_fqn, path.sink_fqn
-            );
+            println!("     └─ {} → {}", path.source_fqn, path.sink_fqn);
         }
         if taint_paths.len() > 5 {
             println!("     └─ ... and {} more", taint_paths.len() - 5);
@@ -103,9 +100,13 @@ pub fn run_report(config: &Config, store: &Arc<StoreManager>) -> Result<(), anyh
         println!("  ✓  No OWASP Top 10 patterns detected");
     } else {
         // Group by category
-        let mut by_category: std::collections::HashMap<&str, Vec<_>> = std::collections::HashMap::new();
+        let mut by_category: std::collections::HashMap<&str, Vec<_>> =
+            std::collections::HashMap::new();
         for f in &findings {
-            by_category.entry(f.owasp_category.as_deref().unwrap_or("Unknown")).or_default().push(f);
+            by_category
+                .entry(f.finding.owasp_category.as_deref().unwrap_or("Unknown"))
+                .or_default()
+                .push(f);
         }
         for (category, items) in &by_category {
             println!(
@@ -115,7 +116,10 @@ pub fn run_report(config: &Config, store: &Arc<StoreManager>) -> Result<(), anyh
                 if items.len() == 1 { "" } else { "s" }
             );
             for item in items.iter().take(3) {
-                println!("     └─ {} ({})", item.node_fqn, item.description);
+                println!(
+                    "     └─ {} ({})",
+                    item.finding.node_fqn, item.finding.description
+                );
             }
             if items.len() > 3 {
                 println!("     └─ ... and {} more", items.len() - 3);
@@ -134,10 +138,7 @@ pub fn run_report(config: &Config, store: &Arc<StoreManager>) -> Result<(), anyh
             Ok(results) => {
                 let vuln_count: usize = results.iter().map(|r| r.vulnerabilities.len()).sum();
                 if vuln_count == 0 {
-                    println!(
-                        "  ✓  SBOM: {} dependencies, 0 known CVEs",
-                        entries.len()
-                    );
+                    println!("  ✓  SBOM: {} dependencies, 0 known CVEs", entries.len());
                 } else {
                     println!(
                         "  ⚠  SBOM: {} dependencies, {} known CVE{}",
@@ -145,12 +146,13 @@ pub fn run_report(config: &Config, store: &Arc<StoreManager>) -> Result<(), anyh
                         vuln_count,
                         if vuln_count == 1 { "" } else { "s" }
                     );
-                    for result in results.iter().filter(|r| !r.vulnerabilities.is_empty()).take(5) {
+                    for result in results
+                        .iter()
+                        .filter(|r| !r.vulnerabilities.is_empty())
+                        .take(5)
+                    {
                         for vuln in &result.vulnerabilities {
-                            println!(
-                                "     └─ {} ({})",
-                                vuln.id, result.package
-                            );
+                            println!("     └─ {} ({})", vuln.id, result.package);
                         }
                     }
                 }
@@ -170,4 +172,3 @@ pub fn run_report(config: &Config, store: &Arc<StoreManager>) -> Result<(), anyh
 
     Ok(())
 }
-

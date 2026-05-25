@@ -35,19 +35,30 @@ pub struct VulnInfo {
 /// Trait for OSV API client, allowing mock implementations in tests.
 pub trait OsvClient {
     /// Query OSV.dev for vulnerabilities affecting a package.
-    fn query(&self, package: &str, version: &str, ecosystem: &str) -> Result<Vec<VulnInfo>, SecurityError>;
+    fn query(
+        &self,
+        package: &str,
+        version: &str,
+        ecosystem: &str,
+    ) -> Result<Vec<VulnInfo>, SecurityError>;
 }
 
 /// Real OSV.dev API client (requires network access).
 pub struct RealOsvClient;
 
 impl OsvClient for RealOsvClient {
-    fn query(&self, _package: &str, _version: &str, _ecosystem: &str) -> Result<Vec<VulnInfo>, SecurityError> {
+    fn query(
+        &self,
+        _package: &str,
+        _version: &str,
+        _ecosystem: &str,
+    ) -> Result<Vec<VulnInfo>, SecurityError> {
         // In a real implementation, this would make an HTTP POST to
         // https://api.osv.dev/v1/query with the package info.
         // For now, return empty (no network calls in this build).
         Err(SecurityError::AnalysisFailed {
-            reason: "OSV.dev check requires network access; not available in air-gap mode".to_string(),
+            reason: "OSV.dev check requires network access; not available in air-gap mode"
+                .to_string(),
         })
     }
 }
@@ -119,11 +130,10 @@ fn guess_ecosystem(package: &str, source_file: &str) -> String {
 
 /// Parse an OSV API response JSON into VulnInfo structs.
 pub fn parse_osv_response(response_json: &str) -> Result<Vec<VulnInfo>, SecurityError> {
-    let parsed: serde_json::Value = serde_json::from_str(response_json).map_err(|e| {
-        SecurityError::AnalysisFailed {
+    let parsed: serde_json::Value =
+        serde_json::from_str(response_json).map_err(|e| SecurityError::AnalysisFailed {
             reason: format!("failed to parse OSV response: {}", e),
-        }
-    })?;
+        })?;
 
     let mut vulns = Vec::new();
 
@@ -159,7 +169,9 @@ pub fn parse_osv_response(response_json: &str) -> Result<Vec<VulnInfo>, Security
                 .and_then(|e| e.as_array())
                 .and_then(|events| {
                     events.iter().find_map(|e| {
-                        e.get("fixed").and_then(|f| f.as_str()).map(|s| s.to_string())
+                        e.get("fixed")
+                            .and_then(|f| f.as_str())
+                            .map(|s| s.to_string())
                     })
                 });
 
@@ -185,7 +197,12 @@ mod tests {
     }
 
     impl OsvClient for MockOsvClient {
-        fn query(&self, package: &str, _version: &str, _ecosystem: &str) -> Result<Vec<VulnInfo>, SecurityError> {
+        fn query(
+            &self,
+            package: &str,
+            _version: &str,
+            _ecosystem: &str,
+        ) -> Result<Vec<VulnInfo>, SecurityError> {
             for (pkg, vulns) in &self.responses {
                 if pkg == package {
                     return Ok(vulns.clone());
@@ -199,7 +216,12 @@ mod tests {
     struct FailingOsvClient;
 
     impl OsvClient for FailingOsvClient {
-        fn query(&self, _package: &str, _version: &str, _ecosystem: &str) -> Result<Vec<VulnInfo>, SecurityError> {
+        fn query(
+            &self,
+            _package: &str,
+            _version: &str,
+            _ecosystem: &str,
+        ) -> Result<Vec<VulnInfo>, SecurityError> {
             Err(SecurityError::AnalysisFailed {
                 reason: "network timeout".to_string(),
             })
@@ -260,7 +282,10 @@ mod tests {
 
         // Network failures are gracefully handled - packages are skipped
         let results = check_osv_with_client(&sbom, &client).unwrap();
-        assert!(results.is_empty(), "Failed queries should be skipped gracefully");
+        assert!(
+            results.is_empty(),
+            "Failed queries should be skipped gracefully"
+        );
     }
 
     #[test]

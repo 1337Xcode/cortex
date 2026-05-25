@@ -3,7 +3,7 @@ title: "Getting Started"
 description: "Install Cortex and index your first repository in under a minute."
 order: 1
 category: "guides"
-lastModified: "2025-01-15"
+lastModified: "2025-07-14"
 ---
 
 # Getting started

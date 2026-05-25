@@ -66,17 +66,21 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
 /// Compute cyclomatic complexity for all Function nodes.
 fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source: &[u8]) {
     for node in nodes.iter_mut() {
-        if node.kind == NodeKind::Function {
-            if let Some(ast_node) = find_ast_node_at_line(root, node.start_line, "method_definition")
-                .or_else(|| find_ast_node_at_line(root, node.start_line, "instance_method_declaration"))
-                .or_else(|| find_ast_node_at_line(root, node.start_line, "class_method_declaration"))
-                .or_else(|| find_ast_node_at_line(root, node.start_line, "function_definition"))
-                .or_else(|| find_ast_node_at_line_fuzzy(root, node.start_line))
-            {
-                let c = complexity::compute_full_complexity(ast_node, source, "objc");
-                if let Some(attrs) = node.attributes.as_object_mut() {
-                    attrs.insert("complexity".to_string(), serde_json::json!(c));
-                }
+        if node.kind == NodeKind::Function
+            && let Some(ast_node) =
+                find_ast_node_at_line(root, node.start_line, "method_definition")
+                    .or_else(|| {
+                        find_ast_node_at_line(root, node.start_line, "instance_method_declaration")
+                    })
+                    .or_else(|| {
+                        find_ast_node_at_line(root, node.start_line, "class_method_declaration")
+                    })
+                    .or_else(|| find_ast_node_at_line(root, node.start_line, "function_definition"))
+                    .or_else(|| find_ast_node_at_line_fuzzy(root, node.start_line))
+        {
+            let c = complexity::compute_full_complexity(ast_node, source, "objc");
+            if let Some(attrs) = node.attributes.as_object_mut() {
+                attrs.insert("complexity".to_string(), serde_json::json!(c));
             }
         }
     }
@@ -203,7 +207,10 @@ fn extract_class_interface(
     let end_line = node.end_position().row as u32 + 1;
     let fqn = format!("{file}::{name}");
 
-    if !nodes.iter().any(|n| n.fqn == fqn && n.kind == NodeKind::Class) {
+    if !nodes
+        .iter()
+        .any(|n| n.fqn == fqn && n.kind == NodeKind::Class)
+    {
         let mut attrs = serde_json::Map::new();
         attrs.insert("declaration_type".to_string(), json!("interface"));
 
@@ -247,7 +254,10 @@ fn extract_class_implementation(
     let end_line = node.end_position().row as u32 + 1;
     let fqn = format!("{file}::{name}");
 
-    if !nodes.iter().any(|n| n.fqn == fqn && n.kind == NodeKind::Class) {
+    if !nodes
+        .iter()
+        .any(|n| n.fqn == fqn && n.kind == NodeKind::Class)
+    {
         let mut attrs = serde_json::Map::new();
         attrs.insert("declaration_type".to_string(), json!("implementation"));
 
@@ -359,7 +369,10 @@ fn extract_category_impl(
         let mut attrs = serde_json::Map::new();
         attrs.insert("category".to_string(), json!(category_name));
         attrs.insert("class_name".to_string(), json!(name));
-        attrs.insert("declaration_type".to_string(), json!("category_implementation"));
+        attrs.insert(
+            "declaration_type".to_string(),
+            json!("category_implementation"),
+        );
 
         nodes.push(Node {
             fqn: fqn.clone(),
@@ -473,16 +486,24 @@ fn extract_methods_from_container(
     for child in node.children(&mut cursor) {
         let kind = child.kind();
         match kind {
-            "method_definition" | "instance_method_declaration"
-            | "class_method_declaration" | "method_declaration"
-            | "instance_method_definition" | "class_method_definition" => {
+            "method_definition"
+            | "instance_method_declaration"
+            | "class_method_declaration"
+            | "method_declaration"
+            | "instance_method_definition"
+            | "class_method_definition" => {
                 extract_method(child, file, source, container_name, nodes, defined_fqns);
             }
             _ => {
                 // Recurse into child containers (e.g., method lists)
                 if child.child_count() > 0 && !is_leaf_kind(kind) {
                     extract_methods_from_container(
-                        child, file, source, container_name, nodes, defined_fqns,
+                        child,
+                        file,
+                        source,
+                        container_name,
+                        nodes,
+                        defined_fqns,
                     );
                 }
             }
@@ -550,12 +571,7 @@ fn extract_method(
 /// - `#include <header.h>`
 /// - `#include "header.h"`
 /// - `@import Module;`
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     collect_imports_recursive(node, file, source, edges);
 }
 
@@ -568,9 +584,12 @@ fn collect_imports_recursive(
     let kind = node.kind();
 
     // Handle preprocessor import/include directives
-    if kind == "preproc_import" || kind == "preproc_include"
-        || kind == "#import" || kind == "import_declaration"
-        || kind == "preproc_def" || kind == "preprocessing_directive"
+    if kind == "preproc_import"
+        || kind == "preproc_include"
+        || kind == "#import"
+        || kind == "import_declaration"
+        || kind == "preproc_def"
+        || kind == "preprocessing_directive"
     {
         let text = node.utf8_text(source).unwrap_or("").trim();
         extract_import_from_text(text, file, edges);
@@ -587,7 +606,9 @@ fn collect_imports_recursive(
     // Also check raw text for lines that look like imports (fallback)
     if node.child_count() == 0 {
         let text = node.utf8_text(source).unwrap_or("").trim();
-        if (text.starts_with("#import") || text.starts_with("#include") || text.starts_with("@import"))
+        if (text.starts_with("#import")
+            || text.starts_with("#include")
+            || text.starts_with("@import"))
             && !text.is_empty()
         {
             extract_import_from_text(text, file, edges);
@@ -617,13 +638,9 @@ fn extract_import_from_text(text: &str, file: &str, edges: &mut Vec<Edge>) {
 /// Extract the path from #import or #include directive.
 fn extract_import_path(text: &str) -> Option<String> {
     // Find the first < or " after #import/#include
-    let after_keyword = if text.starts_with("#import") {
-        &text[7..]
-    } else if text.starts_with("#include") {
-        &text[8..]
-    } else {
-        return None;
-    };
+    let after_keyword = text
+        .strip_prefix("#import")
+        .or_else(|| text.strip_prefix("#include"))?;
 
     let trimmed = after_keyword.trim_start();
 
@@ -634,9 +651,8 @@ fn extract_import_path(text: &str) -> Option<String> {
         if !path.is_empty() {
             return Some(path.to_string());
         }
-    } else if trimmed.starts_with('"') {
+    } else if let Some(rest) = trimmed.strip_prefix('"') {
         // Local import: "header.h"
-        let rest = &trimmed[1..];
         let end = rest.find('"')?;
         let path = &rest[..end];
         if !path.is_empty() {
@@ -661,9 +677,10 @@ fn extract_module_import(text: &str, file: &str, edges: &mut Vec<Edge>) {
 
 /// Add an import edge, avoiding duplicates.
 fn add_import_edge(file: &str, target: &str, edges: &mut Vec<Edge>) {
-    if !edges.iter().any(|e| {
-        e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target
-    }) {
+    if !edges
+        .iter()
+        .any(|e| e.kind == EdgeKind::Imports && e.source_fqn == file && e.target_fqn == target)
+    {
         edges.push(Edge {
             id: None,
             source_fqn: file.to_string(),
@@ -832,19 +849,18 @@ fn extract_c_call(
 }
 
 /// Find the enclosing method/function for a given node and return its FQN.
-fn find_enclosing_method_fqn(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_method_fqn(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
 
     while let Some(parent) = current {
         let kind = parent.kind();
         match kind {
-            "method_definition" | "instance_method_definition"
-            | "class_method_definition" | "instance_method_declaration"
-            | "class_method_declaration" | "method_declaration" => {
+            "method_definition"
+            | "instance_method_definition"
+            | "class_method_definition"
+            | "instance_method_declaration"
+            | "class_method_declaration"
+            | "method_declaration" => {
                 let text = parent.utf8_text(source).unwrap_or("");
                 let method_name = extract_method_selector(text);
                 if !method_name.is_empty() {
@@ -1077,7 +1093,11 @@ fn extract_c_function_name(text: &str) -> String {
             .chars()
             .rev()
             .collect();
-        if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+        if !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
         {
             return name;
         }
@@ -1191,14 +1211,49 @@ fn is_leaf_kind(kind: &str) -> bool {
 fn is_objc_keyword(name: &str) -> bool {
     matches!(
         name,
-        "if" | "else" | "for" | "while" | "do" | "switch" | "case"
-            | "break" | "continue" | "return" | "goto" | "sizeof"
-            | "typedef" | "struct" | "union" | "enum" | "static"
-            | "extern" | "const" | "volatile" | "register" | "auto"
-            | "void" | "int" | "char" | "float" | "double" | "long"
-            | "short" | "unsigned" | "signed" | "self" | "super"
-            | "nil" | "NULL" | "YES" | "NO" | "true" | "false"
-            | "id" | "Class" | "SEL" | "IMP" | "BOOL"
+        "if" | "else"
+            | "for"
+            | "while"
+            | "do"
+            | "switch"
+            | "case"
+            | "break"
+            | "continue"
+            | "return"
+            | "goto"
+            | "sizeof"
+            | "typedef"
+            | "struct"
+            | "union"
+            | "enum"
+            | "static"
+            | "extern"
+            | "const"
+            | "volatile"
+            | "register"
+            | "auto"
+            | "void"
+            | "int"
+            | "char"
+            | "float"
+            | "double"
+            | "long"
+            | "short"
+            | "unsigned"
+            | "signed"
+            | "self"
+            | "super"
+            | "nil"
+            | "NULL"
+            | "YES"
+            | "NO"
+            | "true"
+            | "false"
+            | "id"
+            | "Class"
+            | "SEL"
+            | "IMP"
+            | "BOOL"
     )
 }
 
@@ -1206,9 +1261,17 @@ fn is_objc_keyword(name: &str) -> bool {
 fn is_common_macro(name: &str) -> bool {
     matches!(
         name,
-        "NSLog" | "NSAssert" | "NSCAssert" | "dispatch_async"
-            | "dispatch_sync" | "dispatch_once" | "sizeof"
-            | "offsetof" | "va_start" | "va_end" | "va_arg"
+        "NSLog"
+            | "NSAssert"
+            | "NSCAssert"
+            | "dispatch_async"
+            | "dispatch_sync"
+            | "dispatch_once"
+            | "sizeof"
+            | "offsetof"
+            | "va_start"
+            | "va_end"
+            | "va_arg"
     )
 }
 
@@ -1246,7 +1309,10 @@ mod tests {
             .iter()
             .filter(|n| n.kind == NodeKind::Class && n.fqn.contains("UserController"))
             .collect();
-        assert!(!class_nodes.is_empty(), "Should extract UserController class");
+        assert!(
+            !class_nodes.is_empty(),
+            "Should extract UserController class"
+        );
 
         // Should have method nodes
         let method_nodes: Vec<&Node> = result
@@ -1337,7 +1403,9 @@ mod tests {
 
         // Should have at least the framework and local imports
         assert!(
-            imports.iter().any(|e| e.target_fqn == "Foundation/Foundation.h"),
+            imports
+                .iter()
+                .any(|e| e.target_fqn == "Foundation/Foundation.h"),
             "Should extract Foundation import. Got: {:?}",
             imports.iter().map(|e| &e.target_fqn).collect::<Vec<_>>()
         );
@@ -1395,18 +1463,12 @@ mod tests {
             .collect();
 
         // Should have both class and instance methods
-        let has_class_method = methods.iter().any(|n| {
-            n.attributes
-                .get("method_type")
-                .and_then(|v| v.as_str())
-                == Some("class")
-        });
-        let has_instance_method = methods.iter().any(|n| {
-            n.attributes
-                .get("method_type")
-                .and_then(|v| v.as_str())
-                == Some("instance")
-        });
+        let has_class_method = methods
+            .iter()
+            .any(|n| n.attributes.get("method_type").and_then(|v| v.as_str()) == Some("class"));
+        let has_instance_method = methods
+            .iter()
+            .any(|n| n.attributes.get("method_type").and_then(|v| v.as_str()) == Some("instance"));
 
         assert!(has_class_method, "Should extract class method (+)");
         assert!(has_instance_method, "Should extract instance method (-)");
@@ -1474,7 +1536,10 @@ mod tests {
 
         // Verify we get a mix of nodes and edges
         assert!(!result.nodes.is_empty(), "Should extract nodes");
-        assert!(!result.edges.is_empty(), "Should extract edges (imports and/or calls)");
+        assert!(
+            !result.edges.is_empty(),
+            "Should extract edges (imports and/or calls)"
+        );
 
         // Check that we have imports
         let imports: Vec<&Edge> = result

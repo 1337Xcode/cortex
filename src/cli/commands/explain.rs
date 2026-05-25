@@ -1,4 +1,4 @@
-﻿//! Explain command: offline function explanation from the graph.
+//! Explain command: offline function explanation from the graph.
 //!
 //! `cortex explain DatabasePool.acquire` prints what a function does,
 //! what calls it, what it calls, and any security flags - all from
@@ -32,11 +32,14 @@ pub fn run(fqn: &str, store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
     };
 
     println!();
-    println!("EXPLAIN — {}", node.fqn);
+    println!("EXPLAIN: {}", node.fqn);
     println!("{}", "━".repeat(50));
     println!();
     println!("  Kind:     {:?}", node.kind);
-    println!("  File:     {}:{}-{}", node.file, node.start_line, node.end_line);
+    println!(
+        "  File:     {}:{}-{}",
+        node.file, node.start_line, node.end_line
+    );
     println!("  Lines:    {}", node.end_line - node.start_line + 1);
 
     // Callers
@@ -85,7 +88,11 @@ pub fn run(fqn: &str, store: &Arc<StoreManager>) -> Result<(), anyhow::Error> {
         println!();
         println!("  Observations ({}):", observations.len());
         for obs in &observations {
-            let stale_marker = if obs.status == "stale" { " [STALE]" } else { "" };
+            let stale_marker = if obs.status == "stale" {
+                " [STALE]"
+            } else {
+                ""
+            };
             println!("    • {}{}", obs.observation_text, stale_marker);
         }
     }

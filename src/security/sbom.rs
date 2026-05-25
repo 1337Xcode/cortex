@@ -211,9 +211,10 @@ fn parse_cargo_toml(content: &str, source_file: &str) -> Vec<ManifestDependency>
             for (name, value) in table {
                 let version = match value {
                     toml::Value::String(v) => Some(v.clone()),
-                    toml::Value::Table(t) => {
-                        t.get("version").and_then(|v| v.as_str()).map(|s| s.to_string())
-                    }
+                    toml::Value::Table(t) => t
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     _ => None,
                 };
 
@@ -294,15 +295,17 @@ pub fn generate_sbom(
         };
 
         // Deduplicate by package name
-        sbom_entries.entry(package_lower.clone()).or_insert_with(|| SbomEntry {
-            id: None,
-            name: package_name.to_string(),
-            version,
-            license: None,
-            source_file,
-            import_fqn: source_fqn.clone(),
-            indexed_at: now,
-        });
+        sbom_entries
+            .entry(package_lower.clone())
+            .or_insert_with(|| SbomEntry {
+                id: None,
+                name: package_name.to_string(),
+                version,
+                license: None,
+                source_file,
+                import_fqn: source_fqn.clone(),
+                indexed_at: now,
+            });
     }
 
     Ok(sbom_entries.into_values().collect())
@@ -353,7 +356,10 @@ pub fn generate_spdx(entries: &[SbomEntry], project_name: &str) -> SpdxDocument 
         packages.push(SpdxPackage {
             spdx_id: spdx_id.clone(),
             name: entry.name.clone(),
-            version_info: entry.version.clone().unwrap_or_else(|| "NOASSERTION".to_string()),
+            version_info: entry
+                .version
+                .clone()
+                .unwrap_or_else(|| "NOASSERTION".to_string()),
             download_location: "NOASSERTION".to_string(),
             files_analyzed: false,
             license_concluded: entry.license.clone(),
@@ -397,34 +403,34 @@ fn load_manifest_dependencies(repo_root: &Path) -> Result<Vec<ManifestDependency
 
     // requirements.txt
     let req_path = repo_root.join("requirements.txt");
-    if req_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&req_path) {
-            all_deps.extend(parse_requirements_txt(&content, "requirements.txt"));
-        }
+    if req_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&req_path)
+    {
+        all_deps.extend(parse_requirements_txt(&content, "requirements.txt"));
     }
 
     // package.json
     let pkg_path = repo_root.join("package.json");
-    if pkg_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&pkg_path) {
-            all_deps.extend(parse_package_json(&content, "package.json"));
-        }
+    if pkg_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&pkg_path)
+    {
+        all_deps.extend(parse_package_json(&content, "package.json"));
     }
 
     // go.mod
     let go_path = repo_root.join("go.mod");
-    if go_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&go_path) {
-            all_deps.extend(parse_go_mod(&content, "go.mod"));
-        }
+    if go_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&go_path)
+    {
+        all_deps.extend(parse_go_mod(&content, "go.mod"));
     }
 
     // Cargo.toml
     let cargo_path = repo_root.join("Cargo.toml");
-    if cargo_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&cargo_path) {
-            all_deps.extend(parse_cargo_toml(&content, "Cargo.toml"));
-        }
+    if cargo_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&cargo_path)
+    {
+        all_deps.extend(parse_cargo_toml(&content, "Cargo.toml"));
     }
 
     Ok(all_deps)
@@ -448,19 +454,52 @@ fn extract_package_name(import_fqn: &str) -> &str {
 fn is_stdlib_import(name: &str) -> bool {
     // Python stdlib
     let python_stdlib = [
-        "os", "sys", "re", "json", "math", "time", "datetime", "collections",
-        "itertools", "functools", "pathlib", "typing", "abc", "io", "string",
-        "hashlib", "hmac", "secrets", "random", "copy", "enum", "dataclasses",
+        "os",
+        "sys",
+        "re",
+        "json",
+        "math",
+        "time",
+        "datetime",
+        "collections",
+        "itertools",
+        "functools",
+        "pathlib",
+        "typing",
+        "abc",
+        "io",
+        "string",
+        "hashlib",
+        "hmac",
+        "secrets",
+        "random",
+        "copy",
+        "enum",
+        "dataclasses",
     ];
 
     // Node.js built-ins
     let node_stdlib = [
-        "fs", "path", "http", "https", "url", "util", "os", "crypto",
-        "stream", "events", "buffer", "child_process", "net", "dns",
+        "fs",
+        "path",
+        "http",
+        "https",
+        "url",
+        "util",
+        "os",
+        "crypto",
+        "stream",
+        "events",
+        "buffer",
+        "child_process",
+        "net",
+        "dns",
     ];
 
     // Go stdlib (common prefixes)
-    let go_stdlib_prefixes = ["fmt", "log", "net", "os", "io", "sync", "context", "strings"];
+    let go_stdlib_prefixes = [
+        "fmt", "log", "net", "os", "io", "sync", "context", "strings",
+    ];
 
     python_stdlib.contains(&name)
         || node_stdlib.contains(&name)
@@ -474,11 +513,9 @@ fn chrono_now_iso() -> String {
         .unwrap_or_default();
     let secs = duration.as_secs();
     // Simple ISO format without chrono dependency
-    format!("1970-01-01T00:00:00Z") // Placeholder - in production use chrono
-        .replace(
-            "1970-01-01T00:00:00Z",
-            &format_timestamp(secs),
-        )
+    "1970-01-01T00:00:00Z"
+        .to_string() // Placeholder - in production use chrono
+        .replace("1970-01-01T00:00:00Z", &format_timestamp(secs))
 }
 
 /// Format a Unix timestamp as ISO 8601.
@@ -526,7 +563,7 @@ fn format_timestamp(secs: u64) -> String {
 }
 
 fn is_leap_year(year: u64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 // ---------------------------------------------------------------------------
@@ -636,7 +673,8 @@ tokio = "1.0"
                 "INSERT INTO edges (source_fqn, target_fqn, kind, confidence, attributes) \
                  VALUES ('app.py::main', 'flask.Flask', 'Imports', 1.0, '{}')",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let entries = generate_sbom(&store, repo_root.path()).unwrap();
@@ -666,7 +704,8 @@ tokio = "1.0"
                 "INSERT INTO edges (source_fqn, target_fqn, kind, confidence, attributes) \
                  VALUES ('app.py::main', 'unknown_pkg.module', 'Imports', 1.0, '{}')",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let entries = generate_sbom(&store, repo_root.path()).unwrap();

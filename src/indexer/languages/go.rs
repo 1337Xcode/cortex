@@ -1,4 +1,4 @@
-﻿//! Go AST extractor.
+//! Go AST extractor.
 //!
 //! Extracts structural nodes (functions, methods, structs, interfaces) and edges
 //! (calls, imports) from a tree-sitter Go parse tree.
@@ -83,7 +83,7 @@ fn collect_definitions(
 
                     nodes.push(Node {
                         fqn: fqn.clone(),
-                        kind: NodeKind::Function,
+                        kind: NodeKind::Method,
                         file: file.to_string(),
                         start_line,
                         end_line,
@@ -99,33 +99,33 @@ fn collect_definitions(
                 // type_declaration contains type_spec children
                 let mut type_cursor = child.walk();
                 for type_child in child.children(&mut type_cursor) {
-                    if type_child.kind() == "type_spec" {
-                        if let Some(name_node) = type_child.child_by_field_name("name") {
-                            let type_name = name_node.utf8_text(source).unwrap_or("");
-                            // Determine if it's a struct or interface
-                            let type_node = type_child.child_by_field_name("type");
-                            let kind = match type_node.map(|n| n.kind()) {
-                                Some("struct_type") => NodeKind::Class,
-                                Some("interface_type") => NodeKind::Interface,
-                                _ => NodeKind::Type,
-                            };
-                            let fqn = format!("{file}::{type_name}");
-                            let start_line = type_child.start_position().row as u32 + 1;
-                            let end_line = type_child.end_position().row as u32 + 1;
+                    if type_child.kind() == "type_spec"
+                        && let Some(name_node) = type_child.child_by_field_name("name")
+                    {
+                        let type_name = name_node.utf8_text(source).unwrap_or("");
+                        // Determine if it's a struct or interface
+                        let type_node = type_child.child_by_field_name("type");
+                        let kind = match type_node.map(|n| n.kind()) {
+                            Some("struct_type") => NodeKind::Class,
+                            Some("interface_type") => NodeKind::Interface,
+                            _ => NodeKind::Type,
+                        };
+                        let fqn = format!("{file}::{type_name}");
+                        let start_line = type_child.start_position().row as u32 + 1;
+                        let end_line = type_child.end_position().row as u32 + 1;
 
-                            nodes.push(Node {
-                                fqn: fqn.clone(),
-                                kind,
-                                file: file.to_string(),
-                                start_line,
-                                end_line,
-                                file_hash: String::new(),
-                                indexed_at: 0,
-                                attributes: json!({}),
-                            });
+                        nodes.push(Node {
+                            fqn: fqn.clone(),
+                            kind,
+                            file: file.to_string(),
+                            start_line,
+                            end_line,
+                            file_hash: String::new(),
+                            indexed_at: 0,
+                            attributes: json!({}),
+                        });
 
-                            defined_fqns.push((type_name.to_string(), fqn));
-                        }
+                        defined_fqns.push((type_name.to_string(), fqn));
                     }
                 }
             }
@@ -170,12 +170,7 @@ fn extract_type_name(type_node: tree_sitter::Node, source: &[u8]) -> Option<Stri
 }
 
 /// Collect import declarations and create Imports edges.
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -187,12 +182,7 @@ fn collect_imports(
 }
 
 /// Recursively collect import specs from an import declaration.
-fn collect_import_specs(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_import_specs(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -234,63 +224,60 @@ fn collect_calls(
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        if child.kind() == "call_expression" {
-            if let Some(func_node) = child.child_by_field_name("function") {
-                let caller_fqn = find_enclosing_function(child, file, source)
-                    .unwrap_or_else(|| file.to_string());
+        if child.kind() == "call_expression"
+            && let Some(func_node) = child.child_by_field_name("function")
+        {
+            let caller_fqn =
+                find_enclosing_function(child, file, source).unwrap_or_else(|| file.to_string());
 
-                match func_node.kind() {
-                    "identifier" => {
-                        let call_name = func_node.utf8_text(source).unwrap_or("");
-                        if let Some((_, target_fqn)) =
-                            defined_fqns.iter().find(|(name, _)| name == call_name)
-                        {
-                            if caller_fqn != *target_fqn {
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn: target_fqn.clone(),
-                                    kind: EdgeKind::Calls,
-                                    confidence: 1.0,
-                                    attributes: json!({}),
-                                });
-                            }
-                        }
+            match func_node.kind() {
+                "identifier" => {
+                    let call_name = func_node.utf8_text(source).unwrap_or("");
+                    if let Some((_, target_fqn)) =
+                        defined_fqns.iter().find(|(name, _)| name == call_name)
+                        && caller_fqn != *target_fqn
+                    {
+                        edges.push(Edge {
+                            id: None,
+                            source_fqn: caller_fqn,
+                            target_fqn: target_fqn.clone(),
+                            kind: EdgeKind::Calls,
+                            confidence: 1.0,
+                            attributes: json!({}),
+                        });
                     }
-                    "selector_expression" => {
-                        // obj.Method() - selector_expression has operand and field fields
-                        let full_text = func_node.utf8_text(source).unwrap_or("");
-                        if let Some(dot_pos) = full_text.rfind('.') {
-                            let receiver = &full_text[..dot_pos];
-                            let method_name = &full_text[dot_pos + 1..];
-                            if !method_name.is_empty() {
-                                let chain_position = count_chain_depth_go(func_node);
-                                let (target_fqn, confidence) =
-                                    if let Some((_, fqn)) = defined_fqns
-                                        .iter()
-                                        .find(|(name, _)| name == method_name)
-                                    {
-                                        (fqn.clone(), 1.0_f64)
-                                    } else {
-                                        (method_name.to_string(), 0.0_f64)
-                                    };
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn,
-                                    kind: EdgeKind::Calls,
-                                    confidence,
-                                    attributes: json!({
-                                        "receiver": receiver,
-                                        "call_type": "method",
-                                        "chain_position": chain_position
-                                    }),
-                                });
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                "selector_expression" => {
+                    // obj.Method() - selector_expression has operand and field fields
+                    let full_text = func_node.utf8_text(source).unwrap_or("");
+                    if let Some(dot_pos) = full_text.rfind('.') {
+                        let receiver = &full_text[..dot_pos];
+                        let method_name = &full_text[dot_pos + 1..];
+                        if !method_name.is_empty() {
+                            let chain_position = count_chain_depth_go(func_node);
+                            let (target_fqn, confidence) = if let Some((_, fqn)) =
+                                defined_fqns.iter().find(|(name, _)| name == method_name)
+                            {
+                                (fqn.clone(), 1.0_f64)
+                            } else {
+                                (method_name.to_string(), 0.0_f64)
+                            };
+                            edges.push(Edge {
+                                id: None,
+                                source_fqn: caller_fqn,
+                                target_fqn,
+                                kind: EdgeKind::Calls,
+                                confidence,
+                                attributes: json!({
+                                    "receiver": receiver,
+                                    "call_type": "method",
+                                    "chain_position": chain_position
+                                }),
+                            });
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -300,11 +287,7 @@ fn collect_calls(
 }
 
 /// Find the enclosing function/method for a given node to determine the caller FQN.
-fn find_enclosing_function(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_function(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
 
     while let Some(parent) = current {
@@ -344,10 +327,10 @@ fn count_chain_depth_go(func_node: tree_sitter::Node) -> u32 {
 }
 
 fn count_chain_depth_in_call_go(call_node: tree_sitter::Node) -> u32 {
-    if let Some(func) = call_node.child_by_field_name("function") {
-        if func.kind() == "selector_expression" {
-            return count_chain_depth_go(func);
-        }
+    if let Some(func) = call_node.child_by_field_name("function")
+        && func.kind() == "selector_expression"
+    {
+        return count_chain_depth_go(func);
     }
     0
 }
@@ -431,20 +414,26 @@ func main() {
         assert_eq!(new_server.kind, NodeKind::Function);
 
         // Check methods with receiver type in FQN
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "cmd/server/main.go::Server::Start"));
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "cmd/server/main.go::Server::Stop"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "cmd/server/main.go::Server::Start")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "cmd/server/main.go::Server::Stop")
+        );
 
         // Check main function
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "cmd/server/main.go::main"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "cmd/server/main.go::main")
+        );
 
         // Check import edges
         let import_edges: Vec<&Edge> = result
@@ -504,10 +493,7 @@ func anotherValid() {}
 
         // Should not panic and should extract at least the valid definitions
         assert!(!result.nodes.is_empty());
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "broken.go::validFunc"));
+        assert!(result.nodes.iter().any(|n| n.fqn == "broken.go::validFunc"));
     }
 
     #[test]
@@ -539,5 +525,120 @@ func hello() {
         let result = extract(&tree, "empty.go", source);
         assert!(result.nodes.is_empty());
         assert!(result.edges.is_empty());
+    }
+
+    /// Validates: Requirements 9.4
+    /// Verify that standalone functions get NodeKind::Function and methods get NodeKind::Method.
+    #[test]
+    fn test_nodekind_method_vs_function() {
+        let source = r#"package main
+
+type Calculator struct {
+    value int
+}
+
+func (c *Calculator) Add(a, b int) int {
+    return a + b
+}
+
+func (c *Calculator) Subtract(a, b int) int {
+    return a - b
+}
+
+func standaloneHelper() int {
+    return 42
+}
+"#;
+        let tree = parse_go(source);
+        let result = extract(&tree, "test_nodekind.go", source);
+
+        // Standalone function should be NodeKind::Function
+        let helper = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::standaloneHelper"))
+            .expect("standaloneHelper should be extracted");
+        assert_eq!(
+            helper.kind,
+            NodeKind::Function,
+            "Standalone function should have NodeKind::Function"
+        );
+
+        // Methods with receiver should be NodeKind::Method
+        let add_method = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::Calculator::Add"))
+            .expect("Calculator.Add should be extracted");
+        assert_eq!(
+            add_method.kind,
+            NodeKind::Method,
+            "Method with receiver should have NodeKind::Method"
+        );
+
+        let subtract_method = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn.ends_with("::Calculator::Subtract"))
+            .expect("Calculator.Subtract should be extracted");
+        assert_eq!(
+            subtract_method.kind,
+            NodeKind::Method,
+            "Method with receiver should have NodeKind::Method"
+        );
+    }
+
+    /// Validates: Requirements 9.4
+    /// Verify that method FQNs include the parent type name in the format file::TypeName::method_name.
+    #[test]
+    fn test_method_fqn_includes_parent_type() {
+        let source = r#"package main
+
+type MyService struct {
+    data []string
+}
+
+func (s *MyService) Process() {}
+
+func (s MyService) Validate() bool {
+    return true
+}
+
+func FreeFunction() {}
+"#;
+        let tree = parse_go(source);
+        let result = extract(&tree, "pkg/service.go", source);
+
+        // Method FQNs should include parent type (receiver type)
+        let process = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Method && n.fqn.contains("Process"))
+            .expect("Process method should be extracted");
+        assert_eq!(
+            process.fqn, "pkg/service.go::MyService::Process",
+            "Method FQN should be file::ReceiverType::method_name"
+        );
+
+        let validate = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Method && n.fqn.contains("Validate"))
+            .expect("Validate method should be extracted");
+        assert_eq!(
+            validate.fqn, "pkg/service.go::MyService::Validate",
+            "Method FQN should be file::ReceiverType::method_name (value receiver)"
+        );
+
+        // Standalone function FQN should NOT include a type name
+        let free_fn = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Function && n.fqn.contains("FreeFunction"))
+            .expect("FreeFunction should be extracted");
+        assert_eq!(
+            free_fn.fqn, "pkg/service.go::FreeFunction",
+            "Function FQN should be file::function_name without type"
+        );
     }
 }

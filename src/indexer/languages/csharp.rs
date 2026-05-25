@@ -25,7 +25,14 @@ pub fn extract(tree: &Tree, file: &str, source: &str) -> ExtractionResult {
     let source_bytes = source.as_bytes();
 
     let mut defined_fqns: Vec<(String, String)> = Vec::new();
-    collect_definitions_with_fqns(root, file, source_bytes, None, &mut nodes, &mut defined_fqns);
+    collect_definitions_with_fqns(
+        root,
+        file,
+        source_bytes,
+        None,
+        &mut nodes,
+        &mut defined_fqns,
+    );
     collect_usings(root, file, source_bytes, &mut edges);
     collect_calls(root, file, source_bytes, &defined_fqns, &mut edges);
 
@@ -66,7 +73,14 @@ fn collect_definitions_with_fqns(
                     });
                     defined_fqns.push((ns_name.to_string(), fqn));
                     if let Some(body) = child.child_by_field_name("body") {
-                        collect_definitions_with_fqns(body, file, source, Some(ns_name), nodes, defined_fqns);
+                        collect_definitions_with_fqns(
+                            body,
+                            file,
+                            source,
+                            Some(ns_name),
+                            nodes,
+                            defined_fqns,
+                        );
                     }
                 }
             }
@@ -91,7 +105,14 @@ fn collect_definitions_with_fqns(
                     });
                     defined_fqns.push((cls_name.to_string(), fqn));
                     if let Some(body) = child.child_by_field_name("body") {
-                        collect_definitions_with_fqns(body, file, source, Some(cls_name), nodes, defined_fqns);
+                        collect_definitions_with_fqns(
+                            body,
+                            file,
+                            source,
+                            Some(cls_name),
+                            nodes,
+                            defined_fqns,
+                        );
                     }
                 }
             }
@@ -116,7 +137,14 @@ fn collect_definitions_with_fqns(
                     });
                     defined_fqns.push((iface_name.to_string(), fqn));
                     if let Some(body) = child.child_by_field_name("body") {
-                        collect_definitions_with_fqns(body, file, source, Some(iface_name), nodes, defined_fqns);
+                        collect_definitions_with_fqns(
+                            body,
+                            file,
+                            source,
+                            Some(iface_name),
+                            nodes,
+                            defined_fqns,
+                        );
                     }
                 }
             }
@@ -143,7 +171,14 @@ fn collect_definitions_with_fqns(
                 }
             }
             _ => {
-                collect_definitions_with_fqns(child, file, source, parent_name, nodes, defined_fqns);
+                collect_definitions_with_fqns(
+                    child,
+                    file,
+                    source,
+                    parent_name,
+                    nodes,
+                    defined_fqns,
+                );
             }
         }
     }
@@ -159,108 +194,98 @@ fn collect_calls(
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "invocation_expression" {
-            if let Some(func_node) = child.child_by_field_name("function") {
-                let caller_fqn = find_enclosing_method_cs(child, file, source)
-                    .unwrap_or_else(|| file.to_string());
-                match func_node.kind() {
-                    "identifier" => {
-                        let call_name = func_node.utf8_text(source).unwrap_or("");
-                        if let Some((_, target_fqn)) =
-                            defined_fqns.iter().find(|(n, _)| n == call_name)
-                        {
-                            if caller_fqn != *target_fqn {
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn: target_fqn.clone(),
-                                    kind: EdgeKind::Calls,
-                                    confidence: 1.0,
-                                    attributes: json!({}),
-                                });
-                            }
-                        }
+        if child.kind() == "invocation_expression"
+            && let Some(func_node) = child.child_by_field_name("function")
+        {
+            let caller_fqn =
+                find_enclosing_method_cs(child, file, source).unwrap_or_else(|| file.to_string());
+            match func_node.kind() {
+                "identifier" => {
+                    let call_name = func_node.utf8_text(source).unwrap_or("");
+                    if let Some((_, target_fqn)) = defined_fqns.iter().find(|(n, _)| n == call_name)
+                        && caller_fqn != *target_fqn
+                    {
+                        edges.push(Edge {
+                            id: None,
+                            source_fqn: caller_fqn,
+                            target_fqn: target_fqn.clone(),
+                            kind: EdgeKind::Calls,
+                            confidence: 1.0,
+                            attributes: json!({}),
+                        });
                     }
-                    "qualified_name" => {
-                        // Namespace.Class.Method() qualified call
-                        let full_text = func_node.utf8_text(source).unwrap_or("");
-                        if let Some(dot_pos) = full_text.rfind('.') {
-                            let qualifier = &full_text[..dot_pos];
-                            let method_name = &full_text[dot_pos + 1..];
-                            if !method_name.is_empty() {
-                                let (target_fqn, confidence) =
-                                    if let Some((_, fqn)) = defined_fqns
-                                        .iter()
-                                        .find(|(n, _)| n == method_name)
-                                    {
-                                        (fqn.clone(), 1.0_f64)
-                                    } else {
-                                        (full_text.to_string(), 0.6_f64)
-                                    };
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn,
-                                    kind: EdgeKind::Calls,
-                                    confidence,
-                                    attributes: json!({
-                                        "receiver": qualifier,
-                                        "call_type": "qualified"
-                                    }),
-                                });
-                            }
-                        }
-                    }
-                    "member_access_expression" => {
-                        let full_text = func_node.utf8_text(source).unwrap_or("");
-                        if let Some(dot_pos) = full_text.rfind('.') {
-                            let receiver = &full_text[..dot_pos];
-                            let method_name = &full_text[dot_pos + 1..];
-                            if !method_name.is_empty() {
-                                let (target_fqn, confidence) =
-                                    if let Some((_, fqn)) = defined_fqns
-                                        .iter()
-                                        .find(|(n, _)| n == method_name)
-                                    {
-                                        (fqn.clone(), 1.0_f64)
-                                    } else {
-                                        (method_name.to_string(), 0.0_f64)
-                                    };
-                                edges.push(Edge {
-                                    id: None,
-                                    source_fqn: caller_fqn,
-                                    target_fqn,
-                                    kind: EdgeKind::Calls,
-                                    confidence,
-                                    attributes: json!({"receiver": receiver, "call_type": "method"}),
-                                });
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                "qualified_name" => {
+                    // Namespace.Class.Method() qualified call
+                    let full_text = func_node.utf8_text(source).unwrap_or("");
+                    if let Some(dot_pos) = full_text.rfind('.') {
+                        let qualifier = &full_text[..dot_pos];
+                        let method_name = &full_text[dot_pos + 1..];
+                        if !method_name.is_empty() {
+                            let (target_fqn, confidence) = if let Some((_, fqn)) =
+                                defined_fqns.iter().find(|(n, _)| n == method_name)
+                            {
+                                (fqn.clone(), 1.0_f64)
+                            } else {
+                                (full_text.to_string(), 0.6_f64)
+                            };
+                            edges.push(Edge {
+                                id: None,
+                                source_fqn: caller_fqn,
+                                target_fqn,
+                                kind: EdgeKind::Calls,
+                                confidence,
+                                attributes: json!({
+                                    "receiver": qualifier,
+                                    "call_type": "qualified"
+                                }),
+                            });
+                        }
+                    }
+                }
+                "member_access_expression" => {
+                    let full_text = func_node.utf8_text(source).unwrap_or("");
+                    if let Some(dot_pos) = full_text.rfind('.') {
+                        let receiver = &full_text[..dot_pos];
+                        let method_name = &full_text[dot_pos + 1..];
+                        if !method_name.is_empty() {
+                            let (target_fqn, confidence) = if let Some((_, fqn)) =
+                                defined_fqns.iter().find(|(n, _)| n == method_name)
+                            {
+                                (fqn.clone(), 1.0_f64)
+                            } else {
+                                (method_name.to_string(), 0.0_f64)
+                            };
+                            edges.push(Edge {
+                                id: None,
+                                source_fqn: caller_fqn,
+                                target_fqn,
+                                kind: EdgeKind::Calls,
+                                confidence,
+                                attributes: json!({"receiver": receiver, "call_type": "method"}),
+                            });
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         collect_calls(child, file, source, defined_fqns, edges);
     }
 }
 
-fn find_enclosing_method_cs(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_method_cs(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
     while let Some(parent) = current {
-        if parent.kind() == "method_declaration" {
-            if let Some(name_node) = parent.child_by_field_name("name") {
-                let method_name = name_node.utf8_text(source).unwrap_or("");
-                let class_name = find_enclosing_class_cs(parent, source);
-                return match class_name {
-                    Some(cls) => Some(format!("{file}::{cls}::{method_name}")),
-                    None => Some(format!("{file}::{method_name}")),
-                };
-            }
+        if parent.kind() == "method_declaration"
+            && let Some(name_node) = parent.child_by_field_name("name")
+        {
+            let method_name = name_node.utf8_text(source).unwrap_or("");
+            let class_name = find_enclosing_class_cs(parent, source);
+            return match class_name {
+                Some(cls) => Some(format!("{file}::{cls}::{method_name}")),
+                None => Some(format!("{file}::{method_name}")),
+            };
         }
         current = parent.parent();
     }
@@ -270,26 +295,18 @@ fn find_enclosing_method_cs(
 fn find_enclosing_class_cs(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
     while let Some(parent) = current {
-        if parent.kind() == "class_declaration" {
-            if let Some(name_node) = parent.child_by_field_name("name") {
-                return Some(name_node.utf8_text(source).unwrap_or("").to_string());
-            }
+        if parent.kind() == "class_declaration"
+            && let Some(name_node) = parent.child_by_field_name("name")
+        {
+            return Some(name_node.utf8_text(source).unwrap_or("").to_string());
         }
         current = parent.parent();
     }
     None
 }
 
-
-
-
 /// Collect using directives and create Imports edges.
-fn collect_usings(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_usings(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -361,25 +378,23 @@ namespace MyApp.Services
         let result = extract(&tree, "Services/OrderService.cs", source);
 
         // Check namespace
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "Services/OrderService.cs::MyApp.Services"
-                && n.kind == NodeKind::Module));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Services/OrderService.cs::MyApp.Services"
+                    && n.kind == NodeKind::Module)
+        );
 
         // Check interface
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "Services/OrderService.cs::MyApp.Services::IOrderService"
-                && n.kind == NodeKind::Interface));
+        assert!(result.nodes.iter().any(|n| n.fqn
+            == "Services/OrderService.cs::MyApp.Services::IOrderService"
+            && n.kind == NodeKind::Interface));
 
         // Check class
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "Services/OrderService.cs::MyApp.Services::OrderService"
-                && n.kind == NodeKind::Class));
+        assert!(result.nodes.iter().any(|n| n.fqn
+            == "Services/OrderService.cs::MyApp.Services::OrderService"
+            && n.kind == NodeKind::Class));
 
         // Check methods
         assert!(result.nodes.iter().any(|n| n.fqn
@@ -397,9 +412,11 @@ namespace MyApp.Services
             .collect();
         assert_eq!(import_edges.len(), 2);
         assert!(import_edges.iter().any(|e| e.target_fqn == "System"));
-        assert!(import_edges
-            .iter()
-            .any(|e| e.target_fqn == "System.Collections.Generic"));
+        assert!(
+            import_edges
+                .iter()
+                .any(|e| e.target_fqn == "System.Collections.Generic")
+        );
     }
 
     #[test]
@@ -438,10 +455,12 @@ public class Broken {{{ invalid !!!
         let result = extract(&tree, "Broken.cs", source);
 
         assert!(!result.nodes.is_empty());
-        assert!(result
-            .nodes
-            .iter()
-            .any(|n| n.fqn == "Broken.cs::ValidClass"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "Broken.cs::ValidClass")
+        );
     }
 
     #[test]

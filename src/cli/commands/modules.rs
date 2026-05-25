@@ -24,11 +24,20 @@ pub fn run(store: &Arc<StoreManager>, coupling_threshold: f64) -> Result<(), any
     println!("DETECTED MODULES (Leiden community detection)");
     println!("{}", "=".repeat(50));
     println!();
-    println!("  {} modules detected (coupling threshold: {:.1})", result.communities.len(), coupling_threshold);
+    println!(
+        "  {} modules detected (coupling threshold: {:.1})",
+        result.communities.len(),
+        coupling_threshold
+    );
     println!();
 
     for (i, comm) in result.communities.iter().enumerate() {
-        println!("  Module {} ({} nodes, {} files)", i + 1, comm.node_count, comm.files.len());
+        println!(
+            "  Module {} ({} nodes, {} files)",
+            i + 1,
+            comm.node_count,
+            comm.files.len()
+        );
         println!("  {}", "-".repeat(40));
 
         // Show files
@@ -47,7 +56,10 @@ pub fn run(store: &Arc<StoreManager>, coupling_threshold: f64) -> Result<(), any
                 println!("      {}", member);
             }
             if comm.suggested_api_surface.len() > 5 {
-                println!("      ... and {} more", comm.suggested_api_surface.len() - 5);
+                println!(
+                    "      ... and {} more",
+                    comm.suggested_api_surface.len() - 5
+                );
             }
         }
 

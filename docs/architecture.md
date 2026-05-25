@@ -3,7 +3,7 @@ title: "Architecture"
 description: "Technical overview of Cortex internals, the call graph, and module structure."
 order: 6
 category: "concepts"
-lastModified: "2025-01-15"
+lastModified: "2025-07-14"
 ---
 
 # Architecture
@@ -142,7 +142,7 @@ erDiagram
 
 Core tables:
 
-- `nodes`: all extracted symbols (FQN, kind, file, line, column, content hash)
+- `nodes`: all extracted symbols (FQN, kind, file, line, column, content hash, coverage data)
 - `edges`: call relationships between nodes (caller FQN, callee FQN, kind, call count)
 - `files`: tracked files with content hashes for change detection
 - `observations`: agent memory linked to node FQNs with timestamps and staleness
@@ -150,6 +150,41 @@ Core tables:
 - `fts_nodes`: FTS5 virtual table for full-text search over symbol names
 
 Indexes exist on FQN, file path, and edge endpoints for fast lookups.
+
+## Coverage field
+
+When LCOV coverage data is loaded via `cortex coverage --lcov`, each graph node gains a structured `coverage` field:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hit_count` | u32 | Number of test executions hitting this function |
+| `line_coverage_pct` | f64 | Percentage of lines covered (0.0 to 100.0) |
+| `is_covered` | bool | Whether the function has any coverage (`hit_count > 0`) |
+
+Nodes without coverage data have `coverage: null`. The `get_file_context` and `search_symbols` MCP tools include coverage when it has been loaded.
+
+## NodeKind classification
+
+The indexer assigns `NodeKind::Method` to functions defined inside a class, struct, impl block, or trait implementation. Standalone functions get `NodeKind::Function`. The classification rules per language:
+
+| Language | Method context |
+|----------|---------------|
+| Python | Function inside `class_definition` |
+| TypeScript | Function inside `class_declaration` or `class_body` |
+| Rust | Function inside `impl_item` or `trait_item` |
+| Go | Function with receiver parameter |
+| Java | Function inside `class_declaration` or `interface_declaration` |
+
+Methods include the parent type name in their FQN: `file::ClassName::method_name`. Standalone functions use `file::function_name`.
+
+## Ego-graph capping
+
+Ego-graph queries (subgraph centered on a node) are capped at 500 nodes. When the traversal would exceed this limit, nodes are prioritized by:
+
+1. BFS depth (closer nodes first)
+2. Caller count within the same depth (more-connected nodes first)
+
+The response includes `truncated: true` and `total_reachable` count so consumers know the full extent of the subgraph.
 
 ## Language support
 
@@ -227,3 +262,23 @@ The bundle is JSON (not SQLite) because:
 Agent observations are stored linked to specific code node FQNs. When the indexer detects that a node has changed (content hash differs), all observations linked to that node are marked stale.
 
 Stale observations still surface in read results, but with a clear `is_stale: true` flag so the agent knows the note may be outdated.
+
+## Agent steering generation
+
+The `generate_steering` tool produces markdown content for CLAUDE.md, AGENTS.md, or .cursorrules files. The generated content includes:
+
+- **Module boundaries**: derived from Leiden community detection, showing clusters of tightly-coupled code
+- **Complexity hotspots**: top functions by cyclomatic complexity with file paths
+- **Active ADRs**: architectural decision records with status "accepted"
+
+The output is kept under 2000 tokens (estimated as character count / 4). If the content exceeds this budget, hotspots are truncated to the top 5 and ADR summaries are reduced to title-only.
+
+## Unified UI
+
+When the visualizer HTTP server is enabled (`CORTEX_UI_ENABLED=true` or `cortex viz --port`), Cortex serves a tabbed interface at the root path:
+
+- **Graph tab**: interactive 3D force-graph visualization of the call graph
+- **Dashboard tab**: metrics overview with node counts, language distribution, and coverage summary
+- **Explorer tab**: symbol search and navigation with filtering by kind
+
+The UI uses Lucide icons, a responsive CSS grid layout (768px to 2560px), and the project design tokens (off-white background, off-black text, Press Start 2P brand font).

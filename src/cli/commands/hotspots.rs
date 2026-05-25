@@ -74,7 +74,7 @@ pub fn run(
     }
 
     // Step 4: Sort by risk score descending and take top N.
-    results.sort_by(|a, b| b.risk_score.cmp(&a.risk_score));
+    results.sort_by_key(|r| std::cmp::Reverse(r.risk_score));
     results.truncate(limit);
 
     // Step 5: Print results.
@@ -87,10 +87,7 @@ pub fn run(
         println!("  No hotspots found. Either git history does not overlap with indexed files,");
         println!("  or no functions have both churn and callers.");
     } else {
-        println!(
-            "  {:<6} {:<8} {:<8} {}",
-            "RISK", "CHURN", "CALLERS", "FUNCTION"
-        );
+        println!("  {:<6} {:<8} {:<8} FUNCTION", "RISK", "CHURN", "CALLERS");
         println!("  {}", "─".repeat(66));
 
         for r in &results {
@@ -121,7 +118,13 @@ fn get_git_churn(months: u32) -> Result<HashMap<String, u32>, anyhow::Error> {
     let since_arg = format!("{} months ago", months);
 
     let output = ProcessCommand::new("git")
-        .args(["log", "--format=format:", "--name-only", "--since", &since_arg])
+        .args([
+            "log",
+            "--format=format:",
+            "--name-only",
+            "--since",
+            &since_arg,
+        ])
         .output()
         .map_err(|e| anyhow::anyhow!("failed to run git: {}", e))?;
 

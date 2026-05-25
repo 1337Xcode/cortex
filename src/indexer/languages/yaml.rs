@@ -366,10 +366,11 @@ fn extract_pair_key(pair_node: tree_sitter::Node, source: &[u8]) -> Option<Strin
                 } else {
                     // Recurse into the child to find the actual key text
                     let key = extract_scalar_text(child, source);
-                    if let Some(k) = key {
-                        if !k.is_empty() && k != ":" {
-                            return Some(sanitize_key(&k));
-                        }
+                    if let Some(k) = key
+                        && !k.is_empty()
+                        && k != ":"
+                    {
+                        return Some(sanitize_key(&k));
                     }
                 }
             }
@@ -423,7 +424,7 @@ fn get_pair_value(pair_node: tree_sitter::Node) -> Option<tree_sitter::Node> {
     for child in children.iter().rev() {
         let kind = child.kind();
         // Skip the colon separator and the key
-        if kind != ":" && kind != "flow_node" || kind == "block_node" || kind == "flow_node" {
+        if kind != ":" || kind == "flow_node" || kind == "block_node" {
             // The value could be a block_node, flow_node, block_scalar, etc.
             if kind == "block_node"
                 || kind == "flow_node"
@@ -438,10 +439,10 @@ fn get_pair_value(pair_node: tree_sitter::Node) -> Option<tree_sitter::Node> {
     }
 
     // Fallback: return the last child if it has children (likely a value container)
-    if let Some(last) = children.last() {
-        if last.child_count() > 0 {
-            return Some(*last);
-        }
+    if let Some(last) = children.last()
+        && last.child_count() > 0
+    {
+        return Some(*last);
     }
 
     None
@@ -492,24 +493,32 @@ spec:
 
         // Top-level keys should be Module nodes
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "k8s/service.yml::apiVersion"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/service.yml::apiVersion" && n.kind == NodeKind::Module),
             "Expected top-level key 'apiVersion' as Module. Got nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "k8s/service.yml::kind"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/service.yml::kind" && n.kind == NodeKind::Module),
             "Expected top-level key 'kind'"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "k8s/service.yml::metadata"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/service.yml::metadata" && n.kind == NodeKind::Module),
             "Expected top-level key 'metadata'"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "k8s/service.yml::spec"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/service.yml::spec" && n.kind == NodeKind::Module),
             "Expected top-level key 'spec'"
         );
     }
@@ -530,22 +539,32 @@ spec:
 
         // Top-level key
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "docker-compose.yml::services"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "docker-compose.yml::services" && n.kind == NodeKind::Module),
             "Expected top-level key 'services'. Got nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
 
         // Nested keys should be Class nodes
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "docker-compose.yml::services::web"
-                && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "docker-compose.yml::services::web" && n.kind == NodeKind::Class),
             "Expected nested key 'services::web' as Class. Got nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "docker-compose.yml::services::db"
-                && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "docker-compose.yml::services::db" && n.kind == NodeKind::Class),
             "Expected nested key 'services::db' as Class"
         );
     }
@@ -569,10 +588,16 @@ production:
 
         // Anchor should be a Constant node
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "config/database.yml::&defaults"
-                && n.kind == NodeKind::Constant),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "config/database.yml::&defaults" && n.kind == NodeKind::Constant),
             "Expected anchor '&defaults' as Constant. Got nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
 
         // Check anchor attribute
@@ -589,7 +614,9 @@ production:
         let alias_edges: Vec<&Edge> = result
             .edges
             .iter()
-            .filter(|e| e.kind == EdgeKind::Imports && e.target_fqn == "config/database.yml::&defaults")
+            .filter(|e| {
+                e.kind == EdgeKind::Imports && e.target_fqn == "config/database.yml::&defaults"
+            })
             .collect();
         assert!(
             !alias_edges.is_empty(),
@@ -616,19 +643,25 @@ metadata:
         // Both documents should have their top-level keys extracted
         // Note: keys with same name across documents will deduplicate by FQN
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "k8s/multi.yml::apiVersion"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/multi.yml::apiVersion" && n.kind == NodeKind::Module),
             "Expected 'apiVersion' from multi-doc. Got nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "k8s/multi.yml::kind"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/multi.yml::kind" && n.kind == NodeKind::Module),
             "Expected 'kind' from multi-doc"
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "k8s/multi.yml::metadata"
-                && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/multi.yml::metadata" && n.kind == NodeKind::Module),
             "Expected 'metadata' from multi-doc"
         );
     }
@@ -660,10 +693,30 @@ spec:
         let result = parse_and_extract("k8s/deployment.yml", source);
 
         // Top-level keys
-        assert!(result.nodes.iter().any(|n| n.fqn == "k8s/deployment.yml::apiVersion"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "k8s/deployment.yml::kind"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "k8s/deployment.yml::metadata"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "k8s/deployment.yml::spec"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/deployment.yml::apiVersion")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/deployment.yml::kind")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/deployment.yml::metadata")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "k8s/deployment.yml::spec")
+        );
 
         // Nested keys under metadata
         assert!(
@@ -698,27 +751,47 @@ services:
         let result = parse_and_extract("docker-compose.yml", source);
 
         // Top-level keys
-        assert!(result.nodes.iter().any(|n| n.fqn == "docker-compose.yml::version"));
-        assert!(result.nodes.iter().any(|n| n.fqn == "docker-compose.yml::services"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "docker-compose.yml::version")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "docker-compose.yml::services")
+        );
 
         // Anchor
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "docker-compose.yml::&common"
-                && n.kind == NodeKind::Constant),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "docker-compose.yml::&common" && n.kind == NodeKind::Constant),
             "Expected anchor '&common'. Got nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
 
         // Nested service keys
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "docker-compose.yml::services::web"
-                && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "docker-compose.yml::services::web" && n.kind == NodeKind::Class),
             "Expected nested 'services::web'. Got nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "docker-compose.yml::services::api"
-                && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "docker-compose.yml::services::api" && n.kind == NodeKind::Class),
             "Expected nested 'services::api'"
         );
     }
@@ -764,20 +837,41 @@ jobs:
         let result = parse_and_extract(".github/workflows/ci.yml", source);
 
         // Top-level keys
-        assert!(result.nodes.iter().any(|n| n.fqn == ".github/workflows/ci.yml::name"));
-        assert!(result.nodes.iter().any(|n| n.fqn == ".github/workflows/ci.yml::on"));
-        assert!(result.nodes.iter().any(|n| n.fqn == ".github/workflows/ci.yml::jobs"));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == ".github/workflows/ci.yml::name")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == ".github/workflows/ci.yml::on")
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == ".github/workflows/ci.yml::jobs")
+        );
 
         // Nested keys under jobs
         assert!(
-            result.nodes.iter().any(|n| n.fqn == ".github/workflows/ci.yml::jobs::build"
-                && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == ".github/workflows/ci.yml::jobs::build"
+                    && n.kind == NodeKind::Class),
             "Expected nested 'jobs::build'. Got nodes: {:?}",
             result.nodes.iter().map(|n| &n.fqn).collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == ".github/workflows/ci.yml::jobs::lint"
-                && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == ".github/workflows/ci.yml::jobs::lint"
+                    && n.kind == NodeKind::Class),
             "Expected nested 'jobs::lint'"
         );
     }

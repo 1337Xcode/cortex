@@ -101,7 +101,7 @@ pub fn list(data_dir: &Path) -> Result<(), anyhow::Error> {
     }
 
     println!("Federated repositories ({}):", manifest.repos.len());
-    println!("{:<20} {:<50} {}", "NAME", "PATH", "ADDED");
+    println!("{:<20} {:<50} ADDED", "NAME", "PATH");
     println!("{}", "-".repeat(80));
 
     for repo in &manifest.repos {

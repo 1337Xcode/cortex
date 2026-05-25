@@ -23,12 +23,12 @@ fn count_source_stats() -> (usize, usize) {
                 let path = entry.path();
                 if path.is_dir() {
                     walk_dir(&path, file_count, line_count);
-                } else if let Some(ext) = path.extension() {
-                    if ext == "rs" {
-                        *file_count += 1;
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            *line_count += content.lines().count();
-                        }
+                } else if let Some(ext) = path.extension()
+                    && ext == "rs"
+                {
+                    *file_count += 1;
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        *line_count += content.lines().count();
                     }
                 }
             }
@@ -84,7 +84,10 @@ fn benchmark_self_index() {
     drop(conn);
 
     println!("--- Indexing ---");
-    println!("  Full index time:        {}ms ({} files indexed)", full_index_ms, stats.files_indexed);
+    println!(
+        "  Full index time:        {}ms ({} files indexed)",
+        full_index_ms, stats.files_indexed
+    );
     println!("  Nodes produced:         {}", node_count);
     println!("  Edges produced:         {}", edge_count);
 
@@ -94,7 +97,10 @@ fn benchmark_self_index() {
         .expect("incremental re-index should succeed");
     let incr_index_ms = start.elapsed().as_millis();
 
-    println!("  Incremental re-index:   {}ms ({} files re-indexed)", incr_index_ms, incr_stats.files_indexed);
+    println!(
+        "  Incremental re-index:   {}ms ({} files re-indexed)",
+        incr_index_ms, incr_stats.files_indexed
+    );
     println!();
 
     // --- Query latency ---
@@ -120,7 +126,11 @@ fn benchmark_self_index() {
     );
     let search_ms = start.elapsed().as_micros() as f64 / 1000.0;
     let search_ok = result.is_ok();
-    println!("  search_symbols:         {:.2}ms {}", search_ms, if search_ok { "✓" } else { "✗" });
+    println!(
+        "  search_symbols:         {:.2}ms {}",
+        search_ms,
+        if search_ok { "✓" } else { "✗" }
+    );
 
     // trace_callees
     let start = Instant::now();
@@ -131,7 +141,11 @@ fn benchmark_self_index() {
     );
     let callees_ms = start.elapsed().as_micros() as f64 / 1000.0;
     let callees_ok = result.is_ok();
-    println!("  trace_callees:          {:.2}ms {}", callees_ms, if callees_ok { "✓" } else { "✗" });
+    println!(
+        "  trace_callees:          {:.2}ms {}",
+        callees_ms,
+        if callees_ok { "✓" } else { "✗" }
+    );
 
     // trace_callers
     let start = Instant::now();
@@ -142,18 +156,23 @@ fn benchmark_self_index() {
     );
     let callers_ms = start.elapsed().as_micros() as f64 / 1000.0;
     let callers_ok = result.is_ok();
-    println!("  trace_callers:          {:.2}ms {}", callers_ms, if callers_ok { "✓" } else { "✗" });
+    println!(
+        "  trace_callers:          {:.2}ms {}",
+        callers_ms,
+        if callers_ok { "✓" } else { "✗" }
+    );
 
     // get_architecture
     let start = Instant::now();
-    let result = cortex::mcp::dispatch::dispatch_tool(
-        &store,
-        "get_architecture",
-        &serde_json::json!({}),
-    );
+    let result =
+        cortex::mcp::dispatch::dispatch_tool(&store, "get_architecture", &serde_json::json!({}));
     let arch_ms = start.elapsed().as_micros() as f64 / 1000.0;
     let arch_ok = result.is_ok();
-    println!("  get_architecture:       {:.2}ms {}", arch_ms, if arch_ok { "✓" } else { "✗" });
+    println!(
+        "  get_architecture:       {:.2}ms {}",
+        arch_ms,
+        if arch_ok { "✓" } else { "✗" }
+    );
 
     // get_code_snippet
     unsafe {
@@ -167,7 +186,11 @@ fn benchmark_self_index() {
     );
     let snippet_ms = start.elapsed().as_micros() as f64 / 1000.0;
     let snippet_ok = result.is_ok();
-    println!("  get_code_snippet:       {:.2}ms {}", snippet_ms, if snippet_ok { "✓" } else { "✗" });
+    println!(
+        "  get_code_snippet:       {:.2}ms {}",
+        snippet_ms,
+        if snippet_ok { "✓" } else { "✗" }
+    );
 
     // find_dead_code
     let start = Instant::now();
@@ -178,7 +201,11 @@ fn benchmark_self_index() {
     );
     let dead_ms = start.elapsed().as_micros() as f64 / 1000.0;
     let dead_ok = result.is_ok();
-    println!("  find_dead_code:         {:.2}ms {}", dead_ms, if dead_ok { "✓" } else { "✗" });
+    println!(
+        "  find_dead_code:         {:.2}ms {}",
+        dead_ms,
+        if dead_ok { "✓" } else { "✗" }
+    );
 
     // search_text (FTS5)
     let start = Instant::now();
@@ -189,7 +216,11 @@ fn benchmark_self_index() {
     );
     let fts_ms = start.elapsed().as_micros() as f64 / 1000.0;
     let fts_ok = result.is_ok();
-    println!("  search_text (FTS5):     {:.2}ms {}", fts_ms, if fts_ok { "✓" } else { "✗" });
+    println!(
+        "  search_text (FTS5):     {:.2}ms {}",
+        fts_ms,
+        if fts_ok { "✓" } else { "✗" }
+    );
 
     // query_graph
     let start = Instant::now();
@@ -200,7 +231,11 @@ fn benchmark_self_index() {
     );
     let graph_ms = start.elapsed().as_micros() as f64 / 1000.0;
     let graph_ok = result.is_ok();
-    println!("  query_graph:            {:.2}ms {}", graph_ms, if graph_ok { "✓" } else { "✗" });
+    println!(
+        "  query_graph:            {:.2}ms {}",
+        graph_ms,
+        if graph_ok { "✓" } else { "✗" }
+    );
 
     println!();
 
@@ -212,31 +247,42 @@ fn benchmark_self_index() {
         &store,
         "search_symbols",
         &serde_json::json!({"pattern": "*", "limit": 50}),
-    ).unwrap();
+    )
+    .unwrap();
     let meta = result.get("_meta").unwrap();
     let tokens_used = meta["tokens_used"].as_u64().unwrap_or(0);
     let tokens_saved = meta["tokens_saved"].as_u64().unwrap_or(0);
     if tokens_used > 0 {
         let ratio = (tokens_saved as f64 + tokens_used as f64) / tokens_used as f64;
-        println!("  search_symbols:         {:.1}x savings (used={}, saved={})", ratio, tokens_used, tokens_saved);
+        println!(
+            "  search_symbols:         {:.1}x savings (used={}, saved={})",
+            ratio, tokens_used, tokens_saved
+        );
     } else {
-        println!("  search_symbols:         used={}, saved={}", tokens_used, tokens_saved);
+        println!(
+            "  search_symbols:         used={}, saved={}",
+            tokens_used, tokens_saved
+        );
     }
 
     // get_architecture
-    let result = cortex::mcp::dispatch::dispatch_tool(
-        &store,
-        "get_architecture",
-        &serde_json::json!({}),
-    ).unwrap();
+    let result =
+        cortex::mcp::dispatch::dispatch_tool(&store, "get_architecture", &serde_json::json!({}))
+            .unwrap();
     let meta = result.get("_meta").unwrap();
     let tokens_used = meta["tokens_used"].as_u64().unwrap_or(0);
     let tokens_saved = meta["tokens_saved"].as_u64().unwrap_or(0);
     if tokens_used > 0 {
         let ratio = (tokens_saved as f64 + tokens_used as f64) / tokens_used as f64;
-        println!("  get_architecture:       {:.1}x savings (used={}, saved={})", ratio, tokens_used, tokens_saved);
+        println!(
+            "  get_architecture:       {:.1}x savings (used={}, saved={})",
+            ratio, tokens_used, tokens_saved
+        );
     } else {
-        println!("  get_architecture:       used={}, saved={}", tokens_used, tokens_saved);
+        println!(
+            "  get_architecture:       used={}, saved={}",
+            tokens_used, tokens_saved
+        );
     }
 
     // trace_callees
@@ -244,15 +290,22 @@ fn benchmark_self_index() {
         &store,
         "trace_callees",
         &serde_json::json!({"fqn": &real_fqn, "depth": 3}),
-    ).unwrap();
+    )
+    .unwrap();
     let meta = result.get("_meta").unwrap();
     let tokens_used = meta["tokens_used"].as_u64().unwrap_or(0);
     let tokens_saved = meta["tokens_saved"].as_u64().unwrap_or(0);
     if tokens_used > 0 {
         let ratio = (tokens_saved as f64 + tokens_used as f64) / tokens_used as f64;
-        println!("  trace_callees:          {:.1}x savings (used={}, saved={})", ratio, tokens_used, tokens_saved);
+        println!(
+            "  trace_callees:          {:.1}x savings (used={}, saved={})",
+            ratio, tokens_used, tokens_saved
+        );
     } else {
-        println!("  trace_callees:          used={}, saved={}", tokens_used, tokens_saved);
+        println!(
+            "  trace_callees:          used={}, saved={}",
+            tokens_used, tokens_saved
+        );
     }
 
     // find_dead_code
@@ -260,15 +313,22 @@ fn benchmark_self_index() {
         &store,
         "find_dead_code",
         &serde_json::json!({"limit": 50}),
-    ).unwrap();
+    )
+    .unwrap();
     let meta = result.get("_meta").unwrap();
     let tokens_used = meta["tokens_used"].as_u64().unwrap_or(0);
     let tokens_saved = meta["tokens_saved"].as_u64().unwrap_or(0);
     if tokens_used > 0 {
         let ratio = (tokens_saved as f64 + tokens_used as f64) / tokens_used as f64;
-        println!("  find_dead_code:         {:.1}x savings (used={}, saved={})", ratio, tokens_used, tokens_saved);
+        println!(
+            "  find_dead_code:         {:.1}x savings (used={}, saved={})",
+            ratio, tokens_used, tokens_saved
+        );
     } else {
-        println!("  find_dead_code:         used={}, saved={}", tokens_used, tokens_saved);
+        println!(
+            "  find_dead_code:         used={}, saved={}",
+            tokens_used, tokens_saved
+        );
     }
 
     println!();
@@ -277,9 +337,18 @@ fn benchmark_self_index() {
     println!("--- README Benchmarks Table ---");
     println!("| Metric | Value |");
     println!("|--------|-------|");
-    println!("| Source files | {} Rust files, {} lines |", file_count, line_count);
-    println!("| Full index time | {}ms ({} files) |", full_index_ms, stats.files_indexed);
-    println!("| Incremental re-index (no changes) | {}ms |", incr_index_ms);
+    println!(
+        "| Source files | {} Rust files, {} lines |",
+        file_count, line_count
+    );
+    println!(
+        "| Full index time | {}ms ({} files) |",
+        full_index_ms, stats.files_indexed
+    );
+    println!(
+        "| Incremental re-index (no changes) | {}ms |",
+        incr_index_ms
+    );
     println!("| Nodes produced | {} |", node_count);
     println!("| Edges produced | {} |", edge_count);
     println!("| search_symbols latency | {:.2}ms |", search_ms);

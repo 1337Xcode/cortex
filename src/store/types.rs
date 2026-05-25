@@ -7,10 +7,11 @@
 use serde::{Deserialize, Serialize};
 
 /// Node kind matching the CHECK constraint:
-/// `kind IN ('Function','Class','Module','Route','Interface','Type','Enum','Constant','TypeAlias','Trait','Namespace')`
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `kind IN ('Function','Method','Class','Module','Route','Interface','Type','Enum','Constant','TypeAlias','Trait','Namespace')`
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeKind {
     Function,
+    Method,
     Class,
     Module,
     Route,
@@ -150,6 +151,27 @@ pub struct BundleMetadata {
     pub repo_root_hash: Option<String>,
 }
 
+/// Coverage data for a graph node, derived from LCOV test coverage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CoverageData {
+    /// Number of test executions hitting this function.
+    pub hit_count: u32,
+    /// Percentage of lines covered (0.0 to 100.0).
+    pub line_coverage_pct: f64,
+    /// Whether the function has any coverage.
+    pub is_covered: bool,
+}
+
+impl CoverageData {
+    /// Extract coverage data from a node's attributes JSON.
+    /// Returns `None` if no coverage data is present.
+    pub fn from_attributes(attributes: &serde_json::Value) -> Option<Self> {
+        attributes
+            .get("coverage")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+}
+
 /// Result of extracting nodes and edges from a parsed file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractionResult {
@@ -166,6 +188,7 @@ mod tests {
     fn node_kind_serialize_deserialize_roundtrip() {
         let variants = vec![
             NodeKind::Function,
+            NodeKind::Method,
             NodeKind::Class,
             NodeKind::Module,
             NodeKind::Route,
@@ -187,8 +210,21 @@ mod tests {
 
     #[test]
     fn node_kind_variants_match_schema() {
-        // These must match: CHECK(kind IN ('Function','Class','Module','Route','Interface','Type','Enum','Constant','TypeAlias','Trait','Namespace'))
-        let expected = vec!["Function", "Class", "Module", "Route", "Interface", "Type", "Enum", "Constant", "TypeAlias", "Trait", "Namespace"];
+        // These must match: CHECK(kind IN ('Function','Method','Class','Module','Route','Interface','Type','Enum','Constant','TypeAlias','Trait','Namespace'))
+        let expected = vec![
+            "Function",
+            "Method",
+            "Class",
+            "Module",
+            "Route",
+            "Interface",
+            "Type",
+            "Enum",
+            "Constant",
+            "TypeAlias",
+            "Trait",
+            "Namespace",
+        ];
         for name in &expected {
             let json_str = format!("\"{}\"", name);
             let kind: NodeKind = serde_json::from_str(&json_str).unwrap();
@@ -218,7 +254,14 @@ mod tests {
     #[test]
     fn edge_kind_variants_match_schema() {
         // These must match: CHECK(kind IN ('Calls','Imports','Inherits','Implements','HttpLink','DataFlow'))
-        let expected = vec!["Calls", "Imports", "Inherits", "Implements", "HttpLink", "DataFlow"];
+        let expected = vec![
+            "Calls",
+            "Imports",
+            "Inherits",
+            "Implements",
+            "HttpLink",
+            "DataFlow",
+        ];
         for name in &expected {
             let json_str = format!("\"{}\"", name);
             let kind: EdgeKind = serde_json::from_str(&json_str).unwrap();
@@ -498,5 +541,138 @@ mod tests {
         let invalid = "\"InvalidKind\"";
         let result: Result<EdgeKind, _> = serde_json::from_str(invalid);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn coverage_data_serialize_deserialize_roundtrip() {
+        let coverage = CoverageData {
+            hit_count: 5,
+            line_coverage_pct: 87.5,
+            is_covered: true,
+        };
+
+        let serialized = serde_json::to_string(&coverage).unwrap();
+        let deserialized: CoverageData = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.hit_count, 5);
+        assert_eq!(deserialized.line_coverage_pct, 87.5);
+        assert!(deserialized.is_covered);
+    }
+
+    #[test]
+    fn coverage_data_from_attributes_present() {
+        let attrs = json!({
+            "coverage": {
+                "hit_count": 3,
+                "line_coverage_pct": 75.0,
+                "is_covered": true
+            }
+        });
+
+        let coverage = CoverageData::from_attributes(&attrs);
+        assert!(coverage.is_some());
+        let c = coverage.unwrap();
+        assert_eq!(c.hit_count, 3);
+        assert_eq!(c.line_coverage_pct, 75.0);
+        assert!(c.is_covered);
+    }
+
+    #[test]
+    fn coverage_data_from_attributes_absent() {
+        let attrs = json!({"async": true});
+        let coverage = CoverageData::from_attributes(&attrs);
+        assert!(coverage.is_none());
+    }
+
+    #[test]
+    fn coverage_data_from_attributes_null() {
+        let attrs = json!({"coverage": null});
+        let coverage = CoverageData::from_attributes(&attrs);
+        assert!(coverage.is_none());
+    }
+}
+
+/// **Validates: Requirements 7.2, 7.3**
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Strategy to generate valid CoverageData values.
+    /// - hit_count: any u32
+    /// - line_coverage_pct: f64 in [0.0, 100.0]
+    fn arb_coverage_data() -> impl Strategy<Value = CoverageData> {
+        (any::<u32>(), 0.0..=100.0f64).prop_map(|(hit_count, line_coverage_pct)| CoverageData {
+            hit_count,
+            line_coverage_pct,
+            is_covered: hit_count > 0,
+        })
+    }
+
+    proptest! {
+        /// **Property 7: Coverage field structure**
+        ///
+        /// For any node with LCOV data, coverage contains valid `hit_count` (u32),
+        /// `line_coverage_pct` (0.0..=100.0), and `is_covered == (hit_count > 0)`.
+        ///
+        /// **Validates: Requirements 7.2, 7.3**
+        #[test]
+        fn prop_coverage_is_covered_equals_hit_count_positive(
+            coverage in arb_coverage_data()
+        ) {
+            // is_covered must be true iff hit_count > 0
+            prop_assert_eq!(coverage.is_covered, coverage.hit_count > 0);
+        }
+
+        #[test]
+        fn prop_coverage_line_coverage_pct_in_range(
+            coverage in arb_coverage_data()
+        ) {
+            // line_coverage_pct must be in [0.0, 100.0]
+            prop_assert!(coverage.line_coverage_pct >= 0.0);
+            prop_assert!(coverage.line_coverage_pct <= 100.0);
+        }
+
+        #[test]
+        fn prop_coverage_serialization_roundtrip(
+            coverage in arb_coverage_data()
+        ) {
+            // Serializing to JSON and deserializing back must preserve the structure
+            let serialized = serde_json::to_string(&coverage).unwrap();
+            let deserialized: CoverageData = serde_json::from_str(&serialized).unwrap();
+
+            // hit_count and is_covered must be exactly preserved
+            prop_assert_eq!(deserialized.hit_count, coverage.hit_count);
+            prop_assert_eq!(deserialized.is_covered, coverage.is_covered);
+
+            // line_coverage_pct: f64 JSON roundtrip may have minimal precision loss
+            let diff = (deserialized.line_coverage_pct - coverage.line_coverage_pct).abs();
+            prop_assert!(
+                diff < 1e-10,
+                "line_coverage_pct drift too large: {} vs {} (diff={})",
+                deserialized.line_coverage_pct,
+                coverage.line_coverage_pct,
+                diff
+            );
+
+            // Also verify the is_covered invariant is preserved after roundtrip
+            prop_assert_eq!(deserialized.is_covered, deserialized.hit_count > 0);
+            prop_assert!(deserialized.line_coverage_pct >= 0.0);
+            prop_assert!(deserialized.line_coverage_pct <= 100.0);
+        }
+
+        #[test]
+        fn prop_coverage_from_attributes_roundtrip(
+            coverage in arb_coverage_data()
+        ) {
+            // Embedding in a node's attributes JSON and extracting back must work
+            let attrs = serde_json::json!({ "coverage": coverage });
+            let extracted = CoverageData::from_attributes(&attrs).unwrap();
+
+            prop_assert_eq!(&extracted, &coverage);
+            prop_assert_eq!(extracted.is_covered, extracted.hit_count > 0);
+            prop_assert!(extracted.line_coverage_pct >= 0.0);
+            prop_assert!(extracted.line_coverage_pct <= 100.0);
+        }
     }
 }

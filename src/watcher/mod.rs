@@ -7,6 +7,7 @@
 //! file events that downstream consumers (like the indexer) can act on.
 
 pub mod filter;
+#[allow(clippy::module_inception)]
 pub mod watcher;
 
 pub use filter::WatchFilter;

@@ -16,9 +16,8 @@ use crate::error::McpError;
 use crate::store::db::StoreManager;
 
 use super::types::{
-    InitializeResult, JsonRpcRequest, JsonRpcResponse, ServerCapabilities, ServerInfo,
-    ToolDefinition, ToolsCapability, ToolsListResult,
-    INTERNAL_ERROR, METHOD_NOT_FOUND, PARSE_ERROR,
+    INTERNAL_ERROR, InitializeResult, JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND,
+    PARSE_ERROR, ServerCapabilities, ServerInfo, ToolDefinition, ToolsCapability, ToolsListResult,
 };
 
 /// Maximum number of concurrent tool executions.
@@ -78,11 +77,10 @@ impl McpServer {
 
             // Notifications (no id) do not get a response
             if let Some(response) = response {
-                let json = serde_json::to_string(&response).map_err(|e| {
-                    McpError::ProtocolError {
+                let json =
+                    serde_json::to_string(&response).map_err(|e| McpError::ProtocolError {
                         reason: format!("failed to serialize response: {}", e),
-                    }
-                })?;
+                    })?;
 
                 stdout
                     .write_all(json.as_bytes())
@@ -763,11 +761,8 @@ mod tests {
         // Apply migrations so dispatch can query tables
         {
             let conn = store.write_conn();
-            crate::store::migrations::run_migrations(
-                &conn,
-                std::path::Path::new("migrations"),
-            )
-            .expect("failed to run migrations");
+            crate::store::migrations::run_migrations(&conn, std::path::Path::new("migrations"))
+                .expect("failed to run migrations");
         }
         let server = McpServer::new(store);
         (server, tmp)
@@ -805,10 +800,7 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
 
         // Verify all expected tools are present
-        let tool_names: Vec<&str> = tools
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
+        let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
 
         let expected_tools = [
             "search_symbols",
@@ -840,11 +832,7 @@ mod tests {
         ];
 
         for expected in &expected_tools {
-            assert!(
-                tool_names.contains(expected),
-                "Missing tool: {}",
-                expected
-            );
+            assert!(tool_names.contains(expected), "Missing tool: {}", expected);
         }
 
         // Verify each tool has required fields
@@ -894,7 +882,10 @@ mod tests {
         let line = make_request(None, "notifications/initialized", None);
 
         let response = server.handle_line(&line).await;
-        assert!(response.is_none(), "Notifications should not produce a response");
+        assert!(
+            response.is_none(),
+            "Notifications should not produce a response"
+        );
     }
 
     #[tokio::test]

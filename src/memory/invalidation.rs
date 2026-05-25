@@ -1,4 +1,4 @@
-﻿//! Memory invalidation: automatically mark observations stale when linked nodes
+//! Memory invalidation: automatically mark observations stale when linked nodes
 //! are modified or deleted.
 //!
 //! This module provides a higher-level interface for triggering observation
@@ -20,10 +20,11 @@ pub fn invalidate_for_modified_nodes(
     let conn = store.write_conn();
     let mut total = 0;
     for fqn in fqns {
-        let count = mark_observations_stale(&conn, fqn, "node_modified")
-            .map_err(|e| MemoryError::ObservationFailed {
+        let count = mark_observations_stale(&conn, fqn, "node_modified").map_err(|e| {
+            MemoryError::ObservationFailed {
                 reason: format!("failed to invalidate for modified node '{}': {}", fqn, e),
-            })?;
+            }
+        })?;
         total += count;
     }
     Ok(total)
@@ -38,10 +39,11 @@ pub fn invalidate_for_deleted_nodes(
     let conn = store.write_conn();
     let mut total = 0;
     for fqn in fqns {
-        let count = mark_observations_stale(&conn, fqn, "node_deleted")
-            .map_err(|e| MemoryError::ObservationFailed {
+        let count = mark_observations_stale(&conn, fqn, "node_deleted").map_err(|e| {
+            MemoryError::ObservationFailed {
                 reason: format!("failed to invalidate for deleted node '{}': {}", fqn, e),
-            })?;
+            }
+        })?;
         total += count;
     }
     Ok(total)
@@ -79,16 +81,19 @@ mod tests {
         // Write an observation for node A
         {
             let conn = store.write_conn();
-            write_observation(&conn, "src/a.rs::foo", "observation about foo", "agent-1", "hash_a")
-                .expect("failed to write observation");
+            write_observation(
+                &conn,
+                "src/a.rs::foo",
+                "observation about foo",
+                "agent-1",
+                "hash_a",
+            )
+            .expect("failed to write observation");
         }
 
         // Invalidate for modified node A
-        let staled = invalidate_for_modified_nodes(
-            &store,
-            &["src/a.rs::foo".to_string()],
-        )
-        .expect("invalidation failed");
+        let staled = invalidate_for_modified_nodes(&store, &["src/a.rs::foo".to_string()])
+            .expect("invalidation failed");
 
         assert_eq!(staled, 1);
 
@@ -99,7 +104,10 @@ mod tests {
                 .expect("failed to read observations");
             assert_eq!(observations.len(), 1);
             assert_eq!(observations[0].status, "stale");
-            assert_eq!(observations[0].stale_reason.as_deref(), Some("node_modified"));
+            assert_eq!(
+                observations[0].stale_reason.as_deref(),
+                Some("node_modified")
+            );
         }
     }
 
@@ -110,16 +118,19 @@ mod tests {
         // Write an observation for node B
         {
             let conn = store.write_conn();
-            write_observation(&conn, "src/b.rs::bar", "observation about bar", "agent-2", "hash_b")
-                .expect("failed to write observation");
+            write_observation(
+                &conn,
+                "src/b.rs::bar",
+                "observation about bar",
+                "agent-2",
+                "hash_b",
+            )
+            .expect("failed to write observation");
         }
 
         // Invalidate for deleted node B
-        let staled = invalidate_for_deleted_nodes(
-            &store,
-            &["src/b.rs::bar".to_string()],
-        )
-        .expect("invalidation failed");
+        let staled = invalidate_for_deleted_nodes(&store, &["src/b.rs::bar".to_string()])
+            .expect("invalidation failed");
 
         assert_eq!(staled, 1);
 
@@ -130,7 +141,10 @@ mod tests {
                 .expect("failed to read observations");
             assert_eq!(observations.len(), 1);
             assert_eq!(observations[0].status, "stale");
-            assert_eq!(observations[0].stale_reason.as_deref(), Some("node_deleted"));
+            assert_eq!(
+                observations[0].stale_reason.as_deref(),
+                Some("node_deleted")
+            );
         }
     }
 
@@ -141,16 +155,20 @@ mod tests {
         // Write an observation for node C
         {
             let conn = store.write_conn();
-            write_observation(&conn, "src/c.rs::baz", "observation about baz", "agent-3", "hash_c")
-                .expect("failed to write observation");
+            write_observation(
+                &conn,
+                "src/c.rs::baz",
+                "observation about baz",
+                "agent-3",
+                "hash_c",
+            )
+            .expect("failed to write observation");
         }
 
         // Do NOT invalidate node C - only invalidate a different node
-        let staled = invalidate_for_modified_nodes(
-            &store,
-            &["src/other.rs::unrelated".to_string()],
-        )
-        .expect("invalidation failed");
+        let staled =
+            invalidate_for_modified_nodes(&store, &["src/other.rs::unrelated".to_string()])
+                .expect("invalidation failed");
 
         assert_eq!(staled, 0);
 
@@ -192,12 +210,10 @@ mod tests {
     fn test_invalidate_empty_list_returns_zero() {
         let (store, _tmp) = setup_store();
 
-        let staled = invalidate_for_modified_nodes(&store, &[])
-            .expect("invalidation failed");
+        let staled = invalidate_for_modified_nodes(&store, &[]).expect("invalidation failed");
         assert_eq!(staled, 0);
 
-        let staled = invalidate_for_deleted_nodes(&store, &[])
-            .expect("invalidation failed");
+        let staled = invalidate_for_deleted_nodes(&store, &[]).expect("invalidation failed");
         assert_eq!(staled, 0);
     }
 }

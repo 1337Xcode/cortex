@@ -73,21 +73,16 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
 /// Compute cyclomatic complexity for all Function nodes.
 fn compute_node_complexities(nodes: &mut [Node], root: tree_sitter::Node, source: &[u8]) {
     for node in nodes.iter_mut() {
-        if node.kind == NodeKind::Function {
-            if let Some(ast_node) =
+        if node.kind == NodeKind::Function
+            && let Some(ast_node) =
                 find_ast_node_at_line(root, node.start_line, "function_signature")
                     .or_else(|| find_ast_node_at_line(root, node.start_line, "method_signature"))
-                    .or_else(|| {
-                        find_ast_node_at_line(root, node.start_line, "function_body")
-                    })
-                    .or_else(|| {
-                        find_ast_node_at_line(root, node.start_line, "method_definition")
-                    })
-            {
-                let c = complexity::compute_full_complexity(ast_node, source, "dart");
-                if let Some(attrs) = node.attributes.as_object_mut() {
-                    attrs.insert("complexity".to_string(), serde_json::json!(c));
-                }
+                    .or_else(|| find_ast_node_at_line(root, node.start_line, "function_body"))
+                    .or_else(|| find_ast_node_at_line(root, node.start_line, "method_definition"))
+        {
+            let c = complexity::compute_full_complexity(ast_node, source, "dart");
+            if let Some(attrs) = node.attributes.as_object_mut() {
+                attrs.insert("complexity".to_string(), serde_json::json!(c));
             }
         }
     }
@@ -212,7 +207,6 @@ fn is_leaf_kind(kind: &str) -> bool {
     )
 }
 
-
 /// Extract a class definition.
 fn extract_class(
     node: tree_sitter::Node,
@@ -290,8 +284,8 @@ fn extract_mixin(
     extract_interfaces(node, source, &fqn, edges);
 
     // Recurse into body for methods
-    if let Some(body) = find_child_by_kind(node, "class_body")
-        .or_else(|| find_child_by_kind(node, "mixin_body"))
+    if let Some(body) =
+        find_child_by_kind(node, "class_body").or_else(|| find_child_by_kind(node, "mixin_body"))
     {
         collect_class_members(body, file, source, &name, nodes, defined_fqns, edges);
     }
@@ -562,19 +556,11 @@ fn collect_class_members(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
-            "method_signature" | "function_signature" | "getter_signature"
-            | "setter_signature" => {
+            "method_signature" | "function_signature" | "getter_signature" | "setter_signature" => {
                 extract_function(child, file, source, Some(parent_name), nodes, defined_fqns);
             }
             "constructor_signature" => {
-                extract_constructor(
-                    child,
-                    file,
-                    source,
-                    Some(parent_name),
-                    nodes,
-                    defined_fqns,
-                );
+                extract_constructor(child, file, source, Some(parent_name), nodes, defined_fqns);
             }
             "method_declaration" | "function_declaration" => {
                 // These wrap a signature + body. Extract from the signature.
@@ -585,8 +571,11 @@ fn collect_class_members(
                 }
             }
             // Don't recurse into nested class/mixin/enum bodies
-            "class_declaration" | "class_definition" | "mixin_declaration"
-            | "enum_declaration" | "extension_declaration" => {}
+            "class_declaration"
+            | "class_definition"
+            | "mixin_declaration"
+            | "enum_declaration"
+            | "extension_declaration" => {}
             // Don't recurse into function bodies (we only want signatures)
             "function_body" | "block" => {}
             _ => {
@@ -796,12 +785,7 @@ fn get_type_from_clause(node: tree_sitter::Node, source: &[u8]) -> String {
 }
 
 /// Collect import declarations.
-fn collect_imports(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -819,12 +803,7 @@ fn collect_imports(
 }
 
 /// Extract an import declaration into Imports edges.
-fn extract_import(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-    edges: &mut Vec<Edge>,
-) {
+fn extract_import(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mut Vec<Edge>) {
     let text = node.utf8_text(source).unwrap_or("").trim().to_string();
     if text.is_empty() || !text.starts_with("import") {
         return;
@@ -907,45 +886,43 @@ fn extract_call_edge(
     edges: &mut Vec<Edge>,
 ) {
     // The function being called is typically the first child
-    let func_node = node.child_by_field_name("function").or_else(|| node.child(0));
+    let func_node = node
+        .child_by_field_name("function")
+        .or_else(|| node.child(0));
 
     if let Some(func) = func_node {
         let call_text = func.utf8_text(source).unwrap_or("").trim();
 
         // Only resolve simple identifier calls (not method calls like obj.method())
-        if func.kind() == "identifier" {
-            if let Some((_, target_fqn)) =
-                defined_fqns.iter().find(|(name, _)| name == call_text)
+        if func.kind() == "identifier"
+            && let Some((_, target_fqn)) = defined_fqns.iter().find(|(name, _)| name == call_text)
+        {
+            let caller_fqn = find_enclosing_function(node, file, source);
+            if let Some(caller) = caller_fqn
+                && caller != *target_fqn
             {
-                let caller_fqn = find_enclosing_function(node, file, source);
-                if let Some(caller) = caller_fqn {
-                    if caller != *target_fqn {
-                        edges.push(Edge {
-                            id: None,
-                            source_fqn: caller,
-                            target_fqn: target_fqn.clone(),
-                            kind: EdgeKind::Calls,
-                            confidence: 1.0,
-                            attributes: json!({}),
-                        });
-                    }
-                }
+                edges.push(Edge {
+                    id: None,
+                    source_fqn: caller,
+                    target_fqn: target_fqn.clone(),
+                    kind: EdgeKind::Calls,
+                    confidence: 1.0,
+                    attributes: json!({}),
+                });
             }
         }
     }
 }
 
 /// Find the enclosing function/method for a given node to determine the caller FQN.
-fn find_enclosing_function(
-    node: tree_sitter::Node,
-    file: &str,
-    source: &[u8],
-) -> Option<String> {
+fn find_enclosing_function(node: tree_sitter::Node, file: &str, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
 
     while let Some(parent) = current {
         match parent.kind() {
-            "function_signature" | "method_signature" | "function_definition"
+            "function_signature"
+            | "method_signature"
+            | "function_definition"
             | "method_definition" => {
                 let name = get_function_name(parent, source);
                 if !name.is_empty() {
@@ -953,7 +930,9 @@ fn find_enclosing_function(
                     let mut ancestor = parent.parent();
                     while let Some(anc) = ancestor {
                         match anc.kind() {
-                            "class_definition" | "class_declaration" | "mixin_declaration"
+                            "class_definition"
+                            | "class_declaration"
+                            | "mixin_declaration"
                             | "extension_declaration" => {
                                 let cls = get_identifier_child(anc, source);
                                 if cls.is_empty() {
@@ -966,8 +945,8 @@ fn find_enclosing_function(
                                 }
                                 break;
                             }
-                            "class_body" | "extension_body" | "mixin_body"
-                            | "class_member" | "method_declaration" => {}
+                            "class_body" | "extension_body" | "mixin_body" | "class_member"
+                            | "method_declaration" => {}
                             _ => {}
                         }
                         ancestor = anc.parent();
@@ -983,8 +962,10 @@ fn find_enclosing_function(
                         let mut ancestor = parent.parent();
                         while let Some(anc) = ancestor {
                             match anc.kind() {
-                                "class_definition" | "class_declaration"
-                                | "mixin_declaration" | "extension_declaration" => {
+                                "class_definition"
+                                | "class_declaration"
+                                | "mixin_declaration"
+                                | "extension_declaration" => {
                                     let cls = get_identifier_child(anc, source);
                                     if cls.is_empty() {
                                         let cls = get_extension_name(anc, source);
@@ -996,8 +977,8 @@ fn find_enclosing_function(
                                     }
                                     break;
                                 }
-                                "class_body" | "extension_body" | "mixin_body"
-                                | "class_member" => {}
+                                "class_body" | "extension_body" | "mixin_body" | "class_member" => {
+                                }
                                 _ => {}
                             }
                             ancestor = anc.parent();
@@ -1141,10 +1122,10 @@ fn get_constructor_name(
     }
 
     // Single name - it's the class name constructor
-    if let Some(parent) = parent_name {
-        if names[0] == parent {
-            return parent.to_string();
-        }
+    if let Some(parent) = parent_name
+        && names[0] == parent
+    {
+        return parent.to_string();
     }
 
     names[0].clone()
@@ -1161,12 +1142,12 @@ fn get_extension_name(node: tree_sitter::Node, source: &[u8]) -> String {
             found_extension_keyword = true;
             continue;
         }
-        if found_extension_keyword {
-            if child.kind() == "identifier" || child.kind() == "type_identifier" {
-                let text = child.utf8_text(source).unwrap_or("").trim().to_string();
-                if text != "on" && !text.is_empty() {
-                    return text;
-                }
+        if found_extension_keyword
+            && (child.kind() == "identifier" || child.kind() == "type_identifier")
+        {
+            let text = child.utf8_text(source).unwrap_or("").trim().to_string();
+            if text != "on" && !text.is_empty() {
+                return text;
             }
         }
     }
@@ -1211,10 +1192,8 @@ fn get_type_alias_name(node: tree_sitter::Node, source: &[u8]) -> String {
             found_typedef = true;
             continue;
         }
-        if found_typedef && child.kind() == "identifier" {
-            if !text.is_empty() {
-                return text.to_string();
-            }
+        if found_typedef && child.kind() == "identifier" && !text.is_empty() {
+            return text.to_string();
         }
     }
 
@@ -1279,14 +1258,9 @@ fn find_child_by_kind<'a>(
     kind: &str,
 ) -> Option<tree_sitter::Node<'a>> {
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == kind {
-            return Some(child);
-        }
-    }
-    None
+    node.children(&mut cursor)
+        .find(|&child| child.kind() == kind)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1329,26 +1303,49 @@ abstract class BaseWidget {
 
         // Check classes
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/widget.dart::MyWidget" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/widget.dart::MyWidget" && n.kind == NodeKind::Class),
             "Should find MyWidget class. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/widget.dart::BaseWidget" && n.kind == NodeKind::Class),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/widget.dart::BaseWidget" && n.kind == NodeKind::Class),
             "Should find BaseWidget class"
         );
 
         // Check methods
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/widget.dart::MyWidget::build" && n.kind == NodeKind::Function),
+            result.nodes.iter().any(
+                |n| n.fqn == "lib/widget.dart::MyWidget::build" && n.kind == NodeKind::Function
+            ),
             "Should find build method. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
 
         // Check inheritance
-        let inherits: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Inherits).collect();
+        let inherits: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Inherits)
+            .collect();
         assert!(
-            inherits.iter().any(|e| e.source_fqn == "lib/widget.dart::MyWidget" && e.target_fqn == "StatelessWidget"),
+            inherits
+                .iter()
+                .any(|e| e.source_fqn == "lib/widget.dart::MyWidget"
+                    && e.target_fqn == "StatelessWidget"),
             "Should have extends edge. Inherits edges: {:?}",
             inherits
         );
@@ -1371,20 +1368,37 @@ mixin Serializable {
 
         // Mixins use NodeKind::Trait
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/mixins.dart::Logging" && n.kind == NodeKind::Trait),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/mixins.dart::Logging" && n.kind == NodeKind::Trait),
             "Should find Logging mixin as Trait. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/mixins.dart::Serializable" && n.kind == NodeKind::Trait),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/mixins.dart::Serializable" && n.kind == NodeKind::Trait),
             "Should find Serializable mixin as Trait"
         );
 
         // Methods inside mixin
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/mixins.dart::Logging::log" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/mixins.dart::Logging::log" && n.kind == NodeKind::Function),
             "Should find log method in Logging mixin. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1406,12 +1420,22 @@ enum Status {
         let result = parse_and_extract("lib/enums.dart", source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/enums.dart::Color" && n.kind == NodeKind::Enum),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/enums.dart::Color" && n.kind == NodeKind::Enum),
             "Should find Color enum. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/enums.dart::Status" && n.kind == NodeKind::Enum),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/enums.dart::Status" && n.kind == NodeKind::Enum),
             "Should find Status enum"
         );
     }
@@ -1434,12 +1458,21 @@ extension NumberParsing on String {
         let result = parse_and_extract("lib/extensions.dart", source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/extensions.dart::StringExt" && n.kind == NodeKind::Module),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/extensions.dart::StringExt" && n.kind == NodeKind::Module),
             "Should find StringExt extension as Module. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/extensions.dart::NumberParsing" && n.kind == NodeKind::Module),
+            result.nodes.iter().any(
+                |n| n.fqn == "lib/extensions.dart::NumberParsing" && n.kind == NodeKind::Module
+            ),
             "Should find NumberParsing extension as Module"
         );
     }
@@ -1453,9 +1486,15 @@ import 'package:http/http.dart' as http;
 "#;
         let result = parse_and_extract("lib/app.dart", source);
 
-        let imports: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
+        let imports: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
         assert!(
-            imports.iter().any(|e| e.target_fqn == "package:flutter/material.dart"),
+            imports
+                .iter()
+                .any(|e| e.target_fqn == "package:flutter/material.dart"),
             "Should import flutter/material.dart. Imports: {:?}",
             imports
         );
@@ -1465,7 +1504,9 @@ import 'package:http/http.dart' as http;
             imports
         );
         assert!(
-            imports.iter().any(|e| e.target_fqn == "package:http/http.dart"),
+            imports
+                .iter()
+                .any(|e| e.target_fqn == "package:http/http.dart"),
             "Should import http/http.dart. Imports: {:?}",
             imports
         );
@@ -1484,9 +1525,15 @@ void main() {
 "#;
         let result = parse_and_extract("lib/main.dart", source);
 
-        let calls: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Calls).collect();
+        let calls: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Calls)
+            .collect();
         assert!(
-            calls.iter().any(|e| e.source_fqn.contains("main") && e.target_fqn.contains("helper")),
+            calls
+                .iter()
+                .any(|e| e.source_fqn.contains("main") && e.target_fqn.contains("helper")),
             "Should have call from main to helper. Calls: {:?}",
             calls
         );
@@ -1511,17 +1558,29 @@ class Dog extends Animal implements Movable {
         let result = parse_and_extract("lib/animals.dart", source);
 
         // Check inheritance
-        let inherits: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Inherits).collect();
+        let inherits: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Inherits)
+            .collect();
         assert!(
-            inherits.iter().any(|e| e.source_fqn == "lib/animals.dart::Dog" && e.target_fqn == "Animal"),
+            inherits
+                .iter()
+                .any(|e| e.source_fqn == "lib/animals.dart::Dog" && e.target_fqn == "Animal"),
             "Dog should extend Animal. Inherits: {:?}",
             inherits
         );
 
         // Check implements
-        let implements: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Implements).collect();
+        let implements: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Implements)
+            .collect();
         assert!(
-            implements.iter().any(|e| e.source_fqn == "lib/animals.dart::Dog" && e.target_fqn == "Movable"),
+            implements
+                .iter()
+                .any(|e| e.source_fqn == "lib/animals.dart::Dog" && e.target_fqn == "Movable"),
             "Dog should implement Movable. Implements: {:?}",
             implements
         );
@@ -1550,19 +1609,40 @@ int add(int a, int b) => a + b;
         let result = parse_and_extract("lib/main.dart", source);
 
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/main.dart::main" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/main.dart::main" && n.kind == NodeKind::Function),
             "Should find main function. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/main.dart::fetchData" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/main.dart::fetchData" && n.kind == NodeKind::Function),
             "Should find fetchData function. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
         assert!(
-            result.nodes.iter().any(|n| n.fqn == "lib/main.dart::add" && n.kind == NodeKind::Function),
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/main.dart::add" && n.kind == NodeKind::Function),
             "Should find add function. Nodes: {:?}",
-            result.nodes.iter().map(|n| (&n.fqn, &n.kind)).collect::<Vec<_>>()
+            result
+                .nodes
+                .iter()
+                .map(|n| (&n.fqn, &n.kind))
+                .collect::<Vec<_>>()
         );
     }
 }

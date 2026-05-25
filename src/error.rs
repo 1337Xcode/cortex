@@ -197,6 +197,14 @@ pub enum AgentError {
     /// Agent configuration write failed.
     #[error("agent configuration failed: {reason}")]
     ConfigurationFailed { reason: String },
+
+    /// Permission denied writing a config file.
+    #[error("Permission denied writing {path}. Required: write access to {path}")]
+    PermissionDenied { path: String },
+
+    /// Generated config failed validation when parsed back.
+    #[error("Generated config for {agent} failed validation: {reason}")]
+    ValidationFailed { agent: String, reason: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +224,10 @@ mod tests {
         let err = StoreError::ConnectionFailed {
             reason: "file not found".to_string(),
         };
-        assert_eq!(err.to_string(), "database connection failed: file not found");
+        assert_eq!(
+            err.to_string(),
+            "database connection failed: file not found"
+        );
 
         let err = StoreError::QueryFailed {
             reason: "no such table: nodes".to_string(),
@@ -330,10 +341,7 @@ mod tests {
         let err = McpError::ProtocolError {
             reason: "invalid JSON-RPC request".to_string(),
         };
-        assert_eq!(
-            err.to_string(),
-            "protocol error: invalid JSON-RPC request"
-        );
+        assert_eq!(err.to_string(), "protocol error: invalid JSON-RPC request");
 
         let err = McpError::DispatchError {
             reason: "unknown tool: foo_bar".to_string(),

@@ -1,9 +1,9 @@
 ---
 title: "Configuration"
-description: "Configure Cortex behavior through cortex.toml and environment variables."
+description: "Configure Cortex behavior through cortex.toml, pricing.toml, and environment variables."
 order: 5
 category: "reference"
-lastModified: "2025-01-15"
+lastModified: "2025-07-14"
 ---
 
 # Configuration
@@ -78,3 +78,65 @@ By default, Cortex stores everything in `.cortex/` relative to the repository ro
 - Semantic search model files (if enabled)
 
 Add `.cortex/` to your `.gitignore`. The `cortex.json` bundle file is the exception: you can commit it to share the graph with teammates who do not want to re-index locally.
+
+## Model pricing
+
+Cortex can report token cost estimates for different LLM providers. Configure pricing in `~/.cortex/pricing.toml`:
+
+```toml
+[[models]]
+pattern = "claude-sonnet-4"
+input_cost_per_million = 3.0
+output_cost_per_million = 15.0
+
+[[models]]
+pattern = "gpt-5-4"
+input_cost_per_million = 2.5
+output_cost_per_million = 15.0
+
+[[models]]
+pattern = "gpt-4o"
+input_cost_per_million = 2.5
+output_cost_per_million = 10.0
+
+[[models]]
+pattern = "gemini-2-5-pro"
+input_cost_per_million = 1.0
+output_cost_per_million = 10.0
+```
+
+Each entry has three fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pattern` | string | Prefix pattern for model name matching |
+| `input_cost_per_million` | float | USD cost per 1M input tokens |
+| `output_cost_per_million` | float | USD cost per 1M output tokens |
+
+When multiple patterns match a model name, Cortex uses the longest (most specific) prefix. For example, `gpt-4o-mini-2026` matches both `gpt-4o` and `gpt-4o-mini`, but the longer pattern wins.
+
+If `~/.cortex/pricing.toml` does not exist, Cortex uses built-in defaults for common models. If the file contains invalid TOML, Cortex logs a warning and falls back to defaults.
+
+## Ego-graph capping
+
+When querying the ego-graph (subgraph centered on a node), Cortex caps results at 500 nodes to keep visualizations performant and responses compact.
+
+Priority ordering when the cap is reached:
+
+1. Nodes closer to the center (lower BFS depth) are included first
+2. Within the same depth, nodes with more callers are prioritized
+
+The response includes `truncated: true` and `total_reachable` count when the cap is applied, so you know how much of the graph was omitted.
+
+## Update checking
+
+When `update_check = true` (the default), Cortex checks for new versions on startup by comparing the local version against the latest GitHub Release tag. The check has a 3-second timeout and runs without blocking normal operation.
+
+If a newer version is available, Cortex prints a notification to stderr with the update command:
+
+```
+Update available: v1.0.0 -> v1.0.3
+Run: npx @1337xcode/cortex install
+```
+
+If the network request fails or times out, Cortex continues silently.

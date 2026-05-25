@@ -283,9 +283,11 @@ pub fn trace_callers(
 
     // Sort by call_count descending, then confidence descending as tiebreaker
     results.sort_by(|a, b| {
-        b.call_count
-            .cmp(&a.call_count)
-            .then_with(|| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+        b.call_count.cmp(&a.call_count).then_with(|| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
     Ok(results)
@@ -347,9 +349,11 @@ pub fn trace_callees(
 
     // Sort by call_count descending, then confidence descending as tiebreaker
     results.sort_by(|a, b| {
-        b.call_count
-            .cmp(&a.call_count)
-            .then_with(|| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+        b.call_count.cmp(&a.call_count).then_with(|| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
     Ok(results)
@@ -359,9 +363,7 @@ pub fn trace_callees(
 pub fn get_architecture_summary(conn: &Connection) -> Result<ArchitectureSummary, StoreError> {
     // Total nodes
     let total_nodes: usize = conn
-        .query_row("SELECT COUNT(*) FROM nodes", [], |row| {
-            row.get::<_, i64>(0)
-        })
+        .query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get::<_, i64>(0))
         .map_err(|e| StoreError::QueryFailed {
             reason: format!("failed to count nodes: {}", e),
         })? as usize;
@@ -413,9 +415,7 @@ pub fn get_architecture_summary(conn: &Connection) -> Result<ArchitectureSummary
 
     // Entry points: Route nodes + nodes with "main" in FQN
     let mut stmt = conn
-        .prepare(
-            "SELECT fqn FROM nodes WHERE kind = 'Route' OR fqn LIKE '%main%' ORDER BY fqn",
-        )
+        .prepare("SELECT fqn FROM nodes WHERE kind = 'Route' OR fqn LIKE '%main%' ORDER BY fqn")
         .map_err(|e| StoreError::QueryFailed {
             reason: format!("failed to prepare entry_points: {}", e),
         })?;
@@ -446,10 +446,7 @@ pub fn get_architecture_summary(conn: &Connection) -> Result<ArchitectureSummary
 }
 
 /// Detect languages from file extensions in the database.
-fn detect_languages(
-    _modules: &[String],
-    conn: &Connection,
-) -> Vec<String> {
+fn detect_languages(_modules: &[String], conn: &Connection) -> Vec<String> {
     let mut stmt = conn
         .prepare(
             "SELECT DISTINCT \
@@ -586,11 +583,7 @@ pub fn find_dead_code(conn: &Connection, limit: usize) -> Result<Vec<Node>, Stor
 /// (BFS over inbound edges of all kinds).
 ///
 /// Depth is capped at 5 (MAX_TRAVERSAL_DEPTH).
-pub fn blast_radius(
-    conn: &Connection,
-    fqn: &str,
-    depth: u32,
-) -> Result<Vec<Node>, StoreError> {
+pub fn blast_radius(conn: &Connection, fqn: &str, depth: u32) -> Result<Vec<Node>, StoreError> {
     let effective_depth = depth.min(crate::config::MAX_TRAVERSAL_DEPTH);
 
     let mut stmt = conn
@@ -629,6 +622,7 @@ pub fn blast_radius(
 fn serialize_node_kind(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::Function => "Function",
+        NodeKind::Method => "Method",
         NodeKind::Class => "Class",
         NodeKind::Module => "Module",
         NodeKind::Route => "Route",
@@ -660,7 +654,6 @@ impl<T> OptionalExt<T> for Result<T, rusqlite::Error> {
         }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -915,7 +908,13 @@ mod tests {
         insert_node(&conn, "src/a.rs::foo", "Function", "src/a.rs", 1);
         insert_node(&conn, "src/a.rs::bar", "Function", "src/a.rs", 20);
         insert_node(&conn, "src/b.rs::MyClass", "Class", "src/b.rs", 1);
-        insert_node(&conn, "routes/api.rs::get_users", "Route", "routes/api.rs", 1);
+        insert_node(
+            &conn,
+            "routes/api.rs::get_users",
+            "Route",
+            "routes/api.rs",
+            1,
+        );
 
         let summary = get_architecture_summary(&conn).unwrap();
         assert_eq!(summary.total_nodes, 4);
@@ -939,13 +938,31 @@ mod tests {
     fn test_architecture_summary_entry_points() {
         let conn = setup_db();
         insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", 1);
-        insert_node(&conn, "src/routes.rs::get_users", "Route", "src/routes.rs", 1);
+        insert_node(
+            &conn,
+            "src/routes.rs::get_users",
+            "Route",
+            "src/routes.rs",
+            1,
+        );
         insert_node(&conn, "src/lib.rs::helper", "Function", "src/lib.rs", 1);
 
         let summary = get_architecture_summary(&conn).unwrap();
-        assert!(summary.entry_points.contains(&"src/main.rs::main".to_string()));
-        assert!(summary.entry_points.contains(&"src/routes.rs::get_users".to_string()));
-        assert!(!summary.entry_points.contains(&"src/lib.rs::helper".to_string()));
+        assert!(
+            summary
+                .entry_points
+                .contains(&"src/main.rs::main".to_string())
+        );
+        assert!(
+            summary
+                .entry_points
+                .contains(&"src/routes.rs::get_users".to_string())
+        );
+        assert!(
+            !summary
+                .entry_points
+                .contains(&"src/lib.rs::helper".to_string())
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -960,7 +977,13 @@ mod tests {
         insert_node(&conn, "src/c.rs::caller", "Function", "src/c.rs", 1);
 
         // caller -> used_func (so used_func is NOT dead)
-        insert_edge(&conn, "src/c.rs::caller", "src/a.rs::used_func", "Calls", 1.0);
+        insert_edge(
+            &conn,
+            "src/c.rs::caller",
+            "src/a.rs::used_func",
+            "Calls",
+            1.0,
+        );
 
         let dead = find_dead_code(&conn, 100).unwrap();
         let dead_fqns: Vec<&str> = dead.iter().map(|n| n.fqn.as_str()).collect();
@@ -975,7 +998,13 @@ mod tests {
     #[test]
     fn test_find_dead_code_excludes_routes() {
         let conn = setup_db();
-        insert_node(&conn, "src/routes.rs::get_users", "Route", "src/routes.rs", 1);
+        insert_node(
+            &conn,
+            "src/routes.rs::get_users",
+            "Route",
+            "src/routes.rs",
+            1,
+        );
         insert_node(&conn, "src/lib.rs::orphan", "Function", "src/lib.rs", 1);
 
         let dead = find_dead_code(&conn, 100).unwrap();
@@ -990,7 +1019,13 @@ mod tests {
     fn test_find_dead_code_excludes_main_and_test() {
         let conn = setup_db();
         insert_node(&conn, "src/main.rs::main", "Function", "src/main.rs", 1);
-        insert_node(&conn, "tests/test_foo.rs::test_it", "Function", "tests/test_foo.rs", 1);
+        insert_node(
+            &conn,
+            "tests/test_foo.rs::test_it",
+            "Function",
+            "tests/test_foo.rs",
+            1,
+        );
         insert_node(&conn, "src/lib.rs::orphan", "Function", "src/lib.rs", 1);
 
         let dead = find_dead_code(&conn, 100).unwrap();
@@ -1064,11 +1099,29 @@ mod tests {
         let conn = setup_db();
         insert_node(&conn, "src/base.rs::Base", "Class", "src/base.rs", 1);
         insert_node(&conn, "src/child.rs::Child", "Class", "src/child.rs", 1);
-        insert_node(&conn, "src/user.rs::use_child", "Function", "src/user.rs", 1);
+        insert_node(
+            &conn,
+            "src/user.rs::use_child",
+            "Function",
+            "src/user.rs",
+            1,
+        );
 
         // Child inherits Base, use_child calls Child
-        insert_edge(&conn, "src/child.rs::Child", "src/base.rs::Base", "Inherits", 1.0);
-        insert_edge(&conn, "src/user.rs::use_child", "src/child.rs::Child", "Calls", 1.0);
+        insert_edge(
+            &conn,
+            "src/child.rs::Child",
+            "src/base.rs::Base",
+            "Inherits",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/user.rs::use_child",
+            "src/child.rs::Child",
+            "Calls",
+            1.0,
+        );
 
         // Blast radius of Base: Child depends on it (Inherits), use_child depends on Child
         let radius = blast_radius(&conn, "src/base.rs::Base", 5).unwrap();
@@ -1122,27 +1175,75 @@ mod tests {
         let conn = setup_db();
 
         // Create a target node and several callers with different inbound edge counts
-        insert_node(&conn, "src/target.rs::target", "Function", "src/target.rs", 1);
-        insert_node(&conn, "src/popular.rs::popular", "Function", "src/popular.rs", 1);
+        insert_node(
+            &conn,
+            "src/target.rs::target",
+            "Function",
+            "src/target.rs",
+            1,
+        );
+        insert_node(
+            &conn,
+            "src/popular.rs::popular",
+            "Function",
+            "src/popular.rs",
+            1,
+        );
         insert_node(&conn, "src/rare.rs::rare", "Function", "src/rare.rs", 1);
-        insert_node(&conn, "src/medium.rs::medium", "Function", "src/medium.rs", 1);
+        insert_node(
+            &conn,
+            "src/medium.rs::medium",
+            "Function",
+            "src/medium.rs",
+            1,
+        );
 
         // All three call target
-        insert_edge(&conn, "src/popular.rs::popular", "src/target.rs::target", "Calls", 1.0);
-        insert_edge(&conn, "src/rare.rs::rare", "src/target.rs::target", "Calls", 1.0);
-        insert_edge(&conn, "src/medium.rs::medium", "src/target.rs::target", "Calls", 1.0);
+        insert_edge(
+            &conn,
+            "src/popular.rs::popular",
+            "src/target.rs::target",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/rare.rs::rare",
+            "src/target.rs::target",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/medium.rs::medium",
+            "src/target.rs::target",
+            "Calls",
+            1.0,
+        );
 
         // Make "popular" heavily called by many other nodes (5 callers)
         for i in 0..5 {
             let caller_fqn = format!("src/caller{}.rs::caller{}", i, i);
-            insert_node(&conn, &caller_fqn, "Function", &format!("src/caller{}.rs", i), 1);
+            insert_node(
+                &conn,
+                &caller_fqn,
+                "Function",
+                &format!("src/caller{}.rs", i),
+                1,
+            );
             insert_edge(&conn, &caller_fqn, "src/popular.rs::popular", "Calls", 1.0);
         }
 
         // Make "medium" moderately called (2 callers)
         for i in 0..2 {
             let caller_fqn = format!("src/med_caller{}.rs::med_caller{}", i, i);
-            insert_node(&conn, &caller_fqn, "Function", &format!("src/med_caller{}.rs", i), 1);
+            insert_node(
+                &conn,
+                &caller_fqn,
+                "Function",
+                &format!("src/med_caller{}.rs", i),
+                1,
+            );
             insert_edge(&conn, &caller_fqn, "src/medium.rs::medium", "Calls", 1.0);
         }
 
@@ -1170,18 +1271,48 @@ mod tests {
         let conn = setup_db();
 
         // Create a source node and several callees with different inbound edge counts
-        insert_node(&conn, "src/source.rs::source", "Function", "src/source.rs", 1);
+        insert_node(
+            &conn,
+            "src/source.rs::source",
+            "Function",
+            "src/source.rs",
+            1,
+        );
         insert_node(&conn, "src/hot.rs::hot_func", "Function", "src/hot.rs", 1);
-        insert_node(&conn, "src/cold.rs::cold_func", "Function", "src/cold.rs", 1);
+        insert_node(
+            &conn,
+            "src/cold.rs::cold_func",
+            "Function",
+            "src/cold.rs",
+            1,
+        );
 
         // source calls both hot_func and cold_func
-        insert_edge(&conn, "src/source.rs::source", "src/hot.rs::hot_func", "Calls", 1.0);
-        insert_edge(&conn, "src/source.rs::source", "src/cold.rs::cold_func", "Calls", 1.0);
+        insert_edge(
+            &conn,
+            "src/source.rs::source",
+            "src/hot.rs::hot_func",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/source.rs::source",
+            "src/cold.rs::cold_func",
+            "Calls",
+            1.0,
+        );
 
         // Make hot_func heavily called by many other nodes (4 additional callers)
         for i in 0..4 {
             let caller_fqn = format!("src/user{}.rs::user{}", i, i);
-            insert_node(&conn, &caller_fqn, "Function", &format!("src/user{}.rs", i), 1);
+            insert_node(
+                &conn,
+                &caller_fqn,
+                "Function",
+                &format!("src/user{}.rs", i),
+                1,
+            );
             insert_edge(&conn, &caller_fqn, "src/hot.rs::hot_func", "Calls", 1.0);
         }
 

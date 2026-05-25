@@ -151,9 +151,14 @@ fn load_call_graph(conn: &Connection, module_path: Option<&str>) -> Result<Graph
         )
     };
 
-    let mut stmt = conn.prepare(node_sql).map_err(|e| StoreError::QueryFailed {
-        reason: format!("failed to prepare node query for community detection: {}", e),
-    })?;
+    let mut stmt = conn
+        .prepare(node_sql)
+        .map_err(|e| StoreError::QueryFailed {
+            reason: format!(
+                "failed to prepare node query for community detection: {}",
+                e
+            ),
+        })?;
 
     let rows: Vec<(String, String)> = if let Some(ref pat) = pattern {
         stmt.query_map(rusqlite::params![pat], |row| {
@@ -185,9 +190,14 @@ fn load_call_graph(conn: &Connection, module_path: Option<&str>) -> Result<Graph
 
     // Load edges (Calls and Import edges between nodes in our graph)
     let edge_sql = "SELECT source_fqn, target_fqn, confidence FROM edges WHERE kind = 'Calls' OR kind = 'Import'";
-    let mut edge_stmt = conn.prepare(edge_sql).map_err(|e| StoreError::QueryFailed {
-        reason: format!("failed to prepare edge query for community detection: {}", e),
-    })?;
+    let mut edge_stmt = conn
+        .prepare(edge_sql)
+        .map_err(|e| StoreError::QueryFailed {
+            reason: format!(
+                "failed to prepare edge query for community detection: {}",
+                e
+            ),
+        })?;
 
     let edge_rows: Vec<(String, String, f64)> = edge_stmt
         .query_map([], |row| {
@@ -249,8 +259,13 @@ fn leiden_algorithm(graph: &Graph, threshold: f64) -> Vec<usize> {
 
         // Phase 1: Local moving
         for node in 0..n {
-            let best_community =
-                find_best_community(graph, node, &assignments, num_communities, effective_threshold);
+            let best_community = find_best_community(
+                graph,
+                node,
+                &assignments,
+                num_communities,
+                effective_threshold,
+            );
 
             if best_community != assignments[node] {
                 assignments[node] = best_community;
@@ -314,7 +329,10 @@ fn find_best_community(
     let mut best_gain = 0.0;
 
     // Weight to current community (for removal calculation)
-    let ki_in_current = community_weights.get(&current_community).copied().unwrap_or(0.0);
+    let ki_in_current = community_weights
+        .get(&current_community)
+        .copied()
+        .unwrap_or(0.0);
 
     // Sum of degrees in current community (excluding this node)
     let sigma_current = community_degree_sum(graph, assignments, current_community, Some(node));
@@ -355,10 +373,10 @@ fn community_degree_sum(
     let mut sum = 0.0;
     for (i, &comm) in assignments.iter().enumerate() {
         if comm == community {
-            if let Some(excl) = exclude {
-                if i == excl {
-                    continue;
-                }
+            if let Some(excl) = exclude
+                && i == excl
+            {
+                continue;
             }
             sum += graph.weighted_degree(i);
         }
@@ -547,31 +565,125 @@ mod tests {
         let conn = setup_db();
 
         // Module A: tightly connected cluster
-        insert_node(&conn, "src/auth/login.rs::authenticate", "Function", "src/auth/login.rs");
-        insert_node(&conn, "src/auth/login.rs::validate_password", "Function", "src/auth/login.rs");
-        insert_node(&conn, "src/auth/session.rs::create_session", "Function", "src/auth/session.rs");
-        insert_node(&conn, "src/auth/session.rs::validate_session", "Function", "src/auth/session.rs");
+        insert_node(
+            &conn,
+            "src/auth/login.rs::authenticate",
+            "Function",
+            "src/auth/login.rs",
+        );
+        insert_node(
+            &conn,
+            "src/auth/login.rs::validate_password",
+            "Function",
+            "src/auth/login.rs",
+        );
+        insert_node(
+            &conn,
+            "src/auth/session.rs::create_session",
+            "Function",
+            "src/auth/session.rs",
+        );
+        insert_node(
+            &conn,
+            "src/auth/session.rs::validate_session",
+            "Function",
+            "src/auth/session.rs",
+        );
 
         // Module B: tightly connected cluster
-        insert_node(&conn, "src/db/query.rs::execute_query", "Function", "src/db/query.rs");
-        insert_node(&conn, "src/db/query.rs::prepare_statement", "Function", "src/db/query.rs");
-        insert_node(&conn, "src/db/pool.rs::get_connection", "Function", "src/db/pool.rs");
-        insert_node(&conn, "src/db/pool.rs::release_connection", "Function", "src/db/pool.rs");
+        insert_node(
+            &conn,
+            "src/db/query.rs::execute_query",
+            "Function",
+            "src/db/query.rs",
+        );
+        insert_node(
+            &conn,
+            "src/db/query.rs::prepare_statement",
+            "Function",
+            "src/db/query.rs",
+        );
+        insert_node(
+            &conn,
+            "src/db/pool.rs::get_connection",
+            "Function",
+            "src/db/pool.rs",
+        );
+        insert_node(
+            &conn,
+            "src/db/pool.rs::release_connection",
+            "Function",
+            "src/db/pool.rs",
+        );
 
         // Dense internal edges within Module A
-        insert_edge(&conn, "src/auth/login.rs::authenticate", "src/auth/login.rs::validate_password", "Calls", 1.0);
-        insert_edge(&conn, "src/auth/login.rs::authenticate", "src/auth/session.rs::create_session", "Calls", 1.0);
-        insert_edge(&conn, "src/auth/session.rs::create_session", "src/auth/session.rs::validate_session", "Calls", 1.0);
-        insert_edge(&conn, "src/auth/session.rs::validate_session", "src/auth/login.rs::validate_password", "Calls", 1.0);
+        insert_edge(
+            &conn,
+            "src/auth/login.rs::authenticate",
+            "src/auth/login.rs::validate_password",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/auth/login.rs::authenticate",
+            "src/auth/session.rs::create_session",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/auth/session.rs::create_session",
+            "src/auth/session.rs::validate_session",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/auth/session.rs::validate_session",
+            "src/auth/login.rs::validate_password",
+            "Calls",
+            1.0,
+        );
 
         // Dense internal edges within Module B
-        insert_edge(&conn, "src/db/query.rs::execute_query", "src/db/query.rs::prepare_statement", "Calls", 1.0);
-        insert_edge(&conn, "src/db/query.rs::execute_query", "src/db/pool.rs::get_connection", "Calls", 1.0);
-        insert_edge(&conn, "src/db/pool.rs::get_connection", "src/db/pool.rs::release_connection", "Calls", 1.0);
-        insert_edge(&conn, "src/db/query.rs::prepare_statement", "src/db/pool.rs::get_connection", "Calls", 1.0);
+        insert_edge(
+            &conn,
+            "src/db/query.rs::execute_query",
+            "src/db/query.rs::prepare_statement",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/db/query.rs::execute_query",
+            "src/db/pool.rs::get_connection",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/db/pool.rs::get_connection",
+            "src/db/pool.rs::release_connection",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/db/query.rs::prepare_statement",
+            "src/db/pool.rs::get_connection",
+            "Calls",
+            1.0,
+        );
 
         // One weak cross-module edge
-        insert_edge(&conn, "src/auth/login.rs::authenticate", "src/db/query.rs::execute_query", "Calls", 0.5);
+        insert_edge(
+            &conn,
+            "src/auth/login.rs::authenticate",
+            "src/db/query.rs::execute_query",
+            "Calls",
+            0.5,
+        );
 
         let result = detect_communities(&conn, None, 0.5).unwrap();
 
@@ -580,7 +692,11 @@ mod tests {
             result.communities.len() >= 2,
             "Expected ≥2 communities, got {}. Communities: {:?}",
             result.communities.len(),
-            result.communities.iter().map(|c| (&c.files, c.node_count)).collect::<Vec<_>>()
+            result
+                .communities
+                .iter()
+                .map(|c| (&c.files, c.node_count))
+                .collect::<Vec<_>>()
         );
 
         // Verify community structure
@@ -589,18 +705,42 @@ mod tests {
 
         // At least one community should have external edges (the cross-module call)
         let has_external = result.communities.iter().any(|c| c.external_edges > 0);
-        assert!(has_external, "Expected at least one community with external edges");
+        assert!(
+            has_external,
+            "Expected at least one community with external edges"
+        );
     }
 
     #[test]
     fn test_module_path_filter() {
         let conn = setup_db();
 
-        insert_node(&conn, "src/auth/login.rs::authenticate", "Function", "src/auth/login.rs");
-        insert_node(&conn, "src/auth/login.rs::validate", "Function", "src/auth/login.rs");
-        insert_node(&conn, "src/db/query.rs::execute", "Function", "src/db/query.rs");
+        insert_node(
+            &conn,
+            "src/auth/login.rs::authenticate",
+            "Function",
+            "src/auth/login.rs",
+        );
+        insert_node(
+            &conn,
+            "src/auth/login.rs::validate",
+            "Function",
+            "src/auth/login.rs",
+        );
+        insert_node(
+            &conn,
+            "src/db/query.rs::execute",
+            "Function",
+            "src/db/query.rs",
+        );
 
-        insert_edge(&conn, "src/auth/login.rs::authenticate", "src/auth/login.rs::validate", "Calls", 1.0);
+        insert_edge(
+            &conn,
+            "src/auth/login.rs::authenticate",
+            "src/auth/login.rs::validate",
+            "Calls",
+            1.0,
+        );
 
         // Filter to only auth module
         let result = detect_communities(&conn, Some("src/auth"), 0.5).unwrap();
@@ -628,11 +768,29 @@ mod tests {
         insert_node(&conn, "src/b.rs::func_b2", "Function", "src/b.rs");
 
         // Internal edges
-        insert_edge(&conn, "src/a.rs::func_a1", "src/a.rs::func_a2", "Calls", 1.0);
-        insert_edge(&conn, "src/b.rs::func_b1", "src/b.rs::func_b2", "Calls", 1.0);
+        insert_edge(
+            &conn,
+            "src/a.rs::func_a1",
+            "src/a.rs::func_a2",
+            "Calls",
+            1.0,
+        );
+        insert_edge(
+            &conn,
+            "src/b.rs::func_b1",
+            "src/b.rs::func_b2",
+            "Calls",
+            1.0,
+        );
 
         // Cross-edge
-        insert_edge(&conn, "src/a.rs::func_a1", "src/b.rs::func_b1", "Calls", 0.3);
+        insert_edge(
+            &conn,
+            "src/a.rs::func_a1",
+            "src/b.rs::func_b1",
+            "Calls",
+            0.3,
+        );
 
         let result = detect_communities(&conn, None, 0.5).unwrap();
 
@@ -642,7 +800,10 @@ mod tests {
                 .communities
                 .iter()
                 .any(|c| !c.suggested_api_surface.is_empty());
-            assert!(has_api_surface, "Expected at least one community with API surface");
+            assert!(
+                has_api_surface,
+                "Expected at least one community with API surface"
+            );
         }
     }
 }

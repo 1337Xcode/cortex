@@ -485,7 +485,10 @@ mod tests {
     #[test]
     fn test_parse_bundle_export() {
         let cli = Cli::try_parse_from(["cortex", "bundle", "export"]).unwrap();
-        assert!(matches!(cli.command, Command::Bundle(BundleCommand::Export { .. })));
+        assert!(matches!(
+            cli.command,
+            Command::Bundle(BundleCommand::Export { .. })
+        ));
     }
 
     #[test]
@@ -512,7 +515,15 @@ mod tests {
 
     #[test]
     fn test_parse_query_callers() {
-        let cli = Cli::try_parse_from(["cortex", "query", "callers", "src/main.rs::main", "--depth", "5"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "cortex",
+            "query",
+            "callers",
+            "src/main.rs::main",
+            "--depth",
+            "5",
+        ])
+        .unwrap();
         match cli.command {
             Command::Query(QueryCommand::Callers { fqn, depth }) => {
                 assert_eq!(fqn, "src/main.rs::main");
@@ -536,7 +547,15 @@ mod tests {
 
     #[test]
     fn test_parse_query_callees() {
-        let cli = Cli::try_parse_from(["cortex", "query", "callees", "src/main.rs::main", "--depth", "2"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "cortex",
+            "query",
+            "callees",
+            "src/main.rs::main",
+            "--depth",
+            "2",
+        ])
+        .unwrap();
         match cli.command {
             Command::Query(QueryCommand::Callees { fqn, depth }) => {
                 assert_eq!(fqn, "src/main.rs::main");
@@ -548,9 +567,16 @@ mod tests {
 
     #[test]
     fn test_parse_query_find() {
-        let cli = Cli::try_parse_from(["cortex", "query", "find", "process*", "--kind", "Function", "--limit", "10"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "cortex", "query", "find", "process*", "--kind", "Function", "--limit", "10",
+        ])
+        .unwrap();
         match cli.command {
-            Command::Query(QueryCommand::Find { pattern, kind, limit }) => {
+            Command::Query(QueryCommand::Find {
+                pattern,
+                kind,
+                limit,
+            }) => {
                 assert_eq!(pattern, "process*");
                 assert_eq!(kind, Some("Function".to_string()));
                 assert_eq!(limit, 10);
@@ -563,7 +589,11 @@ mod tests {
     fn test_parse_query_find_defaults() {
         let cli = Cli::try_parse_from(["cortex", "query", "find", "main"]).unwrap();
         match cli.command {
-            Command::Query(QueryCommand::Find { pattern, kind, limit }) => {
+            Command::Query(QueryCommand::Find {
+                pattern,
+                kind,
+                limit,
+            }) => {
                 assert_eq!(pattern, "main");
                 assert!(kind.is_none());
                 assert_eq!(limit, 50);
@@ -575,7 +605,10 @@ mod tests {
     #[test]
     fn test_parse_query_architecture() {
         let cli = Cli::try_parse_from(["cortex", "query", "architecture"]).unwrap();
-        assert!(matches!(cli.command, Command::Query(QueryCommand::Architecture)));
+        assert!(matches!(
+            cli.command,
+            Command::Query(QueryCommand::Architecture)
+        ));
     }
 
     #[test]
@@ -591,7 +624,15 @@ mod tests {
 
     #[test]
     fn test_parse_query_blast_radius() {
-        let cli = Cli::try_parse_from(["cortex", "query", "blast-radius", "src/db.rs::connect", "--depth", "4"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "cortex",
+            "query",
+            "blast-radius",
+            "src/db.rs::connect",
+            "--depth",
+            "4",
+        ])
+        .unwrap();
         match cli.command {
             Command::Query(QueryCommand::BlastRadius { fqn, depth }) => {
                 assert_eq!(fqn, "src/db.rs::connect");
@@ -627,19 +668,28 @@ mod tests {
     #[test]
     fn test_parse_security_scan() {
         let cli = Cli::try_parse_from(["cortex", "security", "scan"]).unwrap();
-        assert!(matches!(cli.command, Command::Security(SecurityCommand::Scan)));
+        assert!(matches!(
+            cli.command,
+            Command::Security(SecurityCommand::Scan)
+        ));
     }
 
     #[test]
     fn test_parse_security_sbom() {
         let cli = Cli::try_parse_from(["cortex", "security", "sbom"]).unwrap();
-        assert!(matches!(cli.command, Command::Security(SecurityCommand::Sbom)));
+        assert!(matches!(
+            cli.command,
+            Command::Security(SecurityCommand::Sbom)
+        ));
     }
 
     #[test]
     fn test_parse_security_vulns() {
         let cli = Cli::try_parse_from(["cortex", "security", "vulns"]).unwrap();
-        assert!(matches!(cli.command, Command::Security(SecurityCommand::Vulns)));
+        assert!(matches!(
+            cli.command,
+            Command::Security(SecurityCommand::Vulns)
+        ));
     }
 
     #[test]
@@ -674,19 +724,28 @@ mod tests {
     #[test]
     fn test_parse_semantic_enable() {
         let cli = Cli::try_parse_from(["cortex", "semantic", "enable"]).unwrap();
-        assert!(matches!(cli.command, Command::Semantic(SemanticCommand::Enable)));
+        assert!(matches!(
+            cli.command,
+            Command::Semantic(SemanticCommand::Enable)
+        ));
     }
 
     #[test]
     fn test_parse_semantic_disable() {
         let cli = Cli::try_parse_from(["cortex", "semantic", "disable"]).unwrap();
-        assert!(matches!(cli.command, Command::Semantic(SemanticCommand::Disable)));
+        assert!(matches!(
+            cli.command,
+            Command::Semantic(SemanticCommand::Disable)
+        ));
     }
 
     #[test]
     fn test_parse_semantic_status() {
         let cli = Cli::try_parse_from(["cortex", "semantic", "status"]).unwrap();
-        assert!(matches!(cli.command, Command::Semantic(SemanticCommand::Status)));
+        assert!(matches!(
+            cli.command,
+            Command::Semantic(SemanticCommand::Status)
+        ));
     }
 
     #[test]
@@ -704,25 +763,45 @@ mod tests {
     #[test]
     fn test_parse_cursor_install() {
         let cli = Cli::try_parse_from(["cortex", "cursor", "install"]).unwrap();
-        assert!(matches!(cli.command, Command::Cursor { action: CursorCommand::Install }));
+        assert!(matches!(
+            cli.command,
+            Command::Cursor {
+                action: CursorCommand::Install
+            }
+        ));
     }
 
     #[test]
     fn test_parse_vscode_install() {
         let cli = Cli::try_parse_from(["cortex", "vscode", "install"]).unwrap();
-        assert!(matches!(cli.command, Command::Vscode { action: VscodeCommand::Install }));
+        assert!(matches!(
+            cli.command,
+            Command::Vscode {
+                action: VscodeCommand::Install
+            }
+        ));
     }
 
     #[test]
     fn test_parse_kiro_install() {
         let cli = Cli::try_parse_from(["cortex", "kiro", "install"]).unwrap();
-        assert!(matches!(cli.command, Command::Kiro { action: KiroCommand::Install }));
+        assert!(matches!(
+            cli.command,
+            Command::Kiro {
+                action: KiroCommand::Install
+            }
+        ));
     }
 
     #[test]
     fn test_parse_antigravity_install() {
         let cli = Cli::try_parse_from(["cortex", "antigravity", "install"]).unwrap();
-        assert!(matches!(cli.command, Command::Antigravity { action: AntigravityCommand::Install }));
+        assert!(matches!(
+            cli.command,
+            Command::Antigravity {
+                action: AntigravityCommand::Install
+            }
+        ));
     }
 
     #[test]

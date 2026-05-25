@@ -14,7 +14,12 @@ use crate::store::types::{Edge, EdgeKind, ExtractionResult, Node, NodeKind};
 /// Estimate the end line of a block starting at `start_byte` in `source` by
 /// counting brace depth.  Returns the 1-based line number of the closing `}`.
 /// Falls back to `start_line + fallback_offset` when no matching brace is found.
-fn estimate_end_line(source: &str, start_byte: usize, start_line: u32, fallback_offset: u32) -> u32 {
+fn estimate_end_line(
+    source: &str,
+    start_byte: usize,
+    start_line: u32,
+    fallback_offset: u32,
+) -> u32 {
     let slice = &source[start_byte..];
     let mut depth: i32 = 0;
     let mut found_open = false;
@@ -50,9 +55,7 @@ fn estimate_complexity_perl(source: &str, start_byte: usize, end_byte: usize) ->
     let body = &source[start_byte..end];
     let mut complexity: u32 = 1; // base
 
-    let decision_re = Regex::new(
-        r"\b(if|elsif|unless|while|until|for|foreach|when)\b"
-    ).unwrap();
+    let decision_re = Regex::new(r"\b(if|elsif|unless|while|until|for|foreach|when)\b").unwrap();
     complexity += decision_re.find_iter(body).count() as u32;
 
     // Count logical operators
@@ -97,7 +100,11 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
         let match_start = caps.get(0).unwrap().start();
         let line = source[..match_start].matches('\n').count() as u32 + 1;
         let end_line = estimate_end_line(source, match_start, line, 5);
-        let end_byte = source.lines().take(end_line as usize).map(|l| l.len() + 1).sum::<usize>();
+        let end_byte = source
+            .lines()
+            .take(end_line as usize)
+            .map(|l| l.len() + 1)
+            .sum::<usize>();
         let complexity = estimate_complexity_perl(source, match_start, end_byte);
         let attributes = if attr == "method" {
             json!({"method_attribute": true, "complexity": complexity})
@@ -141,23 +148,23 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     //    emit a Class node for the package.
     // -----------------------------------------------------------------------
     let moose_re = Regex::new(r"(?m)^\s*use\s+(Moose|Moo|Mouse)\b").unwrap();
-    if moose_re.is_match(source) {
-        if let Some(pkg_caps) = package_re.captures(source) {
-            let pkg_name = pkg_caps.get(1).unwrap().as_str();
-            let match_start = pkg_caps.get(0).unwrap().start();
-            let line = source[..match_start].matches('\n').count() as u32 + 1;
-            let end_line = estimate_end_line(source, match_start, line, 50);
-            nodes.push(Node {
-                fqn: format!("{}::{}::__class__", file, pkg_name),
-                kind: NodeKind::Class,
-                file: file.to_string(),
-                start_line: line,
-                end_line,
-                file_hash: String::new(),
-                indexed_at: 0,
-                attributes: json!({"moose": true, "package": pkg_name}),
-            });
-        }
+    if moose_re.is_match(source)
+        && let Some(pkg_caps) = package_re.captures(source)
+    {
+        let pkg_name = pkg_caps.get(1).unwrap().as_str();
+        let match_start = pkg_caps.get(0).unwrap().start();
+        let line = source[..match_start].matches('\n').count() as u32 + 1;
+        let end_line = estimate_end_line(source, match_start, line, 50);
+        nodes.push(Node {
+            fqn: format!("{}::{}::__class__", file, pkg_name),
+            kind: NodeKind::Class,
+            file: file.to_string(),
+            start_line: line,
+            end_line,
+            file_hash: String::new(),
+            indexed_at: 0,
+            attributes: json!({"moose": true, "package": pkg_name}),
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -204,9 +211,9 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     // 7. Inheritance via @ISA: our @ISA = ('Base');
     // -----------------------------------------------------------------------
     let isa_re = Regex::new(r#"(?m)@ISA\s*=\s*\(([^)]+)\)"#).unwrap();
+    let base_re = Regex::new(r#"['"](\w[\w:]*)['"]"#).unwrap();
     for caps in isa_re.captures_iter(source) {
         let bases_str = caps.get(1).unwrap().as_str();
-        let base_re = Regex::new(r#"['"](\w[\w:]*)['"]"#).unwrap();
         for base_caps in base_re.captures_iter(bases_str) {
             let base = base_caps.get(1).unwrap().as_str();
             edges.push(Edge {
@@ -239,13 +246,15 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
                     });
                 }
             }
-            "strict" | "warnings" | "utf8" | "feature" | "lib" | "constant"
-            | "Moose" | "Moo" | "Mouse" => {
+            "strict" | "warnings" | "utf8" | "feature" | "lib" | "constant" | "Moose" | "Moo"
+            | "Mouse" => {
                 // Skip pragmas and OOP frameworks (handled separately)
             }
             _ => {
                 // Skip version strings like v5.10
-                if target.starts_with('v') && target[1..].chars().all(|c| c.is_ascii_digit() || c == '.') {
+                if target.starts_with('v')
+                    && target[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
+                {
                     // version pragma, skip
                 } else {
                     edges.push(Edge {
@@ -314,13 +323,15 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
     // -----------------------------------------------------------------------
     let call_re = Regex::new(r"(?m)\b([a-zA-Z_]\w*)\s*\(").unwrap();
     let perl_keywords: std::collections::HashSet<&str> = [
-        "if", "elsif", "else", "unless", "while", "until", "for", "foreach",
-        "do", "sub", "my", "our", "local", "return", "use", "require",
-        "package", "BEGIN", "END", "eval", "die", "warn", "print", "say",
-        "open", "close", "chomp", "chop", "push", "pop", "shift", "unshift",
-        "splice", "grep", "map", "sort", "join", "split", "defined", "exists",
-        "delete", "ref", "bless", "new", "has", "extends", "with",
-    ].iter().copied().collect();
+        "if", "elsif", "else", "unless", "while", "until", "for", "foreach", "do", "sub", "my",
+        "our", "local", "return", "use", "require", "package", "BEGIN", "END", "eval", "die",
+        "warn", "print", "say", "open", "close", "chomp", "chop", "push", "pop", "shift",
+        "unshift", "splice", "grep", "map", "sort", "join", "split", "defined", "exists", "delete",
+        "ref", "bless", "new", "has", "extends", "with",
+    ]
+    .iter()
+    .copied()
+    .collect();
 
     // Find function ranges for enclosing context
     let fn_ranges: Vec<(&str, u32, u32)> = nodes
@@ -395,12 +406,35 @@ sub validate {
 "#;
         let result = extract_regex("lib/MyApp/UserService.pm", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/MyApp/UserService.pm::MyApp::UserService" && n.kind == NodeKind::Module));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/MyApp/UserService.pm::new" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/MyApp/UserService.pm::find_user" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/MyApp/UserService.pm::validate" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/MyApp/UserService.pm::MyApp::UserService"
+                    && n.kind == NodeKind::Module)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/MyApp/UserService.pm::new" && n.kind == NodeKind::Function)
+        );
+        assert!(result.nodes.iter().any(
+            |n| n.fqn == "lib/MyApp/UserService.pm::find_user" && n.kind == NodeKind::Function
+        ));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/MyApp/UserService.pm::validate"
+                    && n.kind == NodeKind::Function)
+        );
 
-        let imports: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
+        let imports: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
         assert!(imports.iter().any(|e| e.target_fqn == "DBI"));
         assert!(imports.iter().any(|e| e.target_fqn == "MyApp::Config"));
         assert!(!imports.iter().any(|e| e.target_fqn == "strict"));
@@ -429,7 +463,10 @@ use constant APP_NAME => "MyApp";
 "#;
         let result = extract_regex("lib/MyApp.pm", source);
 
-        let max_size = result.nodes.iter().find(|n| n.fqn == "lib/MyApp.pm::MAX_SIZE");
+        let max_size = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "lib/MyApp.pm::MAX_SIZE");
         assert!(max_size.is_some(), "MAX_SIZE constant not found");
         assert_eq!(max_size.unwrap().kind, NodeKind::Constant);
 
@@ -437,7 +474,10 @@ use constant APP_NAME => "MyApp";
         assert!(pi.is_some(), "PI constant not found");
         assert_eq!(pi.unwrap().kind, NodeKind::Constant);
 
-        let app_name = result.nodes.iter().find(|n| n.fqn == "lib/MyApp.pm::APP_NAME");
+        let app_name = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "lib/MyApp.pm::APP_NAME");
         assert!(app_name.is_some(), "APP_NAME constant not found");
         assert_eq!(app_name.unwrap().kind, NodeKind::Constant);
     }
@@ -461,15 +501,29 @@ sub speak {
 "#;
         let result = extract_regex("lib/Animal.pm", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/Animal.pm::Animal" && n.kind == NodeKind::Module));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/Animal.pm::Animal" && n.kind == NodeKind::Module)
+        );
 
-        let class_node = result.nodes.iter().find(|n| n.kind == NodeKind::Class && n.attributes["moose"] == true);
+        let class_node = result
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Class && n.attributes["moose"] == true);
         assert!(class_node.is_some(), "Moose class node not found");
 
-        let name_attr = result.nodes.iter().find(|n| n.fqn == "lib/Animal.pm::name" && n.attributes["moose_attr"] == true);
+        let name_attr = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "lib/Animal.pm::name" && n.attributes["moose_attr"] == true);
         assert!(name_attr.is_some(), "Moose has attribute name not found");
 
-        let sound_attr = result.nodes.iter().find(|n| n.fqn == "lib/Animal.pm::sound" && n.attributes["moose_attr"] == true);
+        let sound_attr = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "lib/Animal.pm::sound" && n.attributes["moose_attr"] == true);
         assert!(sound_attr.is_some(), "Moose has attribute sound not found");
     }
 
@@ -490,8 +544,15 @@ sub bark {
 "#;
         let result = extract_regex("lib/Dog.pm", source);
 
-        let inherits: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Inherits).collect();
-        assert!(inherits.iter().any(|e| e.target_fqn == "Animal"), "Inherits edge to Animal not found");
+        let inherits: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Inherits)
+            .collect();
+        assert!(
+            inherits.iter().any(|e| e.target_fqn == "Animal"),
+            "Inherits edge to Animal not found"
+        );
     }
 
     #[test]
@@ -508,12 +569,29 @@ with 'Serializable';
 "#;
         let result = extract_regex("lib/Cat.pm", source);
 
-        let implements: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Implements).collect();
-        assert!(implements.iter().any(|e| e.target_fqn == "Printable"), "Implements edge to Printable not found");
-        assert!(implements.iter().any(|e| e.target_fqn == "Serializable"), "Implements edge to Serializable not found");
+        let implements: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Implements)
+            .collect();
+        assert!(
+            implements.iter().any(|e| e.target_fqn == "Printable"),
+            "Implements edge to Printable not found"
+        );
+        assert!(
+            implements.iter().any(|e| e.target_fqn == "Serializable"),
+            "Implements edge to Serializable not found"
+        );
 
-        let inherits: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Inherits).collect();
-        assert!(inherits.iter().any(|e| e.target_fqn == "Animal"), "Inherits edge to Animal not found");
+        let inherits: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Inherits)
+            .collect();
+        assert!(
+            inherits.iter().any(|e| e.target_fqn == "Animal"),
+            "Inherits edge to Animal not found"
+        );
     }
 
     #[test]
@@ -532,9 +610,19 @@ sub new {
 "#;
         let result = extract_regex("lib/MyClass.pm", source);
 
-        let inherits: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Inherits).collect();
-        assert!(inherits.iter().any(|e| e.target_fqn == "BaseClass"), "Inherits edge to BaseClass not found");
-        assert!(inherits.iter().any(|e| e.target_fqn == "Mixin"), "Inherits edge to Mixin not found");
+        let inherits: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Inherits)
+            .collect();
+        assert!(
+            inherits.iter().any(|e| e.target_fqn == "BaseClass"),
+            "Inherits edge to BaseClass not found"
+        );
+        assert!(
+            inherits.iter().any(|e| e.target_fqn == "Mixin"),
+            "Inherits edge to Mixin not found"
+        );
     }
 
     #[test]
@@ -556,15 +644,39 @@ use base 'Parent2';
         let result1 = extract_regex("lib/Child.pm", source);
         let result2 = extract_regex("lib/Child2.pm", source2);
 
-        let inherits1: Vec<&Edge> = result1.edges.iter().filter(|e| e.kind == EdgeKind::Inherits).collect();
-        assert!(inherits1.iter().any(|e| e.target_fqn == "Parent"), "use parent should produce Inherits edge");
+        let inherits1: Vec<&Edge> = result1
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Inherits)
+            .collect();
+        assert!(
+            inherits1.iter().any(|e| e.target_fqn == "Parent"),
+            "use parent should produce Inherits edge"
+        );
 
-        let inherits2: Vec<&Edge> = result2.edges.iter().filter(|e| e.kind == EdgeKind::Inherits).collect();
-        assert!(inherits2.iter().any(|e| e.target_fqn == "Parent2"), "use base should produce Inherits edge");
+        let inherits2: Vec<&Edge> = result2
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Inherits)
+            .collect();
+        assert!(
+            inherits2.iter().any(|e| e.target_fqn == "Parent2"),
+            "use base should produce Inherits edge"
+        );
 
-        let imports1: Vec<&Edge> = result1.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
-        assert!(!imports1.iter().any(|e| e.target_fqn == "parent"), "parent should not be an Imports edge");
-        assert!(!imports1.iter().any(|e| e.target_fqn == "Parent"), "Parent should not be an Imports edge");
+        let imports1: Vec<&Edge> = result1
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
+        assert!(
+            !imports1.iter().any(|e| e.target_fqn == "parent"),
+            "parent should not be an Imports edge"
+        );
+        assert!(
+            !imports1.iter().any(|e| e.target_fqn == "Parent"),
+            "Parent should not be an Imports edge"
+        );
     }
 
     #[test]
@@ -581,7 +693,10 @@ sub new {
 "#;
         let result = extract_regex("lib/OldStyle.pm", source);
 
-        let class_node = result.nodes.iter().find(|n| n.fqn == "lib/OldStyle.pm::OldStyle" && n.kind == NodeKind::Class);
+        let class_node = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "lib/OldStyle.pm::OldStyle" && n.kind == NodeKind::Class);
         assert!(class_node.is_some(), "bless-based Class node not found");
         assert_eq!(class_node.unwrap().attributes["bless"], true);
     }
@@ -606,14 +721,23 @@ sub plain_sub {
 "#;
         let result = extract_regex("lib/MyClass.pm", source);
 
-        let greet = result.nodes.iter().find(|n| n.fqn == "lib/MyClass.pm::greet");
+        let greet = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "lib/MyClass.pm::greet");
         assert!(greet.is_some(), "greet sub not found");
         assert_eq!(greet.unwrap().kind, NodeKind::Function);
         assert_eq!(greet.unwrap().attributes["method_attribute"], true);
 
-        let plain = result.nodes.iter().find(|n| n.fqn == "lib/MyClass.pm::plain_sub");
+        let plain = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "lib/MyClass.pm::plain_sub");
         assert!(plain.is_some(), "plain_sub not found");
-        assert_eq!(plain.unwrap().attributes["method_attribute"], serde_json::Value::Null);
+        assert_eq!(
+            plain.unwrap().attributes["method_attribute"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]
@@ -638,8 +762,10 @@ sub simple {
 
         let outer = result.nodes.iter().find(|n| n.fqn == "lib/Test.pm::outer");
         assert!(outer.is_some());
-        assert!(outer.unwrap().end_line > outer.unwrap().start_line,
-            "end_line should be greater than start_line for multi-line sub");
+        assert!(
+            outer.unwrap().end_line > outer.unwrap().start_line,
+            "end_line should be greater than start_line for multi-line sub"
+        );
 
         let simple = result.nodes.iter().find(|n| n.fqn == "lib/Test.pm::simple");
         assert!(simple.is_some());
@@ -656,9 +782,19 @@ require "some/file.pl";
 "#;
         let result = extract_regex("lib/MyApp.pm", source);
 
-        let imports: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
-        assert!(imports.iter().any(|e| e.target_fqn == "Exporter"), "require Exporter not found");
-        assert!(imports.iter().any(|e| e.target_fqn == "some/file.pl"), "require file not found");
+        let imports: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
+        assert!(
+            imports.iter().any(|e| e.target_fqn == "Exporter"),
+            "require Exporter not found"
+        );
+        assert!(
+            imports.iter().any(|e| e.target_fqn == "some/file.pl"),
+            "require file not found"
+        );
     }
 
     #[test]
@@ -693,25 +829,78 @@ sub describe {
 "#;
         let result = extract_regex("lib/Zoo/Animal.pm", source);
 
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/Zoo/Animal.pm::Zoo::Animal" && n.kind == NodeKind::Module));
-        assert!(result.nodes.iter().any(|n| n.kind == NodeKind::Class && n.attributes["moose"] == true));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/Zoo/Animal.pm::species" && n.attributes["moose_attr"] == true));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/Zoo/Animal.pm::age" && n.attributes["moose_attr"] == true));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/Zoo/Animal.pm::MAX_AGE" && n.kind == NodeKind::Constant));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/Zoo/Animal.pm::DEFAULT_SOUND" && n.kind == NodeKind::Constant));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/Zoo/Animal.pm::speak" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "lib/Zoo/Animal.pm::describe" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/Zoo/Animal.pm::Zoo::Animal" && n.kind == NodeKind::Module)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.kind == NodeKind::Class && n.attributes["moose"] == true)
+        );
+        assert!(
+            result.nodes.iter().any(
+                |n| n.fqn == "lib/Zoo/Animal.pm::species" && n.attributes["moose_attr"] == true
+            )
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/Zoo/Animal.pm::age" && n.attributes["moose_attr"] == true)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/Zoo/Animal.pm::MAX_AGE" && n.kind == NodeKind::Constant)
+        );
+        assert!(
+            result.nodes.iter().any(
+                |n| n.fqn == "lib/Zoo/Animal.pm::DEFAULT_SOUND" && n.kind == NodeKind::Constant
+            )
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/Zoo/Animal.pm::speak" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "lib/Zoo/Animal.pm::describe" && n.kind == NodeKind::Function)
+        );
 
-        let speak = result.nodes.iter().find(|n| n.fqn == "lib/Zoo/Animal.pm::speak");
+        let speak = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "lib/Zoo/Animal.pm::speak");
         assert_eq!(speak.unwrap().attributes["method_attribute"], true);
 
-        let inherits: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Inherits).collect();
+        let inherits: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Inherits)
+            .collect();
         assert!(inherits.iter().any(|e| e.target_fqn == "LivingThing"));
 
-        let implements: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Implements).collect();
+        let implements: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Implements)
+            .collect();
         assert!(implements.iter().any(|e| e.target_fqn == "Nameable"));
 
-        let imports: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
+        let imports: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .collect();
         assert!(imports.iter().any(|e| e.target_fqn == "Scalar::Util"));
         assert!(imports.iter().any(|e| e.target_fqn == "List::Util"));
     }

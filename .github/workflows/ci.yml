@@ -35,11 +35,9 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
-        continue-on-error: true
 
       - name: Check formatting
         run: cargo fmt --all -- --check
-        continue-on-error: true
 
   test:
     runs-on: ubuntu-latest
@@ -70,7 +68,7 @@ jobs:
       - name: Check for UTF-8 BOM in JS/TS scripts
         shell: bash
         run: |
-          # BOM bytes: EF BB BF — fatal in Node.js scripts (breaks shebang parsing)
+          # BOM bytes: EF BB BF, fatal in Node.js scripts (breaks shebang parsing)
           BOM_FILES=$(grep -rlP '^\xEF\xBB\xBF' --include='*.js' --include='*.ts' --include='*.mjs' --include='*.cjs' . 2>/dev/null || true)
           if [ -n "$BOM_FILES" ]; then
             echo "ERROR: UTF-8 BOM detected in the following files:"

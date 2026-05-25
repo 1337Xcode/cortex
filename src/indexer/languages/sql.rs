@@ -1,4 +1,4 @@
-﻿//! SQL language extractor (regex-based).
+//! SQL language extractor (regex-based).
 //!
 //! Extracts SQL DDL constructs from SQL source code using regex patterns.
 //! Handles: CREATE TABLE, CREATE FUNCTION, CREATE OR REPLACE FUNCTION,
@@ -24,7 +24,12 @@ use crate::store::types::{Edge, EdgeKind, ExtractionResult, Node, NodeKind};
 /// back to scanning for the terminating semicolon and return that line.
 ///
 /// Falls back to `start_line + fallback_offset` when neither is found.
-fn estimate_end_line_sql(source: &str, start_byte: usize, start_line: u32, fallback_offset: u32) -> u32 {
+fn estimate_end_line_sql(
+    source: &str,
+    start_byte: usize,
+    start_line: u32,
+    fallback_offset: u32,
+) -> u32 {
     let slice = &source[start_byte..];
     let mut depth: i32 = 0;
     let mut found_begin = false;
@@ -101,9 +106,8 @@ fn estimate_complexity_sql(source: &str, start_byte: usize, end_byte: usize) -> 
     let body = &source[start_byte..end];
     let mut complexity: u32 = 1; // base
 
-    let decision_re = Regex::new(
-        r"(?i)\b(IF|ELSIF|ELSEIF|CASE|WHEN|LOOP|WHILE|FOR|EXCEPTION)\b"
-    ).unwrap();
+    let decision_re =
+        Regex::new(r"(?i)\b(IF|ELSIF|ELSEIF|CASE|WHEN|LOOP|WHILE|FOR|EXCEPTION)\b").unwrap();
     complexity += decision_re.find_iter(body).count() as u32;
 
     // Count AND/OR in WHERE clauses as additional paths
@@ -122,8 +126,9 @@ pub fn extract_sql(file: &str, source: &str) -> ExtractionResult {
     // 1. CREATE SCHEMA [IF NOT EXISTS] name  →  NodeKind::Module
     // -----------------------------------------------------------------------
     let schema_re = Regex::new(
-        r"(?im)^\s*CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:AUTHORIZATION\s+\w+\s+)?(\w+)"
-    ).unwrap();
+        r"(?im)^\s*CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:AUTHORIZATION\s+\w+\s+)?(\w+)",
+    )
+    .unwrap();
     for caps in schema_re.captures_iter(source) {
         let name = caps.get(1).unwrap().as_str();
         let match_start = caps.get(0).unwrap().start();
@@ -166,15 +171,18 @@ pub fn extract_sql(file: &str, source: &str) -> ExtractionResult {
     // -----------------------------------------------------------------------
     // 3. CREATE [OR REPLACE] FUNCTION [schema.]name  →  NodeKind::Function
     // -----------------------------------------------------------------------
-    let func_re = Regex::new(
-        r"(?im)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:\w+\.)?(\w+)"
-    ).unwrap();
+    let func_re =
+        Regex::new(r"(?im)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:\w+\.)?(\w+)").unwrap();
     for caps in func_re.captures_iter(source) {
         let name = caps.get(1).unwrap().as_str();
         let match_start = caps.get(0).unwrap().start();
         let line = source[..match_start].matches('\n').count() as u32 + 1;
         let end_line = estimate_end_line_sql(source, match_start, line, 10);
-        let end_byte = source.lines().take(end_line as usize).map(|l| l.len() + 1).sum::<usize>();
+        let end_byte = source
+            .lines()
+            .take(end_line as usize)
+            .map(|l| l.len() + 1)
+            .sum::<usize>();
         let complexity = estimate_complexity_sql(source, match_start, end_byte);
         nodes.push(Node {
             fqn: format!("{}::{}", file, name),
@@ -216,15 +224,18 @@ pub fn extract_sql(file: &str, source: &str) -> ExtractionResult {
     // -----------------------------------------------------------------------
     // 5. CREATE [OR REPLACE] PROCEDURE [schema.]name  →  NodeKind::Function
     // -----------------------------------------------------------------------
-    let proc_re = Regex::new(
-        r"(?im)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+(?:\w+\.)?(\w+)"
-    ).unwrap();
+    let proc_re =
+        Regex::new(r"(?im)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+(?:\w+\.)?(\w+)").unwrap();
     for caps in proc_re.captures_iter(source) {
         let name = caps.get(1).unwrap().as_str();
         let match_start = caps.get(0).unwrap().start();
         let line = source[..match_start].matches('\n').count() as u32 + 1;
         let end_line = estimate_end_line_sql(source, match_start, line, 10);
-        let end_byte = source.lines().take(end_line as usize).map(|l| l.len() + 1).sum::<usize>();
+        let end_byte = source
+            .lines()
+            .take(end_line as usize)
+            .map(|l| l.len() + 1)
+            .sum::<usize>();
         let complexity = estimate_complexity_sql(source, match_start, end_byte);
         nodes.push(Node {
             fqn: format!("{}::{}", file, name),
@@ -243,8 +254,9 @@ pub fn extract_sql(file: &str, source: &str) -> ExtractionResult {
     //    with trigger=true attribute
     // -----------------------------------------------------------------------
     let trigger_re = Regex::new(
-        r"(?im)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\s+(?:\w+\.)?(\w+)"
-    ).unwrap();
+        r"(?im)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\s+(?:\w+\.)?(\w+)",
+    )
+    .unwrap();
     for caps in trigger_re.captures_iter(source) {
         let name = caps.get(1).unwrap().as_str();
         let match_start = caps.get(0).unwrap().start();
@@ -268,9 +280,7 @@ pub fn extract_sql(file: &str, source: &str) -> ExtractionResult {
     //    a subquery).  We match `WITH name AS (` where the WITH is at the
     //    beginning of a line (possibly preceded by whitespace).
     // -----------------------------------------------------------------------
-    let cte_re = Regex::new(
-        r"(?im)^\s*WITH\s+(\w+)\s+AS\s*\("
-    ).unwrap();
+    let cte_re = Regex::new(r"(?im)^\s*WITH\s+(\w+)\s+AS\s*\(").unwrap();
     for caps in cte_re.captures_iter(source) {
         let name = caps.get(1).unwrap().as_str();
         let match_start = caps.get(0).unwrap().start();
@@ -292,9 +302,7 @@ pub fn extract_sql(file: &str, source: &str) -> ExtractionResult {
     // -----------------------------------------------------------------------
     // 8. Foreign key references as DataFlow edges: REFERENCES [schema.]table
     // -----------------------------------------------------------------------
-    let ref_re = Regex::new(
-        r"(?im)REFERENCES\s+(?:\w+\.)?(\w+)"
-    ).unwrap();
+    let ref_re = Regex::new(r"(?im)REFERENCES\s+(?:\w+\.)?(\w+)").unwrap();
     for caps in ref_re.captures_iter(source) {
         let target_table = caps.get(1).unwrap().as_str();
         edges.push(Edge {
@@ -313,19 +321,95 @@ pub fn extract_sql(file: &str, source: &str) -> ExtractionResult {
     // -----------------------------------------------------------------------
     let sql_call_re = Regex::new(r"(?im)\b([a-zA-Z_]\w*)\s*\(").unwrap();
     let sql_keywords: std::collections::HashSet<&str> = [
-        "select", "from", "where", "insert", "update", "delete", "create",
-        "alter", "drop", "table", "index", "view", "function", "procedure",
-        "trigger", "schema", "if", "else", "elsif", "then", "end", "begin",
-        "declare", "set", "into", "values", "returns", "return", "as",
-        "is", "or", "and", "not", "in", "exists", "between", "like",
-        "case", "when", "join", "on", "left", "right", "inner", "outer",
-        "group", "order", "having", "limit", "offset", "union", "except",
-        "intersect", "with", "recursive", "replace", "grant", "revoke",
-        "commit", "rollback", "savepoint", "constraint", "primary", "foreign",
-        "key", "references", "check", "unique", "default", "null", "cascade",
-        "count", "sum", "avg", "min", "max", "coalesce", "cast", "convert",
-        "trim", "substring", "upper", "lower", "length", "concat",
-    ].iter().copied().collect();
+        "select",
+        "from",
+        "where",
+        "insert",
+        "update",
+        "delete",
+        "create",
+        "alter",
+        "drop",
+        "table",
+        "index",
+        "view",
+        "function",
+        "procedure",
+        "trigger",
+        "schema",
+        "if",
+        "else",
+        "elsif",
+        "then",
+        "end",
+        "begin",
+        "declare",
+        "set",
+        "into",
+        "values",
+        "returns",
+        "return",
+        "as",
+        "is",
+        "or",
+        "and",
+        "not",
+        "in",
+        "exists",
+        "between",
+        "like",
+        "case",
+        "when",
+        "join",
+        "on",
+        "left",
+        "right",
+        "inner",
+        "outer",
+        "group",
+        "order",
+        "having",
+        "limit",
+        "offset",
+        "union",
+        "except",
+        "intersect",
+        "with",
+        "recursive",
+        "replace",
+        "grant",
+        "revoke",
+        "commit",
+        "rollback",
+        "savepoint",
+        "constraint",
+        "primary",
+        "foreign",
+        "key",
+        "references",
+        "check",
+        "unique",
+        "default",
+        "null",
+        "cascade",
+        "count",
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "coalesce",
+        "cast",
+        "convert",
+        "trim",
+        "substring",
+        "upper",
+        "lower",
+        "length",
+        "concat",
+    ]
+    .iter()
+    .copied()
+    .collect();
 
     // Collect declared function/procedure names
     let _declared_fns: std::collections::HashSet<String> = nodes
@@ -428,24 +512,61 @@ FOR EACH ROW EXECUTE FUNCTION update_modified_column();
         let result = extract_sql("migrations/001_schema.sql", source);
 
         // Tables → NodeKind::Type
-        assert!(result.nodes.iter().any(|n| n.fqn == "migrations/001_schema.sql::users" && n.kind == NodeKind::Type));
-        assert!(result.nodes.iter().any(|n| n.fqn == "migrations/001_schema.sql::orders" && n.kind == NodeKind::Type));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "migrations/001_schema.sql::users" && n.kind == NodeKind::Type)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "migrations/001_schema.sql::orders" && n.kind == NodeKind::Type)
+        );
 
         // Function → NodeKind::Function
-        assert!(result.nodes.iter().any(|n| n.fqn == "migrations/001_schema.sql::get_user_orders" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "migrations/001_schema.sql::get_user_orders"
+                    && n.kind == NodeKind::Function)
+        );
 
         // View → NodeKind::Class (changed from Type)
-        assert!(result.nodes.iter().any(|n| n.fqn == "migrations/001_schema.sql::active_users" && n.kind == NodeKind::Class));
+        assert!(result.nodes.iter().any(
+            |n| n.fqn == "migrations/001_schema.sql::active_users" && n.kind == NodeKind::Class
+        ));
 
         // Procedure → NodeKind::Function
-        assert!(result.nodes.iter().any(|n| n.fqn == "migrations/001_schema.sql::archive_old_orders" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "migrations/001_schema.sql::archive_old_orders"
+                    && n.kind == NodeKind::Function)
+        );
 
         // Trigger → NodeKind::Function
-        assert!(result.nodes.iter().any(|n| n.fqn == "migrations/001_schema.sql::update_timestamp" && n.kind == NodeKind::Function));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "migrations/001_schema.sql::update_timestamp"
+                    && n.kind == NodeKind::Function)
+        );
 
         // Foreign key reference edge
-        let refs: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::DataFlow).collect();
-        assert!(refs.iter().any(|e| e.target_fqn == "migrations/001_schema.sql::users"));
+        let refs: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::DataFlow)
+            .collect();
+        assert!(
+            refs.iter()
+                .any(|e| e.target_fqn == "migrations/001_schema.sql::users")
+        );
     }
 
     #[test]
@@ -467,12 +588,18 @@ CREATE SCHEMA IF NOT EXISTS reporting;
 "#;
         let result = extract_sql("db/schemas.sql", source);
 
-        let myapp = result.nodes.iter().find(|n| n.fqn == "db/schemas.sql::myapp");
+        let myapp = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "db/schemas.sql::myapp");
         assert!(myapp.is_some(), "myapp schema not found");
         assert_eq!(myapp.unwrap().kind, NodeKind::Module);
         assert_eq!(myapp.unwrap().attributes["sql_type"], "schema");
 
-        let reporting = result.nodes.iter().find(|n| n.fqn == "db/schemas.sql::reporting");
+        let reporting = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "db/schemas.sql::reporting");
         assert!(reporting.is_some(), "reporting schema not found");
         assert_eq!(reporting.unwrap().kind, NodeKind::Module);
     }
@@ -488,13 +615,19 @@ SELECT id, name, email FROM users;
 "#;
         let result = extract_sql("views.sql", source);
 
-        let active = result.nodes.iter().find(|n| n.fqn == "views.sql::active_users");
+        let active = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "views.sql::active_users");
         assert!(active.is_some(), "active_users view not found");
         assert_eq!(active.unwrap().kind, NodeKind::Class);
         assert_eq!(active.unwrap().attributes["sql_type"], "view");
         assert_eq!(active.unwrap().attributes["materialized"], false);
 
-        let summary = result.nodes.iter().find(|n| n.fqn == "views.sql::user_summary");
+        let summary = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "views.sql::user_summary");
         assert!(summary.is_some(), "user_summary view not found");
         assert_eq!(summary.unwrap().kind, NodeKind::Class);
     }
@@ -514,13 +647,22 @@ SELECT product_id, COUNT(*) AS order_count FROM order_items GROUP BY 1;
 "#;
         let result = extract_sql("materialized.sql", source);
 
-        let monthly = result.nodes.iter().find(|n| n.fqn == "materialized.sql::monthly_sales");
-        assert!(monthly.is_some(), "monthly_sales materialized view not found");
+        let monthly = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "materialized.sql::monthly_sales");
+        assert!(
+            monthly.is_some(),
+            "monthly_sales materialized view not found"
+        );
         assert_eq!(monthly.unwrap().kind, NodeKind::Class);
         assert_eq!(monthly.unwrap().attributes["materialized"], true);
         assert_eq!(monthly.unwrap().attributes["sql_type"], "view");
 
-        let stats = result.nodes.iter().find(|n| n.fqn == "materialized.sql::product_stats");
+        let stats = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "materialized.sql::product_stats");
         assert!(stats.is_some(), "product_stats materialized view not found");
         assert_eq!(stats.unwrap().attributes["materialized"], true);
     }
@@ -548,12 +690,18 @@ $$;
 "#;
         let result = extract_sql("procedures.sql", source);
 
-        let transfer = result.nodes.iter().find(|n| n.fqn == "procedures.sql::transfer_funds");
+        let transfer = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "procedures.sql::transfer_funds");
         assert!(transfer.is_some(), "transfer_funds procedure not found");
         assert_eq!(transfer.unwrap().kind, NodeKind::Function);
         assert_eq!(transfer.unwrap().attributes["sql_type"], "procedure");
 
-        let cleanup = result.nodes.iter().find(|n| n.fqn == "procedures.sql::cleanup_sessions");
+        let cleanup = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "procedures.sql::cleanup_sessions");
         assert!(cleanup.is_some(), "cleanup_sessions procedure not found");
         assert_eq!(cleanup.unwrap().kind, NodeKind::Function);
     }
@@ -576,18 +724,30 @@ FOR EACH ROW EXECUTE FUNCTION validate_balance();
 "#;
         let result = extract_sql("triggers.sql", source);
 
-        let ts_trigger = result.nodes.iter().find(|n| n.fqn == "triggers.sql::update_timestamp");
+        let ts_trigger = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "triggers.sql::update_timestamp");
         assert!(ts_trigger.is_some(), "update_timestamp trigger not found");
         assert_eq!(ts_trigger.unwrap().kind, NodeKind::Function);
         assert_eq!(ts_trigger.unwrap().attributes["sql_type"], "trigger");
         assert_eq!(ts_trigger.unwrap().attributes["trigger"], true);
 
-        let audit = result.nodes.iter().find(|n| n.fqn == "triggers.sql::audit_log");
+        let audit = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "triggers.sql::audit_log");
         assert!(audit.is_some(), "audit_log trigger not found");
         assert_eq!(audit.unwrap().attributes["trigger"], true);
 
-        let constraint_trigger = result.nodes.iter().find(|n| n.fqn == "triggers.sql::check_balance");
-        assert!(constraint_trigger.is_some(), "check_balance constraint trigger not found");
+        let constraint_trigger = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "triggers.sql::check_balance");
+        assert!(
+            constraint_trigger.is_some(),
+            "check_balance constraint trigger not found"
+        );
         assert_eq!(constraint_trigger.unwrap().kind, NodeKind::Function);
         assert_eq!(constraint_trigger.unwrap().attributes["trigger"], true);
     }
@@ -609,7 +769,10 @@ JOIN revenue_by_user r ON u.id = r.user_id;
 "#;
         let result = extract_sql("queries/report.sql", source);
 
-        let active_orders = result.nodes.iter().find(|n| n.fqn == "queries/report.sql::active_orders");
+        let active_orders = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "queries/report.sql::active_orders");
         assert!(active_orders.is_some(), "active_orders CTE not found");
         assert_eq!(active_orders.unwrap().kind, NodeKind::Function);
         assert_eq!(active_orders.unwrap().attributes["sql_type"], "cte");
@@ -640,8 +803,16 @@ SELECT COUNT(*) FROM recent_activity;
         let result = extract_sql("queries/analytics.sql", source);
 
         // Both top-level CTEs should be captured (each starts a new WITH statement)
-        assert!(result.nodes.iter().any(|n| n.fqn == "queries/analytics.sql::top_customers" && n.attributes["cte"] == true));
-        assert!(result.nodes.iter().any(|n| n.fqn == "queries/analytics.sql::recent_activity" && n.attributes["cte"] == true));
+        assert!(result.nodes.iter().any(
+            |n| n.fqn == "queries/analytics.sql::top_customers" && n.attributes["cte"] == true
+        ));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "queries/analytics.sql::recent_activity"
+                    && n.attributes["cte"] == true)
+        );
     }
 
     #[test]
@@ -661,13 +832,19 @@ $$ LANGUAGE plpgsql;
 "#;
         let result = extract_sql("functions.sql", source);
 
-        let func = result.nodes.iter().find(|n| n.fqn == "functions.sql::calculate_tax");
+        let func = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "functions.sql::calculate_tax");
         assert!(func.is_some(), "calculate_tax function not found");
         let f = func.unwrap();
         // The function spans multiple lines; end_line should be > start_line
-        assert!(f.end_line > f.start_line,
+        assert!(
+            f.end_line > f.start_line,
             "end_line ({}) should be greater than start_line ({}) for multi-line function",
-            f.end_line, f.start_line);
+            f.end_line,
+            f.start_line
+        );
     }
 
     #[test]
@@ -686,9 +863,24 @@ SELECT id, name FROM public.users;
         let result = extract_sql("schema_qualified.sql", source);
 
         // Schema-qualified names: only the unqualified name is captured
-        assert!(result.nodes.iter().any(|n| n.fqn == "schema_qualified.sql::users" && n.kind == NodeKind::Type));
-        assert!(result.nodes.iter().any(|n| n.fqn == "schema_qualified.sql::get_user" && n.kind == NodeKind::Function));
-        assert!(result.nodes.iter().any(|n| n.fqn == "schema_qualified.sql::user_stats" && n.kind == NodeKind::Class));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "schema_qualified.sql::users" && n.kind == NodeKind::Type)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "schema_qualified.sql::get_user" && n.kind == NodeKind::Function)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "schema_qualified.sql::user_stats" && n.kind == NodeKind::Class)
+        );
     }
 
     #[test]
@@ -732,31 +924,64 @@ SELECT * FROM event_summary WHERE total_events > 100;
         let result = extract_sql("analytics/setup.sql", source);
 
         // Schema
-        assert!(result.nodes.iter().any(|n| n.fqn == "analytics/setup.sql::analytics" && n.kind == NodeKind::Module));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "analytics/setup.sql::analytics" && n.kind == NodeKind::Module)
+        );
 
         // Table
-        assert!(result.nodes.iter().any(|n| n.fqn == "analytics/setup.sql::events" && n.kind == NodeKind::Type));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "analytics/setup.sql::events" && n.kind == NodeKind::Type)
+        );
 
         // Function
-        assert!(result.nodes.iter().any(|n| n.fqn == "analytics/setup.sql::track_event" && n.kind == NodeKind::Function));
+        assert!(
+            result.nodes.iter().any(
+                |n| n.fqn == "analytics/setup.sql::track_event" && n.kind == NodeKind::Function
+            )
+        );
 
         // Materialized view
-        let mv = result.nodes.iter().find(|n| n.fqn == "analytics/setup.sql::daily_events");
+        let mv = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "analytics/setup.sql::daily_events");
         assert!(mv.is_some(), "daily_events materialized view not found");
         assert_eq!(mv.unwrap().kind, NodeKind::Class);
         assert_eq!(mv.unwrap().attributes["materialized"], true);
 
         // Trigger
-        let trigger = result.nodes.iter().find(|n| n.fqn == "analytics/setup.sql::events_audit");
+        let trigger = result
+            .nodes
+            .iter()
+            .find(|n| n.fqn == "analytics/setup.sql::events_audit");
         assert!(trigger.is_some(), "events_audit trigger not found");
         assert_eq!(trigger.unwrap().kind, NodeKind::Function);
         assert_eq!(trigger.unwrap().attributes["trigger"], true);
 
         // CTE
-        assert!(result.nodes.iter().any(|n| n.fqn == "analytics/setup.sql::event_summary" && n.attributes["cte"] == true));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|n| n.fqn == "analytics/setup.sql::event_summary"
+                    && n.attributes["cte"] == true)
+        );
 
         // Foreign key reference edge
-        let refs: Vec<&Edge> = result.edges.iter().filter(|e| e.kind == EdgeKind::DataFlow).collect();
-        assert!(refs.iter().any(|e| e.target_fqn == "analytics/setup.sql::users"));
+        let refs: Vec<&Edge> = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::DataFlow)
+            .collect();
+        assert!(
+            refs.iter()
+                .any(|e| e.target_fqn == "analytics/setup.sql::users")
+        );
     }
 }
