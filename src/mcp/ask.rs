@@ -280,7 +280,7 @@ fn query_neighbors(conn: &Connection, fqn: &str) -> Vec<NeighborNode> {
         SELECT e.target_fqn, e.kind, n.kind, n.file, n.start_line, n.end_line
         FROM edges e
         JOIN nodes n ON n.fqn = e.target_fqn
-        WHERE e.source_fqn = ?1
+        WHERE e.source_fqn = ?1 AND e.confidence >= 0.7
     ";
 
     if let Ok(mut stmt) = conn.prepare(outgoing_sql)
@@ -305,7 +305,7 @@ fn query_neighbors(conn: &Connection, fqn: &str) -> Vec<NeighborNode> {
         SELECT e.source_fqn, e.kind, n.kind, n.file, n.start_line, n.end_line
         FROM edges e
         JOIN nodes n ON n.fqn = e.source_fqn
-        WHERE e.target_fqn = ?1
+        WHERE e.target_fqn = ?1 AND e.confidence >= 0.7
     ";
 
     if let Ok(mut stmt) = conn.prepare(incoming_sql)

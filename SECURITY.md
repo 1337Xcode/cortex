@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.0.x   | :white_check_mark: |
+| 1.0.x   | :white_check_mark: |
+| 0.0.x   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -54,4 +55,6 @@ Cortex is designed with the following security principles:
 3. **No code execution**: Cortex never executes code from indexed repositories
 4. **No secrets in logs**: Tracing never logs file contents, observation text, or source code
 5. **Input sanitization**: All FTS5 queries are sanitized to prevent injection
-6. **Air-gap compatible**: All features work without network access (except OSV.dev checks)
+6. **Air-gap compatible**: All features work without network access (except OSV.dev checks and `cortex update`)
+7. **SHA-256 verified updates**: `cortex update` and the npm installer verify checksums before replacing binaries
+8. **Stale binary cleanup**: Installer removes old binaries from other PATH locations to prevent version confusion

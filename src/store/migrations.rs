@@ -179,6 +179,14 @@ static EMBEDDED_MIGRATIONS: &[(&str, &str)] = &[
         "0006_add_document_kind.sql",
         include_str!("../../migrations/0006_add_document_kind.sql"),
     ),
+    (
+        "0007_token_savings.sql",
+        include_str!("../../migrations/0007_token_savings.sql"),
+    ),
+    (
+        "0008_add_method_kind.sql",
+        include_str!("../../migrations/0008_add_method_kind.sql"),
+    ),
 ];
 
 /// Run embedded migrations that are compiled into the binary.

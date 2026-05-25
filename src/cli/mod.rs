@@ -238,6 +238,9 @@ pub enum Command {
     /// Delete the graph database and perform a clean full index.
     Reindex,
 
+    /// Remove all Cortex traces (binary, database, config, PATH entries).
+    Uninstall,
+
     /// Self-update binary from GitHub releases.
     Update,
 }

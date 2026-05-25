@@ -2,6 +2,35 @@
 
 All notable changes to Cortex are documented here.
 
+## [1.0.4] - 2026-05-25
+
+### Added
+- `cortex uninstall` command: removes all Cortex traces (binary, graph DB, config, PATH entries, steering files)
+- Installer automatically removes stale cortex binaries from `~/.local/bin`, npm global, and other known locations before installing
+- Installer prepends `~/.cortex/bin` to the current session PATH so reindex uses the new binary immediately
+- Installer checks `.profile` in addition to `.bashrc`/`.zshrc` for Unix PATH configuration
+- Live visualizer (`cortex serve` at `http://127.0.0.1:9749`) now serves the clean viz.rs-style 3D graph UI
+- Dashboard page at `/dashboard` with token savings, symbol search, and tool usage table
+- Navigation between graph view and dashboard via header links
+- `Method` node kind added to SQLite CHECK constraint (fixes indexing of Python `__init__`, class methods, TS constructors)
+- CI auto-fixes formatting and clippy before checking (no more spurious failures)
+
+### Fixed
+- `get_architecture` files count now derived from distinct files in the nodes table (fixes inaccurate count when `files` table drifts from actual indexed content)
+- Old cortex binaries in `~/.local/bin` or npm global shadowing the new install (caused `cortex -V` showing wrong version after update)
+- IDE auto-detection no longer falsely detects agents from generic directories (`.github/`, `.vscode/`, `.idea/`, `.kiro/`)
+- Embedded migrations 0007 and 0008 were missing from the binary (Method kind, token savings tables)
+- Windows `setx` PATH note tells user to open a new terminal
+
+### Changed
+- HTML templates moved from `src/cli/commands/` to `src/cli/templates/` (proper structure)
+- Visualizer root (`/`) serves the viz.rs-style graph; dashboard at `/dashboard`
+- Dashboard rewritten: clean dark UI matching viz.rs aesthetic, no more janky tabbed interface
+- Removed dead `dashboard_html.html` file
+
+### Removed
+- Old tabbed unified UI (replaced by separate graph + dashboard pages)
+
 ## [1.0.3] - 2026-05-25
 
 ### Added
@@ -14,6 +43,7 @@ All notable changes to Cortex are documented here.
 - Windows x86 (`win32-ia32`) binary support in release workflow and npm installer
 
 ### Changed
+- Visualizer serves dynamic graph template (fetches `/api/nodes` and `/api/edges` at runtime) with loading state, reset button, and additional node kind badges (Method, Interface, Type)
 - Unified UI fully dark-themed (`#1e1e2e` background) with corner-positioned icon navigation replacing the nav bar
 - Hotspots table uses `overflow-x: auto` to prevent horizontal overflow
 - Statistics overlay uses CSS Grid with `tabular-nums` for numeric alignment

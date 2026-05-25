@@ -26,14 +26,30 @@ use crate::store::types::{ExtractionResult, FileSnapshot};
 const EXCLUDED_DIRS: &[&str] = &[
     ".git",
     ".cortex",
+    ".cortex-data",
     "node_modules",
     "target",
     "__pycache__",
     ".venv",
+    "venv",
     ".serena",
     ".cursor",
     ".kiro",
     ".agent",
+    "dist",
+    "build",
+    ".next",
+    "out",
+    "vendor",
+    ".output",
+    ".nuxt",
+    ".svelte-kit",
+    "coverage",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".tox",
+    ".eggs",
+    "site-packages",
 ];
 
 /// Files to always skip during indexing (lock files, generated manifests).
@@ -249,6 +265,17 @@ fn walk_directory(
         // Skip excluded files (lock files, etc.) before any further processing
         let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
         if EXCLUDED_FILES.contains(&filename) {
+            continue;
+        }
+
+        // Skip minified/bundled files (contain hashes like .D2o_JWn5.js or are .min.js)
+        if filename.contains(".min.")
+            || filename.ends_with(".min.js")
+            || filename.ends_with(".min.css")
+            || filename.ends_with(".bundle.js")
+            || filename.ends_with(".chunk.js")
+            || (filename.len() > 20 && filename.matches('.').count() >= 3)
+        {
             continue;
         }
 

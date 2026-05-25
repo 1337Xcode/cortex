@@ -21,6 +21,7 @@ pub mod reindex;
 pub mod report;
 pub mod security;
 pub mod serve;
+pub mod uninstall;
 pub mod update;
 pub mod visualizer;
 pub mod viz;

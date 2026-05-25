@@ -83,7 +83,7 @@ pub fn run(config: &Config) -> Result<(), anyhow::Error> {
     } else if !configured.is_empty() {
         println!("Configured Cortex MCP server for:");
         for agent in &configured {
-            println!("  \u{2713} {}", agent);
+            println!("  [ok] {}", agent);
         }
     }
 
@@ -92,43 +92,39 @@ pub fn run(config: &Config) -> Result<(), anyhow::Error> {
         println!();
         println!("Errors:");
         for err in &errors {
-            println!("  \u{2717} {}", err);
+            println!("  [err] {}", err);
         }
     }
 
     println!();
     println!("Supported platforms:");
-    println!("  \u{2022} Claude Code       ~/.claude/settings.json");
+    println!("  - Claude Code       ~/.claude/settings.json");
+    println!("  - Cursor            .cursor/mcp.json                  (or: cortex cursor install)");
+    println!("  - Windsurf          .windsurf/mcp.json");
+    println!("  - VS Code           .vscode/mcp.json");
+    println!("  - Kiro              .kiro/settings/mcp.json           (or: cortex kiro install)");
+    println!("  - Zed               .zed/settings.json");
+    println!("  - JetBrains         .idea/mcp.json");
+    println!("  - Cline/Roo         .vscode/mcp.json");
+    println!("  - Aider             .aider.mcp.json");
+    println!("  - Continue.dev      .continue/config.json");
+    println!("  - GitHub Copilot    .github/copilot-mcp.json");
+    println!("  - Codex CLI         .codex/mcp.json");
+    println!("  - OpenCode          .opencode/mcp.json");
+    println!("  - OpenClaw          .openclaw/mcp.json");
+    println!("  - Factory Droid     .droid/mcp.json");
+    println!("  - Trae              .trae/mcp.json");
+    println!("  - Trae CN           .trae-cn/mcp.json");
+    println!("  - Gemini CLI        .gemini/settings.json");
+    println!("  - Hermes            .hermes/mcp.json");
+    println!("  - Kimi Code         .kimi/mcp.json");
+    println!("  - Pi                .pi/mcp.json");
     println!(
-        "  \u{2022} Cursor            .cursor/mcp.json                  (or: cortex cursor install)"
+        "  - Google Antigravity ~/.antigravity/mcp.json          (or: cortex antigravity install)"
     );
-    println!("  \u{2022} Windsurf          .windsurf/mcp.json");
-    println!("  \u{2022} VS Code           .vscode/mcp.json");
-    println!(
-        "  \u{2022} Kiro              .kiro/settings/mcp.json           (or: cortex kiro install)"
-    );
-    println!("  \u{2022} Zed               .zed/settings.json");
-    println!("  \u{2022} JetBrains         .idea/mcp.json");
-    println!("  \u{2022} Cline/Roo         .vscode/mcp.json");
-    println!("  \u{2022} Aider             .aider.mcp.json");
-    println!("  \u{2022} Continue.dev      .continue/config.json");
-    println!("  \u{2022} GitHub Copilot    .github/copilot-mcp.json");
-    println!("  \u{2022} Codex CLI         .codex/mcp.json");
-    println!("  \u{2022} OpenCode          .opencode/mcp.json");
-    println!("  \u{2022} OpenClaw          .openclaw/mcp.json");
-    println!("  \u{2022} Factory Droid     .droid/mcp.json");
-    println!("  \u{2022} Trae              .trae/mcp.json");
-    println!("  \u{2022} Trae CN           .trae-cn/mcp.json");
-    println!("  \u{2022} Gemini CLI        .gemini/settings.json");
-    println!("  \u{2022} Hermes            .hermes/mcp.json");
-    println!("  \u{2022} Kimi Code         .kimi/mcp.json");
-    println!("  \u{2022} Pi                .pi/mcp.json");
-    println!(
-        "  \u{2022} Google Antigravity ~/.antigravity/mcp.json          (or: cortex antigravity install)"
-    );
-    println!("  \u{2022} Supermaven        .supermaven/mcp.json");
-    println!("  \u{2022} Codeium           .codeium/mcp.json");
-    println!("  \u{2022} Tabnine           .tabnine/mcp.json");
+    println!("  - Supermaven        .supermaven/mcp.json");
+    println!("  - Codeium           .codeium/mcp.json");
+    println!("  - Tabnine           .tabnine/mcp.json");
     println!();
     println!("Use --platform <name> to configure a specific agent.");
 
@@ -166,7 +162,7 @@ fn write_workspace_mcp_config(repo_root: &Path) -> Result<(), anyhow::Error> {
     let _: Value = serde_json::from_str(&content)?;
 
     write_json_file(&mcp_path, &mcp_config)?;
-    println!("  \u{2713} Wrote .cortex/mcp.json (workspace-level MCP config)");
+    println!("  [ok] Wrote .cortex/mcp.json (workspace-level MCP config)");
     Ok(())
 }
 
@@ -216,15 +212,12 @@ fn generate_agent_steering(repo_root: &Path) {
             let path = crate::agents::steering::steering_file_path(effective_agent, repo_root);
             if agent_name.is_some() {
                 println!(
-                    "  \u{2713} Wrote steering file for {} \u{2192} {}",
+                    "  [ok] Wrote steering file for {} -> {}",
                     effective_agent,
                     path.display()
                 );
             } else {
-                println!(
-                    "  \u{2713} Wrote generic steering file \u{2192} {}",
-                    path.display()
-                );
+                println!("  [ok] Wrote generic steering file -> {}", path.display());
                 println!(
                     "    No known agent environment detected (Cursor, Claude Code, Kiro, Windsurf, Copilot)."
                 );
@@ -234,7 +227,7 @@ fn generate_agent_steering(repo_root: &Path) {
             }
         }
         Err(e) => {
-            eprintln!("  \u{26a0} Failed to write steering file: {}", e);
+            eprintln!("  [warn] Failed to write steering file: {}", e);
         }
     }
 }

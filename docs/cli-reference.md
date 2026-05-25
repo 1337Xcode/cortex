@@ -38,6 +38,23 @@ Removes `graph.db`, `graph.db-wal`, and `graph.db-shm` from `.cortex-data/`, rec
 
 Use this after a schema change, a corrupted database, or when switching branches with significantly different code.
 
+## cortex uninstall
+
+Remove all Cortex traces from the system.
+
+```sh
+cortex uninstall
+```
+
+Removes:
+- Graph database (`.cortex-data/`)
+- Config directory (`.cortex/`)
+- Binary (`~/.cortex/bin/cortex`)
+- Shell PATH entries added by the installer
+- Agent steering files written by `cortex install`
+
+After uninstalling, restart your terminal for PATH changes to take effect.
+
 ## cortex status
 
 Print graph statistics for the current repository.

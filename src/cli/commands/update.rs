@@ -110,7 +110,7 @@ pub async fn run_update() -> Result<(), anyhow::Error> {
         eprintln!("Warning: failed to run reindex after update: {}", e);
     }
 
-    println!("Updated cortex: {} \u{2192} {}", current, latest);
+    println!("Updated cortex: {} -> {}", current, latest);
     Ok(())
 }
 
@@ -264,7 +264,7 @@ pub fn verify_sha256(
 
     if actual != expected {
         bail!(
-            "Checksum mismatch for '{}' \u{2014} possible tampering.\n  Expected: {}\n  Got:      {}",
+            "Checksum mismatch for '{}' - possible tampering.\n  Expected: {}\n  Got:      {}",
             archive_name,
             expected,
             actual
@@ -382,7 +382,7 @@ fn extract_tar_gz(archive_bytes: &[u8], target_dir: &Path) -> Result<(), anyhow:
 
 /// Format the update success message.
 pub fn format_update_message(old_version: &str, new_version: &str) -> String {
-    format!("Updated cortex: {} \u{2192} {}", old_version, new_version)
+    format!("Updated cortex: {} -> {}", old_version, new_version)
 }
 
 // ---------------------------------------------------------------------------
@@ -479,7 +479,7 @@ mod tests {
     #[test]
     fn test_format_update_message() {
         let msg = format_update_message("1.0.2", "1.0.3");
-        assert_eq!(msg, "Updated cortex: 1.0.2 \u{2192} 1.0.3");
+        assert_eq!(msg, "Updated cortex: 1.0.2 -> 1.0.3");
     }
 
     #[test]
@@ -487,7 +487,7 @@ mod tests {
         let msg = format_update_message("0.9.0", "2.0.0");
         assert!(msg.contains("0.9.0"));
         assert!(msg.contains("2.0.0"));
-        assert!(msg.contains("\u{2192}"));
+        assert!(msg.contains("->"));
     }
 
     #[test]
@@ -626,7 +626,7 @@ mod proptests {
             prop_assert!(msg.contains(&new_ver), "Message missing new version: {}", msg);
 
             // Message must contain the arrow separator
-            prop_assert!(msg.contains("\u{2192}"), "Message missing arrow: {}", msg);
+            prop_assert!(msg.contains("->"), "Message missing arrow: {}", msg);
 
             // Message must start with "Updated cortex:"
             prop_assert!(msg.starts_with("Updated cortex:"), "Wrong prefix: {}", msg);

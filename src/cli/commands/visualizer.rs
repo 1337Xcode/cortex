@@ -48,7 +48,8 @@ pub async fn serve(store: Arc<StoreManager>, port: u16) -> Result<(), anyhow::Er
 
     use crate::mcp::savings_store::{self, TimePeriod};
 
-    static UNIFIED_UI_HTML: &str = include_str!("unified_ui.html");
+    static DASHBOARD_HTML: &str = include_str!("../templates/dashboard.html");
+    static GRAPH_HTML: &str = include_str!("../templates/graph.html");
 
     #[derive(Clone)]
     struct AppState {
@@ -56,7 +57,7 @@ pub async fn serve(store: Arc<StoreManager>, port: u16) -> Result<(), anyhow::Er
     }
 
     async fn index_handler() -> Html<&'static str> {
-        Html(UNIFIED_UI_HTML)
+        Html(GRAPH_HTML)
     }
 
     async fn health_handler() -> Json<serde_json::Value> {
@@ -308,7 +309,7 @@ pub async fn serve(store: Arc<StoreManager>, port: u16) -> Result<(), anyhow::Er
     }
 
     async fn dashboard_handler() -> Html<&'static str> {
-        Html(UNIFIED_UI_HTML)
+        Html(DASHBOARD_HTML)
     }
 
     async fn savings_summary_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -349,6 +350,7 @@ pub async fn serve(store: Arc<StoreManager>, port: u16) -> Result<(), anyhow::Er
         .route("/api/edges", get(edges_handler))
         .route("/api/stats", get(stats_handler))
         .route("/dashboard", get(dashboard_handler))
+        .route("/dashboard/", get(dashboard_handler))
         .route("/api/savings/summary", get(savings_summary_handler))
         .route("/api/savings/timeseries", get(savings_timeseries_handler))
         .route("/api/savings/per-tool", get(savings_per_tool_handler))

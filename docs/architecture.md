@@ -18,6 +18,7 @@ graph TD
         Indexer[Indexer<br/>Rayon + tree-sitter]
         Watcher[File Watcher<br/>notify crate]
         MCP[MCP Server<br/>Tokio + JSON-RPC 2.0]
+        Viz[Visualizer<br/>3D Graph + Dashboard]
     end
 
     DB[(SQLite<br/>WAL mode)]
@@ -25,6 +26,11 @@ graph TD
     Watcher -->|FileEvent| Indexer
     Indexer -->|Write| DB
     MCP -->|Read| DB
+    Viz -->|Read| DB
+
+    Update[cortex update] -->|GitHub Releases| Replace[Replace Binary]
+    Replace --> Reindex[cortex reindex]
+    Reindex -->|Delete + Rebuild| DB
 ```
 
 ```mermaid

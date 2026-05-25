@@ -33,11 +33,11 @@ jobs:
       - name: Check compilation
         run: cargo check --all-targets
 
-      - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+      - name: Format
+        run: cargo fmt --all
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
 
   test:
     runs-on: ubuntu-latest

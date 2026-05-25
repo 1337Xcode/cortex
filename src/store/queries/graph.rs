@@ -436,7 +436,9 @@ pub fn get_architecture_summary(conn: &Connection) -> Result<ArchitectureSummary
             .query_row("SELECT COUNT(*) FROM edges", [], |row| row.get::<_, i64>(0))
             .unwrap_or(0) as usize,
         files_indexed: conn
-            .query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
+            .query_row("SELECT COUNT(DISTINCT file) FROM nodes", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap_or(0) as usize,
         languages: detect_languages(&top_level_modules, conn),
         counts_by_kind,

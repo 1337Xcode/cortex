@@ -4,15 +4,16 @@
  * Cortex installer script.
  *
  * Downloads the correct platform binary from GitHub releases, places it in
- * ~/.cortex/bin/, configures PATH, and runs `cortex reindex` to build the
- * code graph.
+ * ~/.cortex/bin/, removes stale binaries from other locations, configures PATH,
+ * and runs `cortex reindex` to build the code graph.
  *
  * Handles fresh installs and updates: overwrites any existing binary in place.
+ * Automatically cleans up old cortex binaries from ~/.local/bin, npm global, etc.
  *
  * Usage: npx @1337xcode/cortex install
  */
 
-const { execFileSync } = require("node:child_process");
+const { execFileSync, execSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -107,6 +108,62 @@ async function extractTarGz(buffer, destDir) {
   }
 }
 
+/**
+ * Remove stale cortex binaries from known locations that are NOT our install dir.
+ * This prevents old versions from shadowing the new install on PATH.
+ */
+function removeStaleBindaries(platform, binaryName) {
+  const home = os.homedir();
+  const stalePaths = [];
+
+  if (platform === "win32") {
+    // Common stale locations on Windows
+    stalePaths.push(
+      path.join(home, ".local", "bin", "cortex.exe"),
+      path.join(home, "AppData", "Roaming", "npm", "cortex"),
+      path.join(home, "AppData", "Roaming", "npm", "cortex.cmd"),
+      path.join(home, "AppData", "Roaming", "npm", "cortex.ps1"),
+    );
+  } else {
+    // Common stale locations on Unix
+    stalePaths.push(
+      path.join(home, ".local", "bin", "cortex"),
+      "/usr/local/bin/cortex",
+    );
+  }
+
+  // Also check npm global prefix
+  try {
+    const npmPrefix = execSync("npm prefix -g", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+    if (npmPrefix) {
+      const npmBin = platform === "win32" ? npmPrefix : path.join(npmPrefix, "bin");
+      stalePaths.push(path.join(npmBin, binaryName));
+      if (platform === "win32") {
+        stalePaths.push(path.join(npmPrefix, "cortex.cmd"));
+        stalePaths.push(path.join(npmPrefix, "cortex.ps1"));
+      }
+    }
+  } catch { /* npm not available or failed, skip */ }
+
+  let removed = 0;
+  for (const p of stalePaths) {
+    // Never remove our own install location
+    if (path.resolve(p) === path.resolve(path.join(INSTALL_DIR, binaryName))) continue;
+
+    if (fs.existsSync(p)) {
+      try {
+        fs.unlinkSync(p);
+        console.log(`  Removed stale binary: ${p}`);
+        removed++;
+      } catch {
+        // Best-effort: might be locked or permission denied
+        console.warn(`  Warning: Could not remove stale binary: ${p}`);
+      }
+    }
+  }
+  return removed;
+}
+
 function configurePath(installDir) {
   if (process.platform === "win32") {
     configurePathWindows(installDir);
@@ -132,7 +189,7 @@ function configurePathWindows(installDir) {
 
 function configurePathUnix(installDir) {
   const exportLine = `export PATH="${installDir}:$PATH"`;
-  const shellFiles = [".bashrc", ".zshrc"]
+  const shellFiles = [".bashrc", ".zshrc", ".profile"]
     .map((f) => path.join(os.homedir(), f))
     .filter((f) => fs.existsSync(f));
 
@@ -155,7 +212,7 @@ function runReindex(binaryPath) {
   console.log("\nRebuilding code graph...");
   try {
     execFileSync(binaryPath, ["reindex"], { stdio: "inherit", timeout: 120000 });
-  } catch (e) {
+  } catch {
     console.warn("Warning: `cortex reindex` failed. You can run it manually later: cortex reindex");
   }
 }
@@ -168,13 +225,22 @@ async function main() {
 
   console.log(`Installing cortex for ${platform}-${arch}...`);
 
-  // Create install directory (handles fresh installs)
+  // Step 1: Remove stale binaries from other locations
+  console.log("\nCleaning up old installations...");
+  const removed = removeStaleBindaries(platform, binaryName);
+  if (removed > 0) {
+    console.log(`  Cleaned ${removed} stale binary location(s).`);
+  } else {
+    console.log("  No stale binaries found.");
+  }
+
+  // Step 2: Create install directory
   fs.mkdirSync(INSTALL_DIR, { recursive: true });
 
-  // Remove existing binary if present (handles updates)
+  // Step 3: Remove existing binary in our install dir (handles updates)
   const binaryPath = path.join(INSTALL_DIR, binaryName);
   if (fs.existsSync(binaryPath)) {
-    console.log("Existing installation detected, updating...");
+    console.log("\nExisting installation detected, updating...");
     try {
       fs.unlinkSync(binaryPath);
     } catch (e) {
@@ -185,11 +251,11 @@ async function main() {
     }
   }
 
-  // Download the archive
-  console.log(`Downloading from GitHub releases...`);
+  // Step 4: Download the archive
+  console.log(`\nDownloading from GitHub releases...`);
   const buffer = await download(url);
 
-  // Verify checksum if available
+  // Step 5: Verify checksum if available
   const expectedHash = await downloadChecksum(archive, baseUrl);
   if (expectedHash) {
     const actualHash = verifySha256(buffer, expectedHash, archive);
@@ -198,10 +264,10 @@ async function main() {
     console.warn("Warning: Checksum file not available, skipping verification.");
   }
 
-  // Extract
+  // Step 6: Extract
   await extractTarGz(buffer, INSTALL_DIR);
 
-  // Make executable on Unix
+  // Step 7: Make executable on Unix
   if (platform !== "win32" && fs.existsSync(binaryPath)) {
     fs.chmodSync(binaryPath, 0o755);
   }
@@ -215,13 +281,19 @@ async function main() {
 
   console.log(`\nInstalled cortex to ${binaryPath}`);
 
-  // Configure PATH
+  // Step 8: Configure PATH (prepend so new binary always wins)
   configurePath(INSTALL_DIR);
 
-  // Run cortex reindex to build the code graph
+  // Step 9: Update current session PATH so reindex uses the new binary
+  process.env.PATH = `${INSTALL_DIR}${path.delimiter}${process.env.PATH}`;
+
+  // Step 10: Run cortex reindex to build the code graph
   runReindex(binaryPath);
 
   console.log("\nDone. Run `cortex serve` to start the MCP server.");
+  if (platform === "win32") {
+    console.log("Note: Open a new terminal for PATH changes to take effect.");
+  }
 }
 
 main().catch((err) => {

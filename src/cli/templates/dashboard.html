@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cortex Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&family=Press+Start+2P&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0f0f14;
+  --panel: rgba(20,20,28,0.95);
+  --border: rgba(255,255,255,0.08);
+  --accent: #a8b1ff;
+  --text-dim: #6b7280;
+  --top-bar-height: 60px;
+}
+body { background: var(--bg); font-family: 'IBM Plex Sans', sans-serif; color: #e2e4e9; min-height: 100vh; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #313244; border-radius: 3px; }
+
+/* Top bar */
+#top-bar {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 100;
+  width: min(980px, calc(100% - 28px)); min-height: 56px;
+  background: rgba(15,15,20,0.9); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
+  display: grid; grid-template-columns: minmax(120px, 1fr) minmax(240px, 1.4fr) auto;
+  align-items: center; gap: 12px; padding: 8px 12px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+}
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-name {
+  font-size: 13px; font-weight: 400; color: var(--accent);
+  font-family: 'Press Start 2P', ui-monospace, monospace;
+  letter-spacing: 0.4px;
+}
+.brand-tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: #f3f5ff; background: #2a315a; border: 1px solid #3b4375;
+  border-radius: 999px; padding: 2px 8px;
+}
+.stats { font-size: 12px; color: var(--text-dim); font-family: 'IBM Plex Mono', monospace; white-space: nowrap; }
+.icon-12 { width: 12px; height: 12px; }
+.icon-14 { width: 14px; height: 14px; }
+
+.search-wrap {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px;
+}
+.search-wrap:focus-within { border-color: rgba(168,177,255,0.4); box-shadow: 0 0 0 2px rgba(168,177,255,0.1); }
+.search-wrap input {
+  width: 100%; padding: 6px 2px; border: none; outline: none; background: transparent;
+  color: #e2e4e9; font-size: 13px; font-family: 'IBM Plex Mono', monospace;
+}
+.search-wrap input::placeholder { color: #4b5563; }
+.search-wrap .icon-14 { color: #7b8291; }
+
+.nav { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.nav a {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 8px; font-size: 12px; color: #c3cad8;
+  text-decoration: none; background: transparent; border: 1px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.nav a:hover { color: #e2e4e9; border-color: rgba(168,177,255,0.25); }
+.nav a.active {
+  color: var(--accent); background: rgba(168,177,255,0.12); border-color: rgba(168,177,255,0.25);
+}
+.nav a::after {
+  content: attr(data-label);
+  position: absolute; left: 50%; top: 40px; transform: translate(-50%, -4px);
+  background: rgba(15,15,20,0.96); border: 1px solid rgba(255,255,255,0.08);
+  color: #e2e4e9; padding: 4px 8px; border-radius: 6px;
+  font-size: 11px; white-space: nowrap; opacity: 0; pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.nav a:hover::after { opacity: 1; transform: translate(-50%, 0); }
+
+/* Content */
+.content { max-width: 960px; margin: 0 auto; padding: calc(2rem + var(--top-bar-height) + 12px) 1.5rem 2rem; }
+
+/* Cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 2rem; }
+.card {
+  background: rgba(20,20,28,0.8); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px; padding: 1.25rem 1.5rem;
+}
+.card-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 4px; }
+.card-value { font-size: 1.5rem; font-weight: 600; font-family: 'IBM Plex Mono', monospace; color: #e2e4e9; }
+.card-sub { font-size: 11px; color: #4b5563; margin-top: 4px; }
+
+/* Sections */
+.section { margin-bottom: 2rem; }
+.section-title { font-size: 13px; font-weight: 500; color: #9ca3af; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* Table */
+.table-wrap {
+  background: rgba(20,20,28,0.8); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px; overflow: hidden;
+}
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead { background: rgba(15,15,20,0.6); }
+th { text-align: left; padding: 10px 16px; font-size: 11px; font-weight: 500; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+td { padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.03); font-family: 'IBM Plex Mono', monospace; color: #d1d5db; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+
+/* Search section spacing */
+.search-slot { margin-bottom: 1rem; }
+
+/* Results */
+.result-item {
+  background: rgba(20,20,28,0.8); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; cursor: pointer;
+  transition: border-color 0.15s;
+}
+.result-item:hover { border-color: rgba(168,177,255,0.3); }
+.result-name { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #e2e4e9; margin-bottom: 4px; }
+.result-meta { font-size: 11px; color: #6b7280; display: flex; gap: 12px; }
+.badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 500; background: rgba(168,177,255,0.1); color: #a8b1ff; margin-right: 8px; }
+
+/* Chart */
+.chart-wrap {
+  background: rgba(20,20,28,0.8); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px; padding: 1.5rem; overflow-x: auto;
+}
+.chart-wrap svg { width: 100%; height: auto; display: block; }
+
+/* Empty state */
+.empty { text-align: center; padding: 3rem; color: #4b5563; }
+.empty h3 { color: #9ca3af; font-size: 14px; margin-bottom: 4px; }
+
+/* Loading */
+.loading { text-align: center; padding: 2rem; color: #6b7280; }
+
+.hidden { display: none; }
+
+@media (max-width: 720px) {
+  #top-bar {
+    grid-template-columns: 1fr; gap: 8px; padding: 10px 12px;
+  }
+  .brand, .nav { justify-content: center; }
+  .nav a::after { left: 50%; transform: translate(-50%, -4px); }
+  .nav a:hover::after { transform: translate(-50%, 0); }
+}
+</style>
+</head>
+<body>
+
+<div id="top-bar">
+  <div class="brand">
+    <span class="brand-name">Cortex</span>
+    <span class="brand-tag">Dashboard</span>
+  </div>
+  <label class="search-wrap" aria-label="Search symbols">
+    <i data-lucide="search" class="icon-14"></i>
+    <input id="search" type="text" placeholder="Search by name, file, or kind..." autocomplete="off" spellcheck="false">
+  </label>
+  <div class="nav">
+    <a href="/" data-label="Graph" aria-label="Graph"><i data-lucide="git-branch" class="icon-12"></i></a>
+    <a href="/dashboard" class="active" data-label="Dashboard" aria-label="Dashboard"><i data-lucide="layout-dashboard" class="icon-12"></i></a>
+  </div>
+</div>
+
+<div class="content">
+  <!-- Stats Cards -->
+  <div class="cards" id="cards">
+    <div class="card"><div class="card-label">Nodes</div><div class="card-value" id="c-nodes">&mdash;</div></div>
+    <div class="card"><div class="card-label">Edges</div><div class="card-value" id="c-edges">&mdash;</div></div>
+    <div class="card"><div class="card-label">Files</div><div class="card-value" id="c-files">&mdash;</div></div>
+    <div class="card"><div class="card-label">Tokens Saved</div><div class="card-value" id="c-tokens">&mdash;</div></div>
+  </div>
+
+  <!-- Symbol Search -->
+  <div class="section">
+    <div class="section-title">Symbol Search</div>
+    <div class="search-slot"></div>
+    <div id="results"></div>
+  </div>
+
+  <!-- Per-Tool Breakdown -->
+  <div class="section hidden" id="tools-section">
+    <div class="section-title">Tool Usage</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tool</th><th>Calls</th><th>Tokens Saved</th></tr></thead>
+        <tbody id="tools-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+function fmt(n) { return n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : n.toString(); }
+
+// Load stats
+Promise.all([
+  fetch('/api/stats').then(r => r.json()).catch(() => ({})),
+  fetch('/api/savings/summary').then(r => r.json()).catch(() => null),
+  fetch('/api/savings/per-tool').then(r => r.json()).catch(() => [])
+]).then(([stats, savings, perTool]) => {
+  document.getElementById('c-nodes').textContent = fmt(stats.node_count || 0);
+  document.getElementById('c-edges').textContent = fmt(stats.edge_count || 0);
+  document.getElementById('c-files').textContent = fmt(stats.file_count || stats.module_count || 0);
+  if (savings && savings.total_tokens_saved > 0) {
+    document.getElementById('c-tokens').textContent = fmt(savings.total_tokens_saved);
+  } else {
+    document.getElementById('c-tokens').textContent = '0';
+  }
+  if (perTool && perTool.length > 0) {
+    document.getElementById('tools-section').classList.remove('hidden');
+    const tbody = document.getElementById('tools-body');
+    tbody.innerHTML = perTool.map(t =>
+      `<tr><td>${t.tool_name}</td><td>${fmt(t.call_count)}</td><td>${fmt(t.total_tokens_saved)}</td></tr>`
+    ).join('');
+  }
+});
+
+// Search
+let allNodes = null;
+const searchInput = document.getElementById('search');
+const resultsDiv = document.getElementById('results');
+
+searchInput.addEventListener('input', async (e) => {
+  const q = e.target.value.toLowerCase().trim();
+  if (q.length < 2) { resultsDiv.innerHTML = ''; return; }
+  if (!allNodes) {
+    resultsDiv.innerHTML = '<div class="loading">Loading...</div>';
+    try { allNodes = await fetch('/api/nodes').then(r => r.json()); } catch { allNodes = []; }
+  }
+  const matches = allNodes.filter(n =>
+    n.fqn.toLowerCase().includes(q) || (n.file && n.file.toLowerCase().includes(q))
+  ).slice(0, 30);
+  if (matches.length === 0) { resultsDiv.innerHTML = '<div class="empty"><h3>No results</h3></div>'; return; }
+  resultsDiv.innerHTML = matches.map(n => {
+    const short = n.fqn.split('::').pop() || n.fqn;
+    return `<div class="result-item" onclick="window.location='/?focus=${encodeURIComponent(n.fqn)}'">
+      <div class="result-name"><span class="badge">${n.kind}</span>${short}</div>
+      <div class="result-meta"><span>${n.fqn}</span><span>${n.file || ''}</span></div>
+    </div>`;
+  }).join('');
+});
+
+searchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const first = resultsDiv.querySelector('.result-item');
+    if (first) first.click();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement !== searchInput) { e.preventDefault(); searchInput.focus(); }
+});
+
+lucide.createIcons();
+</script>
+</body>
+</html>

@@ -73,7 +73,7 @@ Cortex indexes your repository into a SQLite call graph and exposes it over the 
 ## Install
 
 ```sh
-npx @1337xcode/cortex install
+npx @1337xcode/cortex@latest install
 ```
 
 <details>
@@ -112,7 +112,6 @@ cortex impact UserService.getUser       # blast radius: what breaks if I change 
 cortex explain DatabasePool.acquire     # offline function explanation, zero LLM calls
 cortex security report                  # taint flows, OWASP patterns, dependency vulns
 cortex diff main feature-branch         # call graph diff between branches
-cortex viz --port 9749                  # unified tabbed UI (Graph, Dashboard, Explorer)
 cortex viz --export graph.html          # interactive 3D graph in a standalone HTML file
 cortex ci --fail-on-taint               # CI quality gate with exit codes
 cortex hotspots --months 6              # high-churn risky code ranked by risk score
@@ -128,7 +127,7 @@ cortex federate add ../auth-service     # query across repos with unified graph
 - **Sub-second incremental re-indexing** via native OS file watcher (inotify, FSEvents, ReadDirectoryChangesW)
 - **Configurable model pricing** via `~/.cortex/pricing.toml` with longest-prefix matching
 - **Ego-graph capping** at 500 nodes with priority ordering (depth first, then caller count)
-- **Unified tabbed UI** with Graph, Dashboard, and Explorer views served at a single endpoint
+- **Unified tabbed UI** with Graph and Dashboard views served at `cortex serve` (localhost:9749)
 - **Coverage field on graph nodes** populated from LCOV data, surfaced in MCP tool responses
 - **Method vs Function classification** verified across Python, TypeScript, Rust, Go, and Java
 - **Agent steering generation** with module boundaries, complexity hotspots, and active ADRs
@@ -201,7 +200,7 @@ graph TD
 | Coverage gap analysis | Yes (LCOV cross-ref) | No | No | No | No |
 | Configurable pricing | Yes (TOML) | No | No | No | No |
 | Ego-graph capping | Yes (500 nodes) | No | No | No | No |
-| Unified tabbed UI | Yes (Graph/Dashboard/Explorer) | No | No | No | No |
+| Unified tabbed UI | Yes (Graph/Dashboard) | No | No | No | No |
 | Agent steering generation | Yes (boundaries, hotspots, ADRs) | No | No | No | No |
 | CI quality gates | Yes (exit codes) | No | No | No | No |
 | Single binary, zero deps | Yes | Yes | No (Python) | No (Python+LSP) | No (Python) |

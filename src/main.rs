@@ -720,6 +720,9 @@ fn main() {
         Command::Reindex => {
             cli::commands::reindex::run_reindex(&config.repo_root, &config.data_dir);
         }
+        Command::Uninstall => {
+            cli::commands::uninstall::run_uninstall(&config.repo_root, &config.data_dir);
+        }
         Command::Update => {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()

@@ -8,10 +8,10 @@ Code intelligence for AI agents. Indexes your repo into a call graph, exposes it
 ## Install
 
 ```sh
-npx @1337xcode/cortex install
+npx @1337xcode/cortex@latest install
 ```
 
-Downloads the binary for your platform, verifies the SHA256 checksum, drops it in your PATH. Works on Linux, macOS (Intel + Apple Silicon), and Windows.
+Downloads the binary for your platform, verifies the SHA256 checksum, removes any stale cortex binaries from other locations, and drops it in your PATH. Works on Linux, macOS (Intel + Apple Silicon), and Windows. Zero-touch: one command, no manual cleanup needed.
 
 ## What it does
 
