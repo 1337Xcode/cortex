@@ -498,6 +498,7 @@ mod tests {
             target_fqn: target.to_string(),
             kind: EdgeKind::Calls,
             confidence: 0.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({}),
         }
     }
@@ -510,6 +511,7 @@ mod tests {
             target_fqn: target.to_string(),
             kind: EdgeKind::Imports,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({}),
         }
     }
@@ -522,6 +524,7 @@ mod tests {
             target_fqn: target.to_string(),
             kind: EdgeKind::Imports,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"alias": alias}),
         }
     }
@@ -757,6 +760,7 @@ mod tests {
                 target_fqn: "BaseClass".to_string(),
                 kind: EdgeKind::Inherits,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({}),
             },
         ];
@@ -958,6 +962,7 @@ mod tests {
                 target_fqn: "unknown_method".to_string(),
                 kind: EdgeKind::Calls,
                 confidence: 0.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({"receiver": "obj", "call_type": "method", "chain_position": 0}),
             },
         ];
@@ -987,6 +992,7 @@ mod tests {
                 target_fqn: "chained_method".to_string(),
                 kind: EdgeKind::Calls,
                 confidence: 0.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({"receiver": "a.b()", "call_type": "method", "chain_position": 1}),
             },
         ];
@@ -1007,6 +1013,7 @@ mod tests {
             target_fqn: "./utils".to_string(),
             kind: EdgeKind::Imports,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"reexport": true}),
         };
         assert_eq!(
@@ -1039,6 +1046,7 @@ mod tests {
             target_fqn: "get_user".to_string(),
             kind: EdgeKind::Calls,
             confidence: 0.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"receiver": "svc", "call_type": "method"}),
         }];
 
@@ -1073,6 +1081,7 @@ mod tests {
                 target_fqn: "unknown".to_string(),
                 kind: EdgeKind::Calls,
                 confidence: 0.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({"receiver": "obj", "call_type": "method", "chain_position": 0}),
             },
             Edge {
@@ -1081,6 +1090,7 @@ mod tests {
                 target_fqn: "chained".to_string(),
                 kind: EdgeKind::Calls,
                 confidence: 0.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({"receiver": "a.b()", "call_type": "method", "chain_position": 2}),
             },
         ];

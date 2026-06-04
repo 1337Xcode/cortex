@@ -458,6 +458,7 @@ fn collect_imports(node: tree_sitter::Node, file: &str, source: &[u8], edges: &m
                                 target_fqn: target,
                                 kind: EdgeKind::Imports,
                                 confidence: 1.0,
+                                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                                 attributes: json!({"import_type": call_name}),
                             });
                         }
@@ -532,6 +533,7 @@ fn extract_call_edge(
                         target_fqn: target_fqn.clone(),
                         kind: EdgeKind::Calls,
                         confidence: 1.0,
+                        edge_source: crate::store::confidence::EdgeSource::AstDirect,
                         attributes: json!({"receiver": receiver, "call_type": "method"}),
                     });
                 }
@@ -543,6 +545,7 @@ fn extract_call_edge(
                     target_fqn: call_name.to_string(),
                     kind: EdgeKind::Calls,
                     confidence: 0.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({"receiver": receiver, "call_type": "qualified"}),
                 });
             }
@@ -560,6 +563,7 @@ fn extract_call_edge(
             target_fqn: target_fqn.clone(),
             kind: EdgeKind::Calls,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({}),
         });
     }

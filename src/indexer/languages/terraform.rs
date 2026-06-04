@@ -272,6 +272,7 @@ fn extract_module_block(
                 target_fqn: module_source,
                 kind: EdgeKind::Imports,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({}),
             });
         }

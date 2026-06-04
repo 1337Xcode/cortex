@@ -3,7 +3,7 @@ title: "Architecture"
 description: "Technical overview of Cortex internals, the call graph, and module structure."
 order: 6
 category: "concepts"
-lastModified: "2025-07-14"
+lastModified: "2026-06-01"
 ---
 
 # Architecture
@@ -16,63 +16,130 @@ Cortex is a single Rust binary that runs three subsystems in one process.
 graph TD
     subgraph "cortex serve"
         Indexer[Indexer<br/>Rayon + tree-sitter]
+        SCIP[SCIP Ingester<br/>Protobuf → HIGH edges]
+        FA[Framework Adapters<br/>FastAPI · Express · NestJS<br/>Spring · Django · React]
         Watcher[File Watcher<br/>notify crate]
         MCP[MCP Server<br/>Tokio + JSON-RPC 2.0]
         Viz[Visualizer<br/>3D Graph + Dashboard]
+        HG[Health Gate]
     end
 
     DB[(SQLite<br/>WAL mode)]
 
     Watcher -->|FileEvent| Indexer
-    Indexer -->|Write| DB
-    MCP -->|Read| DB
+    Indexer -->|ast_direct 0.5| DB
+    SCIP -->|scip 1.0| DB
+    FA -->|framework_adapter 0.8| DB
+    MCP -->|Read via Health Gate| HG
+    HG -->|Healthy| DB
+    HG -->|Unhealthy| Err[HealthError + FallbackSuggestion]
     Viz -->|Read| DB
-
-    Update[cortex update] -->|GitHub Releases| Replace[Replace Binary]
-    Replace --> Reindex[cortex reindex]
-    Reindex -->|Delete + Rebuild| DB
 ```
 
 ```mermaid
 sequenceDiagram
     participant Agent as AI Agent
     participant MCP as MCP Server
+    participant HG as Health Gate
     participant Store as SQLite Store
     participant Indexer as Indexer
 
     Note over Indexer: Background: file watcher triggers re-index
 
     Agent->>MCP: tools/call (trace_callers, fqn="process_order")
-    MCP->>Store: graph::trace_callers(fqn, depth=3)
-    Store-->>MCP: Vec<CallPath> (BFS result)
-    MCP-->>Agent: JSON response + _meta {tokens_used, tokens_saved}
+    MCP->>HG: check_health()
+    alt Index healthy
+        HG-->>MCP: HealthStatus { healthy: true }
+        MCP->>Store: graph::trace_callers_with_confidence(fqn, depth=3, min_confidence=0.7)
+        Store-->>MCP: Vec<CallPathNode> with edge_source + confidence_tier
+        MCP-->>Agent: JSON response + _meta {tokens_used, tokens_saved}
+    else Index unhealthy
+        HG-->>MCP: HealthStatus { healthy: false }
+        MCP-->>Agent: HealthError { reason, suggested_action, fallback: FallbackSuggestion }
+    end
 ```
 
-## Indexer
+## Indexer pipeline
 
-The indexer walks the repository, parses each file with tree-sitter, and extracts:
+The indexer runs in multiple passes per file:
 
-- Symbols (functions, classes, methods, modules, interfaces, enums)
-- Call edges (function A calls function B)
-- Import relationships
-- HTTP route definitions
-- Taint sources and sinks
-
-Parsing is parallelized with Rayon. Each file gets its own tree-sitter parser instance. Results are written to SQLite serially (single writer constraint).
+1. **Framework detection** — scans dependency manifests to determine which adapters to activate
+2. **tree-sitter parse** — extracts symbols and call edges (`edge_source=ast_direct`, `confidence=0.5`)
+3. **SCIP ingestion** — additive pass that reads `.scip/index.scip` (or `index.scip`, `dump.lsif`) and creates HIGH-confidence edges (`edge_source=scip`, `confidence=1.0`); SCIP edges win over tree-sitter on conflicts
+4. **Framework adapters** — pattern-match framework-specific wiring (DI, routing, middleware) and create MEDIUM-confidence edges (`edge_source=framework_adapter`, `confidence=0.8`)
+5. **Pattern rules** — user-defined regex rules from `.cortex/patterns.toml`
+6. **Embeddings** — incremental embedding generation (only re-embeds functions whose content hash changed)
+7. **Health update** — writes `index_health` singleton row with file/node/edge counts and SCIP coverage
 
 ```mermaid
 flowchart TD
-    File[Source File] --> Parse[tree-sitter Parse]
-    Parse --> Extract[AST Extraction<br/>Nodes + Edges]
-    Extract --> Security[Security Pass<br/>Taint sources/sinks]
-    Extract --> Resolve[FQN Resolution<br/>Cross-file call edges]
+    File[Source File] --> FD[Framework Detection<br/>scan manifests]
+    FD --> Parse[tree-sitter Parse<br/>ast_direct · 0.5]
+    Parse --> SCIP[SCIP Ingestion<br/>scip · 1.0<br/>dedup: SCIP wins]
+    SCIP --> FA[Framework Adapters<br/>framework_adapter · 0.8]
+    FA --> PR[Pattern Rules<br/>.cortex/patterns.toml]
+    PR --> Security[Security Pass<br/>Taint + OWASP + SBOM]
+    PR --> Resolve[FQN Resolution<br/>Cross-file call edges]
     Security --> Delta[Delta Computation<br/>Compare to file_snapshots]
     Resolve --> Delta
     Delta --> Write[SQLite Write<br/>Single transaction]
+    Write --> Health[Update index_health]
     Write --> Invalidate[Memory Invalidation<br/>Mark stale observations]
 ```
 
 On subsequent runs, the indexer skips files whose content hash has not changed. A full re-index of a medium project (100 files, 30K lines) takes about 500ms. Incremental re-index with no changes takes under 15ms.
+
+## Confidence system
+
+Every edge in the graph carries a `edge_source` and `confidence` value. Queries default to `confidence >= 0.7` (MEDIUM), filtering out heuristic name-match edges.
+
+| Source | Confidence | Tier | How produced |
+|--------|-----------|------|--------------|
+| `scip` | 1.0 | HIGH | SCIP index (precise symbol resolution) |
+| `framework_adapter` | 0.8 | MEDIUM | FastAPI/Express/NestJS/Spring/Django/React pattern matching |
+| `ast_direct` | 0.5 | LOW | tree-sitter AST extraction |
+| `name_match` | 0.3 | VERY_LOW | heuristic name-based resolution |
+
+The `min_confidence` parameter on `trace_callers` and `blast_radius` lets agents lower or raise the threshold. All MCP tool responses include `edge_source` and `confidence_tier` per result.
+
+## Framework adapters
+
+Six adapters detect wiring that tree-sitter cannot see:
+
+| Adapter | Patterns detected | Edge kinds |
+|---------|------------------|-----------|
+| FastAPI | `Depends(X)`, `@app.get/post`, `@router.*` | `Injects`, `Routes` |
+| Express | `app.use(mw)`, `router.use(mw)`, `router.get/post/put/delete` | `Middleware`, `Routes` |
+| NestJS | `@Controller()`, `@Injectable()` constructor injection | `Routes`, `Injects` |
+| Spring | `@Autowired`, `@Inject`, `@Component/@Service/@Repository`, `@Bean` | `Injects` |
+| Django | `urlpatterns path()/re_path()`, `@login_required` | `Routes`, `Middleware` |
+| React | JSX component renders, `useContext(SomeContext)` | `Renders`, `Injects` |
+
+Adapters only run for frameworks detected in dependency manifests. Manual override via `.cortex/config.toml` `frameworks = ["fastapi", "express"]`.
+
+## Index health gate
+
+All MCP tools check `index_health` before serving results. If `files_indexed == 0` or `node_count == 0` or `edge_count == 0`, every tool returns a `HealthError` with:
+- `reason`: specific failure description
+- `suggested_action`: e.g. "Run `cortex index`"
+- `fallback`: `FallbackSuggestion` with grep commands and file-read suggestions
+
+`cortex_status` and `get_repo_brief` are exempt from the health gate and always respond.
+
+## Evidence-fusion ranking
+
+`get_task_context` uses a multi-signal ranking formula:
+
+```
+score = (lexical_match × 0.30)
+      + (embedding_similarity × 0.25)   ← 0.0 if embeddings unavailable
+      + (scip_reference_distance × 0.20)
+      + (git_recency × 0.15)
+      + (edge_confidence × 0.10)
+      + (file_size_penalty × −0.05)
+```
+
+When embeddings are unavailable, `lexical_match` weight becomes 0.55. Results are packed greedily into the token budget; top-1 is always included. Each result includes a one-line reason explaining why it was selected.
 
 ## File watcher
 
@@ -86,22 +153,48 @@ The MCP server runs on a Tokio async runtime. It communicates over stdio using J
 
 Each tool call is handled concurrently (up to 4 simultaneous calls by default). Read operations use a connection pool. Write operations go through a single writer connection.
 
+### Tool surface
+
+Tools are classified into three tiers:
+
+| Tier | Count | How to enable |
+|------|-------|---------------|
+| Default (always-on) | 10 | automatic |
+| Experimental (opt-in) | 7 | `.cortex/config.toml` `experimental_tools = true` |
+| Smart-tools mode | 5 | `cortex serve --smart-tools` |
+
+`semantic_search` only appears in the manifest when embeddings are built.
+
 ```mermaid
 flowchart LR
-    subgraph "MCP Tools (32)"
+    subgraph "Default Tools (10)"
         direction TB
-        Structural[Structural<br/>search_symbols, trace_callers,<br/>trace_callees, get_file_context,<br/>get_architecture, find_dead_code,<br/>blast_radius, detect_changes,<br/>get_code_snippet, query_graph]
-        Search[Search<br/>search_text, semantic_search]
-        HTTP[HTTP<br/>get_http_routes, trace_http_call]
-        Security[Security<br/>find_taint_paths, scan_owasp,<br/>generate_sbom, check_dependencies]
-        Memory[Memory<br/>write_observation, read_observations,<br/>write_adr, read_adrs,<br/>prune_observations]
-        Analysis[Analysis<br/>decompose_boundaries,<br/>get_complexity_hotspots,<br/>get_task_context,<br/>generate_steering,<br/>get_class_hierarchy,<br/>get_git_hotspots,<br/>get_import_graph,<br/>find_similar_functions]
+        D1[get_repo_brief]
+        D2[get_task_context]
+        D3[ask]
+        D4[trace_callers]
+        D5[blast_radius]
+        D6[get_complexity_hotspots]
+        D7[get_git_hotspots]
+        D8[search_symbols]
+        D9[write_observation]
+        D10[read_observations]
+    end
+    subgraph "Experimental Tools (7)"
+        direction TB
+        E1[find_taint_paths]
+        E2[check_dependencies]
+        E3[decompose_boundaries]
+        E4[generate_steering]
+        E5[find_dead_code]
+        E6[generate_sbom]
+        E7[find_similar_functions]
     end
 ```
 
 ## Database schema
 
-Cortex uses SQLite in WAL mode with a configurable read pool (1-16 connections, default 4).
+Cortex uses SQLite in WAL mode with a configurable read pool (1–16 connections, default 4).
 
 ```mermaid
 erDiagram
@@ -114,15 +207,31 @@ erDiagram
         text content_hash
     }
     edges {
-        text caller_fqn FK
-        text callee_fqn FK
+        text source_fqn FK
+        text target_fqn FK
         text kind
-        int call_count
+        real confidence
+        text edge_source
     }
-    files {
-        text path PK
+    file_snapshots {
+        text file PK
         text content_hash
-        int last_indexed
+        int indexed_at
+    }
+    scip_coverage {
+        text file PK
+        int has_scip_data
+        int symbols_resolved
+        int indexed_at
+    }
+    index_health {
+        int id PK
+        int files_indexed
+        int node_count
+        int edge_count
+        real scip_coverage_percent
+        text frameworks_detected
+        text health_status
     }
     observations {
         int id PK
@@ -139,35 +248,42 @@ erDiagram
         text status
         text linked_fqn FK
     }
+    token_savings {
+        int id PK
+        text tool_name
+        int tokens_used
+        int baseline_cost
+        int net_saved
+        text query_terms
+        int timestamp
+    }
+    repo_brief_cache {
+        int id PK
+        text brief_json
+        int computed_at
+        text index_hash
+    }
 
-    nodes ||--o{ edges : "caller"
-    nodes ||--o{ edges : "callee"
+    nodes ||--o{ edges : "source"
+    nodes ||--o{ edges : "target"
     nodes ||--o{ observations : "linked to"
     nodes ||--o{ adrs : "linked to"
 ```
 
 Core tables:
 
-- `nodes`: all extracted symbols (FQN, kind, file, line, column, content hash, coverage data)
-- `edges`: call relationships between nodes (caller FQN, callee FQN, kind, call count)
-- `files`: tracked files with content hashes for change detection
-- `observations`: agent memory linked to node FQNs with timestamps and staleness
+- `nodes`: all extracted symbols (FQN, kind, file, line, content hash)
+- `edges`: relationships between nodes — now includes `edge_source` and `confidence`
+- `file_snapshots`: tracked files with content hashes for change detection
+- `scip_coverage`: per-file SCIP coverage tracking
+- `index_health`: singleton row updated after every index run
+- `observations`: agent memory linked to node FQNs with staleness tracking
 - `adrs`: architectural decision records
-- `fts_nodes`: FTS5 virtual table for full-text search over symbol names
+- `token_savings`: per-query savings with honest `net_saved` (can be negative)
+- `repo_brief_cache`: cached `get_repo_brief` output, invalidated on re-index
+- `nodes_fts`: FTS5 virtual table for full-text search over symbol names
 
-Indexes exist on FQN, file path, and edge endpoints for fast lookups.
-
-## Coverage field
-
-When LCOV coverage data is loaded via `cortex coverage --lcov`, each graph node gains a structured `coverage` field:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `hit_count` | u32 | Number of test executions hitting this function |
-| `line_coverage_pct` | f64 | Percentage of lines covered (0.0 to 100.0) |
-| `is_covered` | bool | Whether the function has any coverage (`hit_count > 0`) |
-
-Nodes without coverage data have `coverage: null`. The `get_file_context` and `search_symbols` MCP tools include coverage when it has been loaded.
+Schema migrations are numbered SQL files applied in order on startup (0001–0012).
 
 ## NodeKind classification
 
@@ -182,15 +298,6 @@ The indexer assigns `NodeKind::Method` to functions defined inside a class, stru
 | Java | Function inside `class_declaration` or `interface_declaration` |
 
 Methods include the parent type name in their FQN: `file::ClassName::method_name`. Standalone functions use `file::function_name`.
-
-## Ego-graph capping
-
-Ego-graph queries (subgraph centered on a node) are capped at 500 nodes. When the traversal would exceed this limit, nodes are prioritized by:
-
-1. BFS depth (closer nodes first)
-2. Caller count within the same depth (more-connected nodes first)
-
-The response includes `truncated: true` and `total_reachable` count so consumers know the full extent of the subgraph.
 
 ## Language support
 
@@ -230,8 +337,6 @@ Supported languages (29, of which 26 use tree-sitter grammars and 3 use regex-ba
 | YAML | .yml, .yaml |
 | Terraform/HCL | .tf, .hcl |
 
-Each language has a tree-sitter query that extracts function definitions, class definitions, method definitions, and call expressions. Python, TypeScript, Rust, and Go have the most complete coverage.
-
 ## Security analysis
 
 The security pass runs over the AST and call graph during indexing:
@@ -244,9 +349,22 @@ The security pass runs over the AST and call graph during indexing:
 
 ## Semantic search
 
-When enabled (`cortex semantic enable`), Cortex downloads a local ONNX model (nomic-embed-text-v1, about 138 MB) and generates embeddings for all symbols. These are stored in the SQLite database via sqlite-vec and used for vector similarity search.
+When enabled (`cortex semantic enable`), Cortex downloads a local ONNX model (nomic-embed-text-v1, about 138 MB) or uses Ollama with `nomic-embed-code` if available. Embeddings are generated for all Function/Method/Class nodes and stored in the SQLite database via sqlite-vec.
 
-The model runs locally with no network calls after the initial download. Suitable for air-gapped environments.
+Embedding generation is **incremental**: only nodes whose content hash changed since the last run are re-embedded. Stale embeddings for deleted nodes are removed automatically.
+
+When embeddings are available, `get_task_context` uses cosine similarity as a 0.25-weight signal in evidence-fusion ranking. `cortex status` shows the embedding count and a degradation warning when running in BM25-only mode.
+
+The `semantic_search` MCP tool only appears in the tool manifest when embeddings are built.
+
+## Token savings accounting
+
+After every query, Cortex records:
+
+- `baseline_cost = (matching_file_count × avg_file_tokens) + grep_output_tokens`
+- `net_saved = baseline_cost − (cortex_response_tokens + query_overhead_tokens)`
+
+Negative values (Cortex cost more than grep would have) are stored and reported without modification. `cortex status --savings` shows the full dashboard.
 
 ## Bundle format
 
@@ -258,33 +376,12 @@ flowchart LR
     JSON -->|import on checkout| DB2[(SQLite<br/>rebuilt from JSON)]
 ```
 
-The bundle is JSON (not SQLite) because:
-- JSON is diffable in pull requests
-- Adding fields is backward-compatible
-- Developers can open cortex.json and read the observations their team's agents wrote
-
 ## Memory layer
 
 Agent observations are stored linked to specific code node FQNs. When the indexer detects that a node has changed (content hash differs), all observations linked to that node are marked stale.
 
 Stale observations still surface in read results, but with a clear `is_stale: true` flag so the agent knows the note may be outdated.
 
-## Agent steering generation
+## Correctness benchmarks
 
-The `generate_steering` tool produces markdown content for CLAUDE.md, AGENTS.md, or .cursorrules files. The generated content includes:
-
-- **Module boundaries**: derived from Leiden community detection, showing clusters of tightly-coupled code
-- **Complexity hotspots**: top functions by cyclomatic complexity with file paths
-- **Active ADRs**: architectural decision records with status "accepted"
-
-The output is kept under 2000 tokens (estimated as character count / 4). If the content exceeds this budget, hotspots are truncated to the top 5 and ADR summaries are reduced to title-only.
-
-## Unified UI
-
-When the visualizer HTTP server is enabled (`CORTEX_UI_ENABLED=true` or `cortex viz --port`), Cortex serves a tabbed interface at the root path:
-
-- **Graph tab**: interactive 3D force-graph visualization of the call graph
-- **Dashboard tab**: metrics overview with node counts, language distribution, and coverage summary
-- **Explorer tab**: symbol search and navigation with filtering by kind
-
-The UI uses Lucide icons, a responsive CSS grid layout (768px to 2560px), and the project design tokens (off-white background, off-black text, Press Start 2P brand font).
+`cortex benchmark` runs JSON-based test suites with ground-truth answers for `trace_callers`, `blast_radius`, `get_task_context`, and `ask`. The CI pipeline runs this on every release and fails the build if pass rate drops below 70%. `cortex status` displays a warning when the last benchmark run was below threshold.

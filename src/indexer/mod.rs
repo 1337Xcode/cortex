@@ -1,12 +1,16 @@
+pub mod adapters;
 pub mod build_system;
 pub mod complexity;
 pub mod context_budget;
 pub mod embedder;
+pub mod framework_detect;
 pub mod http_routes;
 pub mod incremental;
 pub mod languages;
 pub mod multi_repo;
 pub mod parser;
+pub mod pattern_rules;
 pub mod pipeline;
 pub mod resolver;
+pub mod scip;
 pub mod type_map;

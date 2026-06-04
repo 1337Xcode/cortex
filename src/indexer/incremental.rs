@@ -253,6 +253,10 @@ fn edge_kind_str(kind: &crate::store::types::EdgeKind) -> &'static str {
         EdgeKind::Implements => "Implements",
         EdgeKind::HttpLink => "HttpLink",
         EdgeKind::DataFlow => "DataFlow",
+        EdgeKind::Injects => "Injects",
+        EdgeKind::Middleware => "Middleware",
+        EdgeKind::Routes => "Routes",
+        EdgeKind::Renders => "Renders",
     }
 }
 
@@ -604,6 +608,7 @@ mod tests {
                 target_fqn: "test.py::world".to_string(),
                 kind: EdgeKind::Calls,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: serde_json::json!({}),
             }],
         };
@@ -616,6 +621,7 @@ mod tests {
                 target_fqn: "test.py::foo".to_string(),
                 kind: EdgeKind::Calls,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: serde_json::json!({}),
             }],
         };

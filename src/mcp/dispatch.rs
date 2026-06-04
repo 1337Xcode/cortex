@@ -21,6 +21,7 @@ use crate::store::queries::memory;
 use crate::store::queries::search;
 use crate::store::types::NodeKind;
 
+use super::health;
 use super::savings_store;
 use super::token_counter::{
     TokenMeta, compute_token_breakdown, estimate_tokens_saved, estimate_tokens_used,
@@ -37,6 +38,65 @@ pub fn dispatch_tool(
     arguments: &Value,
 ) -> Result<Value, McpError> {
     let start = Instant::now();
+
+    // ── Unknown tool check — must run BEFORE health gate ─────────────────────
+    // Return Err immediately for unknown tools, regardless of index state.
+    const KNOWN_TOOLS: &[&str] = &[
+        "search_symbols", "trace_callers", "trace_callees", "get_file_context",
+        "get_architecture", "find_dead_code", "blast_radius", "write_observation",
+        "read_observations", "write_adr", "read_adrs", "prune_observations",
+        "detect_changes", "semantic_search", "search_text", "get_code_snippet",
+        "query_graph", "get_http_routes", "trace_http_call", "find_taint_paths",
+        "scan_owasp", "generate_sbom", "check_dependencies", "generate_steering",
+        "decompose_boundaries", "get_complexity_hotspots", "get_task_context",
+        "get_class_hierarchy", "get_git_hotspots", "get_import_graph",
+        "find_similar_functions", "ask",
+    ];
+    if !KNOWN_TOOLS.contains(&tool_name) {
+        return Err(McpError::DispatchError {
+            reason: format!("unknown tool: {}", tool_name),
+        });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── Health gate ──────────────────────────────────────────────────────────
+    // Read-only / write tools (write_observation, write_adr, prune_observations)
+    // are exempt — they can operate on an empty index.
+    // All graph query tools check health first to avoid confidently wrong answers.
+    const HEALTH_EXEMPT: &[&str] = &[
+        "write_observation",
+        "read_observations",
+        "write_adr",
+        "read_adrs",
+        "prune_observations",
+    ];
+
+    if !HEALTH_EXEMPT.contains(&tool_name) {
+        let health_status = health::check_health(store);
+        if !health_status.healthy {
+            let health_error = health::build_health_error(&health_status);
+            let error_json =
+                serde_json::to_string(&health_error).unwrap_or_else(|_| {
+                    format!(
+                        "{{\"error\":\"index_unhealthy\",\"reason\":\"{}\"}}",
+                        health_status
+                            .failure_reason
+                            .unwrap_or_else(|| "unknown".to_string())
+                    )
+                });
+            let tool_result = super::types::ToolCallResult {
+                content: vec![super::types::ToolContent {
+                    content_type: "text".to_string(),
+                    text: error_json,
+                }],
+                is_error: Some(true),
+            };
+            return serde_json::to_value(tool_result).map_err(|e| McpError::DispatchError {
+                reason: format!("failed to serialize health error: {}", e),
+            });
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     // search_symbols has special handling for retrieval_method in _meta
     let (result_json, files_touched, retrieval_method) = if tool_name == "search_symbols" {
@@ -2097,6 +2157,13 @@ mod tests {
         let conn = store.write_conn();
         migrations::run_migrations(&conn, std::path::Path::new("migrations"))
             .expect("failed to run migrations");
+        // Mark index as healthy so the health gate allows graph queries in tests.
+        // Tests that insert nodes/edges will have a real graph to query.
+        // Tests that don't insert data will get empty (but valid) results.
+        conn.execute(
+            "UPDATE index_health SET files_indexed = 1, node_count = 1, edge_count = 1 WHERE id = 1",
+            [],
+        ).expect("failed to set index_health for test");
         drop(conn);
         (store, tmp)
     }

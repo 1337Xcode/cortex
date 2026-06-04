@@ -65,6 +65,7 @@ pub fn detect_routes(
                 target_fqn,
                 kind: EdgeKind::HttpLink,
                 confidence,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({
                     "url": url_path,
                     "source_line": line,

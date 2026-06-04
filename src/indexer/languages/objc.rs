@@ -687,6 +687,7 @@ fn add_import_edge(file: &str, target: &str, edges: &mut Vec<Edge>) {
             target_fqn: target.to_string(),
             kind: EdgeKind::Imports,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({}),
         });
     }
@@ -785,6 +786,7 @@ fn extract_message_send(
                 target_fqn: target_fqn.clone(),
                 kind: EdgeKind::Calls,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({"receiver": receiver, "call_type": "message_send", "selector": selector}),
             });
         }
@@ -796,6 +798,7 @@ fn extract_message_send(
             target_fqn: simple_selector,
             kind: EdgeKind::Calls,
             confidence: 0.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"receiver": receiver, "call_type": "message_send", "selector": selector}),
         });
     }
@@ -832,6 +835,7 @@ fn extract_c_call(
                 target_fqn: target_fqn.clone(),
                 kind: EdgeKind::Calls,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({"call_type": "function"}),
             });
         }
@@ -843,6 +847,7 @@ fn extract_c_call(
             target_fqn: call_name,
             kind: EdgeKind::Calls,
             confidence: 0.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"call_type": "function"}),
         });
     }

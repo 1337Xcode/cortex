@@ -222,6 +222,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
                 target_fqn: base.to_string(),
                 kind: EdgeKind::Inherits,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({"via": "@ISA"}),
             });
         }
@@ -242,6 +243,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
                         target_fqn: base_cap.as_str().to_string(),
                         kind: EdgeKind::Inherits,
                         confidence: 1.0,
+                        edge_source: crate::store::confidence::EdgeSource::AstDirect,
                         attributes: json!({"via": target}),
                     });
                 }
@@ -263,6 +265,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
                         target_fqn: target.to_string(),
                         kind: EdgeKind::Imports,
                         confidence: 1.0,
+                        edge_source: crate::store::confidence::EdgeSource::AstDirect,
                         attributes: json!({}),
                     });
                 }
@@ -282,6 +285,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
             target_fqn: target.to_string(),
             kind: EdgeKind::Imports,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({}),
         });
     }
@@ -298,6 +302,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
             target_fqn: base.to_string(),
             kind: EdgeKind::Inherits,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"via": "extends"}),
         });
     }
@@ -314,6 +319,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
             target_fqn: role.to_string(),
             kind: EdgeKind::Implements,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"via": "with"}),
         });
     }
@@ -363,6 +369,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
             target_fqn: name.to_string(),
             kind: EdgeKind::Calls,
             confidence: 0.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"call_type": "function"}),
         });
     }

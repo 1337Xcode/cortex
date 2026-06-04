@@ -311,6 +311,7 @@ pub fn extract_sql(file: &str, source: &str) -> ExtractionResult {
             target_fqn: format!("{}::{}", file, target_table),
             kind: EdgeKind::DataFlow,
             confidence: 0.9,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"reference": true}),
         });
     }
@@ -453,6 +454,7 @@ pub fn extract_sql(file: &str, source: &str) -> ExtractionResult {
             target_fqn: name.to_string(),
             kind: EdgeKind::Calls,
             confidence: 0.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"call_type": "function"}),
         });
     }

@@ -82,6 +82,11 @@ pub struct DailySavings {
 }
 
 /// Record a tool call's token usage into the `token_savings` table.
+///
+/// Also computes and stores `baseline_cost` (tokens that would have been used
+/// without Cortex, i.e. `tokens_used + tokens_saved`) and `net_saved`
+/// (`tokens_saved - tokens_used`), which can be negative if the tool response
+/// itself was large.
 pub fn record_savings(
     conn: &Connection,
     tool_name: &str,
@@ -95,10 +100,33 @@ pub fn record_savings(
         .unwrap_or_default()
         .as_secs() as i64;
 
+    // baseline_cost: what the agent would have consumed reading files directly.
+    // Modelled as tokens_used (actual query cost) + tokens_saved (avoided reads).
+    let baseline_cost = tokens_used.saturating_add(tokens_saved);
+
+    // net_saved: actual savings over baseline. Can be negative if the tool
+    // response itself is larger than what was avoided (honest accounting).
+    let net_saved = (tokens_saved as i64) - (tokens_used as i64);
+
+    // Use the query terms from the tool name as a minimal proxy for the query.
+    let query_terms = serde_json::json!([tool_name]).to_string();
+
     conn.execute(
-        "INSERT INTO token_savings (tool_name, tokens_used, tokens_saved, timestamp, agent_id, model_name) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![tool_name, tokens_used as i64, tokens_saved as i64, now, agent_id, model_name],
+        "INSERT INTO token_savings \
+         (tool_name, tokens_used, tokens_saved, timestamp, agent_id, model_name, \
+          baseline_cost, net_saved, query_terms) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            tool_name,
+            tokens_used as i64,
+            tokens_saved as i64,
+            now,
+            agent_id,
+            model_name,
+            baseline_cost as i64,
+            net_saved,
+            query_terms,
+        ],
     )
     .map_err(|e| StoreError::QueryFailed {
         reason: format!("failed to record savings: {}", e),

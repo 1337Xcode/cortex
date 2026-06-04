@@ -66,3 +66,4 @@ benchmark/cpython_architecture.json
 # Misc
 *.tgz
 *.tar.gz
+tar*/

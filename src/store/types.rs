@@ -25,7 +25,8 @@ pub enum NodeKind {
 }
 
 /// Edge kind matching the CHECK constraint:
-/// `kind IN ('Calls','Imports','Inherits','Implements','HttpLink','DataFlow')`
+/// `kind IN ('Calls','Imports','Inherits','Implements','HttpLink','DataFlow',
+///           'Injects','Middleware','Routes','Renders')`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EdgeKind {
     Calls,
@@ -34,6 +35,14 @@ pub enum EdgeKind {
     Implements,
     HttpLink,
     DataFlow,
+    /// Dependency injection: a component injects another.
+    Injects,
+    /// Middleware chain: handler is wrapped by middleware.
+    Middleware,
+    /// HTTP routing: route handler registered for a path.
+    Routes,
+    /// Component rendering: a UI component renders another.
+    Renders,
 }
 
 /// A node in the code graph, corresponding to the `nodes` table.
@@ -57,7 +66,28 @@ pub struct Edge {
     pub target_fqn: String,
     pub kind: EdgeKind,
     pub confidence: f64,
+    /// The analysis step that produced this edge. Defaults to `ast_direct`.
+    #[serde(default = "default_edge_source")]
+    pub edge_source: crate::store::confidence::EdgeSource,
     pub attributes: serde_json::Value,
+}
+
+fn default_edge_source() -> crate::store::confidence::EdgeSource {
+    crate::store::confidence::EdgeSource::AstDirect
+}
+
+impl Default for Edge {
+    fn default() -> Self {
+        Self {
+            id: None,
+            source_fqn: String::new(),
+            target_fqn: String::new(),
+            kind: EdgeKind::Calls,
+            confidence: 0.5,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
+            attributes: serde_json::json!({}),
+        }
+    }
 }
 
 /// A file snapshot record, corresponding to the `file_snapshots` table.
@@ -242,6 +272,10 @@ mod tests {
             EdgeKind::Implements,
             EdgeKind::HttpLink,
             EdgeKind::DataFlow,
+            EdgeKind::Injects,
+            EdgeKind::Middleware,
+            EdgeKind::Routes,
+            EdgeKind::Renders,
         ];
 
         for variant in &variants {
@@ -253,7 +287,9 @@ mod tests {
 
     #[test]
     fn edge_kind_variants_match_schema() {
-        // These must match: CHECK(kind IN ('Calls','Imports','Inherits','Implements','HttpLink','DataFlow'))
+        // These must match: CHECK(kind IN ('Calls','Imports','Inherits','Implements',
+        //                                  'HttpLink','DataFlow','Injects','Middleware',
+        //                                  'Routes','Renders'))
         let expected = vec![
             "Calls",
             "Imports",
@@ -261,6 +297,10 @@ mod tests {
             "Implements",
             "HttpLink",
             "DataFlow",
+            "Injects",
+            "Middleware",
+            "Routes",
+            "Renders",
         ];
         for name in &expected {
             let json_str = format!("\"{}\"", name);
@@ -304,6 +344,7 @@ mod tests {
             target_fqn: "src/lib.rs::run".to_string(),
             kind: EdgeKind::Calls,
             confidence: 0.95,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({}),
         };
 
@@ -315,6 +356,7 @@ mod tests {
         assert_eq!(deserialized.target_fqn, edge.target_fqn);
         assert_eq!(deserialized.kind, edge.kind);
         assert_eq!(deserialized.confidence, edge.confidence);
+        assert_eq!(deserialized.edge_source, edge.edge_source);
         assert_eq!(deserialized.attributes, edge.attributes);
     }
 
@@ -516,6 +558,7 @@ mod tests {
                 target_fqn: "src/lib.rs::run".to_string(),
                 kind: EdgeKind::Calls,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({}),
             }],
         };

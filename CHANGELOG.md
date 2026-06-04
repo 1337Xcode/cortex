@@ -2,6 +2,110 @@
 
 All notable changes to Cortex are documented here.
 
+## [1.1.0] - 2026-06-01
+
+### Added
+
+**SCIP Index Ingestion**
+- Parses SCIP protobuf index files (`.scip/index.scip`, `index.scip`, `dump.lsif`) and creates HIGH-confidence edges (confidence=1.0, edge_source=`scip`)
+- Supports indexes produced by scip-python, scip-typescript, rust-analyzer, scip-java, and scip-go
+- SCIP edges win over tree-sitter edges on conflicts — deduplication keeps SCIP as primary, tree-sitter as secondary
+- Additive, non-blocking pass after tree-sitter extraction; malformed SCIP files log a warning and fall back gracefully
+- `cortex status` shows SCIP coverage percentage per language
+- `cortex index --generate-scip` suggests the appropriate indexer for the detected primary language when no SCIP index is present
+
+**Confidence-Tagged Edges**
+- Every edge now carries `edge_source` (`scip`, `framework_adapter`, `ast_direct`, `name_match`) and `confidence` (1.0 / 0.8 / 0.5 / 0.3)
+- All MCP tools include edge_source and confidence_tier in results so agents can filter by reliability
+- Default query threshold: confidence >= MEDIUM (0.7) — filters out name-match heuristics by default
+- Optional `min_confidence` parameter on `trace_callers` and `blast_radius` to lower or raise the threshold
+
+**Framework Adapters** — six new adapters detect wiring that tree-sitter cannot see:
+- **FastAPI**: `Depends(X)` → `Injects` edges; `@app.get/post/router.get/post/put/delete` → `Routes` edges; transitive dependency chains
+- **Express**: `app.use(middleware)` / `router.use(middleware)` → `Middleware` edges; `router.get/post/put/delete(path, handler)` → `Routes` edges
+- **NestJS**: `@Controller()` → `Routes` edges; `@Injectable()` constructor injection → `Injects` edges
+- **Spring**: `@Autowired` / `@Inject` → `Injects` edges; `@Component/@Service/@Repository/@Controller` marks injectable; `@Bean` factory methods
+- **Django**: `urlpatterns path()/re_path()` → `Routes` edges; `@login_required/@permission_required` → `Middleware` edges
+- **React**: JSX component renders → `Renders` edges; `useContext(SomeContext)` → `Injects` edges
+- Framework detection scans dependency manifests (`package.json`, `requirements.txt`, `pyproject.toml`, `pom.xml`, `build.gradle`, `go.mod`, `Gemfile`, `composer.json`) — only relevant adapters run
+- Manual override via `.cortex/config.toml` `frameworks = ["fastapi", "express"]`
+
+**User-Configurable Pattern Rules**
+- `.cortex/patterns.toml` supports custom regex rules with named capture groups, edge kind, and confidence tier
+- Enables framework-specific wiring for any framework not covered by built-in adapters
+
+**Evidence-Fusion Task Context** (`get_task_context` overhaul)
+- Multi-signal ranking: lexical match (BM25, 0.30) + embedding similarity (0.25) + SCIP reference distance (0.20) + git recency (0.15) + edge confidence (0.10) + file size penalty (−0.05)
+- Weight redistributed to lexical (0.55) when embeddings are unavailable
+- Greedy budget packing always includes top-1 result; each included file gets a one-line reason explaining selection
+- Falls back to file-proximity heuristic (recently modified files matching keywords) when graph signals are weak
+- Response includes `confidence` (0.0–1.0) and `coverage_percent` fields
+- Non-empty results guaranteed on a healthy index
+
+**Ask Tool Overhaul**
+- Priority-ordered data source querying: SCIP edges first → framework adapter edges → AST-direct edges → grep fallback
+- `FallbackSuggestion` returned when average confidence < 0.7 or zero results — includes grep commands and file-read suggestions derived from query terms
+- Token cap: results capped at 1000 tokens when average confidence is below MEDIUM
+- `confidence_warning` annotation on responses when results exist but confidence is low (never returns empty when results are available)
+- Detects unindexed file paths in queries and returns targeted fallback suggestions
+
+**Index Health Gate**
+- Startup health check validates `files_indexed > 0`, `node_count > 0`, `edge_count > 0`
+- All MCP tools return a structured `HealthError` (with reason, suggested action, and fallback grep commands) when the index is unhealthy — never serves confidently wrong data
+- `cortex_status` tool is exempt from the health gate
+- `cortex index --repair` rebuilds the index from scratch (clears all graph tables, resets FTS5, re-runs full pipeline) while preserving observations and ADRs
+
+**Token Savings Accounting** (honest math)
+- `baseline_cost` computed as `(matching_file_count × avg_file_tokens) + grep_output_tokens` using FTS5 to count matching files
+- `net_saved = baseline_cost − (cortex_response_tokens + query_overhead_tokens)` — negative values reported without modification
+- `cortex status --savings` displays: cumulative net saved, average per query, net-negative query count, baseline total vs actual total
+
+**Repo Brief** (`get_repo_brief` — new MCP tool)
+- Zero-parameter cold-start summary under 400 tokens: detected languages and frameworks, top 5 entry points, top 10 hotspots (complexity × churn), auth/security patterns, test coverage shape, index health
+- Cached in `repo_brief_cache` table; invalidated when `files_indexed`, `node_count`, or `edge_count` changes
+- Returns partial info even when the index is unhealthy
+
+**Tool Surface Management**
+- Default tools (always-on, 10): `get_repo_brief`, `get_task_context`, `ask`, `trace_callers`, `blast_radius`, `get_complexity_hotspots`, `get_git_hotspots`, `search_symbols`, `write_observation`, `read_observations`
+- Experimental tools (opt-in via `.cortex/config.toml` `experimental_tools = true`, 7): `find_taint_paths`, `check_dependencies`, `decompose_boundaries`, `generate_steering`, `find_dead_code`, `generate_sbom`, `find_similar_functions`
+- Smart-tools mode (`cortex serve --smart-tools`, 5): `get_repo_brief`, `ask`, `get_task_context`, `write_observation`, `read_observations`
+- All tool descriptions kept under 100 tokens
+- `semantic_search` only appears in the tool manifest when embeddings are built
+
+**Hybrid Semantic Retrieval**
+- Incremental embedding: only re-embeds functions whose content hash changed since the last run; removes stale embeddings for deleted nodes
+- `cortex semantic enable` builds the initial embedding index (Ollama nomic-embed-code or bundled ONNX model)
+- Cosine similarity integrated as a 0.25-weight signal in evidence-fusion ranking
+- `cortex status` shows embedding count and a degradation warning when running in BM25-only mode
+
+**Correctness Benchmarks**
+- `cortex benchmark` command runs JSON-based test suites with ground-truth answers for `trace_callers`, `blast_radius`, `get_task_context`, and `ask`
+- Reports pass rate, per-tool accuracy, and average token savings vs grep baseline
+- 24-case self-referential benchmark suite ships in `benchmark/cortex_self_benchmark.json`
+- CI gate: `cortex benchmark` runs on every release and exits with code 1 if pass rate drops below 70%
+- `cortex status` displays a warning when the last benchmark run was below the 70% threshold
+
+**Schema Migrations**
+- `0009_confidence_edges.sql`: adds `edge_source` and `confidence` columns to edges; adds new edge kinds (`Injects`, `Middleware`, `Routes`, `Renders`); migrates existing edges to `ast_direct` / 0.5
+- `0010_scip_coverage.sql`: `scip_coverage` table (per-file SCIP tracking) and `index_health` singleton table
+- `0011_enhanced_savings.sql`: adds `baseline_cost`, `net_saved`, `query_terms` columns to `token_savings`
+- `0012_repo_brief_cache.sql`: `repo_brief_cache` table for cached repo briefs
+
+### Changed
+- `trace_callers` now traverses `Injects` edges (framework DI injection sites) and follows `Implements` edges to include callers of interface/trait methods; annotates each result with `edge_source` and `confidence_tier`
+- `blast_radius` now traverses all edge types (`Calls`, `Imports`, `Injects`, `Implements`, `Middleware`, `Routes`, `Renders`) with confidence filtering
+- `get_task_context` replaced with evidence-fusion ranking (see above); response format extended with `confidence`, `coverage_percent`, and `reasons` fields
+- `cortex status` extended with SCIP coverage %, active framework adapters, per-language file breakdown, semantic search status, and benchmark pass rate warning
+- Indexing pipeline now runs framework detection before adapters, SCIP ingestion after tree-sitter, and updates `index_health` at the end of every index run
+- Universal exclusions hardened: generation markers (`// Code generated`, `# AUTO-GENERATED`, `@generated`) detected in first 2KB; `*.map` source maps excluded; `.cortexignore` support verified
+
+### Fixed
+- `get_task_context` no longer returns empty on a healthy index — file-proximity fallback guarantees at least one result
+- `ask` no longer returns confidently wrong answers from a corrupt or empty index — health gate blocks all tools when unhealthy
+- `trace_callers` missed framework-wired connections (FastAPI `Depends`, Spring `@Autowired`, NestJS constructor injection) — now included via `Injects` edge traversal
+- Low-confidence name-match edges no longer pollute results by default — filtered at confidence >= 0.7
+- User-defined pattern rules (`.cortex/patterns.toml`) were incorrectly stored with `edge_source=name_match` (confidence 0.3) instead of `edge_source=framework_adapter` (confidence 0.8) — pattern rule edges now pass the default `min_confidence >= 0.7` filter and appear correctly in `trace_callers`, `blast_radius`, and `ask` results
+
 ## [1.0.4] - 2026-05-25
 
 ### Added

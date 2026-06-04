@@ -318,6 +318,7 @@ fn extract_anchors_from_node(
                             target_fqn,
                             kind: EdgeKind::Imports,
                             confidence: 0.9,
+                            edge_source: crate::store::confidence::EdgeSource::AstDirect,
                             attributes: json!({"yaml_type": "alias_reference"}),
                         });
                     }

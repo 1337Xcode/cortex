@@ -614,6 +614,7 @@ fn extract_superclass(
                     target_fqn: type_name,
                     kind: EdgeKind::Inherits,
                     confidence: 1.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({}),
                 });
             }
@@ -636,6 +637,7 @@ fn extract_superclass(
                 target_fqn: type_name,
                 kind: EdgeKind::Inherits,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({}),
             });
         }
@@ -679,6 +681,7 @@ fn extract_interfaces(
                     target_fqn: name,
                     kind: EdgeKind::Implements,
                     confidence: 1.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({}),
                 });
             }
@@ -725,6 +728,7 @@ fn extract_mixins_clause(
                     target_fqn: name,
                     kind: EdgeKind::Inherits,
                     confidence: 1.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({}),
                 });
             }
@@ -752,6 +756,7 @@ fn extract_type_list(
                         target_fqn: name,
                         kind: edge_kind.clone(),
                         confidence: 1.0,
+                        edge_source: crate::store::confidence::EdgeSource::AstDirect,
                         attributes: json!({}),
                     });
                 }
@@ -817,6 +822,7 @@ fn extract_import(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mu
             target_fqn: target,
             kind: EdgeKind::Imports,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({}),
         });
     }
@@ -907,6 +913,7 @@ fn extract_call_edge(
                     target_fqn: target_fqn.clone(),
                     kind: EdgeKind::Calls,
                     confidence: 1.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({}),
                 });
             }

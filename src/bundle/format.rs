@@ -114,6 +114,7 @@ mod tests {
                 target_fqn: "src/lib.rs::run".to_string(),
                 kind: EdgeKind::Calls,
                 confidence: 1.0,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: json!({}),
             }],
             security_findings: vec![],

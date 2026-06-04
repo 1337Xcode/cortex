@@ -188,6 +188,7 @@ fn collect_includes(node: tree_sitter::Node, file: &str, source: &[u8], edges: &
                     target_fqn: include_path.to_string(),
                     kind: EdgeKind::Imports,
                     confidence: 1.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({}),
                 });
             }

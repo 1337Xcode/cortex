@@ -194,6 +194,7 @@ fn query_all_edges(conn: &rusqlite::Connection) -> Result<Vec<Edge>, BundleError
                 kind: serde_json::from_str(&format!("\"{kind_str}\""))
                     .unwrap_or(crate::store::types::EdgeKind::Calls),
                 confidence: row.get(4)?,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: serde_json::from_str(&attrs_str)
                     .unwrap_or(serde_json::Value::Object(Default::default())),
             })

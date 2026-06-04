@@ -21,7 +21,7 @@ fn test_version_flag_reports_version() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("cortex 1.0.2"));
+        .stdout(predicate::str::contains("cortex 1.1.0"));
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn test_valid_config_exits_zero_with_startup_line() {
         .env_remove("CORTEX_LOG_LEVEL")
         .assert()
         .success()
-        .stderr(predicate::str::contains("cortex 1.0.2"))
+        .stderr(predicate::str::contains("cortex 1.1.0"))
         .stderr(predicate::str::contains("repo:"))
         .stderr(predicate::str::contains("data:"));
 }

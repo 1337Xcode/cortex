@@ -13,10 +13,12 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::error::IndexError;
+use crate::indexer::framework_detect;
 use crate::indexer::http_routes;
 use crate::indexer::languages;
 use crate::indexer::parser::{self, SupportedLanguage};
 use crate::indexer::resolver;
+use crate::indexer::scip;
 use crate::security::secrets;
 use crate::store::db::StoreManager;
 use crate::store::queries::delta::{GraphDelta, apply_delta, apply_deltas_batch};
@@ -231,6 +233,64 @@ pub fn index_repository(repo_root: &Path, store: &StoreManager) -> Result<IndexS
     // Step 7: Handle deleted files
     let deleted_count = handle_deleted_files(repo_root, &candidate_files, store)?;
     stats.files_deleted = deleted_count;
+
+    // Step 8: SCIP index ingestion (if an index file exists next to the repo root).
+    // Runs after tree-sitter indexing so SCIP edges can supersede ast_direct edges
+    // for the same (source_fqn, target_fqn) pairs.
+    let scip_coverage = if let Some(scip_path) = scip::find_scip_index(repo_root) {
+        scip::try_ingest_scip(&scip_path, store);
+        scip::compute_scip_coverage(store)
+    } else {
+        scip::compute_scip_coverage(store)
+    };
+
+    // Step 9: Framework detection — scan dependency manifests and record detected
+    // frameworks in index_health for health-gate reporting.
+    let detected_frameworks = framework_detect::detect_frameworks(repo_root);
+    let framework_names: Vec<String> = detected_frameworks
+        .iter()
+        .map(|f| f.name.as_str().to_string())
+        .collect();
+    let frameworks_json = serde_json::to_string(&framework_names).unwrap_or_else(|_| "[]".to_string());
+
+    // Step 10: Update the index_health singleton row with current metrics.
+    {
+        let conn = store.write_conn();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        let node_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get(0))
+            .unwrap_or(0);
+        let edge_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM edges", [], |row| row.get(0))
+            .unwrap_or(0);
+        let files_indexed: i64 = conn
+            .query_row("SELECT COUNT(*) FROM file_snapshots", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let _ = conn.execute(
+            "UPDATE index_health SET \
+             files_indexed = ?1, \
+             node_count = ?2, \
+             edge_count = ?3, \
+             scip_coverage_percent = ?4, \
+             frameworks_detected = ?5, \
+             last_index_at = ?6, \
+             health_status = 'healthy' \
+             WHERE id = 1",
+            rusqlite::params![
+                files_indexed,
+                node_count,
+                edge_count,
+                scip_coverage,
+                frameworks_json,
+                now,
+            ],
+        );
+    }
 
     stats.duration_ms = start.elapsed().as_millis() as u64;
     Ok(stats)

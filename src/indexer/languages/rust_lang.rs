@@ -249,6 +249,7 @@ fn collect_use_statements(
                     target_fqn: use_path.to_string(),
                     kind: EdgeKind::Imports,
                     confidence: 1.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: if is_reexport {
                         json!({"reexport": true})
                     } else {
@@ -292,6 +293,7 @@ fn collect_calls(
                             target_fqn: target_fqn.clone(),
                             kind: EdgeKind::Calls,
                             confidence: 1.0,
+                            edge_source: crate::store::confidence::EdgeSource::AstDirect,
                             attributes: json!({}),
                         });
                     }
@@ -318,6 +320,7 @@ fn collect_calls(
                                 target_fqn,
                                 kind: EdgeKind::Calls,
                                 confidence,
+                                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                                 attributes: json!({
                                     "receiver": qualifier,
                                     "call_type": "qualified"
@@ -347,6 +350,7 @@ fn collect_calls(
                                 target_fqn,
                                 kind: EdgeKind::Calls,
                                 confidence,
+                                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                                 attributes: json!({
                                     "receiver": receiver,
                                     "call_type": "method",

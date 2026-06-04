@@ -472,6 +472,11 @@ fn test_dispatch_search_text() {
             [],
         )
         .unwrap();
+        conn.execute(
+            "UPDATE index_health SET files_indexed = 1, node_count = 1, edge_count = 1 WHERE id = 1",
+            [],
+        )
+        .unwrap();
     }
 
     // Dispatch search_text tool
@@ -498,6 +503,11 @@ fn test_dispatch_search_text_missing_query() {
         let conn = store.write_conn();
         cortex::store::migrations::run_migrations(&conn, &migrations_dir())
             .expect("migrations should succeed");
+        conn.execute(
+            "UPDATE index_health SET files_indexed = 1, node_count = 1, edge_count = 1 WHERE id = 1",
+            [],
+        )
+        .unwrap();
     }
 
     // Missing required "query" argument
@@ -642,6 +652,11 @@ fn test_graph_results_include_confidence_via_dispatch() {
             [],
         )
         .unwrap();
+        conn.execute(
+            "UPDATE index_health SET files_indexed = 2, node_count = 2, edge_count = 1 WHERE id = 1",
+            [],
+        )
+        .unwrap();
     }
 
     // trace_callers should return results with confidence from edge
@@ -679,6 +694,11 @@ fn test_search_symbols_includes_confidence_1_0() {
         conn.execute(
             "INSERT INTO nodes (fqn, kind, file, start_line, end_line, file_hash, indexed_at, attributes)
              VALUES ('src/main.rs::main', 'Function', 'src/main.rs', 1, 10, 'hash', 1000, '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE index_health SET files_indexed = 1, node_count = 1, edge_count = 1 WHERE id = 1",
             [],
         )
         .unwrap();
@@ -760,6 +780,11 @@ fn test_trace_callers_sorted_by_confidence_descending() {
             [],
         )
         .unwrap();
+        conn.execute(
+            "UPDATE index_health SET files_indexed = 4, node_count = 4, edge_count = 3 WHERE id = 1",
+            [],
+        )
+        .unwrap();
     }
 
     let args = serde_json::json!({ "fqn": "src/target.rs::target", "depth": 1 });
@@ -805,6 +830,11 @@ fn test_search_text_dispatch_includes_confidence() {
         conn.execute(
             "INSERT INTO nodes (fqn, kind, file, start_line, end_line, file_hash, indexed_at, attributes)
              VALUES ('src/api/users.rs::get_user', 'Function', 'src/api/users.rs', 1, 20, 'hash', 1000, '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE index_health SET files_indexed = 1, node_count = 1, edge_count = 1 WHERE id = 1",
             [],
         )
         .unwrap();

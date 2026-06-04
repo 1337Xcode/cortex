@@ -1,7 +1,7 @@
 {
   "name": "@1337xcode/cortex",
-  "version": "1.0.4",
-  "description": "Code intelligence MCP server. Indexes your repository into a queryable call graph for AI coding agents.",
+  "version": "1.1.0",
+  "description": "Code intelligence MCP server. Indexes your repository into a confidence-aware call graph with SCIP ingestion, framework adapters, and evidence-fusion ranking for AI coding agents.",
   "bin": {
     "cortex": "./bin/cortex.js"
   },
@@ -20,7 +20,11 @@
     "cortex",
     "code-graph",
     "security",
-    "taint-analysis"
+    "taint-analysis",
+    "scip",
+    "framework-adapters",
+    "confidence-aware",
+    "evidence-fusion"
   ],
   "author": "1337Xcode",
   "license": "MIT",

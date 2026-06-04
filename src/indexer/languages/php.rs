@@ -567,6 +567,7 @@ fn extract_use_edge(node: tree_sitter::Node, file: &str, source: &[u8], edges: &
                         target_fqn: normalized,
                         kind: EdgeKind::Imports,
                         confidence: 1.0,
+                        edge_source: crate::store::confidence::EdgeSource::AstDirect,
                         attributes: json!({}),
                     });
                 }
@@ -587,6 +588,7 @@ fn extract_use_edge(node: tree_sitter::Node, file: &str, source: &[u8], edges: &
                             target_fqn: normalized,
                             kind: EdgeKind::Imports,
                             confidence: 1.0,
+                            edge_source: crate::store::confidence::EdgeSource::AstDirect,
                             attributes: json!({}),
                         });
                     }
@@ -615,6 +617,7 @@ fn extract_use_edge(node: tree_sitter::Node, file: &str, source: &[u8], edges: &
                                     target_fqn: normalized,
                                     kind: EdgeKind::Imports,
                                     confidence: 1.0,
+                                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                                     attributes: json!({}),
                                 });
                             }
@@ -649,6 +652,7 @@ fn extract_use_edge(node: tree_sitter::Node, file: &str, source: &[u8], edges: &
                     target_fqn: normalized,
                     kind: EdgeKind::Imports,
                     confidence: 1.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({}),
                 });
             }
@@ -686,6 +690,7 @@ fn extract_require_include(
                                 target_fqn: path.to_string(),
                                 kind: EdgeKind::Imports,
                                 confidence: 0.9,
+                                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                                 attributes: json!({"require": true}),
                             });
                         }
@@ -750,6 +755,7 @@ fn extract_call_edge(
                     target_fqn: target_fqn.clone(),
                     kind: EdgeKind::Calls,
                     confidence: 1.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({}),
                 });
             }
@@ -845,6 +851,7 @@ fn extract_names_from_clause(
                         target_fqn: text,
                         kind: edge_kind.clone(),
                         confidence: 1.0,
+                        edge_source: crate::store::confidence::EdgeSource::AstDirect,
                         attributes: json!({}),
                     });
                 }

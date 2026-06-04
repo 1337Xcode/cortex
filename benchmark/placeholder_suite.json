@@ -1,0 +1,86 @@
+{
+  "name": "cortex-placeholder",
+  "description": "Placeholder benchmark suite for infrastructure validation. Replace with real repository snapshots and ground-truth answers in task 18.2.",
+  "cases": [
+    {
+      "id": "search-main-function",
+      "tool_name": "search_symbols",
+      "input_args": {
+        "pattern": "*main*"
+      },
+      "expected_output": {
+        "min_results": 1,
+        "expected_keywords": ["main"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "trace-callers-placeholder",
+      "tool_name": "trace_callers",
+      "input_args": {
+        "fqn": "src/main.rs::main",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [],
+        "min_results": 0
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.7,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "blast-radius-placeholder",
+      "tool_name": "blast_radius",
+      "input_args": {
+        "fqn": "src/main.rs::main",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [],
+        "min_results": 0
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.7,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "task-context-placeholder",
+      "tool_name": "get_task_context",
+      "input_args": {
+        "task_description": "implement user authentication",
+        "token_budget": 4000
+      },
+      "expected_output": {
+        "expected_fqns": [],
+        "expected_keywords": [],
+        "min_results": 0
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "ask-placeholder",
+      "tool_name": "ask",
+      "input_args": {
+        "question": "what does the main function do?"
+      },
+      "expected_output": {
+        "expected_fqns": [],
+        "expected_keywords": [],
+        "min_results": 0
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    }
+  ]
+}

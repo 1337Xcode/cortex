@@ -1,0 +1,489 @@
+{
+  "name": "cortex-self-benchmark",
+  "description": "Comprehensive benchmark suite using the Cortex codebase itself as the repository snapshot. Contains 24 test cases with ground-truth answers for trace_callers, blast_radius, get_task_context, and ask queries. Validates correctness and measures token savings vs grep baseline.",
+  "cases": [
+    {
+      "id": "trace-callers-dispatch-tool",
+      "tool_name": "trace_callers",
+      "input_args": {
+        "fqn": "src/mcp/dispatch.rs::dispatch_tool",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/server.rs::McpServer::handle_tools_call",
+          "src/benchmark/mod.rs::execute_case"
+        ],
+        "min_results": 1,
+        "expected_keywords": ["dispatch_tool", "handle_tools_call"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "trace-callers-blast-radius-fn",
+      "tool_name": "trace_callers",
+      "input_args": {
+        "fqn": "src/store/queries/graph.rs::blast_radius",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/dispatch.rs::dispatch_blast_radius"
+        ],
+        "min_results": 1,
+        "expected_keywords": ["blast_radius", "dispatch"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "trace-callers-trace-callers-fn",
+      "tool_name": "trace_callers",
+      "input_args": {
+        "fqn": "src/store/queries/graph.rs::trace_callers",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/dispatch.rs::dispatch_trace_callers"
+        ],
+        "min_results": 1,
+        "expected_keywords": ["trace_callers", "dispatch"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "trace-callers-index-repository",
+      "tool_name": "trace_callers",
+      "input_args": {
+        "fqn": "src/indexer/pipeline.rs::index_repository",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/cli"
+        ],
+        "min_results": 1,
+        "expected_keywords": ["index_repository"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "trace-callers-search-fts",
+      "tool_name": "trace_callers",
+      "input_args": {
+        "fqn": "src/store/queries/search.rs::search_fts",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/ask.rs",
+          "src/indexer/context_budget.rs"
+        ],
+        "min_results": 1,
+        "expected_keywords": ["search_fts", "fts5"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "trace-callers-propagate-taint",
+      "tool_name": "trace_callers",
+      "input_args": {
+        "fqn": "src/security/taint.rs::propagate_taint",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/dispatch.rs::dispatch_find_taint_paths"
+        ],
+        "min_results": 1,
+        "expected_keywords": ["taint", "dispatch"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "blast-radius-store-manager",
+      "tool_name": "blast_radius",
+      "input_args": {
+        "fqn": "src/store/db.rs::StoreManager",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/dispatch.rs",
+          "src/mcp/server.rs",
+          "src/indexer/pipeline.rs",
+          "src/benchmark/mod.rs"
+        ],
+        "min_results": 3,
+        "expected_keywords": ["StoreManager"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "blast-radius-edge-kind",
+      "tool_name": "blast_radius",
+      "input_args": {
+        "fqn": "src/store/types.rs::EdgeKind",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/store/queries/graph.rs",
+          "src/indexer/resolver.rs",
+          "src/mcp/dispatch.rs"
+        ],
+        "min_results": 2,
+        "expected_keywords": ["EdgeKind", "edge"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "blast-radius-node-kind",
+      "tool_name": "blast_radius",
+      "input_args": {
+        "fqn": "src/store/types.rs::NodeKind",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/indexer/pipeline.rs",
+          "src/store/queries/graph.rs",
+          "src/mcp/dispatch.rs"
+        ],
+        "min_results": 2,
+        "expected_keywords": ["NodeKind"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "blast-radius-ask-config",
+      "tool_name": "blast_radius",
+      "input_args": {
+        "fqn": "src/mcp/ask.rs::AskConfig",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/ask.rs::ask",
+          "src/mcp/ask.rs::dispatch_ask"
+        ],
+        "min_results": 1,
+        "expected_keywords": ["AskConfig", "ask"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "blast-radius-confidence-tier",
+      "tool_name": "blast_radius",
+      "input_args": {
+        "fqn": "src/store/confidence.rs::ConfidenceTier",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/store",
+          "src/indexer"
+        ],
+        "min_results": 1,
+        "expected_keywords": ["ConfidenceTier", "confidence"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "blast-radius-mcp-error",
+      "tool_name": "blast_radius",
+      "input_args": {
+        "fqn": "src/mcp/types.rs::McpError",
+        "depth": 2
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/dispatch.rs",
+          "src/mcp/server.rs",
+          "src/mcp/ask.rs"
+        ],
+        "min_results": 2,
+        "expected_keywords": ["McpError"]
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "task-context-add-new-mcp-tool",
+      "tool_name": "get_task_context",
+      "input_args": {
+        "task_description": "Add a new MCP tool for querying class hierarchy and inheritance",
+        "token_budget": 8000
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/dispatch.rs",
+          "src/mcp/server.rs"
+        ],
+        "expected_keywords": ["dispatch", "tool", "mcp"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "task-context-fix-edge-resolution",
+      "tool_name": "get_task_context",
+      "input_args": {
+        "task_description": "Fix cross-file edge resolution for aliased imports in TypeScript",
+        "token_budget": 6000
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/indexer/resolver.rs"
+        ],
+        "expected_keywords": ["resolve", "import", "edge"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "task-context-improve-taint-analysis",
+      "tool_name": "get_task_context",
+      "input_args": {
+        "task_description": "Improve taint analysis to detect SQL injection paths from HTTP inputs",
+        "token_budget": 6000
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/security/taint.rs"
+        ],
+        "expected_keywords": ["taint", "source", "sink", "sql"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "task-context-optimize-indexing-performance",
+      "tool_name": "get_task_context",
+      "input_args": {
+        "task_description": "Optimize indexing performance for large repositories with parallel file parsing",
+        "token_budget": 8000
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/indexer/pipeline.rs"
+        ],
+        "expected_keywords": ["index", "pipeline", "parse"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "task-context-add-embedding-support",
+      "tool_name": "get_task_context",
+      "input_args": {
+        "task_description": "Add vector embedding support for semantic code search using ONNX runtime",
+        "token_budget": 6000
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/indexer/embedder.rs",
+          "src/store/queries/embeddings.rs"
+        ],
+        "expected_keywords": ["embedding", "semantic", "vector"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "task-context-implement-benchmark-runner",
+      "tool_name": "get_task_context",
+      "input_args": {
+        "task_description": "Implement benchmark runner that validates tool correctness against ground truth",
+        "token_budget": 6000
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/benchmark/mod.rs"
+        ],
+        "expected_keywords": ["benchmark", "suite", "case"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "ask-what-calls-dispatch-tool",
+      "tool_name": "ask",
+      "input_args": {
+        "question": "What calls dispatch_tool in the MCP server?"
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/mcp/dispatch.rs",
+          "src/mcp/server.rs"
+        ],
+        "expected_keywords": ["dispatch_tool", "server", "handle"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "ask-explain-confidence-system",
+      "tool_name": "ask",
+      "input_args": {
+        "question": "Explain how the confidence system works for edge filtering"
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/store/confidence.rs"
+        ],
+        "expected_keywords": ["confidence", "edge", "tier"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "ask-how-indexing-works",
+      "tool_name": "ask",
+      "input_args": {
+        "question": "How does the indexing pipeline process files and create nodes?"
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/indexer/pipeline.rs"
+        ],
+        "expected_keywords": ["index", "pipeline", "node", "file"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "ask-security-taint-analysis",
+      "tool_name": "ask",
+      "input_args": {
+        "question": "How does taint analysis detect security vulnerabilities?"
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/security/taint.rs"
+        ],
+        "expected_keywords": ["taint", "source", "sink", "security"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "ask-architecture-overview",
+      "tool_name": "ask",
+      "input_args": {
+        "question": "What is the overall architecture of the Cortex MCP server?"
+      },
+      "expected_output": {
+        "expected_fqns": [],
+        "expected_keywords": ["mcp", "server", "store", "indexer"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    },
+    {
+      "id": "ask-how-fts5-search-works",
+      "tool_name": "ask",
+      "input_args": {
+        "question": "How does the FTS5 full-text search find matching symbols?"
+      },
+      "expected_output": {
+        "expected_fqns": [
+          "src/store/queries/search.rs"
+        ],
+        "expected_keywords": ["fts5", "search", "query"],
+        "min_results": 1
+      },
+      "tolerance": {
+        "fqn_match_ratio": 0.5,
+        "allow_extra_results": true
+      }
+    }
+  ],
+  "metadata": {
+    "repository": "cortex (self-referential)",
+    "languages": ["rust"],
+    "frameworks": [],
+    "total_cases": 24,
+    "tool_breakdown": {
+      "trace_callers": 6,
+      "blast_radius": 6,
+      "get_task_context": 6,
+      "ask": 6
+    },
+    "token_savings_baseline": {
+      "description": "Baseline cost computed as: matching_file_count * average_file_tokens + grep_output_tokens. For the Cortex codebase (~80 source files, ~300 tokens avg per file), a typical grep query matches 5-15 files.",
+      "estimated_avg_file_tokens": 300,
+      "estimated_grep_output_tokens_per_match": 20,
+      "estimated_baseline_per_query": 2500,
+      "notes": "Token savings = baseline_cost - cortex_response_tokens. Cortex responses typically 200-800 tokens, yielding 1700-2300 tokens saved per query."
+    }
+  }
+}

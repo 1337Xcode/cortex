@@ -596,6 +596,7 @@ fn add_import_edge(file: &str, target: &str, import_type: &str, edges: &mut Vec<
             target_fqn: target.to_string(),
             kind: EdgeKind::Imports,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"import_type": import_type}),
         });
     }
@@ -683,6 +684,7 @@ fn extract_call_edge(
                     target_fqn: call_name.to_string(),
                     kind: EdgeKind::Calls,
                     confidence: 0.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({"call_type": "qualified"}),
                 });
             }
@@ -722,6 +724,7 @@ fn add_call_edge(
         target_fqn: target_fqn.to_string(),
         kind: EdgeKind::Calls,
         confidence: 1.0,
+        edge_source: crate::store::confidence::EdgeSource::AstDirect,
         attributes,
     });
 }

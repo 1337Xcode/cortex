@@ -70,6 +70,8 @@ An agent asking "what calls processOrder" gets a 200-token graph result instead 
 
 Cortex indexes your repository into a SQLite call graph and exposes it over the Model Context Protocol. 127 files indexed in 535ms. Incremental re-index in 13ms. Handles 100K to 1M+ line repositories.
 
+**v1.1 adds multi-source confidence-aware intelligence.** Cortex now ingests SCIP indexes for precise symbol resolution, runs framework-specific adapters (FastAPI, Express, NestJS, Spring, Django, React) to detect dependency injection and routing wiring, tags every edge with a confidence tier, and falls back honestly when it can't give a confident answer. The `ask` and `get_task_context` tools are completely overhauled with evidence-fusion ranking and structured fallback suggestions.
+
 ## Install
 
 ```sh
@@ -118,27 +120,35 @@ cortex hotspots --months 6              # high-churn risky code ranked by risk s
 cortex coverage --lcov coverage.lcov    # populate coverage field, rank untested functions
 cortex modules                          # Leiden community detection module boundaries
 cortex federate add ../auth-service     # query across repos with unified graph
+cortex benchmark                        # run correctness suite, report pass rate + token savings
+cortex status --savings                 # token savings dashboard with honest net-negative reporting
+cortex index --repair                   # rebuild index from scratch, preserve observations
+cortex semantic enable                  # build embedding index for semantic search
 ```
 
 ## What you get
 
 - **29 languages** parsed via tree-sitter
 - **32 MCP tools** exposed over stdio, or 5 in smart mode (the `ask` meta-tool routes internally)
+- **SCIP index ingestion** for precise symbol resolution — SCIP edges win over tree-sitter on conflicts
+- **6 framework adapters** (FastAPI, Express, NestJS, Spring, Django, React) detect DI wiring, middleware chains, and routing that tree-sitter cannot see
+- **Confidence-tagged edges** — every edge carries `edge_source` and `confidence` (1.0 SCIP / 0.8 framework / 0.5 AST / 0.3 name-match); queries default to confidence ≥ 0.7
+- **Evidence-fusion `get_task_context`** — multi-signal ranking (BM25 + SCIP distance + git recency + edge confidence + file size penalty) with per-file reasons and guaranteed non-empty results
+- **Honest fallback** — `ask` returns structured grep suggestions when confidence is below MEDIUM; never returns confidently wrong data from an unhealthy index
+- **Index health gate** — all tools return a structured error with fallback suggestions when the index is empty or corrupt
+- **Token savings dashboard** — `cortex status --savings` shows cumulative net saved, average per query, and net-negative queries (reported honestly)
+- **`get_repo_brief`** — zero-parameter cold-start summary under 400 tokens: languages, frameworks, entry points, hotspots, security patterns, test shape
+- **Tool surface management** — 10 default tools, 7 experimental (opt-in), 5 smart-tools mode; `semantic_search` only listed when embeddings are built
+- **Incremental embeddings** — only re-embeds functions whose content hash changed; `cortex semantic enable` builds the initial index
+- **Correctness benchmarks** — `cortex benchmark` validates tool accuracy against ground-truth; CI gate fails the build if pass rate drops below 70%
 - **Sub-second incremental re-indexing** via native OS file watcher (inotify, FSEvents, ReadDirectoryChangesW)
 - **Configurable model pricing** via `~/.cortex/pricing.toml` with longest-prefix matching
-- **Ego-graph capping** at 500 nodes with priority ordering (depth first, then caller count)
-- **Unified tabbed UI** with Graph and Dashboard views served at `cortex serve` (localhost:9749)
-- **Coverage field on graph nodes** populated from LCOV data, surfaced in MCP tool responses
-- **Method vs Function classification** verified across Python, TypeScript, Rust, Go, and Java
-- **Agent steering generation** with module boundaries, complexity hotspots, and active ADRs
-- **IDE install hardening** across 25 platforms with config validation and error reporting
 - **Taint flow analysis, OWASP Top 10 detection, SBOM generation** all running locally, no cloud
 - **Cross-session memory** that marks observations stale when linked code changes
 - **Multi-repo federation** for querying across repositories with a unified graph
-- **Hybrid search** combining FTS5 BM25 with optional local ONNX vector search
 - **CI quality gates** with configurable thresholds and exit codes
 - **3D interactive graph visualization** exportable to standalone HTML
-- **Portable JSON bundle** (cortex.json) for team sharing via git. `cortex bundle export` serializes the full graph as a portable JSON file. Commit it to git so your team skips the index step entirely.
+- **Portable JSON bundle** (cortex.json) for team sharing via git
 - **Works offline.** No cloud, no API keys, no Docker, no language runtimes.
 
 <details>
@@ -169,14 +179,44 @@ graph TD
     D --> E[MCP Server<br/>Tokio + JSON-RPC 2.0]
     E --> F[AI Coding Agent]
 
-    C --> G[Security Pass<br/>Taint + OWASP + SBOM]
-    G --> D
+    C --> G1[SCIP Ingester<br/>Protobuf → HIGH edges]
+    G1 --> D
+
+    C --> G2[Framework Adapters<br/>FastAPI · Express · NestJS<br/>Spring · Django · React]
+    G2 --> D
+
+    C --> G3[Security Pass<br/>Taint + OWASP + SBOM]
+    G3 --> D
 
     D --> H[Bundle Exporter<br/>cortex.json]
     H --> I[Git Repository<br/>Team Sharing]
 
     D --> J[Memory Layer<br/>Staleness-aware observations]
+
+    D --> K[Evidence Fusion<br/>BM25 + SCIP + git + embeddings]
+    K --> E
 ```
+
+## Confidence tiers
+
+Every edge in the graph carries a source and confidence value. Queries default to confidence ≥ 0.7 (MEDIUM), filtering out heuristic name-match edges.
+
+| Source | Confidence | How produced |
+|--------|-----------|--------------|
+| `scip` | 1.0 HIGH | SCIP index (precise symbol resolution) |
+| `framework_adapter` | 0.8 MEDIUM | FastAPI/Express/NestJS/Spring/Django/React pattern matching |
+| `ast_direct` | 0.5 LOW | tree-sitter AST extraction |
+| `name_match` | 0.3 VERY_LOW | heuristic name-based resolution |
+
+## Benchmark results
+
+Cortex ships with a self-referential benchmark suite (`benchmark/cortex_self_benchmark.json`, 24 cases) covering `trace_callers`, `blast_radius`, `get_task_context`, and `ask`. Run it against your index:
+
+```sh
+cortex benchmark
+```
+
+The CI pipeline runs this on every release and fails the build if pass rate drops below 70%.
 
 ## Comparison
 
@@ -186,6 +226,14 @@ graph TD
 | Languages | 29 (tree-sitter) | 66 (tree-sitter) | 10 (tree-sitter) | 40+ (LSP) | 4 |
 | MCP tools | 32 (or 5 smart mode) | 14 | 42 | ~20 | 17 |
 | Smart tool routing | Yes (ask meta-tool) | No | No | No | No |
+| SCIP precise resolution | Yes | No | No | Yes (LSP) | No |
+| Framework adapters | 6 (DI, routing, middleware) | No | No | No | No |
+| Confidence-tagged edges | Yes (4 tiers) | No | No | No | No |
+| Honest fallback | Yes (FallbackSuggestion) | No | No | No | No |
+| Index health gate | Yes | No | No | No | No |
+| Token savings dashboard | Yes (honest math) | No | No | No | No |
+| Cold-start repo brief | Yes (get_repo_brief) | No | No | No | No |
+| Correctness benchmarks | Yes (CI gate, 70% threshold) | No | No | No | No |
 | Call graph | Function-level | Full chains | Callers/callees | LSP-precise | Cross-file |
 | Hybrid search | FTS5 + sqlite-vec | Graph only | RRF fusion | Keyword | Structural |
 | Token reduction | 100x on structural queries | 121x avg | Not measured | Not measured | 87% |
@@ -193,19 +241,10 @@ graph TD
 | Security (taint/OWASP/SBOM) | Yes | No | No | No | No |
 | Cross-session memory | Staleness-aware | No | No | No | No |
 | Multi-repo federation | Yes | No | SQLite ATTACH | Partial | No |
-| Document ingestion | Yes | No | No | No | No |
-| Build system awareness | Cargo, npm, Go, Gradle, Maven | No | Yes | No | No |
-| Git intelligence | Hotspots, churn | Commit-aware delta | git blame | No | No |
 | Community detection | Leiden algorithm | No | Leiden | No | No |
 | Coverage gap analysis | Yes (LCOV cross-ref) | No | No | No | No |
-| Configurable pricing | Yes (TOML) | No | No | No | No |
-| Ego-graph capping | Yes (500 nodes) | No | No | No | No |
-| Unified tabbed UI | Yes (Graph/Dashboard) | No | No | No | No |
-| Agent steering generation | Yes (boundaries, hotspots, ADRs) | No | No | No | No |
-| CI quality gates | Yes (exit codes) | No | No | No | No |
 | Single binary, zero deps | Yes | Yes | No (Python) | No (Python+LSP) | No (Python) |
 | Auto IDE config | 25 agents | No | No | No | No |
-| 3D visualization | Yes | Yes | No | No | No |
 | Air-gap compatible | Yes | Yes | Yes | Yes | Yes |
 | License | MIT | MIT | MIT | MIT | MIT |
 
@@ -223,3 +262,5 @@ Full docs site: [1337xcode.github.io/cortex](https://1337xcode.github.io/cortex)
 ## License
 
 [MIT](LICENSE)
+
+**[Documentation](https://1337xcode.github.io/cortex)** · **[npm](https://www.npmjs.com/package/@1337xcode/cortex)** · **[Issues](https://github.com/1337Xcode/cortex/issues)**

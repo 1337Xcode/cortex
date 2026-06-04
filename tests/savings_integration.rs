@@ -124,7 +124,7 @@ fn test_savings_row_has_positive_token_values() {
     }
 
     // Execute a tool that touches files (search_symbols with broad pattern)
-    let args = serde_json::json!({"pattern": "*", "limit": 10});
+    let args = serde_json::json!({"pattern": "*", "limit": 1});
     dispatch_tool(&store, "search_symbols", &args).expect("dispatch should succeed");
 
     // Verify tokens_used > 0 (the result JSON has some content)

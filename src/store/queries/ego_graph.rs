@@ -334,6 +334,7 @@ fn get_edges_between(
                 target_fqn: row.get(2)?,
                 kind: parse_edge_kind(&kind_str),
                 confidence: row.get(4)?,
+                edge_source: crate::store::confidence::EdgeSource::AstDirect,
                 attributes: serde_json::from_str(&attributes_str).unwrap_or_default(),
             })
         })

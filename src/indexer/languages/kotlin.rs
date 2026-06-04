@@ -359,6 +359,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
             target_fqn: target.to_string(),
             kind: EdgeKind::Imports,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({}),
         });
     }
@@ -459,6 +460,7 @@ pub fn extract_regex(file: &str, source: &str) -> ExtractionResult {
             target_fqn: name.to_string(),
             kind: EdgeKind::Calls,
             confidence: 0.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({"call_type": "function"}),
         });
     }

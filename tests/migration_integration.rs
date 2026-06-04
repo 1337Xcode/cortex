@@ -1,4 +1,4 @@
-﻿//! Integration tests for Phase 1 migration files (0001-0003).
+//! Integration tests for Phase 1 migration files (0001-0003).
 //!
 //! Verifies that running all migrations creates the expected tables, indexes,
 //! and constraints in the SQLite database.
@@ -354,7 +354,7 @@ fn test_migrations_are_idempotent() {
     // First run.
     let applied = cortex::store::migrations::run_migrations(&conn, &dir)
         .expect("first migration run should succeed");
-    assert_eq!(applied.len(), 7);
+    assert_eq!(applied.len(), 13);
 
     // Second run - should apply nothing.
     let applied = cortex::store::migrations::run_migrations(&conn, &dir)

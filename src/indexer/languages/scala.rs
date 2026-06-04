@@ -521,6 +521,7 @@ fn extract_type_names_from_clause(
                         target_fqn: name,
                         kind: EdgeKind::Inherits,
                         confidence: 1.0,
+                        edge_source: crate::store::confidence::EdgeSource::AstDirect,
                         attributes: json!({}),
                     });
                 }
@@ -536,6 +537,7 @@ fn extract_type_names_from_clause(
                             target_fqn: name,
                             kind: EdgeKind::Inherits,
                             confidence: 1.0,
+                            edge_source: crate::store::confidence::EdgeSource::AstDirect,
                             attributes: json!({}),
                         });
                     }
@@ -586,6 +588,7 @@ fn extract_import(node: tree_sitter::Node, file: &str, source: &[u8], edges: &mu
             target_fqn: import_path.to_string(),
             kind: EdgeKind::Imports,
             confidence: 1.0,
+            edge_source: crate::store::confidence::EdgeSource::AstDirect,
             attributes: json!({}),
         });
     }
@@ -643,6 +646,7 @@ fn extract_call_edge(
                     target_fqn: target_fqn.clone(),
                     kind: EdgeKind::Calls,
                     confidence: 1.0,
+                    edge_source: crate::store::confidence::EdgeSource::AstDirect,
                     attributes: json!({}),
                 });
             }
