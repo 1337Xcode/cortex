@@ -9,5 +9,6 @@ All notable changes to this project are documented in this file. The format is b
 ### Added
 
 - `cortex version` prints the binary's name and version.
-- `cargo xtask verify` runs formatting, the crate dependency-direction rules, clippy, the tests and
-  the dependency licence and advisory checks.
+- `cargo xtask verify` runs formatting, the crate dependency-direction rules, the shared lint
+  settings in every crate, the invariant tags, clippy, the tests and the dependency licence and
+  advisory checks.

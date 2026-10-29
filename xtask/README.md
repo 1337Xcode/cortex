@@ -24,9 +24,8 @@ cargo xtask verify --full   # adds the benchmark budget checks
    choose), and leaves out code under an attribute named `test` or `bench` or under a `cfg` that
    cannot hold without `test` (`src/compiled.rs`, `src/cfg.rs`). Inside a macro's tokens such an
    attribute covers the next braced block or item. Test targets, benches, examples and files no
-   target reaches never count. The scan never follows symbolic
-   links and leaves out `.git`, `node_modules`, `ui/dist`, a package's own `target` folder and
-   `tests/fixtures`.
+   target reaches never count. The scan never follows symbolic links and leaves out `.git`,
+   `node_modules`, `ui/dist`, a package's own `target` folder and `tests/fixtures`.
 5. `cargo clippy --workspace --all-targets --locked -- -D warnings`
 6. `cargo test --workspace --locked`, doc tests included
 7. `cargo deny check`: licences, advisories, bans and sources (`deny.toml`)
