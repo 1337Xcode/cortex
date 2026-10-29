@@ -130,6 +130,11 @@ mod tests {
             (Language::Go, "shop/test_pay.go", false),
             (Language::Rust, "tests/orders.rs", true),
             (Language::Rust, "src/orders_test.rs", false),
+            (Language::Java, "shop/OrderTest.java", true),
+            (Language::Java, "shop/OrderTests.java", true),
+            (Language::Java, "shop/OrderIT.java", true),
+            (Language::Java, "shop/Order.java", false),
+            (Language::Java, "shop/TestOrder.java", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

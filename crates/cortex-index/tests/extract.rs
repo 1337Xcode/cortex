@@ -164,6 +164,12 @@ fn rust() -> TestResult {
     check_golden("rust", "sample.rs", Language::Rust, "\n")
 }
 
+/// Java: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn java() -> TestResult {
+    check_golden("java", "sample.java", Language::Java, "\n")
+}
+
 /// The same Python with Windows line breaks: the same lines, spans that end at the same tokens,
 /// the same hashes.
 #[test]
@@ -342,6 +348,60 @@ fn rust_impls_name_their_items() -> TestResult {
         .map(|symbol| symbol.qual_name.as_str())
         .collect();
     assert_eq!(names, ["Stack.N", "Stack.push", "Wrapper.fmt", "Point.x"]);
+    Ok(())
+}
+
+/// In Java a method annotated as a test is a test wherever the file is, by plain or qualified
+/// name; JUnit 3's `test*` methods are tests only in a test file.
+#[test]
+fn java_tests_are_marked_by_annotation_or_name() -> TestResult {
+    use SymbolKind::{Class, Method, Test};
+    let source = "class OrderTest {\n    @org.junit.jupiter.api.Test void a() {}\n    \
+                  @ParameterizedTest @ValueSource(ints = {1}) void b(int x) {}\n    \
+                  @Disabled void c() {}\n    void testD() {}\n    void helper() {}\n    \
+                  @Test(timeout = 100) void e() {}\n    @lombok.Generated void f() {}\n}\n";
+    let kinds = |path: &str| -> Result<Vec<SymbolKind>, Box<dyn Error>> {
+        let extraction = extract(path, Language::Java, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| symbol.kind)
+            .collect())
+    };
+    assert_eq!(
+        kinds("shop/OrderTest.java")?,
+        [Class, Test, Test, Method, Test, Method, Test, Method]
+    );
+    assert_eq!(
+        kinds("shop/Order.java")?,
+        [Class, Test, Test, Method, Method, Method, Test, Method]
+    );
+    Ok(())
+}
+
+/// Java constants are `static final` fields, with the modifiers in either order, and the fields
+/// of an interface; other fields are not definitions.
+#[test]
+fn java_constants_take_either_modifier_order() -> TestResult {
+    let source = "class C {\n    static final int A = 1;\n    final static int B = 2;\n    \
+                  static int c = 3;\n    final int d = 4;\n}\ninterface I {\n    int E = 5;\n}\n";
+    let extraction = extract("shop/C.java", Language::Java, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant, Interface};
+    assert_eq!(
+        symbols,
+        [
+            ("C", Class),
+            ("C.A", Constant),
+            ("C.B", Constant),
+            ("I", Interface),
+            ("I.E", Constant)
+        ]
+    );
     Ok(())
 }
 

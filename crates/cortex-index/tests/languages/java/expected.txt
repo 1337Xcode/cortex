@@ -1,0 +1,43 @@
+# What sample.java defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text, annotations and modifiers included, up to its body, with each
+# run of whitespace as one space; a constant's body is its value. Not read: the comment, the
+# package, the annotations as uses, `name` (a field that is not `static final`), the enum's
+# constants, `super(name)`, and the primitive types `int` and `void`.
+symbol class Order 8-31 - | @Deprecated public class Order extends Base<Item> implements Priced, Comparable<Order>
+symbol constant Order.LIMIT 10-10 Order | LIMIT =
+symbol method Order.Order 13-16 Order | public Order(String name) throws IOException
+symbol method Order.price 18-21 Order | @Override public Money price(String currency)
+symbol method Order.total 23-25 Order | int total()
+symbol test Order.pays 27-30 Order | @Test void pays()
+symbol interface Priced 33-36 - | interface Priced extends Named
+symbol constant Priced.RATE 34-34 Priced | RATE =
+symbol method Priced.price 35-35 Priced | Money price(String currency);
+symbol class Status 38-38 - | enum Status
+symbol class Line 40-40 - | record Line(Item item, int count)
+symbol interface Audit 42-42 - | @interface Audit
+ref inherit Base 9 Order
+ref type_ref Item 9 Order
+ref inherit Priced 9 Order
+ref inherit Comparable 9 Order
+ref type_ref Order 9 Order
+ref type_ref String 11 Order
+ref type_ref String 13 Order.Order
+ref type_ref IOException 13 Order.Order
+ref type_ref Money 19 Order.price
+ref type_ref String 19 Order.price
+ref call Money 20 Order.price
+ref call total 20 Order.price
+ref call items 24 Order.total
+ref call size 24 Order.total
+ref call assertEquals 29 Order.pays
+ref call total 29 Order.pays
+ref inherit Named 33 Priced
+ref type_ref Money 35 Priced.price
+ref type_ref String 35 Priced.price
+ref type_ref Item 40 Line
+import java.util name:List - 4
+import java.util all - 5
+import org.junit.Assert name:assertEquals - 6
