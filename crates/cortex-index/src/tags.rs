@@ -2,7 +2,9 @@
 //! defines them: each match names something and says what it is, or that nothing may be recorded
 //! for it (`@ignore`); where several patterns find the same name, the earliest pattern wins; a
 //! name that holds a syntax error is skipped; and a name a pattern marks `#is-not? local` is
-//! skipped where a scope around it defines it.
+//! skipped where a scope around it defines it. Where one pattern finds the same name more than
+//! once with different qualifiers, as a declaration after two PHP `namespace` statements is, the
+//! qualifier nearest the name wins.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -80,7 +82,8 @@ pub(crate) fn read_tags<'tree>(
                 entry.insert((tag, pattern));
             }
             Entry::Occupied(mut entry) => {
-                if pattern < entry.get().1 {
+                let (kept, kept_pattern) = entry.get();
+                if pattern < *kept_pattern || (pattern == *kept_pattern && is_nearer(tag, *kept)) {
                     entry.insert((tag, pattern));
                 }
             }
@@ -90,6 +93,18 @@ pub(crate) fn read_tags<'tree>(
         return None;
     }
     Some(by_name.into_values().filter_map(|(tag, _)| tag).collect())
+}
+
+/// Whether `tag` has a qualifier that comes after the one `kept` has, so nearer the name both
+/// qualify; the qualifier always comes before the name, as the pattern places it.
+fn is_nearer(tag: Option<Tag<'_>>, kept: Option<Tag<'_>>) -> bool {
+    match (
+        tag.and_then(|tag| tag.qualifier),
+        kept.and_then(|kept| kept.qualifier),
+    ) {
+        (Some(new), Some(old)) => new.start_byte() > old.start_byte(),
+        _ => false,
+    }
 }
 
 /// The name one match's `captures` are about, with the tag to record for it, or `None` for an
@@ -425,6 +440,37 @@ mod tests {
             ]
         );
         assert_eq!(tags_found(&IGNORED, source)?, Vec::new());
+        Ok(())
+    }
+
+    /// Where one pattern finds a name more than once with different qualifiers, the qualifier
+    /// nearest the name wins: `f` follows only `a`, while `g` follows `a` and then `b`.
+    #[test]
+    fn the_nearest_qualifier_wins() -> Result<(), Box<dyn Error>> {
+        static SIBLINGS: TagsSpec = python_spec(
+            &["(module (expression_statement (identifier) @qualifier) \
+               (function_definition name: (identifier) @name) @definition.function)"],
+            PLAIN_IMPORTS,
+        );
+        let source = "a\ndef f(): pass\nb\ndef g(): pass\n";
+        let qualified = with_tags(&SIBLINGS, source, |tags| {
+            tags.iter()
+                .map(|tag| {
+                    let text = |node: Node<'_>| node.utf8_text(source.as_bytes()).unwrap_or("?");
+                    (
+                        text(tag.name).to_owned(),
+                        tag.qualifier.map(text).map(str::to_owned),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })?;
+        assert_eq!(
+            qualified,
+            [
+                ("f".to_owned(), Some("a".to_owned())),
+                ("g".to_owned(), Some("b".to_owned()))
+            ]
+        );
         Ok(())
     }
 

@@ -157,6 +157,9 @@ mod tests {
             (Language::CSharp, "src/OrderTest.cs", true),
             (Language::CSharp, "src/Order.cs", false),
             (Language::CSharp, "src/TestOrder.cs", false),
+            (Language::Php, "src/OrderTest.php", true),
+            (Language::Php, "src/Order.php", false),
+            (Language::Php, "src/TestOrder.php", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

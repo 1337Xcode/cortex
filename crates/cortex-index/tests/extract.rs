@@ -216,6 +216,12 @@ fn csharp() -> TestResult {
     check_golden("csharp", "sample.cs", Language::CSharp, "\n")
 }
 
+/// PHP: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn php() -> TestResult {
+    check_golden("php", "sample.php", Language::Php, "\n")
+}
+
 /// Ruby: every construct in the fixture, listed by hand in `expected.txt`.
 #[test]
 fn ruby() -> TestResult {
@@ -1114,6 +1120,265 @@ fn cpp_operator_names_ignore_spacing() -> TestResult {
         .map(|symbol| symbol.qual_name.as_str())
         .collect();
     assert_eq!(names, ["Wi", "Wi.operator<", "Wi.operator new", "Wi.~Wi"]);
+    Ok(())
+}
+
+/// PHPUnit's tests: a method with the `Test` attribute, plain or PHPUnit's own qualified one, or
+/// with `@test` in the comment just before it, anywhere; one named `test...` in a test file. Another
+/// library's `Test` attribute and `@testing` mark nothing.
+#[test]
+fn php_tests_are_marked_by_attribute_or_name() -> TestResult {
+    use SymbolKind::{Class, Method, Test};
+    let source = "<?php\nclass OrderTest extends TestCase\n{\n    public function testPays(): void { }\n    \
+                  #[Test]\n    public function ships(): void { }\n    \
+                  /** @test */\n    public function it_bills(): void { }\n    \
+                  #[\\PHPUnit\\Framework\\Attributes\\Test]\n    public function refunds(): void { }\n    \
+                  #[Other\\Test]\n    public function later(): void { }\n    \
+                  /** @testing */\n    public function helper(): void { }\n}\n";
+    let kinds = |path: &str| -> Result<Vec<SymbolKind>, Box<dyn Error>> {
+        let extraction = extract(path, Language::Php, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| symbol.kind)
+            .collect())
+    };
+    assert_eq!(
+        kinds("src/OrderTest.php")?,
+        [Class, Test, Test, Test, Test, Method, Method]
+    );
+    assert_eq!(
+        kinds("src/Order.php")?,
+        [Class, Method, Test, Test, Test, Method, Method]
+    );
+    Ok(())
+}
+
+/// A PHP namespace with a block holds what is in it, of every kind; the global block has no name.
+/// `use` takes a name from a namespace, or names a class of the global namespace, renamed or
+/// not; an include reads a literal path, and a path a function builds names no file. A
+/// constant's value is not a definition.
+#[test]
+fn php_namespaces_and_includes() -> TestResult {
+    let source = "<?php\nnamespace App\\Billing {\n    use App\\Models\\Order;\n    class Invoice { }\n    \
+                  enum Status { }\n    interface Payable { }\n    trait Audits { }\n    const LIMIT = MAX;\n}\n\
+                  namespace {\n    use Item as I;\n    include 'a.php';\n    \
+                  require dirname(__FILE__) . '/c.php';\n    function main() { }\n}\n";
+    let extraction = extract("src/billing.php", Language::Php, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant, Function, Interface, Module};
+    assert_eq!(
+        symbols,
+        [
+            ("App\\Billing", Module),
+            ("App\\Billing.Invoice", Class),
+            ("App\\Billing.Status", Class),
+            ("App\\Billing.Payable", Interface),
+            ("App\\Billing.Audits", Interface),
+            ("App\\Billing.LIMIT", Constant),
+            ("main", Function)
+        ]
+    );
+    let imports: Vec<(&str, String, Option<&str>, u32)> = extraction
+        .imports
+        .iter()
+        .map(|import| {
+            let imported = match &import.imported {
+                Imported::Name(name) => format!("name:{}", name.as_str()),
+                other => format!("{other:?}"),
+            };
+            let alias = import.alias.as_ref().map(cortex_core::Identifier::as_str);
+            (import.specifier.as_str(), imported, alias, import.line)
+        })
+        .collect();
+    assert_eq!(
+        imports,
+        [
+            ("App\\Models", "name:Order".to_owned(), None, 3),
+            ("Item", "Module".to_owned(), Some("I"), 11),
+            ("a.php", "Module".to_owned(), None, 12)
+        ]
+    );
+    Ok(())
+}
+
+/// A PHP include of each kind names its file by a literal path, quoted either way, or by a path
+/// relative to the file's own folder, either one perhaps in parentheses. A path built otherwise, or
+/// with a variable or an escape inside its quotes, names none.
+#[test]
+fn php_includes_of_every_kind_and_form() -> TestResult {
+    let forms = [
+        ("'a.php'", Some("a.php")),
+        ("\"a.php\"", Some("a.php")),
+        ("('a.php')", Some("a.php")),
+        ("(\"a.php\")", Some("a.php")),
+        ("__DIR__ . '/a.php'", Some("/a.php")),
+        ("__DIR__ . \"/a.php\"", Some("/a.php")),
+        ("(__DIR__ . '/a.php')", Some("/a.php")),
+        ("(__DIR__ . \"/a.php\")", Some("/a.php")),
+        ("ROOT . '/a.php'", None),
+        ("dirname(__FILE__) . '/a.php'", None),
+        ("\"a$version.php\"", None),
+        ("\"a\\n.php\"", None),
+        ("$path", None),
+    ];
+    for kind in ["require", "require_once", "include", "include_once"] {
+        for (form, expected) in forms {
+            let source = format!("<?php\n{kind} {form};\n");
+            let extraction = extract("src/boot.php", Language::Php, &source)?;
+            let specifiers: Vec<&str> = extraction
+                .imports
+                .iter()
+                .map(|import| import.specifier.as_str())
+                .collect();
+            let expected: Vec<&str> = expected.into_iter().collect();
+            assert_eq!(specifiers, expected, "{kind} {form}");
+        }
+    }
+    Ok(())
+}
+
+/// After a second PHP `namespace` statement, the declarations that follow take the nearer one, of
+/// every kind: classes, enums, interfaces, traits, functions and constants, two in one statement.
+/// A constant's value (`C1` in `C3 = C1`) and an enum's cases are not definitions.
+#[test]
+fn php_namespaces_after_namespaces() -> TestResult {
+    let source = "<?php\nnamespace A;\nclass X {}\nnamespace B;\nclass Y { public function m() {} }\n\
+                  function f() {}\nconst C1 = 1, C2 = 2;\nconst C3 = C1;\nenum Suit { case Hearts; }\n\
+                  interface I {}\n\
+                  trait T {}\n";
+    let extraction = extract("src/both.php", Language::Php, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant, Function, Interface, Method, Module};
+    assert_eq!(
+        symbols,
+        [
+            ("A", Module),
+            ("A.X", Class),
+            ("B", Module),
+            ("B.Y", Class),
+            ("B.Y.m", Method),
+            ("B.f", Function),
+            ("B.C1", Constant),
+            ("B.C2", Constant),
+            ("B.C3", Constant),
+            ("B.Suit", Class),
+            ("B.I", Interface),
+            ("B.T", Interface)
+        ]
+    );
+    Ok(())
+}
+
+/// PHP references and imports in every form: qualified bases, interfaces, traits, calls and types,
+/// a call on a maybe-null object, `instanceof` with a plain or a qualified class, `define` in
+/// another case and with double quotes, its value no constant, and `defined`, which defines
+/// nothing; `self`, `static` and `parent` name no type or class. A `use` with a leading backslash,
+/// `use function`, an alias, and includes quoted either way, in parentheses or relative to the
+/// file's folder; a path built from a constant names no file.
+#[test]
+fn php_references_and_imports_in_every_form() -> TestResult {
+    let source = "<?php\nuse \\Lead\\Thing;\nuse function App\\Support\\format;\nuse App\\Models\\Item as I;\n\
+                  require_once 'lib.php';\ninclude_once __DIR__ . \"/dq.php\";\nrequire ROOT . '/x.php';\n\
+                  require('paren.php');\ndefined('UP') || DEFINE(\"UP\", 'up');\n\
+                  class C extends \\App\\Base implements \\App\\Priced { use \\App\\Logs;\n    \
+                  public function m(\\App\\Item|self $i): static {\n        \
+                  $a?->pay(); \\App\\log(1); new \\App\\Order(); new static();\n        \
+                  if ($i instanceof \\App\\Line || $i instanceof Lot) {}\n    }\n}\n";
+    let extraction = extract("src/c.php", Language::Php, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant, Method};
+    assert_eq!(symbols, [("UP", Constant), ("C", Class), ("C.m", Method)]);
+    let refs: Vec<(&str, &str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("call", "defined", 9),
+            ("call", "DEFINE", 9),
+            ("inherit", "Base", 10),
+            ("inherit", "Priced", 10),
+            ("inherit", "Logs", 10),
+            ("type_ref", "Item", 11),
+            ("call", "pay", 12),
+            ("call", "log", 12),
+            ("call", "Order", 12),
+            ("type_ref", "Line", 13),
+            ("type_ref", "Lot", 13)
+        ]
+    );
+    let imports: Vec<(&str, String, Option<&str>, u32)> = extraction
+        .imports
+        .iter()
+        .map(|import| {
+            let imported = match &import.imported {
+                Imported::Name(name) => format!("name:{}", name.as_str()),
+                other => format!("{other:?}"),
+            };
+            let alias = import.alias.as_ref().map(cortex_core::Identifier::as_str);
+            (import.specifier.as_str(), imported, alias, import.line)
+        })
+        .collect();
+    assert_eq!(
+        imports,
+        [
+            ("Lead", "name:Thing".to_owned(), None, 2),
+            ("App\\Support", "name:format".to_owned(), None, 3),
+            ("App\\Models", "name:Item".to_owned(), Some("I"), 4),
+            ("lib.php", "Module".to_owned(), None, 5),
+            ("/dq.php", "Module".to_owned(), None, 6),
+            ("paren.php", "Module".to_owned(), None, 8)
+        ]
+    );
+    Ok(())
+}
+
+/// A PHP `use` group takes each name from its prefix, a qualified name whole.
+#[test]
+fn php_grouped_uses_keep_qualified_names() -> TestResult {
+    let source = "<?php\nuse Models\\{Order, Sub\\Item, Line as L};\n";
+    let extraction = extract("src/uses.php", Language::Php, source)?;
+    let imports: Vec<(&str, String, Option<&str>)> = extraction
+        .imports
+        .iter()
+        .map(|import| {
+            let imported = match &import.imported {
+                Imported::Name(name) => format!("name:{}", name.as_str()),
+                other => format!("{other:?}"),
+            };
+            let alias = import.alias.as_ref().map(cortex_core::Identifier::as_str);
+            (import.specifier.as_str(), imported, alias)
+        })
+        .collect();
+    assert_eq!(
+        imports,
+        [
+            ("Models", "name:Order".to_owned(), None),
+            ("Models", "name:Sub\\Item".to_owned(), None),
+            ("Models", "name:Line".to_owned(), Some("L"))
+        ]
+    );
     Ok(())
 }
 

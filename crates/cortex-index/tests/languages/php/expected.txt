@@ -1,0 +1,39 @@
+# What sample.php defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text, attributes and modifiers included, up to its body, with each
+# run of whitespace as one space; a namespace written as a statement, a constant and a method
+# without a body are all header. The namespace written as a statement goes before the names of
+# what follows it, which it does not hold. Not read: the comment, the attribute, the property
+# `item`, the built-in types, and every use of a variable or a constant.
+symbol module Shop\Orders 3-3 - | namespace Shop\Orders;
+symbol constant Shop\Orders.RATE 9-9 - | RATE = 2
+symbol constant LIMIT 10-10 - | define('LIMIT', 3)
+symbol interface Shop\Orders.Priced 12-15 - | interface Priced extends Named
+symbol method Shop\Orders.Priced.price 14-14 Shop\Orders.Priced | public function price(): int;
+symbol interface Shop\Orders.Logs 17-20 - | trait Logs
+symbol method Shop\Orders.Logs.log 19-19 Shop\Orders.Logs | public function log(string $message): void
+symbol class Shop\Orders.Order 22-36 - | #[Entity] final class Order extends Base implements Priced
+symbol constant Shop\Orders.Order.SLOTS 26-26 Shop\Orders.Order | SLOTS = 4
+symbol method Shop\Orders.Order.__construct 29-29 Shop\Orders.Order | public function __construct(private int $size)
+symbol method Shop\Orders.Order.price 31-35 Shop\Orders.Order | public function price(): int
+symbol function Shop\Orders.fee 38-41 - | function fee(int $cents): int
+ref call define 10 LIMIT
+ref inherit Named 12 Shop\Orders.Priced
+ref call error_log 19 Shop\Orders.Logs.log
+ref inherit Base 23 Shop\Orders.Order
+ref inherit Priced 23 Shop\Orders.Order
+ref inherit Logs 25 Shop\Orders.Order
+ref type_ref Item 27 Shop\Orders.Order
+ref call __construct 29 Shop\Orders.Order.__construct
+ref call log 33 Shop\Orders.Order.price
+ref call round 34 Shop\Orders.Order.price
+ref call fee 34 Shop\Orders.Order.price
+ref call count 34 Shop\Orders.Order.price
+ref call Receipt 34 Shop\Orders.Order.price
+ref call intdiv 40 Shop\Orders.fee
+import Shop\Models name:Item - 5
+import Shop\Support name:Money - 6
+import Shop\Support name:Clock Time 6
+import /helpers.php module - 7
