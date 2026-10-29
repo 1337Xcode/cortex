@@ -17,9 +17,11 @@ cargo xtask verify --full   # adds the benchmark budget checks
    the workspace manifest reach it (`src/lints.rs`).
 4. Invariant tags: every tag comment names a known invariant, and each invariant whose owning
    crate exists has at least one tagged enforcing line in that crate's `src/`
-   (`src/invariants.rs`). A tag is a `//` line comment outside string literals. The scan never
-   follows symbolic links and leaves out `.git`, `node_modules`, `ui/dist`, a package's own
-   `target` folder and `tests/fixtures`.
+   (`src/invariants.rs`). A tag is a `//` line comment outside string literals and block
+   comments, found by a small lexer (`src/comments.rs`). A tag in test code enforces nothing:
+   under `tests/`, inside an item marked `#[cfg(test)]` or `#[test]`, or in the file of a module
+   declared `#[cfg(test)] mod name;`. The scan never follows symbolic links and leaves out
+   `.git`, `node_modules`, `ui/dist`, a package's own `target` folder and `tests/fixtures`.
 5. `cargo clippy --workspace --all-targets --locked -- -D warnings`
 6. `cargo test --workspace --locked`, doc tests included
 7. `cargo deny check`: licences, advisories, bans and sources (`deny.toml`)
@@ -30,6 +32,6 @@ cargo xtask verify --full   # adds the benchmark budget checks
 cargo test -p xtask
 ```
 
-The architecture, lint and tag checks are pure functions tested on synthetic input; the file
-walk is tested on a temporary folder, and the manifest checks on this workspace's own
-`cargo metadata`.
+The architecture, lint and tag checks and the comment lexer are pure functions tested on
+synthetic input; the file walk is tested on a temporary folder, and the manifest checks on this
+workspace's own `cargo metadata`.

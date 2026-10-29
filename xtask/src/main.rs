@@ -8,6 +8,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod architecture;
+mod comments;
 mod invariants;
 mod lints;
 mod steps;

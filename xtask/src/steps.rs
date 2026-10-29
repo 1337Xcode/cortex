@@ -133,17 +133,20 @@ fn check_lint_inheritance(metadata: &Metadata) -> anyhow::Result<()> {
 fn check_invariant_tags(root: &Path, crate_names: &BTreeSet<String>) -> anyhow::Result<()> {
     println!("xtask: invariant tags");
     let mut tags = Vec::new();
+    let mut test_paths = Vec::new();
     for dir in TAGGED_SOURCE_DIRS {
         let path = root.join(dir);
         if path.is_dir() {
             for file in source_files(root, &path)? {
                 let text = fs::read_to_string(&file)
                     .with_context(|| format!("reading {}", file.display()))?;
-                tags.extend(invariants::scan(&relative_path(root, &file), &text));
+                let relative = relative_path(root, &file);
+                tags.extend(invariants::scan(&relative, &text));
+                test_paths.extend(invariants::test_module_paths(&relative, &text));
             }
         }
     }
-    let problems = invariants::check(&tags, crate_names);
+    let problems = invariants::check(&tags, &test_paths, crate_names);
     if !problems.is_empty() {
         bail!("invariant tags:\n  {}", problems.join("\n  "));
     }

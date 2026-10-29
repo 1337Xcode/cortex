@@ -3,10 +3,14 @@
 //! Each line that enforces one of the product's invariants carries a comment naming it, so one
 //! text search finds every enforcement point. This check refuses tags with unknown names (a typo
 //! would hide an enforcement point) and, once the crate that owns an invariant exists, requires at
-//! least one tag for it in that crate's `src/`. A tag is a `//` line comment; the marker inside a
-//! string literal or in test code does not count.
+//! least one tag for it in that crate's `src/`. A tag is a `//` line comment (found by
+//! [`crate::comments`], so the marker inside a string literal or a block comment is no tag). A tag
+//! in test code is checked for its name but enforces nothing: under `tests/`, inside an item
+//! marked `#[cfg(test)]` or `#[test]`, or in the file of a module declared `#[cfg(test)] mod x;`.
 
 use std::collections::BTreeSet;
+
+use crate::comments;
 
 /// The marker word. It is assembled at run time so this file never contains a tag itself.
 const MARKER_WORD: &str = "INVARIANT";
@@ -33,17 +37,17 @@ pub(crate) struct Tag {
     pub(crate) line: usize,
     /// The invariant name as written after the marker.
     pub(crate) name: String,
+    /// Whether the tag sits in an item that only compiles for tests.
+    pub(crate) is_test: bool,
 }
 
 /// Finds the tags in one file: a `//` comment containing the marker word and a colon, then a name.
 pub(crate) fn scan(path: &str, text: &str) -> Vec<Tag> {
     let marker = format!("{MARKER_WORD}:");
-    let quotes = string_quotes(path);
-    text.lines()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            let comment = line_comment(line, quotes)?;
-            let (_, rest) = comment.split_once(marker.as_str())?;
+    comments::line_comments(path, text)
+        .into_iter()
+        .filter_map(|comment| {
+            let (_, rest) = comment.text.split_once(marker.as_str())?;
             let name = rest
                 .trim_start()
                 .chars()
@@ -51,53 +55,43 @@ pub(crate) fn scan(path: &str, text: &str) -> Vec<Tag> {
                 .collect();
             Some(Tag {
                 path: path.to_owned(),
-                line: index + 1,
+                line: comment.line,
                 name,
+                is_test: comment.is_test,
             })
         })
         .collect()
 }
 
-/// The characters that open a string literal in the file's language: Rust uses `'` for lifetimes
-/// and characters, so only `"` counts there; TypeScript strings use all three.
-fn string_quotes(path: &str) -> &'static [char] {
-    if path.ends_with(".rs") {
-        &['"']
-    } else {
-        &['"', '\'', '`']
-    }
+/// The files holding the modules that the file at `path` declares test-only without a body:
+/// `<name>.rs` and everything under `<name>/`, in the folder where that file's submodules live.
+/// A `#[path]` attribute on such a declaration is not followed.
+pub(crate) fn test_module_paths(path: &str, text: &str) -> Vec<String> {
+    let Some((parent, file)) = path.rsplit_once('/') else {
+        return Vec::new();
+    };
+    let module_dir = match file {
+        "lib.rs" | "main.rs" | "mod.rs" => parent.to_owned(),
+        _ => format!("{parent}/{}", file.trim_end_matches(".rs")),
+    };
+    comments::test_module_names(path, text)
+        .into_iter()
+        .flat_map(|name| {
+            [
+                format!("{module_dir}/{name}.rs"),
+                format!("{module_dir}/{name}/"),
+            ]
+        })
+        .collect()
 }
 
-/// The text after the first `//` that is not inside a string literal, if the line has one.
-///
-/// Raw strings and a quote inside a Rust character literal are not recognised; such a line hides
-/// a tag rather than inventing one.
-fn line_comment<'a>(line: &'a str, quotes: &[char]) -> Option<&'a str> {
-    let mut open_quote: Option<char> = None;
-    let mut escaped = false;
-    let mut previous_slash = false;
-    for (index, character) in line.char_indices() {
-        match open_quote {
-            Some(quote) => {
-                if escaped {
-                    escaped = false;
-                } else if character == '\\' {
-                    escaped = true;
-                } else if character == quote {
-                    open_quote = None;
-                }
-            }
-            None if character == '/' && previous_slash => return line.get(index + 1..),
-            None if quotes.contains(&character) => open_quote = Some(character),
-            None => {}
-        }
-        previous_slash = open_quote.is_none() && character == '/';
-    }
-    None
-}
-
-/// Every problem with `tags`, given the names of the crates that exist.
-pub(crate) fn check(tags: &[Tag], crate_names: &BTreeSet<String>) -> Vec<String> {
+/// Every problem with `tags`, given the test module files found by [`test_module_paths`] and
+/// the names of the crates that exist.
+pub(crate) fn check(
+    tags: &[Tag],
+    test_paths: &[String],
+    crate_names: &BTreeSet<String>,
+) -> Vec<String> {
     let mut problems: Vec<String> = tags
         .iter()
         .filter(|tag| !INVARIANTS.iter().any(|(name, _)| *name == tag.name))
@@ -113,9 +107,14 @@ pub(crate) fn check(tags: &[Tag], crate_names: &BTreeSet<String>) -> Vec<String>
             continue;
         }
         let owner_dir = format!("crates/{owner}/src/");
-        let is_enforced = tags
-            .iter()
-            .any(|tag| tag.name == *name && tag.path.starts_with(&owner_dir));
+        let is_enforced = tags.iter().any(|tag| {
+            tag.name == *name
+                && !tag.is_test
+                && tag.path.starts_with(&owner_dir)
+                && !test_paths
+                    .iter()
+                    .any(|test| tag.path.starts_with(test.as_str()))
+        });
         if !is_enforced {
             problems.push(format!("{name}: no tagged enforcing line in {owner_dir}"));
         }
@@ -150,6 +149,7 @@ mod tests {
                 path: "crates/cortex-hook/src/lib.rs".to_owned(),
                 line: 2,
                 name: "fail-open".to_owned(),
+                is_test: false,
             }]
         );
     }
@@ -166,7 +166,7 @@ mod tests {
     fn unknown_name_is_reported() {
         let tags = scan("crates/cortex-hook/src/lib.rs", &tag_comment("fial-open"));
         assert_eq!(
-            check(&tags, &crates(&[])),
+            check(&tags, &[], &crates(&[])),
             vec!["crates/cortex-hook/src/lib.rs:1: unknown invariant \"fial-open\"".to_owned()]
         );
     }
@@ -175,12 +175,12 @@ mod tests {
     #[test]
     fn existing_owner_needs_a_tag() {
         assert_eq!(
-            check(&[], &crates(&["cortex-hook"])),
+            check(&[], &[], &crates(&["cortex-hook"])),
             vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
         );
         let tags = scan("crates/cortex-hook/src/lib.rs", &tag_comment("fail-open"));
         assert_eq!(
-            check(&tags, &crates(&["cortex-hook"])),
+            check(&tags, &[], &crates(&["cortex-hook"])),
             Vec::<String>::new()
         );
     }
@@ -190,7 +190,7 @@ mod tests {
     fn tag_outside_the_owner_does_not_count() {
         let tags = scan("crates/cortex-cli/src/main.rs", &tag_comment("fail-open"));
         assert_eq!(
-            check(&tags, &crates(&["cortex-hook", "cortex-cli"])),
+            check(&tags, &[], &crates(&["cortex-hook", "cortex-cli"])),
             vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
         );
     }
@@ -203,9 +203,87 @@ mod tests {
             &tag_comment("fail-open"),
         );
         assert_eq!(
-            check(&tags, &crates(&["cortex-hook"])),
+            check(&tags, &[], &crates(&["cortex-hook"])),
             vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
         );
+    }
+
+    /// A tag inside the owner's `#[cfg(test)]` module is test code, not an enforcing line.
+    #[test]
+    fn tag_in_a_test_module_does_not_count() {
+        let text = format!(
+            "#[cfg(test)]
+mod tests {{
+{}
+}}
+",
+            tag_comment("fail-open")
+        );
+        let tags = scan("crates/cortex-hook/src/lib.rs", &text);
+        assert_eq!(tags.len(), 1);
+        assert!(tags.iter().all(|tag| tag.is_test && tag.line == 3));
+        assert_eq!(
+            check(&tags, &[], &crates(&["cortex-hook"])),
+            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
+        );
+    }
+
+    /// A test module kept in its own file is test code: its tags enforce nothing.
+    #[test]
+    fn tag_in_a_test_module_file_does_not_count() {
+        let test_paths = test_module_paths(
+            "crates/cortex-hook/src/lib.rs",
+            "#[cfg(test)]
+mod tests;
+",
+        );
+        assert_eq!(
+            test_paths,
+            vec![
+                "crates/cortex-hook/src/tests.rs".to_owned(),
+                "crates/cortex-hook/src/tests/".to_owned(),
+            ]
+        );
+        assert_eq!(
+            test_module_paths(
+                "crates/cortex-hook/src/gate.rs",
+                "#[cfg(test)]
+mod tests;
+"
+            ),
+            vec![
+                "crates/cortex-hook/src/gate/tests.rs".to_owned(),
+                "crates/cortex-hook/src/gate/tests/".to_owned(),
+            ]
+        );
+        let mut tags = scan("crates/cortex-hook/src/tests.rs", &tag_comment("fail-open"));
+        tags.extend(scan(
+            "crates/cortex-hook/src/tests/cases.rs",
+            &tag_comment("fail-open"),
+        ));
+        assert_eq!(
+            check(&tags, &test_paths, &crates(&["cortex-hook"])),
+            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
+        );
+        let production = scan(
+            "crates/cortex-hook/src/testing.rs",
+            &tag_comment("fail-open"),
+        );
+        assert_eq!(
+            check(&production, &test_paths, &crates(&["cortex-hook"])),
+            Vec::<String>::new()
+        );
+    }
+
+    /// The marker on the second line of a string that spans lines is not a tag.
+    #[test]
+    fn marker_in_a_multi_line_string_is_not_a_tag() {
+        let text = format!(
+            "let s = \"first line
+// {MARKER_WORD}: fail-open\";
+"
+        );
+        assert_eq!(scan("crates/cortex-hook/src/lib.rs", &text), Vec::new());
     }
 
     /// `//` inside a string literal starts no comment, in Rust or TypeScript.
@@ -237,7 +315,7 @@ mod tests {
     #[test]
     fn missing_owner_requires_nothing() {
         assert_eq!(
-            check(&[], &crates(&["cortex-cli", "xtask"])),
+            check(&[], &[], &crates(&["cortex-cli", "xtask"])),
             Vec::<String>::new()
         );
     }
