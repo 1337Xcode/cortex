@@ -1,0 +1,3 @@
+# Every text file is stored and checked out with LF line endings, so fixtures stay byte-exact on
+# every platform and content hashes match across machines.
+* text=auto eol=lf

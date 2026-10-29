@@ -1,0 +1,3 @@
+[alias]
+# `cargo xtask verify` runs every check this repository has; see xtask/README.md.
+xtask = "run --quiet --package xtask --"

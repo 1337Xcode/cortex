@@ -1,0 +1,42 @@
+# Supply-chain rules for every dependency, checked by `cargo deny check` inside `cargo xtask verify`.
+
+[graph]
+# The platforms Cortex is built for; dependencies used only on other targets are ignored.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-pc-windows-gnu",
+]
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+# Permissive licences only: anything copyleft, or unknown, fails the check.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+confidence-threshold = 0.93
+# The allow list is policy, not an inventory: a licence no dependency uses yet is fine.
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Workspace crates refer to each other by path without a version; they are never published.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
