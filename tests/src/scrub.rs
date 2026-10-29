@@ -5,8 +5,6 @@
 //! find anything it missed, in every key and value of a payload and in the text of a fixture
 //! README.
 
-use std::ops::Range;
-
 /// Folders a scrubbed `cwd` may be, or be inside.
 pub const SCRUBBED_REPO_ROOTS: &[&str] = &["C:\\repo", "/repo"];
 
@@ -20,14 +18,12 @@ pub const SCRUBBED_USER: &str = "dev";
 /// Prefix of every scrubbed UUID-style id.
 pub const SCRUBBED_UUID_PREFIX: &str = "00000000-0000-4000-8000-";
 
-/// Lower-case text that a user name follows in a plain path, with the separators that end the
-/// name. Separators repeated after the marker are skipped, so a path whose backslashes were
-/// escaped once more (`C:\\Users\\name`, as in JSON held inside a string) is still read.
-const PATH_MARKERS: &[(&str, &[char])] = &[
-    ("\\users\\", &['\\', '/']),
-    ("/users/", &['/', '\\']),
-    ("/home/", &['/', '\\']),
-];
+/// Payload fields that hold a transcript path, which must sit under a scrubbed home.
+const TRANSCRIPT_KEYS: &[&str] = &["transcript_path", "agent_transcript_path"];
+
+/// Folder names under a home root that belong to no one user: shared and default profiles, and
+/// the scrubbed user.
+const SHARED_HOME_NAMES: &[&str] = &[SCRUBBED_USER, "public", "default", "shared", "all"];
 
 /// Lower-case markers of the hyphen-encoded folder names Claude Code gives transcript folders
 /// (`C--Users-<name>-...` on Windows, `-Users-<name>-...` on macOS, `-home-<name>-...` on Linux).
@@ -35,15 +31,14 @@ const PATH_MARKERS: &[(&str, &[char])] = &[
 /// from the path after it, so every encoded home folder is reported.
 const ENCODED_MARKERS: &[&str] = &["-users-", "-home-"];
 
-/// Web address schemes; a `/users/` or `/home/` inside a web address is a web path, not a folder.
-const WEB_SCHEMES: &[&str] = &["http://", "https://"];
+/// Characters that may come right before an encoded folder name: a path separator, a quote, an
+/// assignment or a list separator. A space does not count, so a flag such as `-home-dir` in prose
+/// is not read as a folder.
+const ENCODED_FOLDER_STARTS: &[char] = &['/', '\\', '"', '\'', '`', '=', ':', '(', ','];
 
-/// Lower-case prefixes of the names Windows gives a new machine: the prefix, then
-/// [`MACHINE_SUFFIX_LEN`] letters and digits, such as `DESKTOP-7F3KQ2M`.
-const MACHINE_PREFIXES: &[&str] = &["desktop-", "laptop-"];
-
-/// Length of the random part of a default Windows machine name.
-const MACHINE_SUFFIX_LEN: usize = 7;
+/// The names Windows gives a new machine, as a lower-case prefix and the length of the random
+/// part after it: `DESKTOP-7F3KQ2M`, `LAPTOP-7F3KQ2M`, and `WIN-` with eleven on servers.
+const MACHINE_NAMES: &[(&str, usize)] = &[("desktop-", 7), ("laptop-", 7), ("win-", 11)];
 
 /// Keys whose values are session, prompt, turn, subagent or tool-call ids.
 const ID_KEYS: &[&str] = &[
@@ -56,7 +51,7 @@ const ID_KEYS: &[&str] = &[
 ];
 
 /// Keys whose values are opaque hashes of content the capture cannot inspect; the scrubber
-/// replaces every digit with `0`.
+/// replaces every character with `0`.
 const ZEROED_KEYS: &[&str] = &["harnessSectionHash"];
 
 /// The forms a scrubbed id takes.
@@ -84,6 +79,20 @@ const EMBEDDED_IDS: &[(&str, &str, usize)] = &[
 /// Length of a UUID in its hyphenated text form: `8-4-4-4-12` hexadecimal digits.
 const UUID_LEN: usize = 36;
 
+/// Path separators, either of which may repeat (`C:\\Users`, `\/home\/` in escaped JSON).
+const SEPARATORS: &[char] = &['/', '\\'];
+
+/// Where the folder before a home folder name sits in its path.
+#[derive(Debug, PartialEq, Eq)]
+enum PathRoot {
+    /// After a drive: `C:\`, `\\?\C:\`, or `/c/` and `/mnt/c/` from Git Bash and WSL.
+    Drive,
+    /// At the top of an absolute path: `/home`, `/Users`.
+    Top,
+    /// Inside a relative path, such as `src/routes/users/`.
+    Relative,
+}
+
 /// Every problem with one parsed payload: its folder and session fields, every id-valued and
 /// hash-valued key, and the text of every key and string value.
 #[must_use]
@@ -95,29 +104,19 @@ pub fn payload_problems(payload: &serde_json::Value) -> Vec<String> {
     {
         problems.push(format!("cwd {cwd:?} is not a scrubbed repository path"));
     }
-    if let Some(transcript) = field("transcript_path")
-        && !SCRUBBED_HOMES
-            .iter()
-            .any(|home| transcript.starts_with(home))
-    {
-        problems.push(format!(
-            "transcript path {transcript:?} is not under a scrubbed home"
-        ));
+    for key in TRANSCRIPT_KEYS {
+        if let Some(transcript) = field(key)
+            && !SCRUBBED_HOMES
+                .iter()
+                .any(|home| transcript.starts_with(home))
+        {
+            problems.push(format!("{key} {transcript:?} is not under a scrubbed home"));
+        }
     }
     let mut pairs = Vec::new();
     key_values(payload, &mut pairs);
     for (key, value) in &pairs {
-        if ID_KEYS.contains(key)
-            && !value.is_empty()
-            && !FIXED_ID_PREFIXES
-                .iter()
-                .any(|prefix| value.starts_with(prefix))
-        {
-            problems.push(format!("{key} {value:?} is not a fixed id"));
-        }
-        if ZEROED_KEYS.contains(key) && !value.chars().all(|character| character == '0') {
-            problems.push(format!("{key} {value:?} is not zeroed"));
-        }
+        problems.extend(value_problems(key, value));
     }
     let mut texts = Vec::new();
     strings_in(payload, &mut texts);
@@ -141,7 +140,7 @@ pub fn text_problems(text: &str) -> Vec<String> {
             .map(|id| format!("id {id} is not a fixed id")),
     );
     problems.extend(
-        home_users_in(&lowered)
+        home_users_in(text, &lowered)
             .into_iter()
             .map(|user| format!("home folder of user {user:?} is not scrubbed")),
     );
@@ -163,10 +162,39 @@ pub fn text_problems(text: &str) -> Vec<String> {
     problems
 }
 
+/// The problems with one key and its value: an id that is not in a fixed form or not a string,
+/// or an opaque hash that is not zeroed.
+fn value_problems(key: &str, value: &serde_json::Value) -> Vec<String> {
+    let mut problems = Vec::new();
+    if ID_KEYS.contains(&key) {
+        match value {
+            serde_json::Value::Null => {}
+            serde_json::Value::String(id) => {
+                if !id.is_empty()
+                    && !FIXED_ID_PREFIXES
+                        .iter()
+                        .any(|prefix| id.starts_with(prefix))
+                {
+                    problems.push(format!("{key} {id:?} is not a fixed id"));
+                }
+            }
+            other => problems.push(format!("{key} {other} is not a string id")),
+        }
+    }
+    if ZEROED_KEYS.contains(&key)
+        && !value
+            .as_str()
+            .is_some_and(|hash| hash.chars().all(|character| character == '0'))
+    {
+        problems.push(format!("{key} {value} is not zeroed"));
+    }
+    problems
+}
+
 /// Whether `path` is `root` or a path inside it.
 fn is_inside(path: &str, root: &str) -> bool {
     path.strip_prefix(root)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['\\', '/']))
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(SEPARATORS))
 }
 
 /// Every key and every string value inside `value`, depth first.
@@ -184,15 +212,13 @@ fn strings_in<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a str>) {
     }
 }
 
-/// Every key whose value is a string, with that value, at any depth.
-fn key_values<'a>(value: &'a serde_json::Value, out: &mut Vec<(&'a str, &'a str)>) {
+/// Every key with its value, at any depth.
+fn key_values<'a>(value: &'a serde_json::Value, out: &mut Vec<(&'a str, &'a serde_json::Value)>) {
     match value {
         serde_json::Value::Array(items) => items.iter().for_each(|item| key_values(item, out)),
         serde_json::Value::Object(fields) => {
             for (key, field) in fields {
-                if let Some(text) = field.as_str() {
-                    out.push((key.as_str(), text));
-                }
+                out.push((key.as_str(), field));
                 key_values(field, out);
             }
         }
@@ -242,47 +268,60 @@ fn is_name_char(character: char) -> bool {
     character.is_alphanumeric() || "._-".contains(character)
 }
 
-/// The character just before byte offset `index` of `text`, if any.
-fn char_before(text: &str, index: usize) -> Option<char> {
-    text.get(..index).and_then(|head| head.chars().next_back())
+/// Whether a character can be part of a folder name, as opposed to what starts a path: a space,
+/// a quote, `=`, `:`, a comma or a bracket.
+fn is_segment_char(character: char) -> bool {
+    character.is_alphanumeric() || "._-~%$+@".contains(character)
 }
 
-/// The byte ranges of the web addresses in `lowered`: from the scheme to the next space, quote,
-/// angle bracket or parenthesis.
-fn web_address_spans(lowered: &str) -> Vec<Range<usize>> {
-    let ends_address =
-        |character: char| character.is_whitespace() || "\"'`<>()".contains(character);
-    let mut spans = Vec::new();
-    for scheme in WEB_SCHEMES {
-        for (start, _) in lowered.match_indices(scheme) {
-            let end = lowered
-                .get(start..)
-                .and_then(|rest| rest.find(ends_address))
-                .map_or(lowered.len(), |offset| start + offset);
-            spans.push(start..end);
+/// Where a path that continues after `head` starts: after a drive, at the top, or inside a
+/// relative path. `head` is the text before the separators that precede a folder name.
+fn path_root(head: &str) -> PathRoot {
+    let mut back = head.chars().rev();
+    let (last, second, third) = (back.next(), back.next(), back.next());
+    let is_word_start =
+        |character: Option<char>| character.is_none_or(|before| !before.is_alphanumeric());
+    match (last, second) {
+        // `C:` with nothing alphanumeric before the letter.
+        (Some(':'), Some(letter)) if letter.is_ascii_alphabetic() && is_word_start(third) => {
+            PathRoot::Drive
         }
+        // `/c` from Git Bash or `/mnt/c` from WSL: a one-letter folder.
+        (Some(letter), Some(separator))
+            if letter.is_ascii_alphabetic() && SEPARATORS.contains(&separator) =>
+        {
+            PathRoot::Drive
+        }
+        (Some(character), _) if is_segment_char(character) => PathRoot::Relative,
+        _ => PathRoot::Top,
     }
-    spans
 }
 
-/// The user name after every plain home-folder marker in `lowered` text, when it is not the
-/// scrubbed user. A name ends at its marker's separator or at the first character a user name
-/// cannot hold, such as a closing quote. Markers inside web addresses are skipped.
-fn home_users_in(lowered: &str) -> Vec<String> {
-    let web = web_address_spans(lowered);
+/// The user name of every home folder in `text` that is not a shared or scrubbed one. A home
+/// folder is a `users` or `home` folder right after a drive (any case), or `/Users` or `/home` at
+/// the top of an absolute path (as macOS and Linux spell them). A `users` folder inside a
+/// relative path or a web address is not a home folder. Separators may repeat or mix, as in
+/// escaped JSON.
+fn home_users_in(text: &str, lowered: &str) -> Vec<String> {
     let mut users = Vec::new();
-    for (marker, separators) in PATH_MARKERS {
-        for (index, _) in lowered.match_indices(marker) {
-            if web.iter().any(|span| span.contains(&index)) {
+    for (word, top_spelling) in [("users", "Users"), ("home", "home")] {
+        for (index, _) in lowered.match_indices(word) {
+            let head = lowered.get(..index).unwrap_or_default();
+            let tail = lowered.get(index + word.len()..).unwrap_or_default();
+            if !head.ends_with(SEPARATORS) || !tail.starts_with(SEPARATORS) {
                 continue;
             }
-            let rest = lowered.get(index + marker.len()..).unwrap_or_default();
-            let user: String = rest
-                .trim_start_matches(*separators)
+            let is_home = match path_root(head.trim_end_matches(SEPARATORS)) {
+                PathRoot::Drive => true,
+                PathRoot::Top => text.get(index..index + word.len()) == Some(top_spelling),
+                PathRoot::Relative => false,
+            };
+            let user: String = tail
+                .trim_start_matches(SEPARATORS)
                 .chars()
-                .take_while(|character| !separators.contains(character) && is_name_char(*character))
+                .take_while(|character| is_name_char(*character))
                 .collect();
-            if !user.is_empty() && user != SCRUBBED_USER {
+            if is_home && !user.is_empty() && !SHARED_HOME_NAMES.contains(&user.as_str()) {
                 users.push(user);
             }
         }
@@ -291,25 +330,21 @@ fn home_users_in(lowered: &str) -> Vec<String> {
 }
 
 /// Every hyphen-encoded home folder in `lowered` text, as the marker without its first hyphen and
-/// the name characters after it. The marker must start a folder name: after a path separator, a
-/// quote, a space or the start of the text, or, for `-users-`, after a drive letter and a hyphen
-/// (`c--users-`). This leaves out words such as `take-home-pay` and flags such as `--home-dir`.
+/// the name characters after it. The marker must start a folder name (see
+/// [`ENCODED_FOLDER_STARTS`]), or, for `-users-`, follow a drive letter and a hyphen (`c--users-`).
 fn encoded_homes_in(lowered: &str) -> Vec<String> {
-    let starts_name = |character: char| "/\\\"'`".contains(character) || character.is_whitespace();
     let mut folders = Vec::new();
     for marker in ENCODED_MARKERS {
         for (index, _) in lowered.match_indices(marker) {
             let head = lowered.get(..index).unwrap_or_default();
-            let is_drive_form = *marker == "-users-" && {
-                let mut back = head.chars().rev();
-                matches!(
-                    (back.next(), back.next(), back.next()),
-                    (Some('-'), Some(letter), before)
-                        if letter.is_ascii_alphabetic()
-                            && before.is_none_or(|character| !character.is_alphanumeric())
-                )
-            };
-            if !is_drive_form && !char_before(lowered, index).is_none_or(starts_name) {
+            let mut back = head.chars().rev();
+            let (last, second, third) = (back.next(), back.next(), back.next());
+            let is_drive_form = *marker == "-users-"
+                && last == Some('-')
+                && second.is_some_and(|letter| letter.is_ascii_alphabetic())
+                && third.is_none_or(|before| !before.is_alphanumeric());
+            let starts_folder = last.is_none_or(|before| ENCODED_FOLDER_STARTS.contains(&before));
+            if !is_drive_form && !starts_folder {
                 continue;
             }
             let rest = lowered.get(index + marker.len()..).unwrap_or_default();
@@ -324,13 +359,16 @@ fn encoded_homes_in(lowered: &str) -> Vec<String> {
 }
 
 /// Every default Windows machine name in `text`: a machine prefix at the start of a word, then
-/// exactly [`MACHINE_SUFFIX_LEN`] letters and digits holding a digit or written in capitals, as
+/// exactly the expected number of letters and digits, holding a digit or written in capitals as
 /// Windows writes it. A word such as `desktop-classic` is left out.
 fn machine_names_in(text: &str, lowered: &str) -> Vec<String> {
     let mut names = Vec::new();
-    for prefix in MACHINE_PREFIXES {
+    for (prefix, suffix_len) in MACHINE_NAMES {
         for (index, _) in lowered.match_indices(prefix) {
-            if char_before(lowered, index).is_some_and(char::is_alphanumeric) {
+            let before = lowered
+                .get(..index)
+                .and_then(|head| head.chars().next_back());
+            if before.is_some_and(char::is_alphanumeric) {
                 continue;
             }
             let rest = text.get(index + prefix.len()..).unwrap_or_default();
@@ -342,7 +380,7 @@ fn machine_names_in(text: &str, lowered: &str) -> Vec<String> {
                 || suffix
                     .chars()
                     .all(|character| character.is_ascii_uppercase());
-            if suffix.len() == MACHINE_SUFFIX_LEN && is_machine_like {
+            if suffix.len() == *suffix_len && is_machine_like {
                 names.push(format!("{prefix}{}", suffix.to_ascii_lowercase()));
             }
         }
@@ -350,8 +388,10 @@ fn machine_names_in(text: &str, lowered: &str) -> Vec<String> {
     names
 }
 
-/// Every email address in `text`: a local part, `@`, and a domain with a dot and a letter suffix.
-/// The `git` user of an SSH remote (`git@github.com:owner/repo`) is not an address.
+/// Every email address in `text`: a local part, `@`, and a domain whose first label holds a
+/// letter and whose last label is two or more letters. The `git` user of an SSH remote
+/// (`git@github.com:owner/repo`) and a version after a package name (`pkg@1.2.3-beta.rc`) are not
+/// addresses.
 fn emails_in(text: &str) -> Vec<String> {
     let is_local =
         |character: char| character.is_ascii_alphanumeric() || "._%+-".contains(character);
@@ -372,18 +412,21 @@ fn emails_in(text: &str) -> Vec<String> {
             .chars()
             .take_while(|character| is_domain(*character))
             .collect();
-        let suffix = domain
-            .trim_end_matches('.')
-            .rsplit('.')
-            .next()
-            .unwrap_or("");
+        let domain = domain.trim_end_matches('.');
+        let mut labels = domain.split('.');
+        let first_has_letter = labels.next().is_some_and(|label| {
+            label
+                .chars()
+                .any(|character| character.is_ascii_alphabetic())
+        });
+        let suffix = domain.rsplit('.').next().unwrap_or("");
         let has_suffix = domain.contains('.')
             && suffix.len() >= 2
             && suffix
                 .chars()
                 .all(|character| character.is_ascii_alphabetic());
-        if !local.is_empty() && local != "git" && has_suffix {
-            emails.push(format!("{local}@{}", domain.trim_end_matches('.')));
+        if !local.is_empty() && local != "git" && first_has_letter && has_suffix {
+            emails.push(format!("{local}@{domain}"));
         }
     }
     emails
@@ -393,8 +436,8 @@ fn emails_in(text: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Fixed ids, the scrubbed user's paths, web addresses, SSH remotes and plain words raise
-    /// nothing.
+    /// Fixed ids, the scrubbed user's and shared homes, relative paths, web addresses, SSH remotes,
+    /// package versions and plain words raise nothing.
     #[test]
     fn scrubbed_text_is_clean() {
         let clean = [
@@ -405,8 +448,12 @@ mod tests {
             "short-0000-4000, 2026-10-29T06-03-56, call_sites, decorators like @property",
             "the home folder is `C:\\Users\\dev`; the rest is prose",
             "take-home-assignment.md, a work-from-home policy, the --home-dir flag",
+            "pass the -home-dir flag",
             "see https://api.github.com/users/octocat and (http://example.com/home/page)",
-            "git@github.com:org/repo.git",
+            "GET /users/list returns users",
+            "src/routes/users/profile.ts and app/home/page.tsx and ~/projects/home/x",
+            "C:/Users/Public/Desktop and /Users/Shared/x",
+            "git@github.com:org/repo.git and pkg@1.2.3-beta.rc",
             "a desktop-classic theme, msg_count, req_body, gAAAAA_fixture_encrypted_message",
         ];
         for text in clean {
@@ -414,8 +461,8 @@ mod tests {
         }
     }
 
-    /// Live ids and tokens, other users' folders in any spelling, encoded home folders, machine
-    /// names and email addresses are each reported once.
+    /// Live ids and tokens, other users' homes in any spelling and separator mix, encoded home
+    /// folders, machine names and email addresses are each reported once.
     #[test]
     fn unscrubbed_text_is_reported() {
         let dirty = [
@@ -427,18 +474,32 @@ mod tests {
             "req_011CUZkYzAbCdEfGhIjKl",
             "gAAAAABpQwErTyUiOpAsDfGhJkL",
             "/home/alice/project",
+            "/Users/alice/proj",
             "C:\\Users\\devon\\notes",
             "c:\\users\\alice\\notes",
             "C:\\\\Users\\\\alice\\\\proj",
+            "C:/Users\\alice/x",
+            "C:\\Users/alice/x",
+            "{\"p\":\"\\/home\\/alice\\/x\"}",
+            "/c/Users/alice/x",
+            "/mnt/c/Users/alice/x",
+            "https://example.com,/home/alice/x",
             "projects\\C--Users-alice-Desktop-repo\\x.jsonl",
             "projects\\C--Users-Dev-Smith-Desktop-x\\y.jsonl",
             "projects/-home-alice-repo/x.jsonl",
+            "dir=-Users-alice-proj",
             "whoami printed desktop-7f3kq2m",
             "host DESKTOP-ABCDEFG",
+            "host WIN-ABCDEFGHIJK",
             "write to someone.else@example.org today",
         ];
         for text in dirty {
-            assert_eq!(text_problems(text).len(), 1, "{text}");
+            assert_eq!(
+                text_problems(text).len(),
+                1,
+                "{text}: {:?}",
+                text_problems(text)
+            );
         }
     }
 
@@ -450,6 +511,7 @@ mod tests {
             "session_id": "00000000-0000-4000-8000-000000000001",
             "cwd": "C:\\repo",
             "transcript_path": "C:\\Users\\dev\\.claude\\projects\\C--repo\\x.jsonl",
+            "agent_transcript_path": "C:\\Users\\dev\\.claude\\projects\\C--repo\\y.jsonl",
             "tool_response": {"agentId": "fixtureagent0001", "harnessSectionHash": "0000"}
         });
         assert_eq!(payload_problems(&clean), Vec::<String>::new());
@@ -462,13 +524,36 @@ mod tests {
             serde_json::json!({"cwd": "C:\\work\\repo"}),
             serde_json::json!({"cwd": "/repository-of-alice"}),
             serde_json::json!({"transcript_path": "D:\\logs\\x.jsonl"}),
+            serde_json::json!({"agent_transcript_path": "D:\\agents\\x.jsonl"}),
             serde_json::json!({"nested": {"agent_id": "a1b2c3d4e5f6a7b8c"}}),
+            serde_json::json!({"turn_id": 7}),
             serde_json::json!({"files": {"/home/alice/x.rs": 1}}),
             serde_json::json!({"tool_response": {"harnessSectionHash": "9f3a"}}),
             serde_json::json!({"tool_response": "{\"path\":\"C:\\\\Users\\\\alice\\\\x\"}"}),
         ];
         for payload in dirty {
             assert_eq!(payload_problems(&payload).len(), 1, "{payload}");
+        }
+    }
+
+    /// The three path roots, worked out by hand.
+    #[test]
+    fn path_roots_are_told_apart() {
+        let cases = [
+            ("c:", PathRoot::Drive),
+            ("\\\\?\\c:", PathRoot::Drive),
+            ("/c", PathRoot::Drive),
+            ("/mnt/c", PathRoot::Drive),
+            ("", PathRoot::Top),
+            ("get ", PathRoot::Top),
+            ("{\"p\":\"", PathRoot::Top),
+            ("https://example.com,", PathRoot::Top),
+            ("src/routes", PathRoot::Relative),
+            ("https://api.github.com", PathRoot::Relative),
+            ("ac:", PathRoot::Top),
+        ];
+        for (head, expected) in cases {
+            assert_eq!(path_root(head), expected, "{head:?}");
         }
     }
 }

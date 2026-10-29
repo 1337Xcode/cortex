@@ -17,7 +17,7 @@ pub enum Expect {
     StartsWith(&'static str, &'static str),
     /// The string at the pointer contains the text.
     Contains(&'static str, &'static str),
-    /// The pointer holds a value of any kind.
+    /// The pointer holds a value of any kind other than `null`.
     Present(&'static str),
 }
 
@@ -411,7 +411,9 @@ fn is_met(payload: &Value, expect: Expect) -> bool {
         Is(pointer, text) => text_at(pointer) == Some(text),
         StartsWith(pointer, text) => text_at(pointer).is_some_and(|found| found.starts_with(text)),
         Contains(pointer, text) => text_at(pointer).is_some_and(|found| found.contains(text)),
-        Present(pointer) => payload.pointer(pointer).is_some(),
+        Present(pointer) => payload
+            .pointer(pointer)
+            .is_some_and(|value| !value.is_null()),
     }
 }
 
@@ -461,5 +463,21 @@ mod tests {
             problems.get(1).map(String::as_str),
             Some(r#"Present("/tool_input/limit") does not hold; found None"#)
         );
+    }
+
+    /// Each kind of expectation means what it says and no more: `Is` needs the whole string,
+    /// `StartsWith` the beginning, `Present` a value that is not `null`.
+    #[test]
+    fn expectation_kinds_are_distinct() {
+        let payload = serde_json::json!({
+            "tool_name": "Read",
+            "error": "Exit code 1",
+            "offset": null
+        });
+        assert_eq!(unmet(&payload, &[Contains("/tool_name", "Rea")]).len(), 0);
+        assert_eq!(unmet(&payload, &[Is("/tool_name", "Rea")]).len(), 1);
+        assert_eq!(unmet(&payload, &[Contains("/error", "code 1")]).len(), 0);
+        assert_eq!(unmet(&payload, &[StartsWith("/error", "code 1")]).len(), 1);
+        assert_eq!(unmet(&payload, &[Present("/offset")]).len(), 1);
     }
 }
