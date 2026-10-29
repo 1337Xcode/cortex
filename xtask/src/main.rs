@@ -10,6 +10,7 @@
 
 mod architecture;
 mod comments;
+mod compiled;
 mod invariants;
 mod lints;
 mod steps;

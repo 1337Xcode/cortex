@@ -3,17 +3,19 @@
 //! Each line that enforces one of the product's invariants carries a comment naming it, so one
 //! text search finds every enforcement point. This check refuses tags with unknown names (a typo
 //! would hide an enforcement point) and, once the crate that owns an invariant exists, requires at
-//! least one tag for it in that crate's `src/`. A tag is a `//` line comment (found by
-//! [`crate::comments`], so the marker inside a string literal or a block comment is no tag). A tag
-//! in test code is checked for its name but enforces nothing: under `tests/`, inside an item
-//! marked `#[cfg(test)]` or `#[test]`, or in the file of a module declared `#[cfg(test)] mod x;`.
+//! least one enforcing tag for it in that crate's `src/`. A tag is a `//` line comment (found by
+//! [`crate::comments`], so the marker inside a string literal or a block comment is no tag). Every
+//! tag is checked for its name, but only a tag in code the product compiles enforces anything: not
+//! in a file no target reaches, such as a test module's own file, and not inside code that
+//! compiles only for tests ([`crate::compiled`]).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use crate::comments;
 
 /// The marker word. It is assembled at run time so this file never contains a tag itself.
-const MARKER_WORD: &str = "INVARIANT";
+pub(crate) const MARKER_WORD: &str = "INVARIANT";
 
 /// Every invariant and the crate that must hold at least one enforcing line for it.
 const INVARIANTS: &[(&str, &str)] = &[
@@ -35,11 +37,15 @@ pub(crate) struct Tag {
     pub(crate) path: String,
     /// One-based line number.
     pub(crate) line: usize,
+    /// Byte offset of the comment in its file.
+    pub(crate) offset: usize,
     /// The invariant name as written after the marker.
     pub(crate) name: String,
-    /// Whether the tag sits in an item that only compiles for tests.
-    pub(crate) is_test: bool,
 }
+
+/// The files the product compiles, by repository-relative path, each with the byte ranges inside
+/// it that compile only for tests.
+pub(crate) type CompiledCode = BTreeMap<String, Vec<Range<usize>>>;
 
 /// Finds the tags in one file: a `//` comment containing the marker word and a colon, then a name.
 pub(crate) fn scan(path: &str, text: &str) -> Vec<Tag> {
@@ -56,40 +62,24 @@ pub(crate) fn scan(path: &str, text: &str) -> Vec<Tag> {
             Some(Tag {
                 path: path.to_owned(),
                 line: comment.line,
+                offset: comment.offset,
                 name,
-                is_test: comment.is_test,
             })
         })
         .collect()
 }
 
-/// The files holding the modules that the file at `path` declares test-only without a body:
-/// `<name>.rs` and everything under `<name>/`, in the folder where that file's submodules live.
-/// A `#[path]` attribute on such a declaration is not followed.
-pub(crate) fn test_module_paths(path: &str, text: &str) -> Vec<String> {
-    let Some((parent, file)) = path.rsplit_once('/') else {
-        return Vec::new();
-    };
-    let module_dir = match file {
-        "lib.rs" | "main.rs" | "mod.rs" => parent.to_owned(),
-        _ => format!("{parent}/{}", file.trim_end_matches(".rs")),
-    };
-    comments::test_module_names(path, text)
-        .into_iter()
-        .flat_map(|name| {
-            [
-                format!("{module_dir}/{name}.rs"),
-                format!("{module_dir}/{name}/"),
-            ]
-        })
-        .collect()
+/// Whether a tag sits in code the product compiles, outside test-only ranges.
+fn is_compiled(tag: &Tag, compiled: &CompiledCode) -> bool {
+    compiled
+        .get(&tag.path)
+        .is_some_and(|test_ranges| !test_ranges.iter().any(|range| range.contains(&tag.offset)))
 }
 
-/// Every problem with `tags`, given the test module files found by [`test_module_paths`] and
-/// the names of the crates that exist.
+/// Every problem with `tags`, given the code the product compiles and the crates that exist.
 pub(crate) fn check(
     tags: &[Tag],
-    test_paths: &[String],
+    compiled: &CompiledCode,
     crate_names: &BTreeSet<String>,
 ) -> Vec<String> {
     let mut problems: Vec<String> = tags
@@ -108,12 +98,7 @@ pub(crate) fn check(
         }
         let owner_dir = format!("crates/{owner}/src/");
         let is_enforced = tags.iter().any(|tag| {
-            tag.name == *name
-                && !tag.is_test
-                && tag.path.starts_with(&owner_dir)
-                && !test_paths
-                    .iter()
-                    .any(|test| tag.path.starts_with(test.as_str()))
+            tag.name == *name && tag.path.starts_with(&owner_dir) && is_compiled(tag, compiled)
         });
         if !is_enforced {
             problems.push(format!("{name}: no tagged enforcing line in {owner_dir}"));
@@ -136,7 +121,16 @@ mod tests {
         names.iter().map(|name| (*name).to_owned()).collect()
     }
 
-    /// A tag comment is found with its path and 1-based line; plain comments are not tags.
+    /// Compiled files with the given test-only ranges.
+    fn compiled(files: &[(&str, Vec<Range<usize>>)]) -> CompiledCode {
+        files
+            .iter()
+            .map(|(path, ranges)| ((*path).to_owned(), ranges.clone()))
+            .collect()
+    }
+
+    /// A tag comment is found with its path, 1-based line and byte offset; plain comments are not
+    /// tags. Offset 24: "fn f() {\n" is 9 bytes, then 15 bytes of code before the slashes.
     #[test]
     fn scan_finds_tags_with_line_numbers() {
         let text = format!(
@@ -148,8 +142,8 @@ mod tests {
             vec![Tag {
                 path: "crates/cortex-hook/src/lib.rs".to_owned(),
                 line: 2,
+                offset: 24,
                 name: "fail-open".to_owned(),
-                is_test: false,
             }]
         );
     }
@@ -161,26 +155,31 @@ mod tests {
         assert_eq!(scan("crates/x/src/lib.rs", &text), Vec::new());
     }
 
-    /// A tag naming no known invariant is reported with its location.
+    /// A tag naming no known invariant is reported with its location, wherever it sits.
     #[test]
     fn unknown_name_is_reported() {
-        let tags = scan("crates/cortex-hook/src/lib.rs", &tag_comment("fial-open"));
+        let tags = scan(
+            "crates/cortex-hook/tests/hook.rs",
+            &tag_comment("fial-open"),
+        );
         assert_eq!(
-            check(&tags, &[], &crates(&[])),
-            vec!["crates/cortex-hook/src/lib.rs:1: unknown invariant \"fial-open\"".to_owned()]
+            check(&tags, &CompiledCode::new(), &crates(&[])),
+            vec!["crates/cortex-hook/tests/hook.rs:1: unknown invariant \"fial-open\"".to_owned()]
         );
     }
 
-    /// Once the owning crate exists, its invariant needs a tagged line inside it.
+    /// Once the owning crate exists, its invariant needs a tagged line it compiles.
     #[test]
     fn existing_owner_needs_a_tag() {
+        let lib = "crates/cortex-hook/src/lib.rs";
+        let code = compiled(&[(lib, Vec::new())]);
         assert_eq!(
-            check(&[], &[], &crates(&["cortex-hook"])),
+            check(&[], &code, &crates(&["cortex-hook"])),
             vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
         );
-        let tags = scan("crates/cortex-hook/src/lib.rs", &tag_comment("fail-open"));
+        let tags = scan(lib, &tag_comment("fail-open"));
         assert_eq!(
-            check(&tags, &[], &crates(&["cortex-hook"])),
+            check(&tags, &code, &crates(&["cortex-hook"])),
             Vec::<String>::new()
         );
     }
@@ -188,89 +187,40 @@ mod tests {
     /// A tag in another crate does not stand in for the owner's.
     #[test]
     fn tag_outside_the_owner_does_not_count() {
-        let tags = scan("crates/cortex-cli/src/main.rs", &tag_comment("fail-open"));
+        let main = "crates/cortex-cli/src/main.rs";
+        let tags = scan(main, &tag_comment("fail-open"));
         assert_eq!(
-            check(&tags, &[], &crates(&["cortex-hook", "cortex-cli"])),
-            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
-        );
-    }
-
-    /// A tag in the owner's tests is not an enforcing line.
-    #[test]
-    fn tag_in_owner_tests_does_not_count() {
-        let tags = scan(
-            "crates/cortex-hook/tests/hook.rs",
-            &tag_comment("fail-open"),
-        );
-        assert_eq!(
-            check(&tags, &[], &crates(&["cortex-hook"])),
-            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
-        );
-    }
-
-    /// A tag inside the owner's `#[cfg(test)]` module is test code, not an enforcing line.
-    #[test]
-    fn tag_in_a_test_module_does_not_count() {
-        let text = format!(
-            "#[cfg(test)]
-mod tests {{
-{}
-}}
-",
-            tag_comment("fail-open")
-        );
-        let tags = scan("crates/cortex-hook/src/lib.rs", &text);
-        assert_eq!(tags.len(), 1);
-        assert!(tags.iter().all(|tag| tag.is_test && tag.line == 3));
-        assert_eq!(
-            check(&tags, &[], &crates(&["cortex-hook"])),
-            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
-        );
-    }
-
-    /// A test module kept in its own file is test code: its tags enforce nothing.
-    #[test]
-    fn tag_in_a_test_module_file_does_not_count() {
-        let test_paths = test_module_paths(
-            "crates/cortex-hook/src/lib.rs",
-            "#[cfg(test)]
-mod tests;
-",
-        );
-        assert_eq!(
-            test_paths,
-            vec![
-                "crates/cortex-hook/src/tests.rs".to_owned(),
-                "crates/cortex-hook/src/tests/".to_owned(),
-            ]
-        );
-        assert_eq!(
-            test_module_paths(
-                "crates/cortex-hook/src/gate.rs",
-                "#[cfg(test)]
-mod tests;
-"
+            check(
+                &tags,
+                &compiled(&[(main, Vec::new())]),
+                &crates(&["cortex-hook", "cortex-cli"])
             ),
-            vec![
-                "crates/cortex-hook/src/gate/tests.rs".to_owned(),
-                "crates/cortex-hook/src/gate/tests/".to_owned(),
-            ]
+            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
         );
-        let mut tags = scan("crates/cortex-hook/src/tests.rs", &tag_comment("fail-open"));
+    }
+
+    /// A tag inside a test-only range of a compiled file, or in a file no target compiles (an
+    /// integration test, a test module's own file), enforces nothing.
+    #[test]
+    fn tags_in_test_code_do_not_count() {
+        let lib = "crates/cortex-hook/src/lib.rs";
+        let mut tags = scan(lib, &tag_comment("fail-open"));
         tags.extend(scan(
-            "crates/cortex-hook/src/tests/cases.rs",
+            "crates/cortex-hook/src/tests.rs",
             &tag_comment("fail-open"),
         ));
+        tags.extend(scan(
+            "crates/cortex-hook/tests/hook.rs",
+            &tag_comment("fail-open"),
+        ));
+        let code = compiled(&[(lib, vec![Range { start: 0, end: 30 }])]);
         assert_eq!(
-            check(&tags, &test_paths, &crates(&["cortex-hook"])),
+            check(&tags, &code, &crates(&["cortex-hook"])),
             vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
         );
-        let production = scan(
-            "crates/cortex-hook/src/testing.rs",
-            &tag_comment("fail-open"),
-        );
+        let outside = compiled(&[(lib, vec![Range { start: 0, end: 10 }])]);
         assert_eq!(
-            check(&production, &test_paths, &crates(&["cortex-hook"])),
+            check(&tags, &outside, &crates(&["cortex-hook"])),
             Vec::<String>::new()
         );
     }
@@ -278,11 +228,7 @@ mod tests;
     /// The marker on the second line of a string that spans lines is not a tag.
     #[test]
     fn marker_in_a_multi_line_string_is_not_a_tag() {
-        let text = format!(
-            "let s = \"first line
-// {MARKER_WORD}: fail-open\";
-"
-        );
+        let text = format!("let s = \"first line\n// {MARKER_WORD}: fail-open\";\n");
         assert_eq!(scan("crates/cortex-hook/src/lib.rs", &text), Vec::new());
     }
 
@@ -315,7 +261,7 @@ mod tests;
     #[test]
     fn missing_owner_requires_nothing() {
         assert_eq!(
-            check(&[], &[], &crates(&["cortex-cli", "xtask"])),
+            check(&[], &CompiledCode::new(), &crates(&["cortex-cli", "xtask"])),
             Vec::<String>::new()
         );
     }

@@ -9,13 +9,26 @@ use std::process::Command;
 use anyhow::{Context, bail};
 
 use crate::architecture::Metadata;
-use crate::{architecture, invariants, lints};
+use crate::invariants::CompiledCode;
+use crate::{architecture, compiled, invariants, lints};
 
 /// Top-level folders whose sources may carry invariant tags.
 const TAGGED_SOURCE_DIRS: &[&str] = &["crates", "ui", "xtask"];
 
 /// File extensions scanned for invariant tags.
 const TAGGED_SOURCE_EXTENSIONS: &[&str] = &["rs", "ts", "tsx"];
+
+/// Target kinds the product ships: code under any other kind (tests, benches, examples, build
+/// scripts) is never an enforcing line.
+const SHIPPED_TARGET_KINDS: &[&str] = &[
+    "lib",
+    "rlib",
+    "dylib",
+    "cdylib",
+    "staticlib",
+    "proc-macro",
+    "bin",
+];
 
 /// Runs every check, stopping at the first failure.
 ///
@@ -28,12 +41,7 @@ pub(crate) fn verify(full: bool) -> anyhow::Result<()> {
     let metadata = workspace_metadata(&root)?;
     check_architecture(&metadata)?;
     check_lint_inheritance(&metadata)?;
-    let crate_names = metadata
-        .packages
-        .iter()
-        .map(|package| package.name.clone())
-        .collect();
-    check_invariant_tags(&root, &crate_names)?;
+    check_invariant_tags(&root, &metadata)?;
     run_cargo(
         &root,
         "clippy",
@@ -129,28 +137,53 @@ fn check_lint_inheritance(metadata: &Metadata) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Checks that every invariant tag names a known invariant and that each owning crate has one.
-fn check_invariant_tags(root: &Path, crate_names: &BTreeSet<String>) -> anyhow::Result<()> {
+/// Checks that every invariant tag names a known invariant and that each owning crate has one in
+/// the code it compiles.
+fn check_invariant_tags(root: &Path, metadata: &Metadata) -> anyhow::Result<()> {
     println!("xtask: invariant tags");
     let mut tags = Vec::new();
-    let mut test_paths = Vec::new();
     for dir in TAGGED_SOURCE_DIRS {
         let path = root.join(dir);
         if path.is_dir() {
             for file in source_files(root, &path)? {
                 let text = fs::read_to_string(&file)
                     .with_context(|| format!("reading {}", file.display()))?;
-                let relative = relative_path(root, &file);
-                tags.extend(invariants::scan(&relative, &text));
-                test_paths.extend(invariants::test_module_paths(&relative, &text));
+                tags.extend(invariants::scan(&relative_path(root, &file), &text));
             }
         }
     }
-    let problems = invariants::check(&tags, &test_paths, crate_names);
+    let compiled_code = compiled_code(root, metadata)?;
+    let crate_names: BTreeSet<String> = metadata
+        .packages
+        .iter()
+        .map(|package| package.name.clone())
+        .collect();
+    let problems = invariants::check(&tags, &compiled_code, &crate_names);
     if !problems.is_empty() {
         bail!("invariant tags:\n  {}", problems.join("\n  "));
     }
     Ok(())
+}
+
+/// The files the workspace's shipped targets compile, by path relative to `root`, each with its
+/// test-only byte ranges.
+fn compiled_code(root: &Path, metadata: &Metadata) -> anyhow::Result<CompiledCode> {
+    let roots: Vec<PathBuf> = metadata
+        .packages
+        .iter()
+        .flat_map(|package| &package.targets)
+        .filter(|target| {
+            target
+                .kind
+                .iter()
+                .any(|kind| SHIPPED_TARGET_KINDS.contains(&kind.as_str()))
+        })
+        .map(|target| target.src_path.clone())
+        .collect();
+    Ok(compiled::compiled_files(&roots)?
+        .into_iter()
+        .map(|file| (relative_path(root, &file.path), file.test_ranges))
+        .collect())
 }
 
 /// Every scanned source file under `dir`, sorted.
@@ -314,6 +347,70 @@ mod tests {
             scratch.0.join("crates/a/src/loop"),
         )?;
         assert_eq!(scanned(&scratch)?, vec!["crates/a/src/lib.rs"]);
+        Ok(())
+    }
+
+    /// Metadata for one library package named `name` rooted at `scratch`'s `src/lib.rs`.
+    fn library(scratch: &ScratchDir, name: &str) -> Metadata {
+        Metadata {
+            packages: vec![architecture::Package {
+                name: name.to_owned(),
+                manifest_path: scratch.0.join(format!("crates/{name}/Cargo.toml")),
+                dependencies: Vec::new(),
+                targets: vec![architecture::Target {
+                    kind: vec!["lib".to_owned()],
+                    src_path: scratch.0.join(format!("crates/{name}/src/lib.rs")),
+                }],
+            }],
+        }
+    }
+
+    /// The tag step reads the compiled module tree: a tag in the file of a `#[cfg(test)]` module
+    /// fails the owner's requirement, the same tag in the library root meets it.
+    #[test]
+    fn tag_step_counts_compiled_code_only() -> anyhow::Result<()> {
+        let tag = format!("// {}: fail-open\n", invariants::MARKER_WORD);
+        let scratch = ScratchDir::new("tags")?;
+        scratch.write(
+            "crates/cortex-hook/src/lib.rs",
+            "#[cfg(test)]\nmod tests;\n",
+        )?;
+        scratch.write("crates/cortex-hook/src/tests.rs", &tag)?;
+        let error = check_invariant_tags(&scratch.0, &library(&scratch, "cortex-hook"))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(
+            error.contains("fail-open: no tagged enforcing line"),
+            "{error}"
+        );
+        scratch.write(
+            "crates/cortex-hook/src/lib.rs",
+            &format!("{tag}#[cfg(test)]\nmod tests;\n"),
+        )?;
+        check_invariant_tags(&scratch.0, &library(&scratch, "cortex-hook"))?;
+        Ok(())
+    }
+
+    /// The compiled-code map of this workspace is keyed by repository-relative paths that the tag
+    /// scan also produces: the binary's root and its modules are in it, its integration tests are
+    /// not.
+    #[test]
+    fn real_workspace_compiled_code_uses_relative_paths() -> anyhow::Result<()> {
+        let root = workspace_root()?;
+        let code = compiled_code(&root, &workspace_metadata(&root)?)?;
+        for expected in [
+            "crates/cortex-cli/src/main.rs",
+            "crates/cortex-cli/src/output.rs",
+            "crates/cortex-cli/src/commands/version.rs",
+            "xtask/src/compiled.rs",
+        ] {
+            assert!(
+                code.contains_key(expected),
+                "{expected} missing from {code:?}"
+            );
+        }
+        assert!(!code.contains_key("crates/cortex-cli/tests/cli.rs"));
         Ok(())
     }
 

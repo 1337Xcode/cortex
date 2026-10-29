@@ -55,6 +55,17 @@ pub(crate) struct Package {
     pub(crate) manifest_path: PathBuf,
     /// Its declared dependencies, workspace and external alike.
     pub(crate) dependencies: Vec<Dependency>,
+    /// Its build targets: libraries, binaries, tests, benches and examples.
+    pub(crate) targets: Vec<Target>,
+}
+
+/// One build target of a package.
+#[derive(Debug, Deserialize)]
+pub(crate) struct Target {
+    /// The target's kinds, such as `lib`, `bin`, `test` or `bench`.
+    pub(crate) kind: Vec<String>,
+    /// Absolute path of the target's root source file.
+    pub(crate) src_path: PathBuf,
 }
 
 /// One declared dependency.
@@ -141,6 +152,7 @@ mod tests {
                     kind: None,
                 })
                 .collect(),
+            targets: Vec::new(),
         }
     }
 
