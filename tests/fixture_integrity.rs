@@ -38,6 +38,7 @@ const REQUIRED: &[(&str, &str, &[&str])] = &[
             "session-start-startup",
             "session-start-resume",
             "session-start-compact",
+            "session-start-clear",
             "user-prompt-submit",
             "pre-tool-use-read",
             "pre-tool-use-grep",
@@ -63,6 +64,7 @@ const REQUIRED: &[(&str, &str, &[&str])] = &[
             "subagent-stop-internal",
             "stop",
             "session-end",
+            "session-end-clear",
         ],
     ),
     (
