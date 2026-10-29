@@ -125,6 +125,9 @@ mod tests {
             (Language::Tsx, "web/Cart.spec.tsx", true),
             (Language::Tsx, "web/Cart.test.ts", false),
             (Language::Tsx, "web/Cart.tsx", false),
+            (Language::Go, "shop/pay_test.go", true),
+            (Language::Go, "shop/pay.go", false),
+            (Language::Go, "shop/test_pay.go", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

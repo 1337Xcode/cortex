@@ -4,7 +4,8 @@
 //! Definitions nest by their spans: each sits in the smallest definition around it. A function
 //! directly in a class is a method, and in a test file a function or method named the way the
 //! language names tests is a test. A qualified name joins the names of the definitions around it
-//! with `.`, in every language. A definition that cannot be recorded, because its name or its
+//! with `.`, in every language, with the definition's qualifier, if its pattern captured one (the
+//! type a Go method belongs to), just before its name. A definition that cannot be recorded, because its name or its
 //! qualified name is not a name Cortex can store, is left out with every definition inside it,
 //! whose qualified names would contain it.
 
@@ -101,12 +102,19 @@ impl Recorder<'_> {
     ) -> Option<usize> {
         let name = Identifier::new(tag.name.utf8_text(self.source).ok()?).ok()?;
         let outer = parent.and_then(|position| self.records.get(position));
-        let qual_name = match outer {
-            Some(outer) => {
-                Identifier::new(&format!("{}.{}", outer.qual_name.as_str(), name.as_str())).ok()?
-            }
-            None => name.clone(),
+        let local = match tag.qualifier {
+            Some(qualifier) => format!(
+                "{}.{}",
+                qualifier.utf8_text(self.source).ok()?,
+                name.as_str()
+            ),
+            None => name.as_str().to_owned(),
         };
+        let qual_name = match outer {
+            Some(outer) => Identifier::new(&format!("{}.{local}", outer.qual_name.as_str())),
+            None => Identifier::new(&local),
+        }
+        .ok()?;
         let kind = self.kind_of(kind, outer.map(|outer| outer.kind), &name);
         let header_end = header_end(tag.node, self.spec.body_paths, span.end);
         let record = SymbolRecord {
@@ -273,6 +281,26 @@ mod tests {
                 ("x.f".to_owned(), Some(0), 0, 4)
             ]
         );
+        Ok(())
+    }
+
+    /// A qualifier comes between the definition around it and the name.
+    #[test]
+    fn qualifiers_join_qualified_names() -> Result<(), Box<dyn Error>> {
+        static QUALIFIED: TagsSpec = python_spec(
+            &[
+                "(class_definition name: (identifier) @name) @definition.class",
+                "(function_definition name: (identifier) @name \
+                 parameters: (parameters . (identifier) @qualifier)) @definition.function",
+            ],
+            PLAIN_IMPORTS,
+        );
+        // `f` takes `owner` first and sits in nothing: `owner.f`. `g` takes `item` first and sits
+        // in the class `C`: `C.item.g`.
+        let source = "def f(owner): pass\nclass C:\n    def g(item): pass\n";
+        let found = symbols_found(&QUALIFIED, source)?;
+        let names: Vec<&str> = found.iter().map(|(name, ..)| name.as_str()).collect();
+        assert_eq!(names, ["owner.f", "C", "C.item.g"]);
         Ok(())
     }
 

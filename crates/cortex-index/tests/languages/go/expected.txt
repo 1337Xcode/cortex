@@ -1,0 +1,48 @@
+# What sample.go defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text up to its body, with each run of whitespace as one space: a
+# constant's body is its value and a named type's the type it stands for. Methods are named with
+# their receiver's type. Not read: the comment, `package shop`, `iota`, the interface's method
+# `Save` (only declared functions and methods), the built-in types `int`, `string` and `error`,
+# and the package names `context`, `http`, `fmt` and `str` before a dot.
+symbol constant Limit 14-14 - | Limit =
+symbol constant Open 17-17 - | Open Status =
+symbol constant Paid 18-18 - | Paid
+symbol type Status 21-21 - | Status
+symbol type ID 23-23 - | ID =
+symbol class Shop 25-28 - | Shop
+symbol interface Store 30-32 - | Store
+symbol method Shop.Pay 34-37 - | func (s *Shop) Pay(ctx context.Context, id ID) (Receipt, error)
+symbol method Shop.find 39-41 - | func (s Shop) find(id ID) Order
+symbol method Queue.Push 43-43 - | func (q *Queue[T]) Push(item T)
+symbol function NewShop 45-47 - | func NewShop() *Shop
+ref type_ref Status 17 Open
+ref type_ref Order 26 Shop
+ref type_ref Client 27 Shop
+ref type_ref Context 31 Store
+ref type_ref Order 31 Store
+ref type_ref Shop 34 Shop.Pay
+ref type_ref Context 34 Shop.Pay
+ref type_ref ID 34 Shop.Pay
+ref type_ref Receipt 34 Shop.Pay
+ref call find 35 Shop.Pay
+ref type_ref Receipt 36 Shop.Pay
+ref call Sqrt 36 Shop.Pay
+ref call Errorf 36 Shop.Pay
+ref call ToUpper 36 Shop.Pay
+ref type_ref Shop 39 Shop.find
+ref type_ref ID 39 Shop.find
+ref type_ref Order 39 Shop.find
+ref type_ref Queue 43 Queue.Push
+ref type_ref T 43 Queue.Push
+ref type_ref T 43 Queue.Push
+ref type_ref Shop 45 NewShop
+ref type_ref Shop 46 NewShop
+import context module - 5
+import fmt module - 6
+import strings module str 7
+import math all - 8
+import embed module - 9
+import net/http module - 12

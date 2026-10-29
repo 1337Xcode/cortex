@@ -53,14 +53,17 @@ Each file is parsed once with tree-sitter. Its tags query, the grammar's own fol
 Cortex's additions in `queries/`, gives definitions and references in tree-sitter's tags format:
 each pattern captures one `@name` and one `@definition.<kind>` or `@reference.<kind>`. Where two
 patterns find the same name, the earlier one wins, and a name holding a syntax error is skipped.
-Comments a pattern captures as `@doc` are ignored, since Cortex keeps no comments, and a capture
-named with a leading `_` only serves a text predicate such as `#eq?`. A second query per
-language finds imports.
+A pattern that captures `@ignore` keeps later patterns from recording that name, as Go's
+built-in types are kept out, and one that captures a `@name` alone records nothing. Comments a
+pattern captures as `@doc` are ignored, since Cortex keeps no comments, and a capture named with
+a leading `_` only serves a text predicate such as `#eq?`. A second query per language finds
+imports.
 
 Definitions nest by their spans. A function directly in a class is a method; in a test file (one
 in a `test`, `tests` or `__tests__` folder, or named as its language names test files) a
 function or method named as its language names tests is a test. Qualified names join names with
-`.` in every language.
+`.` in every language. A pattern may capture a `@qualifier` for a definition, which goes just
+before its name: a Go method's qualified name starts with the type it belongs to.
 
 A decorated definition starts at its first decorator. A definition carries two hashes: of its
 header, from its start to the last part before its body, and of all of it. Comments between the

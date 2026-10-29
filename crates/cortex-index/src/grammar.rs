@@ -1,10 +1,13 @@
 //! Each language's parsing rules compiled for use: its grammar, its tags query and its imports
 //! query, with the meaning of every capture worked out and checked once, before any file is read.
 //!
-//! A tags query follows tree-sitter's tags format: every pattern captures one `@name` and one
-//! `@definition.<kind>` or `@reference.<kind>`, and may capture the comments before a definition
-//! as `@doc`, shaped by `#strip!` and `#select-adjacent!`; Cortex keeps no comments, so those
-//! change nothing. An imports query captures the statement as `@import` and the module as written
+//! A tags query follows tree-sitter's tags format. A pattern that captures a `@name` and a
+//! `@definition.<kind>` or `@reference.<kind>` records a tag; one that captures a `@name` alone
+//! records nothing; one that captures `@ignore` alone keeps later patterns from recording that
+//! name. A pattern may capture the comments before a definition as `@doc`, with any predicate on
+//! them: Cortex keeps no comments, so those change nothing. Cortex adds one capture, `@qualifier`,
+//! a name a definition's qualified name starts with, such as the type a Go method belongs to.
+//! An imports query captures the statement as `@import` and the module as written
 //! as `@import.module`, and may capture the name taken from it (`@import.name`), the name it is
 //! bound to instead (`@import.alias`), and the mark that every name (`@import.all`) or the default
 //! export (`@import.default`) is taken. In either query a capture named with a leading `_` only
@@ -57,6 +60,10 @@ pub(crate) enum TagCapture {
     Doc,
     /// A node only a text predicate looks at.
     Helper,
+    /// A name no later pattern may record a tag for.
+    Ignore,
+    /// A name the definition's qualified name starts with, inside the definition around it.
+    Qualifier,
 }
 
 /// What a capture in an imports query marks.
@@ -259,8 +266,9 @@ fn check_predicates<C>(
     Ok(())
 }
 
-/// Whether a tags query may use `predicate`: only `#strip!` and `#select-adjacent!` on `@doc`,
-/// which shape a definition's comments, and so change nothing Cortex keeps.
+/// Whether a tags query may use `predicate`: only one on `@doc`, such as `#strip!` and
+/// `#select-adjacent!`, which can only shape a definition's comments, and so change nothing
+/// Cortex keeps.
 fn is_doc_predicate(predicate: &QueryPredicate, captures: &[TagCapture]) -> bool {
     let first = match predicate.args.first() {
         Some(QueryPredicateArg::Capture(index)) => usize::try_from(*index)
@@ -268,8 +276,7 @@ fn is_doc_predicate(predicate: &QueryPredicate, captures: &[TagCapture]) -> bool
             .and_then(|index| captures.get(index)),
         _ => None,
     };
-    matches!(predicate.operator.as_ref(), "strip!" | "select-adjacent!")
-        && first == Some(&TagCapture::Doc)
+    first == Some(&TagCapture::Doc)
 }
 
 /// What each of `compiled`'s captures marks, by capture index, as `meaning` reads its name.
@@ -297,6 +304,8 @@ fn tag_capture(name: &str) -> Option<TagCapture> {
     match name {
         "name" => return Some(TagCapture::Name),
         "doc" => return Some(TagCapture::Doc),
+        "ignore" => return Some(TagCapture::Ignore),
+        "qualifier" => return Some(TagCapture::Qualifier),
         _ if is_helper(name) => return Some(TagCapture::Helper),
         _ => {}
     }
@@ -368,26 +377,42 @@ fn use_of<C: Copy>(
     }
 }
 
-/// Whether `pattern` of a tags query captures exactly one name and one definition or reference.
+/// Whether `pattern` of a tags query has one of the three shapes the format allows: a name with one
+/// definition or reference, which records a tag, a definition perhaps with a qualifier; a name
+/// alone, which records nothing; or an `@ignore` alone.
 fn check_tag_pattern(
     compiled: &Query,
     pattern: usize,
     captures: &[TagCapture],
 ) -> Result<(), &'static str> {
-    if use_of(compiled, pattern, captures, |capture| {
-        capture == TagCapture::Name
-    }) != Use::Once
-    {
+    let use_of_sort =
+        |is_sort: fn(TagCapture) -> bool| use_of(compiled, pattern, captures, is_sort);
+    let ignore = use_of_sort(|capture| capture == TagCapture::Ignore);
+    let name = use_of_sort(|capture| capture == TagCapture::Name);
+    let definition = use_of_sort(|capture| matches!(capture, TagCapture::Definition(_)));
+    let reference = use_of_sort(|capture| matches!(capture, TagCapture::Reference(_)));
+    let qualifier = use_of_sort(|capture| capture == TagCapture::Qualifier);
+    if ignore != Use::Never {
+        let others = [name, definition, reference, qualifier];
+        if ignore == Use::Once && others.iter().all(|other| *other == Use::Never) {
+            return Ok(());
+        }
+        return Err("may capture nothing beside one @ignore");
+    }
+    if name != Use::Once {
         return Err("needs exactly one @name");
     }
-    let is_tag = |capture: TagCapture| {
-        matches!(
-            capture,
-            TagCapture::Definition(_) | TagCapture::Reference(_)
-        )
-    };
-    if use_of(compiled, pattern, captures, is_tag) != Use::Once {
-        return Err("needs exactly one @definition or @reference capture");
+    match (definition, reference) {
+        (Use::Once, Use::Never) => {}
+        (Use::Never, Use::Once | Use::Never) => {
+            if qualifier != Use::Never {
+                return Err("may capture a @qualifier only with a @definition");
+            }
+        }
+        _ => return Err("needs at most one @definition or @reference capture"),
+    }
+    if qualifier == Use::Many {
+        return Err("may capture one @qualifier at most");
     }
     Ok(())
 }
@@ -470,6 +495,8 @@ mod tests {
         assert_eq!(tag_capture("name"), Some(TagCapture::Name));
         assert_eq!(tag_capture("doc"), Some(TagCapture::Doc));
         assert_eq!(tag_capture("_kind"), Some(TagCapture::Helper));
+        assert_eq!(tag_capture("ignore"), Some(TagCapture::Ignore));
+        assert_eq!(tag_capture("qualifier"), Some(TagCapture::Qualifier));
         assert_eq!(
             tag_capture("definition.method"),
             Some(TagCapture::Definition(SymbolKind::Method))
@@ -547,9 +574,20 @@ mod tests {
         assert_eq!(error_of(&IMPORT), Some(refused(IMPORTS, "import.source")));
     }
 
-    /// A tags pattern needs exactly one name and one definition or reference.
+    /// A tags pattern records a tag with one name and one definition or reference, records
+    /// nothing with a name alone, or ignores a name with `@ignore` alone; only a definition may
+    /// have a qualifier. Anything else is refused.
     #[test]
-    fn tag_patterns_need_a_name_and_a_kind() {
+    fn tag_patterns_have_the_formats_shapes() {
+        static SHAPES: TagsSpec = spec(
+            &[
+                "(class_definition name: (identifier) @name) @definition.class",
+                "(function_definition name: (identifier) @name)",
+                "((identifier) @ignore (#eq? @ignore \"self\"))",
+                "(function_definition name: (identifier) @name parameters: (parameters (identifier) @qualifier)) @definition.function",
+            ],
+            IMPORTS_QUERY,
+        );
         static NO_NAME: TagsSpec = spec(
             &["(function_definition) @definition.function"],
             IMPORTS_QUERY,
@@ -560,41 +598,55 @@ mod tests {
             ],
             IMPORTS_QUERY,
         );
-        static NO_KIND: TagsSpec = spec(
-            &[
-                "(class_definition name: (identifier) @name) @definition.class",
-                "(function_definition name: (identifier) @name)",
-            ],
-            IMPORTS_QUERY,
-        );
         static MAYBE_NAME: TagsSpec = spec(
             &["(call function: [(identifier) @name (attribute)]) @reference.call"],
             IMPORTS_QUERY,
         );
-        let problem = |pattern, problem| GrammarError::Pattern {
+        static TWO_KINDS: TagsSpec = spec(
+            &["(call function: (identifier) @name @reference.call) @definition.function"],
+            IMPORTS_QUERY,
+        );
+        static IGNORE_AND_NAME: TagsSpec = spec(
+            &[
+                "(call function: (identifier) @ignore arguments: (argument_list (identifier) @name))",
+            ],
+            IMPORTS_QUERY,
+        );
+        static QUALIFIED_REFERENCE: TagsSpec = spec(
+            &[
+                "(call function: (attribute object: (identifier) @qualifier attribute: (identifier) @name)) @reference.call",
+            ],
+            IMPORTS_QUERY,
+        );
+        let problem = |problem| GrammarError::Pattern {
             language: Language::Python,
             query: TAGS,
-            pattern,
+            pattern: 0,
             problem,
         };
-        assert_eq!(
-            error_of(&NO_NAME),
-            Some(problem(0, "needs exactly one @name"))
-        );
+        assert_eq!(error_of(&SHAPES), None);
+        assert_eq!(error_of(&NO_NAME), Some(problem("needs exactly one @name")));
         assert_eq!(
             error_of(&TWO_NAMES),
-            Some(problem(0, "needs exactly one @name"))
+            Some(problem("needs exactly one @name"))
         );
         assert_eq!(
             error_of(&MAYBE_NAME),
-            Some(problem(0, "needs exactly one @name"))
+            Some(problem("needs exactly one @name"))
         );
         assert_eq!(
-            error_of(&NO_KIND),
+            error_of(&TWO_KINDS),
             Some(problem(
-                1,
-                "needs exactly one @definition or @reference capture"
+                "needs at most one @definition or @reference capture"
             ))
+        );
+        assert_eq!(
+            error_of(&IGNORE_AND_NAME),
+            Some(problem("may capture nothing beside one @ignore"))
+        );
+        assert_eq!(
+            error_of(&QUALIFIED_REFERENCE),
+            Some(problem("may capture a @qualifier only with a @definition"))
         );
     }
 
@@ -642,7 +694,7 @@ mod tests {
     }
 
     /// Predicates Cortex does not evaluate are refused by name; text predicates are accepted, and
-    /// so are `#strip!` and `#select-adjacent!` on `@doc` in a tags query, which only shape
+    /// so is any predicate on `@doc` in a tags query, such as `#strip!`, which only shapes
     /// comments.
     #[test]
     fn unevaluated_predicates_are_refused() {
@@ -669,6 +721,13 @@ mod tests {
             ],
             IMPORTS_QUERY,
         );
+        static DOC_TYPO: TagsSpec = spec(
+            &[
+                "((comment)* @doc . (function_definition name: (identifier) @name) @definition.function \
+               (#set-adjacent! @doc @definition.function))",
+            ],
+            IMPORTS_QUERY,
+        );
         static HELPER: TagsSpec = spec(
             &["((call function: (identifier) @_callee) @reference.call \
                (#strip! @_callee \"x\"))"],
@@ -689,6 +748,7 @@ mod tests {
         assert_eq!(error_of(&STRIP), Some(refused("strip!")));
         assert_eq!(error_of(&TEXT), None);
         assert_eq!(error_of(&DOC), None);
+        assert_eq!(error_of(&DOC_TYPO), None);
         assert_eq!(error_of(&HELPER), Some(refused("strip!")));
         assert_eq!(
             error_of(&IMPORT_STRIP),

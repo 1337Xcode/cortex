@@ -1,6 +1,7 @@
 //! The definitions and references a tags query finds in a tree, read as tree-sitter's tags format
-//! defines them: each match names something and says what it is; where several patterns find the
-//! same name, the earliest pattern wins; a name that holds a syntax error is skipped.
+//! defines them: each match names something and says what it is, or that nothing may be recorded
+//! for it (`@ignore`); where several patterns find the same name, the earliest pattern wins; a
+//! name that holds a syntax error is skipped.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -29,9 +30,13 @@ pub(crate) struct Tag<'tree> {
     pub(crate) name: Node<'tree>,
     /// What the tag says about the name.
     pub(crate) role: Role,
-    /// The pattern that found it.
-    pattern: usize,
+    /// The name a definition's qualified name starts with, inside the definition around it.
+    pub(crate) qualifier: Option<Node<'tree>>,
 }
+
+/// What one match says about a name: a tag to record, or nothing to record (`None`), and the
+/// pattern that says it.
+type Verdict<'tree> = (Option<Tag<'tree>>, usize);
 
 /// The tags in the tree under `root`, in the order their names appear; `None` when the deadline
 /// passed before the query finished.
@@ -44,26 +49,22 @@ pub(crate) fn read_tags<'tree>(
 ) -> Option<Vec<Tag<'tree>>> {
     // INVARIANT: deterministic. Tags are kept in the order of their names in the source, however
     // the cursor orders its matches.
-    let mut by_name: BTreeMap<(usize, usize), Tag<'tree>> = BTreeMap::new();
+    let mut by_name: BTreeMap<(usize, usize), Verdict<'tree>> = BTreeMap::new();
     let mut check = |_: &tree_sitter::QueryCursorState| deadline.check();
     let options = QueryCursorOptions::new().progress_callback(&mut check);
     let mut matches = cursor.matches_with_options(&grammar.tags, root, source, options);
     while let Some(found) = matches.next() {
-        let Some(tag) = tag_of(found.captures(), found.pattern_index, &grammar.tag_captures) else {
+        let Some((name, tag)) = verdict_of(found.captures(), &grammar.tag_captures) else {
             continue;
         };
-        // INVARIANT: no-content-stored. A name is the text of a name capture alone, never the
-        // whole of a definition or an expression.
-        if tag.name.has_error() || names_whole_node(&tag) {
-            continue;
-        }
-        match by_name.entry((tag.name.start_byte(), tag.name.end_byte())) {
+        let pattern = found.pattern_index;
+        match by_name.entry((name.start_byte(), name.end_byte())) {
             Entry::Vacant(entry) => {
-                entry.insert(tag);
+                entry.insert((tag, pattern));
             }
             Entry::Occupied(mut entry) => {
-                if tag.pattern < entry.get().pattern {
-                    entry.insert(tag);
+                if pattern < entry.get().1 {
+                    entry.insert((tag, pattern));
                 }
             }
         }
@@ -71,41 +72,49 @@ pub(crate) fn read_tags<'tree>(
     if deadline.has_passed() {
         return None;
     }
-    Some(by_name.into_values().collect())
+    Some(by_name.into_values().filter_map(|(tag, _)| tag).collect())
 }
 
-/// The tag in one match's `captures`, found by `pattern`, when it has a name and a role.
-fn tag_of<'tree>(
+/// The name one match's `captures` are about, with the tag to record for it, or `None` for an
+/// `@ignore`; nothing when the match records nothing: a name alone, or a tag whose name cannot be
+/// one.
+fn verdict_of<'tree>(
     captures: &[QueryCapture<'tree>],
-    pattern: usize,
     meanings: &[TagCapture],
-) -> Option<Tag<'tree>> {
-    let mut name = None;
-    let mut tagged = None;
+) -> Option<(Node<'tree>, Option<Tag<'tree>>)> {
+    let (mut name, mut tagged, mut qualifier) = (None, None, None);
     for capture in captures {
         match meanings.get(usize::try_from(capture.index).ok()?)? {
+            TagCapture::Ignore => return Some((capture.node, None)),
             TagCapture::Name => name = Some(capture.node),
             TagCapture::Definition(kind) => tagged = Some((capture.node, Role::Definition(*kind))),
             TagCapture::Reference(kind) => tagged = Some((capture.node, Role::Reference(*kind))),
+            TagCapture::Qualifier => qualifier = Some(capture.node),
             TagCapture::Doc | TagCapture::Helper => {}
         }
     }
     let (node, role) = tagged?;
-    Some(Tag {
+    let tag = Tag {
         node,
         name: name?,
         role,
-        pattern,
-    })
+        qualifier,
+    };
+    // INVARIANT: no-content-stored. A name is the text of a name capture alone, never the whole
+    // of a definition or an expression.
+    if tag.name.has_error() || names_whole_node(&tag) {
+        return None;
+    }
+    Some((tag.name, Some(tag)))
 }
 
-/// Whether the tag's name covers the whole of its node while that node holds others, as when a
-/// pattern captures a whole definition or call as the name. Such a pattern is mistaken, and the
-/// text of a definition or an expression must never become a name. A name that is the whole of
-/// a single token, such as the identifier of a call, is what a reference often is.
+/// Whether the tag's name covers the whole of its node while the name holds other nodes, as when
+/// a pattern captures a whole definition or call as the name. Such a pattern is mistaken, and the
+/// text of a definition or an expression must never become a name. A name that is a single token
+/// may cover its node: the identifier of a call, or a Go constant written as its name alone.
 fn names_whole_node(tag: &Tag<'_>) -> bool {
     let (name, node) = (tag.name.byte_range(), tag.node.byte_range());
-    name.start <= node.start && node.end <= name.end && tag.node.named_child_count() > 0
+    name.start <= node.start && node.end <= name.end && tag.name.named_child_count() > 0
 }
 
 #[cfg(test)]
@@ -168,6 +177,49 @@ mod tests {
             tags_found(&TOKEN, "f(x)\n")?,
             [("f".to_owned(), Role::Reference(RefKind::Call))]
         );
+        Ok(())
+    }
+
+    /// A definition whose node holds nothing but its name is named, as a Go constant written as
+    /// its name alone is: the line `X` is an expression statement spanning the identifier `X`.
+    #[test]
+    fn a_definition_that_is_only_its_name_is_named() -> Result<(), Box<dyn Error>> {
+        static BARE: TagsSpec = python_spec(
+            &["(expression_statement (identifier) @name) @definition.constant"],
+            PLAIN_IMPORTS,
+        );
+        assert_eq!(
+            tags_found(&BARE, "X\n")?,
+            [("X".to_owned(), Role::Definition(SymbolKind::Constant))]
+        );
+        Ok(())
+    }
+
+    /// An `@ignore` keeps later patterns from recording a name, not earlier ones; a name
+    /// alone records nothing.
+    #[test]
+    fn ignored_names_and_names_alone_record_nothing() -> Result<(), Box<dyn Error>> {
+        static IGNORE_FIRST: TagsSpec = python_spec(
+            &[
+                "((identifier) @ignore (#eq? @ignore \"len\"))",
+                "(call function: (identifier) @name) @reference.call",
+            ],
+            PLAIN_IMPORTS,
+        );
+        static IGNORE_LAST: TagsSpec = python_spec(
+            &[
+                "(call function: (identifier) @name) @reference.call",
+                "((identifier) @ignore (#eq? @ignore \"len\"))",
+            ],
+            PLAIN_IMPORTS,
+        );
+        static NAME_ALONE: TagsSpec =
+            python_spec(&["(call function: (identifier) @name)"], PLAIN_IMPORTS);
+        let call = |name: &str| (name.to_owned(), Role::Reference(RefKind::Call));
+        let source = "len(x)\nf(x)\n";
+        assert_eq!(tags_found(&IGNORE_FIRST, source)?, [call("f")]);
+        assert_eq!(tags_found(&IGNORE_LAST, source)?, [call("len"), call("f")]);
+        assert_eq!(tags_found(&NAME_ALONE, source)?, Vec::new());
         Ok(())
     }
 

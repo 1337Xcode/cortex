@@ -152,6 +152,12 @@ fn tsx() -> TestResult {
     check_golden("tsx", "sample.tsx", Language::Tsx, "\n")
 }
 
+/// Go: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn go() -> TestResult {
+    check_golden("go", "sample.go", Language::Go, "\n")
+}
+
 /// The same Python with Windows line breaks: the same lines, spans that end at the same tokens,
 /// the same hashes.
 #[test]
@@ -264,6 +270,29 @@ fn tests_are_marked_only_in_test_files() -> TestResult {
         kinds("shop/orders.py")?,
         named([Class, Method, Method, Function, Function])
     );
+    Ok(())
+}
+
+/// In a Go test file, the functions `go test` runs (tests, benchmarks, examples and fuzz targets)
+/// are tests; the same code elsewhere has none.
+#[test]
+fn go_tests_are_marked_only_in_test_files() -> TestResult {
+    use SymbolKind::{Function, Test};
+    let source = "package shop\n\nfunc TestPay(t *testing.T) {}\nfunc BenchmarkPay(b *testing.B) {}\n\
+                  func ExamplePay() {}\nfunc FuzzPay(f *testing.F) {}\nfunc helper() {}\n";
+    let kinds = |path: &str| -> Result<Vec<SymbolKind>, Box<dyn Error>> {
+        let extraction = extract(path, Language::Go, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| symbol.kind)
+            .collect())
+    };
+    assert_eq!(
+        kinds("shop/pay_test.go")?,
+        [Test, Test, Test, Test, Function]
+    );
+    assert_eq!(kinds("shop/pay.go")?, [Function; 5]);
     Ok(())
 }
 
