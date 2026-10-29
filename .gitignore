@@ -3,6 +3,8 @@
 **/*.rs.bk
 *.profraw
 *.profdata
+lcov.info
+/coverage/
 
 # Pending insta snapshots; accepted snapshots are committed
 *.snap.new
@@ -20,7 +22,12 @@ node_modules/
 /ui/coverage/
 /ui/playwright-report/
 /ui/test-results/
+/ui/blob-report/
 *.tsbuildinfo
+
+# Evaluation runner scratch space and caches; results are committed
+/eval/work/
+/eval/.cache/
 
 # Cortex's own data when it runs on this repository
 /.cortex/
@@ -30,13 +37,26 @@ node_modules/
 .env.*
 !.env.example
 
+# Personal agent settings
+.claude/settings.local.json
+CLAUDE.local.md
+
 # Editors and operating systems
 .idea/
+*.iml
 .vscode/
+.vs/
 *.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Logs
+# Patch and merge leftovers
+*.orig
+*.rej
+
+# Logs and temporary files
 *.log
+*.tmp
