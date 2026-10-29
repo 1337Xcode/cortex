@@ -40,7 +40,8 @@ cargo xtask verify
 ```
 
 `cargo xtask verify` runs every check a change must pass: formatting, the rules for how crates may
-depend on each other, clippy, the tests and the dependency licence and advisory checks.
+depend on each other, the shared lint settings in every crate, the tags that mark where each
+product guarantee is enforced, clippy, the tests and the dependency licence and advisory checks.
 [CONTRIBUTING.md](CONTRIBUTING.md) explains the layout and how to send a change.
 
 ## License

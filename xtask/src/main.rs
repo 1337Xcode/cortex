@@ -1,7 +1,8 @@
 //! `cargo xtask`: the one entry point for every check in this repository.
 //!
-//! `cargo xtask verify` runs, in order: formatting, the architecture rules, the invariant tags,
-//! clippy, the tests (doc tests included) and `cargo deny`. It stops at the first failure.
+//! `cargo xtask verify` runs, in order: formatting, the architecture rules, workspace-lint
+//! inheritance, the invariant tags, clippy, the tests (doc tests included) and `cargo deny`. It
+//! stops at the first failure.
 //! `cargo xtask verify --full` adds the budget checks.
 
 // xtask is a developer tool whose whole job is to report progress on the terminal.

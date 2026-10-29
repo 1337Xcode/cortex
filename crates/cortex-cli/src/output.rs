@@ -1,4 +1,5 @@
-//! The only place the CLI writes to the terminal.
+//! Where the CLI's own commands write to the terminal. Argument parsing writes help, the version
+//! flag and usage errors itself.
 //!
 //! Writes go through locked handles and report failures instead of panicking, so a closed pipe
 //! (`cortex version | head -0`) ends the command with an error rather than a crash.
