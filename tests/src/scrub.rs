@@ -65,26 +65,54 @@ const EMBEDDED_IDS: &[(&str, usize)] = &[
     ("gAAAAA", 16),
 ];
 
-/// Prefixes of credentials that tool output can print, and the shortest run of letters, digits,
-/// `_` and `-` after the prefix that counts as one: Anthropic and OpenAI keys, GitHub tokens,
-/// Slack tokens, AWS access key ids and Google API keys.
-const SECRET_TOKENS: &[(&str, usize)] = &[
-    ("sk-ant-", 20),
-    ("sk-proj-", 20),
-    ("ghp_", 30),
-    ("gho_", 30),
-    ("ghs_", 30),
-    ("ghu_", 30),
-    ("github_pat_", 30),
-    ("xoxb-", 20),
-    ("xoxp-", 20),
-    ("AKIA", 16),
-    ("AIza", 30),
+/// Prefixes of credentials that tool output can print, the shortest run after the prefix that
+/// counts as one, and whether that run may hold `_` and `-` besides letters and digits: Anthropic
+/// keys; OpenAI project, service-account and older keys (the older form is `sk-` and letters and
+/// digits only, so it never matches the newer prefixes); GitHub, GitLab and Slack tokens; AWS
+/// access and session key ids; Google API keys.
+const SECRET_TOKENS: &[(&str, usize, bool)] = &[
+    ("sk-ant-", 20, true),
+    ("sk-proj-", 20, true),
+    ("sk-svcacct-", 20, true),
+    ("sk-", 40, false),
+    ("ghp_", 30, true),
+    ("gho_", 30, true),
+    ("ghs_", 30, true),
+    ("ghu_", 30, true),
+    ("github_pat_", 30, true),
+    ("glpat-", 20, true),
+    ("xoxb-", 20, true),
+    ("xoxp-", 20, true),
+    ("AKIA", 16, false),
+    ("ASIA", 16, false),
+    ("AIza", 30, true),
 ];
+
+/// The start of a JSON web token: the base64 of `{"`, which opens its header and its payload.
+const JWT_PART_PREFIX: &str = "eyJ";
+
+/// Shortest header or payload part of a JSON web token that counts as one.
+const JWT_MIN_PART_LEN: usize = 10;
+
+/// The two halves of the line that opens a private key in PEM form (`-----BEGIN ... PRIVATE
+/// KEY-----`), kept apart so this file holds no such line.
+const PRIVATE_KEY_MARKERS: (&str, &str) = ("-----BEGIN ", "PRIVATE KEY-----");
 
 /// The names Windows gives a new machine, as a lower-case prefix and the length of the random
 /// part after it: `DESKTOP-7F3KQ2M`, `LAPTOP-7F3KQ2M`, and `WIN-` with eleven on servers.
 const MACHINE_NAMES: &[(&str, usize)] = &[("desktop-", 7), ("laptop-", 7), ("win-", 11)];
+
+/// Lower-case endings of the names macOS gives a new machine after its owner's name, such as
+/// `Alices-MacBook-Pro`.
+const MAC_MODEL_SUFFIXES: &[&str] = &[
+    "-macbook-pro",
+    "-macbook-air",
+    "-macbook",
+    "-imac",
+    "-mac-mini",
+    "-mac-studio",
+    "-mac-pro",
+];
 
 /// Length of a UUID in its hyphenated text form: `8-4-4-4-12` hexadecimal digits.
 const UUID_LEN: usize = 36;
@@ -119,11 +147,7 @@ pub fn text_problems(text: &str) -> Vec<String> {
             .into_iter()
             .map(|id| format!("id {id} is not a fixed id")),
     );
-    problems.extend(
-        secret_tokens_in(text)
-            .into_iter()
-            .map(|prefix| format!("a credential starting {prefix:?}")),
-    );
+    problems.extend(secret_tokens_in(text));
     problems.extend(
         homes::home_users_in(text)
             .into_iter()
@@ -164,7 +188,8 @@ fn value_problems(key: &str, value: &serde_json::Value) -> Vec<String> {
     }
     if TRANSCRIPT_KEYS.contains(&key)
         && let Some(path) = text
-        && !SCRUBBED_HOMES.iter().any(|home| path.starts_with(home))
+        && (!SCRUBBED_HOMES.iter().any(|home| path.starts_with(home))
+            || path.split(['/', '\\']).any(|folder| folder == ".."))
     {
         problems.push(format!("{key} {path:?} is not under a scrubbed home"));
     }
@@ -275,25 +300,52 @@ fn embedded_ids_in(text: &str) -> Vec<String> {
     ids
 }
 
-/// The prefix of every credential-shaped token in `text`.
-fn secret_tokens_in(text: &str) -> Vec<&'static str> {
+/// One problem for every credential-shaped token in `text`: a known key or token prefix with a
+/// long enough run after it, a JSON web token, or the opening line of a private key.
+fn secret_tokens_in(text: &str) -> Vec<String> {
     let mut found = Vec::new();
-    for (prefix, min_len) in SECRET_TOKENS {
+    for (prefix, min_len, allows_separators) in SECRET_TOKENS {
         for (index, _) in text.match_indices(prefix) {
             let run = run_after(text, index + prefix.len(), |character| {
-                character.is_ascii_alphanumeric() || "_-".contains(character)
+                character.is_ascii_alphanumeric()
+                    || (*allows_separators && "_-".contains(character))
             });
             if run.len() >= *min_len {
-                found.push(*prefix);
+                found.push(format!("a credential starting {prefix:?}"));
             }
+        }
+    }
+    for (index, _) in text.match_indices(JWT_PART_PREFIX) {
+        let token = run_after(text, index, |character| {
+            character.is_ascii_alphanumeric() || "_-.".contains(character)
+        });
+        let parts: Vec<&str> = token.split('.').collect();
+        let is_jwt = parts.len() >= 3
+            && parts
+                .iter()
+                .take(2)
+                .all(|part| part.starts_with(JWT_PART_PREFIX) && part.len() >= JWT_MIN_PART_LEN);
+        if is_jwt {
+            found.push("a JSON web token".to_owned());
+        }
+    }
+    let (begin, end) = PRIVATE_KEY_MARKERS;
+    for (index, _) in text.match_indices(begin) {
+        let line = text
+            .get(index..)
+            .and_then(|rest| rest.lines().next())
+            .unwrap_or_default();
+        if line.ends_with(end) {
+            found.push("a private key".to_owned());
         }
     }
     found
 }
 
-/// Every default Windows machine name in `text`: a machine prefix at the start of a word, then
+/// Every default machine name in `text`. On Windows: a machine prefix at the start of a word, then
 /// exactly the expected number of letters and digits, holding a digit or written in capitals as
-/// Windows writes it. A word such as `desktop-classic` is left out.
+/// Windows writes it (a word such as `desktop-classic` is left out). On macOS: an owner's name
+/// before a model ending, such as `alices-macbook-pro`.
 fn machine_names_in(text: &str) -> Vec<String> {
     // ASCII lowering keeps every byte offset, so positions found in `lowered` hold in `text`.
     let lowered = text.to_ascii_lowercase();
@@ -318,13 +370,28 @@ fn machine_names_in(text: &str) -> Vec<String> {
             }
         }
     }
+    for word in
+        lowered.split(|character: char| !(character.is_ascii_alphanumeric() || character == '-'))
+    {
+        let is_mac_name = MAC_MODEL_SUFFIXES.iter().any(|suffix| {
+            word.strip_suffix(suffix).is_some_and(|owner| {
+                owner
+                    .chars()
+                    .any(|character| character.is_ascii_alphabetic())
+            })
+        });
+        if is_mac_name {
+            names.push(word.to_owned());
+        }
+    }
     names
 }
 
 /// Every email address in `text`: a local part, `@`, and a domain whose first label holds a
 /// letter and whose last label is two or more letters. The `git` user of an SSH remote
 /// (`git@github.com:owner/repo`) and a version after a package name (`pkg@1.2.3-beta.rc`) are not
-/// addresses.
+/// addresses; any other user before `@`, as in `ssh://alice@host`, names a person and is
+/// reported.
 fn emails_in(text: &str) -> Vec<String> {
     let is_local =
         |character: char| character.is_ascii_alphanumeric() || "._%+-".contains(character);
@@ -411,14 +478,32 @@ mod tests {
             "host DESKTOP-ABCDEFG",
             "host WIN-ABCDEFGHIJK",
             "write to someone.else@example.org today",
+            "clone ssh://alice@github.com/org/repo.git",
+            "host Alices-MacBook-Pro.local",
         ];
         // Credential-shaped values are built at run time, so this file holds none.
-        let anthropic = format!("key sk-ant-{}", "a".repeat(24));
-        let github = format!("token ghp_{}", "B".repeat(36));
+        let built = [
+            format!("key sk-ant-{}", "a".repeat(24)),
+            format!("key sk-svcacct-{}", "a".repeat(24)),
+            format!("key sk-{}", "A1".repeat(24)),
+            format!("token ghp_{}", "B".repeat(36)),
+            format!("token glpat-{}", "c".repeat(20)),
+            format!("aws ASIA{}", "D".repeat(16)),
+            format!(
+                "bearer eyJ{}.eyJ{}.{}",
+                "e".repeat(12),
+                "f".repeat(12),
+                "g".repeat(16)
+            ),
+            format!(
+                "{}OPENSSH {}\nbody",
+                PRIVATE_KEY_MARKERS.0, PRIVATE_KEY_MARKERS.1
+            ),
+        ];
         for text in dirty
             .iter()
             .copied()
-            .chain([anthropic.as_str(), github.as_str()])
+            .chain(built.iter().map(String::as_str))
         {
             assert_eq!(
                 text_problems(text).len(),
@@ -456,6 +541,7 @@ mod tests {
             serde_json::json!({"nested": {"agent_id": "a1b2c3d4e5f6a7b8c"}}),
             serde_json::json!({"agent_id": "fixtureagent-then-anything"}),
             serde_json::json!({"turn_id": 7}),
+            serde_json::json!({"transcript_path": r"C:\Users\dev\..\..\x.jsonl"}),
             serde_json::json!({"files": {"/home/alice/x.rs": 1}}),
             serde_json::json!({"tool_response": {"harnessSectionHash": "9f3a"}}),
             serde_json::json!({"tool_response": "{\"path\":\"C:\\\\Users\\\\alice\\\\x\"}"}),

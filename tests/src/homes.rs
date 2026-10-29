@@ -4,8 +4,9 @@
 //! list items, assignments and drive letters (`,`, `;`, `=`, `|`, `:`). A token that starts with a
 //! separator is an absolute path. Its first `users` or `home` folder (any case) is a home folder
 //! when every folder before it is a known root: a drive (`c` from Git Bash, `c$` from an admin
-//! share), `?` from a verbatim path, `mnt`, `cygdrive`, `var`, `usr`, `export`, `localhost`,
-//! `wsl$` or `wsl.localhost` and the distribution after it. The folder after it is the user name.
+//! share, `c%3a` from a file address), `?` from a verbatim path, `mnt`, `cygdrive`, `var`, `usr`,
+//! `export`, `localhost`, `wsl$` or `wsl.localhost` and the distribution after it. `..` folds into
+//! the folder before it. The folder after the container is the user name.
 //! This finds `C:\Users\name`, `\\?\C:\Users\name`, `/c/Users/name`, `/mnt/c/Users/name`,
 //! `/Users/name`, `/home/name`, `/var/home/name`, `\\wsl$\Ubuntu\home\name` and escaped forms such
 //! as `\/home\/name`, and leaves out relative paths, project folders under a repository and web
@@ -13,10 +14,11 @@
 //! is a web route; a path broken by a space (`/Volumes/Macintosh HD/Users/name`) is not followed.
 //!
 //! Claude Code names a transcript folder after the project path with every other character
-//! replaced by `-` (`C--Users-name-repo`, `-mnt-c-Users-name-repo`, `-home-name-repo`). A token of
-//! letters, digits and hyphens that starts with `-` (not `--`, a flag) or with a drive and `--`,
-//! and holds `-users-` or `-home-` after nothing but known roots, is reported whatever follows:
-//! the scrubber collapses every encoded project folder to `C--repo`, so none may remain.
+//! replaced by `-` (`C--Users-name-repo`, `-mnt-c-Users-name-repo`, `-home-name-repo`,
+//! `--wsl--Ubuntu-home-name-repo`). A token of letters, digits and hyphens whose first `users` or
+//! `home` follows nothing but known roots is reported whatever follows, when it starts like a
+//! path (see [`is_encoded_home`]): the scrubber collapses every encoded project folder to
+//! `C--repo`, so none may remain. Punctuation that prose puts after a name is ignored.
 
 /// Folder names under a home root that belong to no one user: shared and default profiles,
 /// Homebrew's shared prefix on Linux, and the scrubbed user.
@@ -43,10 +45,15 @@ const ROOT_FOLDERS: &[&str] = &[
     "localhost",
     "wsl$",
     "wsl.localhost",
+    "wsl",
 ];
 
-/// Folders whose next folder is a WSL distribution name, which may sit above `home`.
-const WSL_HOSTS: &[&str] = &["wsl$", "wsl.localhost"];
+/// Folders whose next folder is a WSL distribution or share name, which may sit above `home` or
+/// `Users`. The encoded forms of `wsl$` and `wsl.localhost` are `wsl` and `wsl`, `localhost`.
+const DISTRIBUTION_HOSTS: &[&str] = &["wsl$", "wsl.localhost", "wsl", "localhost"];
+
+/// Characters prose may put right after an encoded folder name, which are not part of it.
+const TRAILING_PUNCTUATION: &[char] = &['.', '!', '?'];
 
 /// Characters that end a path token.
 const TOKEN_ENDS: &[char] = &[
@@ -85,11 +92,16 @@ fn tokens(text: &str) -> impl Iterator<Item = &str> {
 /// The user name after the first home container of an absolute path token, when every folder
 /// before the container is a known root.
 fn home_user(token: &str) -> Option<String> {
-    let folders: Vec<String> = token
-        .split(SEPARATORS)
-        .filter(|folder| !folder.is_empty())
-        .map(str::to_ascii_lowercase)
-        .collect();
+    let mut folders: Vec<String> = Vec::new();
+    for folder in token.split(SEPARATORS) {
+        match folder {
+            "" | "." => {}
+            ".." => {
+                folders.pop();
+            }
+            name => folders.push(name.to_ascii_lowercase()),
+        }
+    }
     let container = folders
         .iter()
         .position(|folder| HOME_CONTAINERS.contains(&folder.as_str()))?;
@@ -113,48 +125,65 @@ fn home_user(token: &str) -> Option<String> {
 }
 
 /// Whether a lower-case folder may sit above a home container: a known root, a drive letter
-/// (`c`, `c$`), or the distribution name after a WSL host.
+/// (`c`, `c$`, or `c%3a` as a file address writes `c:`), or the name after a WSL host or share.
 fn is_root_folder(folder: &str, previous: Option<&str>) -> bool {
     let mut characters = folder.chars();
     let first = characters.next();
     let rest = characters.as_str();
     let is_drive = first.is_some_and(|letter| letter.is_ascii_alphabetic())
-        && (rest.is_empty() || rest == "$");
+        && (rest.is_empty() || rest == "$" || rest == "%3a");
     is_drive
         || ROOT_FOLDERS.contains(&folder)
-        || previous.is_some_and(|host| WSL_HOSTS.contains(&host))
+        || previous.is_some_and(|host| DISTRIBUTION_HOSTS.contains(&host))
 }
 
-/// Whether a lower-case token is an encoded transcript folder that names a home.
+/// Whether a lower-case token is an encoded transcript folder that names a home: letters, digits
+/// and hyphens, with its first home container after nothing but known roots. A token without a
+/// leading hyphen must start with a drive and two hyphens (`c--users-`); one leading hyphen starts
+/// a Unix path (`-home-`, `-mnt-c-users-`); two or more start a share or a verbatim path
+/// (`--wsl--ubuntu-home-`, `----c--users-`) only when a root comes before the container, since
+/// `--home-dir` is a flag.
 fn is_encoded_home(token: &str) -> bool {
-    let is_encoded = token
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || character == '-');
-    let mut characters = token.chars();
-    let starts_like_a_path = match (characters.next(), characters.next(), characters.next()) {
-        (Some('-'), Some(second), _) => second != '-',
-        (Some(letter), Some('-'), Some('-')) => letter.is_ascii_alphabetic(),
-        _ => false,
-    };
-    if !is_encoded || !starts_like_a_path {
+    let token = token.trim_end_matches(TRAILING_PUNCTUATION);
+    let is_encoded = !token.is_empty()
+        && token
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-');
+    if !is_encoded {
         return false;
     }
-    ["-users-", "-home-"].iter().any(|marker| {
-        token.match_indices(marker).any(|(index, _)| {
-            let before = token.get(..index).unwrap_or_default();
-            let folders: Vec<&str> = before
-                .split('-')
-                .filter(|folder| !folder.is_empty())
-                .collect();
-            folders.iter().enumerate().all(|(position, folder)| {
-                let previous = position
-                    .checked_sub(1)
-                    .and_then(|at| folders.get(at))
-                    .copied();
-                is_root_folder(folder, previous)
-            })
+    let folders: Vec<&str> = token
+        .split('-')
+        .filter(|folder| !folder.is_empty())
+        .collect();
+    let Some(container) = folders
+        .iter()
+        .position(|folder| HOME_CONTAINERS.contains(folder))
+    else {
+        return false;
+    };
+    let is_rooted = folders.get(..container).is_some_and(|roots| {
+        roots.iter().enumerate().all(|(position, folder)| {
+            let previous = position
+                .checked_sub(1)
+                .and_then(|at| roots.get(at))
+                .copied();
+            is_root_folder(folder, previous)
         })
-    })
+    });
+    let leading_hyphens = token.len() - token.trim_start_matches('-').len();
+    let starts_like_a_path = match leading_hyphens {
+        0 => {
+            token.get(1..3) == Some("--")
+                && token
+                    .chars()
+                    .next()
+                    .is_some_and(|letter| letter.is_ascii_alphabetic())
+        }
+        1 => true,
+        _ => container > 0,
+    };
+    starts_like_a_path && is_rooted
 }
 
 #[cfg(test)]
@@ -182,6 +211,11 @@ mod tests {
             ("\\\\wsl.localhost\\Ubuntu\\home\\alice\\repo", "alice"),
             ("{\"p\":\"\\/home\\/alice\\/x\"}", "alice"),
             ("file:///home/alice/x", "alice"),
+            (
+                "{\"uri\":\"file:///c%3A/Users/alice/proj/src/x.ts\"}",
+                "alice",
+            ),
+            (r"C:\Users\dev\..\alice\x", "alice"),
             ("https://example.com,/home/alice/x", "alice"),
         ];
         for (text, user) in cases {
@@ -220,6 +254,10 @@ mod tests {
             "-var-home-alice-repo",
             "dir=-Users-alice-proj",
             "pass the -home-dir flag",
+            r"projects\--wsl--Ubuntu-home-alice-repo\x.jsonl",
+            "--wsl-localhost-Ubuntu-home-alice-repo",
+            "----C--Users-alice-repo",
+            "see C--Users-alice-repo.",
         ];
         for text in found {
             assert_eq!(encoded_homes_in(text).len(), 1, "{text}");
