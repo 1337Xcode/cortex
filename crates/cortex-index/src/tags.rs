@@ -20,6 +20,8 @@ use crate::pattern_rules::PatternRule;
 pub(crate) enum Role {
     /// The name is defined here, as this kind.
     Definition(SymbolKind),
+    /// The name is defined here as a macro.
+    Macro,
     /// The name is used here, in this way.
     Reference(RefKind),
 }
@@ -103,6 +105,7 @@ fn verdict_of<'tree>(
             TagCapture::Ignore => return Some((capture.node, None)),
             TagCapture::Name => name = Some(capture.node),
             TagCapture::Definition(kind) => tagged = Some((capture.node, Role::Definition(*kind))),
+            TagCapture::Macro => tagged = Some((capture.node, Role::Macro)),
             TagCapture::Reference(kind) => tagged = Some((capture.node, Role::Reference(*kind))),
             TagCapture::Qualifier => qualifier = Some(capture.node),
             TagCapture::Doc

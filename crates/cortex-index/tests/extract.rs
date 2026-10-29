@@ -170,6 +170,19 @@ fn java() -> TestResult {
     check_golden("java", "sample.java", Language::Java, "\n")
 }
 
+/// C: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn c() -> TestResult {
+    check_golden("c", "sample.c", Language::C, "\n")
+}
+
+/// The same C with Windows line breaks, which end its `#define` lines: the same lines, spans
+/// that end at the same tokens, the same hashes.
+#[test]
+fn c_with_crlf_line_breaks() -> TestResult {
+    check_golden("c", "sample.c", Language::C, "\r\n")
+}
+
 /// Ruby: every construct in the fixture, listed by hand in `expected.txt`.
 #[test]
 fn ruby() -> TestResult {
@@ -519,6 +532,110 @@ fn ruby_imports_need_a_literal_path() -> TestResult {
             .iter()
             .all(|import| import.imported == Imported::Module && import.alias.is_none())
     );
+    Ok(())
+}
+
+/// In a C test file, the functions named `test_` are tests; the same code elsewhere has none.
+/// `testing` lacks the underscore, and the macro `test_assert` is a macro, not a test.
+#[test]
+fn c_tests_are_marked_only_in_test_files() -> TestResult {
+    use SymbolKind::{Function, Test};
+    let source = "#define test_assert(x) (x)\nint test_total(void) { return 0; }\n\
+                  static int helper(void) { return 1; }\nint testing(void) { return 2; }\n";
+    let kinds = |path: &str| -> Result<Vec<SymbolKind>, Box<dyn Error>> {
+        let extraction = extract(path, Language::C, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| symbol.kind)
+            .collect())
+    };
+    for path in ["tests/order.c", "src/test_order.c", "src/order_test.c"] {
+        assert_eq!(kinds(path)?, [Function, Test, Function, Function], "{path}");
+    }
+    assert_eq!(kinds("src/order.c")?, [Function; 4]);
+    Ok(())
+}
+
+/// C constants are variables that cannot change, declared outside any function: at the top of
+/// the file, in an `#if`, `#ifndef` or `#else` block, or in an `extern "C"` block. A plain variable
+/// or an array is `const` itself; a pointer has `const` after its star. A pointer to constant data
+/// (`VAL`), a `volatile` variable, an include guard's `#define` and a `const` in a function or a
+/// `for` are not constants.
+#[test]
+fn c_constants_are_variables_that_cannot_change() -> TestResult {
+    let source = "static const char LABEL[] = \"x\";\n#if DEBUG\nconst int LEVEL = 2;\n#endif\n\
+                  #ifndef GRID_H\n#define GRID_H\nstatic const int SIZE = 4;\n#else\n\
+                  const int ELSE = 2;\n#endif\nextern \"C\" {\nconst int EXT = 1;\n}\n\
+                  char *const PTR = 0;\nstatic const char *const NAMES[] = {\"a\", \"b\"};\n\
+                  const char *VAL = 0;\nstatic volatile int flag = 0;\n\
+                  int **grid(void) { const int n = 1; for (const int i = 0; i < n;) {} return 0; }\n";
+    let extraction = extract("src/grid.c", Language::C, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Constant, Function};
+    assert_eq!(
+        symbols,
+        [
+            ("LABEL", Constant),
+            ("LEVEL", Constant),
+            ("SIZE", Constant),
+            ("ELSE", Constant),
+            ("EXT", Constant),
+            ("PTR", Constant),
+            ("NAMES", Constant),
+            ("grid", Function)
+        ]
+    );
+    Ok(())
+}
+
+/// Each name a C `typedef` gives is a type, and none sits inside another or inside the typedef
+/// of another: one name or several, plain, pointer, array or enum, with attributes after it, or
+/// beside a named struct the typedef defines. A name deeper in its declarator (`grid_t`) is not
+/// read, and is not read as a use either; only its use on line 10 is, as a union and an enum
+/// named without a body are uses on lines 11 and 12. The attribute's `aligned(8)` is not a
+/// call.
+#[test]
+fn c_typedefs_name_each_type_once() -> TestResult {
+    let source = "typedef unsigned long money;\ntypedef struct { int x; } point;\n\
+                  typedef int *intptr;\ntypedef enum status { OPEN } status_t;\n\
+                  typedef struct node { int v; } node_t, *node_ptr;\ntypedef int a, b;\n\
+                  typedef int cint __attribute__((aligned(8)));\ntypedef char label[32];\n\
+                  typedef int **grid_t;\ngrid_t g;\nunion value *v;\nenum status s;\n";
+    let extraction = extract("src/types.c", Language::C, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Type};
+    assert_eq!(
+        symbols,
+        [
+            ("money", Type),
+            ("point", Type),
+            ("intptr", Type),
+            ("status", Type),
+            ("status_t", Type),
+            ("node", Class),
+            ("node_t", Type),
+            ("node_ptr", Type),
+            ("a", Type),
+            ("b", Type),
+            ("cint", Type),
+            ("label", Type)
+        ]
+    );
+    let refs: Vec<(&str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| (reference.dst_name.as_str(), reference.line))
+        .collect();
+    assert_eq!(refs, [("grid_t", 10), ("value", 11), ("status", 12)]);
     Ok(())
 }
 

@@ -25,13 +25,12 @@ use tree_sitter::{Query, QueryPredicate, QueryPredicateArg};
 use crate::languages::{self, TagsSpec};
 use crate::pattern_rules::{PatternRule, Problem, check_import_pattern, tag_pattern_rule};
 
-/// What each `@definition.<kind>` capture records. A macro is used as a function is.
+/// What each `@definition.<kind>` capture records; `@definition.macro` is read apart.
 const DEFINITION_KINDS: &[(&str, SymbolKind)] = &[
     ("class", SymbolKind::Class),
     ("constant", SymbolKind::Constant),
     ("function", SymbolKind::Function),
     ("interface", SymbolKind::Interface),
-    ("macro", SymbolKind::Function),
     ("method", SymbolKind::Method),
     ("module", SymbolKind::Module),
     ("test", SymbolKind::Test),
@@ -61,6 +60,8 @@ pub(crate) enum TagCapture {
     Name,
     /// A definition of this kind.
     Definition(SymbolKind),
+    /// A definition of a macro, which is used as a function is but is never a test.
+    Macro,
     /// A use of a name, of this kind.
     Reference(RefKind),
     /// The comments before a definition, which Cortex does not keep.
@@ -315,6 +316,7 @@ fn tag_capture(name: &str) -> Option<TagCapture> {
         "doc" => return Some(TagCapture::Doc),
         "ignore" => return Some(TagCapture::Ignore),
         "qualifier" => return Some(TagCapture::Qualifier),
+        "definition.macro" => return Some(TagCapture::Macro),
         "local.scope" => return Some(TagCapture::LocalScope),
         "local.definition" => return Some(TagCapture::LocalDefinition),
         "local.reference" => return Some(TagCapture::LocalReference),
@@ -412,6 +414,7 @@ mod tests {
             tag_capture("definition.method"),
             Some(TagCapture::Definition(SymbolKind::Method))
         );
+        assert_eq!(tag_capture("definition.macro"), Some(TagCapture::Macro));
         assert_eq!(
             tag_capture("reference.class"),
             Some(TagCapture::Reference(RefKind::Call))

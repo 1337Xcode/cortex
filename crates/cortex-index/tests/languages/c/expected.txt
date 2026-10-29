@@ -1,0 +1,30 @@
+# What sample.c defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text up to its body, with each run of whitespace as one space; a
+# macro's or a constant's body is its value, and a typedef has none. Not read: the comment, the
+# include guard, `NAME` (a pointer to constant characters, not a constant), the prototype of
+# `pay`, the enum's constants, the fields, and every use of a variable or a constant.
+symbol constant ORDER_LIMIT 6-6 - | #define ORDER_LIMIT
+symbol function MAX 8-8 - | #define MAX(a, b)
+symbol constant RATE 10-10 - | RATE =
+symbol type pay_fn 13-13 - | typedef void (*pay_fn)(struct order *order);
+symbol class order 15-18 - | struct order
+symbol type order_t 18-18 - | order_t
+symbol class amount 20-20 - | union amount
+symbol type status 21-21 - | enum status
+symbol function fee 25-27 - | static int fee(int cents)
+symbol function total 29-34 - | money_t *total(order_t *order)
+ref type_ref order 13 pay_fn
+ref type_ref money_t 16 order
+ref type_ref pay_fn 17 order
+ref type_ref order_t 23 -
+ref call MAX 26 fee
+ref type_ref money_t 29 total
+ref type_ref order_t 29 total
+ref call printf 30 total
+ref call fee 31 total
+ref call pay 32 total
+import <stdio.h> module - 2
+import shop/money.h module - 3

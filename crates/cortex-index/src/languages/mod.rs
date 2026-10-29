@@ -140,6 +140,11 @@ mod tests {
             (Language::Ruby, "lib/test_order.rb", true),
             (Language::Ruby, "lib/order.rb", false),
             (Language::Ruby, "lib/order_tests.rb", false),
+            (Language::C, "src/test_order.c", true),
+            (Language::C, "src/order_test.c", true),
+            (Language::C, "include/test_order.h", true),
+            (Language::C, "src/order.c", false),
+            (Language::C, "src/order_tests.c", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

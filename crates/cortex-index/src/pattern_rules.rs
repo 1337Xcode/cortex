@@ -124,7 +124,8 @@ fn check_tag_shape(
         |is_sort: fn(TagCapture) -> bool| use_of(compiled, pattern, captures, is_sort);
     let ignore = use_of_sort(|capture| capture == TagCapture::Ignore);
     let name = use_of_sort(|capture| capture == TagCapture::Name);
-    let definition = use_of_sort(|capture| matches!(capture, TagCapture::Definition(_)));
+    let definition =
+        use_of_sort(|capture| matches!(capture, TagCapture::Definition(_) | TagCapture::Macro));
     let reference = use_of_sort(|capture| matches!(capture, TagCapture::Reference(_)));
     let qualifier = use_of_sort(|capture| capture == TagCapture::Qualifier);
     if ignore != Use::Never {

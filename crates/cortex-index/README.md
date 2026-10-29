@@ -68,11 +68,12 @@ function or method named as its language names tests is a test. Qualified names 
 `.` in every language. A pattern may capture a `@qualifier` for a definition, which goes just
 before its name: a Go method's qualified name starts with the type it belongs to.
 
-A decorated definition starts at its first decorator. A definition carries two hashes: of its
-header, from its start to the last part before its body, and of all of it. Comments between the
-header and the body count only in the second, and each run of whitespace counts as one space, so
-reindenting or rewrapping a definition keeps both hashes and editing its body changes only the
-second.
+A decorated definition starts at its first decorator, and every definition ends at its last
+character that is not whitespace, though its node may end with a line break, as a C `#define`
+does. A definition carries two hashes: of its header, from its start to the last part before its
+body, and of all of it. Comments between the header and the body count only in the second, and
+each run of whitespace counts as one space, so reindenting or rewrapping a definition keeps both
+hashes and editing its body changes only the second.
 
 ## Rules
 

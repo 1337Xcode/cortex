@@ -5,15 +5,15 @@
 //! directly in a class is a method, and in a test file a function or method named the way the
 //! language names tests is a test. A qualified name joins the names of the definitions around it
 //! with `.`, in every language, with the definition's qualifier, if its pattern captured one (the
-//! type a Go method belongs to), just before its name. A definition that cannot be recorded, because its name or its
-//! qualified name is not a name Cortex can store, is left out with every definition inside it,
-//! whose qualified names would contain it.
+//! type a Go method belongs to), just before its name. A definition that cannot be recorded,
+//! because its name or its qualified name is not a name Cortex can store, is left out with every
+//! definition inside it, whose qualified names would contain it.
 
 use std::cmp::Reverse;
 
 use cortex_core::{Identifier, SymbolKind};
 use cortex_store::SymbolRecord;
-use tree_sitter::{Node, Point};
+use tree_sitter::Node;
 
 use crate::hashes::collapsed_hash;
 use crate::languages::TagsSpec;
@@ -21,17 +21,17 @@ use crate::lines::line_number;
 use crate::tags::{Role, Tag};
 
 /// Where a definition is: from the start of its node or its name, whichever comes first, to the
-/// end of whichever ends last.
+/// end of whichever ends last, less any whitespace there.
 #[derive(Debug, Clone, Copy)]
 struct Span {
     /// The byte offset where it starts.
     start: usize,
     /// The byte offset just past its end.
     end: usize,
-    /// Where it starts.
-    first: Point,
-    /// Where it ends.
-    last: Point,
+    /// The 0-based row of its first byte.
+    first_row: usize,
+    /// The 0-based row of its last byte.
+    last_row: usize,
 }
 
 /// What a definition's record needs besides its tag.
@@ -54,16 +54,14 @@ pub(crate) fn build_symbols(
     spec: &TagsSpec,
     is_test_file: bool,
 ) -> Vec<SymbolRecord> {
-    let mut definitions: Vec<(Span, &Tag<'_>, SymbolKind)> = tags
+    let mut definitions: Vec<(Span, &Tag<'_>)> = tags
         .iter()
-        .filter_map(|tag| match tag.role {
-            Role::Definition(kind) => Some((span_of(tag), tag, kind)),
-            Role::Reference(_) => None,
-        })
+        .filter(|tag| matches!(tag.role, Role::Definition(_) | Role::Macro))
+        .filter_map(|tag| Some((span_of(tag, source)?, tag)))
         .collect();
     // Outer definitions before the ones inside them. The sort is stable and the tags come in the
     // order of their names, so definitions with equal spans keep that order.
-    definitions.sort_by_key(|(span, _, _)| (span.start, Reverse(span.end)));
+    definitions.sort_by_key(|(span, _)| (span.start, Reverse(span.end)));
     let mut recorder = Recorder {
         source,
         spec,
@@ -73,7 +71,7 @@ pub(crate) fn build_symbols(
     // The spans of the definitions around the current one, innermost last, each with the
     // position of its record, or `None` when it was left out.
     let mut around: Vec<(Span, Option<usize>)> = Vec::new();
-    for (span, tag, kind) in definitions {
+    for (span, tag) in definitions {
         while around
             .last()
             .is_some_and(|(outer, _)| !(outer.start <= span.start && span.end <= outer.end))
@@ -82,8 +80,8 @@ pub(crate) fn build_symbols(
         }
         let position = match around.last() {
             Some((_, None)) => None,
-            Some((_, Some(parent))) => recorder.record(tag, kind, span, Some(*parent)),
-            None => recorder.record(tag, kind, span, None),
+            Some((_, Some(parent))) => recorder.record(tag, span, Some(*parent)),
+            None => recorder.record(tag, span, None),
         };
         around.push((span, position));
     }
@@ -91,15 +89,9 @@ pub(crate) fn build_symbols(
 }
 
 impl Recorder<'_> {
-    /// Records the definition `tag`, of `kind`, over `span`, inside the record at `parent`; the
-    /// new record's position, or `None` when the definition cannot be recorded.
-    fn record(
-        &mut self,
-        tag: &Tag<'_>,
-        kind: SymbolKind,
-        span: Span,
-        parent: Option<usize>,
-    ) -> Option<usize> {
+    /// Records the definition `tag` over `span`, inside the record at `parent`; the new
+    /// record's position, or `None` when the definition cannot be recorded.
+    fn record(&mut self, tag: &Tag<'_>, span: Span, parent: Option<usize>) -> Option<usize> {
         let name = Identifier::new(tag.name.utf8_text(self.source).ok()?).ok()?;
         let outer = parent.and_then(|position| self.records.get(position));
         let local = match tag.qualifier {
@@ -115,7 +107,7 @@ impl Recorder<'_> {
             None => Identifier::new(&local),
         }
         .ok()?;
-        let kind = self.kind_of(kind, outer.map(|outer| outer.kind), &name);
+        let kind = self.kind_of(tag.role, outer.map(|outer| outer.kind), &name)?;
         let header_end = header_end(tag.node, self.spec.body_paths, span.end);
         let record = SymbolRecord {
             parent,
@@ -124,8 +116,8 @@ impl Recorder<'_> {
             qual_name,
             start_byte: span.start as u64,
             end_byte: span.end as u64,
-            start_line: line_number(span.first.row)?,
-            end_line: last_line(span)?,
+            start_line: line_number(span.first_row)?,
+            end_line: line_number(span.last_row)?,
             sig_hash: collapsed_hash(self.source.get(span.start..header_end)?),
             body_hash: collapsed_hash(self.source.get(span.start..span.end)?),
         };
@@ -133,14 +125,20 @@ impl Recorder<'_> {
         Some(self.records.len() - 1)
     }
 
-    /// The kind a definition tagged `kind`, named `name`, is recorded as, when the definition
-    /// around it is of kind `outer`.
+    /// The kind a definition with `role`, named `name`, is recorded as, when the definition
+    /// around it is of kind `outer`; `None` for a reference. A macro is recorded as a function,
+    /// since it is used as one, but never as a method or a test.
     fn kind_of(
         &self,
-        kind: SymbolKind,
+        role: Role,
         outer: Option<SymbolKind>,
         name: &Identifier,
-    ) -> SymbolKind {
+    ) -> Option<SymbolKind> {
+        let kind = match role {
+            Role::Definition(kind) => kind,
+            Role::Macro => return Some(SymbolKind::Function),
+            Role::Reference(_) => return None,
+        };
         let kind = if kind == SymbolKind::Function && outer == Some(SymbolKind::Class) {
             SymbolKind::Method
         } else {
@@ -153,29 +151,41 @@ impl Recorder<'_> {
                 .test_functions
                 .iter()
                 .any(|pattern| pattern.matches(name.as_str()));
-        if is_test { SymbolKind::Test } else { kind }
+        Some(if is_test { SymbolKind::Test } else { kind })
     }
 }
 
-/// The span of the definition `tag` names.
-fn span_of(tag: &Tag<'_>) -> Span {
+/// The span of the definition `tag` names in `source`. It ends at its last byte that is not
+/// whitespace: a node can end with the line break that closes it, as a C `#define` does, and
+/// tree-sitter then places its end at the start of the next line.
+fn span_of(tag: &Tag<'_>, source: &[u8]) -> Option<Span> {
     let (node, name) = (tag.node, tag.name);
-    let (start, first) = if name.start_byte() < node.start_byte() {
-        (name.start_byte(), name.start_position())
+    let (start, first_row) = if name.start_byte() < node.start_byte() {
+        (name.start_byte(), name.start_position().row)
     } else {
-        (node.start_byte(), node.start_position())
+        (node.start_byte(), node.start_position().row)
     };
-    let (end, last) = if name.end_byte() > node.end_byte() {
-        (name.end_byte(), name.end_position())
+    let (end, end_row) = if name.end_byte() > node.end_byte() {
+        (name.end_byte(), name.end_position().row)
     } else {
-        (node.end_byte(), node.end_position())
+        (node.end_byte(), node.end_position().row)
     };
-    Span {
+    let text = source.get(start..end)?;
+    let kept = text
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map_or(text.len(), |at| at + 1);
+    let line_breaks = text
+        .get(kept..)?
+        .split(|byte| *byte == b'\n')
+        .skip(1)
+        .count();
+    Some(Span {
         start,
-        end,
-        first,
-        last,
-    }
+        end: start + kept,
+        first_row,
+        last_row: end_row.saturating_sub(line_breaks),
+    })
 }
 
 /// Where the header of the definition at `node` ends: at the end of the last part before its
@@ -202,17 +212,6 @@ fn follow<'tree>(node: Node<'tree>, path: &[&str]) -> Option<(Node<'tree>, Node<
         .iter()
         .try_fold(node, |current, field| current.child_by_field_name(field))?;
     Some((holder, holder.child_by_field_name(last)?))
-}
-
-/// The 1-based line holding the span's last byte. A span that ends with a line break ends, as
-/// tree-sitter places it, at the start of the next line, which holds none of it.
-fn last_line(span: Span) -> Option<u32> {
-    let row = if span.last.column == 0 && span.last.row > span.first.row {
-        span.last.row - 1
-    } else {
-        span.last.row
-    };
-    line_number(row)
 }
 
 #[cfg(test)]
@@ -304,23 +303,28 @@ mod tests {
         Ok(())
     }
 
-    /// A span that ends just after a line break ends on the line before.
+    /// A span ends at its last byte that is not whitespace, on the line that holds it, however
+    /// many line breaks and spaces its node ends with. Here the whole module is the definition of
+    /// `x`, and the module runs to the end of the file.
     #[test]
-    fn a_final_line_break_is_not_a_line() {
-        let span = |last: Point| Span {
-            start: 0,
-            end: 30,
-            first: Point { row: 0, column: 0 },
-            last,
+    fn spans_end_at_their_last_token() -> Result<(), Box<dyn Error>> {
+        static MODULE: TagsSpec = python_spec(
+            &["(module . (expression_statement (identifier) @name)) @definition.module"],
+            PLAIN_IMPORTS,
+        );
+        let ends = |source: &str| {
+            with_tags(&MODULE, source, |tags| {
+                build_symbols(tags, source.as_bytes(), &MODULE, false)
+                    .into_iter()
+                    .map(|symbol| (symbol.end_byte, symbol.start_line, symbol.end_line))
+                    .collect::<Vec<_>>()
+            })
         };
-        assert_eq!(last_line(span(Point { row: 3, column: 0 })), Some(3));
-        assert_eq!(last_line(span(Point { row: 3, column: 1 })), Some(4));
-        let empty = Span {
-            start: 5,
-            end: 5,
-            first: Point { row: 2, column: 0 },
-            last: Point { row: 2, column: 0 },
-        };
-        assert_eq!(last_line(empty), Some(3));
+        // `x` is byte 0 on line 1; `y` on line 2 is byte 2, so the module ends at byte 3.
+        assert_eq!(ends("x")?, [(1, 1, 1)]);
+        assert_eq!(ends("x\n")?, [(1, 1, 1)]);
+        assert_eq!(ends("x  \r\n\n\n")?, [(1, 1, 1)]);
+        assert_eq!(ends("x\ny \n")?, [(3, 1, 2)]);
+        Ok(())
     }
 }
