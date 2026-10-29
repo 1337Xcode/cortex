@@ -20,9 +20,11 @@ cargo xtask verify --full   # adds the benchmark budget checks
    (`src/invariants.rs`). A tag is a `//` line comment outside string literals and block
    comments, found by a small lexer (`src/comments.rs`). Only a tag in code the product compiles
    enforces anything: the check parses every library and binary target with `syn`, follows its
-   `mod` declarations the way the compiler does, and leaves out code under `#[test]` and similar
-   attributes or under a `cfg` that cannot hold without `test` (`src/compiled.rs`). Test targets,
-   benches, examples and files no target reaches never count. The scan never follows symbolic
+   `mod` declarations the way the compiler does (every file a `#[path]` or `cfg_attr` path can
+   choose), and leaves out code under an attribute named `test` or `bench` or under a `cfg` that
+   cannot hold without `test` (`src/compiled.rs`, `src/cfg.rs`). Inside a macro's tokens such an
+   attribute covers the next braced block or item. Test targets, benches, examples and files no
+   target reaches never count. The scan never follows symbolic
    links and leaves out `.git`, `node_modules`, `ui/dist`, a package's own `target` folder and
    `tests/fixtures`.
 5. `cargo clippy --workspace --all-targets --locked -- -D warnings`

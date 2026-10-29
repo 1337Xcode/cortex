@@ -9,6 +9,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod architecture;
+mod cfg;
 mod comments;
 mod compiled;
 mod invariants;

@@ -3,28 +3,31 @@
 //! An invariant tag counts as an enforcing line only where the product builds it. This module
 //! parses the root file of every library and binary target with `syn`, follows the `mod`
 //! declarations it finds through the files they load, and reports each file reached with the byte
-//! ranges inside it that compile only for tests: anything under an attribute named `test` or
-//! `bench` (`#[test]`, `#[tokio::test]`), and anything under a `cfg` that cannot hold while `test`
-//! is off (`cfg(test)`, `cfg(all(test, unix))`, `cfg(false)`). A module declared that way is not
-//! followed, so its file is never reached, and a file no root reaches is not compiled at all.
+//! ranges inside it that compile only for tests (the rules are in [`crate::cfg`]). A module
+//! declared test-only is not followed, so its file is never reached, and a file no root reaches is
+//! not compiled at all.
 //!
 //! Module files are found the way the compiler finds them: `name.rs` or `name/mod.rs` beside a
 //! crate root or `mod.rs`, under `parent/` for any other file, under the directories of enclosing
-//! inline modules, and at the `#[path]` given. A module loaded through `#[path]` keeps its own
-//! submodules in its own directory. Modules that only a macro declares are not followed.
+//! inline modules, and at a `#[path]`, including one inside `cfg_attr`, where every file a
+//! platform could choose is followed. A module loaded through `#[path]` keeps its own submodules
+//! in its own directory. Inside a macro's tokens, which the parser cannot read as items, a
+//! test-only attribute covers the tokens up to the next braced block or semicolon at its level
+//! (`cfg_if!` branches, `#[test]` functions in `macro_rules!` bodies); modules that only a macro
+//! declares are not followed.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, anyhow, bail};
-use proc_macro2::Span;
+use anyhow::{Context, bail};
+use proc_macro2::{Delimiter, Span, TokenStream, TokenTree};
 use syn::ext::IdentExt;
-use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
+
+use crate::cfg::{self, ModulePaths};
 
 /// A source file the product compiles, with the parts of it that compile only for tests.
 #[derive(Debug, PartialEq, Eq)]
@@ -36,12 +39,12 @@ pub(crate) struct CompiledFile {
 }
 
 /// A `mod name;` declaration whose file the walk must load.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct ModuleDeclaration {
     /// The module name, without a raw-identifier prefix.
     name: String,
-    /// The `#[path]` value on the declaration, if any.
-    path: Option<String>,
+    /// The `#[path]` values that may choose its file.
+    paths: ModulePaths,
     /// Directory components of the inline modules around the declaration, outermost first.
     inline_dirs: Vec<String>,
 }
@@ -55,49 +58,16 @@ struct FileScan {
     modules: Vec<ModuleDeclaration>,
 }
 
-/// The value a `cfg` predicate takes while `test` is off and every other option is unknown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Truth {
-    /// Holds in every build.
-    True,
-    /// Holds in no build without `test`.
-    False,
-    /// Depends on the platform, a feature or another option.
-    Unknown,
-}
-
-/// One `cfg` predicate: a boolean literal or an option such as `test`, `unix` or `all(...)`.
-enum Predicate {
-    /// `true` or `false`.
-    Literal(bool),
-    /// An option name, `key = "value"` pair or combinator.
-    Option(Box<syn::Meta>),
-}
-
-impl Parse for Predicate {
-    /// Reads a boolean literal or a meta item.
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        if input.peek(syn::LitBool) {
-            Ok(Self::Literal(input.parse::<syn::LitBool>()?.value))
-        } else {
-            Ok(Self::Option(Box::new(input.parse()?)))
-        }
-    }
-}
-
 /// Every file the targets rooted at `roots` compile, sorted by path.
 ///
 /// # Errors
 ///
 /// Fails when a file cannot be read or parsed, a `cfg` predicate is malformed, or a declared
-/// module has no file.
+/// module has no file or two.
 pub(crate) fn compiled_files(roots: &[PathBuf]) -> anyhow::Result<Vec<CompiledFile>> {
     let mut pending = Vec::new();
     for root in roots {
-        let directory = root
-            .parent()
-            .with_context(|| format!("finding the folder of {}", root.display()))?;
-        pending.push((root.clone(), directory.to_path_buf()));
+        pending.push((normalize(root), folder_of(&normalize(root))?));
     }
     let mut seen = BTreeSet::new();
     let mut files = Vec::new();
@@ -109,7 +79,7 @@ pub(crate) fn compiled_files(roots: &[PathBuf]) -> anyhow::Result<Vec<CompiledFi
             fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
         let scan = scan(&text).with_context(|| format!("parsing {}", file.display()))?;
         for declaration in &scan.modules {
-            pending.push(locate(&file, &module_dir, declaration)?);
+            pending.extend(locate(&file, &module_dir, declaration)?);
         }
         files.push(CompiledFile {
             path: file,
@@ -120,48 +90,81 @@ pub(crate) fn compiled_files(roots: &[PathBuf]) -> anyhow::Result<Vec<CompiledFi
     Ok(files)
 }
 
-/// The file a declaration loads and the directory that file's own submodules live in.
+/// The folder holding `path`.
+fn folder_of(path: &Path) -> anyhow::Result<PathBuf> {
+    path.parent()
+        .map(Path::to_path_buf)
+        .with_context(|| format!("finding the folder of {}", path.display()))
+}
+
+/// `path` with `.` components dropped and each `..` folded into the folder before it, without
+/// touching the file system.
+fn normalize(path: &Path) -> PathBuf {
+    let mut normal = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normal.pop() {
+                    normal.push(component);
+                }
+            }
+            other => normal.push(other),
+        }
+    }
+    normal
+}
+
+/// Every file a declaration may load, each with the directory its own submodules live in.
 fn locate(
     file: &Path,
     module_dir: &Path,
     declaration: &ModuleDeclaration,
-) -> anyhow::Result<(PathBuf, PathBuf)> {
+) -> anyhow::Result<Vec<(PathBuf, PathBuf)>> {
     let inline_dir = declaration
         .inline_dirs
         .iter()
         .fold(module_dir.to_path_buf(), |dir, component| {
             dir.join(component)
         });
-    if let Some(path) = &declaration.path {
-        let base = if declaration.inline_dirs.is_empty() {
-            file.parent()
-                .with_context(|| format!("finding the folder of {}", file.display()))?
-                .to_path_buf()
-        } else {
-            inline_dir
-        };
-        let loaded = base.join(path);
-        let own_dir = loaded
-            .parent()
-            .with_context(|| format!("finding the folder of {}", loaded.display()))?
-            .to_path_buf();
-        return Ok((loaded, own_dir));
-    }
-    let own_dir = inline_dir.join(&declaration.name);
-    let flat = inline_dir.join(format!("{}.rs", declaration.name));
-    let nested = own_dir.join("mod.rs");
-    let loaded = if flat.is_file() {
-        flat
-    } else if nested.is_file() {
-        nested
+    let path_base = if declaration.inline_dirs.is_empty() {
+        folder_of(file)?
     } else {
+        inline_dir.clone()
+    };
+    let mut found = Vec::new();
+    for path in &declaration.paths.paths {
+        let loaded = normalize(&path_base.join(path));
+        if loaded.is_file() {
+            let own_dir = folder_of(&loaded)?;
+            found.push((loaded, own_dir));
+        }
+    }
+    if !declaration.paths.is_unconditional {
+        let own_dir = normalize(&inline_dir.join(&declaration.name));
+        let flat = normalize(&inline_dir.join(format!("{}.rs", declaration.name)));
+        let nested = own_dir.join("mod.rs");
+        match (flat.is_file(), nested.is_file()) {
+            (true, true) => bail!(
+                "module `{}` declared in {} has two files, {} and {}",
+                declaration.name,
+                file.display(),
+                flat.display(),
+                nested.display()
+            ),
+            (true, false) => found.push((flat, own_dir)),
+            (false, true) => found.push((nested, own_dir)),
+            (false, false) => {}
+        }
+    }
+    if found.is_empty() {
         bail!(
             "module `{}` declared in {} has no file",
             declaration.name,
             file.display()
         );
-    };
-    Ok((loaded, own_dir))
+    }
+    Ok(found)
 }
 
 /// The test-only ranges and module declarations of one file's text.
@@ -169,7 +172,7 @@ fn scan(text: &str) -> anyhow::Result<FileScan> {
     let offset = skipped_prefix_len(text);
     let body = text.get(offset..).unwrap_or_default();
     let file: syn::File = syn::parse_str(body)?;
-    if is_test_only(&file.attrs)? {
+    if cfg::is_test_only(&file.attrs)? {
         let whole_file = 0..text.len();
         return Ok(FileScan {
             test_ranges: vec![whole_file],
@@ -208,90 +211,49 @@ fn skipped_prefix_len(text: &str) -> usize {
     bom_len + rest.find('\n').unwrap_or(rest.len())
 }
 
-/// Whether attributes make the item they sit on compile only for tests.
-fn is_test_only(attributes: &[syn::Attribute]) -> anyhow::Result<bool> {
-    for attribute in attributes {
-        let path = attribute.path();
-        if path.is_ident("cfg") {
-            let syn::Meta::List(list) = &attribute.meta else {
-                bail!("a cfg attribute without a predicate");
-            };
-            let predicate: Predicate = syn::parse2(list.tokens.clone())?;
-            if evaluate(&predicate)? == Truth::False {
-                return Ok(true);
-            }
-        } else if path
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == "test" || segment.ident == "bench")
-        {
-            return Ok(true);
-        }
+/// The attribute starting at `index` in a macro's token trees, if one does: the index after its
+/// bracketed content, and whether it makes what follows test-only. Content that is not a valid
+/// attribute (macro syntax such as `#[$meta]`) is never test-only.
+fn attribute_in_tokens(trees: &[TokenTree], index: usize) -> Option<(usize, bool)> {
+    let TokenTree::Punct(pound) = trees.get(index)? else {
+        return None;
+    };
+    if pound.as_char() != '#' {
+        return None;
     }
-    Ok(false)
+    let mut next = index + 1;
+    if matches!(trees.get(next), Some(TokenTree::Punct(bang)) if bang.as_char() == '!') {
+        next += 1;
+    }
+    let TokenTree::Group(group) = trees.get(next)? else {
+        return None;
+    };
+    if group.delimiter() != Delimiter::Bracket {
+        return None;
+    }
+    let is_test = syn::parse2::<syn::Meta>(group.stream())
+        .ok()
+        .and_then(|meta| cfg::is_test_only_meta(&meta).ok())
+        .unwrap_or(false);
+    Some((next + 1, is_test))
 }
 
-/// The value of a predicate while `test` is off.
-fn evaluate(predicate: &Predicate) -> anyhow::Result<Truth> {
-    let meta = match predicate {
-        Predicate::Literal(true) => return Ok(Truth::True),
-        Predicate::Literal(false) => return Ok(Truth::False),
-        Predicate::Option(meta) => meta.as_ref(),
-    };
-    let list = match meta {
-        syn::Meta::Path(path) if path.is_ident("test") => return Ok(Truth::False),
-        syn::Meta::Path(_) | syn::Meta::NameValue(_) => return Ok(Truth::Unknown),
-        syn::Meta::List(list) => list,
-    };
-    let operands =
-        list.parse_args_with(Punctuated::<Predicate, syn::Token![,]>::parse_terminated)?;
-    let values = operands
-        .iter()
-        .map(evaluate)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    if list.path.is_ident("all") {
-        Ok(if values.contains(&Truth::False) {
-            Truth::False
-        } else if values.iter().all(|value| *value == Truth::True) {
-            Truth::True
-        } else {
-            Truth::Unknown
-        })
-    } else if list.path.is_ident("any") {
-        Ok(if values.contains(&Truth::True) {
-            Truth::True
-        } else if values.iter().all(|value| *value == Truth::False) {
-            Truth::False
-        } else {
-            Truth::Unknown
-        })
-    } else if list.path.is_ident("not") {
-        match values.as_slice() {
-            [Truth::True] => Ok(Truth::False),
-            [Truth::False] => Ok(Truth::True),
-            [Truth::Unknown] => Ok(Truth::Unknown),
-            _ => Err(anyhow!("`not` takes exactly one predicate")),
-        }
-    } else {
-        Ok(Truth::Unknown)
+/// The index after the element that attributes ending at `from` sit on, in a macro's token trees:
+/// through the next braced block or semicolon, or up to the next comma, at this level.
+fn element_end(trees: &[TokenTree], from: usize) -> usize {
+    let mut index = from;
+    while let Some((after, _)) = attribute_in_tokens(trees, index) {
+        index = after;
     }
-}
-
-/// The `#[path = "..."]` value among `attributes`, if there is one.
-fn path_attribute(attributes: &[syn::Attribute]) -> Option<String> {
-    attributes.iter().find_map(|attribute| {
-        let syn::Meta::NameValue(pair) = &attribute.meta else {
-            return None;
-        };
-        let syn::Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Str(value),
-            ..
-        }) = &pair.value
-        else {
-            return None;
-        };
-        pair.path.is_ident("path").then(|| value.value())
-    })
+    while let Some(tree) = trees.get(index) {
+        match tree {
+            TokenTree::Group(group) if group.delimiter() == Delimiter::Brace => return index + 1,
+            TokenTree::Punct(punct) if punct.as_char() == ';' => return index + 1,
+            TokenTree::Punct(punct) if punct.as_char() == ',' => return index,
+            _ => index += 1,
+        }
+    }
+    index
 }
 
 /// Walks one file's syntax tree, recording test-only nodes and the modules declared outside them.
@@ -310,19 +272,44 @@ impl Collector {
     /// Records the node at `span` as test code and returns `false` when its attributes make it
     /// test-only; returns `true` when the walk should go inside it.
     fn enter(&mut self, attributes: &[syn::Attribute], span: Span) -> bool {
-        match is_test_only(attributes) {
+        match cfg::is_test_only(attributes) {
             Ok(false) => true,
             Ok(true) => {
-                let range = span.byte_range();
-                self.scan
-                    .test_ranges
-                    .push(range.start + self.offset..range.end + self.offset);
+                self.record(span.byte_range());
                 false
             }
             Err(error) => {
                 self.error.get_or_insert(error);
                 false
             }
+        }
+    }
+
+    /// Records a parser byte range, shifted back to the file's own offsets.
+    fn record(&mut self, range: Range<usize>) {
+        self.scan
+            .test_ranges
+            .push(range.start + self.offset..range.end + self.offset);
+    }
+
+    /// Records the elements under test-only attributes inside a macro's tokens, at every level.
+    fn scan_macro_tokens(&mut self, tokens: TokenStream) {
+        let trees: Vec<TokenTree> = tokens.into_iter().collect();
+        let mut index = 0;
+        while let Some(tree) = trees.get(index) {
+            if let Some((after, true)) = attribute_in_tokens(&trees, index) {
+                let end = element_end(&trees, after);
+                if let Some(last) = trees.get(end.saturating_sub(1)) {
+                    let range = tree.span().byte_range().start..last.span().byte_range().end;
+                    self.record(range);
+                }
+                index = end.max(index + 1);
+                continue;
+            }
+            if let TokenTree::Group(group) = tree {
+                self.scan_macro_tokens(group.stream());
+            }
+            index += 1;
         }
     }
 }
@@ -456,19 +443,36 @@ impl<'ast> Visit<'ast> for Collector {
         if !self.enter(&node.attrs, node.span()) {
             return;
         }
-        let path = path_attribute(&node.attrs);
+        let paths = match cfg::module_paths(&node.attrs) {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.error.get_or_insert(error);
+                return;
+            }
+        };
+        let name = node.ident.unraw().to_string();
         if node.content.is_some() {
-            self.inline_dirs
-                .push(path.unwrap_or_else(|| node.ident.unraw().to_string()));
+            let dir = paths
+                .paths
+                .first()
+                .filter(|_| paths.is_unconditional)
+                .cloned()
+                .unwrap_or_else(|| name.clone());
+            self.inline_dirs.push(dir);
             visit::visit_item_mod(self, node);
             self.inline_dirs.pop();
         } else {
             self.scan.modules.push(ModuleDeclaration {
-                name: node.ident.unraw().to_string(),
-                path,
+                name,
+                paths,
                 inline_dirs: self.inline_dirs.clone(),
             });
         }
+    }
+
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        self.scan_macro_tokens(node.tokens.clone());
+        visit::visit_macro(self, node);
     }
 }
 
@@ -485,6 +489,49 @@ mod tests {
             .test_ranges
             .iter()
             .any(|range| range.contains(&offset)))
+    }
+
+    /// A temporary folder holding `files`, removed when dropped.
+    struct Tree(PathBuf);
+
+    impl Tree {
+        /// Writes each `(relative path, text)` pair under a new temporary folder.
+        fn new(label: &str, files: &[(&str, &str)]) -> anyhow::Result<Self> {
+            let root = std::env::temp_dir().join(format!(
+                "xtask-compiled-{label}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_nanos()
+            ));
+            for (relative, text) in files {
+                let path = root.join(relative);
+                fs::create_dir_all(folder_of(&path)?)?;
+                fs::write(path, text)?;
+            }
+            Ok(Self(root))
+        }
+
+        /// The compiled files reached from `roots`, relative to the folder, with `/`.
+        fn walk(&self, roots: &[&str]) -> anyhow::Result<Vec<String>> {
+            let roots: Vec<PathBuf> = roots.iter().map(|root| self.0.join(root)).collect();
+            Ok(compiled_files(&roots)?
+                .iter()
+                .map(|file| {
+                    file.path
+                        .strip_prefix(&self.0)
+                        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_default()
+                })
+                .collect())
+        }
+    }
+
+    impl Drop for Tree {
+        /// Removes the folder; a failure only leaves a temp folder behind.
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     /// Code under `#[test]`, any attribute ending in `test`, and any `cfg` that needs `test` is
@@ -549,14 +596,42 @@ mod tests {
         Ok(())
     }
 
-    /// An inner `#![cfg(test)]` covers the whole file or the item that holds it, and a shebang
-    /// line does not shift the reported ranges.
+    /// Inside macro tokens, a test-only attribute covers the next braced block or item, and
+    /// nothing after it.
     #[test]
-    fn inner_attributes_and_shebangs() -> anyhow::Result<()> {
+    fn test_attributes_inside_macros_are_found() -> anyhow::Result<()> {
+        let source = r#"
+            cfg_if::cfg_if! { if #[cfg(test)] { fn f() { /* T1 */ } } else { fn f() { /* P1 */ } } }
+            macro_rules! m { () => { #[test] fn t() { /* T2 */ } fn p() { /* P2 */ } }; }
+            fn caller() { run!(#[cfg(test)] { /* T3 */ }, { /* P3 */ }); }
+            run!(#[$meta:meta] { /* P4 */ });
+        "#;
+        let expected = [
+            ("/* T1 */", true),
+            ("/* P1 */", false),
+            ("/* T2 */", true),
+            ("/* P2 */", false),
+            ("/* T3 */", true),
+            ("/* P3 */", false),
+            ("/* P4 */", false),
+        ];
+        for (marker, is_test) in expected {
+            assert_eq!(is_marked(source, marker)?, is_test, "{marker}");
+        }
+        Ok(())
+    }
+
+    /// An inner `#![cfg(test)]` covers the whole file or the item that holds it, and neither a
+    /// shebang line nor a byte-order mark shifts the reported ranges.
+    #[test]
+    fn inner_attributes_shebangs_and_byte_order_marks() -> anyhow::Result<()> {
         assert!(is_marked("#![cfg(test)]\nfn f() { /* X */ }\n", "/* X */")?);
         let source = "#!/usr/bin/env run\nfn f() { #![cfg(test)] /* X */ }\nfn g() { /* Y */ }\n";
         assert!(is_marked(source, "/* X */")?);
         assert!(!is_marked(source, "/* Y */")?);
+        let marked = "\u{feff}#[cfg(test)] fn f() { /* X */ }\nfn g() { /* Y */ }\n";
+        assert!(is_marked(marked, "/* X */")?);
+        assert!(!is_marked(marked, "/* Y */")?);
         Ok(())
     }
 
@@ -570,51 +645,31 @@ mod tests {
     /// The walk loads modules the way the compiler does and never enters test-only declarations.
     #[test]
     fn walk_follows_compiled_modules_only() -> anyhow::Result<()> {
-        let root = std::env::temp_dir().join(format!(
-            "xtask-compiled-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_nanos()
-        ));
-        let files = [
-            (
-                "src/lib.rs",
-                "mod real;\n#[cfg(test)] mod tests;\n#[cfg(test)] #[path = \"support.rs\"] mod support;\nmod outer { #[cfg(test)] mod inner; mod deep; }\n#[path = \"elsewhere/moved.rs\"] mod moved;\n",
-            ),
-            ("src/real.rs", "mod child;\n"),
-            ("src/real/child.rs", ""),
-            ("src/tests.rs", ""),
-            ("src/support.rs", ""),
-            ("src/outer/inner.rs", ""),
-            ("src/outer/deep/mod.rs", ""),
-            ("src/elsewhere/moved.rs", "mod beside;\n"),
-            ("src/elsewhere/beside.rs", ""),
-            ("src/bin/tool.rs", "mod helper;\n"),
-            ("src/bin/helper.rs", ""),
-            ("src/orphan.rs", ""),
-        ];
-        for (relative, text) in files {
-            let path = root.join(relative);
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(path, text)?;
-        }
-        let found = compiled_files(&[root.join("src/lib.rs"), root.join("src/bin/tool.rs")]);
-        let listed: Vec<String> = found?
-            .iter()
-            .map(|file| {
-                file.path
-                    .strip_prefix(&root)
-                    .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-                    .unwrap_or_default()
-            })
-            .collect();
-        fs::remove_dir_all(&root)?;
+        let tree = Tree::new(
+            "walk",
+            &[
+                (
+                    "src/lib.rs",
+                    "mod real;\n#[cfg(test)] mod tests;\n#[cfg(test)] #[path = \"support.rs\"] mod support;\nmod outer { #[cfg(test)] mod inner; mod deep; }\n#[path = \"elsewhere/moved.rs\"] mod moved;\n#[path = \"../shared/common.rs\"] mod common;\n",
+                ),
+                ("src/real.rs", "mod child;\n"),
+                ("src/real/child.rs", ""),
+                ("src/tests.rs", ""),
+                ("src/support.rs", ""),
+                ("src/outer/inner.rs", ""),
+                ("src/outer/deep/mod.rs", ""),
+                ("src/elsewhere/moved.rs", "mod beside;\n"),
+                ("src/elsewhere/beside.rs", ""),
+                ("shared/common.rs", ""),
+                ("src/bin/tool.rs", "mod helper;\n"),
+                ("src/bin/helper.rs", ""),
+                ("src/orphan.rs", ""),
+            ],
+        )?;
         assert_eq!(
-            listed,
+            tree.walk(&["src/lib.rs", "src/bin/tool.rs"])?,
             vec![
+                "shared/common.rs",
                 "src/bin/helper.rs",
                 "src/bin/tool.rs",
                 "src/elsewhere/beside.rs",
@@ -624,6 +679,74 @@ mod tests {
                 "src/real/child.rs",
                 "src/real.rs",
             ]
+        );
+        Ok(())
+    }
+
+    /// Every file a `cfg_attr` path can choose is followed, beside the default file when it
+    /// exists; a test-only `cfg_attr` path is not.
+    #[test]
+    fn walk_follows_every_platform_file() -> anyhow::Result<()> {
+        let tree = Tree::new(
+            "platform",
+            &[
+                (
+                    "src/lib.rs",
+                    "#[cfg_attr(windows, path = \"pipe.rs\")]\n#[cfg_attr(unix, path = \"socket.rs\")]\nmod transport;\n#[cfg_attr(unix, path = \"u.rs\")]\nmod m;\n#[cfg_attr(test, path = \"fake.rs\")]\nmod n;\n",
+                ),
+                ("src/pipe.rs", ""),
+                ("src/socket.rs", ""),
+                ("src/u.rs", ""),
+                ("src/m.rs", ""),
+                ("src/fake.rs", ""),
+                ("src/n.rs", ""),
+            ],
+        )?;
+        assert_eq!(
+            tree.walk(&["src/lib.rs"])?,
+            vec![
+                "src/lib.rs",
+                "src/m.rs",
+                "src/n.rs",
+                "src/pipe.rs",
+                "src/socket.rs",
+                "src/u.rs",
+            ]
+        );
+        Ok(())
+    }
+
+    /// A declared module with no file, or with both `name.rs` and `name/mod.rs`, is an error.
+    #[test]
+    fn missing_or_doubled_module_files_are_errors() -> anyhow::Result<()> {
+        let missing = Tree::new("missing", &[("src/lib.rs", "mod gone;\n")])?;
+        let error = missing
+            .walk(&["src/lib.rs"])
+            .err()
+            .map(|error| format!("{error:#}"));
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|text| text.contains("has no file")),
+            "{error:?}"
+        );
+        let doubled = Tree::new(
+            "doubled",
+            &[
+                ("src/lib.rs", "mod a;\n"),
+                ("src/a.rs", ""),
+                ("src/a/mod.rs", ""),
+            ],
+        )?;
+        let error = doubled
+            .walk(&["src/lib.rs"])
+            .err()
+            .map(|error| format!("{error:#}"));
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|text| text.contains("has two files")),
+            "{error:?}"
         );
         Ok(())
     }
