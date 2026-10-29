@@ -1,0 +1,62 @@
+# What sample.ts defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text up to its body, with each run of whitespace as one space; a
+# signature has no body, so it is all header, with its semicolon. Not read: the comment, the
+# property `label` (only methods), `RATE` (a constant inside a namespace, not at the top of the
+# module), the enum's members, the constructor and `super()`, `string`, `number`, `unknown` and
+# `void` (built-in types), and `require` as a call.
+symbol interface Priced 7-10 - | interface Priced extends Comparable<Priced>, geo.Located
+symbol method Priced.price 8-8 Priced | price(currency: string): Money
+symbol type Total 12-12 - | type Total<T> =
+symbol type Status 14-14 - | enum Status
+symbol module Billing 16-21 - | namespace Billing
+symbol function Billing.tax 18-20 Billing | function tax(amount: Money): Money
+symbol class Shape 23-25 - | abstract class Shape implements Priced
+symbol method Shape.area 24-24 Shape | abstract area(): number
+symbol class Invoice 27-37 - | class Invoice extends Base<Row> implements Priced, geo.Located
+symbol method Invoice.notify 28-28 Invoice | private notify = (event: Event) =>
+symbol method Invoice.price 34-36 Invoice | price(currency: string): Money
+symbol function parse 39-39 - | function parse(text: string): Invoice;
+symbol function parse 40-40 - | function parse(text: Buffer): Invoice;
+symbol function parse 41-43 - | function parse(input: unknown): Invoice
+symbol constant cache 45-45 - | cache: Map<string, Invoice> =
+symbol function emit 47-47 - | function emit(event: Event): void;
+ref inherit Comparable 7 Priced
+ref type_ref Priced 7 Priced
+ref inherit Located 7 Priced
+ref type_ref Money 8 Priced.price
+ref type_ref Label 9 Priced
+ref type_ref T 12 Total
+ref type_ref Money 12 Total
+ref type_ref Partial 12 Total
+ref type_ref T 12 Total
+ref type_ref Money 18 Billing.tax
+ref type_ref Money 18 Billing.tax
+ref call scale 19 Billing.tax
+ref inherit Priced 23 Shape
+ref inherit Base 27 Invoice
+ref type_ref Row 27 Invoice
+ref inherit Priced 27 Invoice
+ref inherit Located 27 Invoice
+ref type_ref Event 28 Invoice.notify
+ref call emit 28 Invoice.notify
+ref type_ref Store 30 Invoice
+ref type_ref Money 34 Invoice.price
+ref call Money 35 Invoice.price
+ref call total 35 Invoice.price
+ref type_ref Invoice 39 parse
+ref type_ref Buffer 40 parse
+ref type_ref Invoice 40 parse
+ref type_ref Invoice 41 parse
+ref call from 42 parse
+ref call readFileSync 42 parse
+ref type_ref Map 45 cache
+ref type_ref Invoice 45 cache
+ref call Map 45 cache
+ref type_ref Event 47 emit
+import ./money name:Money - 2
+import fs module fs 3
+import ./geo all geo 4
+import ./rates name:Rate - 5

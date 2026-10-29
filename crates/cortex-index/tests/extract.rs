@@ -140,6 +140,18 @@ fn javascript() -> TestResult {
     check_golden("javascript", "sample.js", Language::JavaScript, "\n")
 }
 
+/// TypeScript: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn typescript() -> TestResult {
+    check_golden("typescript", "sample.ts", Language::TypeScript, "\n")
+}
+
+/// TSX: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn tsx() -> TestResult {
+    check_golden("tsx", "sample.tsx", Language::Tsx, "\n")
+}
+
 /// The same Python with Windows line breaks: the same lines, spans that end at the same tokens,
 /// the same hashes.
 #[test]

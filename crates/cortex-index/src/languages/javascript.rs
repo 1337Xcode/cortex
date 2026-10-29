@@ -18,6 +18,8 @@ pub const SPEC: Spec = Spec {
         queries: &[
             tree_sitter_javascript::TAGS_QUERY,
             include_str!("../../queries/javascript-tags.scm"),
+            include_str!("../../queries/ecmascript-tags.scm"),
+            include_str!("../../queries/jsx-tags.scm"),
         ],
         imports: include_str!("../../queries/javascript-imports.scm"),
         // Functions, methods and classes have a body. A declaration, property, field or

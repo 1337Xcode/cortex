@@ -1,0 +1,22 @@
+# What sample.tsx defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text up to its body, with each run of whitespace as one space.
+# Not read: the comment, `[open, setOpen]` (a destructuring, not a name), the arrow functions
+# passed as props, `boolean` and `number` (built-in types), the `button` and `span` elements and
+# the closing `</Layout.Panel>`. `Badge` holds a function, so it is a function, not a constant.
+symbol interface CartProps 5-7 - | interface CartProps
+symbol function Cart 9-17 - | function Cart({ items }: CartProps)
+symbol function Badge 19-19 - | Badge = ({ count }: { count: number }) =>
+ref type_ref Item 6 CartProps
+ref type_ref CartProps 9 Cart
+ref call useState 10 Cart
+ref call Panel 12 Cart
+ref call ItemList 13 Cart
+ref type_ref Item 13 Cart
+ref call setOpen 13 Cart
+ref call checkout 14 Cart
+import react default React 2
+import react name:useState - 2
+import ./item name:Item - 3

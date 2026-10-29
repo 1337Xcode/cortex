@@ -117,6 +117,14 @@ mod tests {
             (Language::JavaScript, "web/cart.spec.cjs", true),
             (Language::JavaScript, "web/cart.js", false),
             (Language::JavaScript, "web/test.js", false),
+            (Language::TypeScript, "web/cart.test.ts", true),
+            (Language::TypeScript, "web/cart.spec.mts", true),
+            (Language::TypeScript, "web/cart.test.js", false),
+            (Language::TypeScript, "web/cart.ts", false),
+            (Language::Tsx, "web/Cart.test.tsx", true),
+            (Language::Tsx, "web/Cart.spec.tsx", true),
+            (Language::Tsx, "web/Cart.test.ts", false),
+            (Language::Tsx, "web/Cart.tsx", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

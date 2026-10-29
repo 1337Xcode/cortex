@@ -23,7 +23,9 @@ const DEFINITION_KINDS: &[(&str, SymbolKind)] = &[
     ("class", SymbolKind::Class),
     ("constant", SymbolKind::Constant),
     ("function", SymbolKind::Function),
+    ("interface", SymbolKind::Interface),
     ("method", SymbolKind::Method),
+    ("module", SymbolKind::Module),
     ("type", SymbolKind::Type),
 ];
 
