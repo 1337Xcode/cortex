@@ -170,6 +170,12 @@ fn java() -> TestResult {
     check_golden("java", "sample.java", Language::Java, "\n")
 }
 
+/// Ruby: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn ruby() -> TestResult {
+    check_golden("ruby", "sample.rb", Language::Ruby, "\n")
+}
+
 /// The same Python with Windows line breaks: the same lines, spans that end at the same tokens,
 /// the same hashes.
 #[test]
@@ -375,6 +381,143 @@ fn java_tests_are_marked_by_annotation_or_name() -> TestResult {
     assert_eq!(
         kinds("shop/Order.java")?,
         [Class, Test, Test, Method, Method, Method, Test, Method]
+    );
+    Ok(())
+}
+
+/// In a Ruby test file, the methods Minitest runs, named `test_`, are tests, and so is such a
+/// function; the same code elsewhere has none. `testing` lacks the underscore.
+#[test]
+fn ruby_tests_are_marked_only_in_test_files() -> TestResult {
+    use SymbolKind::{Class, Function, Method, Test};
+    let source = "class OrderTest < Minitest::Test\n  def test_total\n    assert_equal 0, total\n  end\n\n  \
+                  def helper\n  end\n\n  def testing\n  end\nend\n\ndef test_ship\nend\n";
+    let kinds = |path: &str| -> Result<Vec<SymbolKind>, Box<dyn Error>> {
+        let extraction = extract(path, Language::Ruby, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| symbol.kind)
+            .collect())
+    };
+    for path in ["lib/order_test.rb", "lib/order_spec.rb", "test/order.rb"] {
+        assert_eq!(kinds(path)?, [Class, Test, Method, Method, Test], "{path}");
+    }
+    assert_eq!(
+        kinds("lib/order.rb")?,
+        [Class, Method, Method, Method, Function]
+    );
+    Ok(())
+}
+
+/// Ruby base classes and the modules mixed into a class are inheritance, plain or qualified, one
+/// or several at a time. `Order.include(Billing)` mixes into another object, not the class around
+/// it, so `Billing` stays a use of the constant, as `Records` and `Audit` are.
+#[test]
+fn ruby_bases_and_mixins_are_inherited() -> TestResult {
+    let source = "class Order < Records::Base\n  include Comparable, Audit::Trail\n  \
+                  prepend Logging\n  Order.include(Billing)\nend\n";
+    let extraction = extract("lib/order.rb", Language::Ruby, source)?;
+    let refs: Vec<(&str, &str)> = extraction
+        .refs
+        .iter()
+        .map(|reference| (reference.kind.name(), reference.dst_name.as_str()))
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("call", "Records"),
+            ("inherit", "Base"),
+            ("call", "include"),
+            ("inherit", "Comparable"),
+            ("call", "Audit"),
+            ("inherit", "Trail"),
+            ("call", "prepend"),
+            ("inherit", "Logging"),
+            ("call", "Order"),
+            ("call", "include"),
+            ("call", "Billing"),
+        ]
+    );
+    Ok(())
+}
+
+/// Ruby constants are assigned with `=` or `||=`; several at once, or one inside another
+/// namespace, are not read as definitions, and neither is a local variable.
+#[test]
+fn ruby_constants_are_assigned() -> TestResult {
+    let source = "LIMIT = 3\nRATE ||= 2\nA, B = 1, 2\nShop::MAX = 4\nlimit = 5\n";
+    let extraction = extract("lib/limits.rb", Language::Ruby, source)?;
+    let symbols: Vec<(&str, SymbolKind, u32)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind, symbol.start_line))
+        .collect();
+    assert_eq!(
+        symbols,
+        [
+            ("LIMIT", SymbolKind::Constant, 1),
+            ("RATE", SymbolKind::Constant, 2)
+        ]
+    );
+    Ok(())
+}
+
+/// A Ruby method or alias named by a symbol or a variable is not a definition: its name would
+/// carry the sigil, and an interpolated symbol holds code. The grammar parses such methods
+/// without an error. Only `cost` is read.
+#[test]
+fn ruby_names_written_as_symbols_are_left_out() -> TestResult {
+    let source = "class A\n  alias cost total\n  alias :price :total\n  \
+                  alias :\"x#{run(1)}\" y\n  alias $new $old\n  def :total; end\n  \
+                  def @size; end\n  def self.:make; end\nend\ndef :\"a#{b}\"; end\n";
+    let extraction = extract("lib/a.rb", Language::Ruby, source)?;
+    let symbols: Vec<&str> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| symbol.qual_name.as_str())
+        .collect();
+    assert_eq!(symbols, ["A", "A.cost"]);
+    Ok(())
+}
+
+/// A Ruby class, module or `class << self` body, and a method defined on an object, starts with
+/// no local variables. So `size` on line 7 is a call, not the parameter of `make` (which it is on
+/// line 5); `x` on lines 8 and 14 is a call, not the variable of line 1; and `y` on line 10 is a
+/// call, not the variable of line 3.
+#[test]
+fn ruby_classes_and_object_methods_are_scopes() -> TestResult {
+    let source = "x = 5\nclass A\n  y = 1\n  def self.make(size)\n    size\n  end\n  size\n  x\n  \
+                  class << self\n    y\n  end\nend\nmodule K\n  x\nend\n";
+    let extraction = extract("lib/a.rb", Language::Ruby, source)?;
+    let refs: Vec<(&str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| (reference.dst_name.as_str(), reference.line))
+        .collect();
+    assert_eq!(refs, [("size", 7), ("x", 8), ("y", 10), ("x", 14)]);
+    Ok(())
+}
+
+/// A Ruby file imports what `require`, `require_relative`, `load` and `autoload` load by a literal
+/// path, in either kind of quotes and with other arguments after it. A path built at run time
+/// (line 2) and `YAML.load`, a method of another object (line 3), import nothing.
+#[test]
+fn ruby_imports_need_a_literal_path() -> TestResult {
+    let source = "require \"a\"\nrequire \"#{dir}/b\"\nYAML.load \"c.yml\"\nload \"d.rb\", true\n\
+                  require_relative 'e'\nautoload :F, \"f\"\n";
+    let extraction = extract("lib/order.rb", Language::Ruby, source)?;
+    let imports: Vec<(&str, u32)> = extraction
+        .imports
+        .iter()
+        .map(|import| (import.specifier.as_str(), import.line))
+        .collect();
+    assert_eq!(imports, [("a", 1), ("d.rb", 4), ("e", 5), ("f", 6)]);
+    assert!(
+        extraction
+            .imports
+            .iter()
+            .all(|import| import.imported == Imported::Module && import.alias.is_none())
     );
     Ok(())
 }

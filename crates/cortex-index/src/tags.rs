@@ -1,7 +1,8 @@
 //! The definitions and references a tags query finds in a tree, read as tree-sitter's tags format
 //! defines them: each match names something and says what it is, or that nothing may be recorded
 //! for it (`@ignore`); where several patterns find the same name, the earliest pattern wins; a
-//! name that holds a syntax error is skipped.
+//! name that holds a syntax error is skipped; and a name a pattern marks `#is-not? local` is
+//! skipped where a scope around it defines it.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -11,6 +12,8 @@ use tree_sitter::{Node, QueryCapture, QueryCursor, QueryCursorOptions, Streaming
 
 use crate::deadline::Deadline;
 use crate::grammar::{Grammar, TagCapture};
+use crate::locals::Scopes;
+use crate::pattern_rules::PatternRule;
 
 /// What a tag says about its name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,14 +53,26 @@ pub(crate) fn read_tags<'tree>(
     // INVARIANT: deterministic. Tags are kept in the order of their names in the source, however
     // the cursor orders its matches.
     let mut by_name: BTreeMap<(usize, usize), Verdict<'tree>> = BTreeMap::new();
+    let mut scopes = Scopes::new(source);
     let mut check = |_: &tree_sitter::QueryCursorState| deadline.check();
     let options = QueryCursorOptions::new().progress_callback(&mut check);
     let mut matches = cursor.matches_with_options(&grammar.tags, root, source, options);
     while let Some(found) = matches.next() {
+        let pattern = found.pattern_index;
+        let is_not_local = match grammar.pattern_rules.get(pattern) {
+            Some(PatternRule::Locals { scope_inherits }) => {
+                scopes.note(found.captures(), &grammar.tag_captures, *scope_inherits);
+                continue;
+            }
+            Some(PatternRule::Tags { is_not_local }) => *is_not_local,
+            None => continue,
+        };
         let Some((name, tag)) = verdict_of(found.captures(), &grammar.tag_captures) else {
             continue;
         };
-        let pattern = found.pattern_index;
+        if is_not_local && tag.is_some() && scopes.is_local(name) {
+            continue;
+        }
         match by_name.entry((name.start_byte(), name.end_byte())) {
             Entry::Vacant(entry) => {
                 entry.insert((tag, pattern));
@@ -90,7 +105,11 @@ fn verdict_of<'tree>(
             TagCapture::Definition(kind) => tagged = Some((capture.node, Role::Definition(*kind))),
             TagCapture::Reference(kind) => tagged = Some((capture.node, Role::Reference(*kind))),
             TagCapture::Qualifier => qualifier = Some(capture.node),
-            TagCapture::Doc | TagCapture::Helper => {}
+            TagCapture::Doc
+            | TagCapture::Helper
+            | TagCapture::LocalScope
+            | TagCapture::LocalDefinition
+            | TagCapture::LocalReference => {}
         }
     }
     let (node, role) = tagged?;
@@ -248,6 +267,161 @@ mod tests {
             tags_found(&TYPE_FIRST, "f()\n")?,
             [("f".to_owned(), Role::Reference(RefKind::TypeRef))]
         );
+        Ok(())
+    }
+
+    /// The names `spec` finds in `source`, each with the line it starts on, counted from 1.
+    fn names_and_lines(
+        spec: &'static TagsSpec,
+        source: &str,
+    ) -> Result<Vec<(String, usize)>, Box<dyn Error>> {
+        with_tags(spec, source, |tags| {
+            tags.iter()
+                .map(|tag| {
+                    let name = tag.name.utf8_text(source.as_bytes()).unwrap_or("?");
+                    (name.to_owned(), tag.name.start_position().row + 1)
+                })
+                .collect()
+        })
+    }
+
+    /// A pattern marked `#is-not? local` skips a name defined earlier in a scope around it, or in
+    /// one around that while the scopes inherit. In `SOURCE`, `y` is defined in `f`, `x` in the
+    /// file around `f`, and `z` nowhere: so `x` is local in `f` only while `f` inherits, and
+    /// without the mark all three are recorded.
+    #[test]
+    fn local_names_are_skipped() -> Result<(), Box<dyn Error>> {
+        static INHERITING: TagsSpec = python_spec(
+            &[
+                "(function_definition) @local.scope",
+                "(assignment left: (identifier) @local.definition)",
+                "((expression_statement (identifier) @name @reference.call) (#is-not? local))",
+            ],
+            PLAIN_IMPORTS,
+        );
+        static ISOLATED: TagsSpec = python_spec(
+            &[
+                "((function_definition) @local.scope (#set! local.scope-inherits false))",
+                "(assignment left: (identifier) @local.definition)",
+                "((expression_statement (identifier) @name @reference.call) (#is-not? local))",
+            ],
+            PLAIN_IMPORTS,
+        );
+        static UNMARKED: TagsSpec = python_spec(
+            &[
+                "(function_definition) @local.scope",
+                "(assignment left: (identifier) @local.definition)",
+                "(expression_statement (identifier) @name @reference.call)",
+            ],
+            PLAIN_IMPORTS,
+        );
+        const SOURCE: &str = "x = 1\ndef f():\n    y = 2\n    y\n    x\nz\n";
+        let at = |name: &str, line| (name.to_owned(), line);
+        assert_eq!(names_and_lines(&INHERITING, SOURCE)?, [at("z", 6)]);
+        assert_eq!(
+            names_and_lines(&ISOLATED, SOURCE)?,
+            [at("x", 5), at("z", 6)]
+        );
+        assert_eq!(
+            names_and_lines(&UNMARKED, SOURCE)?,
+            [at("y", 4), at("x", 5), at("z", 6)]
+        );
+        // A name is local only after its definition: `a` on line 1 comes before `a = 1`.
+        assert_eq!(names_and_lines(&INHERITING, "a\na = 1\na\n")?, [at("a", 1)]);
+        // A definition belongs to the innermost scope around it: `w = 1` is defined in `g`,
+        // which ends before the `w` on line 4, so that `w` is not local.
+        assert_eq!(
+            names_and_lines(
+                &INHERITING,
+                "def f():\n    def g():\n        w = 1\n    w\n"
+            )?,
+            [at("w", 4)]
+        );
+        // A scope that ended does not hide the one around it: `v` on line 5 comes after `g` and
+        // is defined in `f`, which holds both.
+        assert_eq!(
+            names_and_lines(
+                &INHERITING,
+                "def f():\n    v = 1\n    def g():\n        pass\n    v\nz\n"
+            )?,
+            [at("z", 6)]
+        );
+        Ok(())
+    }
+
+    /// The search for the scopes around a name jumps over a scope's earlier siblings only where
+    /// that cannot change the answer a search of every scope gives. In `OUT_OF_ORDER` the second
+    /// pattern notes `y`'s scope again only when it reaches the `a` on line 5, inside `x`, where
+    /// `a` is already defined: a scope out of the file's order turns the jumps off, or a jump from
+    /// that late `y` would skip `x` and record `a`. In `LATE_NAME` the pattern for `v` ends inside
+    /// the lambda's body, after the lambda's scope is noted, and `v` is defined in the parentheses,
+    /// which end before the lambda: a jump from the lambda would skip them and record `v`.
+    #[test]
+    fn jumps_never_change_the_answer() -> Result<(), Box<dyn Error>> {
+        static OUT_OF_ORDER: TagsSpec = python_spec(
+            &[
+                "(function_definition) @local.scope",
+                "((function_definition) @local.scope . \
+                 (function_definition body: (block . (_) . (expression_statement (identifier)))))",
+                "(assignment left: (identifier) @local.definition)",
+                "((expression_statement (identifier) @name @reference.call) (#is-not? local))",
+            ],
+            PLAIN_IMPORTS,
+        );
+        static LATE_NAME: TagsSpec = python_spec(
+            &[
+                "(parenthesized_expression) @local.scope",
+                "(lambda) @local.scope",
+                "(named_expression name: (identifier) @local.definition)",
+                "((call function: (parenthesized_expression (named_expression name: (identifier) @name)) \
+                  arguments: (argument_list (lambda body: (_)))) @reference.call (#is-not? local))",
+                "((expression_statement (identifier) @name @reference.call) (#is-not? local))",
+            ],
+            PLAIN_IMPORTS,
+        );
+        let source = "def y():\n    pass\ndef x():\n    a = 1\n    a\nb\n";
+        assert_eq!(
+            names_and_lines(&OUT_OF_ORDER, source)?,
+            [("b".to_owned(), 6)]
+        );
+        assert_eq!(
+            names_and_lines(&LATE_NAME, "(v := 1)(lambda: 0)\nw\n")?,
+            [("w".to_owned(), 2)]
+        );
+        Ok(())
+    }
+
+    /// `#is-not? local` applies only to a pattern that records a tag, as in tree-sitter-tags. A
+    /// local name it skips is left to later patterns: in `SKIPPED`, `x` is local, so the second
+    /// pattern reads it as a type, while `y` is not and the first reads it as a call. An `@ignore`
+    /// marked `#is-not? local` ignores a local name all the same: in `IGNORED`, nothing is read.
+    #[test]
+    fn locality_applies_only_to_tags() -> Result<(), Box<dyn Error>> {
+        static SKIPPED: TagsSpec = python_spec(
+            &[
+                "(assignment left: (identifier) @local.definition)",
+                "((expression_statement (identifier) @name @reference.call) (#is-not? local))",
+                "(expression_statement (identifier) @name @reference.type)",
+            ],
+            PLAIN_IMPORTS,
+        );
+        static IGNORED: TagsSpec = python_spec(
+            &[
+                "(assignment left: (identifier) @local.definition)",
+                "((expression_statement (identifier) @ignore) (#is-not? local))",
+                "(expression_statement (identifier) @name @reference.call)",
+            ],
+            PLAIN_IMPORTS,
+        );
+        let source = "x = 1\nx\ny\n";
+        assert_eq!(
+            tags_found(&SKIPPED, source)?,
+            [
+                ("x".to_owned(), Role::Reference(RefKind::TypeRef)),
+                ("y".to_owned(), Role::Reference(RefKind::Call))
+            ]
+        );
+        assert_eq!(tags_found(&IGNORED, source)?, Vec::new());
         Ok(())
     }
 

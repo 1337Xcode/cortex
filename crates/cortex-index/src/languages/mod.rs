@@ -135,6 +135,11 @@ mod tests {
             (Language::Java, "shop/OrderIT.java", true),
             (Language::Java, "shop/Order.java", false),
             (Language::Java, "shop/TestOrder.java", false),
+            (Language::Ruby, "lib/order_test.rb", true),
+            (Language::Ruby, "lib/order_spec.rb", true),
+            (Language::Ruby, "lib/test_order.rb", true),
+            (Language::Ruby, "lib/order.rb", false),
+            (Language::Ruby, "lib/order_tests.rb", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

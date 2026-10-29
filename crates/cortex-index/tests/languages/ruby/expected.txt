@@ -1,0 +1,54 @@
+# What sample.rb defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text up to its body, with each run of whitespace as one space; a
+# constant's body is its value, and an alias has none. Not read: the comment, the path that
+# `require File.join(...)` builds, the symbols `:Receipt`, `:item` and `:count`, the instance
+# variables, `self`, and every use of a local variable or parameter: `items`, `count`, `lines`,
+# `line`, `value`, `order` and `receipt`. The setter's own name `total` is not a use either.
+symbol module Shop 7-35 - | module Shop
+symbol constant Shop.LIMIT 8-8 Shop | LIMIT =
+symbol constant Shop.Line 9-9 Shop | Line =
+symbol class Shop.Order 11-34 Shop | class Order < Base
+symbol method Shop.Order.initialize 15-19 Shop.Order | def initialize(items)
+symbol method Shop.Order.build 21-23 Shop.Order | def self.build(*lines)
+symbol method Shop.Order.total= 25-27 Shop.Order | def total=(value)
+symbol method Shop.Order.paid? 29-31 Shop.Order | def paid?
+symbol method Shop.Order.cost 33-33 Shop.Order | alias cost total
+symbol function checkout 37-41 - | def checkout(order)
+ref call require 2 -
+ref call require_relative 3 -
+ref call autoload 4 -
+ref call require 5 -
+ref call File 5 -
+ref call join 5 -
+ref call __dir__ 5 -
+ref call Struct 9 Shop.Line
+ref call new 9 Shop.Line
+ref inherit Base 11 Shop.Order
+ref call include 12 Shop.Order
+ref inherit Comparable 12 Shop.Order
+ref call extend 13 Shop.Order
+ref call Audit 13 Shop.Order
+ref inherit Logging 13 Shop.Order
+ref call size 17 Shop.Order.initialize
+ref call log 18 Shop.Order.initialize
+ref call new 22 Shop.Order.build
+ref call map 22 Shop.Order.build
+ref call item 22 Shop.Order.build
+ref call total 30 Shop.Order.paid?
+ref call LIMIT 30 Shop.Order.paid?
+ref call Receipt 30 Shop.Order.paid?
+ref call valid? 30 Shop.Order.paid?
+ref call total 33 Shop.Order.cost
+ref call total 38 checkout
+ref call JSON 38 checkout
+ref call parse 38 checkout
+ref call to_s 38 checkout
+ref call Shop 39 checkout
+ref call Receipt 39 checkout
+ref call new 39 checkout
+import json module - 2
+import ../lib/money module - 3
+import shop/receipt module - 4

@@ -24,6 +24,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 globset = "0.4.21"
 ignore = "0.4.34"
 proc-macro2 = { version = "1.0.107", default-features = false, features = ["span-locations"] }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 # Default features off: they add a WebAssembly build of SQLite for wasm32 targets, which Cortex
 # does not build for.
 rusqlite = { version = "0.41.1", default-features = false, features = ["backup", "bundled", "cache"] }
@@ -38,6 +39,7 @@ tree-sitter-go = "0.25.0"
 tree-sitter-java = "0.23.5"
 tree-sitter-javascript = "0.25.0"
 tree-sitter-python = "0.25.0"
+tree-sitter-ruby = "0.23.1"
 tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 

@@ -49,12 +49,15 @@ in `src/languages/`; adding one means adding a file and a line in the registry.
 
 ## Definitions, references and imports
 
-Each file is parsed once with tree-sitter. Its tags query, the grammar's own followed by
-Cortex's additions in `queries/`, gives definitions and references in tree-sitter's tags format:
-each pattern captures one `@name` and one `@definition.<kind>` or `@reference.<kind>`. Where two
-patterns find the same name, the earlier one wins, and a name holding a syntax error is skipped.
-A pattern that captures `@ignore` keeps later patterns from recording that name, as Go's
-built-in types are kept out, and one that captures a `@name` alone records nothing. Comments a
+Each file is parsed once with tree-sitter. Its tags query, the grammar's own and Cortex's
+patterns in `queries/` in the order its language file gives, finds definitions and references in
+tree-sitter's tags format: each pattern captures one `@name` and one `@definition.<kind>` or
+`@reference.<kind>`. Where two patterns find the same name, the earlier one wins, and a name
+holding a syntax error is skipped. A pattern that captures `@ignore` keeps later patterns from
+recording that name, as Go's built-in types are kept out, and one that captures a `@name` alone
+records nothing. Locals patterns find scopes (`@local.scope`) and the variables defined in them
+(`@local.definition`), and a pattern marked `#is-not? local` skips a name that a scope around it
+defined earlier: that keeps a Ruby local variable from being read as a method call. Comments a
 pattern captures as `@doc` are ignored, since Cortex keeps no comments, and a capture named with
 a leading `_` only serves a text predicate such as `#eq?`. A second query per language finds
 imports.

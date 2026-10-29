@@ -7,6 +7,9 @@
 //! name. A pattern may capture the comments before a definition as `@doc`, with any predicate on
 //! them: Cortex keeps no comments, so those change nothing. Cortex adds one capture, `@qualifier`,
 //! a name a definition's qualified name starts with, such as the type a Go method belongs to.
+//! A locals pattern captures only `@local.scope`, `@local.definition` and `@local.reference`,
+//! and may set `local.scope-inherits` to `true` or `false`; a pattern that records tags may test
+//! `#is-not? local`. No other property may be tested or set.
 //! An imports query captures the statement as `@import` and the module as written
 //! as `@import.module`, and may capture the name taken from it (`@import.name`), the name it is
 //! bound to instead (`@import.alias`), and the mark that every name (`@import.all`) or the default
@@ -17,9 +20,10 @@
 
 use cortex_core::{Language, RefKind, SymbolKind};
 use thiserror::Error;
-use tree_sitter::{CaptureQuantifier, Query, QueryPredicate, QueryPredicateArg};
+use tree_sitter::{Query, QueryPredicate, QueryPredicateArg};
 
 use crate::languages::{self, TagsSpec};
+use crate::pattern_rules::{PatternRule, Problem, check_import_pattern, tag_pattern_rule};
 
 /// What each `@definition.<kind>` capture records. A macro is used as a function is.
 const DEFINITION_KINDS: &[(&str, SymbolKind)] = &[
@@ -67,6 +71,12 @@ pub(crate) enum TagCapture {
     Ignore,
     /// A name the definition's qualified name starts with, inside the definition around it.
     Qualifier,
+    /// A scope names can be defined in, for `#is-not? local`.
+    LocalScope,
+    /// A name defined in the scope around it.
+    LocalDefinition,
+    /// A use of a local name, which the tags format reads and Cortex does not need.
+    LocalReference,
 }
 
 /// What a capture in an imports query marks.
@@ -148,6 +158,8 @@ pub(crate) struct Grammar {
     pub(crate) tags: Query,
     /// What each of the tags query's captures marks, by capture index.
     pub(crate) tag_captures: Vec<TagCapture>,
+    /// What each of the tags query's patterns does, by pattern index.
+    pub(crate) pattern_rules: Vec<PatternRule>,
     /// The imports query.
     pub(crate) imports: Query,
     /// What each of the imports query's captures marks, by capture index.
@@ -196,17 +208,19 @@ impl Grammar {
         let grammar = (spec.grammar)();
         let tags = compile_query(language, TAGS, &grammar, &spec.queries.join("\n"))?;
         let tag_captures = captures_of(language, TAGS, &tags, tag_capture)?;
-        check_predicates(language, TAGS, &tags, &tag_captures, is_doc_predicate)?;
-        for pattern in 0..tags.pattern_count() {
-            check_tag_pattern(&tags, pattern, &tag_captures)
-                .map_err(|problem| pattern_error(language, TAGS, pattern, problem))?;
-        }
+        check_general_predicates(language, TAGS, &tags, &tag_captures, is_doc_predicate)?;
+        let pattern_rules = (0..tags.pattern_count())
+            .map(|pattern| {
+                tag_pattern_rule(&tags, pattern, &tag_captures)
+                    .map_err(|problem| refusal(language, TAGS, pattern, problem))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let imports = compile_query(language, IMPORTS, &grammar, spec.imports)?;
         let import_captures = captures_of(language, IMPORTS, &imports, import_capture)?;
-        check_predicates(language, IMPORTS, &imports, &import_captures, |_, _| false)?;
+        check_general_predicates(language, IMPORTS, &imports, &import_captures, |_, _| false)?;
         for pattern in 0..imports.pattern_count() {
             check_import_pattern(&imports, pattern, &import_captures)
-                .map_err(|problem| pattern_error(language, IMPORTS, pattern, problem))?;
+                .map_err(|problem| refusal(language, IMPORTS, pattern, problem))?;
         }
         Ok(Self {
             language,
@@ -214,6 +228,7 @@ impl Grammar {
             tree_sitter: grammar,
             tags,
             tag_captures,
+            pattern_rules,
             imports,
             import_captures,
         })
@@ -234,10 +249,10 @@ fn compile_query(
     })
 }
 
-/// Refuses a predicate in `compiled` that Cortex does not evaluate. The text predicates (`#eq?`,
-/// `#match?`, `#any-of?` and their negations) are fine: tree-sitter applies them while matching.
-/// Of the others, only those `allows` accepts, given the meanings of the captures, are kept.
-fn check_predicates<C>(
+/// Refuses a general predicate in `compiled` that Cortex does not evaluate: those `allows` does not
+/// accept, given the meanings of the captures. The text predicates (`#eq?`, `#match?`, `#any-of?`
+/// and their negations) are fine: tree-sitter applies them while matching.
+fn check_general_predicates<C>(
     language: Language,
     query: &'static str,
     compiled: &Query,
@@ -249,20 +264,11 @@ fn check_predicates<C>(
             .general_predicates(pattern)
             .iter()
             .find(|predicate| !allows(predicate, captures));
-        let operator = if let Some(predicate) = refused {
-            Some(predicate.operator.to_string())
-        } else if let Some((_, is_positive)) = compiled.property_predicates(pattern).first() {
-            Some(if *is_positive { "is?" } else { "is-not?" }.to_owned())
-        } else if compiled.property_settings(pattern).is_empty() {
-            None
-        } else {
-            Some("set!".to_owned())
-        };
-        if let Some(operator) = operator {
+        if let Some(predicate) = refused {
             return Err(GrammarError::Predicate {
                 language,
                 query,
-                operator,
+                operator: predicate.operator.to_string(),
             });
         }
     }
@@ -309,6 +315,9 @@ fn tag_capture(name: &str) -> Option<TagCapture> {
         "doc" => return Some(TagCapture::Doc),
         "ignore" => return Some(TagCapture::Ignore),
         "qualifier" => return Some(TagCapture::Qualifier),
+        "local.scope" => return Some(TagCapture::LocalScope),
+        "local.definition" => return Some(TagCapture::LocalDefinition),
+        "local.reference" => return Some(TagCapture::LocalReference),
         _ if is_helper(name) => return Some(TagCapture::Helper),
         _ => {}
     }
@@ -344,126 +353,25 @@ fn is_helper(name: &str) -> bool {
     name.starts_with('_')
 }
 
-/// How often a pattern uses the captures of one sort.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Use {
-    /// Not at all.
-    Never,
-    /// Exactly once in every match.
-    Once,
-    /// At most once, and not in every match.
-    Maybe,
-    /// More than once, or any number of times.
-    Many,
-}
-
-/// How often `pattern` of `compiled` uses the captures that `is_sort` picks from `captures`.
-fn use_of<C: Copy>(
-    compiled: &Query,
-    pattern: usize,
-    captures: &[C],
-    is_sort: impl Fn(C) -> bool,
-) -> Use {
-    let mut used = compiled
-        .capture_quantifiers(pattern)
-        .iter()
-        .zip(captures)
-        .filter(|(quantifier, capture)| {
-            **quantifier != CaptureQuantifier::Zero && is_sort(**capture)
-        })
-        .map(|(quantifier, _)| *quantifier);
-    match (used.next(), used.next()) {
-        (None, _) => Use::Never,
-        (Some(CaptureQuantifier::One), None) => Use::Once,
-        (Some(CaptureQuantifier::ZeroOrOne), None) => Use::Maybe,
-        _ => Use::Many,
-    }
-}
-
-/// Whether `pattern` of a tags query has one of the three shapes the format allows: a name with one
-/// definition or reference, which records a tag, a definition perhaps with a qualifier; a name
-/// alone, which records nothing; or an `@ignore` alone.
-fn check_tag_pattern(
-    compiled: &Query,
-    pattern: usize,
-    captures: &[TagCapture],
-) -> Result<(), &'static str> {
-    let use_of_sort =
-        |is_sort: fn(TagCapture) -> bool| use_of(compiled, pattern, captures, is_sort);
-    let ignore = use_of_sort(|capture| capture == TagCapture::Ignore);
-    let name = use_of_sort(|capture| capture == TagCapture::Name);
-    let definition = use_of_sort(|capture| matches!(capture, TagCapture::Definition(_)));
-    let reference = use_of_sort(|capture| matches!(capture, TagCapture::Reference(_)));
-    let qualifier = use_of_sort(|capture| capture == TagCapture::Qualifier);
-    if ignore != Use::Never {
-        let others = [name, definition, reference, qualifier];
-        if ignore == Use::Once && others.iter().all(|other| *other == Use::Never) {
-            return Ok(());
-        }
-        return Err("may capture nothing beside one @ignore");
-    }
-    if name != Use::Once {
-        return Err("needs exactly one @name");
-    }
-    match (definition, reference) {
-        (Use::Once, Use::Never) => {}
-        (Use::Never, Use::Once | Use::Never) => {
-            if qualifier != Use::Never {
-                return Err("may capture a @qualifier only with a @definition");
-            }
-        }
-        _ => return Err("needs at most one @definition or @reference capture"),
-    }
-    if qualifier == Use::Many {
-        return Err("may capture one @qualifier at most");
-    }
-    Ok(())
-}
-
-/// Whether `pattern` of an imports query captures exactly one statement and one module, and at
-/// most one of each of the other captures.
-fn check_import_pattern(
-    compiled: &Query,
-    pattern: usize,
-    captures: &[ImportCapture],
-) -> Result<(), &'static str> {
-    let use_of_sort =
-        |sort: ImportCapture| use_of(compiled, pattern, captures, |capture| capture == sort);
-    if use_of_sort(ImportCapture::Statement) != Use::Once {
-        return Err("needs exactly one @import");
-    }
-    if use_of_sort(ImportCapture::Module) != Use::Once {
-        return Err("needs exactly one @import.module");
-    }
-    let optional = [
-        ImportCapture::Name,
-        ImportCapture::Alias,
-        ImportCapture::All,
-        ImportCapture::Default,
-    ];
-    if optional
-        .into_iter()
-        .any(|sort| use_of_sort(sort) == Use::Many)
-    {
-        return Err(
-            "may capture @import.name, @import.alias, @import.all and @import.default once each at most",
-        );
-    }
-    Ok(())
-}
-
 /// The error for `problem` in `pattern` of `query`.
-fn pattern_error(
+fn refusal(
     language: Language,
     query: &'static str,
     pattern: usize,
-    problem: &'static str,
+    problem: Problem,
 ) -> GrammarError {
-    GrammarError::Pattern {
-        language,
-        query,
-        pattern,
-        problem,
+    match problem {
+        Problem::Shape(problem) => GrammarError::Pattern {
+            language,
+            query,
+            pattern,
+            problem,
+        },
+        Problem::Predicate(operator) => GrammarError::Predicate {
+            language,
+            query,
+            operator: operator.to_owned(),
+        },
     }
 }
 
@@ -516,12 +424,22 @@ mod tests {
             tag_capture("reference.type"),
             Some(TagCapture::Reference(RefKind::TypeRef))
         );
+        assert_eq!(tag_capture("local.scope"), Some(TagCapture::LocalScope));
+        assert_eq!(
+            tag_capture("local.definition"),
+            Some(TagCapture::LocalDefinition)
+        );
+        assert_eq!(
+            tag_capture("local.reference"),
+            Some(TagCapture::LocalReference)
+        );
         for unknown in [
             "definition.widget",
             "reference.",
             "docs",
             "names",
-            "local.scope",
+            "local",
+            "local.scopes",
         ] {
             assert_eq!(tag_capture(unknown), None, "{unknown}");
         }
@@ -621,6 +539,25 @@ mod tests {
             ],
             IMPORTS_QUERY,
         );
+        static LOCALS: TagsSpec = spec(
+            &[
+                "(function_definition) @local.scope",
+                "(assignment left: (identifier) @local.definition)",
+                "(identifier) @local.reference",
+            ],
+            IMPORTS_QUERY,
+        );
+        static LOCALS_WITH_HELPER: TagsSpec = spec(
+            &[
+                "((assignment left: (identifier) @local.definition right: (_) @_value) \
+               (#eq? @_value \"1\"))",
+            ],
+            IMPORTS_QUERY,
+        );
+        static MIXED: TagsSpec = spec(
+            &["(function_definition name: (identifier) @name) @definition.function @local.scope"],
+            IMPORTS_QUERY,
+        );
         let problem = |problem| GrammarError::Pattern {
             language: Language::Python,
             query: TAGS,
@@ -628,6 +565,12 @@ mod tests {
             problem,
         };
         assert_eq!(error_of(&SHAPES), None);
+        assert_eq!(error_of(&LOCALS), None);
+        assert_eq!(error_of(&LOCALS_WITH_HELPER), None);
+        assert_eq!(
+            error_of(&MIXED),
+            Some(problem("may not mix @local captures with others"))
+        );
         assert_eq!(error_of(&NO_NAME), Some(problem("needs exactly one @name")));
         assert_eq!(
             error_of(&TWO_NAMES),
@@ -696,19 +639,20 @@ mod tests {
         );
     }
 
-    /// Predicates Cortex does not evaluate are refused by name; text predicates are accepted, and
+    /// The error refusing `operator` in `query` of a Python grammar.
+    fn refused(query: &'static str, operator: &str) -> GrammarError {
+        GrammarError::Predicate {
+            language: Language::Python,
+            query,
+            operator: operator.to_owned(),
+        }
+    }
+
+    /// Predicates Cortex does not evaluate are refused by name. Text predicates are accepted, and
     /// so is any predicate on `@doc` in a tags query, such as `#strip!`, which only shapes
     /// comments.
     #[test]
     fn unevaluated_predicates_are_refused() {
-        static IS_NOT: TagsSpec = spec(
-            &["((identifier) @name @reference.call (#is-not? local))"],
-            IMPORTS_QUERY,
-        );
-        static SET: TagsSpec = spec(
-            &["((identifier) @name @reference.call (#set! kind \"call\"))"],
-            IMPORTS_QUERY,
-        );
         static STRIP: TagsSpec = spec(
             &["((identifier) @name @reference.call (#strip! @name \"_\"))"],
             IMPORTS_QUERY,
@@ -741,25 +685,81 @@ mod tests {
             "((import_statement name: (dotted_name) @import.module) @import \
              (#strip! @import.module \"x\"))",
         );
-        let refused = |operator: &str| GrammarError::Predicate {
-            language: Language::Python,
-            query: TAGS,
-            operator: operator.to_owned(),
-        };
-        assert_eq!(error_of(&IS_NOT), Some(refused("is-not?")));
-        assert_eq!(error_of(&SET), Some(refused("set!")));
-        assert_eq!(error_of(&STRIP), Some(refused("strip!")));
+        assert_eq!(error_of(&STRIP), Some(refused(TAGS, "strip!")));
         assert_eq!(error_of(&TEXT), None);
         assert_eq!(error_of(&DOC), None);
         assert_eq!(error_of(&DOC_TYPO), None);
-        assert_eq!(error_of(&HELPER), Some(refused("strip!")));
-        assert_eq!(
-            error_of(&IMPORT_STRIP),
-            Some(GrammarError::Predicate {
-                language: Language::Python,
-                query: IMPORTS,
-                operator: "strip!".to_owned(),
-            })
+        assert_eq!(error_of(&HELPER), Some(refused(TAGS, "strip!")));
+        assert_eq!(error_of(&IMPORT_STRIP), Some(refused(IMPORTS, "strip!")));
+    }
+
+    /// The only properties accepted are the tags format's locals: a pattern that records tags may
+    /// test `#is-not? local`, and a locals pattern may set `local.scope-inherits` to `true` or
+    /// `false`. Any other test or setting is refused by name, and an imports pattern has none.
+    #[test]
+    fn only_locals_properties_are_accepted() {
+        static IS_NOT_LOCAL: TagsSpec = spec(
+            &["((identifier) @name @reference.call (#is-not? local))"],
+            IMPORTS_QUERY,
         );
+        static IS_LOCAL: TagsSpec = spec(
+            &["((identifier) @name @reference.call (#is? local))"],
+            IMPORTS_QUERY,
+        );
+        static IS_NOT_GLOBAL: TagsSpec = spec(
+            &["((identifier) @name @reference.call (#is-not? global))"],
+            IMPORTS_QUERY,
+        );
+        static IS_NOT_LOCAL_VALUE: TagsSpec = spec(
+            &["((identifier) @name @reference.call (#is-not? local \"x\"))"],
+            IMPORTS_QUERY,
+        );
+        static SET: TagsSpec = spec(
+            &["((identifier) @name @reference.call (#set! kind \"call\"))"],
+            IMPORTS_QUERY,
+        );
+        static SCOPE_ISOLATED: TagsSpec = spec(
+            &["((function_definition) @local.scope (#set! local.scope-inherits false))"],
+            IMPORTS_QUERY,
+        );
+        static SCOPE_INHERITS: TagsSpec = spec(
+            &["((function_definition) @local.scope (#set! local.scope-inherits true))"],
+            IMPORTS_QUERY,
+        );
+        static SCOPE_MAYBE: TagsSpec = spec(
+            &["((function_definition) @local.scope (#set! local.scope-inherits maybe))"],
+            IMPORTS_QUERY,
+        );
+        static SCOPE_OTHER: TagsSpec = spec(
+            &["((function_definition) @local.scope (#set! local.scope-kind false))"],
+            IMPORTS_QUERY,
+        );
+        static LOCAL_TEST: TagsSpec = spec(
+            &["((identifier) @local.reference (#is-not? local))"],
+            IMPORTS_QUERY,
+        );
+        static IMPORT_IS_NOT: TagsSpec = spec(
+            &["(function_definition name: (identifier) @name) @definition.function"],
+            "((import_statement name: (dotted_name) @import.module) @import (#is-not? local))",
+        );
+        static IMPORT_SET: TagsSpec = spec(
+            &["(function_definition name: (identifier) @name) @definition.function"],
+            "((import_statement name: (dotted_name) @import.module) @import (#set! kind module))",
+        );
+        assert_eq!(error_of(&IS_NOT_LOCAL), None);
+        assert_eq!(error_of(&IS_LOCAL), Some(refused(TAGS, "is?")));
+        assert_eq!(error_of(&IS_NOT_GLOBAL), Some(refused(TAGS, "is-not?")));
+        assert_eq!(
+            error_of(&IS_NOT_LOCAL_VALUE),
+            Some(refused(TAGS, "is-not?"))
+        );
+        assert_eq!(error_of(&SET), Some(refused(TAGS, "set!")));
+        assert_eq!(error_of(&SCOPE_ISOLATED), None);
+        assert_eq!(error_of(&SCOPE_INHERITS), None);
+        assert_eq!(error_of(&SCOPE_MAYBE), Some(refused(TAGS, "set!")));
+        assert_eq!(error_of(&SCOPE_OTHER), Some(refused(TAGS, "set!")));
+        assert_eq!(error_of(&LOCAL_TEST), Some(refused(TAGS, "is-not?")));
+        assert_eq!(error_of(&IMPORT_IS_NOT), Some(refused(IMPORTS, "is-not?")));
+        assert_eq!(error_of(&IMPORT_SET), Some(refused(IMPORTS, "set!")));
     }
 }

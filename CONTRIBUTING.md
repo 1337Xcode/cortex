@@ -44,8 +44,9 @@ that runs the built binary.
 A language is one file in `crates/cortex-index/src/languages/` and one line in the `ALL` list in
 `crates/cortex-index/src/languages/mod.rs`. The file says how a file is recognised: extensions,
 whole file names, `#!` interpreters and `linguist-language` names. For a language Cortex parses,
-it also gives the tree-sitter grammar, the tags query (the grammar's own, then additions in
-`crates/cortex-index/queries/<language>-tags.scm`), the imports query
+it also gives the tree-sitter grammar, the tags query (the grammar's own and additions in
+`crates/cortex-index/queries/<language>-tags.scm`, in the order they should win, since the
+earlier of two patterns that find the same name wins), the imports query
 (`crates/cortex-index/queries/<language>-imports.scm`), the grammar fields that hold a
 definition's body, and how the language names test files and test functions. Add a sample file
 and the output you expect from it, written by hand, under
