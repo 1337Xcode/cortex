@@ -34,5 +34,7 @@ Applied to the raw bytes, so key order and spacing are as captured:
 - Session, prompt and other UUIDs are mapped, in order of first appearance, to fixed UUIDs of the
   form `00000000-0000-4000-8000-000000000001`, keeping their format. Tool-use ids become
   `toolu_fixture0001` and so on; subagent ids become `fixtureagent0001`.
+- `harnessSectionHash`, an opaque hash Claude Code reports for its own prompt sections, is replaced
+  by zeros of the same length, since what it hashes is not documented.
 - Prompts, code and command output come from the synthetic capture repository and contain nothing
   else.
