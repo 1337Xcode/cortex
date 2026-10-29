@@ -174,7 +174,8 @@ fn fixture_tree_holds_only_payloads_and_readmes() -> TestResult<()> {
     Ok(())
 }
 
-/// No fixture or README carries a real path, id, user name, email address or carriage return.
+/// No fixture or README carries a real path, id, opaque hash, user or machine name, email address
+/// or carriage return.
 #[test]
 fn fixtures_are_scrubbed() -> TestResult<()> {
     let mut problems = Vec::new();
