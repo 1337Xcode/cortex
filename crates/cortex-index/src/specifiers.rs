@@ -7,6 +7,7 @@ use tree_sitter::{Node, QueryCapture, QueryCursor, QueryCursorOptions, Streaming
 use crate::deadline::Deadline;
 use crate::grammar::{Grammar, ImportCapture};
 use crate::lines::line_number;
+use crate::name_text::name_text;
 
 /// What an import takes from its module.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,7 +123,7 @@ fn identifier_at(node: Node<'_>, source: &[u8]) -> Option<Identifier> {
     if node.has_error() {
         return None;
     }
-    Identifier::new(node.utf8_text(source).ok()?).ok()
+    Identifier::new(&name_text(node, source)?).ok()
 }
 
 #[cfg(test)]

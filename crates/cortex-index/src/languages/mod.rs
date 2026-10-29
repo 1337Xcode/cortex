@@ -153,6 +153,10 @@ mod tests {
             (Language::Cpp, "src/test_order.cpp", true),
             (Language::Cpp, "src/order.cpp", false),
             (Language::Cpp, "src/OrderTest.cpp", false),
+            (Language::CSharp, "src/OrderTests.cs", true),
+            (Language::CSharp, "src/OrderTest.cs", true),
+            (Language::CSharp, "src/Order.cs", false),
+            (Language::CSharp, "src/TestOrder.cs", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

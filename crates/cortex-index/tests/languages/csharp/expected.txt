@@ -1,0 +1,39 @@
+# What sample.cs defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text, attributes and modifiers included, up to its body, with each
+# run of whitespace as one space; a constant, a delegate, a record without a body and an
+# interface's method are all header. Not read: the comment, the attributes, the enum's values,
+# `items` (a field that is not constant), the property `Total`, the local function `Fee`,
+# `base(size)`, the built-in types, and every use of a variable or a constant.
+symbol module Shop.Orders 6-39 - | namespace Shop.Orders
+symbol type Shop.Orders.Paid 8-8 Shop.Orders | public delegate void Paid(Order order);
+symbol interface Shop.Orders.IPriced 10-13 Shop.Orders | public interface IPriced : INamed
+symbol method Shop.Orders.IPriced.Price 12-12 Shop.Orders.IPriced | decimal Price();
+symbol class Shop.Orders.Status 15-15 Shop.Orders | public enum Status
+symbol class Shop.Orders.Line 17-17 Shop.Orders | public record Line(Item Item, int Count);
+symbol class Shop.Orders.Order 19-38 Shop.Orders | [Serializable] public sealed class Order : Base<Item>, IPriced
+symbol constant Shop.Orders.Order.Limit 22-22 Shop.Orders.Order | Limit = 3
+symbol method Shop.Orders.Order.Order 25-25 Shop.Orders.Order | public Order(int size) : base(size)
+symbol method Shop.Orders.Order.Price 29-34 Shop.Orders.Order | public decimal Price()
+symbol test Shop.Orders.Order.Pays 36-37 Shop.Orders.Order | [Test] public void Pays()
+ref type_ref Order 8 Shop.Orders.Paid
+ref inherit INamed 10 Shop.Orders.IPriced
+ref type_ref Item 17 Shop.Orders.Line
+ref inherit Base 20 Shop.Orders.Order
+ref type_ref Item 20 Shop.Orders.Order
+ref inherit IPriced 20 Shop.Orders.Order
+ref type_ref List 23 Shop.Orders.Order
+ref type_ref Item 23 Shop.Orders.Order
+ref call List 23 Shop.Orders.Order
+ref type_ref Item 23 Shop.Orders.Order
+ref call Add 32 Shop.Orders.Order.Price
+ref call Item 32 Shop.Orders.Order.Price
+ref call Max 33 Shop.Orders.Order.Price
+ref call Fee 33 Shop.Orders.Order.Price
+ref call Round 33 Shop.Orders.Order.Price
+ref call AreEqual 37 Shop.Orders.Order.Pays
+import System module - 2
+import System.Math module - 3
+import System.Text.Json.JsonSerializer module Json 4

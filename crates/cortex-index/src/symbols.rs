@@ -18,6 +18,7 @@ use tree_sitter::Node;
 use crate::hashes::collapsed_hash;
 use crate::languages::TagsSpec;
 use crate::lines::line_number;
+use crate::name_text::name_text;
 use crate::tags::{Role, Tag};
 
 /// Where a definition is: from the start of its node or its name, whichever comes first, to the
@@ -92,14 +93,10 @@ impl Recorder<'_> {
     /// Records the definition `tag` over `span`, inside the record at `parent`; the new
     /// record's position, or `None` when the definition cannot be recorded.
     fn record(&mut self, tag: &Tag<'_>, span: Span, parent: Option<usize>) -> Option<usize> {
-        let name = Identifier::new(tag.name.utf8_text(self.source).ok()?).ok()?;
+        let name = Identifier::new(&name_text(tag.name, self.source)?).ok()?;
         let outer = parent.and_then(|position| self.records.get(position));
         let local = match tag.qualifier {
-            Some(qualifier) => format!(
-                "{}.{}",
-                qualifier.utf8_text(self.source).ok()?,
-                name.as_str()
-            ),
+            Some(qualifier) => format!("{}.{}", name_text(qualifier, self.source)?, name.as_str()),
             None => name.as_str().to_owned(),
         };
         let qual_name = match outer {

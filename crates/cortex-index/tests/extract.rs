@@ -210,6 +210,12 @@ fn cpp_with_crlf_line_breaks() -> TestResult {
     check_golden("cpp", "sample.cpp", Language::Cpp, "\r\n")
 }
 
+/// C#: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn csharp() -> TestResult {
+    check_golden("csharp", "sample.cs", Language::CSharp, "\n")
+}
+
 /// Ruby: every construct in the fixture, listed by hand in `expected.txt`.
 #[test]
 fn ruby() -> TestResult {
@@ -877,6 +883,237 @@ fn cpp_shares_the_c_readings() -> TestResult {
         .map(|reference| (reference.dst_name.as_str(), reference.line))
         .collect();
     assert_eq!(refs, [("Receipt", 9), ("Receipt", 11)]);
+    Ok(())
+}
+
+/// C# tests are methods with a test attribute of NUnit, xUnit or MSTest, with or without its
+/// `Attribute` suffix, arguments or other attributes, wherever the file is. A qualified attribute
+/// (`Moq.Test`) could be any library's and is not read; no name makes a test.
+#[test]
+fn csharp_tests_are_marked_by_attribute() -> TestResult {
+    use SymbolKind::{Class, Method, Test};
+    let source = "class OrderTests\n{\n    [Test] public void A() { }\n    [Fact] public void B() { }\n    \
+                  [Theory] [InlineData(1)] public void C(int n) { }\n    [TestMethod] public void D() { }\n    \
+                  [TestCase(1)] [TestCase(2)] public void E(int n) { }\n    \
+                  [DataTestMethod] public void F() { }\n    [TestAttribute] public void G() { }\n    \
+                  [Moq.Test] public void H() { }\n    [Obsolete] public void TestI() { }\n    \
+                  public void Helper() { }\n}\n";
+    for path in ["tests/OrderTests.cs", "src/Order.cs"] {
+        let extraction = extract(path, Language::CSharp, source)?;
+        let kinds: Vec<SymbolKind> = extraction
+            .symbols
+            .iter()
+            .map(|symbol| symbol.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                Class, Test, Test, Test, Test, Test, Test, Test, Method, Method, Method
+            ],
+            "{path}"
+        );
+    }
+    Ok(())
+}
+
+/// A C# file-scoped namespace, `namespace Shop.Orders;`, names the types after it, as a block
+/// namespace does by holding them.
+#[test]
+fn csharp_file_scoped_namespaces_qualify_types() -> TestResult {
+    let source = "namespace Shop.Orders;\npublic class Order { public void Pay() { } }\n\
+                  public interface IPriced { }\npublic delegate void Paid();\npublic struct Money { }\n\
+                  public record Line(int X);\npublic enum Status { Open }\n";
+    let extraction = extract("src/Order.cs", Language::CSharp, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Interface, Method, Module, Type};
+    assert_eq!(
+        symbols,
+        [
+            ("Shop.Orders", Module),
+            ("Shop.Orders.Order", Class),
+            ("Shop.Orders.Order.Pay", Method),
+            ("Shop.Orders.IPriced", Interface),
+            ("Shop.Orders.Paid", Type),
+            ("Shop.Orders.Money", Class),
+            ("Shop.Orders.Line", Class),
+            ("Shop.Orders.Status", Class)
+        ]
+    );
+    Ok(())
+}
+
+/// C# constants are `const` fields and `static readonly` ones, the two modifiers in either order
+/// and among others; a field only `readonly` or only `static` is not one.
+#[test]
+fn csharp_constants_cannot_change() -> TestResult {
+    let source = "class C\n{\n    public const int A = 1;\n    static readonly int B = 2;\n    \
+                  readonly static int D = 3;\n    public static readonly string E = \"e\";\n    \
+                  readonly int F = 4;\n    static int G = 5;\n}\n";
+    let extraction = extract("src/C.cs", Language::CSharp, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant};
+    assert_eq!(
+        symbols,
+        [
+            ("C", Class),
+            ("C.A", Constant),
+            ("C.B", Constant),
+            ("C.D", Constant),
+            ("C.E", Constant)
+        ]
+    );
+    Ok(())
+}
+
+/// C# type uses in a cast, a qualified declaration, a nullable and an array, after `as`, in a
+/// method's result and in nested or qualified type arguments; calls with type arguments, plain or
+/// through a type, on an object that may be null, and creating a qualified type. `nameof` is no
+/// call.
+#[test]
+fn csharp_types_and_calls_in_every_form() -> TestResult {
+    let source = "class D\n{\n    void M(object obj)\n    {\n        var x = (Item)obj;\n        \
+                  System.Text.StringBuilder sb = new System.Text.StringBuilder();\n        \
+                  Item? i = null;\n        Item[] arr = null;\n        Run<int>();\n        \
+                  Helper.Run<Order>();\n        a?.Pay();\n        var z = obj as Zed;\n        \
+                  Dictionary<string, List<Line>> d;\n        nameof(Foo);\n        \
+                  List<System.Text.Encoding> e;\n    }\n    Task<Item> Load() => null;\n}\n";
+    let extraction = extract("src/D.cs", Language::CSharp, source)?;
+    let refs: Vec<(&str, &str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("type_ref", "Item", 5),
+            ("type_ref", "StringBuilder", 6),
+            ("call", "StringBuilder", 6),
+            ("type_ref", "Item", 7),
+            ("type_ref", "Item", 8),
+            ("call", "Run", 9),
+            ("call", "Run", 10),
+            ("type_ref", "Order", 10),
+            ("call", "Pay", 11),
+            ("type_ref", "Zed", 12),
+            ("type_ref", "Dictionary", 13),
+            ("type_ref", "List", 13),
+            ("type_ref", "Line", 13),
+            ("type_ref", "List", 15),
+            ("type_ref", "Encoding", 15),
+            ("type_ref", "Task", 17),
+            ("type_ref", "Item", 17)
+        ]
+    );
+    Ok(())
+}
+
+/// C# base types, qualified or given arguments by a record, and structs and records as classes.
+#[test]
+fn csharp_bases_and_records() -> TestResult {
+    let source =
+        "class X : System.IDisposable { }\nrecord R1(int A) : Base1(A), IFoo1;\nstruct S { }\n";
+    let extraction = extract("src/X.cs", Language::CSharp, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::Class;
+    assert_eq!(symbols, [("X", Class), ("R1", Class), ("S", Class)]);
+    let refs: Vec<(&str, &str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("inherit", "IDisposable", 1),
+            ("inherit", "Base1", 2),
+            ("inherit", "IFoo1", 2)
+        ]
+    );
+    Ok(())
+}
+
+/// A name written across several tokens keeps only the tokens: a comment or a line break inside
+/// a C# namespace or `using` is not part of it, and nothing inside is lost to it.
+#[test]
+fn csharp_names_drop_comments_and_line_breaks() -> TestResult {
+    let source = "using System /* io */ .IO;\nnamespace A /* hi */ . B { class Y { } }\n\
+                  namespace Shop\n    .Orders\n{ class X { void M() { } } }\n";
+    let extraction = extract("src/X.cs", Language::CSharp, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Method, Module};
+    assert_eq!(
+        symbols,
+        [
+            ("A.B", Module),
+            ("A.B.Y", Class),
+            ("Shop.Orders", Module),
+            ("Shop.Orders.X", Class),
+            ("Shop.Orders.X.M", Method)
+        ]
+    );
+    let imports: Vec<&str> = extraction
+        .imports
+        .iter()
+        .map(|import| import.specifier.as_str())
+        .collect();
+    assert_eq!(imports, ["System.IO"]);
+    // A file-scoped namespace's name, which the types after it take as their qualifier.
+    let scoped = extract(
+        "src/Z.cs",
+        Language::CSharp,
+        "namespace Pay /* x */ . Ments;\nclass Z { }\n",
+    )?;
+    let names: Vec<&str> = scoped
+        .symbols
+        .iter()
+        .map(|symbol| symbol.qual_name.as_str())
+        .collect();
+    assert_eq!(names, ["Pay.Ments", "Pay.Ments.Z"]);
+    Ok(())
+}
+
+/// A C++ operator's or destructor's name keeps no spacing from the source, except between two
+/// words: `operator <` is `operator<`, `~ Wi` is `~Wi`, `operator new` keeps its space.
+#[test]
+fn cpp_operator_names_ignore_spacing() -> TestResult {
+    let source = "struct Wi {\n    bool operator <(const Wi& o) const { return true; }\n    \
+                  void* operator new(unsigned long n) { return 0; }\n    ~ Wi() {}\n};\n";
+    let extraction = extract("src/wi.cpp", Language::Cpp, source)?;
+    let names: Vec<&str> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| symbol.qual_name.as_str())
+        .collect();
+    assert_eq!(names, ["Wi", "Wi.operator<", "Wi.operator new", "Wi.~Wi"]);
     Ok(())
 }
 

@@ -66,7 +66,10 @@ Definitions nest by their spans. A function directly in a class is a method; in 
 in a `test`, `tests` or `__tests__` folder, or named as its language names test files) a
 function or method named as its language names tests is a test. Qualified names join names with
 `.` in every language. A pattern may capture a `@qualifier` for a definition, which goes just
-before its name: a Go method's qualified name starts with the type it belongs to.
+before its name: a Go method's qualified name starts with the type it belongs to. A name written
+across several tokens, such as `Shop.Orders` or `operator <`, is read token by token: comments,
+line breaks and spacing between the tokens are not part of it, except one space where two words
+meet (`operator new`). Import specifiers are read the same way.
 
 A decorated definition starts at its first decorator, and every definition ends at its last
 character that is not whitespace, though its node may end with a line break, as a C `#define`

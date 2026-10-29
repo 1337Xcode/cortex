@@ -5,6 +5,7 @@ use cortex_core::Identifier;
 use cortex_store::{RefRecord, SymbolRecord};
 
 use crate::lines::line_number;
+use crate::name_text::name_text;
 use crate::tags::{Role, Tag};
 
 /// The references among `tags`, which are in the order their names appear, as records, each tied
@@ -32,11 +33,8 @@ pub(crate) fn build_references(
             next += 1;
         }
         leave(&mut around, symbols, start, end);
-        let Some(dst_name) = tag
-            .name
-            .utf8_text(source)
-            .ok()
-            .and_then(|text| Identifier::new(text).ok())
+        let Some(dst_name) =
+            name_text(tag.name, source).and_then(|text| Identifier::new(&text).ok())
         else {
             continue;
         };
