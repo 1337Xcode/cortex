@@ -23,7 +23,7 @@
 | Path | Holds |
 | --- | --- |
 | `crates/cortex-cli` | The `cortex` binary: commands and the entry points agents call |
-| `crates/cortex-core` | Shared types: repository paths, ids, hashes, languages and stored names |
+| `crates/cortex-core` | Shared types: repository paths, ids, hashes, languages, stored names, record kinds and settings |
 | `xtask` | The repository checks behind `cargo xtask verify` |
 | `tests` | Cross-crate tests and the recorded agent hook payloads they read, in `fixtures/<agent>/<version>/` |
 

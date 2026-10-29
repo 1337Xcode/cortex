@@ -18,6 +18,10 @@ pub const DEFAULT_MAX_FILE_BYTES: u64 = 1_048_576;
 /// The default for `daemon.idle_shutdown_minutes`: half an hour without any work.
 pub const DEFAULT_IDLE_SHUTDOWN_MINUTES: u64 = 30;
 
+/// The default for `store.mmap_bytes`: 256 mebibytes. SQLite reads the mapped part of the
+/// database straight from the operating system's file cache instead of copying it into its own.
+pub const DEFAULT_MMAP_BYTES: u64 = 268_435_456;
+
 /// The scale mode setting: chosen from the repository's size, or pinned by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModeSetting {
@@ -41,6 +45,9 @@ pub struct Config {
     /// `daemon.idle_shutdown_minutes`: the daemon stops after this many minutes without work.
     /// Default [`DEFAULT_IDLE_SHUTDOWN_MINUTES`].
     pub idle_shutdown_minutes: u64,
+    /// `store.mmap_bytes`: how much of the database SQLite maps into memory; 0 turns mapping off.
+    /// Default [`DEFAULT_MMAP_BYTES`].
+    pub mmap_bytes: u64,
 }
 
 impl Default for Config {
@@ -51,6 +58,7 @@ impl Default for Config {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             extra_ignores: Vec::new(),
             idle_shutdown_minutes: DEFAULT_IDLE_SHUTDOWN_MINUTES,
+            mmap_bytes: DEFAULT_MMAP_BYTES,
         }
     }
 }
@@ -167,6 +175,10 @@ impl Config {
                 self.idle_shutdown_minutes =
                     positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
             }
+            "store.mmap_bytes" => {
+                self.mmap_bytes =
+                    whole_number(value).ok_or_else(|| refuse("a whole number, 0 or more"))?;
+            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -184,10 +196,14 @@ fn mode_setting(word: &str) -> Option<ModeSetting> {
 
 /// The value as a whole number above zero.
 fn positive_integer(value: &toml::Value) -> Option<u64> {
+    whole_number(value).filter(|number| *number > 0)
+}
+
+/// The value as a whole number, zero included.
+fn whole_number(value: &toml::Value) -> Option<u64> {
     value
         .as_integer()
         .and_then(|number| u64::try_from(number).ok())
-        .filter(|number| *number > 0)
 }
 
 /// The value as a list of strings.
@@ -219,6 +235,7 @@ mod tests {
                 max_file_bytes: 1_048_576,
                 extra_ignores: Vec::new(),
                 idle_shutdown_minutes: 30,
+                mmap_bytes: 256 * 1024 * 1024,
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -234,7 +251,7 @@ mod tests {
         );
         let repository = layer(
             "repository",
-            "[index]\nmax_file_bytes = 5000\n[daemon]\nidle_shutdown_minutes = 5\n",
+            "[index]\nmax_file_bytes = 5000\n[daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -244,6 +261,7 @@ mod tests {
                 max_file_bytes: 5000,
                 extra_ignores: vec!["*.log".to_owned()],
                 idle_shutdown_minutes: 5,
+                mmap_bytes: 0,
             }
         );
         Ok(())
@@ -303,6 +321,16 @@ mod tests {
                 "daemon.idle_shutdown_minutes = 0",
                 "daemon.idle_shutdown_minutes",
                 "a whole number above 0",
+            ),
+            (
+                "store.mmap_bytes = -1",
+                "store.mmap_bytes",
+                "a whole number, 0 or more",
+            ),
+            (
+                "store.mmap_bytes = \"256MB\"",
+                "store.mmap_bytes",
+                "a whole number, 0 or more",
             ),
         ];
         for (text, key, expected) in cases {
