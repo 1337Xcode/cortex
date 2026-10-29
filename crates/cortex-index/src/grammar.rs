@@ -21,22 +21,25 @@ use tree_sitter::{CaptureQuantifier, Query, QueryPredicate, QueryPredicateArg};
 
 use crate::languages::{self, TagsSpec};
 
-/// What each `@definition.<kind>` capture records.
+/// What each `@definition.<kind>` capture records. A macro is used as a function is.
 const DEFINITION_KINDS: &[(&str, SymbolKind)] = &[
     ("class", SymbolKind::Class),
     ("constant", SymbolKind::Constant),
     ("function", SymbolKind::Function),
     ("interface", SymbolKind::Interface),
+    ("macro", SymbolKind::Function),
     ("method", SymbolKind::Method),
     ("module", SymbolKind::Module),
+    ("test", SymbolKind::Test),
     ("type", SymbolKind::Type),
 ];
 
 /// What each `@reference.<kind>` capture records. A use of a class, as in `new Order()`, calls
-/// its constructor.
+/// its constructor, and an implementation of an interface or trait inherits from it.
 const REFERENCE_KINDS: &[(&str, RefKind)] = &[
     ("call", RefKind::Call),
     ("class", RefKind::Call),
+    ("implementation", RefKind::Inherit),
     ("inherit", RefKind::Inherit),
     ("type", RefKind::TypeRef),
 ];

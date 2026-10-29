@@ -158,6 +158,12 @@ fn go() -> TestResult {
     check_golden("go", "sample.go", Language::Go, "\n")
 }
 
+/// Rust: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn rust() -> TestResult {
+    check_golden("rust", "sample.rs", Language::Rust, "\n")
+}
+
 /// The same Python with Windows line breaks: the same lines, spans that end at the same tokens,
 /// the same hashes.
 #[test]
@@ -293,6 +299,49 @@ fn go_tests_are_marked_only_in_test_files() -> TestResult {
         [Test, Test, Test, Test, Function]
     );
     assert_eq!(kinds("shop/pay.go")?, [Function; 5]);
+    Ok(())
+}
+
+/// In Rust a test is a function with a test attribute, `#[test]` or a crate's such as
+/// `#[tokio::test]`, other attributes between allowed, wherever the file is.
+#[test]
+fn rust_tests_are_marked_by_attribute() -> TestResult {
+    use SymbolKind::{Function, Test};
+    let source = "#[test]\nfn a() {}\n#[tokio::test]\nasync fn b() {}\n#[test]\n#[ignore]\nfn c() {}\n\
+                  #[inline]\nfn d() {}\n#[tracing::instrument]\nfn e() {}\n";
+    let extraction = extract("src/orders.rs", Language::Rust, source)?;
+    let kinds: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.name.as_str(), symbol.kind))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("a", Test),
+            ("b", Test),
+            ("c", Test),
+            ("d", Function),
+            ("e", Function)
+        ]
+    );
+    Ok(())
+}
+
+/// Methods and constants in a Rust `impl` are named with its type, plain, generic or behind a
+/// path, for a trait's impl as for an inherent one.
+#[test]
+fn rust_impls_name_their_items() -> TestResult {
+    let source = "impl<T> Stack<T> {\n    const N: u32 = 1;\n    fn push(&mut self) {}\n}\n\
+                  impl fmt::Display for Wrapper {\n    fn fmt(&self) {}\n}\n\
+                  impl geo::Point {\n    fn x(&self) {}\n}\n";
+    let extraction = extract("src/shapes.rs", Language::Rust, source)?;
+    let names: Vec<&str> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| symbol.qual_name.as_str())
+        .collect();
+    assert_eq!(names, ["Stack.N", "Stack.push", "Wrapper.fmt", "Point.x"]);
     Ok(())
 }
 

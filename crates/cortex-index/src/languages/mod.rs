@@ -128,6 +128,8 @@ mod tests {
             (Language::Go, "shop/pay_test.go", true),
             (Language::Go, "shop/pay.go", false),
             (Language::Go, "shop/test_pay.go", false),
+            (Language::Rust, "tests/orders.rs", true),
+            (Language::Rust, "src/orders_test.rs", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

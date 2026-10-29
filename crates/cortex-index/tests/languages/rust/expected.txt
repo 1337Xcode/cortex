@@ -1,0 +1,60 @@
+# What sample.rs defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text up to its body, with each run of whitespace as one space: a
+# constant's body is its value, a type alias's the type, and a macro and a signature have none.
+# Methods and constants in an `impl` are named with its type and sit in no definition. Not read:
+# the comment, the attributes, `HashMap` and `logging` as uses, built-in types (`usize`, `&str`,
+# `u64`, `u32`), `Self`, the variants `Open` and `Paid`, what a macro's arguments hold
+# (`self.price()` inside `format!`), and `Item::cost` and `add`, which are passed, not called.
+symbol constant MAX_ITEMS 8-8 - | pub const MAX_ITEMS: usize =
+symbol constant GREETING 9-9 - | static GREETING: &str =
+symbol type Id 11-11 - | pub type Id =
+symbol class Order 14-17 - | pub struct Order
+symbol class Status 19-22 - | pub enum Status
+symbol interface Priced 24-29 - | pub trait Priced
+symbol method Priced.price 25-25 Priced | fn price(&self) -> Money;
+symbol method Priced.label 26-28 Priced | fn label(&self) -> String
+symbol constant Order.LIMIT 32-32 - | pub const LIMIT: u32 =
+symbol method Order.new 34-37 - | pub fn new(items: Vec<Item>) -> Self
+symbol method Order.price 41-43 - | fn price(&self) -> Money
+symbol function money 46-48 - | macro_rules! money { ($v:expr) => { Money::from($v) }; }
+symbol function sum 50-52 - | pub fn sum(items: &[Item]) -> Money
+symbol module tests 55-67 - | mod tests
+symbol function tests.helper 58-60 tests | fn helper() -> Order
+symbol test tests.rejects_empty 64-66 tests | fn rejects_empty()
+ref type_ref Vec 15 Order
+ref type_ref Item 15 Order
+ref type_ref Money 16 Order
+ref type_ref Receipt 21 Status
+ref type_ref Money 25 Priced.price
+ref type_ref String 26 Priced.label
+ref call format 27 Priced.label
+ref type_ref Order 31 -
+ref type_ref Vec 34 Order.new
+ref type_ref Item 34 Order.new
+ref call sum 35 Order.new
+ref type_ref Order 36 Order.new
+ref inherit Priced 40 -
+ref type_ref Order 40 -
+ref type_ref Money 41 Order.price
+ref call clone 42 Order.price
+ref type_ref Item 50 sum
+ref type_ref Money 50 sum
+ref call iter 51 sum
+ref call map 51 sum
+ref call fold 51 sum
+ref call money 51 sum
+ref type_ref Order 58 tests.helper
+ref call new 59 tests.helper
+ref call new 59 tests.helper
+ref call helper 65 tests.rejects_empty
+ref call price 65 tests.rejects_empty
+import std::collections name:HashMap - 2
+import std::io module - 3
+import std::io name:Read R 3
+import crate::models all - 4
+import serde module - 5
+import log module logging 6
+import super all - 56

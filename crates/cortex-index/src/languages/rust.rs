@@ -1,15 +1,37 @@
-//! Rust: how a file is recognised as this language.
+//! Rust: how a file is recognised as this language, and how it is parsed.
 
 use cortex_core::Language;
 
-use super::Spec;
+use super::{Spec, TagsSpec};
 
-/// How Rust files are recognised.
+/// How Rust files are recognised and parsed.
 pub const SPEC: Spec = Spec {
     language: Language::Rust,
     extensions: &["rs"],
     file_names: &[],
     interpreters: &[],
     linguist_names: &["rust", "rs"],
-    tags: None,
+    tags: Some(TagsSpec {
+        grammar,
+        // Cortex's patterns first: they mark tests, name methods by their type and read type
+        // aliases, module functions and inherent impls as such. The uses of type names come
+        // last, after every definition.
+        queries: &[
+            include_str!("../../queries/rust-tags.scm"),
+            tree_sitter_rust::TAGS_QUERY,
+            include_str!("../../queries/rust-type-uses.scm"),
+        ],
+        imports: include_str!("../../queries/rust-imports.scm"),
+        // Items with braces have a body, a constant or static its value, and a type alias the
+        // type it stands for.
+        body_paths: &[&["body"], &["value"], &["type"]],
+        // Every file under `tests/` is a test file; inside any file, `#[test]` marks a test.
+        test_files: &[],
+        test_functions: &[],
+    }),
 };
+
+/// The Rust grammar.
+fn grammar() -> tree_sitter::Language {
+    tree_sitter_rust::LANGUAGE.into()
+}
