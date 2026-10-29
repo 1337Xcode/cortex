@@ -1,7 +1,7 @@
 # cortex-core
 
 The types every other Cortex crate shares: repository paths, the repository id, content hashes,
-the languages Cortex parses, and the names the index may store.
+the languages Cortex parses, the names the index may store, scale modes and settings.
 
 ## What it must never do
 
@@ -19,6 +19,8 @@ the languages Cortex parses, and the names the index may store.
 | `ContentHash`, `ShortHash` | BLAKE3 hashes of 32 bytes (file contents) and 16 bytes (symbols, anchors) |
 | `Language`, `Tier` | The 21 languages and formats with their stored names; Tier A gets symbols, Tier B keys or headings |
 | `Identifier` | A stored name: one line, at most 256 bytes, no control characters |
+| `ScaleMode` | `tiny`, `small`, `medium` or `huge`: how fully a repository of a given size is served |
+| `Config`, `load_config` | The settings in effect: defaults, then `~/.cortex/config.toml`, then `.cortex/config.toml`; unknown keys warn, unusable values are errors naming the file and key |
 
 ## Tests
 

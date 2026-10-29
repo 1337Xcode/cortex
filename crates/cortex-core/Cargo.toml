@@ -1,6 +1,6 @@
 [package]
 name = "cortex-core"
-description = "Shared types for Cortex: repository paths, ids, hashes, languages and stored names."
+description = "Shared types for Cortex: repository paths, ids, hashes, languages, stored names and settings."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 blake3.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

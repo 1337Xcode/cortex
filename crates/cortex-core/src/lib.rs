@@ -2,19 +2,27 @@
 //!
 //! The types here carry the rules that hold everywhere: a [`RepoPath`] is always relative to the
 //! repository root with `/` separators, hashes are BLAKE3 at the sizes storage uses, a
-//! [`Language`] has one stable name, and an [`Identifier`] is the only text besides paths that the
-//! index stores. This crate does no I/O and depends on nothing that does.
+//! [`Language`] has one stable name, an [`Identifier`] is the only text besides paths that the
+//! index stores, and [`Config`] holds every setting with its default. This crate does no I/O and
+//! depends on nothing that does.
 
 #![warn(clippy::pedantic)]
 
+mod config;
 mod hash;
 mod identifier;
 mod language;
 mod path;
 mod repo_id;
+mod scale_mode;
 
+pub use config::{
+    Config, ConfigError, ConfigLayer, DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES,
+    LoadedConfig, ModeSetting, load as load_config,
+};
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
 pub use language::{Language, Tier};
 pub use path::{PathError, RepoPath};
 pub use repo_id::RepoId;
+pub use scale_mode::ScaleMode;
