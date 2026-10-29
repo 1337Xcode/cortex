@@ -1,7 +1,8 @@
 # Codex CLI 0.165.0 hook payloads
 
 Real payloads Codex CLI 0.165.0 sent to command hooks, captured on 2026-10-29 on Windows 11 from
-two headless `codex exec` sessions (model `gpt-6-luna`) in a small Python repository. User
+two headless `codex exec` sessions (model `gpt-6-luna`) in a small Python repository, plus one
+`codex exec resume` of the first session. User
 configuration was ignored and each hook was passed on the command line (`-c hooks.<Event>=[...]`);
 every hook wrote its stdin to a file unchanged. The second session set
 `model_auto_compact_token_limit` low, so reading a long file triggered an automatic compaction in
@@ -11,7 +12,7 @@ One file per event, and per tool or outcome for tool events:
 
 | File | Event |
 | --- | --- |
-| `session-start-{startup,compact}.json` | SessionStart with each `source` seen |
+| `session-start-{startup,resume,compact}.json` | SessionStart with each `source` seen |
 | `user-prompt-submit.json` | UserPromptSubmit |
 | `pre-tool-use-bash-*.json`, `post-tool-use-bash-*.json` | Shell commands: a search (`git grep`), a read (`Get-Content`), the test command failing and then passing, and a command that exited with status 3 |
 | `*-apply-patch*.json` | File edits through `apply_patch`: an updated file and an added file |
@@ -29,6 +30,8 @@ What the payloads show:
   empty. Command output keeps Windows line endings inside the JSON strings; the files use LF.
 - `apply_patch` puts the whole patch in `tool_input.command`. Its hunks (`@@`) carry context lines,
   not line numbers. Its response is text that starts with `Exit code: 0`.
+- On resume the session keeps its `session_id`, and `transcript_path` carries the Windows verbatim
+  prefix (`\\?\C:\Users\dev\...`).
 - Subagent tools carry their namespace with no separator: `collaborationspawn_agent`,
   `collaborationwait_agent`.
 - A subagent's events keep the parent's `session_id`. The subagent's `agent_id` also names its own

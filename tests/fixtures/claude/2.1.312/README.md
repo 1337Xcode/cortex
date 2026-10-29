@@ -13,6 +13,10 @@ One file per event, and per tool for tool events:
 | `pre-tool-use-<tool>.json`, `post-tool-use-<tool>.json` | Glob, Grep, Read, Bash, Edit, Write, Agent |
 | `*-grep-subagent.json` | A tool call made inside a subagent: carries `agent_id` and `agent_type` |
 | `post-tool-use-failure-bash.json` | A Bash command that exited non-zero (`error` starts with `Exit code 3`) |
+| `post-tool-use-bash-test-passing.json` | A test command that passed, not piped (`tool_response` carries no exit code; `duration_ms` is present) |
+| `post-tool-use-failure-{bash-test,powershell}.json` | A failing test command through Bash and through PowerShell (`error` starts with `Exit code 1`) |
+| `*-read-range.json` | Read with `offset` and `limit` |
+| `*-powershell.json` | The PowerShell tool, present on Windows beside Bash |
 | `pre-compact-manual.json`, `post-compact-manual.json` | `/compact` |
 | `subagent-start.json`, `subagent-stop.json` | The Explore subagent |
 | `subagent-stop-internal.json` | Claude Code's own compaction agent, with an empty `agent_type` |

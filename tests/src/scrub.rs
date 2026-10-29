@@ -7,8 +7,9 @@
 /// Folder prefixes a scrubbed `cwd` may start with.
 pub const SCRUBBED_REPO_ROOTS: &[&str] = &["C:\\repo", "/repo"];
 
-/// Folder prefixes a scrubbed transcript path may start with.
-pub const SCRUBBED_HOMES: &[&str] = &["C:\\Users\\dev\\", "/home/dev/"];
+/// Folder prefixes a scrubbed transcript path may start with, including the Windows verbatim form
+/// (`\\?\`) Codex writes when it resumes a session.
+pub const SCRUBBED_HOMES: &[&str] = &["C:\\Users\\dev\\", "\\\\?\\C:\\Users\\dev\\", "/home/dev/"];
 
 /// The only user name a scrubbed home folder may show.
 pub const SCRUBBED_USER: &str = "dev";
@@ -302,6 +303,10 @@ mod tests {
             "tool_response": {"agentId": "fixtureagent0001", "agent_type": ""}
         });
         assert_eq!(payload_problems(&clean), Vec::<String>::new());
+        let resumed = serde_json::json!({
+            "transcript_path": "\\\\?\\C:\\Users\\dev\\.codex\\x.jsonl"
+        });
+        assert_eq!(payload_problems(&resumed), Vec::<String>::new());
         let dirty = [
             serde_json::json!({"cwd": "C:\\work\\repo"}),
             serde_json::json!({"transcript_path": "D:\\logs\\x.jsonl"}),
