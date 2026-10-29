@@ -1,6 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/cortex-cli", "crates/cortex-core", "crates/cortex-store", "tests", "xtask"]
+members = [
+    "crates/cortex-cli",
+    "crates/cortex-core",
+    "crates/cortex-index",
+    "crates/cortex-store",
+    "tests",
+    "xtask",
+]
 
 [workspace.package]
 version = "2.0.0-dev"
@@ -14,6 +21,8 @@ publish = false
 anyhow = "1.0.104"
 blake3 = "1.8.7"
 clap = { version = "4.6.7", features = ["derive"] }
+globset = "0.4.21"
+ignore = "0.4.34"
 proc-macro2 = { version = "1.0.107", default-features = false, features = ["span-locations"] }
 # Default features off: they add a WebAssembly build of SQLite for wasm32 targets, which Cortex
 # does not build for.
