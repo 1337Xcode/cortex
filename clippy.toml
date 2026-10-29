@@ -1,0 +1,3 @@
+# Tests may index directly: a panic there is a failing test, which is what an out-of-range index
+# should be. Product code uses `get` and handles the miss.
+allow-indexing-slicing-in-tests = true
