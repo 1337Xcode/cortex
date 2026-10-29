@@ -1,0 +1,42 @@
+# Rust build output
+/target/
+**/*.rs.bk
+*.profraw
+*.profdata
+
+# Pending insta snapshots; accepted snapshots are committed
+*.snap.new
+*.pending-snap
+
+# cargo-fuzz working data
+/fuzz/artifacts/
+/fuzz/corpus/
+/fuzz/coverage/
+/fuzz/target/
+
+# Map UI build and test output
+node_modules/
+/ui/dist/
+/ui/coverage/
+/ui/playwright-report/
+/ui/test-results/
+*.tsbuildinfo
+
+# Cortex's own data when it runs on this repository
+/.cortex/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
