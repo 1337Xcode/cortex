@@ -1,0 +1,52 @@
+# What sample.js defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text up to its body, with each run of whitespace as one space; a
+# declaration holding a function has the function's body, one holding a value has the value.
+# Not read: the comments, `let counter` (only constants), the constructor and `super()` (the
+# grammar's query leaves constructors out), `require` and `import()` as calls, the `div` element,
+# the closing `</Widget>`, and the name `fs` as the alias of its `require`. `double` holds a
+# function, so it is a function and not a constant.
+symbol constant fs 8-8 - | fs =
+symbol function double 9-9 - | double = (n) =>
+symbol constant LIMIT 10-10 - | LIMIT =
+symbol constant NAMES 11-11 - | NAMES =
+symbol class Order 14-29 - | class Order extends Base
+symbol method Order.total 15-15 Order | total = () =>
+symbol method Order.from 22-24 Order | static from(json)
+symbol method Order.size 26-28 Order | get size()
+symbol class Rush 31-31 - | class Rush extends models.Order
+symbol function ids 33-35 - | function* ids()
+symbol function ship 37-40 - | function ship(order)
+symbol function ship.label 38-38 ship | label = (o) =>
+symbol function App 42-45 - | function App()
+symbol function legacy 47-49 - | legacy = function ()
+symbol function run 51-51 - | module.exports.run = function ()
+symbol constant handlers 53-56 - | handlers =
+symbol function handlers.click 54-54 handlers | click: () =>
+symbol method handlers.submit 55-55 handlers | submit()
+ref inherit Base 14 Order
+ref call Order 23 Order.from
+ref call parse 23 Order.from
+ref inherit Order 31 Rush
+ref call format 38 ship.label
+ref call send 39 ship
+ref call label 39 ship
+ref call useState 43 App
+ref call Widget 44 App
+ref call memo 44 App
+ref call ship 54 handlers.click
+ref call Order 54 handlers.click
+import react default React 2
+import react name:useState - 2
+import react name:useMemo memo 2
+import react name:default Base 2
+import ./api all api 3
+import ./styles.css module - 4
+import ./format name:format - 5
+import ./format name:parse parseOrder 5
+import ./types all - 6
+import ./helpers all helpers 7
+import fs module - 8
+import ./lazy module - 48

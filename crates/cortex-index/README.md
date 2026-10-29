@@ -27,7 +27,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Discovery`, `Problem` | The files found, the number of links and special files passed over, and what could not be read or used: unreadable files, folders and folder entries, names that cannot be stored, folders past the depth limit, rules files that were skipped, and rules lines that could not be used (the first 20 of a file by number, the rest counted) |
 | `Grammars` | Every language's grammar, tags query and imports query, compiled and checked once; a query that uses anything Cortex does not read is refused |
 | `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
-| `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition; and the modules it imports, with what it takes and the name it binds |
+| `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition; and the modules it imports, with what it takes (the module, one name, every name or the default export) and the name it binds |
 
 ## What a file's flags mean
 
@@ -53,7 +53,9 @@ Each file is parsed once with tree-sitter. Its tags query, the grammar's own fol
 Cortex's additions in `queries/`, gives definitions and references in tree-sitter's tags format:
 each pattern captures one `@name` and one `@definition.<kind>` or `@reference.<kind>`. Where two
 patterns find the same name, the earlier one wins, and a name holding a syntax error is skipped.
-A second query per language finds imports.
+Comments a pattern captures as `@doc` are ignored, since Cortex keeps no comments, and a capture
+named with a leading `_` only serves a text predicate such as `#eq?`. A second query per
+language finds imports.
 
 Definitions nest by their spans. A function directly in a class is a method; in a test file (one
 in a `test`, `tests` or `__tests__` folder, or named as its language names test files) a

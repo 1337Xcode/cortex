@@ -87,6 +87,7 @@ fn tag_of<'tree>(
             TagCapture::Name => name = Some(capture.node),
             TagCapture::Definition(kind) => tagged = Some((capture.node, Role::Definition(*kind))),
             TagCapture::Reference(kind) => tagged = Some((capture.node, Role::Reference(*kind))),
+            TagCapture::Doc | TagCapture::Helper => {}
         }
     }
     let (node, role) = tagged?;

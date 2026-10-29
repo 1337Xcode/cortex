@@ -69,6 +69,7 @@ fn describe(extraction: &Extraction) -> Vec<String> {
             Imported::Module => "module".to_owned(),
             Imported::Name(name) => format!("name:{}", name.as_str()),
             Imported::All => "all".to_owned(),
+            Imported::Default => "default".to_owned(),
         };
         let alias = import.alias.as_ref().map_or("-", |alias| alias.as_str());
         format!(
@@ -131,6 +132,12 @@ fn check_golden(folder: &str, sample: &str, language: Language, line_end: &str) 
 #[test]
 fn python() -> TestResult {
     check_golden("python", "sample.py", Language::Python, "\n")
+}
+
+/// JavaScript: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn javascript() -> TestResult {
+    check_golden("javascript", "sample.js", Language::JavaScript, "\n")
 }
 
 /// The same Python with Windows line breaks: the same lines, spans that end at the same tokens,

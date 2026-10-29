@@ -2,16 +2,19 @@
 //! query, with the meaning of every capture worked out and checked once, before any file is read.
 //!
 //! A tags query follows tree-sitter's tags format: every pattern captures one `@name` and one
-//! `@definition.<kind>` or `@reference.<kind>`. An imports query captures the statement as
-//! `@import` and the module as written as `@import.module`, and may capture the name taken from it
-//! (`@import.name`), the name it is bound to instead (`@import.alias`) and the mark that every
-//! name is taken (`@import.all`). A query that uses any other capture, or a predicate Cortex does
-//! not evaluate, is refused: a mistake in a query fails the tests instead of being read some other
-//! way.
+//! `@definition.<kind>` or `@reference.<kind>`, and may capture the comments before a definition
+//! as `@doc`, shaped by `#strip!` and `#select-adjacent!`; Cortex keeps no comments, so those
+//! change nothing. An imports query captures the statement as `@import` and the module as written
+//! as `@import.module`, and may capture the name taken from it (`@import.name`), the name it is
+//! bound to instead (`@import.alias`), and the mark that every name (`@import.all`) or the default
+//! export (`@import.default`) is taken. In either query a capture named with a leading `_` only
+//! serves a text predicate such as `#eq?`. A query that uses any other capture, or a predicate
+//! Cortex does not evaluate, is refused: a mistake in a query fails the tests instead of being
+//! read some other way.
 
 use cortex_core::{Language, RefKind, SymbolKind};
 use thiserror::Error;
-use tree_sitter::{CaptureQuantifier, Query};
+use tree_sitter::{CaptureQuantifier, Query, QueryPredicate, QueryPredicateArg};
 
 use crate::languages::{self, TagsSpec};
 
@@ -20,12 +23,15 @@ const DEFINITION_KINDS: &[(&str, SymbolKind)] = &[
     ("class", SymbolKind::Class),
     ("constant", SymbolKind::Constant),
     ("function", SymbolKind::Function),
+    ("method", SymbolKind::Method),
     ("type", SymbolKind::Type),
 ];
 
-/// What each `@reference.<kind>` capture records.
+/// What each `@reference.<kind>` capture records. A use of a class, as in `new Order()`, calls
+/// its constructor.
 const REFERENCE_KINDS: &[(&str, RefKind)] = &[
     ("call", RefKind::Call),
+    ("class", RefKind::Call),
     ("inherit", RefKind::Inherit),
     ("type", RefKind::TypeRef),
 ];
@@ -45,6 +51,10 @@ pub(crate) enum TagCapture {
     Definition(SymbolKind),
     /// A use of a name, of this kind.
     Reference(RefKind),
+    /// The comments before a definition, which Cortex does not keep.
+    Doc,
+    /// A node only a text predicate looks at.
+    Helper,
 }
 
 /// What a capture in an imports query marks.
@@ -60,6 +70,10 @@ pub(crate) enum ImportCapture {
     Alias,
     /// The mark that every public name of the module is taken.
     All,
+    /// The mark that the module's default export is taken.
+    Default,
+    /// A node only a text predicate looks at.
+    Helper,
 }
 
 /// Why a language's parsing rules cannot be used. Each is a mistake in that language's file.
@@ -170,12 +184,14 @@ impl Grammar {
         let grammar = (spec.grammar)();
         let tags = compile_query(language, TAGS, &grammar, &spec.queries.join("\n"))?;
         let tag_captures = captures_of(language, TAGS, &tags, tag_capture)?;
+        check_predicates(language, TAGS, &tags, &tag_captures, is_doc_predicate)?;
         for pattern in 0..tags.pattern_count() {
             check_tag_pattern(&tags, pattern, &tag_captures)
                 .map_err(|problem| pattern_error(language, TAGS, pattern, problem))?;
         }
         let imports = compile_query(language, IMPORTS, &grammar, spec.imports)?;
         let import_captures = captures_of(language, IMPORTS, &imports, import_capture)?;
+        check_predicates(language, IMPORTS, &imports, &import_captures, |_, _| false)?;
         for pattern in 0..imports.pattern_count() {
             check_import_pattern(&imports, pattern, &import_captures)
                 .map_err(|problem| pattern_error(language, IMPORTS, pattern, problem))?;
@@ -192,22 +208,36 @@ impl Grammar {
     }
 }
 
-/// `source` compiled against `grammar`, refused if it uses a predicate Cortex does not evaluate.
-/// The text predicates (`#eq?`, `#match?`, `#any-of?` and their negations) are fine: tree-sitter
-/// applies them while matching.
+/// `source` compiled against `grammar`.
 fn compile_query(
     language: Language,
     query: &'static str,
     grammar: &tree_sitter::Language,
     source: &str,
 ) -> Result<Query, GrammarError> {
-    let compiled = Query::new(grammar, source).map_err(|error| GrammarError::Query {
+    Query::new(grammar, source).map_err(|error| GrammarError::Query {
         language,
         query,
         message: error.to_string(),
-    })?;
+    })
+}
+
+/// Refuses a predicate in `compiled` that Cortex does not evaluate. The text predicates (`#eq?`,
+/// `#match?`, `#any-of?` and their negations) are fine: tree-sitter applies them while matching.
+/// Of the others, only those `allows` accepts, given the meanings of the captures, are kept.
+fn check_predicates<C>(
+    language: Language,
+    query: &'static str,
+    compiled: &Query,
+    captures: &[C],
+    allows: fn(&QueryPredicate, &[C]) -> bool,
+) -> Result<(), GrammarError> {
     for pattern in 0..compiled.pattern_count() {
-        let operator = if let Some(predicate) = compiled.general_predicates(pattern).first() {
+        let refused = compiled
+            .general_predicates(pattern)
+            .iter()
+            .find(|predicate| !allows(predicate, captures));
+        let operator = if let Some(predicate) = refused {
             Some(predicate.operator.to_string())
         } else if let Some((_, is_positive)) = compiled.property_predicates(pattern).first() {
             Some(if *is_positive { "is?" } else { "is-not?" }.to_owned())
@@ -224,7 +254,20 @@ fn compile_query(
             });
         }
     }
-    Ok(compiled)
+    Ok(())
+}
+
+/// Whether a tags query may use `predicate`: only `#strip!` and `#select-adjacent!` on `@doc`,
+/// which shape a definition's comments, and so change nothing Cortex keeps.
+fn is_doc_predicate(predicate: &QueryPredicate, captures: &[TagCapture]) -> bool {
+    let first = match predicate.args.first() {
+        Some(QueryPredicateArg::Capture(index)) => usize::try_from(*index)
+            .ok()
+            .and_then(|index| captures.get(index)),
+        _ => None,
+    };
+    matches!(predicate.operator.as_ref(), "strip!" | "select-adjacent!")
+        && first == Some(&TagCapture::Doc)
 }
 
 /// What each of `compiled`'s captures marks, by capture index, as `meaning` reads its name.
@@ -249,8 +292,11 @@ fn captures_of<C>(
 
 /// What the tags capture called `name` marks, if Cortex reads it.
 fn tag_capture(name: &str) -> Option<TagCapture> {
-    if name == "name" {
-        return Some(TagCapture::Name);
+    match name {
+        "name" => return Some(TagCapture::Name),
+        "doc" => return Some(TagCapture::Doc),
+        _ if is_helper(name) => return Some(TagCapture::Helper),
+        _ => {}
     }
     if let Some(kind) = name.strip_prefix("definition.") {
         return DEFINITION_KINDS
@@ -273,8 +319,15 @@ fn import_capture(name: &str) -> Option<ImportCapture> {
         "import.name" => Some(ImportCapture::Name),
         "import.alias" => Some(ImportCapture::Alias),
         "import.all" => Some(ImportCapture::All),
+        "import.default" => Some(ImportCapture::Default),
+        _ if is_helper(name) => Some(ImportCapture::Helper),
         _ => None,
     }
+}
+
+/// Whether the capture called `name` only serves a text predicate: its name starts with `_`.
+fn is_helper(name: &str) -> bool {
+    name.starts_with('_')
 }
 
 /// How often a pattern uses the captures of one sort.
@@ -356,12 +409,15 @@ fn check_import_pattern(
         ImportCapture::Name,
         ImportCapture::Alias,
         ImportCapture::All,
+        ImportCapture::Default,
     ];
     if optional
         .into_iter()
         .any(|sort| use_of_sort(sort) == Use::Many)
     {
-        return Err("may capture @import.name, @import.alias and @import.all once each at most");
+        return Err(
+            "may capture @import.name, @import.alias, @import.all and @import.default once each at most",
+        );
     }
     Ok(())
 }
@@ -410,6 +466,16 @@ mod tests {
     #[test]
     fn capture_names_have_one_meaning() {
         assert_eq!(tag_capture("name"), Some(TagCapture::Name));
+        assert_eq!(tag_capture("doc"), Some(TagCapture::Doc));
+        assert_eq!(tag_capture("_kind"), Some(TagCapture::Helper));
+        assert_eq!(
+            tag_capture("definition.method"),
+            Some(TagCapture::Definition(SymbolKind::Method))
+        );
+        assert_eq!(
+            tag_capture("reference.class"),
+            Some(TagCapture::Reference(RefKind::Call))
+        );
         assert_eq!(
             tag_capture("definition.class"),
             Some(TagCapture::Definition(SymbolKind::Class))
@@ -421,14 +487,20 @@ mod tests {
         for unknown in [
             "definition.widget",
             "reference.",
-            "doc",
+            "docs",
             "names",
             "local.scope",
         ] {
             assert_eq!(tag_capture(unknown), None, "{unknown}");
         }
         assert_eq!(import_capture("import.alias"), Some(ImportCapture::Alias));
+        assert_eq!(
+            import_capture("import.default"),
+            Some(ImportCapture::Default)
+        );
+        assert_eq!(import_capture("_require"), Some(ImportCapture::Helper));
         assert_eq!(import_capture("import.names"), None);
+        assert_eq!(import_capture("doc"), None);
     }
 
     /// A query that does not compile is refused with tree-sitter's message.
@@ -562,12 +634,14 @@ mod tests {
         assert_eq!(
             error_of(&MANY_NAMES),
             Some(problem(
-                "may capture @import.name, @import.alias and @import.all once each at most"
+                "may capture @import.name, @import.alias, @import.all and @import.default once each at most"
             ))
         );
     }
 
-    /// Predicates Cortex does not evaluate are refused by name; text predicates are accepted.
+    /// Predicates Cortex does not evaluate are refused by name; text predicates are accepted, and
+    /// so are `#strip!` and `#select-adjacent!` on `@doc` in a tags query, which only shape
+    /// comments.
     #[test]
     fn unevaluated_predicates_are_refused() {
         static IS_NOT: TagsSpec = spec(
@@ -586,6 +660,23 @@ mod tests {
             &["((identifier) @name @reference.call (#not-any-of? @name \"print\" \"len\"))"],
             IMPORTS_QUERY,
         );
+        static DOC: TagsSpec = spec(
+            &[
+                "((comment)* @doc . (function_definition name: (identifier) @name) @definition.function \
+               (#strip! @doc \"^#\") (#select-adjacent! @doc @definition.function))",
+            ],
+            IMPORTS_QUERY,
+        );
+        static HELPER: TagsSpec = spec(
+            &["((call function: (identifier) @_callee) @reference.call \
+               (#strip! @_callee \"x\"))"],
+            IMPORTS_QUERY,
+        );
+        static IMPORT_STRIP: TagsSpec = spec(
+            &["(function_definition name: (identifier) @name) @definition.function"],
+            "((import_statement name: (dotted_name) @import.module) @import \
+             (#strip! @import.module \"x\"))",
+        );
         let refused = |operator: &str| GrammarError::Predicate {
             language: Language::Python,
             query: TAGS,
@@ -595,5 +686,15 @@ mod tests {
         assert_eq!(error_of(&SET), Some(refused("set!")));
         assert_eq!(error_of(&STRIP), Some(refused("strip!")));
         assert_eq!(error_of(&TEXT), None);
+        assert_eq!(error_of(&DOC), None);
+        assert_eq!(error_of(&HELPER), Some(refused("strip!")));
+        assert_eq!(
+            error_of(&IMPORT_STRIP),
+            Some(GrammarError::Predicate {
+                language: Language::Python,
+                query: IMPORTS,
+                operator: "strip!".to_owned(),
+            })
+        );
     }
 }

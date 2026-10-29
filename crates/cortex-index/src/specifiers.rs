@@ -17,6 +17,8 @@ pub enum Imported {
     Name(Identifier),
     /// Every public name of the module, as `from os import *` does.
     All,
+    /// The module's default export, as JavaScript's `import React from "react"` does.
+    Default,
 }
 
 /// One module a file imports.
@@ -45,6 +47,8 @@ struct Parts<'tree> {
     alias: Option<Node<'tree>>,
     /// The mark that every name is taken.
     all: Option<Node<'tree>>,
+    /// The mark that the default export is taken.
+    default: Option<Node<'tree>>,
 }
 
 /// The imports in the tree under `root`, in the order the query finds them, which follows the
@@ -83,7 +87,8 @@ fn parts_of<'tree>(captures: &[QueryCapture<'tree>], meanings: &[ImportCapture])
             Some(ImportCapture::Name) => &mut parts.name,
             Some(ImportCapture::Alias) => &mut parts.alias,
             Some(ImportCapture::All) => &mut parts.all,
-            None => continue,
+            Some(ImportCapture::Default) => &mut parts.default,
+            Some(ImportCapture::Helper) | None => continue,
         };
         *slot = Some(capture.node);
     }
@@ -94,10 +99,11 @@ fn parts_of<'tree>(captures: &[QueryCapture<'tree>], meanings: &[ImportCapture])
 /// not a name Cortex can store.
 fn import_of(parts: &Parts<'_>, source: &[u8]) -> Option<Import> {
     let specifier = identifier_at(parts.module?, source)?;
-    let imported = match (parts.name, parts.all) {
-        (Some(name), _) => Imported::Name(identifier_at(name, source)?),
-        (None, Some(_)) => Imported::All,
-        (None, None) => Imported::Module,
+    let imported = match (parts.name, parts.all, parts.default) {
+        (Some(name), _, _) => Imported::Name(identifier_at(name, source)?),
+        (None, Some(_), _) => Imported::All,
+        (None, None, Some(_)) => Imported::Default,
+        (None, None, None) => Imported::Module,
     };
     let alias = match parts.alias {
         Some(alias) => Some(identifier_at(alias, source)?),

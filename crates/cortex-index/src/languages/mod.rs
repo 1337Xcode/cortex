@@ -96,3 +96,40 @@ pub const ALL: &[&Spec] = &[
     &sql::SPEC,
     &markdown::SPEC,
 ];
+
+#[cfg(test)]
+mod tests {
+    use cortex_core::{PathError, RepoPath};
+
+    use super::*;
+    use crate::path_rules::is_test_file;
+
+    /// Each language's names for test files, besides the test folders every language shares.
+    #[test]
+    fn test_file_names() -> Result<(), PathError> {
+        let cases = [
+            (Language::Python, "shop/test_orders.py", true),
+            (Language::Python, "shop/orders_test.py", true),
+            (Language::Python, "shop/orders.py", false),
+            (Language::JavaScript, "web/cart.test.js", true),
+            (Language::JavaScript, "web/cart.spec.jsx", true),
+            (Language::JavaScript, "web/cart.test.mjs", true),
+            (Language::JavaScript, "web/cart.spec.cjs", true),
+            (Language::JavaScript, "web/cart.js", false),
+            (Language::JavaScript, "web/test.js", false),
+        ];
+        for (language, path, expected) in cases {
+            let names = ALL
+                .iter()
+                .find(|spec| spec.language == language)
+                .and_then(|spec| spec.tags.as_ref())
+                .map_or(&[][..], |tags| tags.test_files);
+            assert_eq!(
+                is_test_file(&RepoPath::new(path)?, names),
+                expected,
+                "{path}"
+            );
+        }
+        Ok(())
+    }
+}
