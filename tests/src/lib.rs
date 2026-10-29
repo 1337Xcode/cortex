@@ -1,5 +1,7 @@
 //! Helpers shared by the cross-crate tests: where the fixtures live and how to load them.
 
+pub mod scrub;
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -30,6 +32,29 @@ pub fn json_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
             .is_some_and(|extension| extension == "json")
         {
             files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Every file under `dir` at any depth, sorted. Symbolic links are listed as files and never
+/// followed.
+///
+/// # Errors
+///
+/// Fails when a folder cannot be listed.
+pub fn files_under(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        for entry in fs::read_dir(&current)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                pending.push(entry.path());
+            } else {
+                files.push(entry.path());
+            }
         }
     }
     files.sort();

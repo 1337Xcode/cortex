@@ -1,17 +1,22 @@
 //! The captured hook payloads are intact, complete and scrubbed.
 //!
-//! Every fixture must parse as a JSON object whose `hook_event_name` matches its file name, every
-//! event the adapters handle must have a fixture for each captured agent version, and no fixture may
-//! carry a real path or id anywhere in its values.
+//! Every fixture must parse as a JSON object whose `hook_event_name` matches its file name; every
+//! event and tool the adapters handle must have a fixture for each captured agent version, holding
+//! the tool, source, reason or trigger its name promises; the fixture folder may hold nothing but
+//! payloads and READMEs; and no fixture or README may carry a real path, id, user name or email.
 
 use std::error::Error;
 use std::fs;
 use std::path::Path;
 
-use cortex_tests::{fixtures_dir, json_files, payload_dir};
+use cortex_tests::{files_under, fixtures_dir, json_files, payload_dir, scrub};
 
 /// Result type for these tests: any I/O or parse failure fails the test.
 type TestResult<T> = Result<T, Box<dyn Error>>;
+
+/// A fixture an agent version must have, with the top-level fields that show the payload is the
+/// one its name promises.
+type Required = (&'static str, &'static [(&'static str, &'static str)]);
 
 /// File-name prefixes and the event each names, longest prefix first so that
 /// `post-tool-use-failure` is not read as `post-tool-use`.
@@ -30,94 +35,103 @@ const EVENT_PREFIXES: &[(&str, &str)] = &[
 ];
 
 /// The fixtures each captured agent version must have: every event and tool the adapters handle.
-const REQUIRED: &[(&str, &str, &[&str])] = &[
+const REQUIRED: &[(&str, &str, &[Required])] = &[
     (
         "claude",
         "2.1.312",
         &[
-            "session-start-startup",
-            "session-start-resume",
-            "session-start-compact",
-            "session-start-clear",
-            "user-prompt-submit",
-            "pre-tool-use-read",
-            "pre-tool-use-grep",
-            "pre-tool-use-glob",
-            "pre-tool-use-edit",
-            "pre-tool-use-write",
-            "pre-tool-use-bash",
-            "pre-tool-use-agent",
-            "pre-tool-use-grep-subagent",
-            "post-tool-use-read",
-            "post-tool-use-grep",
-            "post-tool-use-glob",
-            "post-tool-use-edit",
-            "post-tool-use-write",
-            "post-tool-use-bash",
-            "post-tool-use-agent",
-            "post-tool-use-grep-subagent",
-            "post-tool-use-failure-bash",
-            "pre-compact-manual",
-            "post-compact-manual",
-            "subagent-start",
-            "subagent-stop",
-            "subagent-stop-internal",
-            "stop",
-            "session-end",
-            "session-end-clear",
+            ("session-start-startup", &[("source", "startup")]),
+            ("session-start-resume", &[("source", "resume")]),
+            ("session-start-compact", &[("source", "compact")]),
+            ("session-start-clear", &[("source", "clear")]),
+            ("user-prompt-submit", &[]),
+            ("pre-tool-use-read", &[("tool_name", "Read")]),
+            ("pre-tool-use-grep", &[("tool_name", "Grep")]),
+            ("pre-tool-use-glob", &[("tool_name", "Glob")]),
+            ("pre-tool-use-edit", &[("tool_name", "Edit")]),
+            ("pre-tool-use-write", &[("tool_name", "Write")]),
+            ("pre-tool-use-bash", &[("tool_name", "Bash")]),
+            ("pre-tool-use-agent", &[("tool_name", "Agent")]),
+            (
+                "pre-tool-use-grep-subagent",
+                &[("tool_name", "Grep"), ("agent_type", "Explore")],
+            ),
+            ("post-tool-use-read", &[("tool_name", "Read")]),
+            ("post-tool-use-grep", &[("tool_name", "Grep")]),
+            ("post-tool-use-glob", &[("tool_name", "Glob")]),
+            ("post-tool-use-edit", &[("tool_name", "Edit")]),
+            ("post-tool-use-write", &[("tool_name", "Write")]),
+            ("post-tool-use-bash", &[("tool_name", "Bash")]),
+            ("post-tool-use-agent", &[("tool_name", "Agent")]),
+            (
+                "post-tool-use-grep-subagent",
+                &[("tool_name", "Grep"), ("agent_type", "Explore")],
+            ),
+            ("post-tool-use-failure-bash", &[("tool_name", "Bash")]),
+            ("pre-compact-manual", &[("trigger", "manual")]),
+            ("post-compact-manual", &[("trigger", "manual")]),
+            ("subagent-start", &[("agent_type", "Explore")]),
+            ("subagent-stop", &[("agent_type", "Explore")]),
+            ("subagent-stop-internal", &[("agent_type", "")]),
+            ("stop", &[]),
+            ("session-end", &[("reason", "other")]),
+            ("session-end-clear", &[("reason", "clear")]),
         ],
     ),
     (
         "codex",
         "0.165.0",
         &[
-            "session-start-startup",
-            "session-start-compact",
-            "user-prompt-submit",
-            "pre-tool-use-bash-grep",
-            "pre-tool-use-bash-read",
-            "pre-tool-use-bash-test",
-            "pre-tool-use-bash-subagent",
-            "pre-tool-use-apply-patch",
-            "pre-tool-use-spawn-agent",
-            "pre-tool-use-wait-agent",
-            "post-tool-use-bash-grep",
-            "post-tool-use-bash-read",
-            "post-tool-use-bash-test-failing",
-            "post-tool-use-bash-test-passing",
-            "post-tool-use-bash-nonzero-exit",
-            "post-tool-use-bash-subagent",
-            "post-tool-use-apply-patch",
-            "post-tool-use-apply-patch-add",
-            "post-tool-use-spawn-agent",
-            "post-tool-use-wait-agent",
-            "pre-compact-auto",
-            "post-compact-auto",
-            "subagent-start",
-            "subagent-stop",
-            "stop",
-            "session-end",
+            ("session-start-startup", &[("source", "startup")]),
+            ("session-start-compact", &[("source", "compact")]),
+            ("user-prompt-submit", &[]),
+            ("pre-tool-use-bash-grep", &[("tool_name", "Bash")]),
+            ("pre-tool-use-bash-read", &[("tool_name", "Bash")]),
+            ("pre-tool-use-bash-test", &[("tool_name", "Bash")]),
+            (
+                "pre-tool-use-bash-subagent",
+                &[("tool_name", "Bash"), ("agent_type", "default")],
+            ),
+            ("pre-tool-use-apply-patch", &[("tool_name", "apply_patch")]),
+            (
+                "pre-tool-use-spawn-agent",
+                &[("tool_name", "collaborationspawn_agent")],
+            ),
+            (
+                "pre-tool-use-wait-agent",
+                &[("tool_name", "collaborationwait_agent")],
+            ),
+            ("post-tool-use-bash-grep", &[("tool_name", "Bash")]),
+            ("post-tool-use-bash-read", &[("tool_name", "Bash")]),
+            ("post-tool-use-bash-test-failing", &[("tool_name", "Bash")]),
+            ("post-tool-use-bash-test-passing", &[("tool_name", "Bash")]),
+            ("post-tool-use-bash-nonzero-exit", &[("tool_name", "Bash")]),
+            (
+                "post-tool-use-bash-subagent",
+                &[("tool_name", "Bash"), ("agent_type", "default")],
+            ),
+            ("post-tool-use-apply-patch", &[("tool_name", "apply_patch")]),
+            (
+                "post-tool-use-apply-patch-add",
+                &[("tool_name", "apply_patch")],
+            ),
+            (
+                "post-tool-use-spawn-agent",
+                &[("tool_name", "collaborationspawn_agent")],
+            ),
+            (
+                "post-tool-use-wait-agent",
+                &[("tool_name", "collaborationwait_agent")],
+            ),
+            ("pre-compact-auto", &[("trigger", "auto")]),
+            ("post-compact-auto", &[("trigger", "auto")]),
+            ("subagent-start", &[("agent_type", "default")]),
+            ("subagent-stop", &[("agent_type", "default")]),
+            ("stop", &[]),
+            ("session-end", &[("reason", "other")]),
         ],
     ),
 ];
-
-/// Folder prefixes a scrubbed `cwd` may start with.
-const SCRUBBED_REPO_ROOTS: &[&str] = &["C:\\repo", "/repo"];
-
-/// Folder prefixes a scrubbed transcript path may start with.
-const SCRUBBED_HOMES: &[&str] = &["C:\\Users\\dev\\", "/home/dev/"];
-
-/// Path pieces that are followed by a user name, on Windows and Unix.
-const HOME_MARKERS: &[&str] = &["\\Users\\", "/Users/", "/home/"];
-
-/// The only user name a scrubbed home folder may show.
-const SCRUBBED_USER: &str = "dev";
-
-/// Prefix of every scrubbed UUID-style id.
-const SCRUBBED_UUID_PREFIX: &str = "00000000-0000-4000-8000-";
-
-/// Length of a UUID in its hyphenated text form: `8-4-4-4-12` hexadecimal digits.
-const UUID_LEN: usize = 36;
 
 /// The event a fixture file name says it holds.
 fn expected_event(file_name: &str) -> Option<&'static str> {
@@ -158,91 +172,15 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// Every string value inside `value`, depth first.
-fn strings_in(value: &serde_json::Value) -> Vec<&str> {
-    match value {
-        serde_json::Value::String(text) => vec![text.as_str()],
-        serde_json::Value::Array(items) => items.iter().flat_map(strings_in).collect(),
-        serde_json::Value::Object(fields) => fields.values().flat_map(strings_in).collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// Whether `bytes` is a UUID in its hyphenated `8-4-4-4-12` hexadecimal form.
-fn is_uuid(bytes: &[u8]) -> bool {
-    bytes.len() == UUID_LEN
-        && bytes.iter().enumerate().all(|(index, byte)| match index {
-            8 | 13 | 18 | 23 => *byte == b'-',
-            _ => byte.is_ascii_hexdigit(),
-        })
-}
-
-/// Every UUID-shaped run of characters in `text`, in order.
-fn uuids_in(text: &str) -> Vec<&str> {
-    let bytes = text.as_bytes();
-    (0..=bytes.len().saturating_sub(UUID_LEN))
-        .filter(|&start| bytes.get(start..start + UUID_LEN).is_some_and(is_uuid))
-        .filter_map(|start| text.get(start..start + UUID_LEN))
-        .collect()
-}
-
-/// Whether the text after a home marker names the scrubbed user, followed by a separator or nothing.
-fn is_scrubbed_user(rest: &str) -> bool {
-    rest.strip_prefix(SCRUBBED_USER)
-        .is_some_and(|after| after.is_empty() || after.starts_with(['\\', '/']))
-}
-
-/// The ids and home folders in one string that were not replaced by fixed values.
-fn text_problems(text: &str) -> Vec<String> {
-    let ids = uuids_in(text)
-        .into_iter()
-        .filter(|id| !id.starts_with(SCRUBBED_UUID_PREFIX))
-        .map(|id| format!("id {id} is not a fixed id"));
-    let homes = HOME_MARKERS
-        .iter()
-        .flat_map(|marker| {
-            text.match_indices(marker)
-                .filter_map(move |(index, _)| text.get(index + marker.len()..))
-        })
-        .filter(|rest| !is_scrubbed_user(rest))
-        .map(|rest| {
-            let user: String = rest
-                .chars()
-                .take_while(|character| !matches!(character, '\\' | '/'))
-                .collect();
-            format!("home folder of user {user:?} is not scrubbed")
-        });
-    ids.chain(homes).collect()
-}
-
-/// What in one fixture still looks captured rather than scrubbed.
-fn scrub_problems(bytes: &[u8], payload: &serde_json::Value) -> Vec<String> {
-    let mut problems = Vec::new();
-    if bytes.contains(&b'\r') {
-        problems.push("CRLF line ending".to_owned());
-    }
-    let field = |key: &str| payload.get(key).and_then(serde_json::Value::as_str);
-    if let Some(cwd) = field("cwd")
-        && !SCRUBBED_REPO_ROOTS.iter().any(|root| cwd.starts_with(root))
-    {
-        problems.push(format!("cwd {cwd:?} is not a scrubbed repository path"));
-    }
-    if let Some(transcript) = field("transcript_path")
-        && !SCRUBBED_HOMES
-            .iter()
-            .any(|home| transcript.starts_with(home))
-    {
-        problems.push(format!(
-            "transcript path {transcript:?} is not under a scrubbed home"
-        ));
-    }
-    if let Some(session) = field("session_id")
-        && !session.starts_with(SCRUBBED_UUID_PREFIX)
-    {
-        problems.push(format!("session id {session:?} is not a fixed id"));
-    }
-    problems.extend(strings_in(payload).into_iter().flat_map(text_problems));
-    problems
+/// `path` relative to the fixture folder, with `/` separators.
+fn fixture_relative(path: &Path) -> String {
+    let fixtures = fixtures_dir();
+    let relative = path.strip_prefix(&fixtures).unwrap_or(path);
+    relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Every fixture parses as an object and names the event its file name promises.
@@ -273,33 +211,75 @@ fn every_fixture_names_its_event() -> TestResult<()> {
     Ok(())
 }
 
-/// Each captured agent version has a fixture for every event and tool the adapters handle.
+/// Each captured agent version has every required fixture, and each holds the tool, source,
+/// reason or trigger its name promises.
 #[test]
-fn required_fixtures_exist() -> TestResult<()> {
-    for (agent, version, names) in REQUIRED {
-        let dir = payload_dir(agent, version);
-        for name in *names {
-            let path = dir.join(format!("{name}.json"));
-            assert!(path.is_file(), "missing fixture {}", path.display());
+fn required_fixtures_exist_and_match_their_names() -> TestResult<()> {
+    let mut problems = Vec::new();
+    for (agent, version, required) in REQUIRED {
+        for (name, fields) in *required {
+            let path = payload_dir(agent, version).join(format!("{name}.json"));
+            if !path.is_file() {
+                problems.push(format!("missing fixture {}", path.display()));
+                continue;
+            }
+            let payload: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+            for (key, expected) in *fields {
+                let found = payload.get(*key).and_then(serde_json::Value::as_str);
+                if found != Some(*expected) {
+                    problems.push(format!(
+                        "{}: {key} is {found:?}, the name promises {expected:?}",
+                        path.display()
+                    ));
+                }
+            }
         }
     }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
     Ok(())
 }
 
-/// No fixture carries a real path, a real id or a carriage return, in any of its values.
+/// The fixture folder holds only `<agent>/<version>/` folders of JSON payloads and READMEs, so
+/// nothing escapes the checks by sitting elsewhere or under another extension.
+#[test]
+fn fixture_tree_holds_only_payloads_and_readmes() -> TestResult<()> {
+    let unexpected: Vec<String> = files_under(&fixtures_dir())?
+        .iter()
+        .map(|path| fixture_relative(path))
+        .filter(|relative| {
+            let parts: Vec<&str> = relative.split('/').collect();
+            !matches!(parts.as_slice(), [_, _, name]
+                if *name == "README.md" || name.ends_with(".json"))
+        })
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "unexpected files under the fixture folder: {unexpected:?}"
+    );
+    Ok(())
+}
+
+/// No fixture or README carries a real path, id, user name, email address or carriage return.
 #[test]
 fn fixtures_are_scrubbed() -> TestResult<()> {
     let mut problems = Vec::new();
-    for dir in version_dirs()? {
-        for path in json_files(&dir)? {
-            let bytes = fs::read(&path)?;
-            let payload: serde_json::Value = serde_json::from_slice(&bytes)?;
-            problems.extend(
-                scrub_problems(&bytes, &payload)
-                    .into_iter()
-                    .map(|problem| format!("{}: {problem}", path.display())),
-            );
+    for path in files_under(&fixtures_dir())? {
+        let bytes = fs::read(&path)?;
+        let mut found = Vec::new();
+        if bytes.contains(&b'\r') {
+            found.push("CRLF line ending".to_owned());
         }
+        if file_name(&path) == "README.md" {
+            found.extend(scrub::text_problems(&String::from_utf8(bytes)?));
+        } else {
+            let payload: serde_json::Value = serde_json::from_slice(&bytes)?;
+            found.extend(scrub::payload_problems(&payload));
+        }
+        problems.extend(
+            found
+                .into_iter()
+                .map(|problem| format!("{}: {problem}", fixture_relative(&path))),
+        );
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
     Ok(())
@@ -323,25 +303,4 @@ fn file_names_map_to_events() {
     assert_eq!(expected_event("stop.json"), Some("Stop"));
     assert_eq!(expected_event("stopped.json"), None);
     assert_eq!(expected_event("notes.txt"), None);
-}
-
-/// The text scan flags ids and home folders that were not replaced, and nothing else.
-#[test]
-fn text_scan_flags_unscrubbed_ids_and_homes() {
-    assert!(
-        text_problems("C:\\Users\\dev\\.codex\\rollout-00000000-0000-4000-8000-000000000001.jsonl")
-            .is_empty()
-    );
-    assert!(text_problems("/home/dev/project and /c/Users/dev").is_empty());
-    assert!(text_problems("short-0000-4000 and 2026-10-29T06-03-56").is_empty());
-    assert_eq!(
-        text_problems("rollout-01a18642-06c8-7022-ac9c-fca4853cfe2c.jsonl").len(),
-        1
-    );
-    assert_eq!(
-        text_problems("exec-5aa55f07-61d9-4d37-baed-65ba37f4185f").len(),
-        1
-    );
-    assert_eq!(text_problems("/home/alice/project").len(), 1);
-    assert_eq!(text_problems("C:\\Users\\devon\\notes").len(), 1);
 }
