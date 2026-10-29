@@ -256,6 +256,54 @@ fn element_end(trees: &[TokenTree], from: usize) -> usize {
     index
 }
 
+/// One branch of a `cfg_if!`: the value of its own predicate (`None` for the final `else`) and
+/// its braced block.
+type CfgIfBranch = (Option<cfg::Truth>, proc_macro2::Group);
+
+/// The branches of a `cfg_if!` body: `if #[cfg(...)] { ... }`, then any number of
+/// `else if #[cfg(...)] { ... }`, then an optional `else { ... }`. `None` when the tokens have
+/// another shape or a predicate cannot be read, so the generic macro scan handles them.
+fn cfg_if_branches(tokens: TokenStream) -> Option<Vec<CfgIfBranch>> {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    let is_word = |index: usize, word: &str| matches!(trees.get(index), Some(TokenTree::Ident(ident)) if ident == word);
+    let braced = |index: usize| match trees.get(index) {
+        Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Brace => {
+            Some(group.clone())
+        }
+        _ => None,
+    };
+    let mut branches = Vec::new();
+    let mut index = 0;
+    loop {
+        let has_pound =
+            matches!(trees.get(index + 1), Some(TokenTree::Punct(pound)) if pound.as_char() == '#');
+        if !is_word(index, "if") || !has_pound {
+            return None;
+        }
+        let Some(TokenTree::Group(attribute)) = trees.get(index + 2) else {
+            return None;
+        };
+        if attribute.delimiter() != Delimiter::Bracket {
+            return None;
+        }
+        let meta = syn::parse2::<syn::Meta>(attribute.stream()).ok()?;
+        let truth = cfg::cfg_truth(&meta).ok()??;
+        branches.push((Some(truth), braced(index + 3)?));
+        index += 4;
+        if index == trees.len() {
+            return Some(branches);
+        }
+        if !is_word(index, "else") {
+            return None;
+        }
+        index += 1;
+        if !is_word(index, "if") {
+            branches.push((None, braced(index)?));
+            return (index + 1 == trees.len()).then_some(branches);
+        }
+    }
+}
+
 /// Walks one file's syntax tree, recording test-only nodes and the modules declared outside them.
 struct Collector {
     /// Bytes stripped from the front of the file before parsing.
@@ -310,6 +358,28 @@ impl Collector {
                 self.scan_macro_tokens(group.stream());
             }
             index += 1;
+        }
+    }
+
+    /// Records the `cfg_if!` branches that compile only for tests. A branch holds when its own
+    /// predicate does and every earlier one does not; the final `else` holds when none does.
+    /// Branches that may compile are scanned like any macro body.
+    fn scan_cfg_if(&mut self, branches: Vec<CfgIfBranch>) {
+        let mut none_before = cfg::Truth::True;
+        for (predicate, block) in branches {
+            let holds = match predicate {
+                Some(truth) => {
+                    let holds = none_before.and(truth);
+                    none_before = none_before.and(truth.not());
+                    holds
+                }
+                None => none_before,
+            };
+            if holds == cfg::Truth::False {
+                self.record(block.span().byte_range());
+            } else {
+                self.scan_macro_tokens(block.stream());
+            }
         }
     }
 }
@@ -471,7 +541,20 @@ impl<'ast> Visit<'ast> for Collector {
     }
 
     fn visit_macro(&mut self, node: &'ast syn::Macro) {
-        self.scan_macro_tokens(node.tokens.clone());
+        let is_cfg_if = node
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "cfg_if");
+        let branches = if is_cfg_if {
+            cfg_if_branches(node.tokens.clone())
+        } else {
+            None
+        };
+        match branches {
+            Some(branches) => self.scan_cfg_if(branches),
+            None => self.scan_macro_tokens(node.tokens.clone()),
+        }
         visit::visit_macro(self, node);
     }
 }
@@ -605,8 +688,17 @@ mod tests {
             macro_rules! m { () => { #[test] fn t() { /* T2 */ } fn p() { /* P2 */ } }; }
             fn caller() { run!(#[cfg(test)] { /* T3 */ }, { /* P3 */ }); }
             run!(#[$meta:meta] { /* P4 */ });
+            cfg_if::cfg_if! { if #[cfg(not(test))] { fn f() { /* N1 */ } } else { fn f() { /* N2 */ } } }
+            cfg_if! { if #[cfg(unix)] { fn g() { /* U1 */ } } else if #[cfg(test)] { fn g() { /* U2 */ } } else { fn g() { /* U3 */ } } }
         "#;
+        // Branch values with `test` off: N1 holds (not(test)); N2 needs test, so never; U1 and U3
+        // depend on the platform; U2 needs test and not unix, so never.
         let expected = [
+            ("/* N1 */", false),
+            ("/* N2 */", true),
+            ("/* U1 */", false),
+            ("/* U2 */", true),
+            ("/* U3 */", false),
             ("/* T1 */", true),
             ("/* P1 */", false),
             ("/* T2 */", true),
@@ -650,7 +742,7 @@ mod tests {
             &[
                 (
                     "src/lib.rs",
-                    "mod real;\n#[cfg(test)] mod tests;\n#[cfg(test)] #[path = \"support.rs\"] mod support;\nmod outer { #[cfg(test)] mod inner; mod deep; }\n#[path = \"elsewhere/moved.rs\"] mod moved;\n#[path = \"../shared/common.rs\"] mod common;\n",
+                    "mod real;\n#[cfg(test)] mod tests;\n#[cfg(test)] #[path = \"support.rs\"] mod support;\nmod outer { #[cfg(test)] mod inner; mod deep; }\n#[path = \"elsewhere/moved.rs\"] mod moved;\n#[path = \"../shared/common.rs\"] mod common;\nmod nest { #[path = \"custom.rs\"] mod inner; }\n#[path = \"alt\"] mod m { mod x; }\nmod r#match;\n",
                 ),
                 ("src/real.rs", "mod child;\n"),
                 ("src/real/child.rs", ""),
@@ -661,6 +753,9 @@ mod tests {
                 ("src/elsewhere/moved.rs", "mod beside;\n"),
                 ("src/elsewhere/beside.rs", ""),
                 ("shared/common.rs", ""),
+                ("src/nest/custom.rs", ""),
+                ("src/alt/x.rs", ""),
+                ("src/match.rs", ""),
                 ("src/bin/tool.rs", "mod helper;\n"),
                 ("src/bin/helper.rs", ""),
                 ("src/orphan.rs", ""),
@@ -670,11 +765,14 @@ mod tests {
             tree.walk(&["src/lib.rs", "src/bin/tool.rs"])?,
             vec![
                 "shared/common.rs",
+                "src/alt/x.rs",
                 "src/bin/helper.rs",
                 "src/bin/tool.rs",
                 "src/elsewhere/beside.rs",
                 "src/elsewhere/moved.rs",
                 "src/lib.rs",
+                "src/match.rs",
+                "src/nest/custom.rs",
                 "src/outer/deep/mod.rs",
                 "src/real/child.rs",
                 "src/real.rs",

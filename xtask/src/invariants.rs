@@ -39,6 +39,8 @@ pub(crate) struct Tag {
     pub(crate) line: usize,
     /// Byte offset of the comment in its file.
     pub(crate) offset: usize,
+    /// Byte offset of the code the tag annotates (see [`annotated_offset`]).
+    pub(crate) anchor: usize,
     /// The invariant name as written after the marker.
     pub(crate) name: String,
 }
@@ -63,17 +65,44 @@ pub(crate) fn scan(path: &str, text: &str) -> Vec<Tag> {
                 path: path.to_owned(),
                 line: comment.line,
                 offset: comment.offset,
+                anchor: annotated_offset(text, comment.offset),
                 name,
             })
         })
         .collect()
 }
 
-/// Whether a tag sits in code the product compiles, outside test-only ranges.
+/// The byte offset of the code a comment at `comment_offset` annotates: the first code on the
+/// comment's own line, or, for a comment alone on its line, the first code on the next line that
+/// is neither blank nor another line comment. A tag marks an enforcing line, so it is that line's
+/// code, not the comment's position, that must be compiled outside tests.
+fn annotated_offset(text: &str, comment_offset: usize) -> usize {
+    let head = text.get(..comment_offset).unwrap_or_default();
+    let line_start = head.rfind('\n').map_or(0, |newline| newline + 1);
+    let before = head.get(line_start..).unwrap_or_default();
+    if let Some(position) = before.find(|character: char| !character.is_whitespace()) {
+        return line_start + position;
+    }
+    let mut cursor = text
+        .get(comment_offset..)
+        .and_then(|rest| rest.find('\n'))
+        .map_or(text.len(), |newline| comment_offset + newline + 1);
+    while let Some(rest) = text.get(cursor..).filter(|rest| !rest.is_empty()) {
+        let line = rest.split('\n').next().unwrap_or_default();
+        let code = line.trim_start();
+        if !code.is_empty() && !code.starts_with("//") {
+            return cursor + (line.len() - code.len());
+        }
+        cursor += line.len() + 1;
+    }
+    comment_offset
+}
+
+/// Whether a tag annotates code the product compiles, outside test-only ranges.
 fn is_compiled(tag: &Tag, compiled: &CompiledCode) -> bool {
     compiled
         .get(&tag.path)
-        .is_some_and(|test_ranges| !test_ranges.iter().any(|range| range.contains(&tag.offset)))
+        .is_some_and(|test_ranges| !test_ranges.iter().any(|range| range.contains(&tag.anchor)))
 }
 
 /// Every problem with `tags`, given the code the product compiles and the crates that exist.
@@ -129,8 +158,9 @@ mod tests {
             .collect()
     }
 
-    /// A tag comment is found with its path, 1-based line and byte offset; plain comments are not
-    /// tags. Offset 24: "fn f() {\n" is 9 bytes, then 15 bytes of code before the slashes.
+    /// A tag comment is found with its path, 1-based line, byte offset and anchor; plain comments
+    /// are not tags. "fn f() {\n" is 9 bytes; the line's code starts after 4 spaces (anchor 13)
+    /// and the slashes after 15 bytes of it (offset 24).
     #[test]
     fn scan_finds_tags_with_line_numbers() {
         let text = format!(
@@ -143,6 +173,7 @@ mod tests {
                 path: "crates/cortex-hook/src/lib.rs".to_owned(),
                 line: 2,
                 offset: 24,
+                anchor: 13,
                 name: "fail-open".to_owned(),
             }]
         );
@@ -218,11 +249,26 @@ mod tests {
             check(&tags, &code, &crates(&["cortex-hook"])),
             vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
         );
-        let outside = compiled(&[(lib, vec![Range { start: 0, end: 10 }])]);
+        let outside = compiled(&[(lib, vec![Range { start: 10, end: 30 }])]);
         assert_eq!(
             check(&tags, &outside, &crates(&["cortex-hook"])),
             Vec::<String>::new()
         );
+    }
+
+    /// A tag annotates code: trailing a line, that line's code; alone on its line, the next line
+    /// that holds code. Offsets worked out by hand from the texts below.
+    #[test]
+    fn tags_anchor_on_the_code_they_annotate() {
+        let trailing = format!("#[cfg(test)]\nconst B: u64 = 1; // {MARKER_WORD}: budgeted\n");
+        assert_eq!(
+            scan("x.rs", &trailing).first().map(|tag| tag.anchor),
+            Some(13)
+        );
+        let above = format!("// {MARKER_WORD}: fail-open\n\n// note\n#[test]\nfn t() {{}}\n");
+        assert_eq!(scan("x.rs", &above).first().map(|tag| tag.anchor), Some(33));
+        let last = format!("fn f() {{}}\n// {MARKER_WORD}: fail-open\n");
+        assert_eq!(scan("x.rs", &last).first().map(|tag| tag.anchor), Some(10));
     }
 
     /// The marker on the second line of a string that spans lines is not a tag.

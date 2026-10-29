@@ -365,28 +365,34 @@ mod tests {
         }
     }
 
-    /// The tag step reads the compiled module tree: a tag in the file of a `#[cfg(test)]` module
-    /// fails the owner's requirement, the same tag in the library root meets it.
+    /// The tag step reads the compiled module tree and the code each tag annotates: a tag in the
+    /// file of a `#[cfg(test)]` module, trailing a test-only line, or just above a test, fails the
+    /// owner's requirement; the same tag above production code in the library root meets it.
     #[test]
     fn tag_step_counts_compiled_code_only() -> anyhow::Result<()> {
         let tag = format!("// {}: fail-open\n", invariants::MARKER_WORD);
         let scratch = ScratchDir::new("tags")?;
-        scratch.write(
-            "crates/cortex-hook/src/lib.rs",
-            "#[cfg(test)]\nmod tests;\n",
-        )?;
+        let lib = "crates/cortex-hook/src/lib.rs";
         scratch.write("crates/cortex-hook/src/tests.rs", &tag)?;
-        let error = check_invariant_tags(&scratch.0, &library(&scratch, "cortex-hook"))
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
-        assert!(
-            error.contains("fail-open: no tagged enforcing line"),
-            "{error}"
-        );
+        let failing = [
+            "#[cfg(test)]\nmod tests;\n".to_owned(),
+            format!("#[cfg(test)]\nmod tests;\n#[cfg(test)]\nconst LIMIT: u64 = 1; {tag}"),
+            format!("#[cfg(test)]\nmod tests;\n{tag}#[test]\nfn check() {{}}\n"),
+        ];
+        for source in failing {
+            scratch.write(lib, &source)?;
+            let error = check_invariant_tags(&scratch.0, &library(&scratch, "cortex-hook"))
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default();
+            assert!(
+                error.contains("fail-open: no tagged enforcing line"),
+                "{source}: {error}"
+            );
+        }
         scratch.write(
-            "crates/cortex-hook/src/lib.rs",
-            &format!("{tag}#[cfg(test)]\nmod tests;\n"),
+            lib,
+            &format!("{tag}pub fn enforce() {{}}\n#[cfg(test)]\nmod tests;\n"),
         )?;
         check_invariant_tags(&scratch.0, &library(&scratch, "cortex-hook"))?;
         Ok(())

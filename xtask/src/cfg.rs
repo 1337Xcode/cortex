@@ -21,6 +21,26 @@ pub(crate) enum Truth {
     Unknown,
 }
 
+impl Truth {
+    /// Both hold: false if either is false, true if both are true, unknown otherwise.
+    pub(crate) fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::False, _) | (_, Self::False) => Self::False,
+            (Self::True, Self::True) => Self::True,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// The opposite value; unknown stays unknown.
+    pub(crate) fn not(self) -> Self {
+        match self {
+            Self::True => Self::False,
+            Self::False => Self::True,
+            Self::Unknown => Self::Unknown,
+        }
+    }
+}
+
 /// One `cfg` predicate: a boolean literal or an option such as `test`, `unix` or `all(...)`.
 pub(crate) enum Predicate {
     /// `true` or `false`.
@@ -83,18 +103,26 @@ pub(crate) fn is_test_only(attributes: &[syn::Attribute]) -> anyhow::Result<bool
 
 /// Whether one attribute's content makes its item compile only for tests.
 pub(crate) fn is_test_only_meta(meta: &syn::Meta) -> anyhow::Result<bool> {
-    let path = meta.path();
-    if path.is_ident("cfg") {
-        let syn::Meta::List(list) = meta else {
-            bail!("a cfg attribute without a predicate");
-        };
-        let predicate: Predicate = syn::parse2(list.tokens.clone())?;
-        return Ok(evaluate(&predicate)? == Truth::False);
+    if let Some(truth) = cfg_truth(meta)? {
+        return Ok(truth == Truth::False);
     }
-    Ok(path
+    Ok(meta
+        .path()
         .segments
         .last()
         .is_some_and(|segment| segment.ident == "test" || segment.ident == "bench"))
+}
+
+/// The value of a `cfg(...)` attribute's predicate, or `None` when `meta` is another attribute.
+pub(crate) fn cfg_truth(meta: &syn::Meta) -> anyhow::Result<Option<Truth>> {
+    if !meta.path().is_ident("cfg") {
+        return Ok(None);
+    }
+    let syn::Meta::List(list) = meta else {
+        bail!("a cfg attribute without a predicate");
+    };
+    let predicate: Predicate = syn::parse2(list.tokens.clone())?;
+    Ok(Some(evaluate(&predicate)?))
 }
 
 /// The value of a predicate while `test` is off.
