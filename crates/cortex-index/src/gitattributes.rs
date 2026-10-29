@@ -1,16 +1,19 @@
-//! The `linguist-generated` and `linguist-vendored` attributes of a `.gitattributes` file, which
-//! let a repository say which of its files a tool or a third party wrote.
+//! The `linguist-generated`, `linguist-vendored` and `linguist-language` attributes of a
+//! `.gitattributes` file, which let a repository say which of its files a tool or a third party
+//! wrote, and which language a file is in.
 //!
 //! Git's pattern rules apply, matched relative to the folder the file is in: a pattern without a
 //! slash matches a name at any depth, one with a slash is anchored to the folder, and a folder
 //! pattern (`docs/`) does not reach the files inside it (`docs/**` does). Matching is
 //! case-sensitive on every platform. A later matching line wins over an earlier one. `attr` sets
-//! an attribute and `-attr` clears it; `attr=v` sets it unless `v` is `false`, as GitHub's linguist
-//! reads these attributes; `!attr` forgets what earlier lines said. Each file's patterns are
-//! compiled into one set, so a file is checked against all of them in one pass.
+//! a flag attribute and `-attr` clears it; `attr=v` sets it unless `v` is `false`, as GitHub's
+//! linguist reads these attributes; `linguist-language=name` names a language; `!attr` forgets
+//! what earlier lines said. Each file's patterns are compiled into one set, so a file is checked
+//! against all of them in one pass.
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
+use crate::detect::{LanguageSetting, linguist_language};
 use crate::patterns::literal_braces;
 
 /// The attribute that marks files a tool wrote.
@@ -19,6 +22,9 @@ const GENERATED_ATTRIBUTE: &str = "linguist-generated";
 /// The attribute that marks files a third party wrote.
 const VENDORED_ATTRIBUTE: &str = "linguist-vendored";
 
+/// The attribute that names a file's language.
+const LANGUAGE_ATTRIBUTE: &str = "linguist-language";
+
 /// What attributes say about one file; `None` where they say nothing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Verdict {
@@ -26,6 +32,8 @@ pub struct Verdict {
     pub is_generated: Option<bool>,
     /// Whether a third party wrote the file.
     pub is_vendored: Option<bool>,
+    /// The language the attributes name for the file.
+    pub language: Option<LanguageSetting>,
 }
 
 /// What one line sets an attribute to.
@@ -37,16 +45,38 @@ enum Setting {
     Forget,
 }
 
-/// What one line does to the two attributes.
+/// What one line does to `linguist-language`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LanguageChange {
+    /// Names a language.
+    Set(LanguageSetting),
+    /// Back to unspecified.
+    Forget,
+}
+
+/// What one token of a line, such as `-attr` or `attr=value`, does to its attribute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum State<'a> {
+    /// Set, with a value or without.
+    Set(Option<&'a str>),
+    /// Cleared.
+    Unset,
+    /// Back to unspecified.
+    Forget,
+}
+
+/// What one line does to the three attributes.
 #[derive(Debug, Clone, Copy, Default)]
 struct Settings {
     /// What it does to `linguist-generated`.
     generated: Option<Setting>,
     /// What it does to `linguist-vendored`.
     vendored: Option<Setting>,
+    /// What it does to `linguist-language`.
+    language: Option<LanguageChange>,
 }
 
-/// One attributes file's rules for the two attributes, in line order.
+/// One attributes file's rules for the three attributes, in line order.
 #[derive(Debug)]
 pub struct AttributesFile {
     /// Each rule's pattern; the index of a pattern is the index of its settings.
@@ -115,6 +145,11 @@ impl AttributesFile {
         for settings in matched.iter().filter_map(|index| self.settings.get(*index)) {
             apply(&mut verdict.is_generated, settings.generated);
             apply(&mut verdict.is_vendored, settings.vendored);
+            match settings.language {
+                Some(LanguageChange::Set(language)) => verdict.language = Some(language),
+                Some(LanguageChange::Forget) => verdict.language = None,
+                None => {}
+            }
         }
     }
 }
@@ -156,7 +191,7 @@ fn compile(glob: &str) -> Option<globset::Glob> {
 /// What one line of an attributes file is to Cortex.
 fn read_line(line: &str) -> Line {
     let line = line.trim();
-    let mentions_ours = [GENERATED_ATTRIBUTE, VENDORED_ATTRIBUTE]
+    let mentions_ours = [GENERATED_ATTRIBUTE, VENDORED_ATTRIBUTE, LANGUAGE_ATTRIBUTE]
         .iter()
         .any(|name| line.contains(name));
     if line.starts_with('#') || !mentions_ours {
@@ -173,14 +208,15 @@ fn read_line(line: &str) -> Line {
     };
     let mut settings = Settings::default();
     for attribute in attributes.split_ascii_whitespace() {
-        let (name, setting) = setting_of(attribute);
+        let (name, state) = token(attribute);
         match name {
-            GENERATED_ATTRIBUTE => settings.generated = Some(setting),
-            VENDORED_ATTRIBUTE => settings.vendored = Some(setting),
+            GENERATED_ATTRIBUTE => settings.generated = Some(flag(state)),
+            VENDORED_ATTRIBUTE => settings.vendored = Some(flag(state)),
+            LANGUAGE_ATTRIBUTE => settings.language = Some(language(state)),
             _ => {}
         }
     }
-    if settings.generated.is_none() && settings.vendored.is_none() {
+    if settings.generated.is_none() && settings.vendored.is_none() && settings.language.is_none() {
         return Line::Other;
     }
     match glob_for(&pattern) {
@@ -242,16 +278,34 @@ fn unescape(characters: &mut std::iter::Peekable<std::str::CharIndices<'_>>) -> 
 }
 
 /// An attribute's name and what one `attr`, `-attr`, `!attr` or `attr=value` does to it.
-fn setting_of(attribute: &str) -> (&str, Setting) {
+fn token(attribute: &str) -> (&str, State<'_>) {
     if let Some(name) = attribute.strip_prefix('-') {
-        return (name, Setting::To(false));
+        return (name, State::Unset);
     }
     if let Some(name) = attribute.strip_prefix('!') {
-        return (name, Setting::Forget);
+        return (name, State::Forget);
     }
     match attribute.split_once('=') {
-        None => (attribute, Setting::To(true)),
-        Some((name, value)) => (name, Setting::To(value != "false")),
+        None => (attribute, State::Set(None)),
+        Some((name, value)) => (name, State::Set(Some(value))),
+    }
+}
+
+/// What a token does to a flag attribute: any value but `false` sets it, as linguist reads it.
+fn flag(state: State<'_>) -> Setting {
+    match state {
+        State::Set(Some("false")) | State::Unset => Setting::To(false),
+        State::Set(_) => Setting::To(true),
+        State::Forget => Setting::Forget,
+    }
+}
+
+/// What a token does to `linguist-language`: a value names a language, and anything else leaves
+/// it unspecified.
+fn language(state: State<'_>) -> LanguageChange {
+    match state {
+        State::Set(Some(name)) => LanguageChange::Set(linguist_language(name)),
+        _ => LanguageChange::Forget,
     }
 }
 
@@ -266,12 +320,36 @@ mod tests {
         verdict
     }
 
-    /// A verdict from two optional answers.
+    /// A verdict from two optional answers and no language.
     fn verdict(is_generated: Option<bool>, is_vendored: Option<bool>) -> Verdict {
         Verdict {
             is_generated,
             is_vendored,
+            language: None,
         }
+    }
+
+    /// Languages are named, renamed by later lines, forgotten, and may be ones Cortex does not
+    /// parse.
+    #[test]
+    fn languages_are_named_and_forgotten() {
+        let (file, unusable) = AttributesFile::parse(
+            b"*.h linguist-language=C++\nlegacy/*.h linguist-language=C\nweird.h !linguist-language\n*.groovy linguist-language=Groovy\n",
+        );
+        let cases = [
+            ("a.h", Some(LanguageSetting::Is(cortex_core::Language::Cpp))),
+            (
+                "legacy/b.h",
+                Some(LanguageSetting::Is(cortex_core::Language::C)),
+            ),
+            ("weird.h", None),
+            ("build.groovy", Some(LanguageSetting::Unsupported)),
+            ("a.c", None),
+        ];
+        for (relative, expected) in cases {
+            assert_eq!(verdict_of(&file, relative).language, expected, "{relative}");
+        }
+        assert_eq!(unusable, Vec::<usize>::new());
     }
 
     /// Setting, clearing, values and forgetting, with a later line winning over an earlier one,

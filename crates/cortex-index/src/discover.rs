@@ -1,4 +1,5 @@
-//! Finding a repository's files, and what their paths, attributes and first bytes say about them.
+//! Finding a repository's files, and what their paths, attributes and first bytes say about them:
+//! their language and their flags.
 //!
 //! The walk lists each folder without following links, loads the folder's rules files before it
 //! judges the folder's entries, and keeps a stack of folders to visit rather than recursing, so a
@@ -13,13 +14,13 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cortex_core::{FileFlags, RepoPath};
+use cortex_core::{FileFlags, Language, RepoPath};
 use thiserror::Error;
 
 use crate::gitattributes::Verdict;
 use crate::rules::{FolderRules, Reading, RepositoryRules};
 use crate::safe_read;
-use crate::{head, path_rules};
+use crate::{detect, head, path_rules};
 
 /// Entries the walk never enters or lists: git's own data and Cortex's.
 const PRUNED_NAMES: &[&str] = &[".git", ".cortex"];
@@ -46,6 +47,8 @@ pub struct DiscoverOptions<'a> {
 pub struct DiscoveredFile {
     /// Where it is.
     pub path: RepoPath,
+    /// Its language, when it is one Cortex parses.
+    pub language: Option<Language>,
     /// Its size.
     pub size_bytes: u64,
     /// Its modification time in nanoseconds since the Unix epoch. A time outside what 64 bits of
@@ -303,25 +306,29 @@ impl Walk<'_> {
             return None;
         };
         let mut found = Found::from_path(&path);
+        let mut start = None;
         // A file that may hold secrets is never opened, and one over the limit is never read.
         if !found.is_secret() && size_bytes > self.max_file_bytes {
             found.fixed = found.fixed.with(FileFlags::TOO_LARGE);
         } else if !found.is_secret() {
-            let Ok(start) = safe_read::read_start(&entry.path(), head::HEAD_BYTES) else {
+            let Ok(bytes) = safe_read::read_start(&entry.path(), head::HEAD_BYTES) else {
                 reading.problems.push(Problem {
                     path: Some(path),
                     kind: ProblemKind::Unreadable,
                 });
                 return None;
             };
-            let judged = head::judge(&start);
+            let judged = head::judge(&bytes);
             if judged.is_binary {
                 found.fixed = found.fixed.with(FileFlags::BINARY);
             }
             found.is_generated |= judged.is_generated;
+            start = Some(bytes);
         }
+        let language = detect::detect(&path, start.as_deref(), verdict.language);
         Some(DiscoveredFile {
             flags: found.flags(verdict),
+            language,
             path,
             size_bytes,
             mtime_ns,

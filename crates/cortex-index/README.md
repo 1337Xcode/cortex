@@ -17,7 +17,7 @@ The indexer: which files a repository has and what they are.
 
 | Item | What it is |
 | --- | --- |
-| `discover` | Walks a repository and returns every file, sorted by path, with its size, modification time and flags |
+| `discover` | Walks a repository and returns every file, sorted by path, with its language, size, modification time and flags |
 | `DiscoverOptions` | The size limit, extra patterns in `.gitignore` syntax, and the user's global gitignore file (the caller finds it from git's configuration) |
 | `Discovery`, `Problem` | The files found, the number of links and special files passed over, and what could not be read or used: unreadable files, folders and folder entries, names that cannot be stored, folders past the depth limit, rules files that were skipped, and rules lines that could not be used (the first 20 of a file by number, the rest counted) |
 
@@ -30,6 +30,14 @@ The indexer: which files a repository has and what they are.
 | `BINARY` | A NUL byte appears in its first 8 KiB |
 | `GENERATED` | It is in a `dist`, `build`, `target`, `.next`, `out` or `coverage` folder, is a minified script, source map or package lockfile, or a comment in its first 40 lines carries a code generator's marker; or `.gitattributes` sets `linguist-generated` for it |
 | `VENDORED` | It is in a `node_modules` or `vendor` folder, or `.gitattributes` sets `linguist-vendored` for it |
+
+## Languages
+
+A file's language comes from `linguist-language` in `.gitattributes` when that names one (a
+language Cortex does not parse leaves the file without one), otherwise from its whole name
+(`Gemfile`, `.bashrc`), its extension, or the interpreter its `#!` line names. A `.h` header is
+C++ when its start holds something only C++ has, and C otherwise. Each language has its own file
+in `src/languages/`; adding one means adding a file and a line in the registry.
 
 ## Rules
 

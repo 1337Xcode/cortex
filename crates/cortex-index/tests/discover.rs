@@ -6,7 +6,7 @@ use std::fs::{self, File};
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
-use cortex_core::{FileFlags, RepoPath};
+use cortex_core::{FileFlags, Language, RepoPath};
 use cortex_index::{
     DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, Problem, ProblemKind, discover,
 };
@@ -185,6 +185,7 @@ fn files_get_their_flags() -> TestResult {
         lib,
         &DiscoveredFile {
             path: RepoPath::new("src/lib.rs")?,
+            language: Some(Language::Rust),
             size_bytes: 14,
             mtime_ns: 1_700_000_000_000_000_000,
             flags: FileFlags::empty(),
@@ -232,6 +233,51 @@ fn attributes_follow_git_precedence() -> TestResult {
             ("web/app.js", generated),
             ("web/lib/x.js", FileFlags::VENDORED),
             ("web/other.js", FileFlags::empty()),
+        ]
+    );
+    Ok(())
+}
+
+/// Each file gets its language from its name, its extension or its `#!` line, a `.h` header from
+/// what it holds, and `linguist-language` overrides them all, also to a language Cortex does not
+/// parse. Files whose start is never read still get a language from their name.
+#[test]
+fn languages_are_detected() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write(
+        root,
+        ".gitattributes",
+        b"legacy/*.py linguist-language=Text\n",
+    )?;
+    write(root, "src/app.ts", b"export const a = 1;\n")?;
+    write(
+        root,
+        "include/widget.h",
+        b"namespace ui {\nclass Widget;\n}\n",
+    )?;
+    write(root, "include/add.h", b"int add(int a, int b);\n")?;
+    write(root, "bin/tool", b"#!/usr/bin/env python3\nprint(1)\n")?;
+    write(root, "legacy/old.py", b"print(2)\n")?;
+    write(root, "notes.txt", b"plain\n")?;
+    write(root, "big.json", &[b' '; 300])?;
+    let discovery = discover_plain(root, 200)?;
+    let languages: Vec<(&str, Option<Language>)> = discovery
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), file.language))
+        .collect();
+    assert_eq!(
+        languages,
+        [
+            (".gitattributes", None),
+            ("big.json", Some(Language::Json)),
+            ("bin/tool", Some(Language::Python)),
+            ("include/add.h", Some(Language::C)),
+            ("include/widget.h", Some(Language::Cpp)),
+            ("legacy/old.py", None),
+            ("notes.txt", None),
+            ("src/app.ts", Some(Language::TypeScript)),
         ]
     );
     Ok(())
