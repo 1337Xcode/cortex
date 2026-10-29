@@ -1,5 +1,6 @@
 //! Helpers shared by the cross-crate tests: where the fixtures live and how to load them.
 
+pub mod required;
 pub mod scrub;
 
 use std::fs;

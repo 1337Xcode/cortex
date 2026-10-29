@@ -2,21 +2,19 @@
 //!
 //! Every fixture must parse as a JSON object whose `hook_event_name` matches its file name; every
 //! event and tool the adapters handle must have a fixture for each captured agent version, holding
-//! the tool, source, reason or trigger its name promises; the fixture folder may hold nothing but
-//! payloads and READMEs; and no fixture or README may carry a real path, id, user name or email.
+//! the fields its name promises (the table is in `src/required.rs`); every captured version must
+//! be in that table; the fixture folder may hold nothing but payloads and READMEs; and no fixture
+//! or README may carry a real path, id, user name or email.
 
 use std::error::Error;
 use std::fs;
 use std::path::Path;
 
+use cortex_tests::required::{REQUIRED, unmet};
 use cortex_tests::{files_under, fixtures_dir, json_files, payload_dir, scrub};
 
 /// Result type for these tests: any I/O or parse failure fails the test.
 type TestResult<T> = Result<T, Box<dyn Error>>;
-
-/// A fixture an agent version must have, with the top-level fields that show the payload is the
-/// one its name promises.
-type Required = (&'static str, &'static [(&'static str, &'static str)]);
 
 /// File-name prefixes and the event each names, longest prefix first so that
 /// `post-tool-use-failure` is not read as `post-tool-use`.
@@ -32,116 +30,6 @@ const EVENT_PREFIXES: &[(&str, &str)] = &[
     ("pre-compact", "PreCompact"),
     ("post-compact", "PostCompact"),
     ("stop", "Stop"),
-];
-
-/// The fixtures each captured agent version must have: every event and tool the adapters handle.
-const REQUIRED: &[(&str, &str, &[Required])] = &[
-    (
-        "claude",
-        "2.1.312",
-        &[
-            ("session-start-startup", &[("source", "startup")]),
-            ("session-start-resume", &[("source", "resume")]),
-            ("session-start-compact", &[("source", "compact")]),
-            ("session-start-clear", &[("source", "clear")]),
-            ("user-prompt-submit", &[]),
-            ("pre-tool-use-read", &[("tool_name", "Read")]),
-            ("pre-tool-use-grep", &[("tool_name", "Grep")]),
-            ("pre-tool-use-glob", &[("tool_name", "Glob")]),
-            ("pre-tool-use-edit", &[("tool_name", "Edit")]),
-            ("pre-tool-use-write", &[("tool_name", "Write")]),
-            ("pre-tool-use-bash", &[("tool_name", "Bash")]),
-            ("pre-tool-use-agent", &[("tool_name", "Agent")]),
-            (
-                "pre-tool-use-grep-subagent",
-                &[("tool_name", "Grep"), ("agent_type", "Explore")],
-            ),
-            ("post-tool-use-read", &[("tool_name", "Read")]),
-            ("post-tool-use-grep", &[("tool_name", "Grep")]),
-            ("post-tool-use-glob", &[("tool_name", "Glob")]),
-            ("post-tool-use-edit", &[("tool_name", "Edit")]),
-            ("post-tool-use-write", &[("tool_name", "Write")]),
-            ("post-tool-use-bash", &[("tool_name", "Bash")]),
-            ("post-tool-use-agent", &[("tool_name", "Agent")]),
-            (
-                "post-tool-use-grep-subagent",
-                &[("tool_name", "Grep"), ("agent_type", "Explore")],
-            ),
-            ("post-tool-use-failure-bash", &[("tool_name", "Bash")]),
-            ("post-tool-use-bash-test-passing", &[("tool_name", "Bash")]),
-            ("post-tool-use-failure-bash-test", &[("tool_name", "Bash")]),
-            ("pre-tool-use-read-range", &[("tool_name", "Read")]),
-            ("post-tool-use-read-range", &[("tool_name", "Read")]),
-            ("pre-tool-use-powershell", &[("tool_name", "PowerShell")]),
-            ("post-tool-use-powershell", &[("tool_name", "PowerShell")]),
-            (
-                "post-tool-use-failure-powershell",
-                &[("tool_name", "PowerShell")],
-            ),
-            ("pre-compact-manual", &[("trigger", "manual")]),
-            ("post-compact-manual", &[("trigger", "manual")]),
-            ("subagent-start", &[("agent_type", "Explore")]),
-            ("subagent-stop", &[("agent_type", "Explore")]),
-            ("subagent-stop-internal", &[("agent_type", "")]),
-            ("stop", &[]),
-            ("session-end", &[("reason", "other")]),
-            ("session-end-clear", &[("reason", "clear")]),
-        ],
-    ),
-    (
-        "codex",
-        "0.165.0",
-        &[
-            ("session-start-startup", &[("source", "startup")]),
-            ("session-start-resume", &[("source", "resume")]),
-            ("session-start-compact", &[("source", "compact")]),
-            ("user-prompt-submit", &[]),
-            ("pre-tool-use-bash-grep", &[("tool_name", "Bash")]),
-            ("pre-tool-use-bash-read", &[("tool_name", "Bash")]),
-            ("pre-tool-use-bash-test", &[("tool_name", "Bash")]),
-            (
-                "pre-tool-use-bash-subagent",
-                &[("tool_name", "Bash"), ("agent_type", "default")],
-            ),
-            ("pre-tool-use-apply-patch", &[("tool_name", "apply_patch")]),
-            (
-                "pre-tool-use-spawn-agent",
-                &[("tool_name", "collaborationspawn_agent")],
-            ),
-            (
-                "pre-tool-use-wait-agent",
-                &[("tool_name", "collaborationwait_agent")],
-            ),
-            ("post-tool-use-bash-grep", &[("tool_name", "Bash")]),
-            ("post-tool-use-bash-read", &[("tool_name", "Bash")]),
-            ("post-tool-use-bash-test-failing", &[("tool_name", "Bash")]),
-            ("post-tool-use-bash-test-passing", &[("tool_name", "Bash")]),
-            ("post-tool-use-bash-nonzero-exit", &[("tool_name", "Bash")]),
-            (
-                "post-tool-use-bash-subagent",
-                &[("tool_name", "Bash"), ("agent_type", "default")],
-            ),
-            ("post-tool-use-apply-patch", &[("tool_name", "apply_patch")]),
-            (
-                "post-tool-use-apply-patch-add",
-                &[("tool_name", "apply_patch")],
-            ),
-            (
-                "post-tool-use-spawn-agent",
-                &[("tool_name", "collaborationspawn_agent")],
-            ),
-            (
-                "post-tool-use-wait-agent",
-                &[("tool_name", "collaborationwait_agent")],
-            ),
-            ("pre-compact-auto", &[("trigger", "auto")]),
-            ("post-compact-auto", &[("trigger", "auto")]),
-            ("subagent-start", &[("agent_type", "default")]),
-            ("subagent-stop", &[("agent_type", "default")]),
-            ("stop", &[]),
-            ("session-end", &[("reason", "other")]),
-        ],
-    ),
 ];
 
 /// The event a fixture file name says it holds.
@@ -222,31 +110,47 @@ fn every_fixture_names_its_event() -> TestResult<()> {
     Ok(())
 }
 
-/// Each captured agent version has every required fixture, and each holds the tool, source,
-/// reason or trigger its name promises.
+/// Each captured agent version has every required fixture, and each holds the fields its name
+/// promises.
 #[test]
 fn required_fixtures_exist_and_match_their_names() -> TestResult<()> {
     let mut problems = Vec::new();
     for (agent, version, required) in REQUIRED {
-        for (name, fields) in *required {
+        for (name, expects) in *required {
             let path = payload_dir(agent, version).join(format!("{name}.json"));
             if !path.is_file() {
                 problems.push(format!("missing fixture {}", path.display()));
                 continue;
             }
             let payload: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-            for (key, expected) in *fields {
-                let found = payload.get(*key).and_then(serde_json::Value::as_str);
-                if found != Some(*expected) {
-                    problems.push(format!(
-                        "{}: {key} is {found:?}, the name promises {expected:?}",
-                        path.display()
-                    ));
-                }
-            }
+            problems.extend(
+                unmet(&payload, expects)
+                    .into_iter()
+                    .map(|problem| format!("{agent}/{version}/{name}.json: {problem}")),
+            );
         }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+    Ok(())
+}
+
+/// Every captured agent version has a list of required fixtures, so a new version folder cannot
+/// skip the completeness check.
+#[test]
+fn every_version_folder_is_required() -> TestResult<()> {
+    let unlisted: Vec<String> = version_dirs()?
+        .iter()
+        .map(|dir| fixture_relative(dir))
+        .filter(|relative| {
+            !REQUIRED
+                .iter()
+                .any(|(agent, version, _)| *relative == format!("{agent}/{version}"))
+        })
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "fixture folders missing from the REQUIRED table: {unlisted:?}"
+    );
     Ok(())
 }
 
