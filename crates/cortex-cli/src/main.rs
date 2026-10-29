@@ -16,6 +16,8 @@ use crate::commands::Command;
 #[derive(Debug, Parser)]
 #[command(
     name = "cortex",
+    // Help and usage name the binary `cortex`, not its file name (`cortex.exe` on Windows).
+    bin_name = "cortex",
     version,
     about = "A local memory and map of a codebase for coding agents."
 )]
