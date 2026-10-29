@@ -97,6 +97,7 @@ mod tests {
         names.iter().map(|name| (*name).to_owned()).collect()
     }
 
+    /// A tag comment is found with its path and 1-based line; plain comments are not tags.
     #[test]
     fn scan_finds_tags_with_line_numbers() {
         let text = format!(
@@ -113,12 +114,14 @@ mod tests {
         );
     }
 
+    /// The marker inside code that is not a comment is ignored.
     #[test]
     fn marker_outside_a_comment_is_not_a_tag() {
         let text = format!("let s = \"{MARKER_WORD}: fail-open\";\n");
         assert_eq!(scan("crates/x/src/lib.rs", &text), Vec::new());
     }
 
+    /// A tag naming no known invariant is reported with its location.
     #[test]
     fn unknown_name_is_reported() {
         let tags = scan("crates/cortex-hook/src/lib.rs", &tag_comment("fial-open"));
@@ -128,6 +131,7 @@ mod tests {
         );
     }
 
+    /// Once the owning crate exists, its invariant needs a tagged line inside it.
     #[test]
     fn existing_owner_needs_a_tag() {
         assert_eq!(
@@ -141,6 +145,7 @@ mod tests {
         );
     }
 
+    /// A tag in another crate does not stand in for the owner's.
     #[test]
     fn tag_outside_the_owner_does_not_count() {
         let tags = scan("crates/cortex-cli/src/main.rs", &tag_comment("fail-open"));
@@ -150,6 +155,7 @@ mod tests {
         );
     }
 
+    /// An invariant whose owning crate does not exist yet requires no tag.
     #[test]
     fn missing_owner_requires_nothing() {
         assert_eq!(

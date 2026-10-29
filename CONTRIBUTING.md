@@ -24,6 +24,7 @@
 | --- | --- |
 | `crates/cortex-cli` | The `cortex` binary: commands and the entry points agents call |
 | `xtask` | The repository checks behind `cargo xtask verify` |
+| `tests` | Cross-crate tests and the recorded agent hook payloads they read, in `fixtures/<agent>/<version>/` |
 
 Further crates join as their code lands. Each crate has a place in a layered order, listed in
 `xtask/src/architecture.rs`, and may depend only on crates below it; `cargo xtask verify` refuses a

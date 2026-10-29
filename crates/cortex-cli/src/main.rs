@@ -25,6 +25,7 @@ struct Cli {
     command: Command,
 }
 
+/// Runs the command named on the command line; exit code 1 and a message on stderr on failure.
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match commands::run(cli.command) {

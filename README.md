@@ -1,10 +1,10 @@
 # Cortex
 
 Cortex is a local memory and map of a codebase for coding agents. It is being built to run beside
-Claude Code and Codex through their official hooks: it watches what agents read, edit and test,
-learns which code belongs together from structure, git history and finished work, and hands the
-next task the exact code and project facts it needs. When it is not sure, it says nothing.
-Everything stays on your machine.
+Claude Code and Codex through their official hooks, to watch what agents read, edit and test, to
+learn which code belongs together from structure, git history and finished work, and to hand the
+next task the exact code and project facts it needs. Two rules shape the design: stay silent when
+unsure, and keep everything on the user's machine.
 
 ## Status
 

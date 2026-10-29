@@ -7,7 +7,8 @@ entry points agents and the daemon call.
 
 - Hold product logic. A command parses its arguments, calls the crate that owns the behaviour and
   prints the result.
-- Print anywhere but through `src/output.rs`, or panic on a closed pipe.
+- Print command output anywhere but through `src/output.rs`, or panic on a closed pipe. Help,
+  `--version` and usage errors are printed by clap.
 
 ## Entry points
 

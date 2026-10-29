@@ -140,6 +140,7 @@ mod tests {
         }
     }
 
+    /// Dependencies on lower layers, and the binary's on its own layer, pass.
     #[test]
     fn inward_dependencies_pass() {
         let packages = [
@@ -153,6 +154,7 @@ mod tests {
         assert_eq!(check(&packages), Vec::<String>::new());
     }
 
+    /// A dependency on a higher layer is reported with both layers.
     #[test]
     fn outward_dependency_fails() {
         let packages = [
@@ -165,6 +167,7 @@ mod tests {
         );
     }
 
+    /// Crates in the same layer may not depend on each other, except the binary.
     #[test]
     fn same_layer_dependency_fails_outside_the_binary() {
         let packages = [
@@ -177,6 +180,7 @@ mod tests {
         );
     }
 
+    /// The hook client may depend on the core crate and nothing else of ours.
     #[test]
     fn hook_may_depend_on_core_alone() {
         let packages = [
@@ -190,6 +194,7 @@ mod tests {
         );
     }
 
+    /// A workspace crate missing from the layer table is reported.
     #[test]
     fn crate_without_a_layer_fails() {
         let packages = [package("cortex-extra", &[])];
@@ -202,6 +207,7 @@ mod tests {
         );
     }
 
+    /// Dev-dependencies and the tooling crates are outside the layer rules.
     #[test]
     fn dev_dependencies_and_tooling_are_not_checked() {
         let mut core = package("cortex-core", &[]);

@@ -2,7 +2,7 @@
 //!
 //! `cargo xtask verify` runs, in order: formatting, the architecture rules, the invariant tags,
 //! clippy, the tests (doc tests included) and `cargo deny`. It stops at the first failure.
-//! `cargo xtask verify --full` adds the budget checks run at milestone gates.
+//! `cargo xtask verify --full` adds the budget checks.
 
 // xtask is a developer tool whose whole job is to report progress on the terminal.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
@@ -36,6 +36,7 @@ fn parse_task(args: &[String]) -> Result<Task, String> {
     }
 }
 
+/// Runs the requested task; exit code 2 on bad arguments, 1 when a check fails.
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let task = match parse_task(&args) {
@@ -69,6 +70,7 @@ mod tests {
         list.iter().map(|arg| (*arg).to_owned()).collect()
     }
 
+    /// `verify` and `verify --full` are the two accepted forms.
     #[test]
     fn parses_verify_and_full() {
         assert_eq!(
@@ -81,6 +83,7 @@ mod tests {
         );
     }
 
+    /// Every other argument list is a usage error.
     #[test]
     fn rejects_anything_else() {
         assert!(parse_task(&args(&[])).is_err());
