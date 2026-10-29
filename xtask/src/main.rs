@@ -9,6 +9,7 @@
 
 mod architecture;
 mod invariants;
+mod lints;
 mod steps;
 
 use std::process::ExitCode;

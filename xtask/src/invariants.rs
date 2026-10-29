@@ -3,7 +3,8 @@
 //! Each line that enforces one of the product's invariants carries a comment naming it, so one
 //! text search finds every enforcement point. This check refuses tags with unknown names (a typo
 //! would hide an enforcement point) and, once the crate that owns an invariant exists, requires at
-//! least one tag for it inside that crate.
+//! least one tag for it in that crate's `src/`. A tag is a `//` line comment; the marker inside a
+//! string literal or in test code does not count.
 
 use std::collections::BTreeSet;
 
@@ -37,10 +38,11 @@ pub(crate) struct Tag {
 /// Finds the tags in one file: a `//` comment containing the marker word and a colon, then a name.
 pub(crate) fn scan(path: &str, text: &str) -> Vec<Tag> {
     let marker = format!("{MARKER_WORD}:");
+    let quotes = string_quotes(path);
     text.lines()
         .enumerate()
         .filter_map(|(index, line)| {
-            let (_, comment) = line.split_once("//")?;
+            let comment = line_comment(line, quotes)?;
             let (_, rest) = comment.split_once(marker.as_str())?;
             let name = rest
                 .trim_start()
@@ -54,6 +56,44 @@ pub(crate) fn scan(path: &str, text: &str) -> Vec<Tag> {
             })
         })
         .collect()
+}
+
+/// The characters that open a string literal in the file's language: Rust uses `'` for lifetimes
+/// and characters, so only `"` counts there; TypeScript strings use all three.
+fn string_quotes(path: &str) -> &'static [char] {
+    if path.ends_with(".rs") {
+        &['"']
+    } else {
+        &['"', '\'', '`']
+    }
+}
+
+/// The text after the first `//` that is not inside a string literal, if the line has one.
+///
+/// Raw strings and a quote inside a Rust character literal are not recognised; such a line hides
+/// a tag rather than inventing one.
+fn line_comment<'a>(line: &'a str, quotes: &[char]) -> Option<&'a str> {
+    let mut open_quote: Option<char> = None;
+    let mut escaped = false;
+    let mut previous_slash = false;
+    for (index, character) in line.char_indices() {
+        match open_quote {
+            Some(quote) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == quote {
+                    open_quote = None;
+                }
+            }
+            None if character == '/' && previous_slash => return line.get(index + 1..),
+            None if quotes.contains(&character) => open_quote = Some(character),
+            None => {}
+        }
+        previous_slash = open_quote.is_none() && character == '/';
+    }
+    None
 }
 
 /// Every problem with `tags`, given the names of the crates that exist.
@@ -72,7 +112,7 @@ pub(crate) fn check(tags: &[Tag], crate_names: &BTreeSet<String>) -> Vec<String>
         if !crate_names.contains(*owner) {
             continue;
         }
-        let owner_dir = format!("crates/{owner}/");
+        let owner_dir = format!("crates/{owner}/src/");
         let is_enforced = tags
             .iter()
             .any(|tag| tag.name == *name && tag.path.starts_with(&owner_dir));
@@ -136,7 +176,7 @@ mod tests {
     fn existing_owner_needs_a_tag() {
         assert_eq!(
             check(&[], &crates(&["cortex-hook"])),
-            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/".to_owned()]
+            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
         );
         let tags = scan("crates/cortex-hook/src/lib.rs", &tag_comment("fail-open"));
         assert_eq!(
@@ -151,8 +191,46 @@ mod tests {
         let tags = scan("crates/cortex-cli/src/main.rs", &tag_comment("fail-open"));
         assert_eq!(
             check(&tags, &crates(&["cortex-hook", "cortex-cli"])),
-            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/".to_owned()]
+            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
         );
+    }
+
+    /// A tag in the owner's tests is not an enforcing line.
+    #[test]
+    fn tag_in_owner_tests_does_not_count() {
+        let tags = scan(
+            "crates/cortex-hook/tests/hook.rs",
+            &tag_comment("fail-open"),
+        );
+        assert_eq!(
+            check(&tags, &crates(&["cortex-hook"])),
+            vec!["fail-open: no tagged enforcing line in crates/cortex-hook/src/".to_owned()]
+        );
+    }
+
+    /// `//` inside a string literal starts no comment, in Rust or TypeScript.
+    #[test]
+    fn marker_in_a_string_literal_is_not_a_tag() {
+        let rust = format!("let s = \"// {MARKER_WORD}: fail-open\";\n");
+        assert_eq!(scan("crates/x/src/lib.rs", &rust), Vec::new());
+        let typescript = format!("const s = '// {MARKER_WORD}: fail-open';\n");
+        assert_eq!(scan("ui/src/a.ts", &typescript), Vec::new());
+        let template = format!("const s = `// {MARKER_WORD}: fail-open`;\n");
+        assert_eq!(scan("ui/src/a.tsx", &template), Vec::new());
+    }
+
+    /// A comment after code that holds strings, escapes or lifetimes is still found.
+    #[test]
+    fn tag_after_strings_and_lifetimes_is_found() {
+        let lines = [
+            format!("let s = \"a//b\\\"c\"; // {MARKER_WORD}: fail-open"),
+            format!("fn f<'a>(x: &'a str) {{}} // {MARKER_WORD}: fail-open"),
+        ];
+        for line in lines {
+            let tags = scan("crates/cortex-hook/src/lib.rs", &line);
+            assert_eq!(tags.len(), 1, "{line}");
+            assert_eq!(tags[0].name, "fail-open");
+        }
     }
 
     /// An invariant whose owning crate does not exist yet requires no tag.

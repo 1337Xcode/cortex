@@ -7,6 +7,7 @@
 //! whatever helps them.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 
@@ -50,6 +51,8 @@ pub(crate) struct Metadata {
 pub(crate) struct Package {
     /// The package name, such as `cortex-store`.
     pub(crate) name: String,
+    /// Absolute path of its `Cargo.toml`.
+    pub(crate) manifest_path: PathBuf,
     /// Its declared dependencies, workspace and external alike.
     pub(crate) dependencies: Vec<Dependency>,
 }
@@ -130,6 +133,7 @@ mod tests {
     fn package(name: &str, deps: &[&str]) -> Package {
         Package {
             name: name.to_owned(),
+            manifest_path: PathBuf::new(),
             dependencies: deps
                 .iter()
                 .map(|dep| Dependency {
