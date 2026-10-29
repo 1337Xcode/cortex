@@ -145,6 +145,14 @@ mod tests {
             (Language::C, "include/test_order.h", true),
             (Language::C, "src/order.c", false),
             (Language::C, "src/order_tests.c", false),
+            (Language::Cpp, "src/order_test.cc", true),
+            (Language::Cpp, "src/order_test.cpp", true),
+            (Language::Cpp, "src/order_unittest.cc", true),
+            (Language::Cpp, "src/order_test.cxx", true),
+            (Language::Cpp, "src/order_tests.cpp", true),
+            (Language::Cpp, "src/test_order.cpp", true),
+            (Language::Cpp, "src/order.cpp", false),
+            (Language::Cpp, "src/OrderTest.cpp", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

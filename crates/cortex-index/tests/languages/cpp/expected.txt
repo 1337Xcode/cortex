@@ -1,0 +1,39 @@
+# What sample.cpp defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text up to its body, with each run of whitespace as one space; a
+# constant's body is its value, and an alias has none. A class's span starts at `class`, after its
+# `template` line. Not read: the comments, the template parameter `T` where it is declared, the
+# enum's values, the declared but undefined `operator==`, the fields, `size_(size)` (it sets a
+# field), every use of a variable or a constant, the macro name `TEST`, and the suite name
+# `OrderTest`, which names no type.
+symbol module shop 5-29 - | namespace shop
+symbol constant shop.LIMIT 7-7 shop | LIMIT =
+symbol type shop.money 8-8 shop | using money = long;
+symbol type shop.Status 9-9 shop | enum class Status
+symbol class shop.Ledger 12-23 shop | class Ledger : public Base<T>, private Audit
+symbol method shop.Ledger.Ledger 14-14 shop.Ledger | explicit Ledger(int size) : size_(size)
+symbol method shop.Ledger.~Ledger 15-15 shop.Ledger | ~Ledger()
+symbol method shop.Ledger.add 17-17 shop.Ledger | void add(const T& entry)
+symbol constant shop.Ledger.SLOTS 18-18 shop.Ledger | static constexpr int SLOTS =
+symbol method shop.Order.total 25-27 shop | money Order::total() const
+symbol test OrderTest.Pays 31-34 - | TEST(OrderTest, Pays)
+ref inherit Base 12 shop.Ledger
+ref type_ref T 12 shop.Ledger
+ref inherit Audit 12 shop.Ledger
+ref type_ref Ledger 16 shop.Ledger
+ref type_ref T 17 shop.Ledger.add
+ref call push_back 17 shop.Ledger.add
+ref type_ref vector 21 shop.Ledger
+ref type_ref T 21 shop.Ledger
+ref type_ref money 25 shop.Order.total
+ref call max 26 shop.Order.total
+ref call fee 26 shop.Order.total
+ref call helper 26 shop.Order.total
+ref type_ref money 26 shop.Order.total
+ref call Order 32 OrderTest.Pays
+ref call EXPECT_EQ 33 OrderTest.Pays
+ref call total 33 OrderTest.Pays
+import <vector> module - 2
+import shop/money.h module - 3

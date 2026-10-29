@@ -4,10 +4,10 @@
 
 use std::error::Error;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use cortex_core::{Language, RepoPath, ShortHash, SymbolKind};
+use cortex_core::{Language, RefKind, RepoPath, ShortHash, SymbolKind};
 use cortex_index::{ExtractError, Extraction, Extractor, Grammars, Imported};
 
 /// What the tests return: any failure, with its cause.
@@ -16,9 +16,23 @@ type TestResult = Result<(), Box<dyn Error>>;
 /// A time limit no test file comes near, even in a debug build.
 const GENEROUS: Duration = Duration::from_secs(60);
 
+/// Every grammar, loaded once for all the tests here: compiling the queries takes longer than
+/// anything a test reads.
+fn grammars() -> Result<Arc<Grammars>, Box<dyn Error>> {
+    static GRAMMARS: OnceLock<Result<Arc<Grammars>, String>> = OnceLock::new();
+    GRAMMARS
+        .get_or_init(|| {
+            Grammars::load()
+                .map(Arc::new)
+                .map_err(|error| error.to_string())
+        })
+        .clone()
+        .map_err(Into::into)
+}
+
 /// An extractor over every grammar, allowing each file `timeout`.
 fn extractor(timeout: Duration) -> Result<Extractor, Box<dyn Error>> {
-    Ok(Extractor::new(Arc::new(Grammars::load()?), timeout))
+    Ok(Extractor::new(grammars()?, timeout))
 }
 
 /// What `source` gives when read as the file at `path`, written in `language`.
@@ -181,6 +195,19 @@ fn c() -> TestResult {
 #[test]
 fn c_with_crlf_line_breaks() -> TestResult {
     check_golden("c", "sample.c", Language::C, "\r\n")
+}
+
+/// C++: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn cpp() -> TestResult {
+    check_golden("cpp", "sample.cpp", Language::Cpp, "\n")
+}
+
+/// The same C++ with Windows line breaks: the same lines, spans that end at the same tokens,
+/// the same hashes.
+#[test]
+fn cpp_with_crlf_line_breaks() -> TestResult {
+    check_golden("cpp", "sample.cpp", Language::Cpp, "\r\n")
 }
 
 /// Ruby: every construct in the fixture, listed by hand in `expected.txt`.
@@ -636,6 +663,220 @@ fn c_typedefs_name_each_type_once() -> TestResult {
         .map(|reference| (reference.dst_name.as_str(), reference.line))
         .collect();
     assert_eq!(refs, [("grid_t", 10), ("value", 11), ("status", 12)]);
+    Ok(())
+}
+
+/// Google Test's tests are tests wherever they are, named by the test inside its suite; a function
+/// named `test_` is a test only in a test file, and `testing` lacks the underscore.
+#[test]
+fn cpp_tests_are_marked_by_macro_or_name() -> TestResult {
+    use SymbolKind::{Function, Test};
+    let source = "TEST(OrderTest, Pays) {}\nTEST_F(OrderFixture, Ships) {}\nvoid test_total() {}\n\
+                  void helper() {}\nvoid testing() {}\n";
+    let symbols = |path: &str| -> Result<Vec<(String, SymbolKind)>, Box<dyn Error>> {
+        let extraction = extract(path, Language::Cpp, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| (symbol.qual_name.as_str().to_owned(), symbol.kind))
+            .collect())
+    };
+    let named = |kinds: [SymbolKind; 5]| -> Vec<(String, SymbolKind)> {
+        [
+            "OrderTest.Pays",
+            "OrderFixture.Ships",
+            "test_total",
+            "helper",
+            "testing",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .zip(kinds)
+        .collect()
+    };
+    assert_eq!(
+        symbols("src/order_test.cc")?,
+        named([Test, Test, Test, Function, Function])
+    );
+    assert_eq!(
+        symbols("src/order.cc")?,
+        named([Test, Test, Function, Function, Function])
+    );
+    Ok(())
+}
+
+/// C++ functions and methods by every way of naming them: returning a reference or a pointer to
+/// a pointer, operators, destructors, constructors, specializations, and methods defined outside
+/// their class, its template or up to three scopes, which take the innermost one's name. A
+/// namespace written `a::b` or `n3::n4::n5` is named by its last part, a specialized class by its
+/// template, and a class behind an export macro by its own name. A member constant alone in its
+/// declaration is read; two in one declaration, a pure virtual method, a friend function, a
+/// deleted constructor, a conversion operator and a lambda are not definitions.
+#[test]
+fn cpp_functions_and_methods_are_named() -> TestResult {
+    let source = "const std::string& name(const Order& o) { return o.name; }\n\
+                  Order& Order::operator=(const Order& other) { return *this; }\n\
+                  bool operator==(const Order& a, const Order& b) { return true; }\n\
+                  namespace a::b { int f() { return 0; } }\n\
+                  struct Shape { virtual double area() const = 0; static const int MAX = 9; \
+                  static constexpr int SIDES = 4, EDGES = 4; };\n\
+                  template <typename T> void Stack<T>::pop() {}\nint **grid() { return 0; }\n\
+                  class Order final : public shop::Base, Priced { Order(int n) : n_(n) {} ~Order() {} };\n\
+                  auto make = [](int x) { return x; };\n\
+                  template <> class Hash<Order> { void k() {} };\n\
+                  template <> struct std::hash<Order> { int operator()(const Order& o) const { return 0; } };\n\
+                  struct W { friend bool operator==(const W&, const W&) { return true; } W(const W&) = delete; };\n\
+                  template <> int largest<int>(int a, int b) { return a; }\n\
+                  namespace n3::n4::n5 { void deeper() {} }\n\
+                  class API Exported { void a() {} };\n\
+                  void shop::Order::Inner::h() {}\nvoid a::B::f() {}\n\
+                  struct Conv { operator bool() const { return true; } };\n";
+    let extraction = extract("src/order.cpp", Language::Cpp, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant, Function, Method, Module};
+    assert_eq!(
+        symbols,
+        [
+            ("name", Function),
+            ("Order.operator=", Method),
+            ("operator==", Function),
+            ("b", Module),
+            ("b.f", Function),
+            ("Shape", Class),
+            ("Shape.MAX", Constant),
+            ("Stack.pop", Method),
+            ("grid", Function),
+            ("Order", Class),
+            ("Order.Order", Method),
+            ("Order.~Order", Method),
+            ("Hash", Class),
+            ("Hash.k", Method),
+            ("hash", Class),
+            ("hash.operator()", Method),
+            ("W", Class),
+            ("largest", Function),
+            ("n5", Module),
+            ("n5.deeper", Function),
+            ("Exported", Class),
+            ("Exported.a", Method),
+            ("Inner.h", Method),
+            ("B.f", Method),
+            ("Conv", Class)
+        ]
+    );
+    Ok(())
+}
+
+/// C++ calls: plain, through an object or a pointer, qualified once or twice, with template
+/// arguments, and creating an object with `new`, plain or qualified once or twice. A cast is
+/// not a call.
+#[test]
+fn cpp_calls_are_read_in_every_form() -> TestResult {
+    let source = "void g(Order* p, Order o) {\n    pay(1);\n    o.ship();\n    p->bill();\n    \
+                  std::max(1, 2);\n    shop::util::log(1);\n    make<int>(1);\n    \
+                  std::make_unique<Order>();\n    new Order();\n    new shop::Receipt();\n    \
+                  static_cast<int>(1);\n    std::chrono::duration_cast<std::chrono::seconds>(d);\n    \
+                  new a::b::C();\n}\n";
+    let extraction = extract("src/g.cpp", Language::Cpp, source)?;
+    let calls: Vec<(&str, u32)> = extraction
+        .refs
+        .iter()
+        .filter(|reference| reference.kind == RefKind::Call)
+        .map(|reference| (reference.dst_name.as_str(), reference.line))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("pay", 2),
+            ("ship", 3),
+            ("bill", 4),
+            ("max", 5),
+            ("log", 6),
+            ("make", 7),
+            ("make_unique", 8),
+            ("Order", 9),
+            ("Receipt", 10),
+            ("duration_cast", 12),
+            ("C", 13)
+        ]
+    );
+    Ok(())
+}
+
+/// C++ base classes and type uses qualified by up to two scopes, plain or with template
+/// arguments. The export macro before a class's name is no type.
+#[test]
+fn cpp_qualified_types_are_read() -> TestResult {
+    let source = "class E2 : public a::b::C {};\na::b::C cc;\nstd::chrono::seconds s;\n\
+                  std::vector<shop::Order> orders;\nclass API Exported { void a() {} };\n";
+    let extraction = extract("src/types.cpp", Language::Cpp, source)?;
+    let refs: Vec<(&str, &str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("inherit", "C", 1),
+            ("type_ref", "C", 2),
+            ("type_ref", "seconds", 3),
+            ("type_ref", "vector", 4),
+            ("type_ref", "Order", 4)
+        ]
+    );
+    Ok(())
+}
+
+/// C++ reads what C does with the same patterns: `#define` constants and macros but no include
+/// guard, typedefs that never nest, unions, constant pointers, a forward declaration as a use, no
+/// `const` inside a function, and no call inside an attribute.
+#[test]
+fn cpp_shares_the_c_readings() -> TestResult {
+    let source = "#ifndef ORDER_H\n#define ORDER_H\n#define LIMIT 3\n\
+                  #define MAX(a, b) ((a) > (b) ? (a) : (b))\ntypedef unsigned long money;\n\
+                  typedef struct node { int v; } node_t, *node_ptr;\n\
+                  typedef int cint __attribute__((aligned(8)));\n\
+                  union amount { int cents; float units; };\nclass Receipt;\n\
+                  char *const LABEL = nullptr;\nvoid pay(Receipt* r) { const int fee = 1; }\n#endif\n";
+    let extraction = extract("src/order.hpp", Language::Cpp, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant, Function, Type};
+    assert_eq!(
+        symbols,
+        [
+            ("LIMIT", Constant),
+            ("MAX", Function),
+            ("money", Type),
+            ("node", Class),
+            ("node_t", Type),
+            ("node_ptr", Type),
+            ("cint", Type),
+            ("amount", Class),
+            ("LABEL", Constant),
+            ("pay", Function)
+        ]
+    );
+    let refs: Vec<(&str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| (reference.dst_name.as_str(), reference.line))
+        .collect();
+    assert_eq!(refs, [("Receipt", 9), ("Receipt", 11)]);
     Ok(())
 }
 
