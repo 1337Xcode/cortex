@@ -1,0 +1,66 @@
+# What sample.py defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name> or all> <alias or -> <line>
+# A header is the definition's text from its first decorator up to its body, with each run of
+# whitespace as one space. Not read: the docstrings, `from __future__`, the tuple assignment on
+# line 15, the class attributes on lines 28 and 50 (only module-level assignments are constants),
+# the `T` of `Generic[T]`, `metaclass=`, and the annotations `None` and "Order".
+symbol constant MAX_ITEMS 12-12 - | MAX_ITEMS =
+symbol constant DEFAULT_NAME 13-13 - | DEFAULT_NAME: str =
+symbol constant pending 14-14 - | pending: list[Order]
+symbol type OrderId 17-17 - | type OrderId =
+symbol function total 20-22 - | def total(lines: list[Line], tax: Optional[float] = None) -> float:
+symbol class Order 25-50 - | class Order(OrderModel, mixins.Audited, Generic[T], metaclass=Registry):
+symbol method Order.__init__ 30-32 Order | def __init__(self, order_id: OrderId, lines: list[Line] | None = None) -> None:
+symbol method Order.size 34-36 Order | @property def size(self) -> int:
+symbol method Order.price 38-40 Order | @helpers.cached def price(self) -> float:
+symbol method Order.parse 42-47 Order | @staticmethod def parse(text: str | bytes) -> "Order":
+symbol function Order.parse.clean 44-45 Order.parse | def clean(part):
+symbol class Order.Meta 49-50 Order | class Meta:
+symbol function ship 53-53 - | def ship(order: Order, *, to: Path | str | None) -> None:
+symbol constant on_error 56-56 - | on_error =
+ref type_ref str 13 DEFAULT_NAME
+ref type_ref list 14 pending
+ref type_ref Order 14 pending
+ref type_ref int 17 OrderId
+ref type_ref list 20 total
+ref type_ref Line 20 total
+ref type_ref Optional 20 total
+ref type_ref float 20 total
+ref type_ref float 20 total
+ref call sum 21 total
+ref call round 22 total
+ref inherit OrderModel 25 Order
+ref inherit Audited 25 Order
+ref inherit Generic 25 Order
+ref type_ref OrderId 30 Order.__init__
+ref type_ref list 30 Order.__init__
+ref type_ref Line 30 Order.__init__
+ref call super 31 Order.__init__
+ref call __init__ 31 Order.__init__
+ref call property 34 Order.size
+ref type_ref int 35 Order.size
+ref call len 36 Order.size
+ref call cached 38 Order.price
+ref type_ref float 39 Order.price
+ref call total 40 Order.price
+ref call staticmethod 42 Order.parse
+ref type_ref str 43 Order.parse
+ref type_ref bytes 43 Order.parse
+ref call strip 45 Order.parse.clean
+ref call Order 47 Order.parse
+ref call loads 47 Order.parse
+ref call clean 47 Order.parse
+ref type_ref Order 53 ship
+ref type_ref Path 53 ship
+ref type_ref str 53 ship
+ref call log 56 on_error
+import os.path module - 5
+import json module js 6
+import sys module - 6
+import typing name:Optional - 7
+import . name:helpers - 8
+import ..models name:Order OrderModel 9
+import ..models name:Line - 9
+import .shapes all - 10

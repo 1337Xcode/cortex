@@ -15,6 +15,11 @@ use crate::ScaleMode;
 /// generated code, and parsing them would cost more than they add.
 pub const DEFAULT_MAX_FILE_BYTES: u64 = 1_048_576;
 
+/// The default for `index.parse_timeout_ms`: one second. Parsing a 1 MiB Python file and reading
+/// its definitions took about 0.2 s in a release build when this was set, so only a parse that
+/// has gone wrong runs out of time.
+pub const DEFAULT_PARSE_TIMEOUT_MS: u64 = 1000;
+
 /// The default for `daemon.idle_shutdown_minutes`: half an hour without any work.
 pub const DEFAULT_IDLE_SHUTDOWN_MINUTES: u64 = 30;
 
@@ -42,6 +47,10 @@ pub struct Config {
     /// `index.extra_ignores`: patterns in `.gitignore` syntax that the index also leaves out.
     /// Default none.
     pub extra_ignores: Vec<String>,
+    /// `index.parse_timeout_ms`: how long parsing one file and reading what it defines may take;
+    /// a file that takes longer is indexed at file level only. Default
+    /// [`DEFAULT_PARSE_TIMEOUT_MS`].
+    pub parse_timeout_ms: u64,
     /// `daemon.idle_shutdown_minutes`: the daemon stops after this many minutes without work.
     /// Default [`DEFAULT_IDLE_SHUTDOWN_MINUTES`].
     pub idle_shutdown_minutes: u64,
@@ -57,6 +66,7 @@ impl Default for Config {
             mode: ModeSetting::Auto,
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             extra_ignores: Vec::new(),
+            parse_timeout_ms: DEFAULT_PARSE_TIMEOUT_MS,
             idle_shutdown_minutes: DEFAULT_IDLE_SHUTDOWN_MINUTES,
             mmap_bytes: DEFAULT_MMAP_BYTES,
         }
@@ -171,6 +181,10 @@ impl Config {
                 self.extra_ignores =
                     string_list(value).ok_or_else(|| refuse("a list of strings"))?;
             }
+            "index.parse_timeout_ms" => {
+                self.parse_timeout_ms =
+                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
+            }
             "daemon.idle_shutdown_minutes" => {
                 self.idle_shutdown_minutes =
                     positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
@@ -234,6 +248,7 @@ mod tests {
                 mode: ModeSetting::Auto,
                 max_file_bytes: 1_048_576,
                 extra_ignores: Vec::new(),
+                parse_timeout_ms: 1000,
                 idle_shutdown_minutes: 30,
                 mmap_bytes: 256 * 1024 * 1024,
             }
@@ -251,7 +266,7 @@ mod tests {
         );
         let repository = layer(
             "repository",
-            "[index]\nmax_file_bytes = 5000\n[daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n",
+            "[index]\nmax_file_bytes = 5000\nparse_timeout_ms = 250\n[daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -260,6 +275,7 @@ mod tests {
                 mode: ModeSetting::Pinned(ScaleMode::Small),
                 max_file_bytes: 5000,
                 extra_ignores: vec!["*.log".to_owned()],
+                parse_timeout_ms: 250,
                 idle_shutdown_minutes: 5,
                 mmap_bytes: 0,
             }
@@ -316,6 +332,16 @@ mod tests {
                 "index.extra_ignores = [\"a\", 2]",
                 "index.extra_ignores",
                 "a list of strings",
+            ),
+            (
+                "index.parse_timeout_ms = 0",
+                "index.parse_timeout_ms",
+                "a whole number above 0",
+            ),
+            (
+                "index.parse_timeout_ms = 1.5",
+                "index.parse_timeout_ms",
+                "a whole number above 0",
             ),
             (
                 "daemon.idle_shutdown_minutes = 0",

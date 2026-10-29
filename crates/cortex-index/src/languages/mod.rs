@@ -1,8 +1,11 @@
-//! The languages Cortex parses, one file each, and how a file is recognised as one of them.
+//! The languages Cortex parses, one file each: how a file is recognised as one of them, and for
+//! the languages whose symbols Cortex reads, how their files are parsed.
 //!
 //! Adding a language means adding its file and one line in [`ALL`].
 
 use cortex_core::Language;
+
+use crate::path_rules::NamePattern;
 
 mod bash;
 mod c;
@@ -26,7 +29,10 @@ mod tsx;
 mod typescript;
 mod yaml;
 
-/// How files of one language are recognised.
+#[cfg(test)]
+pub(crate) use python::grammar as python_grammar;
+
+/// How files of one language are recognised and parsed.
 #[derive(Debug)]
 pub struct Spec {
     /// The language.
@@ -39,6 +45,31 @@ pub struct Spec {
     pub interpreters: &'static [&'static str],
     /// Names `linguist-language` may give in `.gitattributes`, lower case, spaces as hyphens.
     pub linguist_names: &'static [&'static str],
+    /// How the language's files are parsed into definitions, references and imports; `None` for
+    /// a language whose files Cortex does not parse with tree-sitter.
+    pub tags: Option<TagsSpec>,
+}
+
+/// How a language's files are parsed into definitions, references and imports.
+#[derive(Debug)]
+pub struct TagsSpec {
+    /// The tree-sitter grammar.
+    pub grammar: fn() -> tree_sitter::Language,
+    /// The tags queries, compiled as one in this order: the grammar's own and Cortex's additions.
+    /// Where two patterns find the same name the earlier one wins, so additions that should
+    /// override the grammar's own patterns come before them.
+    pub queries: &'static [&'static str],
+    /// The query that finds each module a file imports, with what it takes and the name it binds.
+    pub imports: &'static str,
+    /// The paths of grammar fields that lead from a definition's node to its body, tried in order.
+    /// A definition's header, which its signature hash covers, runs up to the last part before its
+    /// body, leaving out comments in between; a definition no path leads to a body from is all
+    /// header.
+    pub body_paths: &'static [&'static [&'static str]],
+    /// Names of files that hold tests, besides every file in a test folder.
+    pub test_files: &'static [NamePattern],
+    /// Names of the functions and methods in a test file that are tests.
+    pub test_functions: &'static [NamePattern],
 }
 
 /// Every language, in the order [`Language::ALL`] lists them.

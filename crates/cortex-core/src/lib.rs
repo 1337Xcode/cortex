@@ -20,7 +20,7 @@ mod scale_mode;
 
 pub use config::{
     Config, ConfigError, ConfigLayer, DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES,
-    DEFAULT_MMAP_BYTES, LoadedConfig, ModeSetting, load as load_config,
+    DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, LoadedConfig, ModeSetting, load as load_config,
 };
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};

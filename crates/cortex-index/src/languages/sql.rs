@@ -11,4 +11,5 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["sql", "plpgsql", "plsql", "tsql"],
+    tags: None,
 };

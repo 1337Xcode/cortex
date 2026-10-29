@@ -11,4 +11,5 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["ts-node", "deno"],
     linguist_names: &["typescript", "ts"],
+    tags: None,
 };

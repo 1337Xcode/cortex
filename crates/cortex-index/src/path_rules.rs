@@ -1,5 +1,5 @@
-//! What a file's path alone says about it: whether it may hold secrets, and whether a tool or a
-//! third party wrote it.
+//! What a file's path alone says about it: whether it may hold secrets, whether a tool or a third
+//! party wrote it, and whether it holds tests.
 //!
 //! Each rule is one line in a table below. Adding a rule means adding a line.
 
@@ -7,7 +7,7 @@ use cortex_core::{FileFlags, RepoPath};
 
 /// A test on a file or folder name.
 #[derive(Debug, Clone, Copy)]
-enum NamePattern {
+pub(crate) enum NamePattern {
     /// The whole name.
     Exact(&'static str),
     /// The start of the name.
@@ -20,7 +20,7 @@ enum NamePattern {
 
 impl NamePattern {
     /// Whether `name` matches.
-    fn matches(self, name: &str) -> bool {
+    pub(crate) fn matches(self, name: &str) -> bool {
         match self {
             Self::Exact(text) => name == text,
             Self::Prefix(text) => name.starts_with(text),
@@ -73,6 +73,9 @@ const GENERATED_NAMES: &[NamePattern] = &[
     NamePattern::Exact("packages.lock.json"),
 ];
 
+/// Folders whose files hold tests, at any depth, matched without regard to case.
+const TEST_FOLDERS: &[&str] = &["test", "tests", "__tests__"];
+
 /// Whether the file at `path` may hold secrets, by its name or the name of a folder above it.
 #[must_use]
 pub fn is_secret(path: &RepoPath) -> bool {
@@ -102,6 +105,23 @@ pub fn flags_for(path: &RepoPath) -> FileFlags {
         flags = flags.with(FileFlags::GENERATED);
     }
     flags
+}
+
+/// Whether the file at `path` holds tests: a folder above it is a test folder, or its name
+/// matches one of `names`, its language's names for test files.
+pub(crate) fn is_test_file(path: &RepoPath, names: &[NamePattern]) -> bool {
+    let mut folders = path.as_str().split('/');
+    // The last part is the file's own name; only the parts before it are folders.
+    folders.next_back();
+    let in_test_folder = folders.any(|folder| {
+        TEST_FOLDERS
+            .iter()
+            .any(|test| folder.eq_ignore_ascii_case(test))
+    });
+    in_test_folder
+        || names
+            .iter()
+            .any(|pattern| pattern.matches(path.file_name()))
 }
 
 #[cfg(test)]
@@ -192,6 +212,38 @@ mod tests {
                 "{name}"
             );
         }
+        Ok(())
+    }
+
+    /// A file is a test file in a test folder at any depth, whatever the folder's case, or when
+    /// its name matches one of its language's patterns; names that only resemble them are not.
+    #[test]
+    fn test_files() -> Result<(), PathError> {
+        let names = [
+            NamePattern::Prefix("test_"),
+            NamePattern::Suffix("_test.py"),
+        ];
+        for name in [
+            "tests/orders.py",
+            "src/app/__tests__/cart.js",
+            "Tests/ShopTests/Cart.swift",
+            "pkg/test/helpers.py",
+            "test_orders.py",
+            "pkg/orders_test.py",
+        ] {
+            assert!(is_test_file(&RepoPath::new(name)?, &names), "{name}");
+        }
+        for name in [
+            "pkg/orders.py",
+            "testing/orders.py",
+            "contest/orders.py",
+            "pkg/test.py",
+            "pkg/latest_orders.py",
+            "tests",
+        ] {
+            assert!(!is_test_file(&RepoPath::new(name)?, &names), "{name}");
+        }
+        assert!(!is_test_file(&RepoPath::new("test_orders.py")?, &[]));
         Ok(())
     }
 }

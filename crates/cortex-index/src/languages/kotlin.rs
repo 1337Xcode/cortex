@@ -11,4 +11,5 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["kotlin"],
     linguist_names: &["kotlin"],
+    tags: None,
 };

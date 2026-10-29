@@ -17,4 +17,5 @@ pub const SPEC: Spec = Spec {
     ],
     interpreters: &["sh", "bash", "dash", "ash", "ksh", "mksh", "zsh"],
     linguist_names: &["shell", "bash", "sh", "shell-script", "zsh"],
+    tags: None,
 };

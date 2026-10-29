@@ -11,4 +11,5 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["rust", "rs"],
+    tags: None,
 };

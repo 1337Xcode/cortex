@@ -11,4 +11,5 @@ pub const SPEC: Spec = Spec {
     file_names: &[".babelrc", ".eslintrc", ".jshintrc"],
     interpreters: &[],
     linguist_names: &["json", "jsonc", "json-with-comments"],
+    tags: None,
 };

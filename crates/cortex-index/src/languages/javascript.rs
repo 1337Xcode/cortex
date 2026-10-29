@@ -11,4 +11,5 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["node", "nodejs"],
     linguist_names: &["javascript", "js", "node", "jsx"],
+    tags: None,
 };

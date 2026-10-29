@@ -10,9 +10,12 @@ publish.workspace = true
 
 [dependencies]
 cortex-core = { path = "../cortex-core" }
+cortex-store = { path = "../cortex-store" }
 globset.workspace = true
 ignore.workspace = true
 thiserror.workspace = true
+tree-sitter.workspace = true
+tree-sitter-python.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

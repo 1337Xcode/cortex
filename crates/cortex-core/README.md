@@ -22,7 +22,7 @@ modes and settings.
 | `Identifier` | A stored name: one line, at most 256 bytes, no control characters |
 | `SymbolKind`, `RefKind`, `Resolution`, `NodeKind`, `EdgeType`, `FileFlags` | The kinds of record the index keeps, with the names, numbers and bits stored for them; a `Resolution` also gives the confidence of a reference resolved that way |
 | `ScaleMode` | `tiny`, `small`, `medium` or `huge`: how fully a repository of a given size is served |
-| `Config`, `load_config` | The settings in effect: defaults, then `~/.cortex/config.toml`, then `.cortex/config.toml`; unknown keys warn, unusable values are errors naming the file and key. Keys: `mode`, `index.max_file_bytes`, `index.extra_ignores`, `daemon.idle_shutdown_minutes`, `store.mmap_bytes` |
+| `Config`, `load_config` | The settings in effect: defaults, then `~/.cortex/config.toml`, then `.cortex/config.toml`; unknown keys warn, unusable values are errors naming the file and key. Keys: `mode`, `index.max_file_bytes`, `index.extra_ignores`, `index.parse_timeout_ms`, `daemon.idle_shutdown_minutes`, `store.mmap_bytes` |
 
 ## Tests
 

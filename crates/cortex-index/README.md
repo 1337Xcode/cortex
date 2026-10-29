@@ -1,6 +1,6 @@
 # cortex-index
 
-The indexer: which files a repository has and what they are.
+The indexer: which files a repository has, what they are, and what they define and use.
 
 ## What it must never do
 
@@ -12,6 +12,11 @@ The indexer: which files a repository has and what they are.
   special files found in the walk are passed over and counted.
 - Enter `.git` or `.cortex`, go more than 256 folders below the root, or stop for one unreadable
   file or folder. Problems are reported beside the results.
+- Take a name from anything but the name a query captures for it, or take as a name the whole
+  text of a definition or an expression. A name is one line of at most 256 bytes; a definition
+  whose name or qualified name is longer is left out, with everything inside it.
+- Go on parsing or querying a file once it has had `index.parse_timeout_ms`. The parser and the
+  queries check the time as they work and stop, and the file is reported as timed out.
 
 ## Entry points
 
@@ -20,6 +25,9 @@ The indexer: which files a repository has and what they are.
 | `discover` | Walks a repository and returns every file, sorted by path, with its language, size, modification time and flags |
 | `DiscoverOptions` | The size limit, extra patterns in `.gitignore` syntax, and the user's global gitignore file (the caller finds it from git's configuration) |
 | `Discovery`, `Problem` | The files found, the number of links and special files passed over, and what could not be read or used: unreadable files, folders and folder entries, names that cannot be stored, folders past the depth limit, rules files that were skipped, and rules lines that could not be used (the first 20 of a file by number, the rest counted) |
+| `Grammars` | Every language's grammar, tags query and imports query, compiled and checked once; a query that uses anything Cortex does not read is refused |
+| `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
+| `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition; and the modules it imports, with what it takes and the name it binds |
 
 ## What a file's flags mean
 
@@ -38,6 +46,25 @@ language Cortex does not parse leaves the file without one), otherwise from its 
 (`Gemfile`, `.bashrc`), its extension, or the interpreter its `#!` line names. A `.h` header is
 C++ when its start holds something only C++ has, and C otherwise. Each language has its own file
 in `src/languages/`; adding one means adding a file and a line in the registry.
+
+## Definitions, references and imports
+
+Each file is parsed once with tree-sitter. Its tags query, the grammar's own followed by
+Cortex's additions in `queries/`, gives definitions and references in tree-sitter's tags format:
+each pattern captures one `@name` and one `@definition.<kind>` or `@reference.<kind>`. Where two
+patterns find the same name, the earlier one wins, and a name holding a syntax error is skipped.
+A second query per language finds imports.
+
+Definitions nest by their spans. A function directly in a class is a method; in a test file (one
+in a `test`, `tests` or `__tests__` folder, or named as its language names test files) a
+function or method named as its language names tests is a test. Qualified names join names with
+`.` in every language.
+
+A decorated definition starts at its first decorator. A definition carries two hashes: of its
+header, from its start to the last part before its body, and of all of it. Comments between the
+header and the body count only in the second, and each run of whitespace counts as one space, so
+reindenting or rewrapping a definition keeps both hashes and editing its body changes only the
+second.
 
 ## Rules
 
@@ -64,3 +91,6 @@ The tests build folder trees in temporary directories and list the expected file
 problems by hand. Files that must never be opened are locked against reading during the test,
 next to locked ordinary files that show the lock works. Cases that only Unix can create (names
 that are not UTF-8, unreadable folders, symbolic links, named pipes) run on Unix.
+
+Each parsed language has a sample file in `tests/languages/<language>/` beside the definitions,
+references and imports expected from it, written by hand.

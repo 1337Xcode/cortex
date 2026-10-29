@@ -24,7 +24,7 @@
 | --- | --- |
 | `crates/cortex-cli` | The `cortex` binary: commands and the entry points agents call |
 | `crates/cortex-core` | Shared types: repository paths, ids, hashes, languages, stored names, record kinds and settings |
-| `crates/cortex-index` | The indexer: discovering a repository's files and flagging secrets, binaries, generated and vendored code |
+| `crates/cortex-index` | The indexer: discovering a repository's files, flagging secrets, binaries, generated and vendored code, and reading what each file defines, uses and imports |
 | `crates/cortex-store` | The SQLite database in `.cortex/`: migrations, the single writer and readers |
 | `xtask` | The repository checks behind `cargo xtask verify` |
 | `tests` | Cross-crate tests and the recorded agent hook payloads they read, in `fixtures/<agent>/<version>/` |
@@ -38,6 +38,19 @@ dependency that points the other way.
 A command is one module in `crates/cortex-cli/src/commands/`, one variant of the `Command` enum and
 one match arm in `crates/cortex-cli/src/commands/mod.rs`. Add a test in `crates/cortex-cli/tests/`
 that runs the built binary.
+
+## Adding a language
+
+A language is one file in `crates/cortex-index/src/languages/` and one line in the `ALL` list in
+`crates/cortex-index/src/languages/mod.rs`. The file says how a file is recognised: extensions,
+whole file names, `#!` interpreters and `linguist-language` names. For a language Cortex parses,
+it also gives the tree-sitter grammar, the tags query (the grammar's own, then additions in
+`crates/cortex-index/queries/<language>-tags.scm`), the imports query
+(`crates/cortex-index/queries/<language>-imports.scm`), the grammar fields that hold a
+definition's body, and how the language names test files and test functions. Add a sample file
+and the output you expect from it, written by hand, under
+`crates/cortex-index/tests/languages/<language>/`, and a test for it in
+`crates/cortex-index/tests/extract.rs`.
 
 ## Code and tests
 

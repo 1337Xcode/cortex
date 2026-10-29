@@ -19,4 +19,5 @@ pub const SPEC: Spec = Spec {
     ],
     interpreters: &["ruby", "jruby"],
     linguist_names: &["ruby", "rb", "jruby"],
+    tags: None,
 };

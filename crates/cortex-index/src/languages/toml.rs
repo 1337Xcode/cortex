@@ -11,4 +11,5 @@ pub const SPEC: Spec = Spec {
     file_names: &["Pipfile"],
     interpreters: &[],
     linguist_names: &["toml"],
+    tags: None,
 };
