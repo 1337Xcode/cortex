@@ -1,0 +1,271 @@
+//! Rows as SQLite returns them, and the checks that turn them into typed rows.
+//!
+//! A query reads the columns it needs into plain values first and checks them second, so a
+//! damaged row is reported as [`StoreError::Corrupt`] with its table, column and id.
+
+use cortex_core::{
+    ContentHash, EdgeType, FileFlags, Language, RefKind, Resolution, ShortHash, SymbolKind,
+};
+use rusqlite::Row;
+
+use crate::error::StoreError;
+use crate::ids::{FileId, NodeId, RefId, SymbolId};
+use crate::records::{EdgeRecord, FileRecord, Target};
+use crate::rows::{EdgeRow, FileRow, RefRow, SymbolRow};
+use crate::values;
+
+/// A `files` row as SQLite returns it.
+pub(crate) struct RawFile {
+    /// `file_id`.
+    id: i64,
+    /// `path`.
+    path: String,
+    /// `lang`.
+    lang: Option<String>,
+    /// `bytes`.
+    bytes: i64,
+    /// `loc`.
+    loc: Option<i64>,
+    /// `content_hash`.
+    content_hash: Option<[u8; 32]>,
+    /// `mtime_ns`.
+    mtime_ns: i64,
+    /// `flags`.
+    flags: i64,
+    /// `indexed_at`.
+    indexed_at: i64,
+}
+
+impl RawFile {
+    /// Reads the columns of [`crate::schema::FILE_BY_PATH`].
+    pub(crate) fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            path: row.get(1)?,
+            lang: row.get(2)?,
+            bytes: row.get(3)?,
+            loc: row.get(4)?,
+            content_hash: row.get(5)?,
+            mtime_ns: row.get(6)?,
+            flags: row.get(7)?,
+            indexed_at: row.get(8)?,
+        })
+    }
+
+    /// The row with every value checked.
+    pub(crate) fn check(self) -> Result<FileRow, StoreError> {
+        let row = self.id;
+        let language = self
+            .lang
+            .map(|name| values::kind(&name, Language::from_name, "files.lang", row))
+            .transpose()?;
+        let line_count = self
+            .loc
+            .map(|lines| values::number(lines, "files.loc", row))
+            .transpose()?;
+        Ok(FileRow {
+            id: FileId(row),
+            file: FileRecord {
+                path: values::path(&self.path, "files.path", row)?,
+                language,
+                size_bytes: values::number(self.bytes, "files.bytes", row)?,
+                line_count,
+                content_hash: self.content_hash.map(ContentHash::from_bytes),
+                mtime_ns: self.mtime_ns,
+                flags: FileFlags::from_bits(values::number(self.flags, "files.flags", row)?),
+                indexed_at_ms: self.indexed_at,
+            },
+        })
+    }
+}
+
+/// A `symbols` row as SQLite returns it.
+pub(crate) struct RawSymbol {
+    /// `symbol_id`.
+    id: i64,
+    /// `file_id`.
+    file: i64,
+    /// `parent_id`.
+    parent: Option<i64>,
+    /// `kind`.
+    kind: String,
+    /// `name`.
+    name: String,
+    /// `qual_name`.
+    qual_name: String,
+    /// `start_byte`, `end_byte`, `start_line` and `end_line`.
+    span: [i64; 4],
+    /// `sig_hash`.
+    sig_hash: [u8; 16],
+    /// `body_hash`.
+    body_hash: [u8; 16],
+}
+
+impl RawSymbol {
+    /// Reads the columns of the symbol queries in [`crate::schema`].
+    pub(crate) fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            file: row.get(1)?,
+            parent: row.get(2)?,
+            kind: row.get(3)?,
+            name: row.get(4)?,
+            qual_name: row.get(5)?,
+            span: [row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?],
+            sig_hash: row.get(10)?,
+            body_hash: row.get(11)?,
+        })
+    }
+
+    /// The row with every value checked.
+    pub(crate) fn check(self) -> Result<SymbolRow, StoreError> {
+        let row = self.id;
+        let [start_byte, end_byte, start_line, end_line] = self.span;
+        Ok(SymbolRow {
+            id: SymbolId(row),
+            file: FileId(self.file),
+            parent: self.parent.map(SymbolId),
+            kind: values::kind(&self.kind, SymbolKind::from_name, "symbols.kind", row)?,
+            name: values::identifier(&self.name, "symbols.name", row)?,
+            qual_name: values::identifier(&self.qual_name, "symbols.qual_name", row)?,
+            start_byte: values::number(start_byte, "symbols.start_byte", row)?,
+            end_byte: values::number(end_byte, "symbols.end_byte", row)?,
+            start_line: values::number(start_line, "symbols.start_line", row)?,
+            end_line: values::number(end_line, "symbols.end_line", row)?,
+            sig_hash: ShortHash::from_bytes(self.sig_hash),
+            body_hash: ShortHash::from_bytes(self.body_hash),
+        })
+    }
+}
+
+/// A `refs` row as SQLite returns it.
+pub(crate) struct RawRef {
+    /// `ref_id`.
+    id: i64,
+    /// `src_file_id`.
+    file: i64,
+    /// `src_symbol_id`.
+    symbol: Option<i64>,
+    /// `dst_name`.
+    dst_name: String,
+    /// `dst_symbol_id`.
+    dst_symbol: Option<i64>,
+    /// `kind`.
+    kind: String,
+    /// `line`.
+    line: i64,
+    /// `resolution`.
+    resolution: Option<String>,
+    /// `confidence`.
+    confidence: f64,
+}
+
+impl RawRef {
+    /// Reads the columns of [`crate::schema::REFS_IN_FILE`].
+    pub(crate) fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            file: row.get(1)?,
+            symbol: row.get(2)?,
+            dst_name: row.get(3)?,
+            dst_symbol: row.get(4)?,
+            kind: row.get(5)?,
+            line: row.get(6)?,
+            resolution: row.get(7)?,
+            confidence: row.get(8)?,
+        })
+    }
+
+    /// The row with every value checked. A target and a resolution come together or not at all.
+    pub(crate) fn check(self) -> Result<RefRow, StoreError> {
+        let row = self.id;
+        let target = match (self.dst_symbol, self.resolution) {
+            (Some(symbol), Some(name)) => Some(Target {
+                symbol: SymbolId(symbol),
+                resolution: values::kind(&name, Resolution::from_name, "refs.resolution", row)?,
+            }),
+            (None, None) => None,
+            _ => {
+                return Err(StoreError::Corrupt {
+                    column: "refs.resolution",
+                    row,
+                });
+            }
+        };
+        Ok(RefRow {
+            id: RefId(row),
+            file: FileId(self.file),
+            symbol: self.symbol.map(SymbolId),
+            dst_name: values::identifier(&self.dst_name, "refs.dst_name", row)?,
+            kind: values::kind(&self.kind, RefKind::from_name, "refs.kind", row)?,
+            line: values::number(self.line, "refs.line", row)?,
+            target,
+            confidence: self.confidence,
+        })
+    }
+}
+
+/// An `edges` row as SQLite returns it.
+pub(crate) struct RawEdge {
+    /// `src`.
+    src: i64,
+    /// `dst`.
+    dst: i64,
+    /// `type`.
+    edge_type: i64,
+    /// `w`.
+    weight: f64,
+    /// `n`.
+    count: i64,
+    /// `last_seq`.
+    last_seq: i64,
+    /// `directed`.
+    directed: i64,
+}
+
+impl RawEdge {
+    /// Reads the columns of [`crate::schema::EDGES_FROM`].
+    pub(crate) fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            src: row.get(0)?,
+            dst: row.get(1)?,
+            edge_type: row.get(2)?,
+            weight: row.get(3)?,
+            count: row.get(4)?,
+            last_seq: row.get(5)?,
+            directed: row.get(6)?,
+        })
+    }
+
+    /// The row with every value checked. Edges have no id of their own, so errors name the
+    /// source node.
+    pub(crate) fn check(self) -> Result<EdgeRow, StoreError> {
+        let row = self.src;
+        let number: u8 = values::number(self.edge_type, "edges.type", row)?;
+        let edge_type = EdgeType::from_number(number).ok_or(StoreError::Corrupt {
+            column: "edges.type",
+            row,
+        })?;
+        let is_directed = match self.directed {
+            0 => false,
+            1 => true,
+            _ => {
+                return Err(StoreError::Corrupt {
+                    column: "edges.directed",
+                    row,
+                });
+            }
+        };
+        Ok(EdgeRow {
+            src: NodeId(self.src),
+            edge_type,
+            edge: EdgeRecord {
+                dst: NodeId(self.dst),
+                weight: self.weight,
+                count: values::number(self.count, "edges.n", row)?,
+                last_seq: self.last_seq,
+                is_directed,
+            },
+        })
+    }
+}
