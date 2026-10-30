@@ -259,6 +259,19 @@ fn ruby() -> TestResult {
     check_golden("ruby", "sample.rb", Language::Ruby, "\n")
 }
 
+/// Markdown: every heading in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn markdown() -> TestResult {
+    check_golden("markdown", "sample.md", Language::Markdown, "\n")
+}
+
+/// The same Markdown with Windows line breaks, which end its headings and their underlines: the
+/// same lines, spans that end at the same text, the same hashes.
+#[test]
+fn markdown_with_crlf_line_breaks() -> TestResult {
+    check_golden("markdown", "sample.md", Language::Markdown, "\r\n")
+}
+
 /// The same Python with Windows line breaks: the same lines, spans that end at the same tokens,
 /// the same hashes.
 #[test]
@@ -2172,6 +2185,91 @@ fn bash_constructs_the_grammar_misreads_give_no_facts() -> TestResult {
     assert_eq!(
         describe(&extraction),
         ["symbol function g 6-8 -", "ref call run 7 g"]
+    );
+    Ok(())
+}
+
+/// Every heading is a module spanning itself alone, named by its text as written, markup and all,
+/// without the spaces that indent it; headings do not nest, whatever their levels. A heading in a
+/// block quote ends where its text or its underline does, before the next line's `>`. Front
+/// matter is no heading, nor is a `#` line in code. Not read: a heading closed by `#` marks, an
+/// empty one, with or without a closing mark, and one whose text runs over two lines. The same
+/// with Windows line breaks.
+#[test]
+fn markdown_headings_in_every_form() -> TestResult {
+    let source = "---\ntitle: Shop\n---\n\n# Shop\n\n## *Fast* setup\n\n### Step [one](one.md)\n\n\
+                  ## Closed ##\n\n# #\n\n##\n\n# * *\n\n  Indented\n   ---\n\nLine one\nLine two\n========\n\n\
+                  > # Quoted\n> text after it\n\n> Quoted under\n> ------------\n> more\n\n## Fix #42\n\n\
+                  #### Four\n##### Five\n###### Six\n\nEquals title\n============\n\n\
+                  \x20   # indented code, not a heading\n";
+    for line_end in ["\n", "\r\n"] {
+        let source = source.replace('\n', line_end);
+        let extraction = extract("docs/guide.md", Language::Markdown, &source)?;
+        assert_eq!(
+            describe(&extraction),
+            [
+                "symbol module Shop 5-5 -",
+                "symbol module *Fast* setup 7-7 -",
+                "symbol module Step [one](one.md) 9-9 -",
+                "symbol module * * 17-17 -",
+                "symbol module Indented 19-20 -",
+                "symbol module Quoted 26-26 -",
+                "symbol module Quoted under 29-30 -",
+                "symbol module Fix #42 33-33 -",
+                "symbol module Four 35-35 -",
+                "symbol module Five 36-36 -",
+                "symbol module Six 37-37 -",
+                "symbol module Equals title 39-40 -"
+            ],
+            "{line_end:?}"
+        );
+        let mut texts = Vec::new();
+        for symbol in &extraction.symbols {
+            let span = usize::try_from(symbol.start_byte)?..usize::try_from(symbol.end_byte)?;
+            texts.push(collapsed(source.get(span).ok_or("span outside the file")?));
+        }
+        assert_eq!(
+            texts,
+            [
+                "# Shop",
+                "## *Fast* setup",
+                "### Step [one](one.md)",
+                "# * *",
+                "Indented ---",
+                "# Quoted",
+                "Quoted under > ------------",
+                "## Fix #42",
+                "#### Four",
+                "##### Five",
+                "###### Six",
+                "Equals title ============"
+            ],
+            "{line_end:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A heading on a file's last line is read when the line break after it is missing, but not in a
+/// file holding nothing else, which the grammar reads as an error, nor when it is underlined and
+/// its underline ends the file, which the grammar reads as a paragraph.
+#[test]
+fn markdown_headings_at_the_end_of_a_file() -> TestResult {
+    let headings = |source: &str| -> Result<Vec<String>, Box<dyn Error>> {
+        Ok(describe(&extract(
+            "docs/notes.md",
+            Language::Markdown,
+            source,
+        )?))
+    };
+    assert_eq!(
+        headings("# A\n\n## Last")?,
+        ["symbol module A 1-1 -", "symbol module Last 3-3 -"]
+    );
+    assert!(headings("# Shop")?.is_empty());
+    assert_eq!(
+        headings("# A\n\ntext\n\nSet\n===")?,
+        ["symbol module A 1-1 -"]
     );
     Ok(())
 }

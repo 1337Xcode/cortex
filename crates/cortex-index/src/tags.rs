@@ -15,6 +15,7 @@ use tree_sitter::{Node, QueryCapture, QueryCursor, QueryCursorOptions, Streaming
 use crate::deadline::Deadline;
 use crate::grammar::{Grammar, TagCapture};
 use crate::locals::Scopes;
+use crate::name_text::{name_text, prose_text};
 use crate::pattern_rules::PatternRule;
 
 /// What a tag says about its name.
@@ -35,12 +36,26 @@ pub(crate) struct Tag<'tree> {
     pub(crate) node: Node<'tree>,
     /// The node of the name.
     pub(crate) name: Node<'tree>,
+    /// Whether the name is prose, read as written rather than token by token.
+    pub(crate) is_prose: bool,
     /// What the tag says about the name.
     pub(crate) role: Role,
     /// The name a definition's qualified name starts with, inside the definition around it.
     pub(crate) qualifier: Option<Node<'tree>>,
     /// A definition's body, when its pattern captures it.
     pub(crate) body: Option<Node<'tree>>,
+}
+
+impl Tag<'_> {
+    /// The text of the tag's name in `source`: as written when its pattern marks it as prose,
+    /// token by token otherwise. `None` when its text is not UTF-8.
+    pub(crate) fn name_text(&self, source: &[u8]) -> Option<String> {
+        if self.is_prose {
+            prose_text(self.name, source)
+        } else {
+            name_text(self.name, source)
+        }
+    }
 }
 
 /// What one match says about a name: a tag to record, or nothing to record (`None`), and the
@@ -117,10 +132,15 @@ fn verdict_of<'tree>(
     meanings: &[TagCapture],
 ) -> Option<(Node<'tree>, Option<Tag<'tree>>)> {
     let (mut name, mut tagged, mut qualifier, mut body) = (None, None, None, None);
+    let mut is_prose = false;
     for capture in captures {
         match meanings.get(usize::try_from(capture.index).ok()?)? {
             TagCapture::Ignore => return Some((capture.node, None)),
             TagCapture::Name => name = Some(capture.node),
+            TagCapture::ProseName => {
+                name = Some(capture.node);
+                is_prose = true;
+            }
             TagCapture::Definition(kind) => tagged = Some((capture.node, Role::Definition(*kind))),
             TagCapture::Macro => tagged = Some((capture.node, Role::Macro)),
             TagCapture::Reference(kind) => tagged = Some((capture.node, Role::Reference(*kind))),
@@ -137,6 +157,7 @@ fn verdict_of<'tree>(
     let tag = Tag {
         node,
         name: name?,
+        is_prose,
         role,
         qualifier,
         body,

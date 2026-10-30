@@ -5,7 +5,6 @@ use cortex_core::Identifier;
 use cortex_store::{RefRecord, SymbolRecord};
 
 use crate::lines::line_number;
-use crate::name_text::name_text;
 use crate::tags::{Role, Tag};
 
 /// The references among `tags`, which are in the order their names appear, as records, each tied
@@ -33,8 +32,9 @@ pub(crate) fn build_references(
             next += 1;
         }
         leave(&mut around, symbols, start, end);
-        let Some(dst_name) =
-            name_text(tag.name, source).and_then(|text| Identifier::new(&text).ok())
+        let Some(dst_name) = tag
+            .name_text(source)
+            .and_then(|text| Identifier::new(&text).ok())
         else {
             continue;
         };
@@ -63,5 +63,41 @@ fn leave(around: &mut Vec<usize>, symbols: &[SymbolRecord], start: u64, end: u64
             break;
         }
         around.pop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use super::*;
+    use crate::languages::TagsSpec;
+    use crate::test_support::{PLAIN_IMPORTS, python_spec, with_tags};
+
+    /// A reference's name its pattern marks as prose is recorded as written; any other is
+    /// recorded token by token.
+    #[test]
+    fn prose_names_of_references_read_as_written() -> Result<(), Box<dyn Error>> {
+        // In `a . b()`, the callee is an attribute whose tokens are `a`, `.` and `b`.
+        static PROSE: TagsSpec = python_spec(
+            &["(call function: (attribute) @name.prose) @reference.call"],
+            PLAIN_IMPORTS,
+        );
+        static TOKENS: TagsSpec = python_spec(
+            &["(call function: (attribute) @name) @reference.call"],
+            PLAIN_IMPORTS,
+        );
+        let source = "a . b()\n";
+        let names = |spec: &'static TagsSpec| {
+            with_tags(spec, source, |tags| {
+                build_references(tags, source.as_bytes(), &[])
+                    .into_iter()
+                    .map(|reference| reference.dst_name.as_str().to_owned())
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(names(&PROSE)?, ["a . b"]);
+        assert_eq!(names(&TOKENS)?, ["a.b"]);
+        Ok(())
     }
 }

@@ -1,0 +1,11 @@
+# What sample.md defines, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+# A heading's name is its text as written, markup included. A heading spans itself alone and is
+# all header: a line, or the two lines of one underlined. Headings do not nest. Not read: the
+# heading closed by `##`, the comment in the code block, the paragraphs.
+symbol module Shop 1-1 - | # Shop
+symbol module Install 5-5 - | ## Install
+symbol module On Linux 9-9 - | ### On Linux
+symbol module Use the `shop` command 13-13 - | ## Use the `shop` command
+symbol module Setext title 15-16 - | Setext title ------------
+symbol module C# and F# 24-24 - | ## C# and F#

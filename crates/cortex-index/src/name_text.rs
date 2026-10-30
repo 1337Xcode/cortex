@@ -4,6 +4,12 @@
 //! space where two words would otherwise run together (`operator new`). A name some grammars
 //! write as a run of sibling nodes with no node around them, as Kotlin writes the package of an
 //! import, is read the same way from its first node to its last.
+//!
+//! A name that is prose, such as a heading's text, is read as written instead, without the spaces
+//! that indent it. A grammar can leave such text whole and make tokens only of the markup in
+//! it, as Markdown's does with `*`, `` ` `` and `#`, so its tokens would keep the markup and lose
+//! the words. Only a query says which names are prose (`@name.prose`): a code name read as
+//! written would keep what lies between its tokens.
 
 use tree_sitter::Node;
 
@@ -16,6 +22,14 @@ pub(crate) fn name_text(node: Node<'_>, source: &[u8]) -> Option<String> {
     let mut tokens = Vec::new();
     push_tokens(node, source, &mut tokens)?;
     Some(joined(&tokens))
+}
+
+/// The name `node` holds in `source` when its query marks it as prose: its text as written,
+/// without the spaces that indent it, as Markdown keeps those of an underlined heading. `None`
+/// when the text is not UTF-8.
+pub(crate) fn prose_text(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let text = node.utf8_text(source).ok()?;
+    Some(text.trim_start_matches(' ').to_owned())
 }
 
 /// The name the siblings from `first` to `last` hold together in `source`, read as
@@ -83,6 +97,8 @@ fn is_word_character(character: char) -> bool {
 mod tests {
     use std::error::Error;
 
+    use tree_sitter::{Query, QueryCursor, StreamingIterator};
+
     use super::*;
     use crate::test_support::parse_python;
 
@@ -119,6 +135,41 @@ mod tests {
             .and_then(|statement| statement.child(0))
             .ok_or("no identifier")?;
         assert_eq!(name_text(single, source.as_bytes()).as_deref(), Some("x"));
+        Ok(())
+    }
+
+    /// Prose reads as written, its markup and the spacing inside it included and the spaces that
+    /// indent it left out, where its tokens alone would keep the markup and lose the words.
+    #[test]
+    fn prose_reads_as_written() -> Result<(), Box<dyn Error>> {
+        let source = "## Use the `shop` command\n\n# * *\n\n  Indented  text\n   ---\n";
+        let language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language)?;
+        let tree = parser.parse(source, None).ok_or("no tree")?;
+        let headings = "[(atx_heading heading_content: (inline) @text)
+                         (setext_heading heading_content: (paragraph (inline) @text))]";
+        let query = Query::new(&language, headings)?;
+        let mut cursor = QueryCursor::new();
+        let mut texts = Vec::new();
+        let mut captures = cursor.captures(&query, tree.root_node(), source.as_bytes());
+        while let Some((found, index)) = captures.next() {
+            let node = found.captures().get(*index).ok_or("no capture")?.node;
+            let read = |text: Option<String>| text.unwrap_or_default();
+            texts.push((
+                read(prose_text(node, source.as_bytes())),
+                read(name_text(node, source.as_bytes())),
+            ));
+        }
+        let pair = |prose: &str, tokens: &str| (prose.to_owned(), tokens.to_owned());
+        assert_eq!(
+            texts,
+            [
+                pair("Use the `shop` command", "``"),
+                pair("* *", "**"),
+                pair("Indented  text", "  Indented  text")
+            ]
+        );
         Ok(())
     }
 

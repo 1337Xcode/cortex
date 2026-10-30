@@ -93,7 +93,7 @@ impl Recorder<'_> {
     /// Records the definition `tag` over `span`, inside the record at `parent`; the new
     /// record's position, or `None` when the definition cannot be recorded.
     fn record(&mut self, tag: &Tag<'_>, span: Span, parent: Option<usize>) -> Option<usize> {
-        let name = Identifier::new(&name_text(tag.name, self.source)?).ok()?;
+        let name = Identifier::new(&tag.name_text(self.source)?).ok()?;
         let outer = parent.and_then(|position| self.records.get(position));
         let local = match tag.qualifier {
             Some(qualifier) => format!("{}.{}", name_text(qualifier, self.source)?, name.as_str()),

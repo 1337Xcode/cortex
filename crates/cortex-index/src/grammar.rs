@@ -8,6 +8,8 @@
 //! them: Cortex keeps no comments, so those change nothing. Cortex adds two captures beside a
 //! definition: `@qualifier`, a name its qualified name starts with, such as the type a Go method
 //! belongs to, and `@body`, its body, where the grammar names no field for it, as Kotlin's does.
+//! A name that is prose, such as a heading's text, is captured as `@name.prose` in place of
+//! `@name`, to be read as written rather than token by token.
 //! A locals pattern captures only `@local.scope`, `@local.definition` and `@local.reference`,
 //! and may set `local.scope-inherits` to `true` or `false`; a pattern that records tags may test
 //! `#is-not? local`. No other property may be tested or set.
@@ -60,6 +62,8 @@ const IMPORTS: &str = "imports";
 pub(crate) enum TagCapture {
     /// The name defined or used.
     Name,
+    /// The name defined or used, written as prose, which is read as written.
+    ProseName,
     /// A definition of this kind.
     Definition(SymbolKind),
     /// A definition of a macro, which is used as a function is but is never a test.
@@ -319,6 +323,7 @@ fn captures_of<C>(
 fn tag_capture(name: &str) -> Option<TagCapture> {
     match name {
         "name" => return Some(TagCapture::Name),
+        "name.prose" => return Some(TagCapture::ProseName),
         "doc" => return Some(TagCapture::Doc),
         "ignore" => return Some(TagCapture::Ignore),
         "qualifier" => return Some(TagCapture::Qualifier),
@@ -414,6 +419,7 @@ mod tests {
     #[test]
     fn capture_names_have_one_meaning() {
         assert_eq!(tag_capture("name"), Some(TagCapture::Name));
+        assert_eq!(tag_capture("name.prose"), Some(TagCapture::ProseName));
         assert_eq!(tag_capture("doc"), Some(TagCapture::Doc));
         assert_eq!(tag_capture("_kind"), Some(TagCapture::Helper));
         assert_eq!(tag_capture("ignore"), Some(TagCapture::Ignore));
@@ -502,6 +508,10 @@ mod tests {
             &["(function_definition name: (identifier) @name) @definition.function"],
             "(import_statement name: (dotted_name) @import.module) @import @import.source",
         );
+        static PROSE_IMPORT: TagsSpec = spec(
+            &["(function_definition name: (identifier) @name) @definition.function"],
+            "(import_statement name: (dotted_name) @import.module @name.prose) @import",
+        );
         let refused = |query, capture: &str| GrammarError::Capture {
             language: Language::Python,
             query,
@@ -510,9 +520,13 @@ mod tests {
         assert_eq!(error_of(&EXTRA), Some(refused(TAGS, "extra")));
         assert_eq!(error_of(&KIND), Some(refused(TAGS, "definition.widget")));
         assert_eq!(error_of(&IMPORT), Some(refused(IMPORTS, "import.source")));
+        assert_eq!(
+            error_of(&PROSE_IMPORT),
+            Some(refused(IMPORTS, "name.prose"))
+        );
     }
 
-    /// A tags pattern records a tag with one name and one definition or reference, records
+    /// A tags pattern records a tag with a name and one definition or reference, records
     /// nothing with a name alone, or ignores a name with `@ignore` alone; only a definition may
     /// have a qualifier. Anything else is refused.
     #[test]
@@ -524,20 +538,6 @@ mod tests {
                 "((identifier) @ignore (#eq? @ignore \"self\"))",
                 "(function_definition name: (identifier) @name parameters: (parameters (identifier) @qualifier)) @definition.function",
             ],
-            IMPORTS_QUERY,
-        );
-        static NO_NAME: TagsSpec = spec(
-            &["(function_definition) @definition.function"],
-            IMPORTS_QUERY,
-        );
-        static TWO_NAMES: TagsSpec = spec(
-            &[
-                "(function_definition name: (identifier) @name body: (block (expression_statement (identifier) @name))) @definition.function",
-            ],
-            IMPORTS_QUERY,
-        );
-        static MAYBE_NAME: TagsSpec = spec(
-            &["(call function: [(identifier) @name (attribute)]) @reference.call"],
             IMPORTS_QUERY,
         );
         static TWO_KINDS: TagsSpec = spec(
@@ -588,15 +588,6 @@ mod tests {
             error_of(&MIXED),
             Some(problem("may not mix @local captures with others"))
         );
-        assert_eq!(error_of(&NO_NAME), Some(problem("needs exactly one @name")));
-        assert_eq!(
-            error_of(&TWO_NAMES),
-            Some(problem("needs exactly one @name"))
-        );
-        assert_eq!(
-            error_of(&MAYBE_NAME),
-            Some(problem("needs exactly one @name"))
-        );
         assert_eq!(
             error_of(&TWO_KINDS),
             Some(problem(
@@ -610,6 +601,62 @@ mod tests {
         assert_eq!(
             error_of(&QUALIFIED_REFERENCE),
             Some(problem("may capture a @qualifier only with a @definition"))
+        );
+    }
+
+    /// A tag's name is captured once in every match, as `@name` or, when it is prose, as
+    /// `@name.prose`, never as both, and a locals pattern captures neither.
+    #[test]
+    fn tags_have_one_name() {
+        static PROSE: TagsSpec = spec(
+            &["(expression_statement (string (string_content) @name.prose)) @definition.constant"],
+            IMPORTS_QUERY,
+        );
+        static NO_NAME: TagsSpec = spec(
+            &["(function_definition) @definition.function"],
+            IMPORTS_QUERY,
+        );
+        static TWO_NAMES: TagsSpec = spec(
+            &[
+                "(function_definition name: (identifier) @name body: (block (expression_statement (identifier) @name))) @definition.function",
+            ],
+            IMPORTS_QUERY,
+        );
+        static NAME_AND_PROSE: TagsSpec = spec(
+            &[
+                "(function_definition name: (identifier) @name body: (block (expression_statement (string) @name.prose))) @definition.function",
+            ],
+            IMPORTS_QUERY,
+        );
+        static MAYBE_NAME: TagsSpec = spec(
+            &["(call function: [(identifier) @name (attribute)]) @reference.call"],
+            IMPORTS_QUERY,
+        );
+        static LOCAL_PROSE: TagsSpec = spec(
+            &["(assignment left: (identifier) @local.definition @name.prose)"],
+            IMPORTS_QUERY,
+        );
+        let one_name = || {
+            Some(GrammarError::Pattern {
+                language: Language::Python,
+                query: TAGS,
+                pattern: 0,
+                problem: "needs exactly one @name or @name.prose",
+            })
+        };
+        assert_eq!(error_of(&PROSE), None);
+        assert_eq!(error_of(&NO_NAME), one_name());
+        assert_eq!(error_of(&TWO_NAMES), one_name());
+        assert_eq!(error_of(&NAME_AND_PROSE), one_name());
+        assert_eq!(error_of(&MAYBE_NAME), one_name());
+        assert_eq!(
+            error_of(&LOCAL_PROSE),
+            Some(GrammarError::Pattern {
+                language: Language::Python,
+                query: TAGS,
+                pattern: 0,
+                problem: "may not mix @local captures with others",
+            })
         );
     }
 

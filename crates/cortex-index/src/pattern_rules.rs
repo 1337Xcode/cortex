@@ -123,7 +123,7 @@ fn check_tag_shape(
     let use_of_sort =
         |is_sort: fn(TagCapture) -> bool| use_of(compiled, pattern, captures, is_sort);
     let ignore = use_of_sort(|capture| capture == TagCapture::Ignore);
-    let name = use_of_sort(|capture| capture == TagCapture::Name);
+    let name = use_of_sort(|capture| matches!(capture, TagCapture::Name | TagCapture::ProseName));
     let definition =
         use_of_sort(|capture| matches!(capture, TagCapture::Definition(_) | TagCapture::Macro));
     let reference = use_of_sort(|capture| matches!(capture, TagCapture::Reference(_)));
@@ -137,7 +137,7 @@ fn check_tag_shape(
         return Err("may capture nothing beside one @ignore");
     }
     if name != Use::Once {
-        return Err("needs exactly one @name");
+        return Err("needs exactly one @name or @name.prose");
     }
     match (definition, reference) {
         (Use::Once, Use::Never) => {}
