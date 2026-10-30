@@ -11,7 +11,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["sql", "plpgsql", "plsql", "tsql"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar ships none.
         queries: &[include_str!("../../queries/sql-tags.scm")],
@@ -22,7 +22,7 @@ pub const SPEC: Spec = Spec {
         // Tests in SQL take no form the index can tell.
         test_files: &[],
         test_functions: &[],
-    }),
+    },
 };
 
 /// The SQL grammar from tree-sitter-sequel.

@@ -20,7 +20,7 @@ pub const SPEC: Spec = Spec {
     ],
     interpreters: &["ruby", "jruby"],
     linguist_names: &["ruby", "rb", "jruby"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // The grammar's locals patterns first, as tree-sitter's tags format reads them: they find
         // the local variables that keep a bare name such as `total` from being read as a call.
@@ -43,7 +43,7 @@ pub const SPEC: Spec = Spec {
         // The methods Minitest and Test::Unit run as tests; RSpec's examples are blocks, not
         // methods, and are marked by their file alone.
         test_functions: &[NamePattern::Prefix("test_")],
-    }),
+    },
 };
 
 /// The Ruby grammar.

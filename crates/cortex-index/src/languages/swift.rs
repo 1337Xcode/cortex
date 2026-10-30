@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["swift"],
     linguist_names: &["swift"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar's own takes a method's whole class for the method.
         queries: &[include_str!("../../queries/swift-tags.scm")],
@@ -28,7 +28,7 @@ pub const SPEC: Spec = Spec {
         // XCTest runs the methods named `test...`; Swift Testing marks tests with `@Test`, read
         // anywhere.
         test_functions: &[NamePattern::Prefix("test")],
-    }),
+    },
 };
 
 /// The Swift grammar.

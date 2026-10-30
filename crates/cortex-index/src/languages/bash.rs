@@ -19,7 +19,7 @@ pub const SPEC: Spec = Spec {
     ],
     interpreters: &["sh", "bash", "dash", "ash", "ksh", "mksh", "zsh"],
     linguist_names: &["shell", "bash", "sh", "shell-script", "zsh"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar ships none.
         queries: &[include_str!("../../queries/bash-tags.scm")],
@@ -36,7 +36,7 @@ pub const SPEC: Spec = Spec {
         ],
         // shUnit2 runs the functions named `test...`.
         test_functions: &[NamePattern::Prefix("test")],
-    }),
+    },
 };
 
 /// The Bash grammar, which reads the other POSIX shells' scripts as far as they agree with Bash.

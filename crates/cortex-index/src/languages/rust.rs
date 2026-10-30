@@ -11,7 +11,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["rust", "rs"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's patterns first: they mark tests, name methods by their type and read type
         // aliases, module functions and inherent impls as such. The uses of type names come
@@ -28,7 +28,7 @@ pub const SPEC: Spec = Spec {
         // Every file under `tests/` is a test file; inside any file, `#[test]` marks a test.
         test_files: &[],
         test_functions: &[],
-    }),
+    },
 };
 
 /// The Rust grammar.

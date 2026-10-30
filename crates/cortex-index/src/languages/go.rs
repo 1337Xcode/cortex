@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["go", "golang"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's patterns first: they name methods by their type, read structs and interfaces
         // as such and leave built-in types out, where the grammar's own patterns would not.
@@ -32,7 +32,7 @@ pub const SPEC: Spec = Spec {
             NamePattern::Prefix("Example"),
             NamePattern::Prefix("Fuzz"),
         ],
-    }),
+    },
 };
 
 /// The Go grammar.

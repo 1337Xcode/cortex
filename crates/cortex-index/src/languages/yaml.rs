@@ -11,7 +11,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["yaml", "yml"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar ships none.
         queries: &[include_str!("../../queries/yaml-tags.scm")],
@@ -22,7 +22,7 @@ pub const SPEC: Spec = Spec {
         // A YAML file holds no tests.
         test_files: &[],
         test_functions: &[],
-    }),
+    },
 };
 
 /// The YAML grammar.

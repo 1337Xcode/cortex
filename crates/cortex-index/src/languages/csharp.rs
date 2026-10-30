@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["c#", "csharp", "cs"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar's uses a capture outside the tags format.
         queries: &[include_str!("../../queries/csharp-tags.scm")],
@@ -28,7 +28,7 @@ pub const SPEC: Spec = Spec {
         ],
         // NUnit, xUnit and MSTest mark tests with an attribute, read anywhere; none goes by name.
         test_functions: &[],
-    }),
+    },
 };
 
 /// The C# grammar.

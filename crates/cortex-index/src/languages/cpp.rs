@@ -14,7 +14,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["c++", "cpp"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar's reads no references, gives functions the span of
         // their declarator alone, and uses a capture Cortex reads differently.
@@ -36,7 +36,7 @@ pub const SPEC: Spec = Spec {
         ],
         // Google Test's tests are marked by their macro; other frameworks' are named `test_`.
         test_functions: &[NamePattern::Prefix("test_")],
-    }),
+    },
 };
 
 /// The C++ grammar.

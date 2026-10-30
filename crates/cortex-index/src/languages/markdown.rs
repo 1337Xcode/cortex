@@ -11,7 +11,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["markdown", "md"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar ships none.
         queries: &[include_str!("../../queries/markdown-tags.scm")],
@@ -22,7 +22,7 @@ pub const SPEC: Spec = Spec {
         // A document holds no tests.
         test_files: &[],
         test_functions: &[],
-    }),
+    },
 };
 
 /// The Markdown block grammar, which reads headings and sections and leaves the text inside a

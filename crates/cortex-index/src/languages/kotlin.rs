@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["kotlin"],
     linguist_names: &["kotlin"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar ships none.
         queries: &[include_str!("../../queries/kotlin-tags.scm")],
@@ -28,7 +28,7 @@ pub const SPEC: Spec = Spec {
         // JUnit, kotlin.test and TestNG mark tests with an annotation, read anywhere; none goes by
         // name.
         test_functions: &[],
-    }),
+    },
 };
 
 /// The Kotlin grammar, which reads scripts (`.kts`) as well as source files.

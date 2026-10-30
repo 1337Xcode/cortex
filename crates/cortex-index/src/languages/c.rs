@@ -13,7 +13,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["c"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar's reads no references and gives functions the span of
         // their declarator alone.
@@ -24,7 +24,7 @@ pub const SPEC: Spec = Spec {
         // The names Unity and CMocka tests usually take.
         test_files: &[NamePattern::Prefix("test_"), NamePattern::Suffix("_test.c")],
         test_functions: &[NamePattern::Prefix("test_")],
-    }),
+    },
 };
 
 /// The C grammar.

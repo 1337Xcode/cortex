@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["scala"],
     linguist_names: &["scala"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar's reads kinds outside the tags format.
         queries: &[include_str!("../../queries/scala-tags.scm")],
@@ -32,7 +32,7 @@ pub const SPEC: Spec = Spec {
         // ScalaTest's and MUnit's tests are strings passed to calls; JUnit's are annotated, read
         // anywhere. None goes by name.
         test_functions: &[],
-    }),
+    },
 };
 
 /// The Scala grammar, which reads Scala 2 and Scala 3.

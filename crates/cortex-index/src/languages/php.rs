@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["php"],
     linguist_names: &["php"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar's reads properties with a kind outside the format.
         queries: &[include_str!("../../queries/php-tags.scm")],
@@ -23,7 +23,7 @@ pub const SPEC: Spec = Spec {
         // PHPUnit's file names and test method names.
         test_files: &[NamePattern::Suffix("Test.php")],
         test_functions: &[NamePattern::Prefix("test")],
-    }),
+    },
 };
 
 /// The PHP grammar, which reads the HTML around PHP code too.

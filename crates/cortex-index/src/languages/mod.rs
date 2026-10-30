@@ -1,5 +1,5 @@
-//! The languages Cortex parses, one file each: how a file is recognised as one of them, and for
-//! the languages whose symbols Cortex reads, how their files are parsed.
+//! The languages Cortex parses, one file each: how a file is recognised as one of them, and how
+//! it is parsed.
 //!
 //! Adding a language means adding its file and one line in [`ALL`].
 
@@ -45,9 +45,8 @@ pub struct Spec {
     pub interpreters: &'static [&'static str],
     /// Names `linguist-language` may give in `.gitattributes`, lower case, spaces as hyphens.
     pub linguist_names: &'static [&'static str],
-    /// How the language's files are parsed into definitions, references and imports; `None` for
-    /// a language whose files Cortex does not parse with tree-sitter.
-    pub tags: Option<TagsSpec>,
+    /// How the language's files are parsed into definitions, references and imports.
+    pub tags: TagsSpec,
 }
 
 /// How a language's files are parsed into definitions, references and imports.
@@ -189,8 +188,7 @@ mod tests {
             let names = ALL
                 .iter()
                 .find(|spec| spec.language == language)
-                .and_then(|spec| spec.tags.as_ref())
-                .map_or(&[][..], |tags| tags.test_files);
+                .map_or(&[][..], |spec| spec.tags.test_files);
             assert_eq!(
                 is_test_file(&RepoPath::new(path)?, names),
                 expected,

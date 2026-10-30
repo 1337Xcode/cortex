@@ -11,7 +11,7 @@ pub const SPEC: Spec = Spec {
     file_names: &["Pipfile"],
     interpreters: &[],
     linguist_names: &["toml"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar ships none.
         queries: &[include_str!("../../queries/toml-tags.scm")],
@@ -22,7 +22,7 @@ pub const SPEC: Spec = Spec {
         // A TOML file holds no tests.
         test_files: &[],
         test_functions: &[],
-    }),
+    },
 };
 
 /// The TOML grammar from tree-sitter-grammars, the maintained one.

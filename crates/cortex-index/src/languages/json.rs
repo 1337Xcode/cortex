@@ -11,7 +11,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[".babelrc", ".eslintrc", ".jshintrc"],
     interpreters: &[],
     linguist_names: &["json", "jsonc", "json-with-comments"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's own query: the grammar ships none.
         queries: &[include_str!("../../queries/json-tags.scm")],
@@ -22,7 +22,7 @@ pub const SPEC: Spec = Spec {
         // A JSON file holds no tests.
         test_files: &[],
         test_functions: &[],
-    }),
+    },
 };
 
 /// The JSON grammar, which reads comments too.

@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["python", "pypy"],
     linguist_names: &["python", "py", "python3"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's patterns first: they read a decorated definition with its decorators, where
         // the grammar's own would read it without them.
@@ -31,7 +31,7 @@ pub const SPEC: Spec = Spec {
         ],
         // pytest's default function names, which unittest's test methods follow too.
         test_functions: &[NamePattern::Prefix("test")],
-    }),
+    },
 };
 
 /// The Python grammar.

@@ -32,12 +32,6 @@ pub struct Extraction {
 /// Why a file was not read.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ExtractError {
-    /// Cortex does not parse files of this language.
-    #[error("Cortex does not parse {} files", .language.name())]
-    NotParsed {
-        /// The language.
-        language: Language,
-    },
     /// The parser refused the language's grammar.
     #[error("the {} grammar cannot be used: {message}", .language.name())]
     Grammar {
@@ -86,7 +80,6 @@ impl Extractor {
     ///
     /// # Errors
     ///
-    /// [`ExtractError::NotParsed`] for a language Cortex does not parse,
     /// [`ExtractError::TimedOut`] when the file takes longer than allowed, and
     /// [`ExtractError::Grammar`] if the parser refuses the language's grammar.
     pub fn extract(
@@ -95,10 +88,7 @@ impl Extractor {
         language: Language,
         source: &[u8],
     ) -> Result<Extraction, ExtractError> {
-        let grammar = self
-            .grammars
-            .get(language)
-            .ok_or(ExtractError::NotParsed { language })?;
+        let grammar = self.grammars.get(language);
         self.parser
             .set_language(&grammar.tree_sitter)
             .map_err(|error| ExtractError::Grammar {

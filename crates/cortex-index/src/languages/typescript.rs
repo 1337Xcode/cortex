@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["ts-node", "deno"],
     linguist_names: &["typescript", "ts"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         queries: QUERIES,
         imports: IMPORTS,
@@ -28,7 +28,7 @@ pub const SPEC: Spec = Spec {
         ],
         // Tests are calls such as `it("ships", ...)`, not named functions.
         test_functions: &[],
-    }),
+    },
 };
 
 /// The tags queries. TypeScript's grammar extends JavaScript's and its own query holds only what

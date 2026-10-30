@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &["node", "nodejs"],
     linguist_names: &["javascript", "js", "node", "jsx"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // The grammar's patterns first: a constant holding a function is read as a function.
         queries: &[
@@ -45,7 +45,7 @@ pub const SPEC: Spec = Spec {
         ],
         // Tests are calls such as `it("ships", ...)`, not named functions.
         test_functions: &[],
-    }),
+    },
 };
 
 /// The JavaScript grammar, which reads JSX too.

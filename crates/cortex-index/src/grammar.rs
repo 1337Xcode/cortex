@@ -180,7 +180,7 @@ pub(crate) struct Grammar {
 /// Every language's parsing rules, compiled once and shared by every [`crate::Extractor`].
 #[derive(Debug)]
 pub struct Grammars {
-    /// One entry per language Cortex parses, in [`Language::ALL`] order.
+    /// One entry per language, in [`Language::ALL`] order.
     grammars: Vec<Grammar>,
 }
 
@@ -194,19 +194,22 @@ impl Grammars {
     pub fn load() -> Result<Self, GrammarError> {
         let grammars = languages::ALL
             .iter()
-            .filter_map(|spec| {
-                let tags = spec.tags.as_ref()?;
-                Some(Grammar::compile(spec.language, tags))
-            })
+            .map(|spec| Grammar::compile(spec.language, &spec.tags))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self { grammars })
     }
 
-    /// The compiled rules for `language`, when Cortex parses it.
-    pub(crate) fn get(&self, language: Language) -> Option<&Grammar> {
+    /// The compiled rules for `language`.
+    #[allow(
+        clippy::expect_used,
+        reason = "load compiles the rules of every language in `languages::ALL`, which the \
+                  detection tests hold to list every `Language`"
+    )]
+    pub(crate) fn get(&self, language: Language) -> &Grammar {
         self.grammars
             .iter()
             .find(|grammar| grammar.language == language)
+            .expect("every language has its compiled rules")
     }
 }
 
@@ -400,17 +403,12 @@ mod tests {
         Grammar::compile(Language::Python, spec).err()
     }
 
-    /// Every language's queries compile, and each language with parsing rules has a grammar.
+    /// Every language's queries compile, each into the rules for that language.
     #[test]
     fn every_language_compiles() -> Result<(), GrammarError> {
         let grammars = Grammars::load()?;
-        for spec in languages::ALL {
-            assert_eq!(
-                grammars.get(spec.language).is_some(),
-                spec.tags.is_some(),
-                "{}",
-                spec.language.name()
-            );
+        for language in Language::ALL {
+            assert_eq!(grammars.get(language).language, language);
         }
         Ok(())
     }

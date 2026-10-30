@@ -14,7 +14,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["tsx"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         queries: &[
             tree_sitter_javascript::TAGS_QUERY,
@@ -32,7 +32,7 @@ pub const SPEC: Spec = Spec {
         ],
         // Tests are calls such as `it("ships", ...)`, not named functions.
         test_functions: &[],
-    }),
+    },
 };
 
 /// The TypeScript grammar with JSX.

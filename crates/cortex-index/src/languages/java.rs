@@ -12,7 +12,7 @@ pub const SPEC: Spec = Spec {
     file_names: &[],
     interpreters: &[],
     linguist_names: &["java"],
-    tags: Some(TagsSpec {
+    tags: TagsSpec {
         grammar,
         // Cortex's patterns first: they mark annotated tests and read base classes, enums,
         // records, annotation types, constructors and constants. The uses of type names come
@@ -33,7 +33,7 @@ pub const SPEC: Spec = Spec {
         ],
         // JUnit 3's convention; later frameworks mark tests with an annotation, read anywhere.
         test_functions: &[NamePattern::Prefix("test")],
-    }),
+    },
 };
 
 /// The Java grammar.
