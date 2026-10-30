@@ -30,6 +30,7 @@ use crate::discover::{
     DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, Problem, ProblemKind, discover,
 };
 use crate::extract::{ExtractError, Extractor};
+use crate::folders;
 use crate::grammar::Grammars;
 use crate::safe_read;
 
@@ -151,7 +152,8 @@ struct Context<'a> {
 }
 
 /// Indexes the repository at `root` into `writer`'s store: walks it, removes the stored files the
-/// walk no longer finds, then reads, parses and writes every file it found.
+/// walk no longer finds, reads, parses and writes every file it found, then gives each folder
+/// holding stored files its node and containment edges.
 ///
 /// # Errors
 ///
@@ -183,6 +185,7 @@ pub fn index_repository(
         problems: Vec::new(),
     };
     write_files(writer, &discovery.files, &context, &mut report)?;
+    folders::write_folders(writer)?;
     Ok(report)
 }
 

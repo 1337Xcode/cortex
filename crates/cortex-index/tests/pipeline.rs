@@ -1,16 +1,18 @@
-//! A full index of small repositories: what is written for each kind of file, how a second index
-//! follows the changes, which stored files a later index removes or keeps, that the number of
-//! threads changes nothing stored, and what becomes of a file that takes too long to parse.
+//! A full index of small repositories: what is written for each kind of file, the folders that
+//! hold them, how a second index follows the changes, which stored files a later index removes or
+//! keeps, that the number of threads changes nothing stored, and what becomes of a file that takes
+//! too long to parse.
 
 mod common;
 
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
 use common::{TestResult, grammars, lock_out, write};
-use cortex_core::{ContentHash, FileFlags, Language, RepoId, RepoPath, SymbolKind};
+use cortex_core::{ContentHash, EdgeType, FileFlags, Language, RepoId, RepoPath, SymbolKind};
 use cortex_index::{
     DiscoverOptions, FileProblem, IndexOptions, IndexReport, Problem, ProblemKind, index_repository,
 };
@@ -239,6 +241,33 @@ fn stored_paths(root: &Path) -> TestResult<Vec<String>> {
     Ok(paths.iter().map(|path| path.as_str().to_owned()).collect())
 }
 
+/// Each folder node stored for the repository at `root`, by path, with the paths of the files its
+/// containment edges reach. Every edge from a folder is checked to be an undirected containment
+/// edge of full strength, supported by one observation.
+fn folders(root: &Path) -> TestResult<Vec<(String, NodeId, Vec<String>)>> {
+    let reader = reader(root)?;
+    let queries = reader.queries();
+    let files: BTreeMap<NodeId, String> = queries
+        .file_nodes()?
+        .into_iter()
+        .map(|(path, node)| (node, path.as_str().to_owned()))
+        .collect();
+    let mut folders = Vec::new();
+    for (path, node) in queries.folder_nodes()? {
+        let mut held = Vec::new();
+        for row in queries.edges_from(node)? {
+            let edge = row.edge;
+            assert_eq!(row.edge_type, EdgeType::Containment, "{path:?}");
+            assert!(edge.weight.total_cmp(&1.0).is_eq(), "{path:?}");
+            assert_eq!((edge.count, edge.last_seq, edge.is_directed), (1, 0, false));
+            held.push(files.get(&edge.dst).ok_or("an edge to no file")?.clone());
+        }
+        held.sort();
+        folders.push((path.as_str().to_owned(), node, held));
+    }
+    Ok(folders)
+}
+
 /// Every row stored for the repository at `root`, file by file in path order.
 fn dump(root: &Path) -> TestResult<Vec<Rows>> {
     let reader = reader(root)?;
@@ -334,6 +363,66 @@ fn every_file_is_written_as_its_kind_allows() -> TestResult {
         assert_eq!(stored(repo.path(), path)?, Some(expected), "{path}");
     }
     Ok(())
+}
+
+/// Every folder that holds files gets a node, joined to each of its files; `src`, which holds only
+/// the folder `shop`, gets none. On a second index a folder whose files are all gone loses its
+/// node, and the others keep theirs, with edges to the files they hold now: the root loses one
+/// file and gains another, `src/shop` gains one.
+#[test]
+fn folders_hold_their_files() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_fixture(root)?;
+    index(root, 2, GENEROUS, SMALL_LIMIT)?;
+    let before = folders(root)?;
+    let expected = [
+        (
+            "",
+            vec![".env", "README.md", "big.py", "data.bin", "notes.txt"],
+        ),
+        ("gen", vec!["gen/types.rs"]),
+        ("src/shop", vec!["src/shop/orders.py"]),
+        ("vendor", vec!["vendor/lib.js"]),
+    ];
+    assert_eq!(held(&before), expected);
+    // Nodes: 8 files, 4 symbols (total, Order, Order.place, Shop) and 4 folders; one containment
+    // edge per file.
+    let counts = reader(root)?.queries().counts()?;
+    assert_eq!((counts.nodes, counts.edges), (16, 8));
+
+    std::fs::remove_file(root.join("vendor/lib.js"))?;
+    std::fs::remove_file(root.join("notes.txt"))?;
+    write(root, "zeta.txt", b"z\n")?;
+    write(root, "src/shop/new.py", b"def fresh():\n    pass\n")?;
+    index(root, 2, GENEROUS, SMALL_LIMIT)?;
+    let after = folders(root)?;
+    let expected = [
+        (
+            "",
+            vec![".env", "README.md", "big.py", "data.bin", "zeta.txt"],
+        ),
+        ("gen", vec!["gen/types.rs"]),
+        ("src/shop", vec!["src/shop/new.py", "src/shop/orders.py"]),
+    ];
+    assert_eq!(held(&after), expected);
+    let ids = |folders: &[(String, NodeId, Vec<String>)]| -> Vec<(String, NodeId)> {
+        folders
+            .iter()
+            .filter(|(path, _, _)| path != "vendor")
+            .map(|(path, node, _)| (path.clone(), *node))
+            .collect()
+    };
+    assert_eq!(ids(&after), ids(&before));
+    Ok(())
+}
+
+/// The folders of `folders` with the files each holds, without their nodes.
+fn held(folders: &[(String, NodeId, Vec<String>)]) -> Vec<(&str, Vec<&str>)> {
+    folders
+        .iter()
+        .map(|(path, _, files)| (path.as_str(), files.iter().map(String::as_str).collect()))
+        .collect()
 }
 
 /// A second index follows the changes: a file the walk no longer finds is removed, a new one is
@@ -437,9 +526,10 @@ fn files_in_a_folder_the_walk_cannot_list_are_kept() -> TestResult {
     Ok(())
 }
 
-/// The number of threads changes nothing stored, row for row and node for node: each batch is
-/// written in path order however its threads finish. A slow file early in the order lets the other
-/// threads run ahead of the one parsing it, and 309 files fill more than one batch.
+/// The number of threads changes nothing stored, row for row and node for node, folder nodes
+/// included: each batch is written in path order however its threads finish. A slow file early in
+/// the order lets the other threads run ahead of the one parsing it, and 309 files fill more than
+/// one batch.
 #[test]
 fn threads_change_nothing_stored() -> TestResult {
     let mut dumps = Vec::new();
@@ -464,9 +554,13 @@ fn threads_change_nothing_stored() -> TestResult {
             (309, 304),
             "{threads} threads"
         );
-        dumps.push(dump(repo.path())?);
+        dumps.push((dump(repo.path())?, folders(repo.path())?));
     }
-    assert_eq!(dumps.first().map(Vec::len), Some(309));
+    // Folders: the root (a_slow.py's too), parts, and the fixture's gen, src/shop and vendor.
+    let sizes = dumps
+        .first()
+        .map(|(rows, folders)| (rows.len(), folders.len()));
+    assert_eq!(sizes, Some((309, 5)));
     assert_eq!(dumps.first(), dumps.get(1));
     Ok(())
 }

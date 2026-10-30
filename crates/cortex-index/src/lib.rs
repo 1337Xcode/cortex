@@ -10,7 +10,8 @@
 //! compiled once and shared between extractors.
 //!
 //! [`index_repository`] does all of it for a whole repository and writes the result to the store:
-//! every file the walk finds, with what it defines and uses, in path order.
+//! every file the walk finds, with what it defines and uses, in path order, and a graph node for
+//! each folder that holds files, joined to them.
 
 #![warn(clippy::pedantic)]
 
@@ -18,6 +19,7 @@ mod deadline;
 mod detect;
 mod discover;
 mod extract;
+mod folders;
 mod gitattributes;
 mod grammar;
 mod hashes;

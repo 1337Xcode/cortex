@@ -123,6 +123,24 @@ impl<'c> Queries<'c> {
         self.node_of(NodeKind::Symbol, symbol.get())
     }
 
+    /// Every folder that has a node, with its node, by path.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored paths that cannot be read back.
+    pub fn folder_nodes(self) -> Result<Vec<(RepoPath, NodeId)>, StoreError> {
+        self.paths_with_nodes(schema::FOLDER_NODES, "nodes.path")
+    }
+
+    /// Every stored file, with its node, by path.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored paths that cannot be read back.
+    pub fn file_nodes(self) -> Result<Vec<(RepoPath, NodeId)>, StoreError> {
+        self.paths_with_nodes(schema::FILE_NODES, "files.path")
+    }
+
     /// The edges that start at `node`, by type, then target.
     ///
     /// # Errors
@@ -177,6 +195,28 @@ impl<'c> Queries<'c> {
             })
             .map(|node| node.map(NodeId))
             .map_err(sqlite("reading a node"))
+    }
+
+    /// The paths and nodes `sql` selects, each row as the id of the row that holds the path (which
+    /// a corrupt path is reported by), the path, read back from `column`, and the node id. For a
+    /// folder the row holding the path is its node, so its node id comes twice.
+    fn paths_with_nodes(
+        self,
+        sql: &'static str,
+        column: &'static str,
+    ) -> Result<Vec<(RepoPath, NodeId)>, StoreError> {
+        let raw: Vec<(i64, String, i64)> = self
+            .connection
+            .prepare_cached(sql)
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                    .collect()
+            })
+            .map_err(sqlite("reading paths and nodes"))?;
+        raw.into_iter()
+            .map(|(id, path, node)| Ok((values::path(&path, column, id)?, NodeId(node))))
+            .collect()
     }
 
     /// The symbols `sql` selects with `key`.

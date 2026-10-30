@@ -12,6 +12,7 @@
 
 mod connection;
 mod error;
+mod folders;
 mod ids;
 mod layout;
 mod links;

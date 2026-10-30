@@ -106,6 +106,19 @@ pub(crate) const NODE_UPSERT: &str = "INSERT INTO nodes (kind, ref_id, path) VAL
 pub(crate) const NODE_OF: &str = "SELECT node_id FROM nodes WHERE kind = ?1 AND ref_id = ?2";
 /// Deletes a node.
 pub(crate) const NODE_DELETE: &str = "DELETE FROM nodes WHERE node_id = ?1";
+// Folder nodes are written with the kind `dir` in the text, as `NodeKind::Dir` names it, so that
+// SQLite can use the unique index on folder paths, which holds `dir` nodes only.
+/// The node of the folder at a path.
+pub(crate) const FOLDER_NODE: &str = "SELECT node_id FROM nodes WHERE kind = 'dir' AND path = ?1";
+/// Adds the node of the folder at a path and returns its id.
+pub(crate) const FOLDER_NODE_INSERT: &str =
+    "INSERT INTO nodes (kind, ref_id, path) VALUES ('dir', NULL, ?1) RETURNING node_id";
+/// Every folder node's id and path, by path.
+pub(crate) const FOLDER_NODES: &str =
+    "SELECT node_id, path, node_id FROM nodes WHERE kind = 'dir' ORDER BY path";
+/// Every file's id, path and node, by path.
+pub(crate) const FILE_NODES: &str = "SELECT f.file_id, f.path, n.node_id FROM files AS f \
+     JOIN nodes AS n ON n.kind = 'file' AND n.ref_id = f.file_id ORDER BY f.path";
 
 /// Deletes a node's outgoing edges of one type.
 pub(crate) const EDGES_DELETE_FROM: &str = "DELETE FROM edges WHERE src = ?1 AND type = ?2";

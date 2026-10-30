@@ -506,6 +506,51 @@ fn removing_a_file_deletes_everything_about_it() -> TestResult {
     Ok(())
 }
 
+/// A folder gets one node, found again by its path, and listed with the others by path; removing
+/// it takes the edges at it, finds nothing the second time, and its id is never given again. Files
+/// are listed with their nodes, by path.
+#[test]
+fn folders_have_nodes_of_their_own() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let file = transaction.replace_file(&index("src/a.py", Vec::new(), Vec::new())?)?;
+    let src = transaction.folder_node(&path("src")?)?;
+    let root = transaction.folder_node(&path("")?)?;
+    assert_eq!(transaction.folder_node(&path("src")?)?, src);
+    assert_ne!(root, src);
+    let edge = EdgeRecord {
+        dst: file.file_node,
+        weight: 1.0,
+        count: 1,
+        last_seq: 0,
+        is_directed: false,
+    };
+    transaction.replace_edges(src, EdgeType::Containment, &[edge])?;
+    let queries = transaction.queries();
+    assert_eq!(
+        queries.folder_nodes()?,
+        [(path("")?, root), (path("src")?, src)]
+    );
+    assert_eq!(queries.file_nodes()?, [(path("src/a.py")?, file.file_node)]);
+    assert_eq!(queries.edges_from(src)?.len(), 1);
+    assert!(transaction.remove_folder_node(&path("src")?)?);
+    assert!(!transaction.remove_folder_node(&path("src")?)?);
+    let again = transaction.folder_node(&path("src")?)?;
+    transaction.commit()?;
+
+    let queries = writer.queries();
+    assert_eq!(queries.edges_from(src)?, Vec::<EdgeRow>::new());
+    assert!(again > src);
+    assert_eq!(
+        queries.folder_nodes()?,
+        [(path("")?, root), (path("src")?, again)]
+    );
+    // a.py's file node and the two folders.
+    assert_eq!(queries.counts()?, counts(1, 0, 0, 0, 3));
+    Ok(())
+}
+
 /// Every stored path is listed in byte order, as paths sort in Rust: capitals before small
 /// letters, and `-` (0x2D) before `/` (0x2F), so `a-b.py` comes before the folder `a`. A removed
 /// file is no longer listed.

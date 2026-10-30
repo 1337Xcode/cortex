@@ -7,6 +7,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::connection::{self, Access};
 use crate::error::{StoreError, io, sqlite};
+use crate::folders;
 use crate::ids::NodeId;
 use crate::layout;
 use crate::links;
@@ -186,6 +187,26 @@ impl WriteTx<'_> {
         edges: &[EdgeRecord],
     ) -> Result<(), StoreError> {
         self.atomically(|connection| links::replace_edges(connection, src, edge_type, edges))
+    }
+
+    /// The node of the folder at `path`, added when it has none. A folder keeps its node, and
+    /// everything attached to it, until the node is removed.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn folder_node(&mut self, path: &RepoPath) -> Result<NodeId, StoreError> {
+        self.atomically(|connection| folders::folder_node(connection, path))
+    }
+
+    /// Deletes the node of the folder at `path` and every edge at it. `false` when the folder had
+    /// no node.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn remove_folder_node(&mut self, path: &RepoPath) -> Result<bool, StoreError> {
+        self.atomically(|connection| folders::remove_folder_node(connection, path))
     }
 
     /// Read queries that also see this transaction's changes.

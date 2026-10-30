@@ -29,7 +29,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Grammars` | Every language's grammar, tags query and imports query, compiled and checked once; a query that uses anything Cortex does not read is refused |
 | `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition; and the modules it imports, with what it takes (the module, one name, every name or the default export) and the name it binds |
-| `index_repository` | Indexes a whole repository into the store: walks it, removes the stored files it no longer finds, then reads, parses and writes every file it found |
+| `index_repository` | Indexes a whole repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file it found, and keeps a node for each folder that holds files |
 | `IndexOptions`, `IndexReport`, `FileProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, and the files skipped because they could not be read, took too long to parse or panicked while being read |
 
 ## What a file's flags mean
@@ -114,6 +114,11 @@ in Cortex or in a grammar, is caught and skips that file only.
 A stored file the walk no longer finds is removed, unless the walk reported a problem at its path
 or at a folder above it: a folder it could not list or did not enter, or a file it could not
 inspect.
+
+Each folder that directly holds a stored file gets a graph node, joined to each of those files by
+a containment edge that points both ways and carries full strength; how much containment counts
+when activation spreads is the containment type's weight, applied where the graph is read. A
+folder that holds only folders gets no node, and one whose files are all gone loses its node.
 
 Files are read and parsed in batches on several threads, each thread with a parser of its own,
 while the batch before is written in one transaction. Each batch is written in path order, so the
