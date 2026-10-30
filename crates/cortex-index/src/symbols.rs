@@ -152,9 +152,11 @@ impl Recorder<'_> {
     }
 }
 
-/// The span of the definition `tag` names in `source`. It ends at its last byte that is not
-/// whitespace: a node can end with the line break that closes it, as a C `#define` does, and
-/// tree-sitter then places its end at the start of the next line.
+/// The span of the definition `tag` names in `source`. It ends with its last token that is not a
+/// comment, at the last byte of it that is not whitespace. The comments after that token head
+/// what follows: a YAML or TOML grammar places the comment above the next key at the end of the
+/// block before it. And a node can end with the line break that closes it, as a C `#define`
+/// does, and tree-sitter then places its end at the start of the next line.
 fn span_of(tag: &Tag<'_>, source: &[u8]) -> Option<Span> {
     let (node, name) = (tag.node, tag.name);
     let (start, first_row) = if name.start_byte() < node.start_byte() {
@@ -162,10 +164,11 @@ fn span_of(tag: &Tag<'_>, source: &[u8]) -> Option<Span> {
     } else {
         (node.start_byte(), node.start_position().row)
     };
-    let (end, end_row) = if name.end_byte() > node.end_byte() {
+    let last = last_token(node);
+    let (end, end_row) = if name.end_byte() > last.end_byte() {
         (name.end_byte(), name.end_position().row)
     } else {
-        (node.end_byte(), node.end_position().row)
+        (last.end_byte(), last.end_position().row)
     };
     let text = source.get(start..end)?;
     let kept = text
@@ -183,6 +186,22 @@ fn span_of(tag: &Tag<'_>, source: &[u8]) -> Option<Span> {
         first_row,
         last_row: end_row.saturating_sub(line_breaks),
     })
+}
+
+/// The last token under `node` that is not a comment or another extra, or `node` itself when it is
+/// a token or holds nothing but extras.
+fn last_token(node: Node<'_>) -> Node<'_> {
+    let mut current = node;
+    loop {
+        let last = (0..current.child_count())
+            .rev()
+            .filter_map(|index| current.child(index))
+            .find(|child| !child.is_extra());
+        match last {
+            Some(child) => current = child,
+            None => return current,
+        }
+    }
 }
 
 /// Where the header of the definition `tag` ends: at the end of the last part before its body,

@@ -2398,6 +2398,57 @@ fn toml_names_read_as_written() -> TestResult {
     Ok(())
 }
 
+/// A definition ends with its last token that is not a comment. The comments after it head what
+/// follows, as the comment above a YAML key or a TOML table does, though the grammar ends the
+/// block before with it; so does a comment after a TOML table's line, which leaves the table's
+/// header its line alone, and one indented at the end of a Python function.
+#[test]
+fn definitions_end_before_the_comments_that_trail_them() -> TestResult {
+    let spans = |path: &str, language, source: &str| -> Result<_, Box<dyn Error>> {
+        let extraction = extract(path, language, source)?;
+        let mut texts = Vec::new();
+        for symbol in &extraction.symbols {
+            let span = usize::try_from(symbol.start_byte)?..usize::try_from(symbol.end_byte)?;
+            texts.push(collapsed(source.get(span).ok_or("span outside the file")?));
+        }
+        Ok((describe(&extraction), texts, extraction.symbols))
+    };
+    let yaml = "a:\n  - 1\n# about b\n\nb:\n  x: 1\n  # last of b\nc: 3\n";
+    let (lines, texts, _) = spans("config/app.yaml", Language::Yaml, yaml)?;
+    assert_eq!(
+        lines,
+        [
+            "symbol constant a 1-2 -",
+            "symbol constant b 5-6 -",
+            "symbol constant c 8-8 -"
+        ]
+    );
+    assert_eq!(texts, ["a: - 1", "b: x: 1", "c: 3"]);
+    let toml = "[t]\na = 1\n# next section comment\n\n[u]\nb = 2 # same line\n[c] # only comment\n\n\
+                # before d\n[d]\n";
+    let (lines, texts, symbols) = spans("config/app.toml", Language::Toml, toml)?;
+    assert_eq!(
+        lines,
+        [
+            "symbol constant t 1-2 -",
+            "symbol constant u 5-6 -",
+            "symbol constant c 7-7 -",
+            "symbol constant d 10-10 -"
+        ]
+    );
+    assert_eq!(texts, ["[t] a = 1", "[u] b = 2", "[c]", "[d]"]);
+    let headers: Vec<ShortHash> = symbols.iter().map(|symbol| symbol.sig_hash).collect();
+    assert_eq!(headers.get(2), Some(&ShortHash::of(b"[c]")));
+    let python = "def f():\n    return 1\n    # trailing note\n\ndef g():\n    pass\n";
+    let (lines, texts, _) = spans("shop/notes.py", Language::Python, python)?;
+    assert_eq!(
+        lines,
+        ["symbol function f 1-2 -", "symbol function g 5-6 -"]
+    );
+    assert_eq!(texts, ["def f(): return 1", "def g(): pass"]);
+    Ok(())
+}
+
 /// zsh and ksh scripts are read with the Bash grammar as far as the shells agree. zsh's own loops,
 /// `foreach ... end` and `repeat`, give no call, neither their reserved words nor the words of a
 /// `foreach` list, while the commands in their bodies are calls as usual; nor does its modifier
