@@ -2329,11 +2329,13 @@ fn json_reads_the_keys_of_the_top_object() -> TestResult {
 
 /// The keys of the mapping each YAML document holds are constants, with an anchor or a tag on
 /// them or written after `?`, a quoted key as written; a key that is a mapping is not read, nor
-/// anything in a document holding a scalar or a list, nor a key under another.
+/// the merge key `<<`, nor anything in a document holding a scalar or a list, nor a key under
+/// another.
 #[test]
 fn yaml_reads_the_top_keys_of_each_document() -> TestResult {
     let source = "base: &defaults\n  adapter: postgres\ndev:\n  <<: *defaults\n? complex key\n: value\n\
-                  {inline: map}: 1\n'single': 2\n!!str tagged: 4\n---\njust a scalar\n---\n- a list\n---\nlast: 3\n";
+                  {inline: map}: 1\n'single': 2\n!!str tagged: 4\n<<: *defaults\n---\njust a scalar\n---\n- a list\n\
+                  ---\nlast: 3\n";
     let extraction = extract("config/database.yml", Language::Yaml, source)?;
     assert_eq!(
         describe(&extraction),
@@ -2343,7 +2345,7 @@ fn yaml_reads_the_top_keys_of_each_document() -> TestResult {
             "symbol constant complex key 5-6 -",
             "symbol constant 'single' 8-8 -",
             "symbol constant tagged 9-9 -",
-            "symbol constant last 15-15 -"
+            "symbol constant last 16-16 -"
         ]
     );
     Ok(())
