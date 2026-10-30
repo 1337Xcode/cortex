@@ -11,8 +11,8 @@
 //!
 //! [`index_repository`] does all of it for a whole repository and writes the result to the store:
 //! every file the walk finds, with what it defines and uses, in path order; each use tied to the
-//! definition its name settles; and a graph node for each folder that holds files, joined to
-//! them.
+//! definition its name settles; each file joined to the files its imports name; and a graph node
+//! for each folder that holds files, joined to them.
 
 #![warn(clippy::pedantic)]
 
@@ -20,11 +20,13 @@ mod deadline;
 mod detect;
 mod discover;
 mod extract;
+mod file_edges;
 mod folders;
 mod gitattributes;
 mod grammar;
 mod hashes;
 mod head;
+mod imports;
 mod languages;
 mod lines;
 mod locals;

@@ -13,6 +13,8 @@ cortex-core = { path = "../cortex-core" }
 cortex-store = { path = "../cortex-store" }
 globset.workspace = true
 ignore.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true
 tree-sitter-bash.workspace = true

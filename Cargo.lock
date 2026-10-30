@@ -219,6 +219,8 @@ dependencies = [
  "globset",
  "ignore",
  "proptest",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tree-sitter",

@@ -1,16 +1,17 @@
 //! What the unit tests share: rules for the Python grammar with queries of their own, parsing,
-//! and the tags those queries find.
+//! the tags those queries find, and the paths and imports import resolution reads.
 
 use std::error::Error;
 use std::time::Duration;
 
-use cortex_core::Language;
+use cortex_core::{Identifier, IdentifierError, Language, RepoPath};
 use tree_sitter::{Parser, QueryCursor, Tree};
 
 use crate::deadline::Deadline;
 use crate::grammar::Grammar;
 use crate::languages::TagsSpec;
 pub(crate) use crate::languages::python_grammar as python;
+use crate::specifiers::{Import, Imported};
 use crate::tags::{Tag, read_tags};
 
 /// An imports query for tests about something else.
@@ -65,4 +66,34 @@ pub(crate) fn with_tags<T>(
 /// cursor checks its deadline many times.
 pub(crate) fn many_functions(count: usize) -> String {
     "def f(x):\n    return g(x) + 1\n".repeat(count)
+}
+
+/// The repository path `text` spells.
+///
+/// # Panics
+///
+/// When `text` spells no repository path: a test wrote a path wrong.
+#[allow(
+    clippy::expect_used,
+    reason = "a test's own literal path; one that is not a path is a mistake in the test, which \
+              must fail rather than stand for another path"
+)]
+pub(crate) fn path(text: &str) -> RepoPath {
+    RepoPath::new(text).expect("a test path is a repository path")
+}
+
+/// An import of the module `specifier` that takes what `imported` says.
+pub(crate) fn import(specifier: &str, imported: Imported) -> Result<Import, IdentifierError> {
+    Ok(Import {
+        specifier: Identifier::new(specifier)?,
+        imported,
+        alias: None,
+        line: 1,
+    })
+}
+
+/// An import of `name` from the module `specifier`, as Python's `from <specifier> import <name>`
+/// makes.
+pub(crate) fn import_name(specifier: &str, name: &str) -> Result<Import, IdentifierError> {
+    import(specifier, Imported::Name(Identifier::new(name)?))
 }
