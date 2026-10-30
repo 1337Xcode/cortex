@@ -4,10 +4,10 @@
 //! `@local.definition` and `@local.reference`, and may say with `#set! local.scope-inherits false`
 //! that names defined around its scope are not local inside it. Every other tags pattern captures
 //! a `@name` with one definition or reference, which records a tag (a definition may also capture a
-//! `@qualifier`), a `@name` alone, which records nothing, or an `@ignore` alone; it may say with
-//! `#is-not? local` that a name defined in a scope around it is not recorded. An imports pattern
-//! captures the statement and the module once and its other captures once at most, and tests
-//! and sets no property.
+//! `@qualifier` and a `@body`), a `@name` alone, which records nothing, or an `@ignore` alone; it
+//! may say with `#is-not? local` that a name defined in a scope around it is not recorded. An
+//! imports pattern captures the statement and the module once and its other captures once at
+//! most, and tests and sets no property.
 
 use tree_sitter::{CaptureQuantifier, Query};
 
@@ -113,8 +113,8 @@ fn test_operator(is_positive: bool) -> &'static str {
 }
 
 /// Whether `pattern` of a tags query, not a locals one, has one of the three shapes the format
-/// allows: a name with one definition or reference, a definition perhaps with a qualifier; a name
-/// alone; or an `@ignore` alone.
+/// allows: a name with one definition or reference, a definition perhaps with a qualifier and a
+/// body; a name alone; or an `@ignore` alone.
 fn check_tag_shape(
     compiled: &Query,
     pattern: usize,
@@ -128,8 +128,9 @@ fn check_tag_shape(
         use_of_sort(|capture| matches!(capture, TagCapture::Definition(_) | TagCapture::Macro));
     let reference = use_of_sort(|capture| matches!(capture, TagCapture::Reference(_)));
     let qualifier = use_of_sort(|capture| capture == TagCapture::Qualifier);
+    let body = use_of_sort(|capture| capture == TagCapture::Body);
     if ignore != Use::Never {
-        let others = [name, definition, reference, qualifier];
+        let others = [name, definition, reference, qualifier, body];
         if ignore == Use::Once && others.iter().all(|other| *other == Use::Never) {
             return Ok(());
         }
@@ -144,11 +145,17 @@ fn check_tag_shape(
             if qualifier != Use::Never {
                 return Err("may capture a @qualifier only with a @definition");
             }
+            if body != Use::Never {
+                return Err("may capture a @body only with a @definition");
+            }
         }
         _ => return Err("needs at most one @definition or @reference capture"),
     }
     if qualifier == Use::Many {
         return Err("may capture one @qualifier at most");
+    }
+    if body == Use::Many {
+        return Err("may capture one @body at most");
     }
     Ok(())
 }
@@ -175,6 +182,7 @@ pub(crate) fn check_import_pattern(
         return Err(Problem::Shape("needs exactly one @import.module"));
     }
     let optional = [
+        ImportCapture::ModuleEnd,
         ImportCapture::Name,
         ImportCapture::Alias,
         ImportCapture::All,
@@ -185,7 +193,8 @@ pub(crate) fn check_import_pattern(
         .any(|sort| use_of_sort(sort) == Use::Many)
     {
         return Err(Problem::Shape(
-            "may capture @import.name, @import.alias, @import.all and @import.default once each at most",
+            "may capture @import.module.end, @import.name, @import.alias, @import.all and \
+             @import.default once each at most",
         ));
     }
     Ok(())

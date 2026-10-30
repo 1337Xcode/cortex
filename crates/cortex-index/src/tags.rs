@@ -39,6 +39,8 @@ pub(crate) struct Tag<'tree> {
     pub(crate) role: Role,
     /// The name a definition's qualified name starts with, inside the definition around it.
     pub(crate) qualifier: Option<Node<'tree>>,
+    /// A definition's body, when its pattern captures it.
+    pub(crate) body: Option<Node<'tree>>,
 }
 
 /// What one match says about a name: a tag to record, or nothing to record (`None`), and the
@@ -114,7 +116,7 @@ fn verdict_of<'tree>(
     captures: &[QueryCapture<'tree>],
     meanings: &[TagCapture],
 ) -> Option<(Node<'tree>, Option<Tag<'tree>>)> {
-    let (mut name, mut tagged, mut qualifier) = (None, None, None);
+    let (mut name, mut tagged, mut qualifier, mut body) = (None, None, None, None);
     for capture in captures {
         match meanings.get(usize::try_from(capture.index).ok()?)? {
             TagCapture::Ignore => return Some((capture.node, None)),
@@ -123,6 +125,7 @@ fn verdict_of<'tree>(
             TagCapture::Macro => tagged = Some((capture.node, Role::Macro)),
             TagCapture::Reference(kind) => tagged = Some((capture.node, Role::Reference(*kind))),
             TagCapture::Qualifier => qualifier = Some(capture.node),
+            TagCapture::Body => body = Some(capture.node),
             TagCapture::Doc
             | TagCapture::Helper
             | TagCapture::LocalScope
@@ -136,6 +139,7 @@ fn verdict_of<'tree>(
         name: name?,
         role,
         qualifier,
+        body,
     };
     // INVARIANT: no-content-stored. A name is the text of a name capture alone, never the whole
     // of a definition or an expression.

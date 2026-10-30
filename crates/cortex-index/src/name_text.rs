@@ -1,7 +1,9 @@
 //! The text of a name as its tokens spell it. A name can span several tokens (`Shop.Orders`,
 //! `operator <`, `a . b`), and the source may put comments, line breaks and spacing between them;
 //! those are not part of the name. The tokens are joined with nothing between them, or with one
-//! space where two words would otherwise run together (`operator new`).
+//! space where two words would otherwise run together (`operator new`). A name some grammars
+//! write as a run of sibling nodes with no node around them, as Kotlin writes the package of an
+//! import, is read the same way from its first node to its last.
 
 use tree_sitter::Node;
 
@@ -12,6 +14,33 @@ pub(crate) fn name_text(node: Node<'_>, source: &[u8]) -> Option<String> {
         return node.utf8_text(source).ok().map(str::to_owned);
     }
     let mut tokens = Vec::new();
+    push_tokens(node, source, &mut tokens)?;
+    Some(joined(&tokens))
+}
+
+/// The name the siblings from `first` to `last` hold together in `source`, read as
+/// [`name_text`] reads one node, with the tokens between them, such as the dots of a dotted
+/// name, and without a comment among them. `None` when `last` is not `first` or a sibling
+/// after it, or a token's text is not UTF-8.
+pub(crate) fn run_text(first: Node<'_>, last: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut tokens = Vec::new();
+    let mut current = first;
+    loop {
+        push_tokens(current, source, &mut tokens)?;
+        if current == last {
+            return Some(joined(&tokens));
+        }
+        current = current.next_sibling()?;
+    }
+}
+
+/// Adds to `tokens` the text of each token under `node`, `node` itself when it is one, that is
+/// not a comment. `None` when a token's text is not UTF-8.
+fn push_tokens<'source>(
+    node: Node<'_>,
+    source: &'source [u8],
+    tokens: &mut Vec<&'source str>,
+) -> Option<()> {
     let mut cursor = node.walk();
     loop {
         let current = cursor.node();
@@ -24,7 +53,7 @@ pub(crate) fn name_text(node: Node<'_>, source: &[u8]) -> Option<String> {
         }
         while !cursor.goto_next_sibling() {
             if !cursor.goto_parent() || cursor.node() == node {
-                return Some(joined(&tokens));
+                return Some(());
             }
         }
     }
@@ -90,6 +119,36 @@ mod tests {
             .and_then(|statement| statement.child(0))
             .ok_or("no identifier")?;
         assert_eq!(name_text(single, source.as_bytes()).as_deref(), Some("x"));
+        Ok(())
+    }
+
+    /// A run of siblings reads as one name, the dots between them included and a line
+    /// continuation among them left out; a run whose last node does not follow its first is
+    /// none.
+    #[test]
+    fn runs_of_siblings_read_as_one_name() -> Result<(), Box<dyn Error>> {
+        // The dotted name in `import a . b \ . c` holds `a`, `.`, `b`, the line continuation,
+        // `.` and `c`, side by side.
+        let source = "import a . b \\\n . c\n";
+        let tree = parse_python(source)?;
+        let dotted = tree
+            .root_node()
+            .child(0)
+            .and_then(|import| import.child_by_field_name("name"))
+            .ok_or("no dotted name")?;
+        let mut cursor = dotted.walk();
+        let parts: Vec<Node<'_>> = dotted
+            .named_children(&mut cursor)
+            .filter(|part| part.kind() == "identifier")
+            .collect();
+        let [a, b, c] = parts[..] else {
+            return Err("not three parts".into());
+        };
+        let text = |first, last| run_text(first, last, source.as_bytes());
+        assert_eq!(text(a, c).as_deref(), Some("a.b.c"));
+        assert_eq!(text(a, b).as_deref(), Some("a.b"));
+        assert_eq!(text(b, b).as_deref(), Some("b"));
+        assert_eq!(text(c, a), None);
         Ok(())
     }
 }

@@ -105,7 +105,7 @@ impl Recorder<'_> {
         }
         .ok()?;
         let kind = self.kind_of(tag.role, outer.map(|outer| outer.kind), &name)?;
-        let header_end = header_end(tag.node, self.spec.body_paths, span.end);
+        let header_end = header_end(tag, self.spec.body_paths, span.end);
         let record = SymbolRecord {
             parent,
             kind,
@@ -185,12 +185,16 @@ fn span_of(tag: &Tag<'_>, source: &[u8]) -> Option<Span> {
     })
 }
 
-/// Where the header of the definition at `node` ends: at the end of the last part before its
-/// body, which the first of `body_paths` that leads to one finds, so that comments between the
-/// header and the body, which the grammar places beside the body, are not part of it; at
-/// `span_end` when no path leads to a body.
-fn header_end(node: Node<'_>, body_paths: &[&[&str]], span_end: usize) -> usize {
-    let Some((holder, body)) = body_paths.iter().find_map(|path| follow(node, path)) else {
+/// Where the header of the definition `tag` ends: at the end of the last part before its body,
+/// the one its pattern captured or else the one the first of `body_paths` that leads to one
+/// finds, so that comments between the header and the body, which the grammar places beside the
+/// body, are not part of it; at `span_end` when it has no body.
+fn header_end(tag: &Tag<'_>, body_paths: &[&[&str]], span_end: usize) -> usize {
+    let found = match tag.body {
+        Some(body) => body.parent().map(|holder| (holder, body)),
+        None => body_paths.iter().find_map(|path| follow(tag.node, path)),
+    };
+    let Some((holder, body)) = found else {
         return span_end;
     };
     let mut cursor = holder.walk();
@@ -322,6 +326,34 @@ mod tests {
         assert_eq!(ends("x\n")?, [(1, 1, 1)]);
         assert_eq!(ends("x  \r\n\n\n")?, [(1, 1, 1)]);
         assert_eq!(ends("x\ny \n")?, [(3, 1, 2)]);
+        Ok(())
+    }
+
+    /// A body the pattern captures ends the header where no body path leads to one: the
+    /// signature hash covers `def f(x):` alone, while without the capture it covers the whole
+    /// function, as the body hash always does.
+    #[test]
+    fn captured_bodies_end_headers() -> Result<(), Box<dyn Error>> {
+        static BODIES: TagsSpec = python_spec(
+            &["(function_definition name: (identifier) @name (block) @body) @definition.function"],
+            PLAIN_IMPORTS,
+        );
+        static NO_BODIES: TagsSpec = python_spec(
+            &["(function_definition name: (identifier) @name) @definition.function"],
+            PLAIN_IMPORTS,
+        );
+        let source = "def f(x):\n    return x\n";
+        let hashes = |spec: &'static TagsSpec| {
+            with_tags(spec, source, |tags| {
+                build_symbols(tags, source.as_bytes(), spec, false)
+                    .into_iter()
+                    .map(|symbol| (symbol.sig_hash, symbol.body_hash))
+                    .collect::<Vec<_>>()
+            })
+        };
+        let whole = collapsed_hash(b"def f(x):\n    return x");
+        assert_eq!(hashes(&BODIES)?, [(collapsed_hash(b"def f(x):"), whole)]);
+        assert_eq!(hashes(&NO_BODIES)?, [(whole, whole)]);
         Ok(())
     }
 }

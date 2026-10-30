@@ -5,18 +5,20 @@
 //! `@definition.<kind>` or `@reference.<kind>` records a tag; one that captures a `@name` alone
 //! records nothing; one that captures `@ignore` alone keeps later patterns from recording that
 //! name. A pattern may capture the comments before a definition as `@doc`, with any predicate on
-//! them: Cortex keeps no comments, so those change nothing. Cortex adds one capture, `@qualifier`,
-//! a name a definition's qualified name starts with, such as the type a Go method belongs to.
+//! them: Cortex keeps no comments, so those change nothing. Cortex adds two captures beside a
+//! definition: `@qualifier`, a name its qualified name starts with, such as the type a Go method
+//! belongs to, and `@body`, its body, where the grammar names no field for it, as Kotlin's does.
 //! A locals pattern captures only `@local.scope`, `@local.definition` and `@local.reference`,
 //! and may set `local.scope-inherits` to `true` or `false`; a pattern that records tags may test
 //! `#is-not? local`. No other property may be tested or set.
 //! An imports query captures the statement as `@import` and the module as written
 //! as `@import.module`, and may capture the name taken from it (`@import.name`), the name it is
 //! bound to instead (`@import.alias`), and the mark that every name (`@import.all`) or the default
-//! export (`@import.default`) is taken. In either query a capture named with a leading `_` only
-//! serves a text predicate such as `#eq?`. A query that uses any other capture, or a predicate
-//! Cortex does not evaluate, is refused: a mistake in a query fails the tests instead of being
-//! read some other way.
+//! export (`@import.default`) is taken. A module the grammar writes as a run of sibling nodes,
+//! with no node around them, runs from its `@import.module` to its `@import.module.end`. In
+//! either query a capture named with a leading `_` only serves a text predicate such as `#eq?`.
+//! A query that uses any other capture, or a predicate Cortex does not evaluate, is refused: a
+//! mistake in a query fails the tests instead of being read some other way.
 
 use cortex_core::{Language, RefKind, SymbolKind};
 use thiserror::Error;
@@ -72,6 +74,8 @@ pub(crate) enum TagCapture {
     Ignore,
     /// A name the definition's qualified name starts with, inside the definition around it.
     Qualifier,
+    /// The definition's body, which its header ends before.
+    Body,
     /// A scope names can be defined in, for `#is-not? local`.
     LocalScope,
     /// A name defined in the scope around it.
@@ -85,8 +89,10 @@ pub(crate) enum TagCapture {
 pub(crate) enum ImportCapture {
     /// The whole import statement.
     Statement,
-    /// The module, as written.
+    /// The module, as written, or the first node of it.
     Module,
+    /// The last node of a module written as a run of sibling nodes.
+    ModuleEnd,
     /// A name taken from the module.
     Name,
     /// The name the import is bound to instead of its own.
@@ -316,6 +322,7 @@ fn tag_capture(name: &str) -> Option<TagCapture> {
         "doc" => return Some(TagCapture::Doc),
         "ignore" => return Some(TagCapture::Ignore),
         "qualifier" => return Some(TagCapture::Qualifier),
+        "body" => return Some(TagCapture::Body),
         "definition.macro" => return Some(TagCapture::Macro),
         "local.scope" => return Some(TagCapture::LocalScope),
         "local.definition" => return Some(TagCapture::LocalDefinition),
@@ -341,6 +348,7 @@ fn import_capture(name: &str) -> Option<ImportCapture> {
     match name {
         "import" => Some(ImportCapture::Statement),
         "import.module" => Some(ImportCapture::Module),
+        "import.module.end" => Some(ImportCapture::ModuleEnd),
         "import.name" => Some(ImportCapture::Name),
         "import.alias" => Some(ImportCapture::Alias),
         "import.all" => Some(ImportCapture::All),
@@ -410,6 +418,7 @@ mod tests {
         assert_eq!(tag_capture("_kind"), Some(TagCapture::Helper));
         assert_eq!(tag_capture("ignore"), Some(TagCapture::Ignore));
         assert_eq!(tag_capture("qualifier"), Some(TagCapture::Qualifier));
+        assert_eq!(tag_capture("body"), Some(TagCapture::Body));
         assert_eq!(
             tag_capture("definition.method"),
             Some(TagCapture::Definition(SymbolKind::Method))
@@ -443,10 +452,15 @@ mod tests {
             "names",
             "local",
             "local.scopes",
+            "bodies",
         ] {
             assert_eq!(tag_capture(unknown), None, "{unknown}");
         }
         assert_eq!(import_capture("import.alias"), Some(ImportCapture::Alias));
+        assert_eq!(
+            import_capture("import.module.end"),
+            Some(ImportCapture::ModuleEnd)
+        );
         assert_eq!(
             import_capture("import.default"),
             Some(ImportCapture::Default)
@@ -599,8 +613,54 @@ mod tests {
         );
     }
 
+    /// A definition may capture its body, once, maybe not in every match; a reference or an
+    /// `@ignore` may not.
+    #[test]
+    fn bodies_belong_to_one_definition() {
+        static BODY: TagsSpec = spec(
+            &["(class_definition name: (identifier) @name (block)? @body) @definition.class"],
+            IMPORTS_QUERY,
+        );
+        static BODY_OF_REFERENCE: TagsSpec = spec(
+            &[
+                "(call function: (identifier) @name arguments: (argument_list) @body) @reference.call",
+            ],
+            IMPORTS_QUERY,
+        );
+        static TWO_BODIES: TagsSpec = spec(
+            &[
+                "(function_definition name: (identifier) @name parameters: (parameters) @body (block) @body) @definition.function",
+            ],
+            IMPORTS_QUERY,
+        );
+        static IGNORE_AND_BODY: TagsSpec = spec(
+            &["(function_definition name: (identifier) @ignore (block) @body)"],
+            IMPORTS_QUERY,
+        );
+        let problem = |problem| GrammarError::Pattern {
+            language: Language::Python,
+            query: TAGS,
+            pattern: 0,
+            problem,
+        };
+        assert_eq!(error_of(&BODY), None);
+        assert_eq!(
+            error_of(&BODY_OF_REFERENCE),
+            Some(problem("may capture a @body only with a @definition"))
+        );
+        assert_eq!(
+            error_of(&TWO_BODIES),
+            Some(problem("may capture one @body at most"))
+        );
+        assert_eq!(
+            error_of(&IGNORE_AND_BODY),
+            Some(problem("may capture nothing beside one @ignore"))
+        );
+    }
+
     /// An imports pattern needs the statement and the module once, and the rest at most once:
-    /// a name or the mark for all names in one match and not the other is fine.
+    /// a name or the mark for all names in one match and not the other is fine, and so is a
+    /// module's last node.
     #[test]
     fn import_patterns_need_a_statement_and_a_module() {
         static TAGS_QUERY: &[&str] =
@@ -619,7 +679,18 @@ mod tests {
             "(import_from_statement module_name: (_) @import.module \
              [name: (dotted_name) @import.name (wildcard_import) @import.all]) @import",
         );
+        static RUN: TagsSpec = spec(
+            TAGS_QUERY,
+            "(import_statement name: (dotted_name . (identifier) @import.module \
+             (identifier) @import.module.end . (identifier) @import.name .)) @import",
+        );
+        static TWO_ENDS: TagsSpec = spec(
+            TAGS_QUERY,
+            "(import_statement name: (dotted_name . (identifier) @import.module \
+             (identifier) @import.module.end (identifier) @import.module.end)) @import",
+        );
         assert_eq!(error_of(&NAME_OR_ALL), None);
+        assert_eq!(error_of(&RUN), None);
         let problem = |problem| GrammarError::Pattern {
             language: Language::Python,
             query: IMPORTS,
@@ -634,12 +705,10 @@ mod tests {
             error_of(&NO_STATEMENT),
             Some(problem("needs exactly one @import"))
         );
-        assert_eq!(
-            error_of(&MANY_NAMES),
-            Some(problem(
-                "may capture @import.name, @import.alias, @import.all and @import.default once each at most"
-            ))
-        );
+        let at_most_once = "may capture @import.module.end, @import.name, @import.alias, @import.all \
+                            and @import.default once each at most";
+        assert_eq!(error_of(&MANY_NAMES), Some(problem(at_most_once)));
+        assert_eq!(error_of(&TWO_ENDS), Some(problem(at_most_once)));
     }
 
     /// The error refusing `operator` in `query` of a Python grammar.
