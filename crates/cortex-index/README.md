@@ -105,6 +105,12 @@ its line count (one per line feed, and one more for text after the last) are rec
 parsed when Cortex parses its language and it is neither generated nor vendored; its definitions
 and references are written with it, and it gets the `PARSED` flag.
 
+A name a file's queries find but cannot keep is left out and counted: one a syntax error
+touches, alone, the definitions inside it recorded as if it were not there; one that is not a
+name Cortex can store, with the definitions inside it, whose qualified names would hold it. The
+report counts, per file, the definitions, references and imports left out. Names a query ignores
+on purpose are not counted.
+
 A file whose reading or parsing fails is skipped: it is reported and not written, and what the
 store held for it stays, or nothing when it held nothing. Reading fails when the file cannot be
 read as the walk found it, because it is gone, locked or has grown past the limit since; parsing

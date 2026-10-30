@@ -101,6 +101,8 @@ fn no_source_line_reaches_the_database() -> TestResult {
     let lines: Vec<String> = samples.into_iter().flatten().collect();
     let report = index(repo.path(), 4, Duration::from_secs(60), 1_048_576)?;
     assert_eq!(report.parsed, 21, "{report:?}");
+    // The samples are clean code: nothing their queries found was left out.
+    assert_eq!(report.left_out, [], "{report:?}");
     let stored = database_bytes(repo.path())?;
     let empty = empty_store_bytes()?;
     // The names were stored, so the scan reads the data it is meant to check.

@@ -12,7 +12,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use common::{NOW_MS, TestResult, index, lock_out, write};
 use cortex_core::{ContentHash, EdgeType, FileFlags, Language, RepoPath, Resolution, SymbolKind};
-use cortex_index::{FileProblem, IndexReport, Problem, ProblemKind};
+use cortex_index::{FileProblem, IndexReport, LeftOut, Problem, ProblemKind};
 use cortex_store::{FileRow, NodeId, Reader, RefRow, SymbolRow};
 
 /// A time limit no test file comes near, even in a debug build.
@@ -313,6 +313,7 @@ fn every_file_is_written_as_its_kind_allows() -> TestResult {
         removed: 0,
         walk_problems: Vec::new(),
         problems: Vec::new(),
+        left_out: Vec::new(),
     };
     assert_eq!(report, expected);
     let parsed = FileFlags::PARSED;
@@ -526,6 +527,31 @@ fn references_resolve_by_file_then_by_family() -> TestResult {
     Ok(())
 }
 
+/// A file whose queries found a name it could not keep is written with the rest, and the report
+/// says how many of each kind it left out: here a function whose name passes 256 bytes.
+#[test]
+fn names_left_out_are_reported() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let source = format!(
+        "def {}():\n    pass\n\n\ndef kept():\n    pass\n",
+        "f".repeat(300)
+    );
+    write(repo.path(), "long.py", source.as_bytes())?;
+    let report = index(repo.path(), 1, GENEROUS, DEFAULT_LIMIT)?;
+    let left_out = LeftOut {
+        definitions: 1,
+        references: 0,
+        imports: 0,
+    };
+    assert_eq!(report.left_out, [(RepoPath::new("long.py")?, left_out)]);
+    let stored = stored(repo.path(), "long.py")?.ok_or("long.py not stored")?;
+    assert_eq!(
+        stored.symbols,
+        [(SymbolKind::Function, "kept".to_owned(), 5, 6)]
+    );
+    Ok(())
+}
+
 /// A second index follows the changes: a file the walk no longer finds is removed, a new one is
 /// added, and a changed one rewritten, the symbols it still defines keeping their ids. A file the
 /// walk cannot read is reported and keeps what was stored for it.
@@ -554,6 +580,7 @@ fn a_second_index_follows_the_changes() -> TestResult {
             kind: ProblemKind::Unreadable,
         }],
         problems: Vec::new(),
+        left_out: Vec::new(),
     };
     assert_eq!(report, expected);
     assert_eq!(stored(root, "notes.txt")?, None);
@@ -685,6 +712,7 @@ fn a_file_out_of_time_is_skipped_and_reported() -> TestResult {
         removed: 0,
         walk_problems: Vec::new(),
         problems: vec![(RepoPath::new("slow.py")?, FileProblem::TimedOut)],
+        left_out: Vec::new(),
     };
     assert_eq!(index(root, 1, Duration::ZERO, DEFAULT_LIMIT)?, out_of_time);
     assert_eq!(stored(root, "slow.py")?, None);

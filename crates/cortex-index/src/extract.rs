@@ -27,6 +27,32 @@ pub struct Extraction {
     pub refs: Vec<RefRecord>,
     /// The modules it imports, in the order they appear.
     pub imports: Vec<Import>,
+    /// What its queries found that was left out.
+    pub left_out: LeftOut,
+}
+
+/// How many of the names a file's queries found were left out: because a syntax error touches
+/// them, or because they are not names Cortex can store (one line of at most 256 bytes, the
+/// qualified name of a definition included). A definition whose name cannot be stored takes the
+/// ones inside it along, and each counts; one whose name a syntax error touches is left out alone,
+/// and the ones inside it are recorded as if it were not there. Names a query ignores on purpose
+/// are not counted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LeftOut {
+    /// Definitions.
+    pub definitions: u64,
+    /// References.
+    pub references: u64,
+    /// Imports.
+    pub imports: u64,
+}
+
+impl LeftOut {
+    /// Whether nothing was left out.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Why a file was not read.
@@ -99,23 +125,41 @@ impl Extractor {
         let deadline = Deadline::after(self.timeout);
         let tree = parse(&mut self.parser, source, &deadline).ok_or_else(timed_out)?;
         let root = tree.root_node();
-        let tags =
+        let read =
             read_tags(&mut self.cursor, grammar, root, source, &deadline).ok_or_else(timed_out)?;
-        let imports = read_imports(&mut self.cursor, grammar, root, source, &deadline)
-            .ok_or_else(timed_out)?;
+        let (imports, imports_left_out) =
+            read_imports(&mut self.cursor, grammar, root, source, &deadline)
+                .ok_or_else(timed_out)?;
         let symbols = build_symbols(
-            &tags,
+            &read.tags,
             source,
             grammar.spec,
             is_test_file(path, grammar.spec.test_files),
         );
-        let refs = build_references(&tags, source, &symbols);
+        let refs = build_references(&read.tags, source, &symbols);
+        let definitions = read
+            .tags
+            .iter()
+            .filter(|tag| tag.role.is_definition())
+            .count();
+        let references = read.tags.len() - definitions;
+        let left_out = LeftOut {
+            definitions: read.broken_definitions + unrecorded(definitions, symbols.len()),
+            references: read.broken_references + unrecorded(references, refs.len()),
+            imports: imports_left_out,
+        };
         Ok(Extraction {
             symbols,
             refs,
             imports,
+            left_out,
         })
     }
+}
+
+/// How many of the `found` tags of one role made no record, `recorded` having been made.
+fn unrecorded(found: usize, recorded: usize) -> u64 {
+    u64::try_from(found.saturating_sub(recorded)).unwrap_or(u64::MAX)
 }
 
 /// The tree of `source`, or `None` when the deadline passed first.

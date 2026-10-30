@@ -56,7 +56,7 @@ pub(crate) fn build_symbols(
 ) -> Vec<SymbolRecord> {
     let mut definitions: Vec<(Span, &Tag<'_>)> = tags
         .iter()
-        .filter(|tag| matches!(tag.role, Role::Definition(_) | Role::Macro))
+        .filter(|tag| tag.role.is_definition())
         .filter_map(|tag| Some((span_of(tag, source)?, tag)))
         .collect();
     // Outer definitions before the ones inside them. The sort is stable and the tags come in the

@@ -56,26 +56,31 @@ struct Parts<'tree> {
 }
 
 /// The imports in the tree under `root`, in the order the query finds them, which follows the
-/// source; `None` when the deadline passed before the query finished.
+/// source, and how many matches were left out because a part is missing, holds a syntax error or
+/// is not a name Cortex can store; `None` when the deadline passed before the query finished.
 pub(crate) fn read_imports(
     cursor: &mut QueryCursor,
     grammar: &Grammar,
     root: Node<'_>,
     source: &[u8],
     deadline: &Deadline,
-) -> Option<Vec<Import>> {
+) -> Option<(Vec<Import>, u64)> {
     let mut imports = Vec::new();
+    let mut left_out = 0;
     let mut check = |_: &tree_sitter::QueryCursorState| deadline.check();
     let options = QueryCursorOptions::new().progress_callback(&mut check);
     let mut matches = cursor.matches_with_options(&grammar.imports, root, source, options);
     while let Some(found) = matches.next() {
         let parts = parts_of(found.captures(), &grammar.import_captures);
-        imports.extend(import_of(&parts, source));
+        match import_of(&parts, source) {
+            Some(import) => imports.push(import),
+            None => left_out += 1,
+        }
     }
     if deadline.has_passed() {
         return None;
     }
-    Some(imports)
+    Some((imports, left_out))
 }
 
 /// The captures of one match, by what each marks.
@@ -175,7 +180,7 @@ mod tests {
                 source.as_bytes(),
                 &Deadline::after(allowance),
             )
-            .map(|imports| imports.len())
+            .map(|(imports, _)| imports.len())
         };
         assert_eq!(read(Duration::ZERO), None);
         assert_eq!(read(Duration::from_secs(60)), Some(5000));
@@ -184,7 +189,7 @@ mod tests {
 
     /// A module captured from its first node to its last reads as the run between them, the
     /// dots included; one whose last node comes before its first, or that holds a syntax error,
-    /// is no import.
+    /// is no import, and is counted as left out.
     #[test]
     fn modules_run_to_their_last_node() -> Result<(), Box<dyn Error>> {
         static TAGS: &[&str] =
@@ -199,7 +204,8 @@ mod tests {
             "(import_statement name: (dotted_name . (identifier) @import.module.end \
              . (identifier) @import.module)) @import",
         );
-        let read = |spec: &'static TagsSpec, source: &str| -> Result<Vec<Import>, Box<dyn Error>> {
+        type Read = (Vec<Import>, u64);
+        let read = |spec: &'static TagsSpec, source: &str| -> Result<Read, Box<dyn Error>> {
             let grammar = Grammar::compile(Language::Python, spec)?;
             let tree = parse_python(source)?;
             let deadline = distant_deadline();
@@ -215,18 +221,19 @@ mod tests {
         };
         // `import a.b.c.d` takes `d` from `a.b.c`; `import x.y` has no part between its first
         // and its last, so the pattern does not match it.
+        let taken = Import {
+            specifier: Identifier::new("a.b.c")?,
+            imported: Imported::Name(Identifier::new("d")?),
+            alias: None,
+            line: 1,
+        };
         assert_eq!(
             read(&RUN, "import a.b.c.d\nimport x.y\n")?,
-            [Import {
-                specifier: Identifier::new("a.b.c")?,
-                imported: Imported::Name(Identifier::new("d")?),
-                alias: None,
-                line: 1,
-            }]
+            (vec![taken], 0)
         );
         // In `import a.b.%.c.d` the run from `a` to `c` holds the stray `.%`, a syntax error.
-        assert_eq!(read(&RUN, "import a.b.%.c.d\n")?, []);
-        assert_eq!(read(&BACKWARDS, "import a.b\n")?, []);
+        assert_eq!(read(&RUN, "import a.b.%.c.d\n")?, (vec![], 1));
+        assert_eq!(read(&BACKWARDS, "import a.b\n")?, (vec![], 1));
         Ok(())
     }
 }

@@ -50,7 +50,7 @@ pub(crate) fn with_tags<T>(
 ) -> Result<T, Box<dyn Error>> {
     let grammar = Grammar::compile(Language::Python, spec)?;
     let tree = parse_python(source)?;
-    let tags = read_tags(
+    let read = read_tags(
         &mut QueryCursor::new(),
         &grammar,
         tree.root_node(),
@@ -58,7 +58,7 @@ pub(crate) fn with_tags<T>(
         &distant_deadline(),
     )
     .ok_or("out of time")?;
-    Ok(use_tags(&tags))
+    Ok(use_tags(&read.tags))
 }
 
 /// Python source holding `count` small functions, each with one call: enough work that the query

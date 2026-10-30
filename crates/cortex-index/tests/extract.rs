@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use common::grammars;
 use cortex_core::{Language, RefKind, RepoPath, ShortHash, SymbolKind};
-use cortex_index::{ExtractError, Extraction, Extractor, Imported};
+use cortex_index::{ExtractError, Extraction, Extractor, Imported, LeftOut};
 
 /// What the tests return: any failure, with its cause.
 type TestResult = Result<(), Box<dyn Error>>;
@@ -2920,6 +2920,75 @@ fn long_qualified_names_are_left_out() -> TestResult {
         })
         .collect();
     assert_eq!(refs, [("helper", 5, Some(1))]);
+    // C and its method are counted as left out, and nothing else.
+    let counted = LeftOut {
+        definitions: 2,
+        references: 0,
+        imports: 0,
+    };
+    assert_eq!(extraction.left_out, counted);
+    Ok(())
+}
+
+/// Names the queries find but cannot keep are counted by kind: a definition, a call and an
+/// import whose names pass 256 bytes; an import broken by a syntax error; a YAML key right after
+/// one. Clean code counts nothing.
+#[test]
+fn left_out_names_are_counted() -> TestResult {
+    let (module, function, call) = ("m".repeat(300), "f".repeat(300), "g".repeat(300));
+    let long = format!("import {module}\n\ndef {function}():\n    {call}()\n");
+    let counted = |definitions, references, imports| LeftOut {
+        definitions,
+        references,
+        imports,
+    };
+    let cases = [
+        (
+            "shop/long.py",
+            Language::Python,
+            long.as_str(),
+            counted(1, 1, 1),
+        ),
+        (
+            "shop/broken.py",
+            Language::Python,
+            "import a.$b\nimport c\n",
+            counted(0, 0, 1),
+        ),
+        (
+            "config/app.yaml",
+            Language::Yaml,
+            "\"x\"y: 3\nok: 1\n",
+            counted(1, 0, 0),
+        ),
+        (
+            "shop/clean.py",
+            Language::Python,
+            "import os\n\ndef f():\n    g()\n",
+            counted(0, 0, 0),
+        ),
+    ];
+    for (path, language, source, expected) in cases {
+        assert_eq!(
+            extract(path, language, source)?.left_out,
+            expected,
+            "{path}"
+        );
+    }
+    // A class whose name a stray `$` before it breaks is left out alone: its method is still
+    // recorded, as a function, since no recorded class holds it.
+    let broken_class = extract(
+        "shop/class.py",
+        Language::Python,
+        "class $C:\n    def f(self):\n        pass\n",
+    )?;
+    assert_eq!(broken_class.left_out, counted(1, 0, 0));
+    let kept: Vec<(SymbolKind, &str)> = broken_class
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.kind, symbol.qual_name.as_str()))
+        .collect();
+    assert_eq!(kept, [(SymbolKind::Function, "f")]);
     Ok(())
 }
 

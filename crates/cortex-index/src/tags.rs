@@ -29,6 +29,26 @@ pub(crate) enum Role {
     Reference(RefKind),
 }
 
+impl Role {
+    /// Whether the name is defined here: a definition or a macro.
+    pub(crate) fn is_definition(self) -> bool {
+        matches!(self, Self::Definition(_) | Self::Macro)
+    }
+}
+
+/// What the tags query found in a tree: the tags to record, and how many names it left out
+/// because a syntax error touches them, counted once per name and only when no other pattern
+/// recorded or ignored that name.
+#[derive(Debug)]
+pub(crate) struct TagsRead<'tree> {
+    /// The tags, in the order their names appear.
+    pub(crate) tags: Vec<Tag<'tree>>,
+    /// Definitions whose names a syntax error touches.
+    pub(crate) broken_definitions: u64,
+    /// References whose names a syntax error touches.
+    pub(crate) broken_references: u64,
+}
+
 /// A name the tags query found, and what it is.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Tag<'tree> {
@@ -73,18 +93,30 @@ impl Tag<'_> {
 /// pattern that says it.
 type Verdict<'tree> = (Option<Tag<'tree>>, usize);
 
-/// The tags in the tree under `root`, in the order their names appear; `None` when the deadline
-/// passed before the query finished.
+/// What one match says about the name it captures.
+enum Said<'tree> {
+    /// Record this tag for it.
+    Tag(Tag<'tree>),
+    /// Record nothing for it: the match captures it as `@ignore`.
+    Ignore,
+    /// Record nothing for it: a syntax error touches it. It would have had this role.
+    Broken(Role),
+}
+
+/// The tags in the tree under `root`, in the order their names appear, and the names left out as
+/// broken; `None` when the deadline passed before the query finished.
 pub(crate) fn read_tags<'tree>(
     cursor: &mut QueryCursor,
     grammar: &Grammar,
     root: Node<'tree>,
     source: &[u8],
     deadline: &Deadline,
-) -> Option<Vec<Tag<'tree>>> {
+) -> Option<TagsRead<'tree>> {
     // INVARIANT: deterministic. Tags are kept in the order of their names in the source, however
     // the cursor orders its matches.
     let mut by_name: BTreeMap<(usize, usize), Verdict<'tree>> = BTreeMap::new();
+    // Each broken name with the role and pattern of the earliest pattern that found it.
+    let mut broken: BTreeMap<(usize, usize), (Role, usize)> = BTreeMap::new();
     let mut scopes = Scopes::new(source);
     let mut check = |_: &tree_sitter::QueryCursorState| deadline.check();
     let options = QueryCursorOptions::new().progress_callback(&mut check);
@@ -99,12 +131,25 @@ pub(crate) fn read_tags<'tree>(
             Some(PatternRule::Tags { is_not_local }) => *is_not_local,
             None => continue,
         };
-        let Some((name, tag)) = verdict_of(found.captures(), &grammar.tag_captures, source) else {
+        let Some((name, said)) = verdict_of(found.captures(), &grammar.tag_captures, source) else {
             continue;
         };
-        if is_not_local && tag.is_some() && scopes.is_local(name) {
+        if is_not_local && !matches!(said, Said::Ignore) && scopes.is_local(name) {
             continue;
         }
+        let tag = match said {
+            Said::Tag(tag) => Some(tag),
+            Said::Ignore => None,
+            Said::Broken(role) => {
+                let earliest = broken
+                    .entry((name.start_byte(), name.end_byte()))
+                    .or_insert((role, pattern));
+                if pattern < earliest.1 {
+                    *earliest = (role, pattern);
+                }
+                continue;
+            }
+        };
         match by_name.entry((name.start_byte(), name.end_byte())) {
             Entry::Vacant(entry) => {
                 entry.insert((tag, pattern));
@@ -120,7 +165,23 @@ pub(crate) fn read_tags<'tree>(
     if deadline.has_passed() {
         return None;
     }
-    Some(by_name.into_values().filter_map(|(tag, _)| tag).collect())
+    let mut read = TagsRead {
+        tags: Vec::new(),
+        broken_definitions: 0,
+        broken_references: 0,
+    };
+    for (span, (role, _)) in broken {
+        if by_name.contains_key(&span) {
+            continue;
+        }
+        if role.is_definition() {
+            read.broken_definitions += 1;
+        } else {
+            read.broken_references += 1;
+        }
+    }
+    read.tags = by_name.into_values().filter_map(|(tag, _)| tag).collect();
+    Some(read)
 }
 
 /// Whether `tag` has a qualifier that comes after the one `kept` has, so nearer the name both
@@ -135,19 +196,19 @@ fn is_nearer(tag: Option<Tag<'_>>, kept: Option<Tag<'_>>) -> bool {
     }
 }
 
-/// The name one match's `captures` are about, with the tag to record for it, or `None` for an
-/// `@ignore`; nothing when the match records nothing: a name alone, or a tag whose name cannot be
-/// one or may be part of a broken one.
+/// The name one match's `captures` are about, with what the match says about it: a tag to record,
+/// `@ignore`, or a name broken by a syntax error, which may be part of a broken one; nothing when
+/// the match records nothing: a name alone, or a tag whose name is its whole node.
 fn verdict_of<'tree>(
     captures: &[QueryCapture<'tree>],
     meanings: &[TagCapture],
     source: &[u8],
-) -> Option<(Node<'tree>, Option<Tag<'tree>>)> {
+) -> Option<(Node<'tree>, Said<'tree>)> {
     let (mut name, mut tagged, mut qualifier, mut body) = (None, None, None, None);
     let mut is_prose = false;
     for capture in captures {
         match meanings.get(usize::try_from(capture.index).ok()?)? {
-            TagCapture::Ignore => return Some((capture.node, None)),
+            TagCapture::Ignore => return Some((capture.node, Said::Ignore)),
             TagCapture::Name => name = Some(capture.node),
             TagCapture::ProseName => {
                 name = Some(capture.node);
@@ -176,10 +237,13 @@ fn verdict_of<'tree>(
     };
     // INVARIANT: no-content-stored. A name is the text of a name capture alone, never the whole
     // of a definition or an expression.
-    if tag.name.has_error() || names_whole_node(&tag) || follows_error(tag.name, source) {
+    if names_whole_node(&tag) {
         return None;
     }
-    Some((tag.name, Some(tag)))
+    if tag.name.has_error() || follows_error(tag.name, source) {
+        return Some((tag.name, Said::Broken(tag.role)));
+    }
+    Some((tag.name, Said::Tag(tag)))
 }
 
 /// Whether a syntax error ends just before `name`, on its line with nothing but spaces and tabs
@@ -552,6 +616,55 @@ mod tests {
         Ok(())
     }
 
+    /// A name a syntax error touches is counted as left out once, in the role its tag would have
+    /// had, unless another pattern recorded or ignored the same name.
+    #[test]
+    fn broken_names_are_counted() -> Result<(), Box<dyn Error>> {
+        static TWICE: TagsSpec = python_spec(
+            &[
+                "(import_statement name: (dotted_name) @name) @reference.call",
+                "(import_statement name: (dotted_name) @name) @reference.type",
+            ],
+            PLAIN_IMPORTS,
+        );
+        static IGNORED: TagsSpec = python_spec(
+            &[
+                "(import_statement name: (dotted_name) @ignore)",
+                "(import_statement name: (dotted_name) @name) @definition.module",
+            ],
+            PLAIN_IMPORTS,
+        );
+        static MIXED: TagsSpec = python_spec(
+            &[
+                "(import_statement name: (dotted_name) @name) @definition.module",
+                "(import_statement name: (dotted_name) @name) @reference.call",
+            ],
+            PLAIN_IMPORTS,
+        );
+        let counts = |spec: &'static TagsSpec| -> Result<(u64, u64), Box<dyn Error>> {
+            let grammar = Grammar::compile(Language::Python, spec)?;
+            let source = "import a.$b\nimport c\n";
+            let tree = parse_python(source)?;
+            let read = read_tags(
+                &mut QueryCursor::new(),
+                &grammar,
+                tree.root_node(),
+                source.as_bytes(),
+                &Deadline::after(Duration::from_secs(60)),
+            )
+            .ok_or("out of time")?;
+            Ok((read.broken_definitions, read.broken_references))
+        };
+        // Two patterns find the broken `a.$b`: one name, one reference left out.
+        assert_eq!(counts(&TWICE)?, (0, 1));
+        // The first pattern ignores every imported name, the broken one included.
+        assert_eq!(counts(&IGNORED)?, (0, 0));
+        // A definition by the first pattern and a reference by the second: the earliest pattern
+        // says what the name would have been, as it does for a name that is recorded.
+        assert_eq!(counts(&MIXED)?, (1, 0));
+        Ok(())
+    }
+
     /// Once the deadline has passed, the query stops and reports it instead of a partial list.
     #[test]
     fn queries_stop_at_the_deadline() -> Result<(), Box<dyn Error>> {
@@ -570,7 +683,7 @@ mod tests {
                 source.as_bytes(),
                 &Deadline::after(allowance),
             )
-            .map(|tags| tags.len())
+            .map(|read| read.tags.len())
         };
         assert_eq!(read(Duration::ZERO), None);
         assert_eq!(read(Duration::from_secs(60)), Some(5000));

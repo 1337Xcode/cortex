@@ -47,7 +47,7 @@ pub use discover::{
     DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, MAX_FOLDER_DEPTH, Problem,
     ProblemKind, discover,
 };
-pub use extract::{ExtractError, Extraction, Extractor};
+pub use extract::{ExtractError, Extraction, Extractor, LeftOut};
 pub use grammar::{GrammarError, Grammars};
 pub use pipeline::{FileProblem, IndexError, IndexOptions, IndexReport, index_repository};
 pub use rules::MAX_REPORTED_LINES;

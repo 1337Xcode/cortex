@@ -29,7 +29,7 @@ use thiserror::Error;
 use crate::discover::{
     DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, Problem, ProblemKind, discover,
 };
-use crate::extract::{ExtractError, Extractor};
+use crate::extract::{ExtractError, Extractor, LeftOut};
 use crate::folders;
 use crate::grammar::Grammars;
 use crate::resolve;
@@ -78,6 +78,9 @@ pub struct IndexReport {
     pub walk_problems: Vec<Problem>,
     /// Files the walk found that were skipped, in path order, with the reason.
     pub problems: Vec<(RepoPath, FileProblem)>,
+    /// Files written although their queries found names that were left out, in path order, with
+    /// how many of each kind.
+    pub left_out: Vec<(RepoPath, LeftOut)>,
 }
 
 /// Why a file the walk found was skipped. A skipped file is not written: what the store held for
@@ -114,8 +117,9 @@ pub enum IndexError {
 /// What became of one file prepared for the index.
 #[derive(Debug, PartialEq, Eq)]
 enum Outcome {
-    /// Its rows, ready to write: with its definitions and references when it was parsed.
-    Ready(FileIndex),
+    /// Its rows, ready to write: with its definitions and references when it was parsed, and what
+    /// its queries found but left out.
+    Ready(FileIndex, LeftOut),
     /// Nothing to write: the file at this path was skipped, for this reason.
     Skipped(RepoPath, FileProblem),
 }
@@ -185,6 +189,7 @@ pub fn index_repository(
         removed,
         walk_problems: discovery.problems,
         problems: Vec::new(),
+        left_out: Vec::new(),
     };
     write_files(writer, &discovery.files, &context, &mut report)?;
     resolve::resolve_names(writer)?;
@@ -271,10 +276,13 @@ fn write_batch(
     let mut transaction = writer.transaction()?;
     for outcome in outcomes {
         match outcome {
-            Outcome::Ready(index) => {
+            Outcome::Ready(index, left_out) => {
                 transaction.replace_file(&index)?;
                 report.files += 1;
                 report.parsed += u64::from(index.file.flags.contains(FileFlags::PARSED));
+                if !left_out.is_empty() {
+                    report.left_out.push((index.file.path, left_out));
+                }
             }
             Outcome::Skipped(path, problem) => report.problems.push((path, problem)),
         }
@@ -371,11 +379,14 @@ fn prepare(
     match extractor.extract(&record.path, language, &source) {
         Ok(extraction) => {
             record.flags = record.flags.with(FileFlags::PARSED);
-            Ok(Outcome::Ready(FileIndex {
-                file: record,
-                symbols: extraction.symbols,
-                refs: extraction.refs,
-            }))
+            Ok(Outcome::Ready(
+                FileIndex {
+                    file: record,
+                    symbols: extraction.symbols,
+                    refs: extraction.refs,
+                },
+                extraction.left_out,
+            ))
         }
         Err(ExtractError::TimedOut { .. }) => {
             Ok(Outcome::Skipped(record.path, FileProblem::TimedOut))
@@ -400,7 +411,7 @@ fn read(file: &DiscoveredFile, root: &Path, max_file_bytes: u64, now_ms: i64) ->
         indexed_at_ms: now_ms,
     };
     if has_any(file.flags, &UNREAD) {
-        return Read::Done(Outcome::Ready(file_only(record)));
+        return Read::Done(Outcome::Ready(file_only(record), LeftOut::default()));
     }
     let Some(source) = read_contents(&mut record, root, max_file_bytes) else {
         return Read::Done(Outcome::Skipped(record.path, FileProblem::Unreadable));
@@ -411,7 +422,7 @@ fn read(file: &DiscoveredFile, root: &Path, max_file_bytes: u64, now_ms: i64) ->
             language,
             source,
         },
-        None => Read::Done(Outcome::Ready(file_only(record))),
+        None => Read::Done(Outcome::Ready(file_only(record), LeftOut::default())),
     }
 }
 
@@ -576,7 +587,10 @@ mod tests {
             FileFlags::BINARY,
         ] {
             let file = found("missing.py", python, flags)?;
-            let expected = Read::Done(Outcome::Ready(file_only(record(&file, false))));
+            let expected = Read::Done(Outcome::Ready(
+                file_only(record(&file, false)),
+                LeftOut::default(),
+            ));
             assert_eq!(read(&file, root, 50, 9), expected, "{flags:?}");
         }
         for file in [
@@ -584,7 +598,10 @@ mod tests {
             found("lib.py", python, FileFlags::VENDORED)?,
             found("notes.txt", None, FileFlags::empty())?,
         ] {
-            let expected = Read::Done(Outcome::Ready(file_only(record(&file, true))));
+            let expected = Read::Done(Outcome::Ready(
+                file_only(record(&file, true)),
+                LeftOut::default(),
+            ));
             assert_eq!(read(&file, root, 50, 9), expected, "{}", file.path.as_str());
         }
         let source = found("a.py", python, FileFlags::empty())?;
@@ -615,7 +632,7 @@ mod tests {
             Ok(Outcome::Skipped(path.clone(), FileProblem::Panicked))
         );
         let ready = || {
-            Outcome::Ready(file_only(FileRecord {
+            let file = FileRecord {
                 path: path.clone(),
                 language: None,
                 size_bytes: 1,
@@ -624,7 +641,8 @@ mod tests {
                 mtime_ns: 1,
                 flags: FileFlags::empty(),
                 indexed_at_ms: 1,
-            }))
+            };
+            Outcome::Ready(file_only(file), LeftOut::default())
         };
         assert_eq!(guarded(&path, || Ok(ready())), Ok(ready()));
         let refused = || ExtractError::Grammar {
@@ -680,7 +698,7 @@ mod tests {
         let summary: Vec<(usize, &str, Option<FileProblem>, Vec<&str>)> = prepared
             .iter()
             .map(|(position, outcome)| match outcome {
-                Outcome::Ready(index) => {
+                Outcome::Ready(index, _) => {
                     let names = index.symbols.iter().map(|s| s.qual_name.as_str());
                     (*position, index.file.path.as_str(), None, names.collect())
                 }
@@ -718,8 +736,9 @@ mod tests {
         }
     }
 
-    /// A batch is written in one transaction and counted: a file ready to write is written, and a
-    /// skipped file is reported and leaves what the store held for it, or nothing.
+    /// A batch is written in one transaction and counted: a file ready to write is written, with
+    /// what its queries left out reported when anything was, and a skipped file is reported and
+    /// leaves what the store held for it, or nothing.
     #[test]
     fn a_batch_writes_what_was_read_and_reports_the_rest() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -754,18 +773,32 @@ mod tests {
             removed: 0,
             walk_problems: Vec::new(),
             problems: Vec::new(),
+            left_out: Vec::new(),
         };
         let skipped = |path: &str, problem| -> Result<Outcome, cortex_core::PathError> {
             Ok(Outcome::Skipped(RepoPath::new(path)?, problem))
         };
+        let some_left_out = LeftOut {
+            definitions: 2,
+            references: 0,
+            imports: 1,
+        };
         let outcomes = vec![
-            Outcome::Ready(file_only(record("a.txt", FileFlags::PARSED)?)),
+            Outcome::Ready(
+                file_only(record("a.txt", FileFlags::PARSED)?),
+                LeftOut::default(),
+            ),
+            Outcome::Ready(
+                file_only(record("b.txt", FileFlags::PARSED)?),
+                some_left_out,
+            ),
             skipped("kept.txt", FileProblem::Unreadable)?,
             skipped("new.txt", FileProblem::Panicked)?,
             skipped("slow.txt", FileProblem::TimedOut)?,
         ];
         write_batch(&mut writer, outcomes, &mut report)?;
-        assert_eq!((report.files, report.parsed), (1, 1));
+        assert_eq!((report.files, report.parsed), (2, 2));
+        assert_eq!(report.left_out, [(RepoPath::new("b.txt")?, some_left_out)]);
         assert_eq!(
             report.problems,
             [
@@ -775,7 +808,7 @@ mod tests {
             ]
         );
         let queries = writer.queries();
-        let paths = ["a.txt", "kept.txt", "slow.txt"].map(RepoPath::new);
+        let paths = ["a.txt", "b.txt", "kept.txt", "slow.txt"].map(RepoPath::new);
         assert_eq!(
             queries.file_paths()?,
             paths.into_iter().collect::<Result<Vec<_>, _>>()?
