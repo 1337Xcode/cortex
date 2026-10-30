@@ -279,3 +279,51 @@ fn go_imports_join_files() -> TestResult {
     assert_eq!(import_edges(root)?, edges(expected));
     Ok(())
 }
+
+/// Rust `use` paths join files through `crate`, `super`, a crate root's own modules, a module
+/// named as a whole and the package's library by name; the standard library names nothing, a
+/// `mod` declaration is not an import, and with `src/lib.rs` beside `src/main.rs` a path that ends
+/// at the crate root names only the module it takes.
+#[test]
+fn rust_imports_join_files() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop-core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub mod models;\nmod api;\npub use models::Order;\n",
+            ),
+            ("src/models.rs", "pub struct Order;\n"),
+            ("src/api/mod.rs", "mod routes;\nuse crate::models::Order;\n"),
+            (
+                "src/api/routes.rs",
+                "use super::*;\nuse crate::models;\nuse std::collections::HashMap;\n",
+            ),
+            ("src/main.rs", "use shop_core::Order;\n\nfn main() {}\n"),
+            (
+                "tests/flow.rs",
+                "mod common;\nuse common::setup;\n\n#[test]\nfn flows() {\n    setup();\n}\n",
+            ),
+            ("tests/common/mod.rs", "pub fn setup() {}\n"),
+        ],
+    )?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    let expected: &[(&str, &[(&str, u32)])] = &[
+        ("src/api/mod.rs", &[("src/models.rs", 1)]),
+        (
+            "src/api/routes.rs",
+            &[("src/api/mod.rs", 1), ("src/models.rs", 1)],
+        ),
+        ("src/lib.rs", &[("src/models.rs", 1)]),
+        ("src/main.rs", &[("src/lib.rs", 1)]),
+        ("tests/flow.rs", &[("tests/common/mod.rs", 1)]),
+    ];
+    assert_eq!(import_edges(root)?, edges(expected));
+    Ok(())
+}

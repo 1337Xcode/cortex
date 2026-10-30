@@ -18,6 +18,7 @@ mod ecmascript;
 mod go;
 mod jsonc;
 mod python;
+mod rust;
 
 /// Reads one project file as text; `None` when it cannot be read.
 pub(crate) type ReadText<'a> = &'a dyn Fn(&RepoPath) -> Option<String>;
@@ -26,7 +27,7 @@ pub(crate) type ReadText<'a> = &'a dyn Fn(&RepoPath) -> Option<String>;
 type Loader = fn(&Files, ReadText<'_>) -> Box<dyn Resolver>;
 
 /// Every language family whose imports name files, by its loader.
-const LOADERS: &[Loader] = &[ecmascript::load, python::load, go::load];
+const LOADERS: &[Loader] = &[ecmascript::load, python::load, go::load, rust::load];
 
 /// Turns the imports of one language family into the files they name.
 trait Resolver: Send + Sync {

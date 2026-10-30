@@ -223,6 +223,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "toml",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
