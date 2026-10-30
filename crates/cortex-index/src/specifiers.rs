@@ -55,9 +55,10 @@ struct Parts<'tree> {
     default: Option<Node<'tree>>,
 }
 
-/// The imports in the tree under `root`, in the order the query finds them, which follows the
-/// source, and how many matches were left out because a part is missing, holds a syntax error or
-/// is not a name Cortex can store; `None` when the deadline passed before the query finished.
+/// The imports in the tree under `root`, in the order they appear: by statement, then by where
+/// what each takes is written; and how many matches were left out because a part is missing,
+/// holds a syntax error or is not a name Cortex can store. `None` when the deadline passed before
+/// the query finished.
 pub(crate) fn read_imports(
     cursor: &mut QueryCursor,
     grammar: &Grammar,
@@ -72,15 +73,35 @@ pub(crate) fn read_imports(
     let mut matches = cursor.matches_with_options(&grammar.imports, root, source, options);
     while let Some(found) = matches.next() {
         let parts = parts_of(found.captures(), &grammar.import_captures);
-        match import_of(&parts, source) {
-            Some(import) => imports.push(import),
+        match import_of(&parts, source).zip(position_of(&parts)) {
+            Some((import, position)) => imports.push((position, import)),
             None => left_out += 1,
         }
     }
     if deadline.has_passed() {
         return None;
     }
-    Some((imports, left_out))
+    // The matches of one statement come pattern by pattern, which need not be the order the
+    // statement writes them in.
+    imports.sort_by_key(|(position, _)| *position);
+    Some((
+        imports.into_iter().map(|(_, import)| import).collect(),
+        left_out,
+    ))
+}
+
+/// Where the import one match describes is written: the start of its statement, then the start
+/// of what it takes (its name, the mark of the default or of every name, its alias, else its
+/// module); `None` when the match has no statement or no module.
+fn position_of(parts: &Parts<'_>) -> Option<(usize, usize)> {
+    let statement = parts.statement?;
+    let taken = parts
+        .name
+        .or(parts.default)
+        .or(parts.all)
+        .or(parts.alias)
+        .or(parts.module)?;
+    Some((statement.start_byte(), taken.start_byte()))
 }
 
 /// The captures of one match, by what each marks.

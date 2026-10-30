@@ -154,6 +154,53 @@ fn tsx() -> TestResult {
     check_golden("tsx", "sample.tsx", Language::Tsx, "\n")
 }
 
+/// `default` in braces is the default export, never a name: imported under a name of the file's
+/// choosing beside plain names, one renamed (line 1), re-exported as it is (line 2) or under a
+/// name (line 3). A name re-exported as the default stays a name, with `default` as its alias
+/// (line 4). The same in TypeScript and TSX, whose grammar reads `default` there as an
+/// identifier, not as JavaScript's keyword.
+#[test]
+fn default_in_braces_is_the_default_export() -> TestResult {
+    let source = "import { default as Base, useState, useMemo as memo } from \"react\";\n\
+                  export { default } from \"./widget\";\n\
+                  export { default as Card, card } from \"./card\";\n\
+                  export { Shape as default } from \"./shape\";\n";
+    let files = [
+        ("src/index.js", Language::JavaScript),
+        ("src/index.ts", Language::TypeScript),
+        ("src/index.tsx", Language::Tsx),
+    ];
+    for (path, language) in files {
+        let extraction = extract(path, language, source)?;
+        let imports: Vec<(&str, String, Option<&str>, u32)> = extraction
+            .imports
+            .iter()
+            .map(|import| {
+                let imported = match &import.imported {
+                    Imported::Name(name) => format!("name:{}", name.as_str()),
+                    other => format!("{other:?}"),
+                };
+                let alias = import.alias.as_ref().map(cortex_core::Identifier::as_str);
+                (import.specifier.as_str(), imported, alias, import.line)
+            })
+            .collect();
+        assert_eq!(
+            imports,
+            [
+                ("react", "Default".to_owned(), Some("Base"), 1),
+                ("react", "name:useState".to_owned(), None, 1),
+                ("react", "name:useMemo".to_owned(), Some("memo"), 1),
+                ("./widget", "Default".to_owned(), None, 2),
+                ("./card", "Default".to_owned(), Some("Card"), 3),
+                ("./card", "name:card".to_owned(), None, 3),
+                ("./shape", "name:Shape".to_owned(), Some("default"), 4)
+            ],
+            "{language:?}"
+        );
+    }
+    Ok(())
+}
+
 /// Go: every construct in the fixture, listed by hand in `expected.txt`.
 #[test]
 fn go() -> TestResult {

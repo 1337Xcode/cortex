@@ -41,7 +41,7 @@ ref call Order 54 handlers.click
 import react default React 2
 import react name:useState - 2
 import react name:useMemo memo 2
-import react name:default Base 2
+import react default Base 2
 import ./api all api 3
 import ./styles.css module - 4
 import ./format name:format - 5
