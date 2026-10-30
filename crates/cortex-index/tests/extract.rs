@@ -304,6 +304,19 @@ fn toml_with_crlf_line_breaks() -> TestResult {
     check_golden("toml", "sample.toml", Language::Toml, "\r\n")
 }
 
+/// SQL: everything the fixture creates, listed by hand in `expected.txt`.
+#[test]
+fn sql() -> TestResult {
+    check_golden("sql", "sample.sql", Language::Sql, "\n")
+}
+
+/// The same SQL with Windows line breaks: the same lines, spans that end at the same tokens, the
+/// same hashes.
+#[test]
+fn sql_with_crlf_line_breaks() -> TestResult {
+    check_golden("sql", "sample.sql", Language::Sql, "\r\n")
+}
+
 /// The same Python with Windows line breaks: the same lines, spans that end at the same tokens,
 /// the same hashes.
 #[test]
@@ -2400,6 +2413,118 @@ fn toml_names_read_as_written() -> TestResult {
     Ok(())
 }
 
+/// What a SQL script creates at its top, or in a transaction there, is read whatever the keywords'
+/// case: a table, a view, a materialized view, a type and a function, a quoted name as written,
+/// in double quotes or backticks, and a schema as the name's qualifier, read the same way. The
+/// header runs up to the query, the columns, the values or the body. A function's return type is
+/// no name, and neither is a table or a function created in a function's body. Not read: a name
+/// with a database before its schema, and a procedure, which the grammar does not know and reads
+/// on after.
+#[test]
+fn sql_reads_what_a_script_creates() -> TestResult {
+    let source = "create table \"Users\" (id int);\nCREATE TABLE `items` (id int);\n\
+                  CREATE TEMP TABLE t AS SELECT 1;\nCREATE OR REPLACE FUNCTION f() RETURNS void AS $$ \
+                  CREATE TABLE inner_t (x int); $$ LANGUAGE sql;\n\
+                  CREATE PROCEDURE archive() LANGUAGE sql AS $$ DELETE FROM users $$;\n\
+                  CREATE TABLE IF NOT EXISTS app.events (id int);\nCREATE TABLE `app`.`logs` (id int);\n\
+                  CREATE VIEW `app`.`recent` AS SELECT 1;\n\
+                  CREATE MATERIALIZED VIEW `app`.`totals` AS SELECT 2;\n\
+                  CREATE TYPE `app`.`pair` AS (a int, b int);\n\
+                  CREATE FUNCTION `app`.`add`(a int) RETURNS app.pair AS $$ SELECT NULL $$ LANGUAGE sql;\n\
+                  CREATE FUNCTION outer_f() RETURNS int AS $$ \
+                  CREATE FUNCTION inner_f() RETURNS int RETURN 1; $$ LANGUAGE sql;\n\
+                  CREATE TABLE db.sch.three (id int);\nBEGIN;\nCREATE TABLE `app`.`inside` (id int);\n\
+                  CREATE TABLE `app`.`copy` AS SELECT 1;\nCREATE VIEW `app`.`in_v` AS SELECT 1;\n\
+                  CREATE MATERIALIZED VIEW `app`.`in_mv` AS SELECT 2;\n\
+                  CREATE TYPE `app`.`in_ty` AS ENUM ('a');\nCREATE TYPE `app`.`duo` AS (a int);\n\
+                  CREATE FUNCTION `app`.`in_tx`() RETURNS app.pair AS $$ SELECT NULL $$ LANGUAGE sql;\n\
+                  COMMIT;\n";
+    let extraction = extract("db/schema.sql", Language::Sql, source)?;
+    assert_eq!(
+        describe(&extraction),
+        [
+            "symbol type \"Users\" 1-1 -",
+            "symbol type `items` 2-2 -",
+            "symbol type t 3-3 -",
+            "symbol function f 4-4 -",
+            "symbol type app.events 6-6 -",
+            "symbol type `app`.`logs` 7-7 -",
+            "symbol type `app`.`recent` 8-8 -",
+            "symbol type `app`.`totals` 9-9 -",
+            "symbol type `app`.`pair` 10-10 -",
+            "symbol function `app`.`add` 11-11 -",
+            "symbol function outer_f 12-12 -",
+            "symbol type `app`.`inside` 15-15 -",
+            "symbol type `app`.`copy` 16-16 -",
+            "symbol type `app`.`in_v` 17-17 -",
+            "symbol type `app`.`in_mv` 18-18 -",
+            "symbol type `app`.`in_ty` 19-19 -",
+            "symbol type `app`.`duo` 20-20 -",
+            "symbol function `app`.`in_tx` 21-21 -"
+        ]
+    );
+    let header_hash = |name: &str| {
+        extraction
+            .symbols
+            .iter()
+            .find(|symbol| symbol.qual_name.as_str() == name)
+            .map(|symbol| symbol.sig_hash)
+    };
+    for (name, header) in [
+        ("t", "CREATE TEMP TABLE t AS"),
+        ("`app`.`recent`", "CREATE VIEW `app`.`recent` AS"),
+        (
+            "`app`.`totals`",
+            "CREATE MATERIALIZED VIEW `app`.`totals` AS",
+        ),
+        ("`app`.`pair`", "CREATE TYPE `app`.`pair` AS"),
+        (
+            "`app`.`add`",
+            "CREATE FUNCTION `app`.`add`(a int) RETURNS app.pair",
+        ),
+        ("`app`.`inside`", "CREATE TABLE `app`.`inside`"),
+        ("`app`.`copy`", "CREATE TABLE `app`.`copy` AS"),
+        ("`app`.`in_v`", "CREATE VIEW `app`.`in_v` AS"),
+        ("`app`.`in_mv`", "CREATE MATERIALIZED VIEW `app`.`in_mv` AS"),
+        ("`app`.`in_ty`", "CREATE TYPE `app`.`in_ty` AS ENUM"),
+        ("`app`.`duo`", "CREATE TYPE `app`.`duo` AS"),
+        (
+            "`app`.`in_tx`",
+            "CREATE FUNCTION `app`.`in_tx`() RETURNS app.pair",
+        ),
+    ] {
+        assert_eq!(
+            header_hash(name),
+            Some(ShortHash::of(header.as_bytes())),
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
+/// A statement the grammar could not read whole is not read: a name it cuts short (`a1` of
+/// `a1$`), a keyword it takes for a name (`IF` of a function's `IF NOT EXISTS`), a statement the
+/// next one ran into, and a name right after text it could not read. A statement it read whole
+/// before an option it does not know is read, without the option.
+#[test]
+fn sql_statements_the_grammar_cannot_read_are_left_out() -> TestResult {
+    let source = "CREATE TABLE a1$ (x int);\n\
+                  CREATE FUNCTION IF NOT EXISTS cf2() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;\n\
+                  CREATE TABLE lk2 LIKE other;\nCREATE TABLE after_1 (id int);\n\
+                  CREATE VIEW vc AS VALUES (1);\nCREATE VIEW v2 AS SELECT 1;\n\
+                  CREATE VIRTUAL TABLE vt USING fts5(a, b);\nCREATE TABLE after_3 (id int);\n\
+                  CREATE TABLE s1 (id int) STRICT;\nCREATE TABLE fine (id int);\n";
+    let extraction = extract("db/schema.sql", Language::Sql, source)?;
+    assert_eq!(
+        describe(&extraction),
+        ["symbol type s1 9-9 -", "symbol type fine 10-10 -"]
+    );
+    let first = extraction.symbols.first().ok_or("no symbol")?;
+    let span = usize::try_from(first.start_byte)?..usize::try_from(first.end_byte)?;
+    assert_eq!(source.get(span), Some("CREATE TABLE s1 (id int)"));
+    Ok(())
+}
+
 /// A definition ends with its last token that is not a comment. The comments after it head what
 /// follows, as the comment above a YAML key or a TOML table does, though the grammar ends the
 /// block before with it; so does a comment after a TOML table's line, which leaves the table's
@@ -2858,18 +2983,5 @@ fn slow_files_time_out() -> TestResult {
     let extraction = extractor(GENEROUS)?.extract(&path, Language::Python, source.as_bytes())?;
     assert_eq!(extraction.symbols.len(), 5000);
     assert_eq!(extraction.refs.len(), 5000);
-    Ok(())
-}
-
-/// A language Cortex does not parse is refused by name.
-#[test]
-fn unparsed_languages_are_refused() -> TestResult {
-    let path = RepoPath::new("schema.sql")?;
-    assert_eq!(
-        extractor(GENEROUS)?.extract(&path, Language::Sql, b"SELECT 1;"),
-        Err(ExtractError::NotParsed {
-            language: Language::Sql
-        })
-    );
     Ok(())
 }

@@ -1,0 +1,12 @@
+# What sample.sql creates, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+# A statement spans its text up to the `;` the grammar leaves outside it; its header runs up to
+# its columns, its query, its values or its body. Not read: the comment, the index, the insert, and the statements
+# inside the functions' bodies.
+symbol type users 2-5 - | CREATE TABLE users
+symbol type public.orders 7-10 - | CREATE TABLE IF NOT EXISTS public.orders
+symbol type active_users 12-13 - | CREATE VIEW active_users AS
+symbol type order_counts 15-16 - | CREATE MATERIALIZED VIEW order_counts AS
+symbol type mood 18-18 - | CREATE TYPE mood AS ENUM
+symbol function add 20-22 - | CREATE FUNCTION add(a integer, b integer) RETURNS integer
+symbol function touch 24-28 - | CREATE OR REPLACE FUNCTION touch() RETURNS trigger

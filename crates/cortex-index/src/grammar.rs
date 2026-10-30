@@ -9,7 +9,7 @@
 //! definition: `@qualifier`, a name its qualified name starts with, such as the type a Go method
 //! belongs to, and `@body`, its body, where the grammar names no field for it, as Kotlin's does.
 //! A name that is prose, such as a heading's text, is captured as `@name.prose` in place of
-//! `@name`, to be read as written rather than token by token.
+//! `@name`, to be read as written rather than token by token, and its qualifier with it.
 //! A locals pattern captures only `@local.scope`, `@local.definition` and `@local.reference`,
 //! and may set `local.scope-inherits` to `true` or `false`; a pattern that records tags may test
 //! `#is-not? local`. No other property may be tested or set.

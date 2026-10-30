@@ -50,10 +50,21 @@ impl Tag<'_> {
     /// The text of the tag's name in `source`: as written when its pattern marks it as prose,
     /// token by token otherwise. `None` when its text is not UTF-8.
     pub(crate) fn name_text(&self, source: &[u8]) -> Option<String> {
+        self.text_of(self.name, source)
+    }
+
+    /// The text of the tag's qualifier in `source`, read as its name is: a qualifier is the
+    /// same kind of text, as a SQL schema written in backticks is beside a table's name.
+    pub(crate) fn qualifier_text(&self, source: &[u8]) -> Option<String> {
+        self.text_of(self.qualifier?, source)
+    }
+
+    /// The text of `node`, the tag's name or qualifier, as written or token by token.
+    fn text_of(&self, node: Node<'_>, source: &[u8]) -> Option<String> {
         if self.is_prose {
-            prose_text(self.name, source)
+            prose_text(node, source)
         } else {
-            name_text(self.name, source)
+            name_text(node, source)
         }
     }
 }

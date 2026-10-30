@@ -18,7 +18,6 @@ use tree_sitter::Node;
 use crate::hashes::collapsed_hash;
 use crate::languages::TagsSpec;
 use crate::lines::line_number;
-use crate::name_text::name_text;
 use crate::tags::{Role, Tag};
 
 /// Where a definition is: from the start of its node or its name, whichever comes first, to the
@@ -96,7 +95,7 @@ impl Recorder<'_> {
         let name = Identifier::new(&tag.name_text(self.source)?).ok()?;
         let outer = parent.and_then(|position| self.records.get(position));
         let local = match tag.qualifier {
-            Some(qualifier) => format!("{}.{}", name_text(qualifier, self.source)?, name.as_str()),
+            Some(_) => format!("{}.{}", tag.qualifier_text(self.source)?, name.as_str()),
             None => name.as_str().to_owned(),
         };
         let qual_name = match outer {
