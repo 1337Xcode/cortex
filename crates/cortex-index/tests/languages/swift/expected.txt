@@ -1,0 +1,44 @@
+# What sample.swift defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text, attributes and modifiers included, up to its body, with each
+# run of whitespace as one space; a constant, a type alias and a protocol's function are all
+# header. An initializer is a method named `init`. An extension is a class named after the type it
+# extends, so what it declares is qualified as the type's own members are. The grammar reads
+# `x + count(y)` as `(x + count)(y)`; `count` is still the call. Not read: the comment, the
+# attribute `@objc`, the property `item`, a type named in an expression (`Money` in
+# `Money.round`), and every use of a variable.
+symbol constant rate 5-5 - | let rate = 2
+symbol type Price 7-7 - | typealias Price = Int
+symbol interface Priced 9-12 - | protocol Priced: Named
+symbol type Priced.Unit 10-10 Priced | associatedtype Unit
+symbol method Priced.price 11-11 Priced | func price() -> Price
+symbol class Order 14-27 - | @objc final class Order: Base, Priced
+symbol constant Order.slots 15-15 Order | static let slots = 4
+symbol method Order.init 18-21 Order | init(size: Int)
+symbol method Order.price 23-26 Order | func price() -> Int
+symbol class Order 29-31 - | extension Order: Codable
+symbol method Order.extra 30-30 Order | func extra() -> Int
+symbol function fee 33-35 - | func fee(_ cents: Int) -> Int
+ref type_ref Int 7 Price
+ref inherit Named 9 Priced
+ref type_ref Price 11 Priced.price
+ref inherit Base 14 Order
+ref inherit Priced 14 Order
+ref type_ref Item 16 Order
+ref type_ref Int 18 Order.init
+ref call init 19 Order.init
+ref call log 20 Order.init
+ref type_ref Int 23 Order.price
+ref call pay 24 Order.price
+ref call round 25 Order.price
+ref call fee 25 Order.price
+ref call count 25 Order.price
+ref call Receipt 25 Order.price
+ref inherit Codable 29 Order
+ref type_ref Int 30 Order.extra
+ref type_ref Int 33 fee
+ref type_ref Int 33 fee
+import Foundation module - 2
+import Shop name:Money - 3

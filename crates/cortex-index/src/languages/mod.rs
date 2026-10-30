@@ -166,6 +166,10 @@ mod tests {
             (Language::Kotlin, "src/Order.kt", false),
             (Language::Kotlin, "src/TestOrder.kt", false),
             (Language::Kotlin, "build.gradle.kts", false),
+            (Language::Swift, "Sources/OrderTests.swift", true),
+            (Language::Swift, "Sources/OrderTest.swift", true),
+            (Language::Swift, "Sources/Order.swift", false),
+            (Language::Swift, "Sources/TestOrder.swift", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

@@ -228,6 +228,12 @@ fn kotlin() -> TestResult {
     check_golden("kotlin", "sample.kt", Language::Kotlin, "\n")
 }
 
+/// Swift: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn swift() -> TestResult {
+    check_golden("swift", "sample.swift", Language::Swift, "\n")
+}
+
 /// Ruby: every construct in the fixture, listed by hand in `expected.txt`.
 #[test]
 fn ruby() -> TestResult {
@@ -1500,6 +1506,255 @@ fn kotlin_imports_in_every_form() -> TestResult {
             ("k", "name:L".to_owned(), Some("M"), 8),
             ("p.q.r", "All".to_owned(), None, 9),
             ("solo", "All".to_owned(), None, 10)
+        ]
+    );
+    Ok(())
+}
+
+/// Swift's tests: a function with Swift Testing's `@Test` attribute, with arguments or without,
+/// anywhere, an extension's included, and an XCTest method named `test...` in a test file.
+/// Another attribute marks nothing, one whose name only starts with `Test` included.
+#[test]
+fn swift_tests_are_marked_by_attribute_or_name() -> TestResult {
+    use SymbolKind::{Class, Function, Method, Test};
+    let source = "final class OrderTests: XCTestCase {\n    func testPays() {}\n    func helper() {}\n}\n\
+                  @Test func ships() {}\n@Test(\"bills twice\") func billsTwice() {}\n@Testable func later() {}\n\
+                  extension OrderTests {\n    @Test func extra() {}\n}\n@Test.Fixture func setup() {}\n";
+    let kinds = |path: &str| -> Result<Vec<SymbolKind>, Box<dyn Error>> {
+        let extraction = extract(path, Language::Swift, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| symbol.kind)
+            .collect())
+    };
+    assert_eq!(
+        kinds("Tests/OrderTests.swift")?,
+        [
+            Class, Test, Method, Test, Test, Function, Class, Test, Function
+        ]
+    );
+    assert_eq!(
+        kinds("Sources/Order.swift")?,
+        [
+            Class, Method, Method, Test, Test, Function, Class, Test, Function
+        ]
+    );
+    Ok(())
+}
+
+/// Swift declarations of every kind: structs, enums, actors and classes are classes, protocols
+/// interfaces, type aliases and associated types types; a type's functions and every initializer,
+/// named `init`, are methods, a function inside a function is a function; `let` at the top of a
+/// file and `static let` in a type are constants, one name to a declaration (two names make
+/// none), and neither `var`
+/// nor an instance `let` is one. An extension is a class named after the type it extends, by the
+/// last part of a qualified or generic name, or as written for an array, a dictionary or an
+/// optional, and what it declares is its own. Operator functions, subscripts and deinitializers
+/// have no name and are not read.
+#[test]
+fn swift_declarations_of_every_kind() -> TestResult {
+    let source = "struct Point {\n    static let origin = Point(x: 0)\n    static var count = 0\n    let x: Int\n    \
+                  static let a = 1, b = 2\n    static func + (l: Point, r: Point) -> Point { l }\n    \
+                  subscript(i: Int) -> Int { i }\n    mutating func move() {\n        func step() {}\n    }\n}\n\
+                  enum Suit {\n    case hearts\n    func color() -> Int { 0 }\n}\n\
+                  actor Store {}\n\
+                  protocol Shape {\n    associatedtype Unit\n    init(size: Int)\n    func draw()\n}\n\
+                  extension Shop.Point {\n    static let zero = 0\n    init(y: Int) {}\n    func shifted() -> Int { 1 }\n    \
+                  class Cache {}\n    typealias Coordinate = Int\n}\n\
+                  class Box {\n    convenience init() {}\n    deinit {}\n    class func make() -> Box { Box() }\n}\n\
+                  extension [Int] {\n    func sum() -> Int { 0 }\n}\nextension Array<Int> {\n    func total() -> Int { 0 }\n}\n\
+                  extension Int? {\n    func unwrapped() -> Int { 0 }\n}\n\
+                  extension [String: Int] {\n    func keyCount() -> Int { 0 }\n}\n\
+                  let limit = 3\nvar counter = 0\nlet c = 1, d = 2\ntypealias Pair = (Int, Int)\n";
+    let extraction = extract("Sources/kinds.swift", Language::Swift, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant, Function, Interface, Method, Type};
+    assert_eq!(
+        symbols,
+        [
+            ("Point", Class),
+            ("Point.origin", Constant),
+            ("Point.move", Method),
+            ("Point.move.step", Function),
+            ("Suit", Class),
+            ("Suit.color", Method),
+            ("Store", Class),
+            ("Shape", Interface),
+            ("Shape.Unit", Type),
+            ("Shape.init", Method),
+            ("Shape.draw", Method),
+            ("Point", Class),
+            ("Point.zero", Constant),
+            ("Point.init", Method),
+            ("Point.shifted", Method),
+            ("Point.Cache", Class),
+            ("Point.Coordinate", Type),
+            ("Box", Class),
+            ("Box.init", Method),
+            ("Box.make", Method),
+            ("[Int]", Class),
+            ("[Int].sum", Method),
+            ("Array", Class),
+            ("Array.total", Method),
+            ("Int?", Class),
+            ("Int?.unwrapped", Method),
+            ("[String:Int]", Class),
+            ("[String:Int].keyCount", Method),
+            ("limit", Constant),
+            ("Pair", Type)
+        ]
+    );
+    Ok(())
+}
+
+/// The Swift grammar gives a call's arguments to a whole sum, product or prefixed operand before
+/// it (`a + plus(x)` reads as `(a + plus)(x)`); the call is still the last operand's, plain or a
+/// member, after a sum, a product or a prefix, alone or one inside another, and after a dot that
+/// names a member of the expected type (`.tags(x)`). After other operators the call reads as it
+/// should. A force-unwrapped callee is still the call's; a subscript, which the grammar writes as
+/// a call with `[`, and `defer`, which it writes as a call with a closure, are no calls.
+#[test]
+fn swift_calls_after_operators() -> TestResult {
+    let source = "func f() {\n    let r1 = a + plus(x)\n    let r2 = a - obj.minus(x)\n    let r3 = a * times(x)\n    \
+                  let r4 = -negate(x)\n    let r5 = !not(x)\n    let r6 = a + b * deep(x)\n    let r7 = a * -flip(x)\n    \
+                  let r8 = a + -obj.both(x)\n    let r9 = x ?? fallback(y)\n    let r10 = x == same(y)\n    \
+                  let r11 = a + first(x) + second(y)\n    let r12 = a + closure { $0 }\n    let r13: Tag = .tags(x)\n    \
+                  let r14 = a + b * obj.mid(x)\n    let r15 = a + -neg(x)\n    let r16 = a * obj.prod(x)\n    \
+                  let r17 = a * -obj.flop(x)\n    let r18 = !obj.off(x)\n    handler!(y)\n    obj.forced!(y)\n    \
+                  let s = items[0]\n    defer { cleanup() }\n    let t = obj.items[0]\n    let u = x + y[0]\n    obj.each { $0 }\n}\n";
+    let extraction = extract("Sources/ops.swift", Language::Swift, source)?;
+    let calls: Vec<(&str, u32)> = extraction
+        .refs
+        .iter()
+        .filter(|reference| reference.kind == RefKind::Call)
+        .map(|reference| (reference.dst_name.as_str(), reference.line))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("plus", 2),
+            ("minus", 3),
+            ("times", 4),
+            ("negate", 5),
+            ("not", 6),
+            ("deep", 7),
+            ("flip", 8),
+            ("both", 9),
+            ("fallback", 10),
+            ("same", 11),
+            ("first", 12),
+            ("second", 12),
+            ("closure", 13),
+            ("tags", 14),
+            ("mid", 15),
+            ("neg", 16),
+            ("prod", 17),
+            ("flop", 18),
+            ("off", 19),
+            ("handler", 20),
+            ("forced", 21),
+            ("cleanup", 23),
+            ("each", 26)
+        ]
+    );
+    Ok(())
+}
+
+/// Swift references in every form: calls plain, on `self`, on `super`, on a call, to a type and
+/// with only a trailing closure; bases generic and qualified; uses of a type in a bound, a `where`
+/// clause, a property, parameters, an optional, an array, a dictionary, a function type, a
+/// qualified type, a generic result, after `as?` and after `is`. An attribute names no type.
+#[test]
+fn swift_references_in_every_form() -> TestResult {
+    let source = "class Box<T: Equatable>: Base<T>, Shop.Priced where T: Hashable {\n    \
+                  @MainActor var items: [Item] = []\n    \
+                  func run(order: Order?, map: [String: Line], f: (Int) -> Unit, cash: Shop.Money) -> Result<Done, Failure> {\n        \
+                  let x = order as? Paid\n        if order is Refund {}\n        self.load()\n        \
+                  Order(size: 1).pay()\n        run { }\n        super.start()\n        return make()\n    }\n}\n";
+    let extraction = extract("Sources/box.swift", Language::Swift, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    assert_eq!(
+        symbols,
+        [("Box", SymbolKind::Class), ("Box.run", SymbolKind::Method)]
+    );
+    let refs: Vec<(&str, &str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("type_ref", "Equatable", 1),
+            ("inherit", "Base", 1),
+            ("type_ref", "T", 1),
+            ("inherit", "Priced", 1),
+            ("type_ref", "Hashable", 1),
+            ("type_ref", "Item", 2),
+            ("type_ref", "Order", 3),
+            ("type_ref", "String", 3),
+            ("type_ref", "Line", 3),
+            ("type_ref", "Int", 3),
+            ("type_ref", "Unit", 3),
+            ("type_ref", "Money", 3),
+            ("type_ref", "Result", 3),
+            ("type_ref", "Done", 3),
+            ("type_ref", "Failure", 3),
+            ("type_ref", "Paid", 4),
+            ("type_ref", "Refund", 5),
+            ("call", "load", 6),
+            ("call", "Order", 7),
+            ("call", "pay", 7),
+            ("call", "run", 8),
+            ("call", "start", 9),
+            ("call", "make", 10)
+        ]
+    );
+    Ok(())
+}
+
+/// Swift imports in every form: a module, a submodule, a module imported for testing, and one
+/// declaration of a module, its kind written, from a module path of one part or of several.
+#[test]
+fn swift_imports_in_every_form() -> TestResult {
+    let source = "import Foundation\nimport Foundation.NSString\nimport struct Shop.Money\n\
+                  import func Darwin.C.sqrt\n@testable import Orders\nimport struct A.B.C.D\n";
+    let extraction = extract("Sources/imports.swift", Language::Swift, source)?;
+    let imports: Vec<(&str, String, u32)> = extraction
+        .imports
+        .iter()
+        .map(|import| {
+            let imported = match &import.imported {
+                Imported::Name(name) => format!("name:{}", name.as_str()),
+                other => format!("{other:?}"),
+            };
+            (import.specifier.as_str(), imported, import.line)
+        })
+        .collect();
+    assert_eq!(
+        imports,
+        [
+            ("Foundation", "Module".to_owned(), 1),
+            ("Foundation.NSString", "Module".to_owned(), 2),
+            ("Shop", "name:Money".to_owned(), 3),
+            ("Darwin.C", "name:sqrt".to_owned(), 4),
+            ("Orders", "Module".to_owned(), 5),
+            ("A.B.C", "name:D".to_owned(), 6)
         ]
     );
     Ok(())
