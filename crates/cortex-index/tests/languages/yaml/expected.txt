@@ -1,0 +1,9 @@
+# What sample.yaml defines, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+# A key spans its value, and its header is the key; a quoted key keeps its quotes. Not read: the
+# comment, the keys under the top ones, the key that is a number, the values.
+symbol constant name 2-2 - | name:
+symbol constant "on" 3-5 - | "on":
+symbol constant env 6-7 - | env:
+symbol constant jobs 8-12 - | jobs:
+symbol constant second 15-15 - | second:

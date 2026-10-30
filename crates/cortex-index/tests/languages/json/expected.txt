@@ -1,0 +1,9 @@
+# What sample.json defines, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+# A key spans its value, and its header is the key. Not read: the keys inside `scripts`, the key
+# holding an escape, the values.
+symbol constant name 2-2 - | "name":
+symbol constant version 3-3 - | "version":
+symbol constant scripts 4-7 - | "scripts":
+symbol constant workspaces 8-10 - | "workspaces":
+symbol constant private 12-12 - | "private":

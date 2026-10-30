@@ -1,0 +1,12 @@
+# What sample.toml defines, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+# A key spans its value, and its header is the key; a quoted key keeps its quotes. A table spans
+# its keys, and its header is its line. Not read: the comments, the keys inside the tables.
+symbol constant title 2-2 - | title =
+symbol constant version.major 3-3 - | version.major =
+symbol constant "quoted key" 4-4 - | "quoted key" =
+symbol constant package 6-9 - | [package]
+symbol constant features 11-11 - | [features]
+symbol constant workspace.dependencies 13-14 - | [workspace.dependencies]
+symbol constant bin 16-17 - | [[bin]]
+symbol constant bin 19-20 - | [[bin]]

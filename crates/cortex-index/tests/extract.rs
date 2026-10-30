@@ -272,6 +272,38 @@ fn markdown_with_crlf_line_breaks() -> TestResult {
     check_golden("markdown", "sample.md", Language::Markdown, "\r\n")
 }
 
+/// JSON: every key in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn json() -> TestResult {
+    check_golden("json", "sample.json", Language::Json, "\n")
+}
+
+/// YAML: every key in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn yaml() -> TestResult {
+    check_golden("yaml", "sample.yaml", Language::Yaml, "\n")
+}
+
+/// The same YAML with Windows line breaks, which end its keys and their values: the same lines,
+/// spans that end at the same text, the same hashes.
+#[test]
+fn yaml_with_crlf_line_breaks() -> TestResult {
+    check_golden("yaml", "sample.yaml", Language::Yaml, "\r\n")
+}
+
+/// TOML: every key and table in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn toml() -> TestResult {
+    check_golden("toml", "sample.toml", Language::Toml, "\n")
+}
+
+/// The same TOML with Windows line breaks, which end its keys and its tables' lines: the same
+/// lines, spans that end at the same text, the same hashes.
+#[test]
+fn toml_with_crlf_line_breaks() -> TestResult {
+    check_golden("toml", "sample.toml", Language::Toml, "\r\n")
+}
+
 /// The same Python with Windows line breaks: the same lines, spans that end at the same tokens,
 /// the same hashes.
 #[test]
@@ -2274,6 +2306,98 @@ fn markdown_headings_at_the_end_of_a_file() -> TestResult {
     Ok(())
 }
 
+/// The keys of the object a JSON file holds are constants, with comments around them, a key
+/// written twice read twice; a key holding an escape is not read, nor an empty key, nor a key
+/// inside a value. A file whose value is not an object has none.
+#[test]
+fn json_reads_the_keys_of_the_top_object() -> TestResult {
+    let source = "// Settings.\n{\n  /* the name */\n  \"name\": \"shop\",\n  \"a\\\"b\": 1,\n  \"\": 2,\n  \
+                  \"name\": \"again\",\n  \"nested\": {\"inner\": 1}\n}\n";
+    let extraction = extract("config/settings.json", Language::Json, source)?;
+    assert_eq!(
+        describe(&extraction),
+        [
+            "symbol constant name 4-4 -",
+            "symbol constant name 7-7 -",
+            "symbol constant nested 8-8 -"
+        ]
+    );
+    let extraction = extract("config/list.json", Language::Json, "[{\"name\": \"x\"}]\n")?;
+    assert!(describe(&extraction).is_empty());
+    Ok(())
+}
+
+/// The keys of the mapping each YAML document holds are constants, with an anchor or a tag on
+/// them or written after `?`, a quoted key as written; a key that is a mapping is not read, nor
+/// anything in a document holding a scalar or a list, nor a key under another.
+#[test]
+fn yaml_reads_the_top_keys_of_each_document() -> TestResult {
+    let source = "base: &defaults\n  adapter: postgres\ndev:\n  <<: *defaults\n? complex key\n: value\n\
+                  {inline: map}: 1\n'single': 2\n!!str tagged: 4\n---\njust a scalar\n---\n- a list\n---\nlast: 3\n";
+    let extraction = extract("config/database.yml", Language::Yaml, source)?;
+    assert_eq!(
+        describe(&extraction),
+        [
+            "symbol constant base 1-2 -",
+            "symbol constant dev 3-4 -",
+            "symbol constant complex key 5-6 -",
+            "symbol constant 'single' 8-8 -",
+            "symbol constant tagged 9-9 -",
+            "symbol constant last 15-15 -"
+        ]
+    );
+    Ok(())
+}
+
+/// A TOML key or table name reads as written: with its quotes where it has a quoted part, with
+/// its spacing where its dots are spaced. A key whose value is an inline table is one constant
+/// and the keys inside it are none, as are the keys of a table. Tables of both kinds are named
+/// by a bare, dotted or quoted name, with keys or without: a table with keys has its line as its
+/// header, one with none is all header.
+#[test]
+fn toml_names_read_as_written() -> TestResult {
+    let source = "site.\"a.b\" = 3\nplain . key = 4\ninline = { x = 1 }\n[tool.\"my.tool\"]\nx = 1\n[a.b.c]\n\
+                  [[empty]]\n[\"a b\"]\nx = 1\n[\"c d\"]\n[[a.d]]\n[[a.e]]\nz = 1\n[['q']]\ny = 2\n[['r']]\n";
+    let extraction = extract("pyproject.toml", Language::Toml, source)?;
+    assert_eq!(
+        describe(&extraction),
+        [
+            "symbol constant site.\"a.b\" 1-1 -",
+            "symbol constant plain . key 2-2 -",
+            "symbol constant inline 3-3 -",
+            "symbol constant tool.\"my.tool\" 4-5 -",
+            "symbol constant a.b.c 6-6 -",
+            "symbol constant empty 7-7 -",
+            "symbol constant \"a b\" 8-9 -",
+            "symbol constant \"c d\" 10-10 -",
+            "symbol constant a.d 11-11 -",
+            "symbol constant a.e 12-13 -",
+            "symbol constant 'q' 14-15 -",
+            "symbol constant 'r' 16-16 -"
+        ]
+    );
+    let header_hash = |name: &str| {
+        extraction
+            .symbols
+            .iter()
+            .find(|symbol| symbol.qual_name.as_str() == name)
+            .map(|symbol| symbol.sig_hash)
+    };
+    for (name, header) in [
+        ("tool.\"my.tool\"", "[tool.\"my.tool\"]"),
+        ("\"a b\"", "[\"a b\"]"),
+        ("a.e", "[[a.e]]"),
+        ("'q'", "[['q']]"),
+    ] {
+        assert_eq!(
+            header_hash(name),
+            Some(ShortHash::of(header.as_bytes())),
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
 /// zsh and ksh scripts are read with the Bash grammar as far as the shells agree. zsh's own loops,
 /// `foreach ... end` and `repeat`, give no call, neither their reserved words nor the words of a
 /// `foreach` list, while the commands in their bodies are calls as usual; nor does its modifier
@@ -2653,11 +2777,11 @@ fn slow_files_time_out() -> TestResult {
 /// A language Cortex does not parse is refused by name.
 #[test]
 fn unparsed_languages_are_refused() -> TestResult {
-    let path = RepoPath::new("data.json")?;
+    let path = RepoPath::new("schema.sql")?;
     assert_eq!(
-        extractor(GENEROUS)?.extract(&path, Language::Json, b"{}"),
+        extractor(GENEROUS)?.extract(&path, Language::Sql, b"SELECT 1;"),
         Err(ExtractError::NotParsed {
-            language: Language::Json
+            language: Language::Sql
         })
     );
     Ok(())

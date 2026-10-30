@@ -1,0 +1,20 @@
+# The shop's manifest.
+title = "shop"
+version.major = 1
+"quoted key" = 2
+
+[package]
+# The crate itself.
+name = "shop"
+edition = "2024"
+
+[features]
+
+[workspace.dependencies]
+serde = "1"
+
+[[bin]]
+name = "shop"
+
+[[bin]]
+name = "shopctl"

@@ -1,0 +1,15 @@
+# The shop's build, in the shape of a CI workflow.
+name: build
+"on":
+  push:
+    branches: [main]
+env:
+  RUST_LOG: info
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo test
+1: one
+---
+second: document
