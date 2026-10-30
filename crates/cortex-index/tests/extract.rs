@@ -2449,6 +2449,40 @@ fn definitions_end_before_the_comments_that_trail_them() -> TestResult {
     Ok(())
 }
 
+/// A name a syntax error touches is not read, as it may be part of a broken one: a name right
+/// after an error on its line, as the name of a TOML array table is, the name of a TOML table an
+/// error follows, a JSON key in a pair holding one. A name with an error further back, on an earlier line or before a space it does not
+/// share, is read: the key after a line the grammar could not read, the whole pair after a stray
+/// string.
+#[test]
+fn names_a_syntax_error_touches_are_not_read() -> TestResult {
+    let names = |path: &str, language, source: &str| -> Result<Vec<String>, Box<dyn Error>> {
+        Ok(describe(&extract(path, language, source)?))
+    };
+    assert_eq!(
+        names("config/app.yaml", Language::Yaml, "\"x\"y: 3\nok: 1\n")?,
+        ["symbol constant ok 2-2 -"]
+    );
+    let toml = ".b = 2\na b = 3\nt = \nu = 1\n[.v]\nk = 1\n[w x]\nk = 2\n[[z y]]\n[ok]\n";
+    assert_eq!(
+        names("config/app.toml", Language::Toml, toml)?,
+        ["symbol constant u 4-4 -", "symbol constant ok 10-10 -"]
+    );
+    assert_eq!(
+        names(
+            "config/app.json",
+            Language::Json,
+            "{\"b\"c\": 2, \"d\": 1}\n"
+        )?,
+        ["symbol constant d 1-1 -"]
+    );
+    assert_eq!(
+        names("config/app.json", Language::Json, "{\"x\" \"y\": 1}\n")?,
+        ["symbol constant y 1-1 -"]
+    );
+    Ok(())
+}
+
 /// zsh and ksh scripts are read with the Bash grammar as far as the shells agree. zsh's own loops,
 /// `foreach ... end` and `repeat`, give no call, neither their reserved words nor the words of a
 /// `foreach` list, while the commands in their bodies are calls as usual; nor does its modifier

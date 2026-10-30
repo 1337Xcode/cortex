@@ -88,7 +88,7 @@ pub(crate) fn read_tags<'tree>(
             Some(PatternRule::Tags { is_not_local }) => *is_not_local,
             None => continue,
         };
-        let Some((name, tag)) = verdict_of(found.captures(), &grammar.tag_captures) else {
+        let Some((name, tag)) = verdict_of(found.captures(), &grammar.tag_captures, source) else {
             continue;
         };
         if is_not_local && tag.is_some() && scopes.is_local(name) {
@@ -126,10 +126,11 @@ fn is_nearer(tag: Option<Tag<'_>>, kept: Option<Tag<'_>>) -> bool {
 
 /// The name one match's `captures` are about, with the tag to record for it, or `None` for an
 /// `@ignore`; nothing when the match records nothing: a name alone, or a tag whose name cannot be
-/// one.
+/// one or may be part of a broken one.
 fn verdict_of<'tree>(
     captures: &[QueryCapture<'tree>],
     meanings: &[TagCapture],
+    source: &[u8],
 ) -> Option<(Node<'tree>, Option<Tag<'tree>>)> {
     let (mut name, mut tagged, mut qualifier, mut body) = (None, None, None, None);
     let mut is_prose = false;
@@ -164,10 +165,37 @@ fn verdict_of<'tree>(
     };
     // INVARIANT: no-content-stored. A name is the text of a name capture alone, never the whole
     // of a definition or an expression.
-    if tag.name.has_error() || names_whole_node(&tag) {
+    if tag.name.has_error() || names_whole_node(&tag) || follows_error(tag.name, source) {
         return None;
     }
     Some((tag.name, Some(tag)))
+}
+
+/// Whether a syntax error ends just before `name`, on its line with nothing but spaces and tabs
+/// between. The grammar then read on from broken text, and the name may be the end of a broken
+/// one, as `y` is of the YAML key `"x"y`. An error further back, on an earlier line, says
+/// nothing about the name; one after it is left to the queries, as a code name followed by a
+/// parameter list in mid-edit is still its name.
+fn follows_error(name: Node<'_>, source: &[u8]) -> bool {
+    let Some(before) = node_before(name) else {
+        return false;
+    };
+    let gap = source
+        .get(before.end_byte()..name.start_byte())
+        .unwrap_or_default();
+    before.is_error() && gap.iter().all(|byte| matches!(byte, b' ' | b'\t'))
+}
+
+/// The nearest node that ends before `node` starts: its previous sibling, or else the previous
+/// sibling of the nearest node around it that has one.
+fn node_before(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = node;
+    loop {
+        if let Some(previous) = current.prev_sibling() {
+            return Some(previous);
+        }
+        current = current.parent()?;
+    }
 }
 
 /// Whether the tag's name covers the whole of its node while the name holds other nodes, as when
