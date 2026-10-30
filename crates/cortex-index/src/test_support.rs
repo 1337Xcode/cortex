@@ -9,6 +9,7 @@ use tree_sitter::{Parser, QueryCursor, Tree};
 
 use crate::deadline::Deadline;
 use crate::grammar::Grammar;
+use crate::imports::Targets;
 use crate::languages::TagsSpec;
 pub(crate) use crate::languages::python_grammar as python;
 use crate::specifiers::{Import, Imported};
@@ -96,4 +97,20 @@ pub(crate) fn import(specifier: &str, imported: Imported) -> Result<Import, Iden
 /// makes.
 pub(crate) fn import_name(specifier: &str, name: &str) -> Result<Import, IdentifierError> {
     import(specifier, Imported::Name(Identifier::new(name)?))
+}
+
+/// The files an import names, as text: the module's, then the submodule.
+pub(crate) type Named = (Vec<String>, Option<String>);
+
+/// The files `targets` names, as text.
+pub(crate) fn named_by(targets: &Targets) -> Named {
+    let module = targets.module.iter().map(|at| at.as_str().to_owned());
+    let submodule = targets.submodule.as_ref().map(|at| at.as_str().to_owned());
+    (module.collect(), submodule)
+}
+
+/// The files an import is expected to name: the module's, then the submodule.
+pub(crate) fn named(module: &[&str], submodule: Option<&str>) -> Named {
+    let module = module.iter().map(|at| (*at).to_owned()).collect();
+    (module, submodule.map(str::to_owned))
 }

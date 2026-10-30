@@ -16,6 +16,7 @@ use crate::specifiers::Import;
 
 mod ecmascript;
 mod jsonc;
+mod python;
 
 /// Reads one project file as text; `None` when it cannot be read.
 pub(crate) type ReadText<'a> = &'a dyn Fn(&RepoPath) -> Option<String>;
@@ -24,7 +25,7 @@ pub(crate) type ReadText<'a> = &'a dyn Fn(&RepoPath) -> Option<String>;
 type Loader = fn(&Files, ReadText<'_>) -> Box<dyn Resolver>;
 
 /// Every language family whose imports name files, by its loader.
-const LOADERS: &[Loader] = &[ecmascript::load];
+const LOADERS: &[Loader] = &[ecmascript::load, python::load];
 
 /// Turns the imports of one language family into the files they name.
 trait Resolver: Send + Sync {
@@ -89,6 +90,11 @@ impl Files {
     /// The files named `name`, in path order.
     fn named(&self, name: &str) -> &[RepoPath] {
         self.by_name.get(name).map_or(&[], Vec::as_slice)
+    }
+
+    /// Every file, in path order.
+    fn all(&self) -> impl Iterator<Item = &RepoPath> {
+        self.paths.iter()
     }
 }
 

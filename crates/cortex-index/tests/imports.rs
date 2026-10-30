@@ -194,3 +194,46 @@ fn a_config_is_not_followed_into_a_file_that_may_hold_secrets() -> TestResult {
     assert_eq!(import_edges(root)?, edges(expected));
     Ok(())
 }
+
+/// Python imports join files through relative imports, a package's submodule and a source root
+/// beside pyproject.toml; the standard library names nothing, even with a `json.py` beside the
+/// importer in its package.
+#[test]
+fn python_imports_join_files() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("pyproject.toml", "[project]\nname = \"shop\"\n"),
+            (
+                "src/shop/__init__.py",
+                "from . import orders\nfrom .orders import Order\n",
+            ),
+            (
+                "src/shop/orders.py",
+                "from .money import total, rate\nimport os\nimport json\n\nclass Order:\n    pass\n",
+            ),
+            (
+                "src/shop/money.py",
+                "def total():\n    pass\n\ndef rate():\n    pass\n",
+            ),
+            ("src/shop/json.py", "def dumps():\n    pass\n"),
+            (
+                "tests/test_orders.py",
+                "from shop.orders import Order\nimport shop.money\n",
+            ),
+        ],
+    )?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    let expected: &[(&str, &[(&str, u32)])] = &[
+        ("src/shop/__init__.py", &[("src/shop/orders.py", 2)]),
+        ("src/shop/orders.py", &[("src/shop/money.py", 2)]),
+        (
+            "tests/test_orders.py",
+            &[("src/shop/money.py", 1), ("src/shop/orders.py", 1)],
+        ),
+    ];
+    assert_eq!(import_edges(root)?, edges(expected));
+    Ok(())
+}

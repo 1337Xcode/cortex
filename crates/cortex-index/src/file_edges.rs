@@ -3,7 +3,7 @@
 //! An import edge points one way, from the importer. It is as strong as a reference tied by its
 //! import path, and its count is how many of the importer's imports name the target.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{EdgeType, Language, RepoPath, Resolution};
 use cortex_store::{EdgeRecord, NodeId, StoreError, Writer};
@@ -20,7 +20,8 @@ pub(crate) type ImportCounts = BTreeMap<RepoPath, u32>;
 
 /// The files `imports`, written in `language` in the file at `importer`, name, each with how
 /// many of the imports name it. Alike imports are resolved once, so the work grows with a file's
-/// distinct imports however often it repeats one, and the importer is left out.
+/// distinct imports however often it repeats one; an import that names a file twice counts once,
+/// and the importer is left out.
 pub(crate) fn imported_files(
     project: &Project,
     importer: &RepoPath,
@@ -30,7 +31,8 @@ pub(crate) fn imported_files(
     let mut counts = ImportCounts::new();
     for (import, times) in alike(imports) {
         let targets = project.targets(importer, language, import);
-        for file in targets.files().filter(|file| *file != importer) {
+        let named: BTreeSet<&RepoPath> = targets.files().filter(|file| *file != importer).collect();
+        for file in named {
             let count = counts.entry(file.clone()).or_insert(0);
             *count = count.saturating_add(times);
         }
@@ -154,6 +156,21 @@ mod tests {
                 ("./b", &a, 1),
             ]
         );
+        Ok(())
+    }
+
+    /// An import that names one file twice counts once: Python's `from . import __init__`, from
+    /// `pkg/a.py`, names `pkg/__init__.py` as the module and as the submodule.
+    #[test]
+    fn an_import_that_names_a_file_twice_counts_once() -> Result<(), IdentifierError> {
+        let project = Project::load(["pkg/__init__.py", "pkg/a.py"].map(path), &|_| None);
+        let counts = imported_files(
+            &project,
+            &path("pkg/a.py"),
+            Language::Python,
+            &[import_name(".", "__init__")?],
+        );
+        assert_eq!(counts, ImportCounts::from([(path("pkg/__init__.py"), 1)]));
         Ok(())
     }
 }
