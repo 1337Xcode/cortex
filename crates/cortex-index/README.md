@@ -146,3 +146,8 @@ that are not UTF-8, unreadable folders, symbolic links, named pipes) run on Unix
 
 Each parsed language has a sample file in `tests/languages/<language>/` beside the definitions,
 references and imports expected from it, written by hand.
+
+A scan indexes every sample with the real pipeline and then searches the database file and its
+log, byte for byte, for each line of the samples of 12 characters or more. No line may be found
+there unless an empty store already holds it (its own schema text) or it is a name by design (a
+Markdown heading's text).

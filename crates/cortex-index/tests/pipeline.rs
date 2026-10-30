@@ -7,21 +7,13 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
-use common::{TestResult, grammars, lock_out, write};
-use cortex_core::{
-    ContentHash, EdgeType, FileFlags, Language, RepoId, RepoPath, Resolution, SymbolKind,
-};
-use cortex_index::{
-    DiscoverOptions, FileProblem, IndexOptions, IndexReport, Problem, ProblemKind, index_repository,
-};
-use cortex_store::{FileRow, NodeId, Reader, RefRow, SymbolRow, Writer, WriterOptions};
-
-/// The time every file is indexed at.
-const NOW_MS: i64 = 1_700_000_000_000;
+use common::{NOW_MS, TestResult, index, lock_out, write};
+use cortex_core::{ContentHash, EdgeType, FileFlags, Language, RepoPath, Resolution, SymbolKind};
+use cortex_index::{FileProblem, IndexReport, Problem, ProblemKind};
+use cortex_store::{FileRow, NodeId, Reader, RefRow, SymbolRow};
 
 /// A time limit no test file comes near, even in a debug build.
 const GENEROUS: Duration = Duration::from_secs(60);
@@ -112,33 +104,6 @@ fn write_fixture(root: &Path) -> TestResult {
 fn fixture(path: &str) -> TestResult<&'static [u8]> {
     let found = FIXTURE.iter().find(|(name, _)| *name == path);
     Ok(found.map(|(_, bytes)| *bytes).ok_or("not in the fixture")?)
-}
-
-/// Indexes the repository at `root` into its `.cortex` folder on `threads` threads, allowing each
-/// file `parse_timeout` and reading no file over `max_file_bytes`.
-fn index(
-    root: &Path,
-    threads: usize,
-    parse_timeout: Duration,
-    max_file_bytes: u64,
-) -> TestResult<IndexReport> {
-    let mut writer = Writer::open(&WriterOptions {
-        folder: &root.join(".cortex"),
-        repo_id: &RepoId::of(root),
-        mmap_bytes: 0,
-        now_ms: NOW_MS,
-    })?;
-    let options = IndexOptions {
-        discover: DiscoverOptions {
-            max_file_bytes,
-            extra_ignores: &[],
-            global_gitignore: None,
-        },
-        parse_timeout,
-        threads: NonZeroUsize::new(threads).ok_or("no threads")?,
-        now_ms: NOW_MS,
-    };
-    Ok(index_repository(root, &grammars()?, &mut writer, &options)?)
 }
 
 /// A reader of the store of the repository at `root`.

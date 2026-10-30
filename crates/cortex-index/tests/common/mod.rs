@@ -7,10 +7,14 @@
 
 use std::error::Error;
 use std::fs::{self, File};
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
-use cortex_index::Grammars;
+use cortex_core::RepoId;
+use cortex_index::{DiscoverOptions, Grammars, IndexOptions, IndexReport, index_repository};
+use cortex_store::{Writer, WriterOptions};
 
 /// Result type for these tests: any failure fails the test.
 pub type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -27,6 +31,36 @@ pub fn grammars() -> Result<Arc<Grammars>, Box<dyn Error>> {
         })
         .clone()
         .map_err(Into::into)
+}
+
+/// The time every file is indexed at.
+pub const NOW_MS: i64 = 1_700_000_000_000;
+
+/// Indexes the repository at `root` into its `.cortex` folder on `threads` threads, allowing each
+/// file `parse_timeout` and reading no file over `max_file_bytes`.
+pub fn index(
+    root: &Path,
+    threads: usize,
+    parse_timeout: Duration,
+    max_file_bytes: u64,
+) -> TestResult<IndexReport> {
+    let mut writer = Writer::open(&WriterOptions {
+        folder: &root.join(".cortex"),
+        repo_id: &RepoId::of(root),
+        mmap_bytes: 0,
+        now_ms: NOW_MS,
+    })?;
+    let options = IndexOptions {
+        discover: DiscoverOptions {
+            max_file_bytes,
+            extra_ignores: &[],
+            global_gitignore: None,
+        },
+        parse_timeout,
+        threads: NonZeroUsize::new(threads).ok_or("no threads")?,
+        now_ms: NOW_MS,
+    };
+    Ok(index_repository(root, &grammars()?, &mut writer, &options)?)
 }
 
 /// Writes `text` to `path` under `root`, creating folders as needed.
