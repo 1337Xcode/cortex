@@ -22,8 +22,13 @@ one writer, and read-only readers.
 | `Writer::open` | Takes the lock, creates `.cortex/` when it is missing and opens the database. A database Cortex did not write, or one a newer Cortex wrote, is refused untouched. When the database has an older schema, it is copied to `.cortex/backups/cortex-v<version>.db` (one copy per version, flushed to disk) and then migrated in one transaction |
 | `Writer::transaction`, `WriteTx` | One transaction: `replace_file`, `remove_file`, `set_resolutions`, `replace_edges`, `folder_node` (a folder's node, added on first use and kept until removed) and `remove_folder_node`, then `commit`. A write that fails is undone on its own, and the transaction keeps the writes before it. If SQLite rolls the whole transaction back after an error such as a full disk, every later write and the commit are refused |
 | `Reader::open` | A read-only connection that can be open beside the writer |
-| `Queries` | Reads shared by both: meta values, files, the path of every file (sorted by the bytes of the path, as Rust sorts strings), every file and every folder with its node, every symbol's and reference's name with its file's language (and the reference's target), symbols, references, nodes, edges and row counts |
+| `Queries` | Reads shared by both: meta values, files, the path of every file (sorted by the bytes of the path, as Rust sorts strings), every file and every folder with its node, every symbol's and reference's name with its file's language (and the reference's target), a node's search tokens, symbols, references, nodes, edges and row counts |
 | `FileIndex` and the other records | What the writer accepts and reports. A symbol keeps its id, its graph node and the node's edges across edits while its qualified name and kind stay the same. Row ids are never reused, so an id kept from an earlier read names its old row or nothing. A reference can only point at an existing symbol and an edge can only join existing nodes; an edge goes with either of its nodes |
+
+Every graph node is written with its search row and removed with it: the identifier tokens of
+its path for a file or folder, of its name and qualified name for a symbol, lower-case words
+joined by spaces, in the full-text index with the node's id as its row id. A node with no word
+(the root folder) has no row.
 
 ## Settings and files
 

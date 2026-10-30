@@ -4,8 +4,9 @@
 //! repository root with `/` separators, hashes are BLAKE3 at the sizes storage uses, a
 //! [`Language`] has one stable name, an [`Identifier`] is the only text besides paths that the
 //! index stores, each record kind such as [`SymbolKind`] has a fixed stored name or number, and
-//! [`Config`] holds every setting with its default. This crate does no I/O and depends on nothing
-//! that does.
+//! [`Config`] holds every setting with its default, and [`identifier_tokens`] splits names and
+//! paths into the words a search matches. This crate does no I/O and depends on nothing that
+//! does.
 
 #![warn(clippy::pedantic)]
 
@@ -17,6 +18,7 @@ mod language;
 mod path;
 mod repo_id;
 mod scale_mode;
+mod tokens;
 
 pub use config::{
     Config, ConfigError, ConfigLayer, DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES,
@@ -29,3 +31,4 @@ pub use language::{Language, Tier};
 pub use path::{PathError, RepoPath};
 pub use repo_id::RepoId;
 pub use scale_mode::ScaleMode;
+pub use tokens::identifier_tokens;

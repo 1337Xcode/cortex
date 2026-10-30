@@ -6,22 +6,26 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{StoreError, sqlite};
 use crate::ids::NodeId;
+use crate::nodes::{remove_node, write_tokens};
 use crate::schema;
 
-/// The node of the folder at `path`, added when it has none.
+/// The node of the folder at `path`, added when it has none, with its search row written either
+/// way.
 pub(crate) fn folder_node(connection: &Connection, path: &RepoPath) -> Result<NodeId, StoreError> {
-    if let Some(node) = find(connection, path)? {
-        return Ok(node);
-    }
-    connection
-        .prepare_cached(schema::FOLDER_NODE_INSERT)
-        .and_then(|mut statement| statement.query_row([path.as_str()], |row| row.get(0)))
-        .map(NodeId)
-        .map_err(sqlite("adding a folder node"))
+    let node = match find(connection, path)? {
+        Some(node) => node,
+        None => connection
+            .prepare_cached(schema::FOLDER_NODE_INSERT)
+            .and_then(|mut statement| statement.query_row([path.as_str()], |row| row.get(0)))
+            .map(NodeId)
+            .map_err(sqlite("adding a folder node"))?,
+    };
+    write_tokens(connection, node, &[path.as_str()])?;
+    Ok(node)
 }
 
-/// Deletes the node of the folder at `path`; the schema deletes every edge at it with it. `false`
-/// when the folder had no node.
+/// Deletes the node of the folder at `path` and its search row; the schema deletes every edge at
+/// it with it. `false` when the folder had no node.
 pub(crate) fn remove_folder_node(
     connection: &Connection,
     path: &RepoPath,
@@ -29,10 +33,7 @@ pub(crate) fn remove_folder_node(
     let Some(node) = find(connection, path)? else {
         return Ok(false);
     };
-    connection
-        .prepare_cached(schema::NODE_DELETE)
-        .and_then(|mut statement| statement.execute([node.get()]))
-        .map_err(sqlite("deleting a folder node"))?;
+    remove_node(connection, node)?;
     Ok(true)
 }
 

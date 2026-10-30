@@ -21,6 +21,7 @@ modes and settings.
 | `Language`, `Tier` | The 21 languages and formats with their stored names; Tier A gets symbols, Tier B keys or headings |
 | `Identifier` | A stored name: one line, at most 256 bytes, no control characters |
 | `SymbolKind`, `RefKind`, `Resolution`, `NodeKind`, `EdgeType`, `FileFlags` | The kinds of record the index keeps, with the names, numbers and bits stored for them; a `Resolution` also gives the confidence of a reference resolved that way |
+| `identifier_tokens` | Splits a name or a path into the lower-case words a search matches: at anything but a letter or a digit, at a capital after a small letter or a digit, and at the last capital of a run when a small letter follows (`parseHTTPRequest` gives `parse`, `http`, `request`) |
 | `ScaleMode` | `tiny`, `small`, `medium` or `huge`: how fully a repository of a given size is served |
 | `Config`, `load_config` | The settings in effect: defaults, then `~/.cortex/config.toml`, then `.cortex/config.toml`; unknown keys warn, unusable values are errors naming the file and key. Keys: `mode`, `index.max_file_bytes`, `index.extra_ignores`, `index.parse_timeout_ms`, `daemon.idle_shutdown_minutes`, `store.mmap_bytes` |
 

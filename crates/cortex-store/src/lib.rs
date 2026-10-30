@@ -19,6 +19,7 @@ mod links;
 mod lock;
 mod meta;
 mod migrate;
+mod nodes;
 mod private;
 mod queries;
 mod raw;

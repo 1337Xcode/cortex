@@ -129,6 +129,14 @@ pub(crate) const FOLDER_NODES: &str =
 pub(crate) const FILE_NODES: &str = "SELECT f.file_id, f.path, n.node_id FROM files AS f \
      JOIN nodes AS n ON n.kind = 'file' AND n.ref_id = f.file_id ORDER BY f.path";
 
+/// Deletes a node's search row, found by its row id, which is the node's id.
+pub(crate) const SEARCH_DELETE: &str = "DELETE FROM search_index WHERE rowid = ?1";
+/// Adds a node's search row: its id as row id and as `node_id`, and its tokens.
+pub(crate) const SEARCH_INSERT: &str =
+    "INSERT INTO search_index (rowid, node_id, tokens) VALUES (?1, ?1, ?2)";
+/// A node's search tokens.
+pub(crate) const SEARCH_TOKENS: &str = "SELECT tokens FROM search_index WHERE rowid = ?1";
+
 /// Deletes a node's outgoing edges of one type.
 pub(crate) const EDGES_DELETE_FROM: &str = "DELETE FROM edges WHERE src = ?1 AND type = ?2";
 /// Adds an edge.

@@ -12,6 +12,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{StoreError, sqlite};
 use crate::ids::{FileId, NodeId, RefId, SymbolId};
+use crate::nodes::{remove_node, upsert_node, write_tokens};
 use crate::queries::Queries;
 use crate::records::{
     ChangeKind, FileChange, FileIndex, FileRecord, FileRemoval, RefRecord, SymbolChange,
@@ -54,6 +55,7 @@ pub(crate) fn replace_file(
     let path = &index.file.path;
     let (file, is_new) = upsert_file(connection, &index.file)?;
     let file_node = upsert_node(connection, NodeKind::File, file.get(), path)?;
+    write_tokens(connection, file_node, &[path.as_str()])?;
     let written = write_symbols(connection, file, path, &index.symbols)?;
     connection
         .execute(schema::REFS_DELETE_IN_FILE, [file.get()])
@@ -129,9 +131,13 @@ fn write_symbols(
                 kind,
             });
         }
-        written
-            .nodes
-            .push(upsert_node(connection, NodeKind::Symbol, id.get(), path)?);
+        let node = upsert_node(connection, NodeKind::Symbol, id.get(), path)?;
+        write_tokens(
+            connection,
+            node,
+            &[symbol.name.as_str(), symbol.qual_name.as_str()],
+        )?;
+        written.nodes.push(node);
         written.ids.push(id);
     }
     let mut gone: Vec<StoredSymbol> = stored.into_values().flatten().collect();
@@ -364,29 +370,4 @@ fn insert_ref(
         .and_then(|mut statement| statement.query_row(params, |row| row.get(0)))
         .map(RefId)
         .map_err(sqlite("adding a reference"))
-}
-
-/// Adds the node for row `id` of the table `kind` names, or updates its path, and returns it.
-fn upsert_node(
-    connection: &Connection,
-    kind: NodeKind,
-    id: i64,
-    path: &RepoPath,
-) -> Result<NodeId, StoreError> {
-    connection
-        .prepare_cached(schema::NODE_UPSERT)
-        .and_then(|mut statement| {
-            statement.query_row((kind.name(), id, path.as_str()), |row| row.get(0))
-        })
-        .map(NodeId)
-        .map_err(sqlite("writing a node"))
-}
-
-/// Deletes a node; the schema deletes every edge at it with it.
-fn remove_node(connection: &Connection, node: NodeId) -> Result<(), StoreError> {
-    connection
-        .prepare_cached(schema::NODE_DELETE)
-        .and_then(|mut statement| statement.execute([node.get()]))
-        .map(drop)
-        .map_err(sqlite("deleting a node"))
 }

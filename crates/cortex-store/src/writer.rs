@@ -142,7 +142,8 @@ pub struct WriteTx<'w> {
 impl WriteTx<'_> {
     /// Writes everything the index records about one file over what was stored for it, keeping
     /// the ids of symbols that match one already stored by qualified name and kind. The file's
-    /// references are written unresolved.
+    /// references are written unresolved; the file's and each symbol's node get their search
+    /// rows, and the nodes of symbols no longer defined lose theirs.
     ///
     /// # Errors
     ///
@@ -152,8 +153,8 @@ impl WriteTx<'_> {
         self.atomically(|connection| replace::replace_file(connection, index))
     }
 
-    /// Deletes everything stored for the file at `path`. References elsewhere to its symbols
-    /// become unresolved. `None` when nothing was stored.
+    /// Deletes everything stored for the file at `path`, its nodes' search rows included.
+    /// References elsewhere to its symbols become unresolved. `None` when nothing was stored.
     ///
     /// # Errors
     ///
@@ -189,8 +190,8 @@ impl WriteTx<'_> {
         self.atomically(|connection| links::replace_edges(connection, src, edge_type, edges))
     }
 
-    /// The node of the folder at `path`, added when it has none. A folder keeps its node, and
-    /// everything attached to it, until the node is removed.
+    /// The node of the folder at `path`, added when it has none, with its search row. A folder
+    /// keeps its node, and everything attached to it, until the node is removed.
     ///
     /// # Errors
     ///
@@ -199,8 +200,8 @@ impl WriteTx<'_> {
         self.atomically(|connection| folders::folder_node(connection, path))
     }
 
-    /// Deletes the node of the folder at `path` and every edge at it. `false` when the folder had
-    /// no node.
+    /// Deletes the node of the folder at `path`, its search row and every edge at it. `false` when
+    /// the folder had no node.
     ///
     /// # Errors
     ///

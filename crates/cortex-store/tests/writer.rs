@@ -7,7 +7,7 @@ use common::{Scratch, TestResult, index, name, path, reference, symbol};
 use cortex_core::{EdgeType, Language, RefKind, RepoId, Resolution, SymbolKind};
 use cortex_store::{
     ChangeKind, EdgeRecord, EdgeRow, IndexCounts, MetaKey, RefName, Resolved, StoreError,
-    SymbolChange, SymbolName, Target,
+    SymbolChange, SymbolName, SymbolRecord, Target,
 };
 
 /// The version the workspace manifest declares; a version bump updates this literal on purpose.
@@ -616,6 +616,120 @@ fn folders_have_nodes_of_their_own() -> TestResult {
     );
     // a.py's file node and the two folders.
     assert_eq!(queries.counts()?, counts(1, 0, 0, 0, 3));
+    Ok(())
+}
+
+/// A node's search row holds the tokens of its path (a file or folder) or of its name and
+/// qualified name (a symbol), split into lower-case words, and goes with the node; the root
+/// folder, with no path, has none. The rows are searchable by any of their words.
+#[test]
+fn search_rows_follow_their_nodes() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let class = symbol(SymbolKind::Class, "OrderLine", None, ("s", "b"))?;
+    let method = symbol(SymbolKind::Method, "OrderLine.addItem", Some(0), ("s", "b"))?;
+    let file = transaction.replace_file(&index(
+        "src/shop/order_lines.py",
+        vec![class.clone(), method],
+        Vec::new(),
+    )?)?;
+    let folder = transaction.folder_node(&path("src/shop")?)?;
+    let root = transaction.folder_node(&path("")?)?;
+    let (class_node, method_node) = (file.symbol_nodes[0], file.symbol_nodes[1]);
+    let queries = transaction.queries();
+    let tokens = |node| queries.search_tokens(node);
+    assert_eq!(
+        tokens(file.file_node)?.as_deref(),
+        Some("src shop order lines py")
+    );
+    assert_eq!(
+        tokens(class_node)?.as_deref(),
+        Some("order line order line")
+    );
+    assert_eq!(
+        tokens(method_node)?.as_deref(),
+        Some("add item order line add item")
+    );
+    assert_eq!(tokens(folder)?.as_deref(), Some("src shop"));
+    assert_eq!(tokens(root)?, None);
+    transaction.commit()?;
+    drop(writer);
+
+    let matching = |word: &str| -> TestResult<Vec<i64>> {
+        let connection = rusqlite::Connection::open(scratch.folder.join("cortex.db"))?;
+        let mut statement = connection
+            .prepare("SELECT rowid FROM search_index WHERE search_index MATCH ?1 ORDER BY rowid")?;
+        let rows = statement.query_map([word], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<i64>>>()?)
+    };
+    assert_eq!(matching("item")?, [method_node.get()]);
+    assert_eq!(matching("shop")?, [file.file_node.get(), folder.get()]);
+
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    // The class keeps its id across the rewrite (same qualified name and kind) under a new name,
+    // and its row follows the name; the method is gone, and so is its row.
+    let renamed = SymbolRecord {
+        name: name("Line")?,
+        ..class
+    };
+    transaction.replace_file(&index(
+        "src/shop/order_lines.py",
+        vec![renamed],
+        Vec::new(),
+    )?)?;
+    let queries = transaction.queries();
+    assert_eq!(
+        queries.search_tokens(class_node)?.as_deref(),
+        Some("line order line")
+    );
+    assert_eq!(queries.search_tokens(method_node)?, None);
+    // A failed write leaves no row behind: the parent position is past the file's symbols.
+    let orphan = symbol(SymbolKind::Method, "Lost.method", Some(5), ("s", "b"))?;
+    let refused = transaction.replace_file(&index("src/orphan.py", vec![orphan], Vec::new())?);
+    assert!(refused.is_err());
+    // Words outside ASCII are kept, a decomposed accent with its letter.
+    let accented =
+        transaction.replace_file(&index("docs/cafe\u{301}s.py", Vec::new(), Vec::new())?)?;
+    assert_eq!(
+        transaction
+            .queries()
+            .search_tokens(accented.file_node)?
+            .as_deref(),
+        Some("docs cafe\u{301}s py")
+    );
+    transaction.remove_file(&path("src/shop/order_lines.py")?)?;
+    transaction.remove_folder_node(&path("src/shop")?)?;
+    let queries = transaction.queries();
+    for node in [file.file_node, class_node, folder] {
+        assert_eq!(queries.search_tokens(node)?, None, "{node:?}");
+    }
+    transaction.commit()?;
+    drop(writer);
+    assert_eq!(matching("order")?, Vec::<i64>::new());
+    assert_eq!(matching("orphan")?, Vec::<i64>::new());
+    Ok(())
+}
+
+/// A folder node that has lost its search row, as one written before folders had rows would have,
+/// gets it back the next time its node is asked for.
+#[test]
+fn a_folder_gets_its_search_row_back() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let folder = transaction.folder_node(&path("src/shop")?)?;
+    transaction.commit()?;
+    drop(writer);
+    rusqlite::Connection::open(scratch.folder.join("cortex.db"))?
+        .execute("DELETE FROM search_index WHERE rowid = ?1", [folder.get()])?;
+    let mut writer = scratch.writer(1)?;
+    assert_eq!(writer.queries().search_tokens(folder)?, None);
+    let mut transaction = writer.transaction()?;
+    assert_eq!(transaction.folder_node(&path("src/shop")?)?, folder);
+    let tokens = transaction.queries().search_tokens(folder)?;
+    assert_eq!(tokens.as_deref(), Some("src shop"));
     Ok(())
 }
 

@@ -160,6 +160,23 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawRefName::check).collect()
     }
 
+    /// The search tokens of `node`, as stored: lower-case words joined by spaces. `None` when the
+    /// node has no search row.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn search_tokens(self, node: NodeId) -> Result<Option<String>, StoreError> {
+        self.connection
+            .prepare_cached(schema::SEARCH_TOKENS)
+            .and_then(|mut statement| {
+                statement
+                    .query_row([node.get()], |row| row.get(0))
+                    .optional()
+            })
+            .map_err(sqlite("reading search tokens"))
+    }
+
     /// The edges that start at `node`, by type, then target.
     ///
     /// # Errors
