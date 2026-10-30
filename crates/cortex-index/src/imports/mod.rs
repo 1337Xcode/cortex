@@ -15,6 +15,7 @@ use cortex_core::{Language, RepoPath};
 use crate::specifiers::Import;
 
 mod ecmascript;
+mod go;
 mod jsonc;
 mod python;
 
@@ -25,7 +26,7 @@ pub(crate) type ReadText<'a> = &'a dyn Fn(&RepoPath) -> Option<String>;
 type Loader = fn(&Files, ReadText<'_>) -> Box<dyn Resolver>;
 
 /// Every language family whose imports name files, by its loader.
-const LOADERS: &[Loader] = &[ecmascript::load, python::load];
+const LOADERS: &[Loader] = &[ecmascript::load, python::load, go::load];
 
 /// Turns the imports of one language family into the files they name.
 trait Resolver: Send + Sync {
@@ -61,6 +62,8 @@ pub(crate) struct Files {
     paths: BTreeSet<RepoPath>,
     /// The paths with each file name, in path order.
     by_name: BTreeMap<String, Vec<RepoPath>>,
+    /// The paths directly in each folder, in path order.
+    by_folder: BTreeMap<RepoPath, Vec<RepoPath>>,
 }
 
 impl Files {
@@ -68,13 +71,21 @@ impl Files {
     pub(crate) fn new(paths: impl IntoIterator<Item = RepoPath>) -> Self {
         let paths: BTreeSet<RepoPath> = paths.into_iter().collect();
         let mut by_name: BTreeMap<String, Vec<RepoPath>> = BTreeMap::new();
+        let mut by_folder: BTreeMap<RepoPath, Vec<RepoPath>> = BTreeMap::new();
         for path in &paths {
             by_name
                 .entry(path.file_name().to_owned())
                 .or_default()
                 .push(path.clone());
+            if let Some(folder) = path.parent() {
+                by_folder.entry(folder).or_default().push(path.clone());
+            }
         }
-        Self { paths, by_name }
+        Self {
+            paths,
+            by_name,
+            by_folder,
+        }
     }
 
     /// Whether a file is at `path`.
@@ -90,6 +101,11 @@ impl Files {
     /// The files named `name`, in path order.
     fn named(&self, name: &str) -> &[RepoPath] {
         self.by_name.get(name).map_or(&[], Vec::as_slice)
+    }
+
+    /// The files directly in `folder`, in path order.
+    fn in_folder(&self, folder: &RepoPath) -> &[RepoPath] {
+        self.by_folder.get(folder).map_or(&[], Vec::as_slice)
     }
 
     /// Every file, in path order.
@@ -218,6 +234,26 @@ mod tests {
             ]
         );
         assert_eq!(files.named("none.py"), &[] as &[RepoPath]);
+    }
+
+    /// A lookup by folder holds only the files directly in it, in path order.
+    #[test]
+    fn files_are_found_by_folder() {
+        let files = Files::new(
+            [
+                "src/shop/orders.go",
+                "src/shop/deep/orders.go",
+                "src/shop/cart.go",
+            ]
+            .map(path),
+        );
+        let inside: Vec<&str> = files
+            .in_folder(&path("src/shop"))
+            .iter()
+            .map(RepoPath::as_str)
+            .collect();
+        assert_eq!(inside, ["src/shop/cart.go", "src/shop/orders.go"]);
+        assert_eq!(files.in_folder(&path("src/none")), &[] as &[RepoPath]);
     }
 
     /// An import goes to the resolver of its file's language: the same `./b` names `b.ts` beside

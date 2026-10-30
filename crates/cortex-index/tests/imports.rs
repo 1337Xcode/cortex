@@ -237,3 +237,45 @@ fn python_imports_join_files() -> TestResult {
     assert_eq!(import_edges(root)?, edges(expected));
     Ok(())
 }
+
+/// A Go import joins the importer to every file of the package, its tests left out, through the
+/// module path go.mod declares, renamed or not; the standard library names nothing.
+#[test]
+fn go_imports_join_files() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("go.mod", "module example.com/shop\n\ngo 1.22\n"),
+            (
+                "cmd/shop/main.go",
+                "package main\n\nimport (\n\t\"fmt\"\n\t\"example.com/shop/orders\"\n\tdb \"example.com/shop/internal/store\"\n)\n\nfunc main() { fmt.Println(orders.Place(), db.Open()) }\n",
+            ),
+            (
+                "orders/order.go",
+                "package orders\n\nfunc Place() int { return 1 }\n",
+            ),
+            (
+                "orders/money.go",
+                "package orders\n\nfunc total() int { return 2 }\n",
+            ),
+            ("orders/order_test.go", "package orders\n"),
+            (
+                "internal/store/store.go",
+                "package store\n\nfunc Open() int { return 0 }\n",
+            ),
+        ],
+    )?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    let expected: &[(&str, &[(&str, u32)])] = &[(
+        "cmd/shop/main.go",
+        &[
+            ("internal/store/store.go", 1),
+            ("orders/money.go", 1),
+            ("orders/order.go", 1),
+        ],
+    )];
+    assert_eq!(import_edges(root)?, edges(expected));
+    Ok(())
+}
