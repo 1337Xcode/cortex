@@ -1,0 +1,40 @@
+# What sample.scala defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text, annotations and modifiers included, up to its body, with each
+# run of whitespace as one space; a function's `=` comes before its body, and a constant, a type
+# definition and a function without a body are all header. The package is no definition and
+# qualifies no name, as in Java; a class and its companion object are two definitions of one name.
+# Not read: the comment, the package, the parameters, `None`, the operator `+` and `/`, and every
+# use of a variable.
+symbol interface Priced 8-10 - | trait Priced extends Named
+symbol method Priced.price 9-9 Priced | def price(): Int
+symbol class Order 12-14 - | case class Order(size: Int, item: Option[Item]) extends Base(size) with Priced
+symbol method Order.price 13-13 Order | def price(): Int =
+symbol class Order 16-19 - | object Order
+symbol constant Order.Slots 17-17 Order | val Slots = 4
+symbol method Order.create 18-18 Order | def create(): Order =
+symbol type Price 21-21 - | type Price = Int
+symbol function fee 23-23 - | def fee(cents: Int): Int =
+ref inherit Named 8 Priced
+ref type_ref Int 9 Priced.price
+ref type_ref Int 12 Order
+ref type_ref Option 12 Order
+ref type_ref Item 12 Order
+ref inherit Base 12 Order
+ref inherit Priced 12 Order
+ref type_ref Int 13 Order.price
+ref call round 13 Order.price
+ref call fee 13 Order.price
+ref call count 13 Order.price
+ref call Receipt 13 Order.price
+ref type_ref Order 18 Order.create
+ref call Order 18 Order.create
+ref type_ref Int 21 Price
+ref type_ref Int 23 fee
+ref type_ref Int 23 fee
+import shop.models name:Item - 4
+import shop.support name:Money - 5
+import shop.support name:Clock Time 5
+import shop.util all - 6

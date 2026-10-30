@@ -170,6 +170,13 @@ mod tests {
             (Language::Swift, "Sources/OrderTest.swift", true),
             (Language::Swift, "Sources/Order.swift", false),
             (Language::Swift, "Sources/TestOrder.swift", false),
+            (Language::Scala, "src/OrderSpec.scala", true),
+            (Language::Scala, "src/OrderTest.scala", true),
+            (Language::Scala, "src/OrderSuite.scala", true),
+            (Language::Scala, "src/OrderTests.scala", true),
+            (Language::Scala, "src/OrderIT.scala", true),
+            (Language::Scala, "src/Order.scala", false),
+            (Language::Scala, "src/TestOrder.scala", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

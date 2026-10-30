@@ -234,6 +234,12 @@ fn swift() -> TestResult {
     check_golden("swift", "sample.swift", Language::Swift, "\n")
 }
 
+/// Scala: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn scala() -> TestResult {
+    check_golden("scala", "sample.scala", Language::Scala, "\n")
+}
+
 /// Ruby: every construct in the fixture, listed by hand in `expected.txt`.
 #[test]
 fn ruby() -> TestResult {
@@ -1755,6 +1761,279 @@ fn swift_imports_in_every_form() -> TestResult {
             ("Darwin.C", "name:sqrt".to_owned(), 4),
             ("Orders", "Module".to_owned(), 5),
             ("A.B.C", "name:D".to_owned(), 6)
+        ]
+    );
+    Ok(())
+}
+
+/// Scala's tests: a method annotated as a test by JUnit or TestNG, plainly or by its qualified
+/// name, with arguments or without, in any file; none goes by its name. Another annotation marks
+/// nothing, plain or qualified.
+#[test]
+fn scala_tests_are_marked_by_annotation() -> TestResult {
+    use SymbolKind::{Class, Method, Test};
+    let source = "class OrderTest {\n  @Test def pays(): Unit = ()\n  @org.junit.Test def refuses(): Unit = ()\n  \
+                  @ParameterizedTest @ValueSource(ints = Array(1, 2)) def bills(n: Int): Unit = ()\n  \
+                  @RepeatedTest(3) def ships(): Unit = ()\n  @TestFactory def cases(): Unit = ()\n  \
+                  @TestTemplate def template(): Unit = ()\n  @Ignore def later(): Unit = ()\n  \
+                  @org.junit.Ignore def ignored(): Unit = ()\n  def testHelper(): Unit = ()\n}\n";
+    let kinds = |path: &str| -> Result<Vec<SymbolKind>, Box<dyn Error>> {
+        let extraction = extract(path, Language::Scala, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| symbol.kind)
+            .collect())
+    };
+    let expected = [
+        Class, Test, Test, Test, Test, Test, Test, Method, Method, Method,
+    ];
+    assert_eq!(kinds("src/test/scala/OrderTest.scala")?, expected);
+    assert_eq!(kinds("src/main/scala/Order.scala")?, expected);
+    Ok(())
+}
+
+/// Scala declarations of every kind: classes, case classes, implicit classes, objects, case
+/// objects and enums are classes, traits interfaces, a package object a module, type definitions
+/// types. A function in the body of a class, object, trait or enum is a method, abstract or not,
+/// and so is an extension method in an object, an operator (`def +`), an auxiliary constructor,
+/// named `this`, and a function of a `given` instance, which no class holds; one inside a function
+/// is a function. A `val` of one name in an object, a package object or at the top of a file is a
+/// constant, lazy or not; a `var`, a `val` of a class and a `val` of two names are none, and
+/// neither is a `given`.
+#[test]
+fn scala_declarations_of_every_kind() -> TestResult {
+    let source = "sealed trait Shape {\n  def area(): Double\n  def describe(): String = \"shape\"\n}\n\
+                  case object Circle extends Shape\n\
+                  abstract class Base[T](val x: T)\n\
+                  implicit class Rich(val s: String) {\n  def shout: String = s.toUpperCase\n}\n\
+                  enum Suit {\n  case Hearts, Spades\n  def color: Int = 0\n}\n\
+                  object Config {\n  val Limit = 3\n  lazy val Cache = load()\n  var counter = 0\n  \
+                  private val (a, b) = (1, 2)\n  object Nested {\n    val Depth = 2\n  }\n  \
+                  extension (o: Order) def total: Int = o.size\n  def +(other: Int): Int = other\n  \
+                  given ordering: Ordering[Order] = Ordering.by(_.size)\n}\n\
+                  class Holder {\n  val instance = 1\n  def outer(): Int = {\n    def inner(): Int = 1\n    inner()\n  }\n  \
+                  def this(x: Int) = this()\n}\n\
+                  package object util {\n  val Version = 1\n  def helper(): Int = 2\n}\n\
+                  given Ordering[Long] with {\n  def compare(a: Long, b: Long): Int = 0\n}\n\
+                  type Price = Int\nval Rate = 2\ndef top(): Int = 1\n";
+    let extraction = extract("src/main/scala/kinds.scala", Language::Scala, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant, Function, Interface, Method, Module, Type};
+    assert_eq!(
+        symbols,
+        [
+            ("Shape", Interface),
+            ("Shape.area", Method),
+            ("Shape.describe", Method),
+            ("Circle", Class),
+            ("Base", Class),
+            ("Rich", Class),
+            ("Rich.shout", Method),
+            ("Suit", Class),
+            ("Suit.color", Method),
+            ("Config", Class),
+            ("Config.Limit", Constant),
+            ("Config.Cache", Constant),
+            ("Config.Nested", Class),
+            ("Config.Nested.Depth", Constant),
+            ("Config.total", Method),
+            ("Config.+", Method),
+            ("Holder", Class),
+            ("Holder.outer", Method),
+            ("Holder.outer.inner", Function),
+            ("Holder.this", Method),
+            ("util", Module),
+            ("util.Version", Constant),
+            ("util.helper", Method),
+            ("compare", Method),
+            ("Price", Type),
+            ("Rate", Constant),
+            ("top", Function)
+        ]
+    );
+    Ok(())
+}
+
+/// Scala references in every form: calls plain, generic, on a member, generic on a member, by
+/// name between two operands, to `apply`, and `new` of a plain, a generic, a qualified and a
+/// qualified generic class, with traits mixed in or without, which the new object inherits;
+/// bases generic, qualified, qualified generic and mixed in with `with`; uses of a type in
+/// parameters, a qualified
+/// type, a function type, type arguments, a result and an annotation. A member read without
+/// arguments (`Map.empty`) is no call.
+#[test]
+fn scala_references_in_every_form() -> TestResult {
+    let source = "class Box[T](items: List[T]) extends Base[T](1) with shop.Priced with Logs {\n  \
+                  @deprecated(\"old\", \"1\") def run(order: shop.models.Order, f: Int => Unit): Map[String, Line] = {\n    \
+                  fee(1)\n    convert[Int](2)\n    order.pay()\n    order.cast[Paid]()\n    xs map f\n    \
+                  new Receipt()\n    new Holder[Int]()\n    new shop.Ticket()\n    Order.apply(1)\n    Map.empty\n  }\n}\n\
+                  class Q extends shop.Base[Int] {\n  val b = new shop.Box[Int](1)\n  \
+                  val m = new Foo[Int](1) with Bar with Baz[Int]\n  val n = new Plain with Mixin { def m2 = 1 }\n  val w = new Worker(1) with Logging\n  val g = new Gen[Int] with Audit\n}\n";
+    let extraction = extract("src/main/scala/box.scala", Language::Scala, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    assert_eq!(
+        symbols,
+        [
+            ("Box", SymbolKind::Class),
+            ("Box.run", SymbolKind::Method),
+            ("Q", SymbolKind::Class),
+            ("Q.m2", SymbolKind::Method)
+        ]
+    );
+    let refs: Vec<(&str, &str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("type_ref", "List", 1),
+            ("type_ref", "T", 1),
+            ("inherit", "Base", 1),
+            ("type_ref", "T", 1),
+            ("inherit", "Priced", 1),
+            ("inherit", "Logs", 1),
+            ("type_ref", "deprecated", 2),
+            ("type_ref", "Order", 2),
+            ("type_ref", "Int", 2),
+            ("type_ref", "Unit", 2),
+            ("type_ref", "Map", 2),
+            ("type_ref", "String", 2),
+            ("type_ref", "Line", 2),
+            ("call", "fee", 3),
+            ("call", "convert", 4),
+            ("type_ref", "Int", 4),
+            ("call", "pay", 5),
+            ("call", "cast", 6),
+            ("type_ref", "Paid", 6),
+            ("call", "map", 7),
+            ("call", "Receipt", 8),
+            ("call", "Holder", 9),
+            ("type_ref", "Int", 9),
+            ("call", "Ticket", 10),
+            ("call", "apply", 11),
+            ("inherit", "Base", 15),
+            ("type_ref", "Int", 15),
+            ("call", "Box", 16),
+            ("type_ref", "Int", 16),
+            ("call", "Foo", 17),
+            ("type_ref", "Int", 17),
+            ("inherit", "Bar", 17),
+            ("inherit", "Baz", 17),
+            ("type_ref", "Int", 17),
+            ("call", "Plain", 18),
+            ("inherit", "Mixin", 18),
+            ("call", "Worker", 19),
+            ("inherit", "Logging", 19),
+            ("call", "Gen", 20),
+            ("type_ref", "Int", 20),
+            ("inherit", "Audit", 20)
+        ]
+    );
+    Ok(())
+}
+
+/// An sbt build file is read as Scala: a `val` at its top is a constant, and its settings are
+/// calls; the operators between them (`:=`, `+=`, `%%`) are not.
+#[test]
+fn scala_build_files_are_read() -> TestResult {
+    let source = "lazy val root = (project in file(\".\")).settings(name := \"shop\")\n\
+                  libraryDependencies += \"org\" %% \"lib\" % \"1.0\"\n";
+    let extraction = extract("build.sbt", Language::Scala, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    assert_eq!(symbols, [("root", SymbolKind::Constant)]);
+    let refs: Vec<(&str, &str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("call", "in", 1),
+            ("call", "file", 1),
+            ("call", "settings", 1)
+        ]
+    );
+    Ok(())
+}
+
+/// Scala imports in every form: a name from a path of one part or of several, or with no path;
+/// every name, with `_` or Scala 3's `*`, of a path of one part or several; selected names,
+/// renamed with `=>` or Scala 3's `as` or not, with every other name among them or a name hidden;
+/// and Scala 3's `as` alone. An import of several clauses, which the grammar runs together, and
+/// one of `given` instances are not read.
+#[test]
+fn scala_imports_in_every_form() -> TestResult {
+    let source = "import shop.models.Item\nimport shop.support.{Money, Clock => Time}\nimport shop.util._\n\
+                  import shop.extra.*\nimport shop.other.Thing as T\nimport single\nimport a.Y\n\
+                  import p.q.r.s.T\nimport x.{A, _}\nimport y.{B => _}\nimport z._\nimport k.{L => M}\n\
+                  import n.O as P\nimport a.b.{c as d2, e => f2, _}\nimport a.B, c.D\nimport e.{F, G}, h.I\n\
+                  import x.given\nimport y.{given, Foo}\nimport java.util.{List => _, _}\n\
+                  import p, q\nimport r._, s._\nimport m.n.{O}, p.Q\nimport a.b.given\nimport a.b.{given, Foo}\nimport u.{V as W}\n";
+    let extraction = extract("src/main/scala/imports.scala", Language::Scala, source)?;
+    let imports: Vec<(&str, String, Option<&str>, u32)> = extraction
+        .imports
+        .iter()
+        .map(|import| {
+            let imported = match &import.imported {
+                Imported::Name(name) => format!("name:{}", name.as_str()),
+                other => format!("{other:?}"),
+            };
+            let alias = import.alias.as_ref().map(cortex_core::Identifier::as_str);
+            (import.specifier.as_str(), imported, alias, import.line)
+        })
+        .collect();
+    assert_eq!(
+        imports,
+        [
+            ("shop.models", "name:Item".to_owned(), None, 1),
+            ("shop.support", "name:Money".to_owned(), None, 2),
+            ("shop.support", "name:Clock".to_owned(), Some("Time"), 2),
+            ("shop.util", "All".to_owned(), None, 3),
+            ("shop.extra", "All".to_owned(), None, 4),
+            ("shop.other", "name:Thing".to_owned(), Some("T"), 5),
+            ("single", "Module".to_owned(), None, 6),
+            ("a", "name:Y".to_owned(), None, 7),
+            ("p.q.r.s", "name:T".to_owned(), None, 8),
+            ("x", "name:A".to_owned(), None, 9),
+            ("x", "All".to_owned(), None, 9),
+            ("z", "All".to_owned(), None, 11),
+            ("k", "name:L".to_owned(), Some("M"), 12),
+            ("n", "name:O".to_owned(), Some("P"), 13),
+            ("a.b", "name:c".to_owned(), Some("d2"), 14),
+            ("a.b", "name:e".to_owned(), Some("f2"), 14),
+            ("a.b", "All".to_owned(), None, 14),
+            ("y", "name:Foo".to_owned(), None, 18),
+            ("java.util", "All".to_owned(), None, 19),
+            ("a.b", "name:Foo".to_owned(), None, 24),
+            ("u", "name:V".to_owned(), Some("W"), 25)
         ]
     );
     Ok(())
