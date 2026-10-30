@@ -34,7 +34,9 @@ pub struct Import {
     pub imported: Imported,
     /// The name the import is bound to, when the file renames it.
     pub alias: Option<Identifier>,
-    /// The 1-based line where the import statement starts.
+    /// The 1-based line where what it takes is written: its name, the mark of the default or of
+    /// every name, its alias, else its module. That is the line its statement starts on, unless
+    /// the statement spans several lines.
     pub line: u32,
 }
 
@@ -87,8 +89,8 @@ pub(crate) fn read_imports<'tree>(
     let mut matches = cursor.matches_with_options(&grammar.imports, root, source, options);
     while let Some(found) = matches.next() {
         let parts = parts_of(found.captures(), &grammar.import_captures);
-        match import_of(&parts, source).zip(position_of(&parts)) {
-            Some((import, position)) => {
+        match import_of(&parts, source) {
+            Some((position, import)) => {
                 names.extend(name_reference(&parts));
                 imports.push((position, import));
             }
@@ -120,20 +122,6 @@ fn name_reference<'tree>(parts: &Parts<'tree>) -> Option<Tag<'tree>> {
     })
 }
 
-/// Where the import one match describes is written: the start of its statement, then the start
-/// of what it takes (its name, the mark of the default or of every name, its alias, else its
-/// module); `None` when the match has no statement or no module.
-fn position_of(parts: &Parts<'_>) -> Option<(usize, usize)> {
-    let statement = parts.statement?;
-    let taken = parts
-        .name
-        .or(parts.default)
-        .or(parts.all)
-        .or(parts.alias)
-        .or(parts.module)?;
-    Some((statement.start_byte(), taken.start_byte()))
-}
-
 /// The captures of one match, by what each marks.
 fn parts_of<'tree>(captures: &[QueryCapture<'tree>], meanings: &[ImportCapture]) -> Parts<'tree> {
     let mut parts = Parts::default();
@@ -156,9 +144,18 @@ fn parts_of<'tree>(captures: &[QueryCapture<'tree>], meanings: &[ImportCapture])
     parts
 }
 
-/// The import one match describes, unless a part of it is missing, holds a syntax error, or is
-/// not a name Cortex can store.
-fn import_of(parts: &Parts<'_>, source: &[u8]) -> Option<Import> {
+/// The import one match describes, with where it is written: the start of its statement, then
+/// the start of what it takes (its name, the mark of the default or of every name, its alias,
+/// else its module). `None` when a part of it is missing, holds a syntax error, or is not a name
+/// Cortex can store.
+fn import_of(parts: &Parts<'_>, source: &[u8]) -> Option<((usize, usize), Import)> {
+    let statement = parts.statement?;
+    let taken = parts
+        .name
+        .or(parts.default)
+        .or(parts.all)
+        .or(parts.alias)
+        .or(parts.module)?;
     let specifier = match parts.module_end {
         Some(end) => run_at(parts.module?, end, source)?,
         None => identifier_at(parts.module?, source)?,
@@ -173,12 +170,13 @@ fn import_of(parts: &Parts<'_>, source: &[u8]) -> Option<Import> {
         Some(alias) => Some(identifier_at(alias, source)?),
         None => None,
     };
-    Some(Import {
+    let import = Import {
         specifier,
         imported,
         alias,
-        line: line_number(parts.statement?.start_position().row)?,
-    })
+        line: line_number(taken.start_position().row)?,
+    };
+    Some(((statement.start_byte(), taken.start_byte()), import))
 }
 
 /// The text of `node` as a name, unless it holds a syntax error or cannot be one.

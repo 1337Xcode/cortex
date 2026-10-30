@@ -204,6 +204,7 @@ fn default_in_braces_is_the_default_export() -> TestResult {
 /// Each name an import takes is a reference of kind `import` where the name is written: on its
 /// own line in an import that spans several (lines 2 and 3, though the statement starts on line
 /// 1), and inside the function that imports it (line 8). A whole module (line 5) takes no name.
+/// Each import is on the line of what it takes, the same lines.
 #[test]
 fn imported_names_are_referenced_where_they_are_written() -> TestResult {
     let source = "from shop import (\n    Order,\n    Line as L,\n)\nimport os\n\n\
@@ -234,12 +235,13 @@ fn imported_names_are_referenced_where_they_are_written() -> TestResult {
             ("call", "tidy", 9, Some("f"))
         ]
     );
+    // An import is on the line of the name it takes, as the name's reference is.
     let lines: Vec<u32> = extraction
         .imports
         .iter()
         .map(|import| import.line)
         .collect();
-    assert_eq!(lines, [1, 1, 5, 8]);
+    assert_eq!(lines, [2, 3, 5, 8]);
     assert!(extraction.left_out.is_empty());
     Ok(())
 }
