@@ -29,7 +29,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Grammars` | Every language's grammar, tags query and imports query, compiled and checked once; a query that uses anything Cortex does not read is refused |
 | `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition; and the modules it imports, with what it takes (the module, one name, every name or the default export) and the name it binds |
-| `index_repository` | Indexes a whole repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file it found, ties references to the definitions their names settle, and keeps a node for each folder that holds files |
+| `index_repository` | Indexes a whole repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file it found, ties references to the definitions their names settle, joins each parsed file to the files its imports name, and keeps a node for each folder that holds files |
 | `IndexOptions`, `IndexReport`, `FileProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, and the files skipped because they could not be read, took too long to parse or panicked while being read |
 
 ## What a file's flags mean
@@ -138,6 +138,51 @@ Files are read and parsed in batches on several threads, each thread with a pars
 while the batch before is written in one transaction. Each batch is written in path order, so the
 same tree gets the same rows and ids whatever the number of threads, as long as no file runs out
 of time.
+
+## Imports
+
+After the references, each parsed file's imports are turned into the files they name, and the
+file gets a directed import edge to each of those files, at weight 0.8. An edge's count is how
+many of the file's imports name its target: an import that names one file twice counts once, and
+a file gets no edge to itself. A full index replaces the import edges of every file it writes, so
+an import that is gone takes its edge with it; a file it skips keeps its edges.
+
+Each language family whose imports can name files has a resolver in `src/imports/`, registered by
+one line there. A resolver reads the project files it needs (configs, `go.mod`, `Cargo.toml`)
+once per index, as the walk found them, and never one that may hold secrets.
+
+- TypeScript and JavaScript. A specifier that starts with `./` or `../` is taken from the
+  importer's folder. Any other goes through the nearest `tsconfig.json` or `jsconfig.json` above
+  the importer, `tsconfig.json` first: an exact `paths` pattern, else the longest matching
+  prefix, else `baseUrl`. A config's relative `extends` is followed, with `.json` added when the
+  path names no file; a config from a package is not read. Each path is tried the way TypeScript
+  tries it: a script extension written in the specifier is swapped for the ones TypeScript would
+  load in its place, then `.ts`, `.tsx`, `.d.ts`, `.js` and `.jsx` are added, then the folder's
+  `index` file is tried with each. A package name with no mapping names no file.
+- Python. A relative import climbs one folder per dot after the first, through packages only
+  (folders with `__init__.py`). An absolute import is looked for under the importer's base
+  folder (the nearest folder above it that is not a package), then under the repository root
+  when that is not a package, then under the one source root that holds it. Source roots are the
+  folders holding `pyproject.toml`, `setup.py` or `setup.cfg`, and the `src` folder beside them.
+  `from x import y` also names `x/y.py` when `x` is a package.
+- Go. The import path is matched against the `module` lines of the repository's `go.mod` files,
+  longest module first, and the rest of the path names a folder under that module. The package's
+  `.go` files are the import's files, test files and files whose names start with `_` or `.` left
+  out. When two `go.mod` files declare the same module, the one in a folder above the importer is
+  used.
+- Rust. A path that starts with `crate`, `self` or `super` is walked from the importer's own
+  crate root or module. One that starts with the name of the package's library, or of a package
+  of the repository it depends on by `path` (directly or through its workspace), is walked from
+  that crate's library root. Each part is looked for as `x.rs`, then `x/mod.rs`. Crate roots are
+  Cargo's targets: the library, `src/main.rs`, the build script, and the binaries, tests,
+  examples and benchmarks, declared or found where Cargo finds them.
+
+Other languages' imports name no file. Every limit on this work is fixed, so a crafted
+repository cannot make it grow: a config built from more than 16 files (itself and everything it
+extends), or with more than 256 wildcard `paths` patterns or more than 16 targets for one
+pattern, is not used, and a Python top-level name held by more than 64 source roots is left
+unresolved. A config that is not used, or that extends a file that cannot be read, leaves only
+relative specifiers to resolve.
 
 ## Tests
 
