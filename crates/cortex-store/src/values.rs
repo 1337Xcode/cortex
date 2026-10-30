@@ -1,7 +1,7 @@
 //! How values are stored and read back: unsigned numbers as SQLite integers, kinds by their
 //! stored names, names and paths as text checked again on the way out.
 
-use cortex_core::{Identifier, RepoPath};
+use cortex_core::{Identifier, Language, RepoPath};
 
 use crate::error::StoreError;
 
@@ -41,4 +41,10 @@ pub(crate) fn kind<T>(
     row: i64,
 ) -> Result<T, StoreError> {
     from_name(text).ok_or(StoreError::Corrupt { column, row })
+}
+
+/// A file's stored language read back, absent when the file has none; `row` is the file's id.
+pub(crate) fn language(name: Option<String>, row: i64) -> Result<Option<Language>, StoreError> {
+    name.map(|name| kind(&name, Language::from_name, "files.lang", row))
+        .transpose()
 }

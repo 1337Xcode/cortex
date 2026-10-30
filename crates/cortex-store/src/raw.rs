@@ -3,15 +3,13 @@
 //! A query reads the columns it needs into plain values first and checks them second, so a
 //! damaged row is reported as [`StoreError::Corrupt`] with its table, column and id.
 
-use cortex_core::{
-    ContentHash, EdgeType, FileFlags, Language, RefKind, Resolution, ShortHash, SymbolKind,
-};
+use cortex_core::{ContentHash, EdgeType, FileFlags, RefKind, Resolution, ShortHash, SymbolKind};
 use rusqlite::Row;
 
 use crate::error::StoreError;
 use crate::ids::{FileId, NodeId, RefId, SymbolId};
 use crate::records::{EdgeRecord, FileRecord, Target};
-use crate::rows::{EdgeRow, FileRow, RefRow, SymbolRow};
+use crate::rows::{EdgeRow, FileRow, RefName, RefRow, SymbolName, SymbolRow};
 use crate::values;
 
 /// A `files` row as SQLite returns it.
@@ -55,10 +53,7 @@ impl RawFile {
     /// The row with every value checked.
     pub(crate) fn check(self) -> Result<FileRow, StoreError> {
         let row = self.id;
-        let language = self
-            .lang
-            .map(|name| values::kind(&name, Language::from_name, "files.lang", row))
-            .transpose()?;
+        let language = values::language(self.lang, row)?;
         let line_count = self
             .loc
             .map(|lines| values::number(lines, "files.loc", row))
@@ -179,19 +174,7 @@ impl RawRef {
     /// The row with every value checked. A target and a resolution come together or not at all.
     pub(crate) fn check(self) -> Result<RefRow, StoreError> {
         let row = self.id;
-        let target = match (self.dst_symbol, self.resolution) {
-            (Some(symbol), Some(name)) => Some(Target {
-                symbol: SymbolId(symbol),
-                resolution: values::kind(&name, Resolution::from_name, "refs.resolution", row)?,
-            }),
-            (None, None) => None,
-            _ => {
-                return Err(StoreError::Corrupt {
-                    column: "refs.resolution",
-                    row,
-                });
-            }
-        };
+        let target = target(self.dst_symbol, self.resolution, row)?;
         Ok(RefRow {
             id: RefId(row),
             file: FileId(self.file),
@@ -200,7 +183,125 @@ impl RawRef {
             kind: values::kind(&self.kind, RefKind::from_name, "refs.kind", row)?,
             line: values::number(self.line, "refs.line", row)?,
             target,
-            confidence: self.confidence,
+            confidence: checked_confidence(self.confidence, target, row)?,
+        })
+    }
+}
+
+/// The target of the reference in `row`, from its stored symbol and resolution, which come
+/// together or not at all.
+fn target(
+    symbol: Option<i64>,
+    resolution: Option<String>,
+    row: i64,
+) -> Result<Option<Target>, StoreError> {
+    match (symbol, resolution) {
+        (Some(symbol), Some(name)) => Ok(Some(Target {
+            symbol: SymbolId(symbol),
+            resolution: values::kind(&name, Resolution::from_name, "refs.resolution", row)?,
+        })),
+        (None, None) => Ok(None),
+        _ => Err(StoreError::Corrupt {
+            column: "refs.resolution",
+            row,
+        }),
+    }
+}
+
+/// The stored confidence of the reference in `row`, which must be its target's resolution's, or 0
+/// without a target.
+fn checked_confidence(
+    confidence: f64,
+    target: Option<Target>,
+    row: i64,
+) -> Result<f64, StoreError> {
+    let expected = target.map_or(0.0, |target| target.resolution.confidence());
+    if confidence.total_cmp(&expected).is_eq() {
+        Ok(confidence)
+    } else {
+        Err(StoreError::Corrupt {
+            column: "refs.confidence",
+            row,
+        })
+    }
+}
+
+/// A symbol's name and file as [`crate::schema::SYMBOL_NAMES`] returns them.
+pub(crate) struct RawSymbolName {
+    /// `symbol_id`.
+    id: i64,
+    /// `file_id`.
+    file: i64,
+    /// The file's `lang`.
+    lang: Option<String>,
+    /// `name`.
+    name: String,
+}
+
+impl RawSymbolName {
+    /// Reads the columns of [`crate::schema::SYMBOL_NAMES`].
+    pub(crate) fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            file: row.get(1)?,
+            lang: row.get(2)?,
+            name: row.get(3)?,
+        })
+    }
+
+    /// The row with every value checked.
+    pub(crate) fn check(self) -> Result<SymbolName, StoreError> {
+        Ok(SymbolName {
+            id: SymbolId(self.id),
+            file: FileId(self.file),
+            language: values::language(self.lang, self.file)?,
+            name: values::identifier(&self.name, "symbols.name", self.id)?,
+        })
+    }
+}
+
+/// A reference's name, file and target as [`crate::schema::REF_NAMES`] returns them.
+pub(crate) struct RawRefName {
+    /// `ref_id`.
+    id: i64,
+    /// `src_file_id`.
+    file: i64,
+    /// The file's `lang`.
+    lang: Option<String>,
+    /// `dst_name`.
+    dst_name: String,
+    /// `dst_symbol_id`.
+    dst_symbol: Option<i64>,
+    /// `resolution`.
+    resolution: Option<String>,
+    /// `confidence`.
+    confidence: f64,
+}
+
+impl RawRefName {
+    /// Reads the columns of [`crate::schema::REF_NAMES`].
+    pub(crate) fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            file: row.get(1)?,
+            lang: row.get(2)?,
+            dst_name: row.get(3)?,
+            dst_symbol: row.get(4)?,
+            resolution: row.get(5)?,
+            confidence: row.get(6)?,
+        })
+    }
+
+    /// The row with every value checked, the stored confidence against the target's resolution.
+    pub(crate) fn check(self) -> Result<RefName, StoreError> {
+        let target = target(self.dst_symbol, self.resolution, self.id)?;
+        checked_confidence(self.confidence, target, self.id)?;
+        Ok(RefName {
+            id: RefId(self.id),
+            file: FileId(self.file),
+            language: values::language(self.lang, self.file)?,
+            name: values::identifier(&self.dst_name, "refs.dst_name", self.id)?,
+            target,
         })
     }
 }

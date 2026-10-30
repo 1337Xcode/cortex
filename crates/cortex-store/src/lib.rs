@@ -39,5 +39,5 @@ pub use records::{
     ChangeKind, EdgeRecord, FileChange, FileIndex, FileRecord, FileRemoval, RefRecord, Resolved,
     SymbolChange, SymbolRecord, Target,
 };
-pub use rows::{EdgeRow, FileRow, IndexCounts, RefRow, SymbolRow};
+pub use rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow};
 pub use writer::{WriteTx, Writer, WriterOptions};

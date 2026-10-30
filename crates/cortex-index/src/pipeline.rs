@@ -32,6 +32,7 @@ use crate::discover::{
 use crate::extract::{ExtractError, Extractor};
 use crate::folders;
 use crate::grammar::Grammars;
+use crate::resolve;
 use crate::safe_read;
 
 /// How many files are prepared together and written in one transaction. The results of the batch
@@ -152,8 +153,9 @@ struct Context<'a> {
 }
 
 /// Indexes the repository at `root` into `writer`'s store: walks it, removes the stored files the
-/// walk no longer finds, reads, parses and writes every file it found, then gives each folder
-/// holding stored files its node and containment edges.
+/// walk no longer finds, reads, parses and writes every file it found, ties each reference to the
+/// definition its name settles, then gives each folder holding stored files its node and
+/// containment edges.
 ///
 /// # Errors
 ///
@@ -185,6 +187,7 @@ pub fn index_repository(
         problems: Vec::new(),
     };
     write_files(writer, &discovery.files, &context, &mut report)?;
+    resolve::resolve_names(writer)?;
     folders::write_folders(writer)?;
     Ok(report)
 }

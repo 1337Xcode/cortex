@@ -4,10 +4,10 @@
 mod common;
 
 use common::{Scratch, TestResult, index, name, path, reference, symbol};
-use cortex_core::{EdgeType, RefKind, RepoId, Resolution, SymbolKind};
+use cortex_core::{EdgeType, Language, RefKind, RepoId, Resolution, SymbolKind};
 use cortex_store::{
-    ChangeKind, EdgeRecord, EdgeRow, IndexCounts, MetaKey, Resolved, StoreError, SymbolChange,
-    Target,
+    ChangeKind, EdgeRecord, EdgeRow, IndexCounts, MetaKey, RefName, Resolved, StoreError,
+    SymbolChange, SymbolName, Target,
 };
 
 /// The version the workspace manifest declares; a version bump updates this literal on purpose.
@@ -333,6 +333,74 @@ fn node_ids_are_never_reused() -> TestResult {
     transaction.replace_file(&index("src/a.py", Vec::new(), Vec::new())?)?;
     let new = transaction.replace_file(&with("new")?)?;
     assert!(new.symbol_nodes[0] > old.symbol_nodes[0]);
+    Ok(())
+}
+
+/// Every symbol's and every reference's name is listed by id, with its file and that file's
+/// language, and each reference with what it is tied to.
+#[test]
+fn names_are_listed_with_their_files() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let a = transaction.replace_file(&index(
+        "src/a.py",
+        vec![
+            symbol(SymbolKind::Function, "helper", None, ("s", "b"))?,
+            symbol(SymbolKind::Function, "main", None, ("s", "b"))?,
+        ],
+        vec![
+            reference(Some(1), "helper", RefKind::Call, 5)?,
+            reference(Some(1), "print", RefKind::Call, 6)?,
+        ],
+    )?)?;
+    let target = Target {
+        symbol: a.symbols[0],
+        resolution: Resolution::SameFile,
+    };
+    transaction.set_resolutions(&[Resolved {
+        reference: a.refs[0],
+        target: Some(target),
+    }])?;
+    transaction.commit()?;
+    let queries = writer.queries();
+    let python = Some(Language::Python);
+    assert_eq!(
+        queries.symbol_names()?,
+        [
+            SymbolName {
+                id: a.symbols[0],
+                file: a.file,
+                language: python,
+                name: name("helper")?,
+            },
+            SymbolName {
+                id: a.symbols[1],
+                file: a.file,
+                language: python,
+                name: name("main")?,
+            },
+        ]
+    );
+    assert_eq!(
+        queries.ref_names()?,
+        [
+            RefName {
+                id: a.refs[0],
+                file: a.file,
+                language: python,
+                name: name("helper")?,
+                target: Some(target),
+            },
+            RefName {
+                id: a.refs[1],
+                file: a.file,
+                language: python,
+                name: name("print")?,
+                target: None,
+            },
+        ]
+    );
     Ok(())
 }
 

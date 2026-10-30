@@ -81,9 +81,9 @@ named_kind! {
         Scip => "scip",
         /// The import path resolved to a file that exports the name.
         ImportPath => "import_path",
-        /// A definition with the name in the same file.
+        /// The only definition with the name in the same file.
         SameFile => "same_file",
-        /// The only definition with the name in the repository.
+        /// The only definition with the name among the files of the reference's language family.
         NameOnly => "name_only",
     }
 }

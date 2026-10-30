@@ -1,6 +1,6 @@
 //! What the read queries return.
 
-use cortex_core::{EdgeType, Identifier, RefKind, ShortHash, SymbolKind};
+use cortex_core::{EdgeType, Identifier, Language, RefKind, ShortHash, SymbolKind};
 
 use crate::ids::{FileId, NodeId, RefId, SymbolId};
 use crate::records::{EdgeRecord, FileRecord, Target};
@@ -90,4 +90,32 @@ pub struct IndexCounts {
     pub nodes: u64,
     /// Graph edges.
     pub edges: u64,
+}
+
+/// A stored symbol's name and the file it is defined in, as resolution reads them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolName {
+    /// Its row.
+    pub id: SymbolId,
+    /// The file it is defined in.
+    pub file: FileId,
+    /// That file's language.
+    pub language: Option<Language>,
+    /// Its name.
+    pub name: Identifier,
+}
+
+/// A stored reference's name, the file it is in and what it is tied to, as resolution reads them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefName {
+    /// Its row.
+    pub id: RefId,
+    /// The file it is in.
+    pub file: FileId,
+    /// That file's language.
+    pub language: Option<Language>,
+    /// The name used.
+    pub name: Identifier,
+    /// The symbol it is tied to, if any.
+    pub target: Option<Target>,
 }

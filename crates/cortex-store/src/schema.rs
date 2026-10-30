@@ -82,6 +82,10 @@ pub(crate) const SYMBOLS_IN_FILE: &str = concat!(
 pub(crate) const SYMBOLS_NAMED: &str =
     concat!(symbol_columns!(), "WHERE name = ?1 ORDER BY symbol_id");
 
+/// Every symbol's id, file, file language and name, by id.
+pub(crate) const SYMBOL_NAMES: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name \
+     FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id ORDER BY s.symbol_id";
+
 /// Adds an unresolved reference and returns its id.
 pub(crate) const REF_INSERT: &str = "INSERT INTO refs (src_file_id, src_symbol_id, dst_name, \
      dst_symbol_id, kind, line, resolution, confidence) \
@@ -98,6 +102,11 @@ pub(crate) const REF_RESOLVE: &str = "UPDATE refs SET dst_symbol_id = ?2, resolu
 pub(crate) const REFS_IN_FILE: &str = "SELECT ref_id, src_file_id, src_symbol_id, dst_name, \
      dst_symbol_id, kind, line, resolution, confidence FROM refs WHERE src_file_id = ?1 \
      ORDER BY ref_id";
+
+/// Every reference's id, file, file language, name, target, resolution and confidence, by id.
+pub(crate) const REF_NAMES: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
+     r.dst_symbol_id, r.resolution, r.confidence FROM refs AS r \
+     JOIN files AS f ON f.file_id = r.src_file_id ORDER BY r.ref_id";
 
 /// Adds the node for a row, or updates its path, and returns its id.
 pub(crate) const NODE_UPSERT: &str = "INSERT INTO nodes (kind, ref_id, path) VALUES (?1, ?2, ?3) \

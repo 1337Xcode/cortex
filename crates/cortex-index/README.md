@@ -29,7 +29,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Grammars` | Every language's grammar, tags query and imports query, compiled and checked once; a query that uses anything Cortex does not read is refused |
 | `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition; and the modules it imports, with what it takes (the module, one name, every name or the default export) and the name it binds |
-| `index_repository` | Indexes a whole repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file it found, and keeps a node for each folder that holds files |
+| `index_repository` | Indexes a whole repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file it found, ties references to the definitions their names settle, and keeps a node for each folder that holds files |
 | `IndexOptions`, `IndexReport`, `FileProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, and the files skipped because they could not be read, took too long to parse or panicked while being read |
 
 ## What a file's flags mean
@@ -114,6 +114,14 @@ in Cortex or in a grammar, is caught and skips that file only.
 A stored file the walk no longer finds is removed, unless the walk reported a problem at its path
 or at a folder above it: a folder it could not list or did not enter, or a file it could not
 inspect.
+
+Each reference is then tied to the one definition with its name in its own file (confidence 0.6),
+or else to the one definition with its name among the files of its language family (0.3). The
+families are TypeScript, TSX and JavaScript; C and C++; Java, Kotlin and Scala; every other
+language is a family of its own, so a call is never tied to a function of another language that
+shares its name. A name with several definitions in reach stays unresolved. Every full index
+resolves every stored reference again, the kept references of skipped files included, and
+writes only the ones whose target changed.
 
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts

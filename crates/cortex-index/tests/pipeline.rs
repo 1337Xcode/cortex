@@ -12,7 +12,9 @@ use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
 use common::{TestResult, grammars, lock_out, write};
-use cortex_core::{ContentHash, EdgeType, FileFlags, Language, RepoId, RepoPath, SymbolKind};
+use cortex_core::{
+    ContentHash, EdgeType, FileFlags, Language, RepoId, RepoPath, Resolution, SymbolKind,
+};
 use cortex_index::{
     DiscoverOptions, FileProblem, IndexOptions, IndexReport, Problem, ProblemKind, index_repository,
 };
@@ -268,6 +270,48 @@ fn folders(root: &Path) -> TestResult<Vec<(String, NodeId, Vec<String>)>> {
     Ok(folders)
 }
 
+/// One reference as resolution left it: its name, its line, the resolution, path and qualified name
+/// of the definition it is tied to, and its stored confidence as text.
+type Use = (String, u32, Option<(Resolution, String, String)>, String);
+
+/// The references stored for the file at `path` of the repository at `root`, in order, each as
+/// resolution left it.
+fn resolutions(root: &Path, path: &str) -> TestResult<Vec<Use>> {
+    let reader = reader(root)?;
+    let queries = reader.queries();
+    let mut definitions = BTreeMap::new();
+    for file_path in queries.file_paths()? {
+        let file = queries.file(&file_path)?.ok_or("listed file missing")?;
+        for symbol in queries.symbols_in_file(file.id)? {
+            let name = symbol.qual_name.as_str().to_owned();
+            definitions.insert(symbol.id, (file_path.as_str().to_owned(), name));
+        }
+    }
+    let file = queries
+        .file(&RepoPath::new(path)?)?
+        .ok_or("file not stored")?;
+    let mut uses = Vec::new();
+    for reference in queries.refs_in_file(file.id)? {
+        let target = match reference.target {
+            Some(target) => {
+                let (file, name) = definitions
+                    .get(&target.symbol)
+                    .ok_or("a target that is not stored")?;
+                Some((target.resolution, file.clone(), name.clone()))
+            }
+            None => None,
+        };
+        let name = reference.dst_name.as_str().to_owned();
+        uses.push((
+            name,
+            reference.line,
+            target,
+            reference.confidence.to_string(),
+        ));
+    }
+    Ok(uses)
+}
+
 /// Every row stored for the repository at `root`, file by file in path order.
 fn dump(root: &Path) -> TestResult<Vec<Rows>> {
     let reader = reader(root)?;
@@ -423,6 +467,98 @@ fn held(folders: &[(String, NodeId, Vec<String>)]) -> Vec<(&str, Vec<&str>)> {
         .iter()
         .map(|(path, _, files)| (path.as_str(), files.iter().map(String::as_str).collect()))
         .collect()
+}
+
+/// A reference is tied to the one definition with its name in its own file (confidence 0.6), or
+/// else to the one definition with its name among files of its language family (0.3), or to
+/// nothing. `local` is defined in `a.py` and `b.py`, so a call in `a.py` takes its own; `twice`
+/// is defined in two Python files and `dup` twice in one, so calls to them stay loose; `render`
+/// is defined only in TypeScript, which a JavaScript call reaches and a Python call does not; a
+/// C++ call reaches a C function and a Kotlin call a Java method, and Java's `twice` is unique in
+/// its family whatever Python defines. On a second index that cannot read `a.py`, its kept
+/// references are resolved again: a second `shared` makes theirs ambiguous.
+#[test]
+fn references_resolve_by_file_then_by_family() -> TestResult {
+    /// A target as the test writes it: resolution, file, qualified name, confidence as text.
+    type Tie<'a> = (Resolution, &'a str, &'a str, &'a str);
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    let a = "def helper():\n    pass\n\n\ndef local():\n    pass\n\n\ndef run():\n    helper()\n    local()\n    shared()\n    twice()\n    render()\n    dup()\n";
+    write(root, "a.py", a.as_bytes())?;
+    let b = "def shared():\n    pass\n\n\ndef twice():\n    pass\n\n\ndef local():\n    pass\n";
+    write(root, "b.py", b.as_bytes())?;
+    write(root, "c.py", b"def twice():\n    pass\n")?;
+    let d = "def dup():\n    pass\n\n\ndef dup():\n    pass\n\n\ndup()\n";
+    write(root, "d.py", d.as_bytes())?;
+    write(root, "web/app.ts", b"export function render() {}\n")?;
+    write(root, "web/use.js", b"render();\nhelper();\n")?;
+    write(
+        root,
+        "native/lib.c",
+        b"int add(int a, int b) { return a + b; }\n",
+    )?;
+    write(
+        root,
+        "native/main.cpp",
+        b"int main() { return add(1, 2); }\n",
+    )?;
+    let util = "class Util {\n    static int twice(int x) {\n        return 2 * x;\n    }\n}\n";
+    write(root, "jvm/Util.java", util.as_bytes())?;
+    write(root, "jvm/main.kt", b"fun main() {\n    twice(2)\n}\n")?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    // The confidences the two rules give, 0.6 and 0.3, and 0 for none, as the store reads them.
+    let tied = |name: &str, line, (resolution, file, qual_name, confidence): Tie<'_>| -> Use {
+        let target = Some((resolution, file.to_owned(), qual_name.to_owned()));
+        (name.to_owned(), line, target, confidence.to_owned())
+    };
+    let loose = |name: &str, line| -> Use { (name.to_owned(), line, None, "0".to_owned()) };
+    let same_file = |file, name| (Resolution::SameFile, file, name, "0.6");
+    let name_only = |file, name| (Resolution::NameOnly, file, name, "0.3");
+    assert_eq!(
+        resolutions(root, "a.py")?,
+        [
+            tied("helper", 10, same_file("a.py", "helper")),
+            tied("local", 11, same_file("a.py", "local")),
+            tied("shared", 12, name_only("b.py", "shared")),
+            loose("twice", 13),
+            loose("render", 14),
+            loose("dup", 15),
+        ]
+    );
+    assert_eq!(resolutions(root, "d.py")?, [loose("dup", 9)]);
+    let from_js = [
+        tied("render", 1, name_only("web/app.ts", "render")),
+        loose("helper", 2),
+    ];
+    assert_eq!(resolutions(root, "web/use.js")?, from_js);
+    assert_eq!(
+        resolutions(root, "native/main.cpp")?,
+        [tied("add", 1, name_only("native/lib.c", "add"))]
+    );
+    assert_eq!(
+        resolutions(root, "jvm/main.kt")?,
+        [tied("twice", 2, name_only("jvm/Util.java", "Util.twice"))]
+    );
+
+    write(root, "e.py", b"def shared():\n    pass\n")?;
+    let report = {
+        let _locked = lock_out(&root.join("a.py"))?;
+        index(root, 2, GENEROUS, DEFAULT_LIMIT)?
+    };
+    assert_eq!(report.walk_problems.len(), 1, "{report:?}");
+    assert_eq!(
+        resolutions(root, "a.py")?,
+        [
+            tied("helper", 10, same_file("a.py", "helper")),
+            tied("local", 11, same_file("a.py", "local")),
+            loose("shared", 12),
+            loose("twice", 13),
+            loose("render", 14),
+            loose("dup", 15),
+        ]
+    );
+    assert_eq!(resolutions(root, "web/use.js")?, from_js);
+    Ok(())
 }
 
 /// A second index follows the changes: a file the walk no longer finds is removed, a new one is

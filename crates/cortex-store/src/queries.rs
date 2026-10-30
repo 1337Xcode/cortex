@@ -6,8 +6,8 @@ use rusqlite::{Connection, OptionalExtension, Row};
 use crate::error::{StoreError, sqlite};
 use crate::ids::{FileId, NodeId, SymbolId};
 use crate::meta::MetaKey;
-use crate::raw::{RawEdge, RawFile, RawRef, RawSymbol};
-use crate::rows::{EdgeRow, FileRow, IndexCounts, RefRow, SymbolRow};
+use crate::raw::{RawEdge, RawFile, RawRef, RawRefName, RawSymbol, RawSymbolName};
+use crate::rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow};
 use crate::schema;
 use crate::values;
 
@@ -62,13 +62,7 @@ impl<'c> Queries<'c> {
     /// SQLite errors and stored paths that cannot be read back.
     pub fn file_paths(self) -> Result<Vec<RepoPath>, StoreError> {
         let raw: Vec<(i64, String)> = self
-            .connection
-            .prepare_cached(schema::FILE_PATHS)
-            .and_then(|mut statement| {
-                statement
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                    .collect()
-            })
+            .collect_all(schema::FILE_PATHS, |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(sqlite("reading file paths"))?;
         raw.iter()
             .map(|(id, path)| values::path(path, "files.path", *id))
@@ -141,6 +135,31 @@ impl<'c> Queries<'c> {
         self.paths_with_nodes(schema::FILE_NODES, "files.path")
     }
 
+    /// Every symbol's name, with the file it is defined in and that file's language, by id.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn symbol_names(self) -> Result<Vec<SymbolName>, StoreError> {
+        let raw = self
+            .collect_all(schema::SYMBOL_NAMES, RawSymbolName::read)
+            .map_err(sqlite("reading symbol names"))?;
+        raw.into_iter().map(RawSymbolName::check).collect()
+    }
+
+    /// Every reference's name, with the file it is in, that file's language and what the
+    /// reference is tied to, by id.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn ref_names(self) -> Result<Vec<RefName>, StoreError> {
+        let raw = self
+            .collect_all(schema::REF_NAMES, RawRefName::read)
+            .map_err(sqlite("reading reference names"))?;
+        raw.into_iter().map(RawRefName::check).collect()
+    }
+
     /// The edges that start at `node`, by type, then target.
     ///
     /// # Errors
@@ -206,13 +225,7 @@ impl<'c> Queries<'c> {
         column: &'static str,
     ) -> Result<Vec<(RepoPath, NodeId)>, StoreError> {
         let raw: Vec<(i64, String, i64)> = self
-            .connection
-            .prepare_cached(sql)
-            .and_then(|mut statement| {
-                statement
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-                    .collect()
-            })
+            .collect_all(sql, |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .map_err(sqlite("reading paths and nodes"))?;
         raw.into_iter()
             .map(|(id, path, node)| Ok((values::path(&path, column, id)?, NodeId(node))))
@@ -240,5 +253,15 @@ impl<'c> Queries<'c> {
     ) -> rusqlite::Result<Vec<T>> {
         let mut statement = self.connection.prepare_cached(sql)?;
         statement.query_map([key], read)?.collect()
+    }
+
+    /// Every row `sql`, which takes no parameter, selects, read by `read`.
+    fn collect_all<T>(
+        self,
+        sql: &'static str,
+        read: fn(&Row<'_>) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<Vec<T>> {
+        let mut statement = self.connection.prepare_cached(sql)?;
+        statement.query_map([], read)?.collect()
     }
 }
