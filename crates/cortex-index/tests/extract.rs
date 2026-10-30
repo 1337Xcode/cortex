@@ -184,6 +184,19 @@ fn java() -> TestResult {
     check_golden("java", "sample.java", Language::Java, "\n")
 }
 
+/// Bash: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn bash() -> TestResult {
+    check_golden("bash", "sample.sh", Language::Bash, "\n")
+}
+
+/// The same Bash with Windows line breaks, which end its commands: the same lines, spans that end
+/// at the same tokens, the same hashes.
+#[test]
+fn bash_with_crlf_line_breaks() -> TestResult {
+    check_golden("bash", "sample.sh", Language::Bash, "\r\n")
+}
+
 /// C: every construct in the fixture, listed by hand in `expected.txt`.
 #[test]
 fn c() -> TestResult {
@@ -2034,6 +2047,166 @@ fn scala_imports_in_every_form() -> TestResult {
             ("java.util", "All".to_owned(), None, 19),
             ("a.b", "name:Foo".to_owned(), None, 24),
             ("u", "name:V".to_owned(), Some("W"), 25)
+        ]
+    );
+    Ok(())
+}
+
+/// Shell tests go by name, as shUnit2 runs them: a function named `test...` in a test file, which
+/// is named `*_test.sh` (or `.bash`, `.zsh`, `.ksh`) or `test_*`, or sits in a test folder.
+#[test]
+fn bash_tests_are_marked_by_name() -> TestResult {
+    use SymbolKind::{Function, Test};
+    let source = "test_deploy() {\n  deploy prod\n}\ntestRollback() {\n  rollback\n}\nhelper() {\n  echo help\n}\n";
+    let kinds = |path: &str| -> Result<Vec<SymbolKind>, Box<dyn Error>> {
+        let extraction = extract(path, Language::Bash, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| symbol.kind)
+            .collect())
+    };
+    for path in [
+        "scripts/deploy_test.sh",
+        "scripts/deploy_test.bash",
+        "scripts/deploy_test.zsh",
+        "scripts/deploy_test.ksh",
+        "scripts/test_deploy.sh",
+        "tests/deploy.sh",
+    ] {
+        assert_eq!(kinds(path)?, [Test, Test, Function], "{path}");
+    }
+    assert_eq!(kinds("scripts/deploy.sh")?, [Function, Function, Function]);
+    Ok(())
+}
+
+/// Shell constants are variables declared read-only at the top of a script, with `readonly` or
+/// with a flag holding `r` given to `declare` or `typeset`, each assignment of a declaration its
+/// own. A plain, exported or integer variable is none, nor is `readonly` given a name without a
+/// value, nor a declaration whose `+r` turns the attribute off. Inside a function none is
+/// read: `declare` and `typeset` make a local variable there, and `readonly` or `declare -g` a
+/// global one the function's name would wrongly qualify. A constant's value is part of it, so the
+/// call that computes it is the constant's.
+#[test]
+fn bash_constants_are_read_only_variables() -> TestResult {
+    let source = "readonly A=1 B=2\ndeclare -r LIMIT=3\ndeclare -ir MAX=4\ntypeset -r MODE=x\n\
+                  declare -xr SHARED=5\ndeclare -gr GLOBAL=6\ndeclare -i counter total=0\ndeclare +r OFF=1\n\
+                  export PREFIX=/opt\nreadonly MARKED\nNAME=value\nreadonly STAMP=$(date +%s)\nouter() {\n  \
+                  readonly IN_FN=1\n  declare -r DR=2\n  local -r LR=3\n  declare -gr GR=4\n  typeset -r TR=5\n}\n";
+    let extraction = extract("scripts/env.sh", Language::Bash, source)?;
+    assert_eq!(
+        describe(&extraction),
+        [
+            "symbol constant A 1-1 -",
+            "symbol constant B 1-1 -",
+            "symbol constant LIMIT 2-2 -",
+            "symbol constant MAX 3-3 -",
+            "symbol constant MODE 4-4 -",
+            "symbol constant SHARED 5-5 -",
+            "symbol constant GLOBAL 6-6 -",
+            "symbol constant STAMP 12-12 -",
+            "symbol function outer 13-19 -",
+            "ref call date 12 STAMP"
+        ]
+    );
+    Ok(())
+}
+
+/// Every command a script runs is a call, in a pipeline, a list, a command substitution, a loop
+/// or a condition, and so is a program run by its path; a command named by a variable is none,
+/// and so is a reserved word such as `time`. A script included with `source` or `.` by a literal
+/// path, bare or in double quotes, is an import and no call; one whose path holds a variable, at
+/// its start or inside its quotes, is neither, and nor is an option, a home directory, a glob or
+/// a path with a backslash, which the shell would read or rewrite before opening the file.
+#[test]
+fn bash_calls_and_includes() -> TestResult {
+    let source = "source ./a.sh\n. ./b.sh\nsource \"./c.sh\" arg\n. \"$DIR/d.sh\"\nsource \"$HOME\"/e.sh\nrun() {\n  \
+                  build | tee out.log\n  [[ -f x ]] && notify\n  result=$(compute 1)\n  \
+                  for f in *; do process \"$f\"; done\n  if check; then deploy; fi\n  $dynamic arg\n}\nsource \"lib/$NAME.sh\"\n\
+                  source -- ./f.sh\nsource ./conf.d/*.sh\nsource ~/.bashrc\nsource ./a\\ b.sh\n./bin/setup.sh --fast\n\
+                  time make\nsource ./part?.sh\n";
+    let extraction = extract("scripts/run.sh", Language::Bash, source)?;
+    let calls: Vec<(&str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| (reference.dst_name.as_str(), reference.line))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("build", 7),
+            ("tee", 7),
+            ("notify", 8),
+            ("compute", 9),
+            ("process", 10),
+            ("check", 11),
+            ("deploy", 11),
+            ("./bin/setup.sh", 19)
+        ]
+    );
+    assert!(
+        extraction
+            .refs
+            .iter()
+            .all(|reference| reference.kind == RefKind::Call)
+    );
+    let imports: Vec<(&str, u32)> = extraction
+        .imports
+        .iter()
+        .map(|import| (import.specifier.as_str(), import.line))
+        .collect();
+    assert_eq!(imports, [("./a.sh", 1), ("./b.sh", 2), ("./c.sh", 3)]);
+    Ok(())
+}
+
+/// A function whose body is a loop or a `case` rather than braces is valid shell the grammar
+/// cannot read: it takes the function's name for a command holding a syntax error and the words
+/// that close the construct for commands. A coprocess is unknown to it as well, and its braces
+/// become a command's words and a command. None of it is read, neither the function nor a call,
+/// and what follows is read as usual.
+#[test]
+fn bash_constructs_the_grammar_misreads_give_no_facts() -> TestResult {
+    let source = "w() while read -r x; do :; done\nc() case $1 in a) :;; esac\ns() select x in a; do :; done\n\
+                  f() for x in a; do :; done\ncoproc worker { serve; }\ng() {\n  run\n}\n";
+    let extraction = extract("scripts/loops.sh", Language::Bash, source)?;
+    assert_eq!(
+        describe(&extraction),
+        ["symbol function g 6-8 -", "ref call run 7 g"]
+    );
+    Ok(())
+}
+
+/// zsh and ksh scripts are read with the Bash grammar as far as the shells agree. zsh's own loops,
+/// `foreach ... end` and `repeat`, give no call, neither their reserved words nor the words of a
+/// `foreach` list, while the commands in their bodies are calls as usual; nor does its modifier
+/// `nocorrect`.
+#[test]
+fn bash_reads_zsh_and_ksh_as_far_as_they_agree() -> TestResult {
+    let zsh = "source ~/.zsh/aliases.zsh\n. ./prompt.zsh\ntypeset -r CACHE=~/.cache\nfunction greet {\n  \
+               print \"hello\"\n}\nforeach name (alpha beta)\n  greet\nend\nrepeat 3 do ping; done\n\
+               zstyle ':completion:*' menu select\nnocorrect mkdir dist\n";
+    let extraction = extract("config/.zshrc", Language::Bash, zsh)?;
+    assert_eq!(
+        describe(&extraction),
+        [
+            "symbol constant CACHE 3-3 -",
+            "symbol function greet 4-6 -",
+            "ref call print 5 greet",
+            "ref call greet 8 -",
+            "ref call zstyle 11 -",
+            "import ./prompt.zsh module - 2"
+        ]
+    );
+    let ksh = "function main {\n  typeset -r LOCAL=1\n  . ./lib.ksh\n  run\n}\ntypeset -r VERSION=2\nmain \"$@\"\n";
+    let extraction = extract("bin/release.ksh", Language::Bash, ksh)?;
+    assert_eq!(
+        describe(&extraction),
+        [
+            "symbol function main 1-5 -",
+            "symbol constant VERSION 6-6 -",
+            "ref call run 4 main",
+            "ref call main 7 -",
+            "import ./lib.ksh module - 3"
         ]
     );
     Ok(())

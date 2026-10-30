@@ -177,6 +177,13 @@ mod tests {
             (Language::Scala, "src/OrderIT.scala", true),
             (Language::Scala, "src/Order.scala", false),
             (Language::Scala, "src/TestOrder.scala", false),
+            (Language::Bash, "scripts/deploy_test.sh", true),
+            (Language::Bash, "scripts/deploy_test.bash", true),
+            (Language::Bash, "scripts/deploy_test.zsh", true),
+            (Language::Bash, "scripts/deploy_test.ksh", true),
+            (Language::Bash, "scripts/test_deploy.sh", true),
+            (Language::Bash, "scripts/deploy.sh", false),
+            (Language::Bash, "scripts/deploy_tests.sh", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

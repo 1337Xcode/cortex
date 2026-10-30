@@ -1,0 +1,21 @@
+# What sample.sh defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text up to its body, with each run of whitespace as one space; a
+# constant spans its assignment and is all header. Not read: the comments, `local` and every other
+# variable that is not read-only, and every use of a variable.
+symbol constant RATE 6-6 - | RATE=2
+symbol constant LIMIT 7-7 - | LIMIT=3
+symbol constant MODE 8-8 - | MODE=fast
+symbol function deploy 10-14 - | function deploy()
+symbol function rollback 16-18 - | function rollback
+symbol function cleanup 20-22 - | cleanup()
+ref call build 12 deploy
+ref call tee 12 deploy
+ref call notify 13 deploy
+ref call restore 17 rollback
+ref call rm 21 cleanup
+ref call deploy 24 -
+import ./lib/common.sh module - 3
+import ./lib/log.sh module - 4
