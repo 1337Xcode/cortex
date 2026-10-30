@@ -21,6 +21,7 @@ symbol method Order.price 23-26 Order | func price() -> Int
 symbol class Order 29-31 - | extension Order: Codable
 symbol method Order.extra 30-30 Order | func extra() -> Int
 symbol function fee 33-35 - | func fee(_ cents: Int) -> Int
+ref import Money 3 -
 ref type_ref Int 7 Price
 ref inherit Named 9 Priced
 ref type_ref Price 11 Priced.price

@@ -16,14 +16,15 @@ use crate::path_rules::is_test_file;
 use crate::references::build_references;
 use crate::specifiers::{Import, read_imports};
 use crate::symbols::build_symbols;
-use crate::tags::read_tags;
+use crate::tags::{Tag, read_tags};
 
 /// What one file defines, uses and imports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Extraction {
     /// Its definitions, in the order of their starts, each after the one it sits in.
     pub symbols: Vec<SymbolRecord>,
-    /// The names it uses, in the order they appear.
+    /// The names it uses, in the order they appear, each name an import takes among them as a
+    /// reference of kind `import`.
     pub refs: Vec<RefRecord>,
     /// The modules it imports, in the order they appear.
     pub imports: Vec<Import>,
@@ -127,34 +128,45 @@ impl Extractor {
         let root = tree.root_node();
         let read =
             read_tags(&mut self.cursor, grammar, root, source, &deadline).ok_or_else(timed_out)?;
-        let (imports, imports_left_out) =
-            read_imports(&mut self.cursor, grammar, root, source, &deadline)
-                .ok_or_else(timed_out)?;
-        let symbols = build_symbols(
-            &read.tags,
-            source,
-            grammar.spec,
-            is_test_file(path, grammar.spec.test_files),
-        );
-        let refs = build_references(&read.tags, source, &symbols);
+        let imported = read_imports(&mut self.cursor, grammar, root, source, &deadline)
+            .ok_or_else(timed_out)?;
         let definitions = read
             .tags
             .iter()
             .filter(|tag| tag.role.is_definition())
             .count();
-        let references = read.tags.len() - definitions;
+        let references = read.tags.len() - definitions + imported.names.len();
+        let tags = with_imported_names(read.tags, imported.names);
+        let symbols = build_symbols(
+            &tags,
+            source,
+            grammar.spec,
+            is_test_file(path, grammar.spec.test_files),
+        );
+        let refs = build_references(&tags, source, &symbols);
         let left_out = LeftOut {
             definitions: read.broken_definitions + unrecorded(definitions, symbols.len()),
             references: read.broken_references + unrecorded(references, refs.len()),
-            imports: imports_left_out,
+            imports: imported.left_out,
         };
         Ok(Extraction {
             symbols,
             refs,
-            imports,
+            imports: imported.imports,
             left_out,
         })
     }
+}
+
+/// `tags`, in the order of their names, with `names`, the references to the names the file's
+/// imports take, put among them in that order.
+fn with_imported_names<'tree>(
+    mut tags: Vec<Tag<'tree>>,
+    names: Vec<Tag<'tree>>,
+) -> Vec<Tag<'tree>> {
+    tags.extend(names);
+    tags.sort_by_key(|tag| (tag.name.start_byte(), tag.name.end_byte()));
+    tags
 }
 
 /// How many of the `found` tags of one role made no record, `recorded` having been made.

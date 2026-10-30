@@ -24,6 +24,8 @@ symbol function sum 50-52 - | pub fn sum(items: &[Item]) -> Money
 symbol module tests 55-67 - | mod tests
 symbol function tests.helper 58-60 tests | fn helper() -> Order
 symbol test tests.rejects_empty 64-66 tests | fn rejects_empty()
+ref import HashMap 2 -
+ref import Read 3 -
 ref type_ref Vec 15 Order
 ref type_ref Item 15 Order
 ref type_ref Money 16 Order

@@ -17,6 +17,9 @@ symbol constant Order.Slots 17-17 Order | val Slots = 4
 symbol method Order.create 18-18 Order | def create(): Order =
 symbol type Price 21-21 - | type Price = Int
 symbol function fee 23-23 - | def fee(cents: Int): Int =
+ref import Item 4 -
+ref import Money 5 -
+ref import Clock 5 -
 ref inherit Named 8 Priced
 ref type_ref Int 9 Priced.price
 ref type_ref Int 12 Order

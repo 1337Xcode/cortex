@@ -9,6 +9,8 @@
 symbol interface CartProps 5-7 - | interface CartProps
 symbol function Cart 9-17 - | function Cart({ items }: CartProps)
 symbol function Badge 19-19 - | Badge = ({ count }: { count: number }) =>
+ref import useState 2 -
+ref import Item 3 -
 ref type_ref Item 6 CartProps
 ref type_ref CartProps 9 Cart
 ref call useState 10 Cart

@@ -28,7 +28,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Discovery`, `Problem` | The files found, the number of links and special files passed over, and what could not be read or used: unreadable files, folders and folder entries, names that cannot be stored, folders past the depth limit, rules files that were skipped, and rules lines that could not be used (the first 20 of a file by number, the rest counted) |
 | `Grammars` | Every language's grammar, tags query and imports query, compiled and checked once; a query that uses anything Cortex does not read is refused |
 | `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
-| `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition; and the modules it imports, with what it takes (the module, one name, every name or the default export) and the name it binds |
+| `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition, the names its imports take among them; and the modules it imports, with what it takes (the module, one name, every name or the default export) and the name it binds |
 | `index_repository` | Indexes a whole repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file it found, ties references to the definitions their names settle, joins each parsed file to the files its imports name, and keeps a node for each folder that holds files |
 | `IndexOptions`, `IndexReport`, `FileProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, and the files skipped because they could not be read, took too long to parse or panicked while being read |
 
@@ -63,7 +63,9 @@ records nothing. Locals patterns find scopes (`@local.scope`) and the variables 
 defined earlier: that keeps a Ruby local variable from being read as a method call. Comments a
 pattern captures as `@doc` are ignored, since Cortex keeps no comments, and a capture named with
 a leading `_` only serves a text predicate such as `#eq?`. A second query per language finds
-imports.
+imports, in the order they are written. Each name an import takes is also a reference, of kind
+`import`, at the name itself: a name on its own line in an import that spans several lines is
+on that line, and one imported inside a function sits in that function.
 
 Definitions nest by their spans. A function directly in a class is a method; in a test file (one
 in a `test`, `tests` or `__tests__` folder, or named as its language names test files) a

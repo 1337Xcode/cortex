@@ -1,14 +1,16 @@
 //! The modules a file imports, read with its language's imports query: for each, the module as
 //! written, what the file takes from it, and the name it binds when it renames it. A module the
-//! grammar writes as a run of sibling nodes is read from its first node to its last.
+//! grammar writes as a run of sibling nodes is read from its first node to its last. Each name an
+//! import takes is also a use of that name, read as a reference of kind `import`.
 
-use cortex_core::Identifier;
+use cortex_core::{Identifier, RefKind};
 use tree_sitter::{Node, QueryCapture, QueryCursor, QueryCursorOptions, StreamingIterator};
 
 use crate::deadline::Deadline;
 use crate::grammar::{Grammar, ImportCapture};
 use crate::lines::line_number;
 use crate::name_text::{name_text, run_text};
+use crate::tags::{Role, Tag};
 
 /// What an import takes from its module.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +38,19 @@ pub struct Import {
     pub line: u32,
 }
 
+/// What a file's imports query found.
+#[derive(Debug)]
+pub(crate) struct ImportsRead<'tree> {
+    /// The imports, in the order they appear: by statement, then by where what each takes is
+    /// written.
+    pub(crate) imports: Vec<Import>,
+    /// For each name an import takes, a reference of kind `import` at that name.
+    pub(crate) names: Vec<Tag<'tree>>,
+    /// How many matches were left out because a part is missing, holds a syntax error or is not a
+    /// name Cortex can store.
+    pub(crate) left_out: u64,
+}
+
 /// The captures of one match of an imports query.
 #[derive(Debug, Default)]
 struct Parts<'tree> {
@@ -55,18 +70,17 @@ struct Parts<'tree> {
     default: Option<Node<'tree>>,
 }
 
-/// The imports in the tree under `root`, in the order they appear: by statement, then by where
-/// what each takes is written; and how many matches were left out because a part is missing,
-/// holds a syntax error or is not a name Cortex can store. `None` when the deadline passed before
+/// What the imports query finds in the tree under `root`; `None` when the deadline passed before
 /// the query finished.
-pub(crate) fn read_imports(
+pub(crate) fn read_imports<'tree>(
     cursor: &mut QueryCursor,
     grammar: &Grammar,
-    root: Node<'_>,
+    root: Node<'tree>,
     source: &[u8],
     deadline: &Deadline,
-) -> Option<(Vec<Import>, u64)> {
+) -> Option<ImportsRead<'tree>> {
     let mut imports = Vec::new();
+    let mut names = Vec::new();
     let mut left_out = 0;
     let mut check = |_: &tree_sitter::QueryCursorState| deadline.check();
     let options = QueryCursorOptions::new().progress_callback(&mut check);
@@ -74,7 +88,10 @@ pub(crate) fn read_imports(
     while let Some(found) = matches.next() {
         let parts = parts_of(found.captures(), &grammar.import_captures);
         match import_of(&parts, source).zip(position_of(&parts)) {
-            Some((import, position)) => imports.push((position, import)),
+            Some((import, position)) => {
+                names.extend(name_reference(&parts));
+                imports.push((position, import));
+            }
             None => left_out += 1,
         }
     }
@@ -84,10 +101,23 @@ pub(crate) fn read_imports(
     // The matches of one statement come pattern by pattern, which need not be the order the
     // statement writes them in.
     imports.sort_by_key(|(position, _)| *position);
-    Some((
-        imports.into_iter().map(|(_, import)| import).collect(),
+    Some(ImportsRead {
+        imports: imports.into_iter().map(|(_, import)| import).collect(),
+        names,
         left_out,
-    ))
+    })
+}
+
+/// The reference to the name the import read from `parts` takes: `None` when it takes no name.
+fn name_reference<'tree>(parts: &Parts<'tree>) -> Option<Tag<'tree>> {
+    Some(Tag {
+        node: parts.statement?,
+        name: parts.name?,
+        is_prose: false,
+        role: Role::Reference(RefKind::Import),
+        qualifier: None,
+        body: None,
+    })
 }
 
 /// Where the import one match describes is written: the start of its statement, then the start
@@ -201,7 +231,7 @@ mod tests {
                 source.as_bytes(),
                 &Deadline::after(allowance),
             )
-            .map(|(imports, _)| imports.len())
+            .map(|read| read.imports.len())
         };
         assert_eq!(read(Duration::ZERO), None);
         assert_eq!(read(Duration::from_secs(60)), Some(5000));
@@ -231,14 +261,15 @@ mod tests {
             let tree = parse_python(source)?;
             let deadline = distant_deadline();
             let root = tree.root_node();
-            let imports = read_imports(
+            let read = read_imports(
                 &mut QueryCursor::new(),
                 &grammar,
                 root,
                 source.as_bytes(),
                 &deadline,
-            );
-            Ok(imports.ok_or("out of time")?)
+            )
+            .ok_or("out of time")?;
+            Ok((read.imports, read.left_out))
         };
         // `import a.b.c.d` takes `d` from `a.b.c`; `import x.y` has no part between its first
         // and its last, so the pattern does not match it.

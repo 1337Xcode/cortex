@@ -19,6 +19,9 @@ symbol constant Shop\Orders.Order.SLOTS 26-26 Shop\Orders.Order | SLOTS = 4
 symbol method Shop\Orders.Order.__construct 29-29 Shop\Orders.Order | public function __construct(private int $size)
 symbol method Shop\Orders.Order.price 31-35 Shop\Orders.Order | public function price(): int
 symbol function Shop\Orders.fee 38-41 - | function fee(int $cents): int
+ref import Item 5 -
+ref import Money 6 -
+ref import Clock 6 -
 ref call define 10 LIMIT
 ref inherit Named 12 Shop\Orders.Priced
 ref call error_log 19 Shop\Orders.Logs.log

@@ -23,6 +23,8 @@ symbol function parse 40-40 - | function parse(text: Buffer): Invoice;
 symbol function parse 41-43 - | function parse(input: unknown): Invoice
 symbol constant cache 45-45 - | cache: Map<string, Invoice> =
 symbol function emit 47-47 - | function emit(event: Event): void;
+ref import Money 2 -
+ref import Rate 5 -
 ref inherit Comparable 7 Priced
 ref type_ref Priced 7 Priced
 ref inherit Located 7 Priced

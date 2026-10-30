@@ -27,6 +27,8 @@ symbol method Registry.register 38-38 Registry | fun register(order: Order): Lis
 symbol function fee 41-43 - | fun fee(cents: Int): Pair<Int, Int>
 symbol class FeeTest 45-50 - | class FeeTest
 symbol test FeeTest.rounds 46-49 FeeTest | @Test fun rounds()
+ref import Item 4 -
+ref import Money 5 -
 ref type_ref Int 10 Price
 ref inherit Named 12 Priced
 ref type_ref Price 13 Priced.price

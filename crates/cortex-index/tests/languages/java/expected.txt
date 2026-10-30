@@ -18,6 +18,8 @@ symbol method Priced.price 35-35 Priced | Money price(String currency);
 symbol class Status 38-38 - | enum Status
 symbol class Line 40-40 - | record Line(Item item, int count)
 symbol interface Audit 42-42 - | @interface Audit
+ref import List 4 -
+ref import assertEquals 6 -
 ref inherit Base 9 Order
 ref type_ref Item 9 Order
 ref inherit Priced 9 Order

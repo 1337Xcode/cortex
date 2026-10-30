@@ -201,6 +201,49 @@ fn default_in_braces_is_the_default_export() -> TestResult {
     Ok(())
 }
 
+/// Each name an import takes is a reference of kind `import` where the name is written: on its
+/// own line in an import that spans several (lines 2 and 3, though the statement starts on line
+/// 1), and inside the function that imports it (line 8). A whole module (line 5) takes no name.
+#[test]
+fn imported_names_are_referenced_where_they_are_written() -> TestResult {
+    let source = "from shop import (\n    Order,\n    Line as L,\n)\nimport os\n\n\
+                  def f():\n    from .helpers import tidy\n    return tidy(Order)\n";
+    let extraction = extract("src/app.py", Language::Python, source)?;
+    let refs: Vec<(&str, &str, u32, Option<&str>)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            let enclosing = reference
+                .symbol
+                .and_then(|position| extraction.symbols.get(position))
+                .map(|symbol| symbol.qual_name.as_str());
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+                enclosing,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("import", "Order", 2, None),
+            ("import", "Line", 3, None),
+            ("import", "tidy", 8, Some("f")),
+            ("call", "tidy", 9, Some("f"))
+        ]
+    );
+    let lines: Vec<u32> = extraction
+        .imports
+        .iter()
+        .map(|import| import.line)
+        .collect();
+    assert_eq!(lines, [1, 1, 5, 8]);
+    assert!(extraction.left_out.is_empty());
+    Ok(())
+}
+
 /// Go: every construct in the fixture, listed by hand in `expected.txt`.
 #[test]
 fn go() -> TestResult {
@@ -2809,8 +2852,8 @@ fn php_namespaces_after_namespaces() -> TestResult {
 /// a call on a maybe-null object, `instanceof` with a plain or a qualified class, `define` in
 /// another case and with double quotes, its value no constant, and `defined`, which defines
 /// nothing; `self`, `static` and `parent` name no type or class. A `use` with a leading backslash,
-/// `use function`, an alias, and includes quoted either way, in parentheses or relative to the
-/// file's folder; a path built from a constant names no file.
+/// `use function`, an alias, each a reference to the name it takes, and includes quoted either way,
+/// in parentheses or relative to the file's folder; a path built from a constant names no file.
 #[test]
 fn php_references_and_imports_in_every_form() -> TestResult {
     let source = "<?php\nuse \\Lead\\Thing;\nuse function App\\Support\\format;\nuse App\\Models\\Item as I;\n\
@@ -2842,6 +2885,9 @@ fn php_references_and_imports_in_every_form() -> TestResult {
     assert_eq!(
         refs,
         [
+            ("import", "Thing", 2),
+            ("import", "format", 3),
+            ("import", "Item", 4),
             ("call", "defined", 9),
             ("call", "DEFINE", 9),
             ("inherit", "Base", 10),
@@ -2978,12 +3024,13 @@ fn long_qualified_names_are_left_out() -> TestResult {
 }
 
 /// Names the queries find but cannot keep are counted by kind: a definition, a call and an
-/// import whose names pass 256 bytes; an import broken by a syntax error; a YAML key right after
-/// one. Clean code counts nothing.
+/// import whose names pass 256 bytes, beside a name an import takes, which is kept; an import
+/// broken by a syntax error; a YAML key right after one. Clean code counts nothing.
 #[test]
 fn left_out_names_are_counted() -> TestResult {
     let (module, function, call) = ("m".repeat(300), "f".repeat(300), "g".repeat(300));
-    let long = format!("import {module}\n\ndef {function}():\n    {call}()\n");
+    let long =
+        format!("from shop import kept\nimport {module}\n\ndef {function}():\n    {call}()\n");
     let counted = |definitions, references, imports| LeftOut {
         definitions,
         references,
@@ -3011,7 +3058,7 @@ fn left_out_names_are_counted() -> TestResult {
         (
             "shop/clean.py",
             Language::Python,
-            "import os\n\ndef f():\n    g()\n",
+            "import os\nfrom os import path\n\ndef f():\n    g()\n",
             counted(0, 0, 0),
         ),
     ];
