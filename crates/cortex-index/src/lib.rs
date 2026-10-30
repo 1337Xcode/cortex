@@ -8,6 +8,9 @@
 //! [`Extractor`] parses one file with its language's grammar and reads its definitions, the names
 //! it uses and the modules it imports. [`Grammars`] holds every language's grammar and queries,
 //! compiled once and shared between extractors.
+//!
+//! [`index_repository`] does all of it for a whole repository and writes the result to the store:
+//! every file the walk finds, with what it defines and uses, in path order.
 
 #![warn(clippy::pedantic)]
 
@@ -26,6 +29,7 @@ mod name_text;
 mod path_rules;
 mod pattern_rules;
 mod patterns;
+mod pipeline;
 mod references;
 mod rules;
 mod safe_read;
@@ -41,5 +45,6 @@ pub use discover::{
 };
 pub use extract::{ExtractError, Extraction, Extractor};
 pub use grammar::{GrammarError, Grammars};
+pub use pipeline::{FileProblem, IndexError, IndexOptions, IndexReport, index_repository};
 pub use rules::MAX_REPORTED_LINES;
 pub use specifiers::{Import, Imported};

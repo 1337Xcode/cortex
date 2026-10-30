@@ -2,33 +2,21 @@
 //! from fixtures, then the hashes, test conventions, the limit on qualified names, broken input
 //! and the time limit.
 
+mod common;
+
 use std::error::Error;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use common::grammars;
 use cortex_core::{Language, RefKind, RepoPath, ShortHash, SymbolKind};
-use cortex_index::{ExtractError, Extraction, Extractor, Grammars, Imported};
+use cortex_index::{ExtractError, Extraction, Extractor, Imported};
 
 /// What the tests return: any failure, with its cause.
 type TestResult = Result<(), Box<dyn Error>>;
 
 /// A time limit no test file comes near, even in a debug build.
 const GENEROUS: Duration = Duration::from_secs(60);
-
-/// Every grammar, loaded once for all the tests here: compiling the queries takes longer than
-/// anything a test reads.
-fn grammars() -> Result<Arc<Grammars>, Box<dyn Error>> {
-    static GRAMMARS: OnceLock<Result<Arc<Grammars>, String>> = OnceLock::new();
-    GRAMMARS
-        .get_or_init(|| {
-            Grammars::load()
-                .map(Arc::new)
-                .map_err(|error| error.to_string())
-        })
-        .clone()
-        .map_err(Into::into)
-}
 
 /// An extractor over every grammar, allowing each file `timeout`.
 fn extractor(timeout: Duration) -> Result<Extractor, Box<dyn Error>> {

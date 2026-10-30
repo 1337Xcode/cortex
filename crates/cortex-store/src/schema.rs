@@ -50,6 +50,8 @@ pub(crate) const FILE_DELETE: &str = "DELETE FROM files WHERE file_id = ?1";
 /// A file's row, found by path.
 pub(crate) const FILE_BY_PATH: &str = "SELECT file_id, path, lang, bytes, loc, content_hash, \
      mtime_ns, flags, indexed_at FROM files WHERE path = ?1";
+/// Every file's id and path, by path. Text compares byte by byte here, as Rust strings do.
+pub(crate) const FILE_PATHS: &str = "SELECT file_id, path FROM files ORDER BY path";
 
 /// What a file's stored symbols are matched by, oldest first.
 pub(crate) const SYMBOLS_TO_MATCH: &str = "SELECT symbol_id, kind, name, qual_name, sig_hash, \

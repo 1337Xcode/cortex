@@ -1,31 +1,20 @@
 //! Discovery on real folder trees: what the walk leaves out, the flags each file gets, files it
 //! must never open, and the problems it reports.
 
-use std::error::Error;
+mod common;
+
 use std::fs::{self, File};
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
+use common::{TestResult, lock_out, write};
 use cortex_core::{FileFlags, Language, RepoPath};
 use cortex_index::{
     DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, Problem, ProblemKind, discover,
 };
 
-/// Result type for these tests: any failure fails the test.
-type TestResult<T = ()> = Result<T, Box<dyn Error>>;
-
 /// The default size limit, 1 MiB.
 const MAX_FILE_BYTES: u64 = 1_048_576;
-
-/// Writes `text` to `path` under `root`, creating folders as needed.
-fn write(root: &Path, path: &str, text: &[u8]) -> TestResult {
-    let native = root.join(path);
-    if let Some(folder) = native.parent() {
-        fs::create_dir_all(folder)?;
-    }
-    fs::write(native, text)?;
-    Ok(())
-}
 
 /// Discovers `root` with no extra patterns and no global gitignore.
 fn discover_plain(root: &Path, max_file_bytes: u64) -> Result<Discovery, DiscoverError> {
@@ -281,26 +270,6 @@ fn languages_are_detected() -> TestResult {
         ]
     );
     Ok(())
-}
-
-/// Keeps the file at `path` from being opened by this process while the returned value lives: on
-/// Unix by removing every permission, on Windows by holding it open with no sharing.
-fn lock_out(path: &Path) -> std::io::Result<Option<File>> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o000))?;
-        Ok(None)
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        File::options()
-            .read(true)
-            .share_mode(0)
-            .open(path)
-            .map(Some)
-    }
 }
 
 /// Files that may hold secrets, by their own name or a folder's, rules files inside such folders,

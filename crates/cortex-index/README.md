@@ -6,7 +6,8 @@ The indexer: which files a repository has, what they are, and what they define a
 
 - Open a file whose name, or the name of a folder above it, says it may hold secrets (`.env*`,
   `*.pem`, `*.key`, `id_rsa*`, `*credentials*`, `*.p12`, in any case), rules files such as
-  `.gitignore` in those folders included. Such a file is recorded by path and size only.
+  `.gitignore` in those folders included. Such a file is recorded with what its folder listing
+  and its name say: path, size, modification time, flags and the language its name implies.
 - Read a file larger than `index.max_file_bytes`, or anything but a regular file. A path is
   inspected without following links, opened, and checked again after opening; symbolic links and
   special files found in the walk are passed over and counted.
@@ -28,6 +29,8 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Grammars` | Every language's grammar, tags query and imports query, compiled and checked once; a query that uses anything Cortex does not read is refused |
 | `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition; and the modules it imports, with what it takes (the module, one name, every name or the default export) and the name it binds |
+| `index_repository` | Indexes a whole repository into the store: walks it, removes the stored files it no longer finds, then reads, parses and writes every file it found |
+| `IndexOptions`, `IndexReport`, `FileProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, and the files skipped because they could not be read, took too long to parse or panicked while being read |
 
 ## What a file's flags mean
 
@@ -92,6 +95,30 @@ the walk.
 
 As in git, a byte order mark before a rules file's first line is ignored and braces in patterns
 are literal. Matching is case-sensitive on every platform.
+
+## Indexing a repository
+
+`index_repository` writes every file the walk finds. A file that may hold secrets, one over the
+size limit and one that is not text are written as the walk found them: path, language, size,
+modification time and flags. Every other file is read whole, and its size, its BLAKE3 hash and
+its line count (one per line feed, and one more for text after the last) are recorded. It is
+parsed when Cortex parses its language and it is neither generated nor vendored; its definitions
+and references are written with it, and it gets the `PARSED` flag.
+
+A file whose reading or parsing fails is skipped: it is reported and not written, and what the
+store held for it stays, or nothing when it held nothing. Reading fails when the file cannot be
+read as the walk found it, because it is gone, locked or has grown past the limit since; parsing
+fails when it takes longer than the time limit. A panic while a file is read or parsed, a fault
+in Cortex or in a grammar, is caught and skips that file only.
+
+A stored file the walk no longer finds is removed, unless the walk reported a problem at its path
+or at a folder above it: a folder it could not list or did not enter, or a file it could not
+inspect.
+
+Files are read and parsed in batches on several threads, each thread with a parser of its own,
+while the batch before is written in one transaction. Each batch is written in path order, so the
+same tree gets the same rows and ids whatever the number of threads, as long as no file runs out
+of time.
 
 ## Tests
 

@@ -54,6 +54,27 @@ impl<'c> Queries<'c> {
         raw.map(RawFile::check).transpose()
     }
 
+    /// The path of every stored file, in the order [`RepoPath`] sorts them: by the bytes of the
+    /// path.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored paths that cannot be read back.
+    pub fn file_paths(self) -> Result<Vec<RepoPath>, StoreError> {
+        let raw: Vec<(i64, String)> = self
+            .connection
+            .prepare_cached(schema::FILE_PATHS)
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect()
+            })
+            .map_err(sqlite("reading file paths"))?;
+        raw.iter()
+            .map(|(id, path)| values::path(path, "files.path", *id))
+            .collect()
+    }
+
     /// The symbols defined in `file`, in the order they appear.
     ///
     /// # Errors

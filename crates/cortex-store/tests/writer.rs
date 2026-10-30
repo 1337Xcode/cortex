@@ -506,6 +506,27 @@ fn removing_a_file_deletes_everything_about_it() -> TestResult {
     Ok(())
 }
 
+/// Every stored path is listed in byte order, as paths sort in Rust: capitals before small
+/// letters, and `-` (0x2D) before `/` (0x2F), so `a-b.py` comes before the folder `a`. A removed
+/// file is no longer listed.
+#[test]
+fn stored_paths_are_listed_in_byte_order() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    for written in ["b.py", "a/x.py", "gone.py", "B.py", "a-b.py"] {
+        transaction.replace_file(&index(written, Vec::new(), Vec::new())?)?;
+    }
+    transaction.remove_file(&path("gone.py")?)?;
+    transaction.commit()?;
+    let expected = ["B.py", "a-b.py", "a/x.py", "b.py"]
+        .into_iter()
+        .map(path)
+        .collect::<TestResult<Vec<_>>>()?;
+    assert_eq!(scratch.reader()?.queries().file_paths()?, expected);
+    Ok(())
+}
+
 /// Replacing a node's edges of one type leaves its other types alone; edges read back by type,
 /// then target.
 #[test]

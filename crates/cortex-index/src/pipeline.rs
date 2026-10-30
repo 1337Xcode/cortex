@@ -1,0 +1,783 @@
+//! Indexing a whole repository: the walk, then every file read, hashed and parsed, then written to
+//! the store in path order.
+//!
+//! Files are prepared in batches. While one batch is written in one transaction, the next is read
+//! and parsed on several threads, each with a parser of its own. A batch is written in path order
+//! however its threads finish, so the same tree gets the same row ids whatever the number of
+//! threads, as long as no file runs out of time.
+//!
+//! A file that may hold secrets, one over the size limit and one that is not text are written as
+//! the walk found them, without being read. Every other file is read whole, hashed and its lines
+//! counted, and parsed when Cortex parses its language and neither a tool nor a third party wrote
+//! it. A file whose reading or parsing fails is skipped: it is reported, and what the store held
+//! for it stays. A stored file the walk no longer finds is removed, unless the walk could not see
+//! where it was.
+
+use std::collections::BTreeSet;
+use std::num::NonZeroUsize;
+use std::panic::{self, AssertUnwindSafe};
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
+use std::time::Duration;
+
+use cortex_core::{ContentHash, FileFlags, Language, RepoPath};
+use cortex_store::{FileIndex, FileRecord, StoreError, Writer};
+use thiserror::Error;
+
+use crate::discover::{
+    DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, Problem, ProblemKind, discover,
+};
+use crate::extract::{ExtractError, Extractor};
+use crate::grammar::Grammars;
+use crate::safe_read;
+
+/// How many files are prepared together and written in one transaction. The results of the batch
+/// being written and of the one being prepared are all the parsed results held in memory at once,
+/// and a commit costs little next to the work in a batch of this size.
+const FILES_PER_BATCH: usize = 256;
+
+/// Flags that keep a file from being read: it may hold secrets, it is over the size limit, or it
+/// is not text.
+const UNREAD: [FileFlags; 3] = [
+    FileFlags::SECRET_PATTERN,
+    FileFlags::TOO_LARGE,
+    FileFlags::BINARY,
+];
+
+/// Flags that keep a file from being parsed: a tool or a third party wrote it.
+const UNPARSED: [FileFlags; 2] = [FileFlags::GENERATED, FileFlags::VENDORED];
+
+/// What [`index_repository`] needs besides the root, the grammars and the writer.
+#[derive(Debug, Clone, Copy)]
+pub struct IndexOptions<'a> {
+    /// How the repository is walked. Its size limit also bounds what is read.
+    pub discover: DiscoverOptions<'a>,
+    /// How long parsing one file and reading its definitions may take
+    /// (`index.parse_timeout_ms`).
+    pub parse_timeout: Duration,
+    /// How many files are read and parsed at once.
+    pub threads: NonZeroUsize,
+    /// The time in UTC milliseconds, recorded as each written file's indexing time.
+    pub now_ms: i64,
+}
+
+/// What an index wrote, and what it could not do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexReport {
+    /// How many files were written.
+    pub files: u64,
+    /// How many of them were parsed for their definitions and references.
+    pub parsed: u64,
+    /// How many stored files were removed because the walk no longer finds them.
+    pub removed: u64,
+    /// What the walk could not do.
+    pub walk_problems: Vec<Problem>,
+    /// Files the walk found that were skipped, in path order, with the reason.
+    pub problems: Vec<(RepoPath, FileProblem)>,
+}
+
+/// Why a file the walk found was skipped. A skipped file is not written: what the store held for
+/// it stays until an index reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileProblem {
+    /// It could not be read as the walk found it: it is gone, locked, no longer a regular file,
+    /// or now over the size limit.
+    Unreadable,
+    /// Parsing it and reading its definitions took longer than allowed.
+    TimedOut,
+    /// Reading it stopped with a panic: a fault in Cortex or in a grammar, caught so that it
+    /// costs this file only.
+    Panicked,
+}
+
+/// Why an index stopped. The batches committed before it stay written.
+#[derive(Debug, Error)]
+pub enum IndexError {
+    /// The walk could not run.
+    #[error(transparent)]
+    Discover(#[from] DiscoverError),
+    /// The store refused a write.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    /// A language's grammar could not be used.
+    #[error(transparent)]
+    Grammar(ExtractError),
+    /// A thread reading files stopped with a panic.
+    #[error("a thread reading files stopped unexpectedly")]
+    WorkerPanicked,
+}
+
+/// What became of one file prepared for the index.
+#[derive(Debug, PartialEq, Eq)]
+enum Outcome {
+    /// Its rows, ready to write: with its definitions and references when it was parsed.
+    Ready(FileIndex),
+    /// Nothing to write: the file at this path was skipped, for this reason.
+    Skipped(RepoPath, FileProblem),
+}
+
+/// What is left to do with a file once it has been read as far as its flags allow.
+#[derive(Debug, PartialEq, Eq)]
+enum Read {
+    /// Nothing: this is what became of it.
+    Done(Outcome),
+    /// Parsing `source`, its contents, in `language`.
+    Parse {
+        /// The file, with its size, lines and hash.
+        record: FileRecord,
+        /// Its language.
+        language: Language,
+        /// Its contents.
+        source: Vec<u8>,
+    },
+}
+
+/// What every thread that prepares files needs.
+struct Context<'a> {
+    /// The repository root.
+    root: &'a Path,
+    /// Every language's compiled rules.
+    grammars: &'a Arc<Grammars>,
+    /// The size above which a file is not read.
+    max_file_bytes: u64,
+    /// How long one file may take to parse and read.
+    parse_timeout: Duration,
+    /// How many threads prepare a batch.
+    threads: NonZeroUsize,
+    /// The indexing time in UTC milliseconds.
+    now_ms: i64,
+}
+
+/// Indexes the repository at `root` into `writer`'s store: walks it, removes the stored files the
+/// walk no longer finds, then reads, parses and writes every file it found.
+///
+/// # Errors
+///
+/// [`IndexError::Discover`] when the walk cannot start, [`IndexError::Store`] when a write fails,
+/// [`IndexError::Grammar`] when a language's grammar cannot be used, and
+/// [`IndexError::WorkerPanicked`]. Problems with single files and folders are reported in the
+/// [`IndexReport`] instead.
+pub fn index_repository(
+    root: &Path,
+    grammars: &Arc<Grammars>,
+    writer: &mut Writer,
+    options: &IndexOptions<'_>,
+) -> Result<IndexReport, IndexError> {
+    let discovery = discover(root, &options.discover)?;
+    let removed = remove_missing(writer, &discovery)?;
+    let context = Context {
+        root,
+        grammars,
+        max_file_bytes: options.discover.max_file_bytes,
+        parse_timeout: options.parse_timeout,
+        threads: options.threads,
+        now_ms: options.now_ms,
+    };
+    let mut report = IndexReport {
+        files: 0,
+        parsed: 0,
+        removed,
+        walk_problems: discovery.problems,
+        problems: Vec::new(),
+    };
+    write_files(writer, &discovery.files, &context, &mut report)?;
+    Ok(report)
+}
+
+/// Removes every stored file the walk did not find, except those it could not see: below a
+/// folder it could not list or did not enter, or a file it could not inspect. Returns how many
+/// it removed.
+fn remove_missing(writer: &mut Writer, discovery: &Discovery) -> Result<u64, StoreError> {
+    let unseen: BTreeSet<&RepoPath> = discovery
+        .problems
+        .iter()
+        .filter(|problem| hides_files(problem.kind))
+        .filter_map(|problem| problem.path.as_ref())
+        .collect();
+    let missing: Vec<RepoPath> = writer
+        .queries()
+        .file_paths()?
+        .into_iter()
+        .filter(|path| {
+            let found = discovery
+                .files
+                .binary_search_by(|file| file.path.cmp(path))
+                .is_ok();
+            !found && !is_unseen(path, &unseen)
+        })
+        .collect();
+    for batch in missing.chunks(FILES_PER_BATCH) {
+        let mut transaction = writer.transaction()?;
+        for path in batch {
+            transaction.remove_file(path)?;
+        }
+        transaction.commit()?;
+    }
+    Ok(u64::try_from(missing.len()).unwrap_or(u64::MAX))
+}
+
+/// Whether a walk problem of this kind means the walk did not see the files at its path or below
+/// it.
+fn hides_files(kind: ProblemKind) -> bool {
+    matches!(
+        kind,
+        ProblemKind::Unreadable | ProblemKind::UnlistedEntry | ProblemKind::TooDeep
+    )
+}
+
+/// Whether `path`, or a folder above it, is in `unseen`.
+fn is_unseen(path: &RepoPath, unseen: &BTreeSet<&RepoPath>) -> bool {
+    std::iter::successors(Some(path.clone()), RepoPath::parent).any(|at| unseen.contains(&at))
+}
+
+/// Prepares the files in batches and writes each batch in one transaction while the next one is
+/// prepared.
+fn write_files(
+    writer: &mut Writer,
+    files: &[DiscoveredFile],
+    context: &Context<'_>,
+    report: &mut IndexReport,
+) -> Result<(), IndexError> {
+    thread::scope(|scope| {
+        let mut batches = files.chunks(FILES_PER_BATCH);
+        let mut next = batches
+            .next()
+            .map(|batch| scope.spawn(move || prepare_batch(batch, context)));
+        while let Some(preparing) = next.take() {
+            let outcomes = preparing.join().map_err(|_| IndexError::WorkerPanicked)??;
+            next = batches
+                .next()
+                .map(|batch| scope.spawn(move || prepare_batch(batch, context)));
+            write_batch(writer, outcomes, report)?;
+        }
+        Ok(())
+    })
+}
+
+/// Writes one batch's files in one transaction, in order, and counts them in `report`.
+fn write_batch(
+    writer: &mut Writer,
+    outcomes: Vec<Outcome>,
+    report: &mut IndexReport,
+) -> Result<(), StoreError> {
+    let mut transaction = writer.transaction()?;
+    for outcome in outcomes {
+        match outcome {
+            Outcome::Ready(index) => {
+                transaction.replace_file(&index)?;
+                report.files += 1;
+                report.parsed += u64::from(index.file.flags.contains(FileFlags::PARSED));
+            }
+            Outcome::Skipped(path, problem) => report.problems.push((path, problem)),
+        }
+    }
+    transaction.commit()
+}
+
+/// Prepares `batch` on the context's threads, each with an extractor of its own, and returns what
+/// became of each file in the batch's order.
+fn prepare_batch(
+    batch: &[DiscoveredFile],
+    context: &Context<'_>,
+) -> Result<Vec<Outcome>, IndexError> {
+    let next = AtomicUsize::new(0);
+    let workers = context.threads.get().min(batch.len());
+    let finished: Vec<_> = thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| scope.spawn(|| prepare_in_turn(batch, &next, context, prepare)))
+            .collect();
+        handles
+            .into_iter()
+            .map(thread::ScopedJoinHandle::join)
+            .collect()
+    });
+    let mut outcomes = Vec::with_capacity(batch.len());
+    for worker in finished {
+        let prepared = worker
+            .map_err(|_| IndexError::WorkerPanicked)?
+            .map_err(IndexError::Grammar)?;
+        outcomes.extend(prepared);
+    }
+    // INVARIANT: deterministic. Threads take files in turn and finish in any order; the batch is
+    // written in path order.
+    outcomes.sort_unstable_by_key(|(position, _)| *position);
+    Ok(outcomes.into_iter().map(|(_, outcome)| outcome).collect())
+}
+
+/// How one file is prepared: [`prepare`], or in tests a stand-in that fails on purpose.
+type PrepareFile =
+    fn(&DiscoveredFile, &Context<'_>, &mut Extractor) -> Result<Outcome, ExtractError>;
+
+/// Prepares files of `batch` one at a time with `prepare_file`, each at the next position `next`
+/// hands out, until none is left. Returns each outcome with its position.
+fn prepare_in_turn(
+    batch: &[DiscoveredFile],
+    next: &AtomicUsize,
+    context: &Context<'_>,
+    prepare_file: PrepareFile,
+) -> Result<Vec<(usize, Outcome)>, ExtractError> {
+    let new_extractor = || Extractor::new(Arc::clone(context.grammars), context.parse_timeout);
+    let mut extractor = new_extractor();
+    let mut prepared = Vec::new();
+    loop {
+        let position = next.fetch_add(1, Ordering::Relaxed);
+        let Some(file) = batch.get(position) else {
+            return Ok(prepared);
+        };
+        let outcome = guarded(&file.path, || prepare_file(file, context, &mut extractor))?;
+        if matches!(outcome, Outcome::Skipped(_, FileProblem::Panicked)) {
+            // The panic may have left the parser or the query cursor part of the way through.
+            extractor = new_extractor();
+        }
+        prepared.push((position, outcome));
+    }
+}
+
+/// Runs `prepare` for the file at `path`, turning a panic into skipping the file, so that one
+/// file cannot stop the index.
+fn guarded(
+    path: &RepoPath,
+    prepare: impl FnOnce() -> Result<Outcome, ExtractError>,
+) -> Result<Outcome, ExtractError> {
+    // Unwind safe as used: after a panic the caller replaces the extractor `prepare` borrowed.
+    panic::catch_unwind(AssertUnwindSafe(prepare))
+        .unwrap_or_else(|_| Ok(Outcome::Skipped(path.clone(), FileProblem::Panicked)))
+}
+
+/// Reads, hashes and parses one file as its flags allow, or skips it. Only a grammar that cannot
+/// be used is an error.
+fn prepare(
+    file: &DiscoveredFile,
+    context: &Context<'_>,
+    extractor: &mut Extractor,
+) -> Result<Outcome, ExtractError> {
+    let (mut record, language, source) =
+        match read(file, context.root, context.max_file_bytes, context.now_ms) {
+            Read::Done(outcome) => return Ok(outcome),
+            Read::Parse {
+                record,
+                language,
+                source,
+            } => (record, language, source),
+        };
+    match extractor.extract(&record.path, language, &source) {
+        Ok(extraction) => {
+            record.flags = record.flags.with(FileFlags::PARSED);
+            Ok(Outcome::Ready(FileIndex {
+                file: record,
+                symbols: extraction.symbols,
+                refs: extraction.refs,
+            }))
+        }
+        Err(ExtractError::TimedOut { .. }) => {
+            Ok(Outcome::Skipped(record.path, FileProblem::TimedOut))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Reads `file`, found under `root`, as far as its flags allow, recording `now_ms` as its indexing
+/// time: not at all when it may hold secrets, is over the size limit or is not text; otherwise
+/// whole, to hash it and count its lines, and then it is left to parse when Cortex parses its
+/// language and neither a tool nor a third party wrote it.
+fn read(file: &DiscoveredFile, root: &Path, max_file_bytes: u64, now_ms: i64) -> Read {
+    let mut record = FileRecord {
+        path: file.path.clone(),
+        language: file.language,
+        size_bytes: file.size_bytes,
+        line_count: None,
+        content_hash: None,
+        mtime_ns: file.mtime_ns,
+        flags: file.flags,
+        indexed_at_ms: now_ms,
+    };
+    if has_any(file.flags, &UNREAD) {
+        return Read::Done(Outcome::Ready(file_only(record)));
+    }
+    let Some(source) = read_contents(&mut record, root, max_file_bytes) else {
+        return Read::Done(Outcome::Skipped(record.path, FileProblem::Unreadable));
+    };
+    match file.language.filter(|_| !has_any(file.flags, &UNPARSED)) {
+        Some(language) => Read::Parse {
+            record,
+            language,
+            source,
+        },
+        None => Read::Done(Outcome::Ready(file_only(record))),
+    }
+}
+
+/// Reads the whole file `record` describes, and records its size, line count and hash; `None`
+/// when it cannot be read as the walk found it.
+fn read_contents(record: &mut FileRecord, root: &Path, max_file_bytes: u64) -> Option<Vec<u8>> {
+    let source = safe_read::read_whole(&record.path.to_native(root), max_file_bytes).ok()?;
+    record.size_bytes = u64::try_from(source.len()).unwrap_or(u64::MAX);
+    record.line_count = Some(count_lines(&source));
+    record.content_hash = Some(ContentHash::of(&source));
+    Some(source)
+}
+
+/// How many lines `source` has: one per line feed, and one more for text after the last.
+#[allow(
+    clippy::naive_bytecount,
+    reason = "a file read here is at most `index.max_file_bytes` long, so one pass over it costs \
+              little next to parsing it, and a counting crate is not worth a dependency"
+)]
+fn count_lines(source: &[u8]) -> u64 {
+    let feeds = source.iter().filter(|byte| **byte == b'\n').count();
+    let has_open_line = source.last().is_some_and(|byte| *byte != b'\n');
+    u64::try_from(feeds)
+        .unwrap_or(u64::MAX)
+        .saturating_add(u64::from(has_open_line))
+}
+
+/// Whether `flags` holds any of `wanted`.
+fn has_any(flags: FileFlags, wanted: &[FileFlags]) -> bool {
+    wanted.iter().any(|flag| flags.contains(*flag))
+}
+
+/// The rows of a file written without definitions or references.
+fn file_only(file: FileRecord) -> FileIndex {
+    FileIndex {
+        file,
+        symbols: Vec::new(),
+        refs: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lines are counted as an editor shows them: a final line feed ends the last line rather
+    /// than starting another, and a carriage return is part of its line.
+    #[test]
+    fn lines_are_counted_as_editors_show_them() {
+        let cases: [(&[u8], u64); 7] = [
+            (b"", 0),
+            (b"a", 1),
+            (b"a\n", 1),
+            (b"a\nb", 2),
+            (b"\n", 1),
+            (b"\n\n", 2),
+            (b"a\r\nb\r\n", 2),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(count_lines(source), expected, "{source:?}");
+        }
+    }
+
+    /// A path the walk could not see is one at or below a path it reported, compared by whole
+    /// folder names; a problem at the root hides every path.
+    #[test]
+    fn unseen_paths_are_at_or_below_a_problem() -> Result<(), cortex_core::PathError> {
+        let folder = RepoPath::new("src/a")?;
+        let unseen = BTreeSet::from([&folder]);
+        let cases = [
+            ("src/a", true),
+            ("src/a/b.py", true),
+            ("src/a/deep/c.py", true),
+            ("src/ab.py", false),
+            ("src/b.py", false),
+            ("a.py", false),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(
+                is_unseen(&RepoPath::new(path)?, &unseen),
+                expected,
+                "{path}"
+            );
+        }
+        let root = RepoPath::root();
+        let everything = BTreeSet::from([&root]);
+        assert!(is_unseen(&RepoPath::new("a.py")?, &everything));
+        Ok(())
+    }
+
+    /// A file is read whole and its size, lines and hash recorded; a file gone since the walk, a
+    /// folder in its place and a file grown past the limit cannot be read and leave the record
+    /// as it was.
+    #[test]
+    fn contents_are_read_as_the_walk_found_them() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = tempfile::tempdir()?;
+        std::fs::write(repo.path().join("a.py"), "x = 1\ny = 2\n")?;
+        std::fs::write(repo.path().join("big.py"), "x = 1\n".repeat(10))?;
+        std::fs::create_dir(repo.path().join("folder.py"))?;
+        let record = |path: &str| -> Result<FileRecord, cortex_core::PathError> {
+            Ok(FileRecord {
+                path: RepoPath::new(path)?,
+                language: None,
+                size_bytes: 3,
+                line_count: None,
+                content_hash: None,
+                mtime_ns: 7,
+                flags: FileFlags::empty(),
+                indexed_at_ms: 9,
+            })
+        };
+        let mut whole = record("a.py")?;
+        let source = read_contents(&mut whole, repo.path(), 50);
+        assert_eq!(source.as_deref(), Some(&b"x = 1\ny = 2\n"[..]));
+        assert_eq!(
+            (whole.size_bytes, whole.line_count, whole.content_hash),
+            (12, Some(2), Some(ContentHash::of(b"x = 1\ny = 2\n")))
+        );
+        for path in ["gone.py", "folder.py", "big.py"] {
+            let mut unread = record(path)?;
+            assert_eq!(read_contents(&mut unread, repo.path(), 50), None, "{path}");
+            assert_eq!(unread, record(path)?, "{path}");
+        }
+        Ok(())
+    }
+
+    /// A file is read only as far as its flags allow. One that may hold secrets, is over the size
+    /// limit or is not text is never opened: the file here does not exist, so opening it would
+    /// make it unreadable. Generated, vendored and other text is read but not parsed; source
+    /// Cortex parses is left to parse; a file gone since the walk is unreadable.
+    #[test]
+    fn files_are_read_as_far_as_their_flags_allow() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = tempfile::tempdir()?;
+        for name in ["a.py", "gen.py", "lib.py", "notes.txt"] {
+            std::fs::write(repo.path().join(name), "x = 1\n")?;
+        }
+        let found =
+            |path: &str, language, flags| -> Result<DiscoveredFile, cortex_core::PathError> {
+                Ok(DiscoveredFile {
+                    path: RepoPath::new(path)?,
+                    language,
+                    size_bytes: 6,
+                    mtime_ns: 7,
+                    flags,
+                })
+            };
+        let record = |file: &DiscoveredFile, is_read: bool| FileRecord {
+            path: file.path.clone(),
+            language: file.language,
+            size_bytes: 6,
+            line_count: is_read.then_some(1),
+            content_hash: is_read.then(|| ContentHash::of(b"x = 1\n")),
+            mtime_ns: 7,
+            flags: file.flags,
+            indexed_at_ms: 9,
+        };
+        let python = Some(Language::Python);
+        let root = repo.path();
+        for flags in [
+            FileFlags::SECRET_PATTERN,
+            FileFlags::TOO_LARGE,
+            FileFlags::BINARY,
+        ] {
+            let file = found("missing.py", python, flags)?;
+            let expected = Read::Done(Outcome::Ready(file_only(record(&file, false))));
+            assert_eq!(read(&file, root, 50, 9), expected, "{flags:?}");
+        }
+        for file in [
+            found("gen.py", python, FileFlags::GENERATED)?,
+            found("lib.py", python, FileFlags::VENDORED)?,
+            found("notes.txt", None, FileFlags::empty())?,
+        ] {
+            let expected = Read::Done(Outcome::Ready(file_only(record(&file, true))));
+            assert_eq!(read(&file, root, 50, 9), expected, "{}", file.path.as_str());
+        }
+        let source = found("a.py", python, FileFlags::empty())?;
+        let expected = Read::Parse {
+            record: record(&source, true),
+            language: Language::Python,
+            source: b"x = 1\n".to_vec(),
+        };
+        assert_eq!(read(&source, root, 50, 9), expected);
+        let gone = found("gone.py", python, FileFlags::empty())?;
+        let expected = Read::Done(Outcome::Skipped(gone.path.clone(), FileProblem::Unreadable));
+        assert_eq!(read(&gone, root, 50, 9), expected);
+        Ok(())
+    }
+
+    /// A panic while a file is prepared skips that file instead of stopping the thread; what
+    /// `prepare` returns otherwise passes through, an error included.
+    #[test]
+    fn a_panic_skips_the_file() -> Result<(), cortex_core::PathError> {
+        let path = RepoPath::new("src/a.py")?;
+        #[allow(
+            clippy::panic,
+            reason = "the panic is what the guard is tested against"
+        )]
+        let skipped = guarded(&path, || panic!("a fault while reading"));
+        assert_eq!(
+            skipped,
+            Ok(Outcome::Skipped(path.clone(), FileProblem::Panicked))
+        );
+        let ready = || {
+            Outcome::Ready(file_only(FileRecord {
+                path: path.clone(),
+                language: None,
+                size_bytes: 1,
+                line_count: Some(1),
+                content_hash: None,
+                mtime_ns: 1,
+                flags: FileFlags::empty(),
+                indexed_at_ms: 1,
+            }))
+        };
+        assert_eq!(guarded(&path, || Ok(ready())), Ok(ready()));
+        let refused = || ExtractError::Grammar {
+            language: Language::Python,
+            message: "refused".to_owned(),
+        };
+        assert_eq!(guarded(&path, || Err(refused())), Err(refused()));
+        Ok(())
+    }
+
+    /// Prepares the file as usual, except that it panics on `b.py`.
+    fn panics_on_b(
+        file: &DiscoveredFile,
+        context: &Context<'_>,
+        extractor: &mut Extractor,
+    ) -> Result<Outcome, ExtractError> {
+        // The failed assertion is the panic the worker is tested against.
+        assert!(file.path.as_str() != "b.py", "a fault while reading b.py");
+        prepare(file, context, extractor)
+    }
+
+    /// A file whose preparation panics costs that file only: the thread reports it with the
+    /// reason and goes on, and parses the file after it as usual.
+    #[test]
+    fn a_panicking_file_costs_that_file_only() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = tempfile::tempdir()?;
+        let names = ["a.py", "b.py", "c.py"];
+        for name in names {
+            std::fs::write(repo.path().join(name), "def f():\n    pass\n")?;
+        }
+        let grammars = Arc::new(Grammars::load()?);
+        let context = Context {
+            root: repo.path(),
+            grammars: &grammars,
+            max_file_bytes: 1000,
+            parse_timeout: Duration::from_secs(60),
+            threads: NonZeroUsize::MIN,
+            now_ms: 9,
+        };
+        let batch = names
+            .into_iter()
+            .map(|name| {
+                Ok(DiscoveredFile {
+                    path: RepoPath::new(name)?,
+                    language: Some(Language::Python),
+                    size_bytes: 18,
+                    mtime_ns: 7,
+                    flags: FileFlags::empty(),
+                })
+            })
+            .collect::<Result<Vec<_>, cortex_core::PathError>>()?;
+        let prepared = prepare_in_turn(&batch, &AtomicUsize::new(0), &context, panics_on_b)?;
+        let summary: Vec<(usize, &str, Option<FileProblem>, Vec<&str>)> = prepared
+            .iter()
+            .map(|(position, outcome)| match outcome {
+                Outcome::Ready(index) => {
+                    let names = index.symbols.iter().map(|s| s.qual_name.as_str());
+                    (*position, index.file.path.as_str(), None, names.collect())
+                }
+                Outcome::Skipped(path, problem) => {
+                    (*position, path.as_str(), Some(*problem), Vec::new())
+                }
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (0, "a.py", None, vec!["f"]),
+                (1, "b.py", Some(FileProblem::Panicked), vec![]),
+                (2, "c.py", None, vec!["f"]),
+            ]
+        );
+        Ok(())
+    }
+
+    /// A problem with a folder, one of its entries or a file means the walk did not see what is
+    /// there; a problem with a rules file or a name that cannot be stored does not.
+    #[test]
+    fn only_what_the_walk_could_not_see_is_hidden() {
+        let cases = [
+            (ProblemKind::Unreadable, true),
+            (ProblemKind::UnlistedEntry, true),
+            (ProblemKind::TooDeep, true),
+            (ProblemKind::UnstorableName, false),
+            (ProblemKind::SkippedRulesFile, false),
+            (ProblemKind::BadRulesLine { line: 1 }, false),
+            (ProblemKind::MoreBadRulesLines { count: 1 }, false),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(hides_files(kind), expected, "{kind:?}");
+        }
+    }
+
+    /// A batch is written in one transaction and counted: a file ready to write is written, and a
+    /// skipped file is reported and leaves what the store held for it, or nothing.
+    #[test]
+    fn a_batch_writes_what_was_read_and_reports_the_rest() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let repo = tempfile::tempdir()?;
+        let mut writer = Writer::open(&cortex_store::WriterOptions {
+            folder: &repo.path().join(".cortex"),
+            repo_id: &cortex_core::RepoId::of(repo.path()),
+            mmap_bytes: 0,
+            now_ms: 1,
+        })?;
+        let record = |path: &str, flags| -> Result<FileRecord, cortex_core::PathError> {
+            Ok(FileRecord {
+                path: RepoPath::new(path)?,
+                language: None,
+                size_bytes: 1,
+                line_count: Some(1),
+                content_hash: None,
+                mtime_ns: 1,
+                flags,
+                indexed_at_ms: 1,
+            })
+        };
+        let kept = record("kept.txt", FileFlags::empty())?;
+        let slow = record("slow.txt", FileFlags::PARSED)?;
+        let mut transaction = writer.transaction()?;
+        transaction.replace_file(&file_only(kept.clone()))?;
+        transaction.replace_file(&file_only(slow.clone()))?;
+        transaction.commit()?;
+        let mut report = IndexReport {
+            files: 0,
+            parsed: 0,
+            removed: 0,
+            walk_problems: Vec::new(),
+            problems: Vec::new(),
+        };
+        let skipped = |path: &str, problem| -> Result<Outcome, cortex_core::PathError> {
+            Ok(Outcome::Skipped(RepoPath::new(path)?, problem))
+        };
+        let outcomes = vec![
+            Outcome::Ready(file_only(record("a.txt", FileFlags::PARSED)?)),
+            skipped("kept.txt", FileProblem::Unreadable)?,
+            skipped("new.txt", FileProblem::Panicked)?,
+            skipped("slow.txt", FileProblem::TimedOut)?,
+        ];
+        write_batch(&mut writer, outcomes, &mut report)?;
+        assert_eq!((report.files, report.parsed), (1, 1));
+        assert_eq!(
+            report.problems,
+            [
+                (RepoPath::new("kept.txt")?, FileProblem::Unreadable),
+                (RepoPath::new("new.txt")?, FileProblem::Panicked),
+                (RepoPath::new("slow.txt")?, FileProblem::TimedOut),
+            ]
+        );
+        let queries = writer.queries();
+        let paths = ["a.txt", "kept.txt", "slow.txt"].map(RepoPath::new);
+        assert_eq!(
+            queries.file_paths()?,
+            paths.into_iter().collect::<Result<Vec<_>, _>>()?
+        );
+        for unchanged in [kept, slow] {
+            let stored = queries.file(&unchanged.path)?;
+            assert_eq!(stored.map(|row| row.file), Some(unchanged));
+        }
+        Ok(())
+    }
+}
