@@ -160,6 +160,12 @@ mod tests {
             (Language::Php, "src/OrderTest.php", true),
             (Language::Php, "src/Order.php", false),
             (Language::Php, "src/TestOrder.php", false),
+            (Language::Kotlin, "src/OrderTest.kt", true),
+            (Language::Kotlin, "src/OrderTests.kt", true),
+            (Language::Kotlin, "src/OrderIT.kt", true),
+            (Language::Kotlin, "src/Order.kt", false),
+            (Language::Kotlin, "src/TestOrder.kt", false),
+            (Language::Kotlin, "build.gradle.kts", false),
         ];
         for (language, path, expected) in cases {
             let names = ALL

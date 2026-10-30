@@ -222,6 +222,12 @@ fn php() -> TestResult {
     check_golden("php", "sample.php", Language::Php, "\n")
 }
 
+/// Kotlin: every construct in the fixture, listed by hand in `expected.txt`.
+#[test]
+fn kotlin() -> TestResult {
+    check_golden("kotlin", "sample.kt", Language::Kotlin, "\n")
+}
+
 /// Ruby: every construct in the fixture, listed by hand in `expected.txt`.
 #[test]
 fn ruby() -> TestResult {
@@ -1150,6 +1156,351 @@ fn php_tests_are_marked_by_attribute_or_name() -> TestResult {
     assert_eq!(
         kinds("src/Order.php")?,
         [Class, Method, Test, Test, Test, Method, Method]
+    );
+    Ok(())
+}
+
+/// Kotlin's tests: a function annotated as a test by JUnit, kotlin.test or TestNG, plainly or by
+/// its qualified name, with arguments or without, in any file; none goes by its name. Another
+/// annotation marks nothing.
+#[test]
+fn kotlin_tests_are_marked_by_annotation() -> TestResult {
+    use SymbolKind::{Class, Method, Test};
+    let source = "class OrderTest {\n    @Test\n    fun pays() {}\n\n    \
+                  @Test(expected = IllegalStateException::class)\n    fun refuses() {}\n\n    \
+                  @ParameterizedTest\n    @ValueSource(ints = [1, 2])\n    fun `bills twice`(n: Int) {}\n\n    \
+                  @org.junit.jupiter.api.RepeatedTest(3)\n    fun ships() {}\n\n    \
+                  @TestFactory\n    fun cases() = listOf<DynamicTest>()\n\n    \
+                  @TestTemplate\n    fun template() {}\n\n    \
+                  @Tested\n    fun helper() {}\n\n    fun testLater() {}\n}\n";
+    let symbols = |path: &str| -> Result<Vec<(String, SymbolKind)>, Box<dyn Error>> {
+        let extraction = extract(path, Language::Kotlin, source)?;
+        Ok(extraction
+            .symbols
+            .iter()
+            .map(|symbol| (symbol.qual_name.as_str().to_owned(), symbol.kind))
+            .collect())
+    };
+    let expected = [
+        ("OrderTest".to_owned(), Class),
+        ("OrderTest.pays".to_owned(), Test),
+        ("OrderTest.refuses".to_owned(), Test),
+        ("OrderTest.`bills twice`".to_owned(), Test),
+        ("OrderTest.ships".to_owned(), Test),
+        ("OrderTest.cases".to_owned(), Test),
+        ("OrderTest.template".to_owned(), Test),
+        ("OrderTest.helper".to_owned(), Method),
+        ("OrderTest.testLater".to_owned(), Method),
+    ];
+    assert_eq!(symbols("src/test/kotlin/OrderTest.kt")?, expected);
+    assert_eq!(symbols("src/main/kotlin/Order.kt")?, expected);
+    Ok(())
+}
+
+/// Kotlin declarations of every kind: interfaces, `fun interface`s and annotation classes are
+/// interfaces; data, enum, sealed, value, nested and inner classes, objects and named companion
+/// objects are classes, and an unnamed companion object holds its members for its class. Members
+/// are methods, in an enum and its entries too, and in an anonymous object, where no class holds
+/// them; local and extension functions are functions; `const val` is a constant wherever it is,
+/// a plain `val` is none; a type alias is a type.
+#[test]
+fn kotlin_declarations_of_every_kind() -> TestResult {
+    let source = "fun interface Handler {\n    fun handle()\n}\n\
+                  sealed interface Shape\n\
+                  annotation class Fast\n\
+                  @JvmInline\nvalue class Cents(val amount: Int)\n\
+                  enum class Suit {\n    HEARTS {\n        override fun color() = 1\n    },\n    SPADES;\n\n    \
+                  open fun color() = 0\n}\n\
+                  class Repo {\n    class Row\n    inner class Cursor\n    \
+                  companion object Factory {\n        fun make() = Repo()\n    }\n}\n\
+                  class Cache {\n    companion object {\n        const val SIZE = 4\n    }\n}\n\
+                  object Config {\n    const val NAME = \"x\"\n    val timeout = 5\n}\n\
+                  val handler = object : Handler {\n    override fun handle() {}\n}\n\
+                  fun Repo.extra(): Int {\n    fun inner() = 1\n    return inner()\n}\n\
+                  typealias Rows = List<Repo.Row>\n";
+    let extraction = extract("src/kinds.kt", Language::Kotlin, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Constant, Function, Interface, Method, Type};
+    assert_eq!(
+        symbols,
+        [
+            ("Handler", Interface),
+            ("Handler.handle", Method),
+            ("Shape", Interface),
+            ("Fast", Interface),
+            ("Cents", Class),
+            ("Suit", Class),
+            ("Suit.color", Method),
+            ("Suit.color", Method),
+            ("Repo", Class),
+            ("Repo.Row", Class),
+            ("Repo.Cursor", Class),
+            ("Repo.Factory", Class),
+            ("Repo.Factory.make", Method),
+            ("Cache", Class),
+            ("Cache.SIZE", Constant),
+            ("Config", Class),
+            ("Config.NAME", Constant),
+            ("handle", Method),
+            ("extra", Function),
+            ("extra.inner", Function),
+            ("Rows", Type)
+        ]
+    );
+    Ok(())
+}
+
+/// Kotlin references in every form: calls plain, generic, with only a trailing lambda, on an
+/// object, on a maybe-null object, on `super` and through a qualified name, and infix between
+/// two names; bases plain, generic, qualified, given arguments and delegated, generic or not;
+/// uses of a type nullable, generic, qualified, in a function
+/// type, a bound, a receiver, after `is` and `as?`, in a `catch` and in an annotation with
+/// arguments. A member reference (`Order::price`) and a property (`order.size`) are no calls.
+#[test]
+fn kotlin_references_in_every_form() -> TestResult {
+    let source = "class Box<T : Comparable<T>>(val item: T) : java.io.Serializable, Base<T>(), \
+                  Comparable<Box<T>>, Logs by Logger(), Iterable<T> by items {\n    \
+                  @Fast(level = 2)\n    fun run(order: Order?, f: (Int) -> Unit): kotlin.collections.List<Line> {\n        \
+                  listOf<Int>().map { it }\n        lock { }\n        order?.pay()\n        super.toString()\n        \
+                  Outer.Inner.make()\n        val pair = start to end\n        if (order is Paid) { }\n        \
+                  val price = order as? Shop.Price\n        try { } catch (e: IllegalStateException) { }\n        \
+                  val ref = Order::price\n        val size = order.size\n        return emptyList()\n    }\n\n    \
+                  fun Order.total(): Int = 0\n}\n";
+    let extraction = extract("src/box.kt", Language::Kotlin, source)?;
+    let symbols: Vec<(&str, SymbolKind)> = extraction
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.qual_name.as_str(), symbol.kind))
+        .collect();
+    use SymbolKind::{Class, Method};
+    assert_eq!(
+        symbols,
+        [("Box", Class), ("Box.run", Method), ("Box.total", Method)]
+    );
+    let refs: Vec<(&str, &str, u32)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("type_ref", "Comparable", 1),
+            ("type_ref", "T", 1),
+            ("type_ref", "T", 1),
+            ("inherit", "Serializable", 1),
+            ("inherit", "Base", 1),
+            ("type_ref", "T", 1),
+            ("inherit", "Comparable", 1),
+            ("type_ref", "Box", 1),
+            ("type_ref", "T", 1),
+            ("inherit", "Logs", 1),
+            ("call", "Logger", 1),
+            ("inherit", "Iterable", 1),
+            ("type_ref", "T", 1),
+            ("type_ref", "Fast", 2),
+            ("type_ref", "Order", 3),
+            ("type_ref", "Int", 3),
+            ("type_ref", "Unit", 3),
+            ("type_ref", "List", 3),
+            ("type_ref", "Line", 3),
+            ("call", "listOf", 4),
+            ("type_ref", "Int", 4),
+            ("call", "map", 4),
+            ("call", "lock", 5),
+            ("call", "pay", 6),
+            ("call", "toString", 7),
+            ("call", "make", 8),
+            ("call", "to", 9),
+            ("type_ref", "Paid", 10),
+            ("type_ref", "Price", 11),
+            ("type_ref", "IllegalStateException", 12),
+            ("call", "emptyList", 15),
+            ("type_ref", "Order", 18),
+            ("type_ref", "Int", 18)
+        ]
+    );
+    Ok(())
+}
+
+/// A class or object that delegates (`: MutableMap<String, Int> by m`) keeps its body where the
+/// grammar reads the body as a lambda passed to the delegate, which Kotlin does not allow there:
+/// the header ends before it, its functions are methods, and the delegate's name, plain or reached
+/// through another, is no call, while a delegate given arguments is one. Each is the last
+/// declaration of its file, where the grammar reads it so.
+#[test]
+fn kotlin_delegating_classes_keep_their_bodies() -> TestResult {
+    type Read = (Vec<(String, SymbolKind, ShortHash)>, Vec<String>);
+    let read = |source: &str| -> Result<Read, Box<dyn Error>> {
+        let extraction = extract("src/store.kt", Language::Kotlin, source)?;
+        let symbols = extraction
+            .symbols
+            .iter()
+            .map(|symbol| {
+                (
+                    symbol.qual_name.as_str().to_owned(),
+                    symbol.kind,
+                    symbol.sig_hash,
+                )
+            })
+            .collect();
+        let calls = extraction
+            .refs
+            .iter()
+            .filter(|reference| reference.kind == RefKind::Call)
+            .map(|reference| reference.dst_name.as_str().to_owned())
+            .collect();
+        Ok((symbols, calls))
+    };
+    let header = |text: &str| ShortHash::of(text.as_bytes());
+    let put = "override fun put(key: String, value: Int): Int?";
+    use SymbolKind::{Class, Method};
+    let (symbols, calls) = read(
+        "class Counts(private val m: MutableMap<String, Int>) : MutableMap<String, Int> by m {\n    \
+         override fun put(key: String, value: Int): Int? = m.put(key, value)\n}\n",
+    )?;
+    let counts =
+        "class Counts(private val m: MutableMap<String, Int>) : MutableMap<String, Int> by m";
+    assert_eq!(
+        symbols,
+        [
+            ("Counts".to_owned(), Class, header(counts)),
+            ("Counts.put".to_owned(), Method, header(put))
+        ]
+    );
+    assert_eq!(calls, ["put"]);
+    let (symbols, calls) = read(
+        "class Nav(private val m: MutableMap<String, Int>) : MutableMap<String, Int> by Holder.m {\n    \
+         override fun put(key: String, value: Int): Int? = m.put(key, value)\n}\n",
+    )?;
+    let nav =
+        "class Nav(private val m: MutableMap<String, Int>) : MutableMap<String, Int> by Holder.m";
+    assert_eq!(
+        symbols,
+        [
+            ("Nav".to_owned(), Class, header(nav)),
+            ("Nav.put".to_owned(), Method, header(put))
+        ]
+    );
+    assert_eq!(calls, ["put"]);
+    let (symbols, calls) = read(
+        "class Wrap(private val m: MutableMap<String, Int>) : MutableMap<String, Int> by Wrapped(m) {\n    \
+         override fun put(key: String, value: Int): Int? = m.put(key, value)\n}\n",
+    )?;
+    let wrap = "class Wrap(private val m: MutableMap<String, Int>) : MutableMap<String, Int> by Wrapped(m)";
+    assert_eq!(
+        symbols,
+        [
+            ("Wrap".to_owned(), Class, header(wrap)),
+            ("Wrap.put".to_owned(), Method, header(put))
+        ]
+    );
+    assert_eq!(calls, ["Wrapped", "put"]);
+    let (symbols, calls) = read(
+        "object Names : List<String> by names {\n    override fun isEmpty() = false\n\n    \
+         @Fast\n    fun later() = 1\n}\n",
+    )?;
+    assert_eq!(
+        symbols,
+        [
+            (
+                "Names".to_owned(),
+                Class,
+                header("object Names : List<String> by names")
+            ),
+            (
+                "Names.isEmpty".to_owned(),
+                Method,
+                header("override fun isEmpty()")
+            ),
+            (
+                "Names.later".to_owned(),
+                Method,
+                header("@Fast fun later()")
+            )
+        ]
+    );
+    assert!(calls.is_empty(), "{calls:?}");
+    Ok(())
+}
+
+/// A Kotlin script (`build.gradle.kts`) is read as statements: its calls, infix ones included,
+/// belong to no definition.
+#[test]
+fn kotlin_scripts_are_read() -> TestResult {
+    let source = "plugins {\n    kotlin(\"jvm\") version \"2.0.0\"\n}\n\n\
+                  dependencies {\n    implementation(\"org.example:lib:1.0\")\n}\n";
+    let extraction = extract("build.gradle.kts", Language::Kotlin, source)?;
+    assert!(extraction.symbols.is_empty());
+    let refs: Vec<(&str, &str, u32, Option<usize>)> = extraction
+        .refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.kind.name(),
+                reference.dst_name.as_str(),
+                reference.line,
+                reference.symbol,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("call", "plugins", 1, None),
+            ("call", "kotlin", 2, None),
+            ("call", "version", 2, None),
+            ("call", "dependencies", 5, None),
+            ("call", "implementation", 6, None)
+        ]
+    );
+    Ok(())
+}
+
+/// Kotlin imports in every form: a name from a package of one part or of several, or with no
+/// package, each renamed or not; every name of a package of one part, two or three; an import
+/// ended by `;`, and one with a comment inside its name.
+#[test]
+fn kotlin_imports_in_every_form() -> TestResult {
+    let source = "import x.Y\nimport p.q.r.s.T;\nimport single\nimport single as S\nimport a.b.D as E\n\
+                  import a.b.*\nimport m./* note */n.O\nimport k.L as M\nimport p.q.r.*\nimport solo.*\n";
+    let extraction = extract("src/imports.kt", Language::Kotlin, source)?;
+    let imports: Vec<(&str, String, Option<&str>, u32)> = extraction
+        .imports
+        .iter()
+        .map(|import| {
+            let imported = match &import.imported {
+                Imported::Name(name) => format!("name:{}", name.as_str()),
+                other => format!("{other:?}"),
+            };
+            let alias = import.alias.as_ref().map(cortex_core::Identifier::as_str);
+            (import.specifier.as_str(), imported, alias, import.line)
+        })
+        .collect();
+    assert_eq!(
+        imports,
+        [
+            ("x", "name:Y".to_owned(), None, 1),
+            ("p.q.r.s", "name:T".to_owned(), None, 2),
+            ("single", "Module".to_owned(), None, 3),
+            ("single", "Module".to_owned(), Some("S"), 4),
+            ("a.b", "name:D".to_owned(), Some("E"), 5),
+            ("a.b", "All".to_owned(), None, 6),
+            ("m.n", "name:O".to_owned(), None, 7),
+            ("k", "name:L".to_owned(), Some("M"), 8),
+            ("p.q.r", "All".to_owned(), None, 9),
+            ("solo", "All".to_owned(), None, 10)
+        ]
     );
     Ok(())
 }

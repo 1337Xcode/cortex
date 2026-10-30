@@ -1,0 +1,60 @@
+# What sample.kt defines, uses and imports, read off the source by hand. One line each:
+#   symbol <kind> <qualified name> <first line>-<last line> <enclosing definition or -> | <header>
+#   ref <kind> <name> <line> <enclosing definition or ->
+#   import <module> <module, name:<name>, all or default> <alias or -> <line>
+# A header is the definition's text, annotations and modifiers included, up to its body, with each
+# run of whitespace as one space; a function's body starts at its `=` or its `{`, and a constant, a
+# type alias and a function without a body are all header. The package is no definition and
+# qualifies no name, as in Java; a named companion object is a class, while an unnamed one is no
+# definition, so what it holds belongs to its class. An annotation class is an interface, as
+# Java's annotation types are,
+# and a function annotated `@Test` is a test in any file. Not read: the comment, the package, the
+# properties and parameters, the enum's entries, the property `first`, and every use of a variable.
+symbol constant RATE 8-8 - | const val RATE = 2
+symbol type Price 10-10 - | typealias Price = Int
+symbol interface Priced 12-14 - | interface Priced : Named
+symbol method Priced.price 13-13 Priced | fun price(): Price
+symbol interface Audited 16-20 - | annotation class Audited
+symbol constant Audited.SINCE 18-18 Audited | const val SINCE = 1
+symbol class Order 22-33 - | @Audited data class Order(val size: Int, private val item: Item?) : Base(size), Priced
+symbol class Order.Factory 24-27 Order | companion object Factory
+symbol constant Order.Factory.SLOTS 25-25 Order.Factory | const val SLOTS = 4
+symbol method Order.Factory.create 26-26 Order.Factory | fun create(): Order
+symbol method Order.price 29-32 Order | override fun price(): Int
+symbol class Suit 35-35 - | enum class Suit
+symbol class Registry 37-39 - | object Registry
+symbol method Registry.register 38-38 Registry | fun register(order: Order): List<Order>
+symbol function fee 41-43 - | fun fee(cents: Int): Pair<Int, Int>
+symbol class FeeTest 45-50 - | class FeeTest
+symbol test FeeTest.rounds 46-49 FeeTest | @Test fun rounds()
+ref type_ref Int 10 Price
+ref inherit Named 12 Priced
+ref type_ref Price 13 Priced.price
+ref type_ref Audited 22 Order
+ref type_ref Int 23 Order
+ref type_ref Item 23 Order
+ref inherit Base 23 Order
+ref inherit Priced 23 Order
+ref type_ref Order 26 Order.Factory.create
+ref call Order 26 Order.Factory.create
+ref type_ref Int 29 Order.price
+ref call pay 30 Order.price
+ref call round 31 Order.price
+ref call fee 31 Order.price
+ref call count 31 Order.price
+ref call Receipt 31 Order.price
+ref type_ref Order 38 Registry.register
+ref type_ref List 38 Registry.register
+ref type_ref Order 38 Registry.register
+ref call listOf 38 Registry.register
+ref type_ref Int 41 fee
+ref type_ref Pair 41 fee
+ref type_ref Int 41 fee
+ref type_ref Int 41 fee
+ref call to 42 fee
+ref type_ref Test 46 FeeTest.rounds
+ref call assertEquals 48 FeeTest.rounds
+ref call fee 48 FeeTest.rounds
+import shop.models name:Item - 4
+import shop.support name:Money Cash 5
+import shop.util all - 6
