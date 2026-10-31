@@ -108,7 +108,7 @@ pub(crate) const REFS_IN_FILE: &str = "SELECT ref_id, src_file_id, src_symbol_id
 /// Every reference's id, file, file language, name, kind, line, target, resolution and
 /// confidence, by id.
 pub(crate) const REF_NAMES: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, r.kind, \
-     r.line, r.dst_symbol_id, r.resolution, r.confidence FROM refs AS r \
+     r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
      JOIN files AS f ON f.file_id = r.src_file_id ORDER BY r.ref_id";
 
 /// Adds the node for a row, or updates its path, and returns its id.
@@ -131,6 +131,9 @@ pub(crate) const FOLDER_NODES: &str =
 /// Every file's id, path and node, by path.
 pub(crate) const FILE_NODES: &str = "SELECT f.file_id, f.path, n.node_id FROM files AS f \
      JOIN nodes AS n ON n.kind = 'file' AND n.ref_id = f.file_id ORDER BY f.path";
+/// Every symbol's id and node, by symbol id.
+pub(crate) const SYMBOL_NODES: &str =
+    "SELECT ref_id, node_id FROM nodes WHERE kind = 'symbol' ORDER BY ref_id";
 
 /// Deletes a node's search row, found by its row id, which is the node's id.
 pub(crate) const SEARCH_DELETE: &str = "DELETE FROM search_index WHERE rowid = ?1";
@@ -148,6 +151,8 @@ pub(crate) const EDGE_INSERT: &str = "INSERT INTO edges (src, dst, type, w, n, l
 /// A node's outgoing edges, by type, then target.
 pub(crate) const EDGES_FROM: &str = "SELECT src, dst, type, w, n, last_seq, directed FROM edges \
      WHERE src = ?1 ORDER BY type, dst";
+/// Every node an edge of a type starts from, in order.
+pub(crate) const EDGE_SOURCES: &str = "SELECT DISTINCT src FROM edges WHERE type = ?1 ORDER BY src";
 
 /// Row counts for status.
 pub(crate) const COUNTS: &str = "SELECT (SELECT count(*) FROM files), \

@@ -43,6 +43,8 @@ use crate::grammar::Grammars;
 use crate::imports::Project;
 use crate::resolve;
 use crate::safe_read;
+use crate::symbol_edges;
+use crate::test_targets;
 
 /// How many files are prepared together and written in one transaction. The results of the batch
 /// being written and of the one being prepared are all the parsed results held in memory at once,
@@ -226,12 +228,19 @@ pub fn index_repository(
         left_out: Vec::new(),
     };
     let imports = write_files(writer, &discovery.files, &context, &mut report)?;
-    let (counts, bindings): (Vec<_>, BTreeMap<_, _>) = imports
-        .into_iter()
-        .map(|(path, imported)| ((path.clone(), imported.counts), (path, imported.bindings)))
-        .unzip();
-    resolve::resolve_names(writer, &bindings)?;
-    file_edges::write_import_edges(writer, &counts)?;
+    let mut counts = Vec::new();
+    let mut bindings = BTreeMap::new();
+    let mut test_targets = BTreeMap::new();
+    for (path, imported) in imports {
+        if let Some(target) = imported.test_target {
+            test_targets.insert(path.clone(), target);
+        }
+        counts.push((path.clone(), imported.counts));
+        bindings.insert(path, imported.bindings);
+    }
+    let ties = resolve::resolve_names(writer, &bindings)?;
+    symbol_edges::write_symbol_edges(writer, &ties)?;
+    file_edges::write_import_edges(writer, &counts, &test_targets)?;
     folders::write_folders(writer)?;
     Ok(report)
 }
@@ -457,8 +466,14 @@ fn prepare(
                 &extraction.imports,
             );
             let names = file_imports::module_names(context.project, language, &extraction.imports);
-            let closed = context.grammars.get(language).spec.closed_scopes;
-            let bindings = Bindings::of(&extraction, &targets, &names, closed);
+            let spec = context.grammars.get(language).spec;
+            let bindings = Bindings::of(&extraction, &targets, &names, spec.closed_scopes);
+            let test_target = test_targets::base_name_target(
+                &record.path,
+                spec.test_files,
+                &counts,
+                context.project,
+            );
             Ok(Outcome::Ready(Box::new(Prepared {
                 index: FileIndex {
                     file: record,
@@ -466,7 +481,11 @@ fn prepare(
                     refs: extraction.refs,
                 },
                 left_out: extraction.left_out,
-                imported: FileImports { counts, bindings },
+                imported: FileImports {
+                    counts,
+                    bindings,
+                    test_target,
+                },
             })))
         }
         Err(ExtractError::TimedOut { .. }) => {
@@ -865,6 +884,7 @@ mod tests {
             Ok(FileImports {
                 counts: [(RepoPath::new("a.txt")?, 2)].into(),
                 bindings: crate::bindings::Bindings::default(),
+                test_target: Some(RepoPath::new("a.txt")?),
             })
         };
         let outcomes = vec![

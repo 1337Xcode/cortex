@@ -125,6 +125,8 @@ pub struct RefName {
     pub kind: RefKind,
     /// The 1-based line of the use.
     pub line: u32,
+    /// The definition it sits in, if any.
+    pub symbol: Option<SymbolId>,
     /// The symbol it is tied to, if any.
     pub target: Option<Target>,
 }

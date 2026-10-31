@@ -1,6 +1,6 @@
 //! Read queries, shared by readers and by the writer's transactions.
 
-use cortex_core::{Identifier, NodeKind, RepoPath};
+use cortex_core::{EdgeType, Identifier, NodeKind, RepoPath};
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{StoreError, sqlite};
@@ -142,6 +142,33 @@ impl<'c> Queries<'c> {
     /// SQLite errors and stored paths that cannot be read back.
     pub fn file_nodes(self) -> Result<Vec<(RepoPath, NodeId)>, StoreError> {
         self.paths_with_nodes(schema::FILE_NODES, "files.path")
+    }
+
+    /// Every symbol's node, by symbol id.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn symbol_nodes(self) -> Result<Vec<(SymbolId, NodeId)>, StoreError> {
+        let raw: Vec<(i64, i64)> = self
+            .collect_all(schema::SYMBOL_NODES, |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(sqlite("reading symbol nodes"))?;
+        Ok(raw
+            .into_iter()
+            .map(|(symbol, node)| (SymbolId(symbol), NodeId(node)))
+            .collect())
+    }
+
+    /// Every node an edge of `edge_type` starts from, in order.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn edge_sources(self, edge_type: EdgeType) -> Result<Vec<NodeId>, StoreError> {
+        let raw = self
+            .collect(schema::EDGE_SOURCES, edge_type.number(), |row| row.get(0))
+            .map_err(sqlite("reading edge sources"))?;
+        Ok(raw.into_iter().map(NodeId).collect())
     }
 
     /// Every symbol's name, with the file it is defined in and that file's language, by id.

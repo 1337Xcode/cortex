@@ -396,10 +396,11 @@ fn folders_hold_their_files() -> TestResult {
         ("vendor", vec!["vendor/lib.js"]),
     ];
     assert_eq!(held(&before), expected);
-    // Nodes: 8 files, 4 symbols (total, Order, Order.place, Shop) and 4 folders; one containment
-    // edge per file.
+    // Nodes: 8 files, 4 symbols (total, Order, Order.place, Shop) and 4 folders. Edges: one
+    // containment edge per file, and one structural edge from `Order.place` to the `total` it
+    // calls in its own file.
     let counts = reader(root)?.queries().counts()?;
-    assert_eq!((counts.nodes, counts.edges), (16, 8));
+    assert_eq!((counts.nodes, counts.edges), (16, 9));
 
     std::fs::remove_file(root.join("vendor/lib.js"))?;
     std::fs::remove_file(root.join("notes.txt"))?;

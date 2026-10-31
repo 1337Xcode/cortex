@@ -194,6 +194,19 @@ many of the file's imports name its target: an import that names one file twice 
 a file gets no edge to itself. A full index replaces the import edges of every file it writes, so
 an import that is gone takes its edge with it; a file it skips keeps its edges.
 
+A test file whose imports name no source file, as a Go test beside its package's files, gets an
+edge to the file its name spells without its test marks (`orders_test.go` to `orders.go`,
+`test_orders.py` to `orders.py`, `cart.test.ts` to `cart.ts`), at weight 0.3, as strong as a tie
+by name: the file of that name in the test's own folder, else the only one in the repository, else
+none. A test that imports source files is joined to them by its import edges.
+
+Definitions are joined the same way: each definition gets a directed edge to each definition the
+references in it are tied to, as calls, uses of a type, inheritance or imports, as strong as the
+strongest of those references by how it was tied (0.8, 0.6 or 0.3), and counting them. A
+reference at the top of a file, in no definition, gives no edge, and neither does a definition
+referring to itself. A full index rewrites these edges from every reference it ties, so a
+definition whose references are gone loses its edges.
+
 Each language family whose imports can name files has a resolver in `src/imports/`, registered by
 one line there. A resolver reads the project files it needs (configs, `go.mod`, `Cargo.toml`)
 once per index, as the walk found them, and never one that may hold secrets.

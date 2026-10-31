@@ -42,10 +42,12 @@ mod resolve;
 mod rules;
 mod safe_read;
 mod specifiers;
+mod symbol_edges;
 mod symbols;
 mod tags;
 #[cfg(test)]
 mod test_support;
+mod test_targets;
 
 pub use discover::{
     DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, MAX_FOLDER_DEPTH, Problem,

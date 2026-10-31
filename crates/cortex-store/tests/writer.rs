@@ -340,7 +340,7 @@ fn node_ids_are_never_reused() -> TestResult {
 /// language. A symbol comes with its kind and says whether it is defined directly in its file:
 /// `helper`, `main` and the module `tests` are; `main.inner` sits in `main`, and `Order.new`
 /// carries the qualifier `Order` with no parent, as a method in an `impl` block does. A
-/// reference comes with its kind, its line and what it is tied to.
+/// reference comes with its kind, its line, the definition it sits in and what it is tied to.
 #[test]
 fn names_are_listed_with_their_files() -> TestResult {
     let scratch = Scratch::new()?;
@@ -392,23 +392,24 @@ fn names_are_listed_with_their_files() -> TestResult {
             symbol_name(4, "tests", true, SymbolKind::Module)?,
         ]
     );
-    let ref_name = |position: usize, text: &str, kind, line, target| -> TestResult<RefName> {
-        Ok(RefName {
+    let ref_name = |position: usize, text: &str, (kind, line), symbol: Option<usize>, target| {
+        Ok::<_, Box<dyn std::error::Error>>(RefName {
             id: a.refs[position],
             file: a.file,
             language: python,
             name: name(text)?,
             kind,
             line,
+            symbol: symbol.map(|at| a.symbols[at]),
             target,
         })
     };
     assert_eq!(
         queries.ref_names()?,
         [
-            ref_name(0, "os", RefKind::Import, 1, None)?,
-            ref_name(1, "helper", RefKind::Call, 5, Some(target))?,
-            ref_name(2, "print", RefKind::Call, 6, None)?,
+            ref_name(0, "os", (RefKind::Import, 1), None, None)?,
+            ref_name(1, "helper", (RefKind::Call, 5), Some(1), Some(target))?,
+            ref_name(2, "print", (RefKind::Call, 6), Some(1), None)?,
         ]
     );
     Ok(())
@@ -772,6 +773,49 @@ fn stored_paths_are_listed_in_byte_order() -> TestResult {
         .map(|written| Ok((path(written)?, ids[written])))
         .collect::<TestResult<Vec<_>>>()?;
     assert_eq!(queries.file_ids()?, with_ids);
+    Ok(())
+}
+
+/// Every symbol's node is listed by symbol, and the nodes edges of one type start from are listed
+/// by node: a file node with structural edges, a symbol node with co-change edges only.
+#[test]
+fn symbol_nodes_and_edge_sources_are_listed() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let a = transaction.replace_file(&index(
+        "a.py",
+        vec![
+            symbol(SymbolKind::Function, "one", None, ("s", "b"))?,
+            symbol(SymbolKind::Function, "two", None, ("s", "b"))?,
+        ],
+        Vec::new(),
+    )?)?;
+    let b = transaction.replace_file(&index("b.py", Vec::new(), Vec::new())?)?;
+    let queries = transaction.queries();
+    assert_eq!(
+        queries.symbol_nodes()?,
+        [
+            (a.symbols[0], a.symbol_nodes[0]),
+            (a.symbols[1], a.symbol_nodes[1])
+        ]
+    );
+    assert_eq!(queries.edge_sources(EdgeType::Structural)?, []);
+    let to_b = EdgeRecord {
+        dst: b.file_node,
+        weight: 0.8,
+        count: 1,
+        last_seq: 0,
+        is_directed: true,
+    };
+    transaction.replace_edges(a.file_node, EdgeType::Structural, &[to_b])?;
+    transaction.replace_edges(a.symbol_nodes[1], EdgeType::CoChange, &[to_b])?;
+    let queries = transaction.queries();
+    assert_eq!(queries.edge_sources(EdgeType::Structural)?, [a.file_node]);
+    assert_eq!(
+        queries.edge_sources(EdgeType::CoChange)?,
+        [a.symbol_nodes[1]]
+    );
     Ok(())
 }
 

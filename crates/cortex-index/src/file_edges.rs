@@ -1,7 +1,9 @@
-//! The graph's structural edges between files: from each file to each file its imports name.
+//! The graph's structural edges between files: from each file to each file its imports name, and
+//! from a test file whose imports name no source file to the file it tests by its base name.
 //!
 //! An import edge points one way, from the importer. It is as strong as a reference tied by its
-//! import path, and its count is how many of the importer's imports name the target.
+//! import path, and its count is how many of the importer's imports name the target. An edge from
+//! a test by its base name is as strong as a reference tied by its name alone.
 
 use std::collections::BTreeMap;
 
@@ -16,7 +18,8 @@ const IMPORTERS_PER_TRANSACTION: usize = 4096;
 pub(crate) type ImportCounts = BTreeMap<RepoPath, u32>;
 
 /// Replaces the structural edges from each file of `importers` with edges to the files its
-/// imports name. A file or target without a node gets no edge.
+/// imports name, and, for a test among `test_targets`, to the file it tests by its base name. A
+/// file or target without a node gets no edge.
 ///
 /// # Errors
 ///
@@ -24,6 +27,7 @@ pub(crate) type ImportCounts = BTreeMap<RepoPath, u32>;
 pub(crate) fn write_import_edges(
     writer: &mut Writer,
     importers: &[(RepoPath, ImportCounts)],
+    test_targets: &BTreeMap<RepoPath, RepoPath>,
 ) -> Result<(), StoreError> {
     let nodes: BTreeMap<RepoPath, NodeId> = writer.queries().file_nodes()?.into_iter().collect();
     for batch in importers.chunks(IMPORTERS_PER_TRANSACTION) {
@@ -32,13 +36,19 @@ pub(crate) fn write_import_edges(
             let Some(src) = nodes.get(importer) else {
                 continue;
             };
-            let edges: Vec<EdgeRecord> = counts
+            let imported = counts
                 .iter()
-                .filter_map(|(target, count)| {
+                .map(|(target, count)| (target, Resolution::ImportPath, *count));
+            let tested = test_targets
+                .get(importer)
+                .map(|target| (target, Resolution::NameOnly, 1));
+            let edges: Vec<EdgeRecord> = imported
+                .chain(tested)
+                .filter_map(|(target, tied, count)| {
                     Some(EdgeRecord {
                         dst: *nodes.get(target)?,
-                        weight: Resolution::ImportPath.confidence(),
-                        count: *count,
+                        weight: tied.confidence(),
+                        count,
                         // No task observed it: the code itself says so.
                         last_seq: 0,
                         is_directed: true,

@@ -157,6 +157,11 @@ impl Project {
         self.resolver(language)?.module_name(specifier)
     }
 
+    /// The repository's files named `name`, in path order.
+    pub(crate) fn files_named(&self, name: &str) -> &[RepoPath] {
+        self.files.named(name)
+    }
+
     /// The resolver that reads imports written in `language`, if one does.
     fn resolver(&self, language: Language) -> Option<&dyn Resolver> {
         self.resolvers

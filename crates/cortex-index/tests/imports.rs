@@ -22,6 +22,10 @@ const DEFAULT_LIMIT: u64 = 1_048_576;
 /// The strength of a reference tied by its import path, which an import edge carries.
 const IMPORT_PATH_CONFIDENCE: f64 = 0.8;
 
+/// The strength of a reference tied by its name alone, which a test's edge to the file it tests
+/// by name carries.
+const TESTED_BY_NAME: f64 = 0.3;
+
 /// One importer's edges: its path, then each file its imports name with how many of them do.
 type Edges = (String, Vec<(String, u32)>);
 
@@ -40,7 +44,9 @@ fn import_edges(root: &Path) -> TestResult<Vec<Edges>> {
     for (path, node) in &files {
         let mut targets = Vec::new();
         for row in queries.edges_from(*node)? {
-            if row.edge_type != EdgeType::Structural {
+            // A test's edge to the file it tests by name alone is the graph test's to check.
+            let is_by_name = row.edge.weight.total_cmp(&TESTED_BY_NAME).is_eq();
+            if row.edge_type != EdgeType::Structural || is_by_name {
                 continue;
             }
             let edge = row.edge;

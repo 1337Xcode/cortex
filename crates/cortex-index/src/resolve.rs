@@ -324,7 +324,8 @@ fn family(language: Language) -> Language {
 /// it unresolved, and writes the references whose target changed, in transactions of
 /// [`RESOLUTIONS_PER_TRANSACTION`]. `bindings` holds what the imports of each file this index
 /// wrote bring in, by path, with a lookup for each of its references in the order they were
-/// written.
+/// written. Returns each tied reference that sits in a definition, as that definition and the
+/// reference's target.
 ///
 /// # Errors
 ///
@@ -332,7 +333,7 @@ fn family(language: Language) -> Language {
 pub(crate) fn resolve_names(
     writer: &mut Writer,
     bindings: &BTreeMap<RepoPath, Bindings>,
-) -> Result<(), StoreError> {
+) -> Result<Vec<(SymbolId, Target)>, StoreError> {
     let queries = writer.queries();
     let files = queries.file_ids()?;
     let symbols = queries.symbol_names()?;
@@ -343,11 +344,15 @@ pub(crate) fn resolve_names(
     // A file's references come back in the order they were written, which is its lookups' order.
     let mut positions: BTreeMap<FileId, usize> = BTreeMap::new();
     let mut changed: Vec<Resolved> = Vec::new();
+    let mut ties = Vec::new();
     for reference in &refs {
         let next = positions.entry(reference.file).or_insert(0);
         let position = *next;
         *next += 1;
         let target = definitions.target(reference, position, &written, &mut memo);
+        if let (Some(symbol), Some(target)) = (reference.symbol, target) {
+            ties.push((symbol, target));
+        }
         if target != reference.target {
             changed.push(Resolved {
                 reference: reference.id,
@@ -360,7 +365,7 @@ pub(crate) fn resolve_names(
         transaction.set_resolutions(batch)?;
         transaction.commit()?;
     }
-    Ok(())
+    Ok(ties)
 }
 
 #[cfg(test)]

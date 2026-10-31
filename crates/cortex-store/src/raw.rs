@@ -288,6 +288,8 @@ pub(crate) struct RawRefName {
     resolution: Option<String>,
     /// `confidence`.
     confidence: f64,
+    /// `src_symbol_id`.
+    src_symbol: Option<i64>,
 }
 
 impl RawRefName {
@@ -303,6 +305,7 @@ impl RawRefName {
             dst_symbol: row.get(6)?,
             resolution: row.get(7)?,
             confidence: row.get(8)?,
+            src_symbol: row.get(9)?,
         })
     }
 
@@ -318,6 +321,7 @@ impl RawRefName {
             name: values::identifier(&self.dst_name, "refs.dst_name", row)?,
             kind: values::kind(&self.kind, RefKind::from_name, "refs.kind", row)?,
             line: values::number(self.line, "refs.line", row)?,
+            symbol: self.src_symbol.map(SymbolId),
             target,
         })
     }

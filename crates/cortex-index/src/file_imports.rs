@@ -17,6 +17,9 @@ pub(crate) struct FileImports {
     pub(crate) counts: ImportCounts,
     /// What they bring into the file and pass on.
     pub(crate) bindings: Bindings,
+    /// The source file the file tests by its base name, when it is a test whose imports name
+    /// none.
+    pub(crate) test_target: Option<RepoPath>,
 }
 
 /// The files `imports`, written in `language` in the file at `importer`, name: each with how
