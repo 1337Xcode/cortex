@@ -56,16 +56,15 @@ fn status_lines(
     queries: Queries<'_>,
     setting: ModeSetting,
 ) -> anyhow::Result<Vec<String>> {
-    let daemon = if is_writer_running(folder)? {
-        "running"
-    } else {
-        "not running"
-    };
+    let is_running = is_writer_running(folder)?;
     let index = if queries.meta(MetaKey::CortexVersion)?.is_some() {
         "ready"
+    } else if is_running {
+        "not ready, an index is under way"
     } else {
-        "not ready, the first index has not finished"
+        "not ready, the last index did not finish; the next one reads every file again"
     };
+    let daemon = if is_running { "running" } else { "not running" };
     let mut mode = queries
         .meta(MetaKey::ScaleMode)?
         .unwrap_or_else(|| "not counted yet".to_owned());

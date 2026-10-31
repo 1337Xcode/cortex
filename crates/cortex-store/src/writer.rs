@@ -173,6 +173,21 @@ impl WriteTx<'_> {
         self.atomically(|connection| links::set_resolutions(connection, resolutions))
     }
 
+    /// Forgets which Cortex wrote the index, before an index writes anything: one that stops
+    /// partway leaves no record, and the next index reads every file again.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn clear_cortex_version(&mut self) -> Result<(), StoreError> {
+        self.atomically(|connection| {
+            connection
+                .execute(schema::META_DELETE, [MetaKey::CortexVersion.name()])
+                .map(drop)
+                .map_err(sqlite("clearing the Cortex version"))
+        })
+    }
+
     /// Records this Cortex as the one whose rules wrote the index, once an index is complete.
     ///
     /// # Errors

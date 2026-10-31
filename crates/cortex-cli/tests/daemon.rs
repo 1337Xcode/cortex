@@ -144,3 +144,62 @@ fn huge_mode_crawls_what_it_took_inventory_of() -> TestResult {
     wait_for(|| Ok(has_definition(repo.path(), "alpha")? && has_definition(repo.path(), "beta")?))?;
     Ok(())
 }
+
+/// Writes 3,000 Python files into `root`, each defining one function named `prefix` and its
+/// number.
+fn write_modules(root: &Path, prefix: &str) -> TestResult {
+    for number in 0..3000 {
+        let source = format!(
+            "def {prefix}{number}():
+    pass
+"
+        );
+        std::fs::write(root.join(format!("m{number}.py")), source)?;
+    }
+    Ok(())
+}
+
+/// An index killed partway, after a complete one, leaves the index marked unfinished, and the next
+/// daemon writes every file again; were the earlier index's mark kept, the files the killed index
+/// wrote would be kept as they are. The first daemon completes an index of 3,000 files and stops.
+/// All of them change; the second daemon is killed once its index has written its first batch, a
+/// dozen batches before the end.
+#[test]
+fn an_index_killed_partway_is_redone_whole() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    write_modules(repo.path(), "f")?;
+    let mut complete = Daemon::start(repo.path(), home.path())?;
+    assert_eq!(
+        complete.first_line()?,
+        "cortex: daemon ready: mode medium; files: 3000 written, 0 unchanged"
+    );
+    complete.child.kill()?;
+    complete.child.wait()?;
+    write_modules(repo.path(), "g")?;
+    let mut killed = Daemon::start(repo.path(), home.path())?;
+    wait_for(|| has_definition(repo.path(), "g0"))?;
+    killed.child.kill()?;
+    killed.child.wait()?;
+    let status = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["status", "--root"])
+        .arg(repo.path())
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .output()?;
+    let stdout = String::from_utf8(status.stdout)?;
+    assert!(
+        stdout.contains(
+            "
+index: not ready, the last index did not finish; the next one reads every file again
+"
+        ),
+        "{stdout}"
+    );
+    let redone = Daemon::start(repo.path(), home.path())?;
+    assert_eq!(
+        redone.first_line()?,
+        "cortex: daemon ready: mode medium; files: 3000 written, 0 unchanged"
+    );
+    Ok(())
+}

@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{EdgeType, FileFlags, RepoPath};
-use cortex_store::{FileRow, MetaKey, NodeId, Queries, StoreError};
+use cortex_store::{FileRow, MetaKey, NodeId, Queries, StoreError, Writer};
 
 use crate::discover::DiscoveredFile;
 
@@ -26,14 +26,47 @@ const MAX_FILES_AROUND: usize = 10_000;
 /// The version of this Cortex, which the store records when an index completes.
 const CORTEX_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// The stored files an index may keep: every stored file's row, by path, when this Cortex wrote
-/// them, and none when another did or none did.
+/// Whether this Cortex completed the store's last index, so that its rows can be kept as they are.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn is_complete(queries: Queries<'_>) -> Result<bool, StoreError> {
+    Ok(queries.meta(MetaKey::CortexVersion)?.as_deref() == Some(CORTEX_VERSION))
+}
+
+/// Marks the store's index as under way before anything is written: an index or a parse that
+/// stops partway, the process killed or a write failed, leaves it so, and the next index reads
+/// every file again instead of keeping rows whose ties were left half done.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn mark_started(writer: &mut Writer) -> Result<(), StoreError> {
+    let mut transaction = writer.transaction()?;
+    transaction.clear_cortex_version()?;
+    transaction.commit()
+}
+
+/// Marks the store's index as completed by this Cortex.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn mark_complete(writer: &mut Writer) -> Result<(), StoreError> {
+    let mut transaction = writer.transaction()?;
+    transaction.set_cortex_version()?;
+    transaction.commit()
+}
+
+/// The stored files an index may keep: every stored file's row, by path, when this Cortex
+/// completed the last index, and none when another did, none did or the last one stopped partway.
 ///
 /// # Errors
 ///
 /// Store errors.
 pub(crate) fn known_files(queries: Queries<'_>) -> Result<BTreeMap<RepoPath, FileRow>, StoreError> {
-    if queries.meta(MetaKey::CortexVersion)?.as_deref() != Some(CORTEX_VERSION) {
+    if !is_complete(queries)? {
         return Ok(BTreeMap::new());
     }
     Ok(queries

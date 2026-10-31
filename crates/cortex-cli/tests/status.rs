@@ -90,7 +90,7 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
     let empty = status(root, home.path())?;
     assert_eq!(
         empty.stdout,
-        "daemon: running\nindex: not ready, the first index has not finished\n\
+        "daemon: running\nindex: not ready, an index is under way\n\
          mode: not counted yet\nfiles: 0 stored, 0 parsed\n"
     );
     index(root, &mut writer)?;

@@ -32,6 +32,8 @@ pub(crate) const META_GET: &str = "SELECT value FROM meta WHERE key = ?1";
 /// Sets a `meta` key.
 pub(crate) const META_SET: &str = "INSERT INTO meta (key, value) VALUES (?1, ?2) \
      ON CONFLICT (key) DO UPDATE SET value = excluded.value";
+/// Removes a `meta` key.
+pub(crate) const META_DELETE: &str = "DELETE FROM meta WHERE key = ?1";
 /// Sets a `meta` key unless it already has a value.
 pub(crate) const META_SET_ONCE: &str =
     "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO NOTHING";

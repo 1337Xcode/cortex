@@ -246,6 +246,7 @@ pub fn index_repository(
 ) -> Result<IndexReport, IndexError> {
     let discovery = discover(root, &options.discover)?;
     let known = incremental::known_files(writer.queries())?;
+    incremental::mark_started(writer)?;
     let is_whole = known.is_empty();
     let missing = missing_files(writer, &discovery)?;
     let importers_of_gone = if is_whole {
@@ -321,9 +322,7 @@ pub fn index_repository(
     link(writer, root, (written, read_again), is_whole, &mut report)?;
     folders::write_folders(writer)?;
     (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
-    let mut transaction = writer.transaction()?;
-    transaction.set_cortex_version()?;
-    transaction.commit()?;
+    incremental::mark_complete(writer)?;
     Ok(report)
 }
 
@@ -343,6 +342,8 @@ pub fn parse_files(
     options: &IndexOptions<'_>,
     paths: &[RepoPath],
 ) -> Result<IndexReport, IndexError> {
+    let was_complete = incremental::is_complete(writer.queries())?;
+    incremental::mark_started(writer)?;
     let stored: BTreeMap<RepoPath, FileRow> = writer
         .queries()
         .file_rows()?
@@ -398,6 +399,9 @@ pub fn parse_files(
     let read_again = read_again(&around, &context)?;
     link(writer, root, (written, read_again), false, &mut report)?;
     (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
+    if was_complete {
+        incremental::mark_complete(writer)?;
+    }
     Ok(report)
 }
 
