@@ -51,6 +51,7 @@ mod tags;
 #[cfg(test)]
 mod test_support;
 mod test_targets;
+mod watch;
 
 pub use discover::{
     DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, MAX_FOLDER_DEPTH, Problem,
@@ -64,3 +65,4 @@ pub use rules::MAX_REPORTED_LINES;
 pub use scale::{RepoSize, mode_for};
 pub use scip::{ScipOutcome, ScipProblem};
 pub use specifiers::{Import, Imported};
+pub use watch::{Change, WatchError, Watcher, watch};

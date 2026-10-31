@@ -31,6 +31,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition, the names its imports take among them, each with what is written before it (`Qualifier`); and the modules it imports, with what it takes (the module, one name, every name or the default export), the name it binds and whether it only passes what it takes on |
 | `index_repository` | Indexes a repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file that changed since the last index, ties references to the definitions their names settle, joins files and definitions in the graph, keeps a node for each folder that holds files, and records the scale mode; reports the definitions whose signature or body changed |
 | `IndexOptions`, `IndexReport`, `FileProblem`, `ScipOutcome`, `ScipProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, the files skipped because they could not be read, took too long to parse or panicked while being read, and what became of the repository's SCIP index |
+| `watch`, `Watcher`, `Change`, `WatchError` | Watches a repository and reports its changes from a thread of its own: the paths the walk would find that were created, changed, removed or renamed, or a change to everything; stops when the `Watcher` is dropped |
 
 ## What a file's flags mean
 
@@ -219,6 +220,16 @@ Files are read and parsed in batches on several threads, each thread with a pars
 while the batch before is written in one transaction. Each batch is written in path order, so the
 same tree gets the same rows and ids whatever the number of threads, as long as no file runs out
 of time.
+
+## Watching
+
+`watch` reports a repository's changes as they happen. File system events are gathered until a
+path has been quiet for 200 ms, then sorted by the walk's own rules: paths under `.git` or
+`.cortex`, and paths the ignore files and patterns leave out, are dropped. The paths left, created,
+changed, removed or renamed (both names), are reported together. More than 500 of them within 2
+seconds, as a branch switch or a large checkout makes, a change to `.gitignore`, `.cortexignore`,
+`.gitattributes` or `.git/info`, or an error from the file system watcher, is reported as a change
+to everything instead. What to do about a change, an index of what changed, is the caller's.
 
 ## Imports
 

@@ -26,6 +26,8 @@ allow = [
     "Zlib",
     "Unicode-3.0",
     "Unicode-DFS-2016",
+    # A public domain dedication, as permissive as a licence gets: the file watcher `notify` uses it.
+    "CC0-1.0",
 ]
 confidence-threshold = 0.93
 # The allow list is policy, not an inventory: a licence no dependency uses yet is fine.

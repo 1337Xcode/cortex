@@ -13,6 +13,8 @@ cortex-core = { path = "../cortex-core" }
 cortex-store = { path = "../cortex-store" }
 globset.workspace = true
 ignore.workspace = true
+notify.workspace = true
+notify-debouncer-full.workspace = true
 protobuf.workspace = true
 scip.workspace = true
 serde.workspace = true

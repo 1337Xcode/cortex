@@ -23,7 +23,7 @@ use crate::safe_read;
 use crate::{detect, head, path_rules};
 
 /// Entries the walk never enters or lists: git's own data and Cortex's.
-const PRUNED_NAMES: &[&str] = &[".git", ".cortex"];
+pub(crate) const PRUNED_NAMES: &[&str] = &[".git", ".cortex"];
 
 /// How many folders deep the walk goes below the root. Real repositories stay far shallower;
 /// the limit bounds the time and memory a crafted, deeply nested tree can cost.
