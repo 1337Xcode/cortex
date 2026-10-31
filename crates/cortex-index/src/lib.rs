@@ -29,6 +29,7 @@ mod grammar;
 mod hashes;
 mod head;
 mod imports;
+mod incremental;
 mod languages;
 mod lines;
 mod locals;

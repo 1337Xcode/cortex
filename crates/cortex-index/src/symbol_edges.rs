@@ -16,9 +16,9 @@ use cortex_store::{EdgeRecord, NodeId, StoreError, SymbolId, Target, Writer};
 /// this many definitions' edges, and the transaction stays short.
 const SOURCES_PER_TRANSACTION: usize = 4096;
 
-/// Replaces the structural edges of every definition with edges to the definitions `ties`, each a
-/// reference's definition and target, point to; a definition that had edges and is in no tie now
-/// loses them. A definition without a node gets no edge.
+/// Replaces the structural edges of every definition, or of those in `only`, with edges to the
+/// definitions `ties`, each a reference's definition and target, point to; such a definition that
+/// had edges and is in no tie now loses them. A definition without a node gets no edge.
 ///
 /// # Errors
 ///
@@ -26,11 +26,15 @@ const SOURCES_PER_TRANSACTION: usize = 4096;
 pub(crate) fn write_symbol_edges(
     writer: &mut Writer,
     ties: &[(SymbolId, Target)],
+    only: Option<&BTreeSet<SymbolId>>,
 ) -> Result<(), StoreError> {
     let queries = writer.queries();
     let nodes: BTreeMap<SymbolId, NodeId> = queries.symbol_nodes()?.into_iter().collect();
     let mut edges: BTreeMap<NodeId, BTreeMap<NodeId, EdgeRecord>> = BTreeMap::new();
     for (source, target) in ties {
+        if only.is_some_and(|only| !only.contains(source)) {
+            continue;
+        }
         let (Some(&src), Some(&dst)) = (nodes.get(source), nodes.get(&target.symbol)) else {
             continue;
         };
@@ -53,10 +57,18 @@ pub(crate) fn write_symbol_edges(
         edge.weight = edge.weight.max(weight);
         edge.count = edge.count.saturating_add(1);
     }
-    let definitions: BTreeSet<NodeId> = nodes.into_values().collect();
-    for stale in queries.edge_sources(EdgeType::Structural)? {
-        if definitions.contains(&stale) {
-            edges.entry(stale).or_default();
+    // A definition to rewrite that is in no tie loses its edges: one of `only`, or else any that
+    // has some now.
+    if let Some(only) = only {
+        for node in only.iter().filter_map(|source| nodes.get(source)) {
+            edges.entry(*node).or_default();
+        }
+    } else {
+        let definitions: BTreeSet<NodeId> = nodes.into_values().collect();
+        for stale in queries.edge_sources(EdgeType::Structural)? {
+            if definitions.contains(&stale) {
+                edges.entry(stale).or_default();
+            }
         }
     }
     let sources: Vec<(NodeId, Vec<EdgeRecord>)> = edges

@@ -66,8 +66,9 @@ fn a_second_writer_is_refused() -> TestResult {
     Ok(())
 }
 
-/// A new database records its schema, repository, Cortex version and creation time; reopening
-/// it later keeps the creation time. A new database needs no backup.
+/// A new database records its schema, repository and creation time; reopening it later keeps the
+/// creation time. The Cortex version is recorded once an index completes. A new database needs no
+/// backup.
 #[test]
 fn identity_is_recorded() -> TestResult {
     let scratch = Scratch::new()?;
@@ -79,17 +80,21 @@ fn identity_is_recorded() -> TestResult {
         queries.meta(MetaKey::RepoId)?.as_deref(),
         Some(expected_id.as_str())
     );
-    assert_eq!(
-        queries.meta(MetaKey::CortexVersion)?.as_deref(),
-        Some(CORTEX_VERSION)
-    );
+    assert_eq!(queries.meta(MetaKey::CortexVersion)?, None);
     assert_eq!(queries.meta(MetaKey::CreatedAt)?.as_deref(), Some("1000"));
     assert_eq!(queries.meta(MetaKey::ScaleMode)?, None);
     drop(writer);
-    let writer = scratch.writer(2000)?;
+    let mut writer = scratch.writer(2000)?;
     assert_eq!(
         writer.queries().meta(MetaKey::CreatedAt)?.as_deref(),
         Some("1000")
+    );
+    let mut transaction = writer.transaction()?;
+    transaction.set_cortex_version()?;
+    transaction.commit()?;
+    assert_eq!(
+        writer.queries().meta(MetaKey::CortexVersion)?.as_deref(),
+        Some(CORTEX_VERSION)
     );
     assert!(!scratch.folder.join("backups").try_exists()?);
     Ok(())

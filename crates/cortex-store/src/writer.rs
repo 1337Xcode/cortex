@@ -97,7 +97,10 @@ impl Writer {
     }
 }
 
-/// Records which repository and which Cortex the database belongs to, and when it was created.
+/// The version of this Cortex, recorded when it completes an index.
+const CORTEX_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Records which repository the database belongs to, and when it was created.
 fn record_identity(
     connection: &mut Connection,
     options: &WriterOptions<'_>,
@@ -110,11 +113,6 @@ fn record_identity(
             schema::META_SET,
             MetaKey::RepoId,
             options.repo_id.as_str().to_owned(),
-        ),
-        (
-            schema::META_SET,
-            MetaKey::CortexVersion,
-            env!("CARGO_PKG_VERSION").to_owned(),
         ),
         (
             schema::META_SET_ONCE,
@@ -173,6 +171,38 @@ impl WriteTx<'_> {
     /// exist. Either all resolutions are written or none.
     pub fn set_resolutions(&mut self, resolutions: &[Resolved]) -> Result<(), StoreError> {
         self.atomically(|connection| links::set_resolutions(connection, resolutions))
+    }
+
+    /// Records this Cortex as the one whose rules wrote the index, once an index is complete.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn set_cortex_version(&mut self) -> Result<(), StoreError> {
+        self.atomically(|connection| {
+            connection
+                .execute(
+                    schema::META_SET,
+                    (MetaKey::CortexVersion.name(), CORTEX_VERSION),
+                )
+                .map(drop)
+                .map_err(sqlite("writing the Cortex version"))
+        })
+    }
+
+    /// Sets the modification time of the stored file at `path` to `mtime_ns`, for a file whose
+    /// contents are as stored. Returns whether the store holds the file.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn set_file_mtime(&mut self, path: &RepoPath, mtime_ns: i64) -> Result<bool, StoreError> {
+        self.atomically(|connection| {
+            connection
+                .execute(schema::FILE_MTIME_SET, (path.as_str(), mtime_ns))
+                .map(|rows| rows > 0)
+                .map_err(sqlite("writing a file's time"))
+        })
     }
 
     /// Records `mode` as the scale mode the index was built for.

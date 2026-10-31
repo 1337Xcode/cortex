@@ -7,7 +7,8 @@ pub enum MetaKey {
     SchemaVersion,
     /// The repository's id on this machine.
     RepoId,
-    /// The version of Cortex that last opened the database for writing.
+    /// The version of Cortex whose rules wrote the index, recorded when an index completes: a file
+    /// another version read is read again.
     CortexVersion,
     /// When the database was created, in UTC milliseconds.
     CreatedAt,

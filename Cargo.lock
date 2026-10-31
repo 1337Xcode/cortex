@@ -220,6 +220,7 @@ dependencies = [
  "ignore",
  "proptest",
  "protobuf",
+ "rusqlite",
  "scip",
  "serde",
  "serde_json",

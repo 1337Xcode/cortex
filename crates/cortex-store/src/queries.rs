@@ -54,6 +54,18 @@ impl<'c> Queries<'c> {
         raw.map(RawFile::check).transpose()
     }
 
+    /// Every stored file's row, by path.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn file_rows(self) -> Result<Vec<FileRow>, StoreError> {
+        let raw = self
+            .collect_all(schema::FILE_ROWS, RawFile::read)
+            .map_err(sqlite("reading files"))?;
+        raw.into_iter().map(RawFile::check).collect()
+    }
+
     /// The path of every stored file, in the order [`RepoPath`] sorts them: by the bytes of the
     /// path.
     ///
@@ -176,6 +188,28 @@ impl<'c> Queries<'c> {
             .into_iter()
             .map(|(symbol, node)| (SymbolId(symbol), NodeId(node)))
             .collect())
+    }
+
+    /// The nodes the edges of `edge_type` into `node` start from, in order.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn sources_into(
+        self,
+        node: NodeId,
+        edge_type: EdgeType,
+    ) -> Result<Vec<NodeId>, StoreError> {
+        let raw: Vec<i64> = self
+            .connection
+            .prepare_cached(schema::SOURCES_INTO)
+            .and_then(|mut statement| {
+                statement
+                    .query_map((node.get(), edge_type.number()), |row| row.get(0))?
+                    .collect()
+            })
+            .map_err(sqlite("reading edge sources"))?;
+        Ok(raw.into_iter().map(NodeId).collect())
     }
 
     /// Every node an edge of `edge_type` starts from, in order.

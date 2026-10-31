@@ -314,10 +314,12 @@ fn every_file_is_written_as_its_kind_allows() -> TestResult {
     let expected = IndexReport {
         files: 8,
         parsed: 2,
+        unchanged: 0,
         removed: 0,
         walk_problems: Vec::new(),
         problems: Vec::new(),
         left_out: Vec::new(),
+        changed_symbols: Vec::new(),
         scip: ScipOutcome::Absent,
         // Source: orders.py (7 lines) and README.md (3); the others are vendored, generated,
         // secret, too large, binary or in no language.
@@ -585,8 +587,11 @@ fn a_second_index_follows_the_changes() -> TestResult {
         index(root, 2, GENEROUS, SMALL_LIMIT)?
     };
     let expected = IndexReport {
-        files: 7,
+        // Written: orders.py, changed, and new.py; kept as they were: big.py, data.bin, .env,
+        // gen/types.rs and vendor/lib.js. README.md the walk could not read, notes.txt is gone.
+        files: 2,
         parsed: 2,
+        unchanged: 5,
         removed: 1,
         walk_problems: vec![Problem {
             path: Some(RepoPath::new("README.md")?),
@@ -594,6 +599,7 @@ fn a_second_index_follows_the_changes() -> TestResult {
         }],
         problems: Vec::new(),
         left_out: Vec::new(),
+        changed_symbols: Vec::new(),
         scip: ScipOutcome::Absent,
         // Source: orders.py (7 lines and 4 more), new.py (2) and README.md, kept with its 3.
         size: RepoSize {
@@ -626,7 +632,8 @@ fn a_second_index_follows_the_changes() -> TestResult {
     Ok(())
 }
 
-/// More files gone than one batch removes are all removed: 300 of them, in two batches.
+/// More files gone than one batch removes are all removed: 300 of them, in two batches;
+/// `keep.txt`, unchanged, is kept as it was.
 #[test]
 fn every_file_gone_is_removed() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -641,7 +648,10 @@ fn every_file_gone_is_removed() -> TestResult {
         std::fs::remove_file(root.join(format!("parts/part{number:03}.py")))?;
     }
     let report = index(root, 4, GENEROUS, DEFAULT_LIMIT)?;
-    assert_eq!((report.files, report.removed), (1, 300));
+    assert_eq!(
+        (report.files, report.unchanged, report.removed),
+        (0, 1, 300)
+    );
     assert_eq!(stored_paths(root)?, ["keep.txt"]);
     Ok(())
 }
@@ -729,10 +739,12 @@ fn a_file_out_of_time_is_skipped_and_reported() -> TestResult {
     let out_of_time = IndexReport {
         files: 1,
         parsed: 0,
+        unchanged: 0,
         removed: 0,
         walk_problems: Vec::new(),
         problems: vec![(RepoPath::new("slow.py")?, FileProblem::TimedOut)],
         left_out: Vec::new(),
+        changed_symbols: Vec::new(),
         scip: ScipOutcome::Absent,
         // Only z.txt is stored, in no language.
         size: RepoSize {
@@ -754,8 +766,16 @@ fn a_file_out_of_time_is_skipped_and_reported() -> TestResult {
         (FileFlags::PARSED, 5000)
     );
     let ids = symbol_ids(root, "slow.py")?;
-    // Kept as stored before, slow.py now counts: 5,000 functions of two lines each.
+    // One more function makes slow.py changed, to be read and parsed again; out of time, it keeps
+    // its stored rows, 5,000 functions of two lines each, and counts as source. z.txt is unchanged.
+    write_dated(
+        root,
+        "slow.py",
+        format!("{slow}def g():\n    pass\n").as_bytes(),
+    )?;
     let kept = IndexReport {
+        files: 0,
+        unchanged: 1,
         size: RepoSize {
             source_files: 1,
             lines: 10_000,

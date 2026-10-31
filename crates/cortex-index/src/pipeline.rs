@@ -28,7 +28,9 @@ use std::thread;
 use std::time::Duration;
 
 use cortex_core::{ContentHash, FileFlags, Language, ModeSetting, RepoPath, ScaleMode};
-use cortex_store::{FileIndex, FileRecord, StoreError, Writer};
+use cortex_store::{
+    ChangeKind, FileIndex, FileRecord, FileRow, StoreError, SymbolChange, SymbolId, Writer,
+};
 use thiserror::Error;
 
 use crate::bindings::Bindings;
@@ -41,6 +43,7 @@ use crate::file_imports::{self, FileImports};
 use crate::folders;
 use crate::grammar::Grammars;
 use crate::imports::Project;
+use crate::incremental;
 use crate::resolve;
 use crate::safe_read;
 use crate::scale::{self, RepoSize};
@@ -87,6 +90,9 @@ pub struct IndexReport {
     pub files: u64,
     /// How many of them were parsed for their definitions and references.
     pub parsed: u64,
+    /// How many files the walk found as stored, kept without being written again; one whose
+    /// contents hashed as stored had only its time written.
+    pub unchanged: u64,
     /// How many stored files were removed because the walk no longer finds them.
     pub removed: u64,
     /// What the walk could not do.
@@ -96,6 +102,8 @@ pub struct IndexReport {
     /// Files written although their queries found names that were left out, in path order, with
     /// how many of each kind.
     pub left_out: Vec<(RepoPath, LeftOut)>,
+    /// The definitions of written files whose signature or body changed, in the order written.
+    pub changed_symbols: Vec<SymbolChange>,
     /// What became of the repository's SCIP index.
     pub scip: ScipOutcome,
     /// The repository's size, as the scale modes count it.
@@ -140,6 +148,8 @@ pub enum IndexError {
 enum Outcome {
     /// It is ready to write.
     Ready(Box<Prepared>),
+    /// Its contents are as stored: only its new modification time, in nanoseconds, needs writing.
+    Touched(RepoPath, i64),
     /// Nothing to write: the file at this path was skipped, for this reason.
     Skipped(RepoPath, FileProblem),
 }
@@ -190,6 +200,9 @@ struct Context<'a> {
     grammars: &'a Arc<Grammars>,
     /// What import resolution knows of the repository.
     project: &'a Project,
+    /// The stored files, by path, whose contents a file read is compared with: one that hashes as
+    /// stored is not parsed. `None` when every file read is parsed.
+    known: Option<&'a BTreeMap<RepoPath, FileRow>>,
     /// The size above which a file is not read.
     max_file_bytes: u64,
     /// How long one file may take to parse and read.
@@ -201,9 +214,11 @@ struct Context<'a> {
 }
 
 /// Indexes the repository at `root` into `writer`'s store: walks it, removes the stored files the
-/// walk no longer finds, reads, parses and writes every file it found, ties each reference to the
-/// definition its file's imports or its name settle, joins each parsed file to the files its
-/// imports name, then gives each folder holding stored files its node and containment edges.
+/// walk no longer finds, reads, parses and writes every file that changed since the last index
+/// (every file the first time, or after a Cortex of another version), reads the files around the
+/// changes again for what their imports bind, ties each reference to the definition its file's
+/// imports or its name settle, joins files and definitions in the graph, gives each folder holding
+/// stored files its node and containment edges, and records the scale mode.
 ///
 /// # Errors
 ///
@@ -218,24 +233,45 @@ pub fn index_repository(
     options: &IndexOptions<'_>,
 ) -> Result<IndexReport, IndexError> {
     let discovery = discover(root, &options.discover)?;
-    let removed = remove_missing(writer, &discovery)?;
+    let known = incremental::known_files(writer.queries())?;
+    let is_whole = known.is_empty();
+    let missing = missing_files(writer, &discovery)?;
+    let importers_of_gone = if is_whole {
+        BTreeSet::new()
+    } else {
+        incremental::importers(writer.queries(), &missing.iter().cloned().collect())?
+    };
+    remove_files(writer, &missing)?;
     let project = load_project(root, writer, &discovery, options.discover.max_file_bytes)?;
     let context = Context {
         root,
         grammars,
         project: &project,
+        known: Some(&known),
         max_file_bytes: options.discover.max_file_bytes,
         parse_timeout: options.parse_timeout,
         threads: options.threads,
         now_ms: options.now_ms,
     };
+    let candidates: Vec<DiscoveredFile> = discovery
+        .files
+        .iter()
+        .filter(|file| {
+            known
+                .get(&file.path)
+                .is_none_or(|row| !incremental::is_unchanged(file, row))
+        })
+        .cloned()
+        .collect();
     let mut report = IndexReport {
         files: 0,
         parsed: 0,
-        removed,
-        walk_problems: discovery.problems,
+        unchanged: count(discovery.files.len() - candidates.len()),
+        removed: count(missing.len()),
+        walk_problems: discovery.problems.clone(),
         problems: Vec::new(),
         left_out: Vec::new(),
+        changed_symbols: Vec::new(),
         scip: ScipOutcome::Absent,
         size: RepoSize {
             source_files: 0,
@@ -243,25 +279,117 @@ pub fn index_repository(
         },
         mode: ScaleMode::Tiny,
     };
-    let imports = write_files(writer, &discovery.files, &context, &mut report)?;
+    let written = write_files(writer, &candidates, &context, &mut report)?;
+    let around = if is_whole {
+        Vec::new()
+    } else {
+        files_around(writer, &discovery, &written, importers_of_gone)?
+    };
+    let again = Context {
+        known: None,
+        ..context
+    };
+    let read_again = read_again(&around, &again)?;
+    link(writer, root, (written, read_again), is_whole, &mut report)?;
+    folders::write_folders(writer)?;
+    (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
+    let mut transaction = writer.transaction()?;
+    transaction.set_cortex_version()?;
+    transaction.commit()?;
+    Ok(report)
+}
+
+/// `items` as a count.
+fn count(items: usize) -> u64 {
+    u64::try_from(items).unwrap_or(u64::MAX)
+}
+
+/// A file this index wrote: what its imports bind, and the ids of its definitions.
+struct Written {
+    /// Where it is.
+    path: RepoPath,
+    /// What its imports name and bind.
+    imported: FileImports,
+    /// Its definitions' rows.
+    symbols: Vec<SymbolId>,
+}
+
+/// The files around this index's changes to read again for what their imports bind: those whose
+/// imports name a `written` file, `importers_of_gone`, whose imports named a removed one, and the
+/// files the written files and these reach through their imports; only files the walk found and
+/// this index did not write.
+fn files_around(
+    writer: &Writer,
+    discovery: &Discovery,
+    written: &[Written],
+    importers_of_gone: BTreeSet<RepoPath>,
+) -> Result<Vec<DiscoveredFile>, StoreError> {
+    let changed: BTreeSet<RepoPath> = written.iter().map(|file| file.path.clone()).collect();
+    let mut around = importers_of_gone;
+    around.extend(incremental::importers(writer.queries(), &changed)?);
+    let from: BTreeSet<RepoPath> = changed.iter().chain(&around).cloned().collect();
+    around.extend(incremental::reached(writer.queries(), &from)?);
+    Ok(discovery
+        .files
+        .iter()
+        .filter(|file| around.contains(&file.path) && !changed.contains(&file.path))
+        .cloned()
+        .collect())
+}
+
+/// Reads and parses `files` again for what their imports bind, without writing them; a file that
+/// cannot be read or parsed now is left out.
+fn read_again(
+    files: &[DiscoveredFile],
+    context: &Context<'_>,
+) -> Result<Vec<(RepoPath, FileImports)>, IndexError> {
+    let mut imports = Vec::new();
+    for batch in files.chunks(FILES_PER_BATCH) {
+        for outcome in prepare_batch(batch, context)? {
+            if let Outcome::Ready(prepared) = outcome {
+                imports.push((prepared.index.file.path, prepared.imported));
+            }
+        }
+    }
+    Ok(imports)
+}
+
+/// Ties every reference and writes the graph's edges once files are written: `files` holds the
+/// written files and those read again for what their imports bind. With `is_whole`, every file
+/// was written and every definition's edges are written again; otherwise only those of the
+/// written files' definitions and of definitions whose references' targets changed.
+fn link(
+    writer: &mut Writer,
+    root: &Path,
+    (written, read_again): (Vec<Written>, Vec<(RepoPath, FileImports)>),
+    is_whole: bool,
+    report: &mut IndexReport,
+) -> Result<(), IndexError> {
     let (scip, scip_ties) = scip::read_index(root, writer.queries())?;
     report.scip = scip;
+    let mut affected: BTreeSet<SymbolId> = BTreeSet::new();
+    let mut files = Vec::new();
+    for file in written {
+        affected.extend(file.symbols);
+        files.push((file.path, file.imported));
+    }
+    files.extend(read_again);
     let mut counts = Vec::new();
     let mut bindings = BTreeMap::new();
     let mut test_targets = BTreeMap::new();
-    for (path, imported) in imports {
+    for (path, imported) in files {
         if let Some(target) = imported.test_target {
             test_targets.insert(path.clone(), target);
         }
         counts.push((path.clone(), imported.counts));
         bindings.insert(path, imported.bindings);
     }
-    let ties = resolve::resolve_names(writer, &bindings, &scip_ties)?;
-    symbol_edges::write_symbol_edges(writer, &ties)?;
+    let pass = resolve::resolve_names(writer, &bindings, &scip_ties)?;
+    affected.extend(pass.changed_sources);
+    let only = (!is_whole).then_some(&affected);
+    symbol_edges::write_symbol_edges(writer, &pass.ties, only)?;
     file_edges::write_import_edges(writer, &counts, &test_targets)?;
-    folders::write_folders(writer)?;
-    (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
-    Ok(report)
+    Ok(())
 }
 
 /// What import resolution knows of the repository at `root`: every file the walk found or the
@@ -290,17 +418,16 @@ fn load_project(
     Ok(Project::load(stored.into_iter().chain(found), &read))
 }
 
-/// Removes every stored file the walk did not find, except those it could not see: below a
-/// folder it could not list or did not enter, or a file it could not inspect. Returns how many
-/// it removed.
-fn remove_missing(writer: &mut Writer, discovery: &Discovery) -> Result<u64, StoreError> {
+/// Every stored file the walk did not find, except those it could not see: below a folder it
+/// could not list or did not enter, or a file it could not inspect.
+fn missing_files(writer: &Writer, discovery: &Discovery) -> Result<Vec<RepoPath>, StoreError> {
     let unseen: BTreeSet<&RepoPath> = discovery
         .problems
         .iter()
         .filter(|problem| hides_files(problem.kind))
         .filter_map(|problem| problem.path.as_ref())
         .collect();
-    let missing: Vec<RepoPath> = writer
+    Ok(writer
         .queries()
         .file_paths()?
         .into_iter()
@@ -311,15 +438,19 @@ fn remove_missing(writer: &mut Writer, discovery: &Discovery) -> Result<u64, Sto
                 .is_ok();
             !found && !is_unseen(path, &unseen)
         })
-        .collect();
-    for batch in missing.chunks(FILES_PER_BATCH) {
+        .collect())
+}
+
+/// Removes the stored files at `paths`.
+fn remove_files(writer: &mut Writer, paths: &[RepoPath]) -> Result<(), StoreError> {
+    for batch in paths.chunks(FILES_PER_BATCH) {
         let mut transaction = writer.transaction()?;
         for path in batch {
             transaction.remove_file(path)?;
         }
         transaction.commit()?;
     }
-    Ok(u64::try_from(missing.len()).unwrap_or(u64::MAX))
+    Ok(())
 }
 
 /// Whether a walk problem of this kind means the walk did not see the files at its path or below
@@ -337,15 +468,15 @@ fn is_unseen(path: &RepoPath, unseen: &BTreeSet<&RepoPath>) -> bool {
 }
 
 /// Prepares the files in batches and writes each batch in one transaction while the next one is
-/// prepared. Returns each written file with what its imports name, in path order.
+/// prepared. Returns each written file, in path order.
 fn write_files(
     writer: &mut Writer,
     files: &[DiscoveredFile],
     context: &Context<'_>,
     report: &mut IndexReport,
-) -> Result<Vec<(RepoPath, FileImports)>, IndexError> {
+) -> Result<Vec<Written>, IndexError> {
     thread::scope(|scope| {
-        let mut imports = Vec::new();
+        let mut written = Vec::new();
         let mut batches = files.chunks(FILES_PER_BATCH);
         let mut next = batches
             .next()
@@ -355,38 +486,51 @@ fn write_files(
             next = batches
                 .next()
                 .map(|batch| scope.spawn(move || prepare_batch(batch, context)));
-            imports.extend(write_batch(writer, outcomes, report)?);
+            written.extend(write_batch(writer, outcomes, report)?);
         }
-        Ok(imports)
+        Ok(written)
     })
 }
 
-/// Writes one batch's files in one transaction, in order, and counts them in `report`. Returns
-/// each written file with what its imports name.
+/// Writes one batch's files in one transaction, in order, and counts them in `report`, with the
+/// definitions whose signature or body changed. A file whose contents are as stored gets only its
+/// new time. Returns each written file.
 fn write_batch(
     writer: &mut Writer,
     outcomes: Vec<Outcome>,
     report: &mut IndexReport,
-) -> Result<Vec<(RepoPath, FileImports)>, StoreError> {
-    let mut imports = Vec::new();
+) -> Result<Vec<Written>, StoreError> {
+    let mut written = Vec::new();
     let mut transaction = writer.transaction()?;
     for outcome in outcomes {
         match outcome {
             Outcome::Ready(prepared) => {
-                transaction.replace_file(&prepared.index)?;
+                let change = transaction.replace_file(&prepared.index)?;
                 report.files += 1;
                 report.parsed += u64::from(prepared.index.file.flags.contains(FileFlags::PARSED));
+                let changed = change.changes.into_iter().filter(|symbol| {
+                    matches!(symbol.kind, ChangeKind::Signature | ChangeKind::Body)
+                });
+                report.changed_symbols.extend(changed);
                 let path = prepared.index.file.path;
                 if !prepared.left_out.is_empty() {
                     report.left_out.push((path.clone(), prepared.left_out));
                 }
-                imports.push((path, prepared.imported));
+                written.push(Written {
+                    path,
+                    imported: prepared.imported,
+                    symbols: change.symbols,
+                });
+            }
+            Outcome::Touched(path, mtime_ns) => {
+                transaction.set_file_mtime(&path, mtime_ns)?;
+                report.unchanged += 1;
             }
             Outcome::Skipped(path, problem) => report.problems.push((path, problem)),
         }
     }
     transaction.commit()?;
-    Ok(imports)
+    Ok(written)
 }
 
 /// Prepares `batch` on the context's threads, each with an extractor of its own, and returns what
@@ -468,7 +612,14 @@ fn prepare(
 ) -> Result<Outcome, ExtractError> {
     let (mut record, language, source) =
         match read(file, context.root, context.max_file_bytes, context.now_ms) {
+            Read::Done(Outcome::Ready(prepared)) if is_as_stored(&prepared.index.file, context) => {
+                let file = prepared.index.file;
+                return Ok(Outcome::Touched(file.path, file.mtime_ns));
+            }
             Read::Done(outcome) => return Ok(outcome),
+            Read::Parse { record, .. } if is_as_stored(&record, context) => {
+                return Ok(Outcome::Touched(record.path, record.mtime_ns));
+            }
             Read::Parse {
                 record,
                 language,
@@ -512,6 +663,19 @@ fn prepare(
         }
         Err(error) => Err(error),
     }
+}
+
+/// Whether the file `record` describes, just read, holds what the store holds for it: the same
+/// contents by hash, language and flags.
+fn is_as_stored(record: &FileRecord, context: &Context<'_>) -> bool {
+    let Some(row) = context.known.and_then(|known| known.get(&record.path)) else {
+        return false;
+    };
+    let stored = &row.file;
+    record.content_hash.is_some()
+        && record.content_hash == stored.content_hash
+        && record.language == stored.language
+        && record.flags == incremental::unparsed(stored.flags)
 }
 
 /// Reads `file`, found under `root`, as far as its flags allow, recording `now_ms` as its indexing
@@ -791,6 +955,7 @@ mod tests {
             root: repo.path(),
             grammars: &grammars,
             project: &Project::load(Vec::new(), &|_| None),
+            known: None,
             max_file_bytes: 1000,
             parse_timeout: Duration::from_secs(60),
             threads: NonZeroUsize::MIN,
@@ -820,6 +985,7 @@ mod tests {
                 Outcome::Skipped(path, problem) => {
                     (*position, path.as_str(), Some(*problem), Vec::new())
                 }
+                Outcome::Touched(path, _) => (*position, path.as_str(), None, Vec::new()),
             })
             .collect();
         assert_eq!(
@@ -851,10 +1017,30 @@ mod tests {
         }
     }
 
+    /// The report of an index that has done nothing yet.
+    fn empty_report() -> IndexReport {
+        IndexReport {
+            files: 0,
+            parsed: 0,
+            unchanged: 0,
+            removed: 0,
+            walk_problems: Vec::new(),
+            problems: Vec::new(),
+            left_out: Vec::new(),
+            changed_symbols: Vec::new(),
+            scip: ScipOutcome::Absent,
+            size: RepoSize {
+                source_files: 0,
+                lines: 0,
+            },
+            mode: ScaleMode::Tiny,
+        }
+    }
+
     /// A batch is written in one transaction and counted: a file ready to write is written, with
     /// what its queries left out reported when anything was, and returned with the files its
     /// imports name; a skipped file is reported and leaves what the store held for it, or
-    /// nothing.
+    /// nothing; a file whose contents are as stored gets its new time and counts as unchanged.
     #[test]
     fn a_batch_writes_what_was_read_and_reports_the_rest() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -883,20 +1069,7 @@ mod tests {
         transaction.replace_file(&file_only(kept.clone()))?;
         transaction.replace_file(&file_only(slow.clone()))?;
         transaction.commit()?;
-        let mut report = IndexReport {
-            files: 0,
-            parsed: 0,
-            removed: 0,
-            walk_problems: Vec::new(),
-            problems: Vec::new(),
-            left_out: Vec::new(),
-            scip: ScipOutcome::Absent,
-            size: RepoSize {
-                source_files: 0,
-                lines: 0,
-            },
-            mode: ScaleMode::Tiny,
-        };
+        let mut report = empty_report();
         let skipped = |path: &str, problem| -> Result<Outcome, cortex_core::PathError> {
             Ok(Outcome::Skipped(RepoPath::new(path)?, problem))
         };
@@ -926,8 +1099,16 @@ mod tests {
             skipped("kept.txt", FileProblem::Unreadable)?,
             skipped("new.txt", FileProblem::Panicked)?,
             skipped("slow.txt", FileProblem::TimedOut)?,
+            Outcome::Touched(RepoPath::new("a.txt")?, 99),
         ];
-        let imports = write_batch(&mut writer, outcomes, &mut report)?;
+        let written = write_batch(&mut writer, outcomes, &mut report)?;
+        let imports: Vec<(RepoPath, FileImports)> = written
+            .into_iter()
+            .map(|file| (file.path, file.imported))
+            .collect();
+        assert_eq!(report.unchanged, 1);
+        let touched = writer.queries().file(&RepoPath::new("a.txt")?)?;
+        assert_eq!(touched.map(|row| row.file.mtime_ns), Some(99));
         assert_eq!(
             imports,
             [

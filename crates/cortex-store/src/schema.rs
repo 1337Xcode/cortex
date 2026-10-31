@@ -50,6 +50,11 @@ pub(crate) const FILE_DELETE: &str = "DELETE FROM files WHERE file_id = ?1";
 /// A file's row, found by path.
 pub(crate) const FILE_BY_PATH: &str = "SELECT file_id, path, lang, bytes, loc, content_hash, \
      mtime_ns, flags, indexed_at FROM files WHERE path = ?1";
+/// Every file's row, by path.
+pub(crate) const FILE_ROWS: &str = "SELECT file_id, path, lang, bytes, loc, content_hash, \
+     mtime_ns, flags, indexed_at FROM files ORDER BY path";
+/// Sets a file's modification time, found by path.
+pub(crate) const FILE_MTIME_SET: &str = "UPDATE files SET mtime_ns = ?2 WHERE path = ?1";
 /// Every file's id and path, by path. Text compares byte by byte here, as Rust strings do.
 pub(crate) const FILE_PATHS: &str = "SELECT file_id, path FROM files ORDER BY path";
 
@@ -154,6 +159,9 @@ pub(crate) const EDGE_INSERT: &str = "INSERT INTO edges (src, dst, type, w, n, l
 /// A node's outgoing edges, by type, then target.
 pub(crate) const EDGES_FROM: &str = "SELECT src, dst, type, w, n, last_seq, directed FROM edges \
      WHERE src = ?1 ORDER BY type, dst";
+/// The nodes the edges of a type into a node start from, in order.
+pub(crate) const SOURCES_INTO: &str =
+    "SELECT src FROM edges WHERE dst = ?1 AND type = ?2 ORDER BY src";
 /// Every node an edge of a type starts from, in order.
 pub(crate) const EDGE_SOURCES: &str = "SELECT DISTINCT src FROM edges WHERE type = ?1 ORDER BY src";
 

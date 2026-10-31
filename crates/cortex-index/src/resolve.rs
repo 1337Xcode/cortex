@@ -322,13 +322,21 @@ fn family(language: Language) -> Language {
     }
 }
 
+/// What the name pass tied.
+pub(crate) struct NamePass {
+    /// Each tied reference that sits in a definition, as that definition and its target.
+    pub(crate) ties: Vec<(SymbolId, Target)>,
+    /// The definitions holding a reference whose target changed.
+    pub(crate) changed_sources: BTreeSet<SymbolId>,
+}
+
 /// Ties every stored reference to the definition its file's imports or its name settle, or marks
 /// it unresolved, and writes the references whose target changed, in transactions of
 /// [`RESOLUTIONS_PER_TRANSACTION`]. `bindings` holds what the imports of each file this index
 /// wrote bring in, by path, with a lookup for each of its references in the order they were
 /// written. A reference `scip` ties, from the repository's SCIP index, is tied as it says, before
-/// any rule here. Returns each tied reference that sits in a definition, as that definition and the
-/// reference's target.
+/// any rule here. Returns what it tied: each tied reference that sits in a definition, and the
+/// definitions holding a reference whose target changed.
 ///
 /// # Errors
 ///
@@ -337,7 +345,7 @@ pub(crate) fn resolve_names(
     writer: &mut Writer,
     bindings: &BTreeMap<RepoPath, Bindings>,
     scip: &BTreeMap<RefId, SymbolId>,
-) -> Result<Vec<(SymbolId, Target)>, StoreError> {
+) -> Result<NamePass, StoreError> {
     let queries = writer.queries();
     let files = queries.file_ids()?;
     let symbols = queries.symbol_names()?;
@@ -349,6 +357,7 @@ pub(crate) fn resolve_names(
     let mut positions: BTreeMap<FileId, usize> = BTreeMap::new();
     let mut changed: Vec<Resolved> = Vec::new();
     let mut ties = Vec::new();
+    let mut changed_sources = BTreeSet::new();
     for reference in &refs {
         let next = positions.entry(reference.file).or_insert(0);
         let position = *next;
@@ -364,6 +373,7 @@ pub(crate) fn resolve_names(
             ties.push((symbol, target));
         }
         if target != reference.target {
+            changed_sources.extend(reference.symbol);
             changed.push(Resolved {
                 reference: reference.id,
                 target,
@@ -375,7 +385,10 @@ pub(crate) fn resolve_names(
         transaction.set_resolutions(batch)?;
         transaction.commit()?;
     }
-    Ok(ties)
+    Ok(NamePass {
+        ties,
+        changed_sources,
+    })
 }
 
 #[cfg(test)]
