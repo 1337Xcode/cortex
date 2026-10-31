@@ -11,6 +11,7 @@ mod host;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use anyhow::Context;
@@ -21,8 +22,9 @@ use cortex_store::{Writer, WriterOptions};
 use self::host::Host;
 use crate::{output, repository, settings};
 
-/// How many changes may wait for the writer. A change that finds the queue full is dropped: the
-/// index the waiting changes start reads the whole tree, the dropped change's files included.
+/// How many changes may wait for the writer. A change that finds the queue full is dropped and the
+/// queue marked as overflowed, so that the changes drained next are indexed as a change to
+/// everything, the dropped change's files included.
 const QUEUE_CHANGES: usize = 10_000;
 
 /// The arguments of `cortex daemon`.
@@ -61,15 +63,20 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         extra_ignores: &config.extra_ignores,
         global_gitignore: None,
     };
-    // A full queue drops the change (see QUEUE_CHANGES); a closed one means the daemon is stopping.
+    let overflowed = Arc::new(AtomicBool::new(false));
+    let marks = Arc::clone(&overflowed);
+    // A full queue drops the change and marks the overflow (see QUEUE_CHANGES); a closed one means
+    // the daemon is stopping, when nothing is left to index.
     let watcher = watch(&root, &discover, move |change| {
-        drop(sender.try_send(change))
+        if sender.try_send(change).is_err() {
+            marks.store(true, Ordering::Release);
+        }
     })
     .context("watching the repository")?;
     let mut host = Host::new(&root, grammars, &config, writer);
     let report = host.index(&[])?;
     output::note(&ready_line(&report, host.waiting()))?;
-    host.serve(&queue)?;
+    host.serve(&queue, &overflowed)?;
     drop(watcher);
     Ok(())
 }

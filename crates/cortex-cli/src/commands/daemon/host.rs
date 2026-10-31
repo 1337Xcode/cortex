@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -78,7 +79,11 @@ impl<'a> Host<'a> {
     /// # Errors
     ///
     /// A failed index or parse, or a watcher that stopped.
-    pub(super) fn serve(mut self, queue: &Receiver<Change>) -> anyhow::Result<()> {
+    pub(super) fn serve(
+        mut self,
+        queue: &Receiver<Change>,
+        overflowed: &AtomicBool,
+    ) -> anyhow::Result<()> {
         let idle = Duration::from_secs(self.config.idle_shutdown_minutes.saturating_mul(60));
         let mut last_change = Instant::now();
         let mut next_crawl = Instant::now();
@@ -97,7 +102,7 @@ impl<'a> Host<'a> {
             };
             match received {
                 Ok(change) => {
-                    match changed(change, queue) {
+                    match changed(change, queue, overflowed) {
                         Changed::Everything(touched) => drop(self.index(&touched)?),
                         Changed::Paths(paths) => self.update(&paths)?,
                     }
@@ -164,8 +169,9 @@ enum Changed {
 }
 
 /// What `first` and every change already queued behind it changed together: everything when any
-/// of them did, else the paths they name.
-fn changed(first: Change, queue: &Receiver<Change>) -> Changed {
+/// of them did or when `overflowed` says a change was dropped, else the paths they name. The mark
+/// is cleared as it is read.
+fn changed(first: Change, queue: &Receiver<Change>, overflowed: &AtomicBool) -> Changed {
     let mut paths = BTreeSet::new();
     let mut is_everything = false;
     for change in std::iter::once(first).chain(queue.try_iter()) {
@@ -175,7 +181,8 @@ fn changed(first: Change, queue: &Receiver<Change>) -> Changed {
         }
     }
     let paths = paths.into_iter().collect();
-    if is_everything {
+    // Read after draining: a change dropped while the queue was drained is in this batch's index.
+    if overflowed.swap(false, Ordering::AcqRel) || is_everything {
         Changed::Everything(paths)
     } else {
         Changed::Paths(paths)
@@ -189,4 +196,47 @@ pub(super) fn now_ms() -> i64 {
         .map_or(0, |since| {
             i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use super::*;
+
+    /// The paths of `changed`, and whether it is a change to everything.
+    fn summary(changed: &Changed) -> (bool, Vec<&str>) {
+        match changed {
+            Changed::Everything(paths) => (true, paths.iter().map(RepoPath::as_str).collect()),
+            Changed::Paths(paths) => (false, paths.iter().map(RepoPath::as_str).collect()),
+        }
+    }
+
+    /// Changes queued together are drained into one, in path order; one change to everything
+    /// makes the whole batch one; a dropped change, marked as an overflow, does too, once.
+    #[test]
+    fn queued_changes_drain_into_one() -> Result<(), Box<dyn std::error::Error>> {
+        let paths = |names: &[&str]| -> Result<Change, cortex_core::PathError> {
+            Ok(Change::Paths(
+                names
+                    .iter()
+                    .map(|name| RepoPath::new(name))
+                    .collect::<Result<_, _>>()?,
+            ))
+        };
+        let (sender, queue) = mpsc::sync_channel(4);
+        let overflowed = AtomicBool::new(false);
+        sender.send(paths(&["b.py"])?)?;
+        let drained = changed(paths(&["a.py"])?, &queue, &overflowed);
+        assert_eq!(summary(&drained), (false, vec!["a.py", "b.py"]));
+        sender.send(Change::Everything)?;
+        let drained = changed(paths(&["c.py"])?, &queue, &overflowed);
+        assert_eq!(summary(&drained), (true, vec!["c.py"]));
+        overflowed.store(true, Ordering::Release);
+        let drained = changed(paths(&["d.py"])?, &queue, &overflowed);
+        assert_eq!(summary(&drained), (true, vec!["d.py"]));
+        let drained = changed(paths(&["e.py"])?, &queue, &overflowed);
+        assert_eq!(summary(&drained), (false, vec!["e.py"]));
+        Ok(())
+    }
 }
