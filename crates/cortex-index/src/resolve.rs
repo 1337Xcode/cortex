@@ -23,7 +23,9 @@ mod search;
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{Identifier, Language, RefKind, RepoPath, Resolution, SymbolKind};
-use cortex_store::{FileId, RefName, Resolved, StoreError, SymbolId, SymbolName, Target, Writer};
+use cortex_store::{
+    FileId, RefId, RefName, Resolved, StoreError, SymbolId, SymbolName, Target, Writer,
+};
 
 use crate::bindings::{Bindings, Lookup, Reach};
 
@@ -324,7 +326,8 @@ fn family(language: Language) -> Language {
 /// it unresolved, and writes the references whose target changed, in transactions of
 /// [`RESOLUTIONS_PER_TRANSACTION`]. `bindings` holds what the imports of each file this index
 /// wrote bring in, by path, with a lookup for each of its references in the order they were
-/// written. Returns each tied reference that sits in a definition, as that definition and the
+/// written. A reference `scip` ties, from the repository's SCIP index, is tied as it says, before
+/// any rule here. Returns each tied reference that sits in a definition, as that definition and the
 /// reference's target.
 ///
 /// # Errors
@@ -333,6 +336,7 @@ fn family(language: Language) -> Language {
 pub(crate) fn resolve_names(
     writer: &mut Writer,
     bindings: &BTreeMap<RepoPath, Bindings>,
+    scip: &BTreeMap<RefId, SymbolId>,
 ) -> Result<Vec<(SymbolId, Target)>, StoreError> {
     let queries = writer.queries();
     let files = queries.file_ids()?;
@@ -349,7 +353,13 @@ pub(crate) fn resolve_names(
         let next = positions.entry(reference.file).or_insert(0);
         let position = *next;
         *next += 1;
-        let target = definitions.target(reference, position, &written, &mut memo);
+        let target = match scip.get(&reference.id) {
+            Some(symbol) => Some(Target {
+                symbol: *symbol,
+                resolution: Resolution::Scip,
+            }),
+            None => definitions.target(reference, position, &written, &mut memo),
+        };
         if let (Some(symbol), Some(target)) = (reference.symbol, target) {
             ties.push((symbol, target));
         }

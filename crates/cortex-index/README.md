@@ -30,7 +30,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition, the names its imports take among them, each with what is written before it (`Qualifier`); and the modules it imports, with what it takes (the module, one name, every name or the default export), the name it binds and whether it only passes what it takes on |
 | `index_repository` | Indexes a whole repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file it found, ties references to the definitions their names settle, joins each parsed file to the files its imports name, and keeps a node for each folder that holds files |
-| `IndexOptions`, `IndexReport`, `FileProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, and the files skipped because they could not be read, took too long to parse or panicked while being read |
+| `IndexOptions`, `IndexReport`, `FileProblem`, `ScipOutcome`, `ScipProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, the files skipped because they could not be read, took too long to parse or panicked while being read, and what became of the repository's SCIP index |
 
 ## What a file's flags mean
 
@@ -124,6 +124,17 @@ or at a folder above it: a folder it could not list or did not enter, or a file 
 inspect.
 
 Each reference is then tied to a definition when what its file says settles which one.
+
+First, a SCIP index at the repository's root (`index.scip`), written by the user's or a CI job's
+own indexer, ties what it settles at confidence 1.0; Cortex runs no indexer. A reference
+occurrence whose symbol the index defines exactly once ties the stored reference with the
+symbol's name on the occurrence's line to the stored definition with that name around the
+definition's line. Only lines are read from a range, so a document's position encoding does not
+matter. A document is left out when its path is not a stored file's or its file changed after the
+index was written, and so is every symbol it defines; symbols local to a document are left out,
+and so is any occurrence the store cannot match one for one. An index over 256 MiB, or that is not
+a regular file or not a SCIP index, is refused and reported, and the rules below tie as they would
+without it.
 
 A bare name, written with nothing before it, may be bound by an import. It is looked up the way
 these languages scope names: from the definition the use sits in outwards, through the functions,

@@ -43,6 +43,7 @@ use crate::grammar::Grammars;
 use crate::imports::Project;
 use crate::resolve;
 use crate::safe_read;
+use crate::scip::{self, ScipOutcome};
 use crate::symbol_edges;
 use crate::test_targets;
 
@@ -92,6 +93,8 @@ pub struct IndexReport {
     /// Files written although their queries found names that were left out, in path order, with
     /// how many of each kind.
     pub left_out: Vec<(RepoPath, LeftOut)>,
+    /// What became of the repository's SCIP index.
+    pub scip: ScipOutcome,
 }
 
 /// Why a file the walk found was skipped. A skipped file is not written: what the store held for
@@ -226,8 +229,11 @@ pub fn index_repository(
         walk_problems: discovery.problems,
         problems: Vec::new(),
         left_out: Vec::new(),
+        scip: ScipOutcome::Absent,
     };
     let imports = write_files(writer, &discovery.files, &context, &mut report)?;
+    let (scip, scip_ties) = scip::read_index(root, writer.queries())?;
+    report.scip = scip;
     let mut counts = Vec::new();
     let mut bindings = BTreeMap::new();
     let mut test_targets = BTreeMap::new();
@@ -238,7 +244,7 @@ pub fn index_repository(
         counts.push((path.clone(), imported.counts));
         bindings.insert(path, imported.bindings);
     }
-    let ties = resolve::resolve_names(writer, &bindings)?;
+    let ties = resolve::resolve_names(writer, &bindings, &scip_ties)?;
     symbol_edges::write_symbol_edges(writer, &ties)?;
     file_edges::write_import_edges(writer, &counts, &test_targets)?;
     folders::write_folders(writer)?;
@@ -871,6 +877,7 @@ mod tests {
             walk_problems: Vec::new(),
             problems: Vec::new(),
             left_out: Vec::new(),
+            scip: ScipOutcome::Absent,
         };
         let skipped = |path: &str, problem| -> Result<Outcome, cortex_core::PathError> {
             Ok(Outcome::Skipped(RepoPath::new(path)?, problem))

@@ -12,7 +12,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use common::{NOW_MS, TestResult, index, lock_out, write};
 use cortex_core::{ContentHash, EdgeType, FileFlags, Language, RepoPath, Resolution, SymbolKind};
-use cortex_index::{FileProblem, IndexReport, LeftOut, Problem, ProblemKind};
+use cortex_index::{FileProblem, IndexReport, LeftOut, Problem, ProblemKind, ScipOutcome};
 use cortex_store::{FileRow, NodeId, Reader, RefRow, SymbolRow};
 
 /// A time limit no test file comes near, even in a debug build.
@@ -314,6 +314,7 @@ fn every_file_is_written_as_its_kind_allows() -> TestResult {
         walk_problems: Vec::new(),
         problems: Vec::new(),
         left_out: Vec::new(),
+        scip: ScipOutcome::Absent,
     };
     assert_eq!(report, expected);
     let parsed = FileFlags::PARSED;
@@ -582,6 +583,7 @@ fn a_second_index_follows_the_changes() -> TestResult {
         }],
         problems: Vec::new(),
         left_out: Vec::new(),
+        scip: ScipOutcome::Absent,
     };
     assert_eq!(report, expected);
     assert_eq!(stored(root, "notes.txt")?, None);
@@ -714,6 +716,7 @@ fn a_file_out_of_time_is_skipped_and_reported() -> TestResult {
         walk_problems: Vec::new(),
         problems: vec![(RepoPath::new("slow.py")?, FileProblem::TimedOut)],
         left_out: Vec::new(),
+        scip: ScipOutcome::Absent,
     };
     assert_eq!(index(root, 1, Duration::ZERO, DEFAULT_LIMIT)?, out_of_time);
     assert_eq!(stored(root, "slow.py")?, None);

@@ -1,0 +1,221 @@
+//! A repository's SCIP index, built in each test with the `scip` crate's own types, read by a
+//! full index: references tied at full confidence to the definitions the index names.
+
+mod common;
+
+use std::fs::File;
+use std::path::Path;
+use std::time::{Duration, SystemTime};
+
+use common::{TestResult, expected, index, ties, write_all};
+use cortex_index::{ScipOutcome, ScipProblem};
+use protobuf::Message;
+use scip::types::{Document, Index, MultiLineRange, Occurrence, SingleLineRange};
+
+/// A time limit no test file comes near, even in a debug build.
+const GENEROUS: Duration = Duration::from_secs(60);
+
+/// The default size limit, 1 MiB.
+const DEFAULT_LIMIT: u64 = 1_048_576;
+
+/// The symbol a test's indexer gives the definition `descriptors`, in the package `shop`.
+fn symbol(descriptors: &str) -> String {
+    format!("scip-python python shop 0.1 {descriptors}")
+}
+
+/// An occurrence of `symbol` on the 0-based `line`, a definition when `is_definition`, its range
+/// written in the packed form.
+fn packed(symbol: &str, line: i32, is_definition: bool) -> Occurrence {
+    let mut occurrence = Occurrence::new();
+    occurrence.symbol = symbol.to_owned();
+    occurrence.range = vec![line, 4, 8];
+    occurrence.symbol_roles = i32::from(is_definition);
+    occurrence
+}
+
+/// A document for the file at `path` with `occurrences`.
+fn document(path: &str, occurrences: Vec<Occurrence>) -> Document {
+    let mut document = Document::new();
+    document.relative_path = path.to_owned();
+    document.occurrences = occurrences;
+    document
+}
+
+/// Writes `documents` as the SCIP index of the repository at `root`.
+fn write_index(root: &Path, documents: Vec<Document>) -> TestResult {
+    let mut index = Index::new();
+    index.documents = documents;
+    std::fs::write(root.join("index.scip"), index.write_to_bytes()?)?;
+    Ok(())
+}
+
+/// The index ties what the rules here cannot, and ties what they can more surely. `lib.helper()`
+/// (line 5 of `app.py`) is tied through `import lib` too, and the index makes it `scip`; `run()`
+/// (line 6) has a definition in `tools.py` and in `jobs.py`, too many for its name alone, and the
+/// index says `jobs.py`. Each definition's range takes another form: packed, a single line, lines.
+/// `late.py` changed after the index was written, so what the index says of its `run()` is left
+/// out and the call stays unresolved; `missing.py` is no file of the repository. Both documents
+/// count as left out.
+#[test]
+fn the_index_ties_references_at_full_confidence() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("lib.py", "def helper():\n    pass\n"),
+            ("tools.py", "def run():\n    pass\n"),
+            ("jobs.py", "def run():\n    pass\n"),
+            (
+                "app.py",
+                "import lib\n\n\ndef main():\n    lib.helper()\n    run()\n",
+            ),
+            ("late.py", "def later():\n    run()\n"),
+        ],
+    )?;
+    let helper = symbol("lib/helper().");
+    let jobs_run = symbol("jobs/run().");
+    let mut single = packed(&symbol("tools/run()."), 0, true);
+    single.range.clear();
+    let mut line = SingleLineRange::new();
+    line.line = 0;
+    single.set_single_line_range(line);
+    let mut multi = packed(&jobs_run, 0, true);
+    multi.range.clear();
+    let mut lines = MultiLineRange::new();
+    lines.start_line = 0;
+    lines.end_line = 1;
+    multi.set_multi_line_range(lines);
+    write_index(
+        root,
+        vec![
+            document("lib.py", vec![packed(&helper, 0, true)]),
+            document("tools.py", vec![single]),
+            document("jobs.py", vec![multi]),
+            document(
+                "app.py",
+                vec![packed(&helper, 4, false), packed(&jobs_run, 5, false)],
+            ),
+            document("late.py", vec![packed(&jobs_run, 1, false)]),
+            document("missing.py", vec![packed(&symbol("missing/x()."), 0, true)]),
+        ],
+    )?;
+    let later = SystemTime::now() + Duration::from_secs(3600);
+    File::options()
+        .write(true)
+        .open(root.join("late.py"))?
+        .set_modified(later)?;
+    let report = index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(
+        report.scip,
+        ScipOutcome::Read {
+            documents: 6,
+            left_out: 2,
+            tied: 2
+        }
+    );
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("call", "helper", 5, Some(("lib.py", "helper", "scip"))),
+            ("call", "run", 6, Some(("jobs.py", "run", "scip"))),
+        ])
+    );
+    assert_eq!(
+        ties(root, "late.py")?,
+        expected(&[("call", "run", 2, None)])
+    );
+    Ok(())
+}
+
+/// What the index cannot settle one for one is left to the rules here: a symbol defined twice in
+/// the index, a symbol local to a document, and a line where one name stands for two symbols.
+/// `twice()` (line 3 of `app.py`) is defined in `a.py` and `b.py` by the index's own account; the
+/// local symbol on line 2 and the two symbols named `go` on line 5, `b.py`'s and `c.py`'s, tie
+/// nothing. The calls go by their names: `run` to its one definition (0.3), `twice` and `go` to
+/// none, each having two.
+#[test]
+fn what_the_index_cannot_settle_is_left_to_the_rules() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("a.py", "def twice():\n    pass\n"),
+            ("b.py", "def twice():\n    pass\n\n\ndef go():\n    pass\n"),
+            ("c.py", "def run():\n    pass\n\n\ndef go():\n    pass\n"),
+            (
+                "app.py",
+                "def main():\n    run()\n    twice()\n\n    go()\n",
+            ),
+        ],
+    )?;
+    let twice = symbol("twice().");
+    let go_b = symbol("b/go().");
+    let go_c = symbol("c/go().");
+    write_index(
+        root,
+        vec![
+            document("a.py", vec![packed(&twice, 0, true)]),
+            document(
+                "b.py",
+                vec![packed(&twice, 0, true), packed(&go_b, 4, true)],
+            ),
+            document("c.py", vec![packed(&go_c, 4, true)]),
+            document(
+                "app.py",
+                vec![
+                    packed("local 1", 1, false),
+                    packed(&twice, 2, false),
+                    packed(&go_b, 4, false),
+                    packed(&go_c, 4, false),
+                ],
+            ),
+        ],
+    )?;
+    let report = index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(
+        report.scip,
+        ScipOutcome::Read {
+            documents: 4,
+            left_out: 0,
+            tied: 0
+        }
+    );
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("call", "run", 2, Some(("c.py", "run", "name_only"))),
+            ("call", "twice", 3, None),
+            ("call", "go", 5, None),
+        ])
+    );
+    Ok(())
+}
+
+/// An index that is no SCIP index is refused and reported, and the rules tie as they would
+/// without it; so is a folder in its place.
+#[test]
+fn an_index_that_cannot_be_used_is_refused() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("lib.py", "def helper():\n    pass\n"),
+            ("app.py", "def main():\n    helper()\n"),
+        ],
+    )?;
+    std::fs::write(root.join("index.scip"), [0xff, 0xff, 0xff, 0xff])?;
+    let report = index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(report.scip, ScipOutcome::Refused(ScipProblem::NotAnIndex));
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[("call", "helper", 2, Some(("lib.py", "helper", "name_only")))])
+    );
+    std::fs::remove_file(root.join("index.scip"))?;
+    std::fs::create_dir(root.join("index.scip"))?;
+    let report = index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(report.scip, ScipOutcome::Refused(ScipProblem::NotAFile));
+    Ok(())
+}

@@ -25,9 +25,13 @@ globset = "0.4.21"
 ignore = "0.4.34"
 proc-macro2 = { version = "1.0.107", default-features = false, features = ["span-locations"] }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+# Exactly the version the `scip` crate pins and was generated with; Cortex needs its `Message`
+# trait to read an index.
+protobuf = "=3.7.2"
 # Default features off: they add a WebAssembly build of SQLite for wasm32 targets, which Cortex
 # does not build for.
 rusqlite = { version = "0.41.1", default-features = false, features = ["backup", "bundled", "cache"] }
+scip = "0.10.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 syn = { version = "3.0.9", default-features = false, features = ["full", "parsing", "printing", "visit"] }
