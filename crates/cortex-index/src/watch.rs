@@ -28,7 +28,7 @@ use crate::seen::{PathRules, WalkRules};
 const DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// More changed paths than this within [`BATCH_WINDOW`] are reported as a change to everything.
-const MAX_PATHS_IN_WINDOW: usize = 500;
+pub(crate) const MAX_PATHS_IN_WINDOW: usize = 500;
 
 /// The window [`MAX_PATHS_IN_WINDOW`] counts paths over.
 const BATCH_WINDOW: Duration = Duration::from_secs(2);

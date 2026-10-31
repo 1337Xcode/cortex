@@ -195,10 +195,11 @@ pub(crate) const NODE_FILE: &str = "SELECT f.file_id, f.path FROM nodes AS n JOI
      ON f.file_id = n.ref_id WHERE n.node_id = ?1 AND n.kind = 'file'";
 /// The path of the file with a row id.
 pub(crate) const FILE_PATH_OF: &str = "SELECT file_id, path FROM files WHERE file_id = ?1";
-/// Whether a file is stored between two paths, exclusive: below a folder when they are the
-/// folder's path with `/` and with the next character, `0`, after it.
-pub(crate) const FILES_BETWEEN: &str =
-    "SELECT EXISTS (SELECT 1 FROM files WHERE path > ?1 AND path < ?2)";
+/// The first files stored between two paths, exclusive, by path, at most as many as the third
+/// parameter: those below a folder when the two are the folder's path with `/` and with the next
+/// character, `0`, after it.
+pub(crate) const FILE_PATHS_BETWEEN: &str =
+    "SELECT file_id, path FROM files WHERE path > ?1 AND path < ?2 ORDER BY path LIMIT ?3";
 /// Adds one row of what a file passes on.
 pub(crate) const PASSES_ON_INSERT: &str =
     "INSERT INTO passes_on (file_id, position, name, taken, path) VALUES (?1, ?2, ?3, ?4, ?5)";

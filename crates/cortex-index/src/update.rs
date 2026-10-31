@@ -11,6 +11,7 @@
 //! store whose last index did not finish.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -25,6 +26,7 @@ use crate::pipeline::{
 use crate::scale::{self, RepoSize};
 use crate::scip::{self, ScipOutcome};
 use crate::seen::{self, PathRules, PathState, WalkRules};
+use crate::watch::MAX_PATHS_IN_WINDOW;
 use crate::{folders, incremental};
 
 /// What the chosen paths hold, against the store.
@@ -54,10 +56,15 @@ pub fn index_paths(
     options: &IndexOptions<'_>,
     paths: &[RepoPath],
 ) -> Result<IndexReport, IndexError> {
-    let paths: BTreeSet<&RepoPath> = paths.iter().collect();
+    if !incremental::is_complete(writer.queries())? {
+        return index_repository(root, grammars, writer, options);
+    }
     let mut rules = PathRules::new(WalkRules::of(root, &options.discover))?;
-    let is_complete = incremental::is_complete(writer.queries())?;
-    if !is_complete || concerns_everything((root, writer), &mut rules, &paths)? {
+    let Some(paths) = expanded((root, writer), &mut rules, paths)? else {
+        return index_repository(root, grammars, writer, options);
+    };
+    let paths: BTreeSet<&RepoPath> = paths.iter().collect();
+    if concerns_everything(&mut rules, &paths) {
         return index_repository(root, grammars, writer, options);
     }
     incremental::mark_started(writer)?;
@@ -148,21 +155,43 @@ pub fn index_paths(
     Ok(report)
 }
 
-/// Whether a change at `paths` of the repository at `root`, stored by `writer`, concerns more than
-/// the files there: a file of rules the walk reads, as `rules` tells, the SCIP index, or a folder,
-/// now or in the store.
-fn concerns_everything(
+/// `paths` of the repository at `root`, stored by `writer`, with each folder among them, on disk
+/// or in the store, joined by the files the walk would find below it, as `rules` tells, and the
+/// files stored below it: `None` when that makes more than [`MAX_PATHS_IN_WINDOW`] paths, as many
+/// as the watcher reports as a change to everything.
+fn expanded(
     (root, writer): (&Path, &Writer),
     rules: &mut PathRules,
-    paths: &BTreeSet<&RepoPath>,
-) -> Result<bool, StoreError> {
+    paths: &[RepoPath],
+) -> Result<Option<BTreeSet<RepoPath>>, StoreError> {
+    let queries = writer.queries();
+    let mut expanded: BTreeSet<RepoPath> = paths.iter().cloned().collect();
     for path in paths {
-        let is_special = rules.changes_rules(path) || path.as_str() == scip::INDEX_FILE;
-        if is_special || path.to_native(root).is_dir() || writer.queries().has_files_under(path)? {
-            return Ok(true);
+        // A link to a folder is no folder to the walk, which never enters one.
+        let is_folder = fs::symlink_metadata(path.to_native(root)).is_ok_and(|meta| meta.is_dir());
+        if is_folder {
+            let Some(found) = rules.files_below(path, MAX_PATHS_IN_WINDOW) else {
+                return Ok(None);
+            };
+            expanded.extend(found);
+        }
+        let Some(stored) = queries.file_paths_under(path, MAX_PATHS_IN_WINDOW)? else {
+            return Ok(None);
+        };
+        expanded.extend(stored);
+        if expanded.len() > MAX_PATHS_IN_WINDOW {
+            return Ok(None);
         }
     }
-    Ok(false)
+    Ok(Some(expanded))
+}
+
+/// Whether a change at `paths` concerns more than the files there: a file of rules the walk reads,
+/// as `rules` tells, or the SCIP index.
+fn concerns_everything(rules: &mut PathRules, paths: &BTreeSet<&RepoPath>) -> bool {
+    paths
+        .iter()
+        .any(|path| rules.changes_rules(path) || path.as_str() == scip::INDEX_FILE)
 }
 
 /// What `paths` hold, found by `rules`, against the store `writer` keeps.

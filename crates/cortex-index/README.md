@@ -256,9 +256,11 @@ again, and those references are tied by the rules. A file saved again with the s
 written too when its new time is later than the SCIP index's, since that time puts it out of the
 index's word. The store ends as a full index would leave it, except for a file whose time moves back
 to before the SCIP index was written: it comes under the index's word again only at the next full
-index. A path that is or was a folder, a file of rules about which files count that the walk reads
-(one in a folder the walk leaves out governs nothing it finds), the SCIP index itself, and a store
-whose last index did not finish make it index the whole repository instead.
+index. A path that is or was a folder stands for the files the walk finds below it now and those
+stored below it. More than 500 paths so counted, as many as the watcher reports as a change to
+everything, a file of rules about which files count that the walk reads (one in a folder the walk
+leaves out governs nothing it finds), the SCIP index itself, and a store whose last index did not
+finish make it index the whole repository instead.
 
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts

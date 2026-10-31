@@ -80,6 +80,12 @@ enum Edit {
     AddFile(usize, usize),
     /// Removes the `web` folder whole, as a checkout can.
     RemoveFolder,
+    /// Adds a folder holding two files, one defining a name and one importing it and calling
+    /// another, reported by the folder's path alone, as the watcher may report a folder created
+    /// whole.
+    AddFolder(usize, usize),
+    /// Renames the `chain` folder, reported by its two paths.
+    RenameFolder,
     /// Adds to the first file an import of the name from the second, when both are Python.
     Import(usize, usize, usize),
 }
@@ -93,6 +99,9 @@ fn edit() -> impl Strategy<Value = Edit> {
         1 => (0..16_usize).prop_map(Edit::Remove),
         2 => (0..NAMES.len(), 0..NAMES.len()).prop_map(|(define, call)| Edit::AddFile(define, call)),
         1 => Just(Edit::RemoveFolder),
+        1 => (0..NAMES.len(), 0..NAMES.len())
+            .prop_map(|(define, call)| Edit::AddFolder(define, call)),
+        1 => Just(Edit::RenameFolder),
         2 => (0..24_usize, 0..24_usize, 0..NAMES.len())
             .prop_map(|(file, from, name)| Edit::Import(file, from, name)),
     ]
@@ -196,6 +205,39 @@ impl Tree<'_> {
                 let module = module.trim_end_matches("/__init__").replace('/', ".");
                 self.write(&path, format!("from {module} import {name}\n{old}"))?;
                 Ok(vec![path])
+            }
+            Edit::AddFolder(define, call) => {
+                self.added += 1;
+                let folder = format!("extra_dir{}", self.added);
+                let define = NAMES.get(define).copied().unwrap_or("fresh");
+                let call = NAMES.get(call).copied().unwrap_or("fresh");
+                self.write(
+                    &format!("{folder}/one.py"),
+                    format!("def {define}():\n    pass\n"),
+                )?;
+                self.write(
+                    &format!("{folder}/two.py"),
+                    format!("from {folder}.one import {define}\n\n{call}()\n"),
+                )?;
+                Ok(vec![folder])
+            }
+            Edit::RenameFolder => {
+                let moved: Vec<(String, String)> = self
+                    .files
+                    .iter()
+                    .filter(|(path, _)| path.starts_with("chain/"))
+                    .map(|(path, content)| (path.clone(), content.clone()))
+                    .collect();
+                if moved.is_empty() {
+                    return Ok(Vec::new());
+                }
+                std::fs::rename(self.root.join("chain"), self.root.join("chain_moved"))?;
+                for (path, content) in moved {
+                    self.files.remove(&path);
+                    self.files
+                        .insert(path.replacen("chain/", "chain_moved/", 1), content);
+                }
+                Ok(vec!["chain".to_owned(), "chain_moved".to_owned()])
             }
             Edit::RemoveFolder => {
                 let had_files = self.files.keys().any(|path| path.starts_with("web/"));
@@ -512,6 +554,59 @@ fn rules_in_an_ignored_folder_index_only_their_path() -> TestResult {
     Ok(())
 }
 
+/// A folder created whole, reported by its path alone, is indexed by the files below it, not as a
+/// change to everything: the SCIP index is left unread, and the store holds what a fresh index
+/// holds. A folder of more than 500 files, as many paths as the watcher reports as a change to
+/// everything, makes the whole repository indexed, which looks for the SCIP index.
+#[test]
+fn a_new_folder_is_indexed_by_its_files() -> TestResult {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("repo");
+    std::fs::create_dir(&root)?;
+    std::fs::write(
+        root.join("app.py"),
+        "from pkg.one import first\n\nfirst()\n",
+    )?;
+    let grammars = grammars()?;
+    let kept_folder = scratch.path().join("kept");
+    let mut kept = writer(&kept_folder, &root)?;
+    index_repository(&root, &grammars, &mut kept, &options())?;
+    std::fs::create_dir_all(root.join("pkg/inner"))?;
+    std::fs::write(root.join("pkg/__init__.py"), "")?;
+    std::fs::write(root.join("pkg/one.py"), "def first():\n    pass\n")?;
+    std::fs::write(root.join("pkg/inner/two.py"), "def second():\n    pass\n")?;
+    let report = index_paths(
+        &root,
+        &grammars,
+        &mut kept,
+        &options(),
+        &[RepoPath::new("pkg")?],
+    )?;
+    assert_eq!((report.scip, report.files), (ScipOutcome::NotRead, 3));
+    let fresh_folder = scratch.path().join("fresh");
+    index_repository(
+        &root,
+        &grammars,
+        &mut writer(&fresh_folder, &root)?,
+        &options(),
+    )?;
+    let (left, right) = (snapshot(&kept_folder)?, snapshot(&fresh_folder)?);
+    assert!(left == right, "{}", differences(&left, &right));
+    std::fs::create_dir(root.join("many"))?;
+    for number in 0..501 {
+        std::fs::write(root.join(format!("many/m{number}.py")), "x = 1\n")?;
+    }
+    let report = index_paths(
+        &root,
+        &grammars,
+        &mut kept,
+        &options(),
+        &[RepoPath::new("many")?],
+    )?;
+    assert_eq!(report.scip, ScipOutcome::Absent);
+    Ok(())
+}
+
 /// A file renamed in case alone, as the watcher reports it with both spellings, is stored under its
 /// new name only, as a fresh index stores it, whether or not the file system tells the two apart.
 #[test]
@@ -580,10 +675,13 @@ fn a_name_passed_on_five_deep_indexes_as_everything_does() -> TestResult {
 }
 
 /// A file restored, a name defined where it was not, and a file removed: the stores stay alike,
-/// and the hand-picked sequence keeps running whatever the random cases draw.
+/// and the hand-picked sequence keeps running whatever the random cases draw. Folders too: one
+/// created whole and the `chain` folder renamed.
 #[test]
 fn chosen_edits_index_as_everything_does() -> TestResult {
     check_edits(&[
+        Edit::AddFolder(1, 5),
+        Edit::RenameFolder,
         Edit::Define(0, 1),
         Edit::Call(2, 4),
         Edit::Define(5, 4),

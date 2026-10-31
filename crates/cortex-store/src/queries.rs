@@ -449,19 +449,38 @@ impl<'c> Queries<'c> {
             .transpose()
     }
 
-    /// Whether any stored file is below the folder `folder`.
+    /// The paths of the files stored below the folder `folder`, by path; `None` when there are
+    /// more than `limit`.
     ///
     /// # Errors
     ///
-    /// SQLite errors.
-    pub fn has_files_under(self, folder: &RepoPath) -> Result<bool, StoreError> {
+    /// SQLite errors and stored paths that cannot be read back.
+    pub fn file_paths_under(
+        self,
+        folder: &RepoPath,
+        limit: usize,
+    ) -> Result<Option<Vec<RepoPath>>, StoreError> {
         // Paths below `a/b` sort from `a/b/` up to `a/b0`, `0` following `/`.
         let low = format!("{folder}/");
         let high = format!("{folder}0");
-        self.connection
-            .prepare_cached(schema::FILES_BETWEEN)
-            .and_then(|mut statement| statement.query_row([low, high], |row| row.get(0)))
-            .map_err(sqlite("looking for files below a folder"))
+        // One more than the limit is asked for, to tell a full list from a cut one.
+        let asked = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
+        let raw: Vec<(i64, String)> = self
+            .connection
+            .prepare_cached(schema::FILE_PATHS_BETWEEN)
+            .and_then(|mut statement| {
+                statement
+                    .query_map((low, high, asked), |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect()
+            })
+            .map_err(sqlite("listing the files below a folder"))?;
+        if raw.len() > limit {
+            return Ok(None);
+        }
+        raw.iter()
+            .map(|(id, path)| values::path(path, "files.path", *id))
+            .collect::<Result<_, _>>()
+            .map(Some)
     }
 
     /// Every reference's name, with the file it is in, that file's language and what the

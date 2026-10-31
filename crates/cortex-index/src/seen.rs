@@ -131,6 +131,43 @@ impl PathRules {
             .is_none_or(|folder| self.is_seen(&folder))
     }
 
+    /// The paths of the files the walk would find in `folder` and below, at most `limit`: `None`
+    /// when there are more. Folders are entered as the walk enters them, never through a link, and
+    /// what the walk passes over (links, special files, names it cannot store) is passed over.
+    pub(crate) fn files_below(&mut self, folder: &RepoPath, limit: usize) -> Option<Vec<RepoPath>> {
+        let mut found = Vec::new();
+        let mut folders = vec![folder.clone()];
+        while let Some(at) = folders.pop() {
+            if !self.is_seen(&at) {
+                continue;
+            }
+            // A folder the walk could not list keeps its stored files, as in a full index.
+            let Ok(entries) = fs::read_dir(at.to_native(&self.walk.root)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let (Ok(kind), Some(name)) = (
+                    entry.file_type(),
+                    entry.file_name().to_str().map(str::to_owned),
+                ) else {
+                    continue;
+                };
+                let Ok(path) = at.join(&name) else {
+                    continue;
+                };
+                if kind.is_dir() {
+                    folders.push(path);
+                } else if kind.is_file() && self.is_seen(&path) {
+                    found.push(path);
+                    if found.len() > limit {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(found)
+    }
+
     /// Reads the rules again, after a file of rules changed.
     pub(crate) fn reload(&mut self) {
         if let Ok(repository) = self.walk.repository() {
