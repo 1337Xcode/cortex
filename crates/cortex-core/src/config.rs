@@ -70,6 +70,9 @@ pub struct Config {
     /// `index.crawl_files_per_second`: how many files the background crawler parses a second in
     /// huge mode. Default [`DEFAULT_CRAWL_FILES_PER_SECOND`].
     pub crawl_files_per_second: u64,
+    /// `privacy.store_prompt_excerpt`: keep the first 200 characters of each prompt with its task.
+    /// Default `false`: a prompt is kept only as its hash.
+    pub store_prompt_excerpt: bool,
 }
 
 impl Default for Config {
@@ -83,6 +86,7 @@ impl Default for Config {
             idle_shutdown_minutes: DEFAULT_IDLE_SHUTDOWN_MINUTES,
             mmap_bytes: DEFAULT_MMAP_BYTES,
             crawl_files_per_second: DEFAULT_CRAWL_FILES_PER_SECOND,
+            store_prompt_excerpt: false,
         }
     }
 }
@@ -212,6 +216,10 @@ impl Config {
                 self.crawl_files_per_second =
                     positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
             }
+            "privacy.store_prompt_excerpt" => {
+                self.store_prompt_excerpt =
+                    value.as_bool().ok_or_else(|| refuse("true or false"))?;
+            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -271,6 +279,7 @@ mod tests {
                 idle_shutdown_minutes: 30,
                 mmap_bytes: 256 * 1024 * 1024,
                 crawl_files_per_second: 100,
+                store_prompt_excerpt: false,
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -287,7 +296,8 @@ mod tests {
         let repository = layer(
             "repository",
             "[index]\nmax_file_bytes = 5000\nparse_timeout_ms = 250\ncrawl_files_per_second = 7\n\
-             [daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n",
+             [daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n\
+             [privacy]\nstore_prompt_excerpt = true\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -300,6 +310,7 @@ mod tests {
                 idle_shutdown_minutes: 5,
                 mmap_bytes: 0,
                 crawl_files_per_second: 7,
+                store_prompt_excerpt: true,
             }
         );
         Ok(())
@@ -354,6 +365,11 @@ mod tests {
                 "index.extra_ignores = [\"a\", 2]",
                 "index.extra_ignores",
                 "a list of strings",
+            ),
+            (
+                "privacy.store_prompt_excerpt = \"yes\"",
+                "privacy.store_prompt_excerpt",
+                "true or false",
             ),
             (
                 "index.parse_timeout_ms = 0",

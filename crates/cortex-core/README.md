@@ -31,7 +31,7 @@ modes and settings.
 | `Ulid` | A sortable unique id: UTC milliseconds, then 80 bits from the BLAKE3 hash of a seed the caller gives; written as 26 characters, and only that spelling is read back |
 | `ipc` | The messages the hook, the CLI and a daemon exchange (`Request`, `Response`, the `Hello` handshake), framed as a 4-byte little-endian length and at most 1 MiB of JSON (`encode`, `decode`, `read_frame`, `write_frame`); `Protocol` (majors must match) and `CortexVersion` (ordered as semantic versioning orders versions). The envelope, `Hello`, `Mismatch` and `Shutdown` never change shape |
 | `UserFolder`, `RunFiles` | `~/.cortex` and what it holds: `config.toml`, `logs/`, and per repository id the daemon's socket (`run/<id>.sock`), named pipe (`cortex-<id>`), lock and process-id files |
-| `Config`, `load_config` | The settings in effect: defaults, then `~/.cortex/config.toml`, then `.cortex/config.toml`; unknown keys warn, unusable values are errors naming the file and key. Keys: `mode`, `index.max_file_bytes`, `index.extra_ignores`, `index.parse_timeout_ms`, `index.crawl_files_per_second`, `daemon.idle_shutdown_minutes`, `store.mmap_bytes` |
+| `Config`, `load_config` | The settings in effect: defaults, then `~/.cortex/config.toml`, then `.cortex/config.toml`; unknown keys warn, unusable values are errors naming the file and key. Keys: `mode`, `index.max_file_bytes`, `index.extra_ignores`, `index.parse_timeout_ms`, `index.crawl_files_per_second`, `daemon.idle_shutdown_minutes`, `store.mmap_bytes`, `privacy.store_prompt_excerpt` |
 
 ## Tests
 

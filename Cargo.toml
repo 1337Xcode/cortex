@@ -4,6 +4,7 @@ members = [
     "crates/cortex-cli",
     "crates/cortex-core",
     "crates/cortex-index",
+    "crates/cortex-learn",
     "crates/cortex-store",
     "tests",
     "xtask",

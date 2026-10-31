@@ -317,6 +317,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-learn"
+version = "2.0.0-dev"
+dependencies = [
+ "cortex-core",
+ "cortex-store",
+ "tempfile",
+]
+
+[[package]]
 name = "cortex-store"
 version = "2.0.0-dev"
 dependencies = [

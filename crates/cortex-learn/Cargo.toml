@@ -1,0 +1,19 @@
+[package]
+name = "cortex-learn"
+description = "What Cortex learns from agents' work: their sessions, tasks and events as the store keeps them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+cortex-core = { path = "../cortex-core" }
+cortex-store = { path = "../cortex-store" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
