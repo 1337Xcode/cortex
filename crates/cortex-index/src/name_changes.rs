@@ -42,6 +42,11 @@ impl NameChanges {
         self.moved.extend(other.moved);
     }
 
+    /// Whether no definition came, went or moved.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.counted.is_empty() && self.moved.is_empty()
+    }
+
     /// Every name whose definitions changed.
     pub(crate) fn names(&self) -> BTreeSet<&Identifier> {
         self.counted

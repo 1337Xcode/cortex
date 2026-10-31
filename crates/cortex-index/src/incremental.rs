@@ -194,7 +194,12 @@ pub(crate) fn around_removal(
 
 /// The stored files holding a reference that goes through an import named in `names` or as a file
 /// passes one of them on (see [`passed_on_as`]): references an index may tie otherwise when the
-/// definitions of those names came or went, and only with the file's imports read again.
+/// definitions of those names came or went, and only with the file's imports read again. When
+/// `defined_in` gives the files where those definitions came or went, only the holders whose
+/// imports reach one of them, directly or through files that pass names on (see [`importers`]),
+/// count: a reference whose import reaches none, as one to a module outside the repository, finds
+/// what it found before. `None` counts every holder, as when a new file defines some of the
+/// names: no import leads to it yet. So does a search for importers cut short.
 ///
 /// # Errors
 ///
@@ -202,12 +207,21 @@ pub(crate) fn around_removal(
 pub(crate) fn users_through_imports(
     queries: Queries<'_>,
     names: &NameChanges,
+    defined_in: Option<&BTreeSet<RepoPath>>,
 ) -> Result<BTreeSet<RepoPath>, StoreError> {
     let mut files = BTreeSet::new();
     for name in passed_on_as(queries, names.names())? {
         files.extend(queries.files_with_refs_through_imports(&name)?);
     }
-    paths_of(queries, files)
+    let holders = paths_of(queries, files)?;
+    let Some(defined_in) = defined_in.filter(|_| !holders.is_empty()) else {
+        return Ok(holders);
+    };
+    let reach = importers(queries, defined_in)?;
+    if reach.is_cut {
+        return Ok(holders);
+    }
+    Ok(holders.intersection(&reach.files).cloned().collect())
 }
 
 /// `names` and every name a file passes one of them on as (`from c2 import x as y` passes `x` on as

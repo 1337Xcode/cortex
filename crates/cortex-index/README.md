@@ -32,7 +32,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition, the names its imports take among them, each with what is written before it (`Qualifier`); and the modules it imports, with what it takes (the module, one name, every name or the default export), the name it binds and whether it only passes what it takes on |
 | `index_repository` | Indexes a repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file that changed since the last index, ties references to the definitions their names settle, joins files and definitions in the graph, keeps a node for each folder that holds files, and records the scale mode; reports the definitions whose signature or body changed |
-| `IndexOptions`, `IndexReport`, `FileProblem`, `ScipOutcome`, `ScipProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, the files that could not be read, took too long to parse or panicked while being read, and what became of the repository's SCIP index |
+| `IndexOptions`, `IndexReport`, `FileProblem`, `ScipOutcome`, `ScipProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed, removed and read again around the changes, what the walk could not do, the files that could not be read, took too long to parse or panicked while being read, and what became of the repository's SCIP index |
 | `index_paths` | Indexes the files at chosen paths now, as the walk would find them: writes the new and changed ones, parsed in huge mode too, removes those gone, and ties again only the references the change concerns. The daemon runs it for the paths the watcher reports and for each crawl batch |
 | `Crawl` | The order in which huge mode parses the files it took inventory of: files asked for, then the other waiting files of their folders, then the rest, the most recently changed first; each handed out once |
 | `watch`, `Watcher`, `Change`, `WatchError` | Watches a repository and reports its changes from a thread of its own: the paths the walk would find that were created, changed, removed or renamed, or a change to everything; stops when the `Watcher` is dropped |
@@ -122,10 +122,12 @@ imports. What a file's imports bind for its own references is not kept, so some 
 change are read again for it, without being written: the importers of a changed file that now passes
 on something else, and of a removed file, through importers that pass names on, up to four files
 away; and the files whose references named like a definition that came or went, or like a name a
-file passes it on as (`from x import a as b`), go through an import (at most 10,000 files). Their
-references are tied again. One that changed since it was stored is not read: its stored references
-belong to the stored version, and its own change writes it whole. A file added does not join files
-whose imports could not name it before until those change or every file is read again.
+file passes it on as (`from x import a as b`), go through an import and reach a file where those
+definitions changed, directly or through files that pass names on (every such file when a new file
+defines them, since no import leads to a new file yet; at most 10,000 files). Their references are
+tied again. One that changed since it was stored is not read: its stored references belong to the
+stored version, and its own change writes it whole. A file added does not join files whose imports
+could not name it before until those change or every file is read again.
 
 A file that may hold secrets, one over the size limit and one that is not text are written as the
 walk found them: path, language, size, modification time and flags. Every other file is read whole,

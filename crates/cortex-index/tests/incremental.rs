@@ -165,6 +165,71 @@ fn a_changed_path_is_read_whatever_its_time_says() -> TestResult {
     Ok(())
 }
 
+/// A file whose imports reach no file where a name's definitions changed is not read again for
+/// that name: `uses.py` calls `getenv` after `os`, a module outside the repository, when `lib.py`
+/// comes to define `getenv`. `app.py`, which imports `lib.py`, holds no reference named `getenv`,
+/// so no file is read again.
+#[test]
+fn a_name_through_imports_elsewhere_reads_nothing_again() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("lib.py", "def helper():\n    pass\n"),
+            ("uses.py", "import os\n\nos.getenv('HOME')\n"),
+            ("app.py", "from lib import helper\n\nhelper()\n"),
+        ],
+    )?;
+    index(root, 1, GENEROUS, DEFAULT_LIMIT)?;
+    write_all(
+        root,
+        &[(
+            "lib.py",
+            "def helper():\n    pass\n\n\ndef getenv():\n    pass\n",
+        )],
+    )?;
+    let report = index_changed(root, &["lib.py"])?;
+    assert_eq!((report.files, report.read_again), (1, 0));
+    Ok(())
+}
+
+/// A new file defines a name another file imported from it before it existed: that file has no
+/// import edge to the new one yet, so every file holding a reference through an import of the name
+/// is read again, and `app.py`'s import and call of `thing` are tied to `later.py`'s.
+#[test]
+fn a_new_file_ties_imports_that_named_it_before_it_existed() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[(
+            "app.py",
+            "from later import thing
+
+thing()
+",
+        )],
+    )?;
+    index(root, 1, GENEROUS, DEFAULT_LIMIT)?;
+    write_all(
+        root,
+        &[(
+            "later.py",
+            "def thing():
+    pass
+",
+        )],
+    )?;
+    index_changed(root, &["later.py"])?;
+    let thing = Some(("later.py", "thing", "import_path"));
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[("import", "thing", 1, thing), ("call", "thing", 3, thing)])
+    );
+    Ok(())
+}
+
 /// A file a changed file reaches through its imports is read again for what it passes on.
 /// `app.ts` takes `x` from `index.ts`, which passes it on from `lib.ts`; after `app.ts` changes,
 /// `index.ts` is not written again, but `x` is still tied to `lib.ts`'s through it.

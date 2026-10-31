@@ -316,6 +316,7 @@ fn every_file_is_written_as_its_kind_allows() -> TestResult {
         parsed: 2,
         unchanged: 0,
         removed: 0,
+        read_again: 0,
         walk_problems: Vec::new(),
         problems: Vec::new(),
         left_out: Vec::new(),
@@ -593,6 +594,9 @@ fn a_second_index_follows_the_changes() -> TestResult {
         parsed: 2,
         unchanged: 5,
         removed: 1,
+        // Nothing around the change holds a reference to `extra` or `fresh`, and
+        // notes.txt had no importers: no file is read again.
+        read_again: 0,
         walk_problems: vec![Problem {
             path: Some(RepoPath::new("README.md")?),
             kind: ProblemKind::Unreadable,
@@ -744,6 +748,7 @@ fn a_file_out_of_time_is_reported_and_tried_again_when_it_changes() -> TestResul
         parsed: 0,
         unchanged: 0,
         removed: 0,
+        read_again: 0,
         walk_problems: Vec::new(),
         problems: vec![(RepoPath::new("slow.py")?, FileProblem::TimedOut)],
         left_out: Vec::new(),

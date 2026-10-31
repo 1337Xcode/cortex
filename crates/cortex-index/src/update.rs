@@ -104,6 +104,7 @@ pub fn index_paths(
         parsed: 0,
         unchanged: 0,
         removed: pipeline::count(gone.len()),
+        read_again: 0,
         walk_problems: Vec::new(),
         problems: Vec::new(),
         left_out: Vec::new(),
@@ -138,6 +139,7 @@ pub fn index_paths(
     let (around, is_cut) =
         pipeline::files_around(writer, &file_of, &written, (around_gone, &names))?;
     let read_again = pipeline::read_again(&around, &context)?;
+    report.read_again = pipeline::count(read_again.len());
     pipeline::link(
         writer,
         (written, read_again),

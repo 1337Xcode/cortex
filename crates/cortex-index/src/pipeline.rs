@@ -98,6 +98,9 @@ pub struct IndexReport {
     pub unchanged: u64,
     /// How many stored files were removed because the walk no longer finds them.
     pub removed: u64,
+    /// How many stored files around the changes were read again, without being written, for what
+    /// their imports bind.
+    pub read_again: u64,
     /// What the walk could not do.
     pub walk_problems: Vec<Problem>,
     /// Files the walk found that were skipped, in path order, with the reason.
@@ -309,6 +312,7 @@ pub fn index_repository(
         parsed: 0,
         unchanged: count(discovery.files.len() - candidates.len()),
         removed: count(missing.len()),
+        read_again: 0,
         walk_problems: discovery.problems.clone(),
         problems: Vec::new(),
         left_out: Vec::new(),
@@ -334,6 +338,7 @@ pub fn index_repository(
         )?
     };
     let read_again = read_again(&around, &context)?;
+    report.read_again = count(read_again.len());
     link(
         writer,
         (written, read_again),
@@ -432,8 +437,18 @@ pub(crate) fn files_around(
             .collect(),
         is_cut: false,
     };
+    // A new file has no import edge leading to it yet: then every holder of a changed name counts.
+    let has_new_names = written
+        .iter()
+        .any(|file| file.is_new && !file.names.is_empty());
+    let defined_in: BTreeSet<RepoPath> = written
+        .iter()
+        .filter(|file| !file.names.is_empty())
+        .map(|file| file.path.clone())
+        .collect();
+    let defined_in = (!has_new_names).then_some(&defined_in);
     let users = Neighbours {
-        files: incremental::users_through_imports(queries, names)?,
+        files: incremental::users_through_imports(queries, names, defined_in)?,
         is_cut: false,
     };
     let mut around = found
@@ -1295,6 +1310,7 @@ mod tests {
             parsed: 0,
             unchanged: 0,
             removed: 0,
+            read_again: 0,
             walk_problems: Vec::new(),
             problems: Vec::new(),
             left_out: Vec::new(),
