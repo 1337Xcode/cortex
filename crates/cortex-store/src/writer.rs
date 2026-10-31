@@ -15,7 +15,6 @@ use crate::links;
 use crate::lock::WriterLock;
 use crate::meta::MetaKey;
 use crate::migrate;
-use crate::private;
 use crate::queries::Queries;
 use crate::records::{EdgeRecord, FileChange, FileIndex, FileRemoval, Resolved};
 use crate::replace;
@@ -55,12 +54,15 @@ impl Writer {
     /// [`StoreError::WriterBusy`] when another writer has the database, the schema errors of a
     /// migration, and I/O and SQLite errors.
     pub fn open(options: &WriterOptions<'_>) -> Result<Self, StoreError> {
-        private::create_folder(options.folder)
+        cortex_core::create_private_folder(options.folder)
             .map_err(io("creating the store folder", options.folder))?;
         let lock = WriterLock::acquire(&layout::writer_lock(options.folder))?;
         let database = layout::database(options.folder);
         // Created here, private, before SQLite creates it with the default permissions.
-        drop(private::open_file(&database).map_err(io("creating the database", &database))?);
+        drop(
+            cortex_core::open_private_file(&database)
+                .map_err(io("creating the database", &database))?,
+        );
         let mut connection = connection::connect(&database, Access::ReadWrite)?;
         // Checked before any setting is applied: a database Cortex did not write, or one a newer
         // Cortex wrote, is left exactly as it was.

@@ -5,8 +5,9 @@
 //! [`Language`] has one stable name, an [`Identifier`] is the only text besides paths that the
 //! index stores, each record kind such as [`SymbolKind`] has a fixed stored name or number, and
 //! [`Config`] holds every setting with its default, and [`identifier_tokens`] splits names and
-//! paths into the words a search matches. This crate does no I/O and depends on nothing that
-//! does.
+//! paths into the words a search matches. Its only I/O is what every process needs alike:
+//! canonicalizing a repository's folder, and creating folders and files only their user can
+//! read.
 
 #![warn(clippy::pedantic)]
 
@@ -20,6 +21,7 @@ mod kinds;
 mod language;
 mod named;
 mod path;
+mod private;
 mod repo_id;
 mod root;
 mod scale_mode;
@@ -45,6 +47,7 @@ pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
 pub use kinds::{EdgeType, FileFlags, NodeKind, RefKind, Resolution, SymbolKind};
 pub use language::{Language, Tier};
 pub use path::{PathError, RepoPath};
+pub use private::{create_private_folder, open_private_file};
 pub use repo_id::RepoId;
 pub use root::canonical_root;
 pub use scale_mode::ScaleMode;

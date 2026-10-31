@@ -8,7 +8,7 @@ use std::fs::{File, TryLockError};
 use std::path::Path;
 
 use crate::error::{StoreError, io};
-use crate::{layout, private};
+use crate::layout;
 
 /// Whether a writer holds the lock of the store in `folder`. The lock is taken shared for an
 /// instant to find out, so a writer opening the store at that instant is refused as if another
@@ -45,7 +45,8 @@ impl WriterLock {
     ///
     /// [`StoreError::WriterBusy`] when another writer holds the lock, and I/O errors.
     pub(crate) fn acquire(path: &Path) -> Result<Self, StoreError> {
-        let file = private::open_file(path).map_err(io("opening the writer lock", path))?;
+        let file =
+            cortex_core::open_private_file(path).map_err(io("opening the writer lock", path))?;
         // INVARIANT: single-writer
         match file.try_lock() {
             Ok(()) => Ok(Self { _file: file }),

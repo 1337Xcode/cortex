@@ -1,9 +1,9 @@
-//! The store's folders and files, kept unreadable to other users of the machine.
+//! Folders and files kept unreadable to other users of the machine: a repository's `.cortex`
+//! folder, and the user's own, with its run files and logs.
 //!
-//! On Unix the store's folders get mode 0700 and its files 0600, whether it creates them or finds
-//! them with a wider mode; SQLite gives the database's `-wal` and `-shm` files the database file's
-//! mode. On Windows, folders and files inherit the access list of the folder they are created in,
-//! and nothing here narrows it.
+//! On Unix these folders get mode 0700 and these files 0600, whether they are created here or
+//! found with a wider mode. On Windows, folders and files inherit the access list of the folder
+//! they are created in, and nothing here narrows it.
 
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::io;
@@ -14,7 +14,7 @@ use std::path::Path;
 /// # Errors
 ///
 /// The folder or a parent cannot be created, or its mode cannot be set.
-pub fn create_folder(folder: &Path) -> io::Result<()> {
+pub fn create_private_folder(folder: &Path) -> io::Result<()> {
     let mut builder = DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -31,7 +31,7 @@ pub fn create_folder(folder: &Path) -> io::Result<()> {
 /// # Errors
 ///
 /// The file cannot be opened or created, or its mode cannot be set.
-pub fn open_file(path: &Path) -> io::Result<File> {
+pub fn open_private_file(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
@@ -42,25 +42,7 @@ pub fn open_file(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-/// Flushes `folder`'s list of entries to disk, so that a file just renamed into it survives a
-/// power cut. Windows offers no way to do this through the standard library; there it does
-/// nothing, and the file's own contents are flushed before the rename.
-#[cfg_attr(
-    not(unix),
-    allow(
-        clippy::unnecessary_wraps,
-        reason = "flushing can fail only on Unix, where it is done"
-    )
-)]
-pub(crate) fn sync_folder(folder: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    File::open(folder)?.sync_all()?;
-    #[cfg(not(unix))]
-    let _ = folder;
-    Ok(())
-}
-
-// Unix only: Windows files have access lists rather than modes, and the store leaves them as
+// Unix only: Windows files have access lists rather than modes, and these helpers leave them as
 // they are inherited.
 #[cfg(all(test, unix))]
 mod tests {
@@ -79,17 +61,17 @@ mod tests {
     fn entries_are_private() -> io::Result<()> {
         let root = tempfile::tempdir()?;
         let folder = root.path().join("a").join(".cortex");
-        create_folder(&folder)?;
+        create_private_folder(&folder)?;
         let file = folder.join("cortex.db");
-        drop(open_file(&file)?);
+        drop(open_private_file(&file)?);
         assert_eq!(mode(&folder)?, 0o700);
         assert_eq!(mode(&root.path().join("a"))?, 0o700);
         assert_eq!(mode(&file)?, 0o600);
 
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755))?;
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))?;
-        create_folder(&folder)?;
-        drop(open_file(&file)?);
+        create_private_folder(&folder)?;
+        drop(open_private_file(&file)?);
         assert_eq!(mode(&folder)?, 0o700);
         assert_eq!(mode(&file)?, 0o600);
         Ok(())

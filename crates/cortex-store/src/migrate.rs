@@ -13,7 +13,6 @@ use rusqlite::{Connection, MAIN_DB, OptionalExtension, TransactionBehavior};
 
 use crate::error::{StoreError, io, sqlite};
 use crate::meta::MetaKey;
-use crate::private;
 use crate::schema::{self, Migration};
 
 /// The database's schema version, when this build can migrate from it.
@@ -120,7 +119,8 @@ pub(crate) fn schema_version(connection: &Connection) -> Result<u32, StoreError>
 /// returns the copy's path. The copy is written beside its final name first and renamed into place
 /// only when complete, so an interrupted copy never replaces a good one.
 fn back_up(connection: &Connection, backups: &Path, version: u32) -> Result<PathBuf, StoreError> {
-    private::create_folder(backups).map_err(io("creating the backups folder", backups))?;
+    cortex_core::create_private_folder(backups)
+        .map_err(io("creating the backups folder", backups))?;
     let target = backups.join(format!("cortex-v{version}.db"));
     let partial = backups.join(format!("cortex-v{version}.db.partial"));
     // An earlier attempt may have stopped part of the way; its copy is incomplete.
@@ -131,7 +131,7 @@ fn back_up(connection: &Connection, backups: &Path, version: u32) -> Result<Path
         _ => {}
     }
     // Created empty and private first: SQLite copies into an empty file and keeps its mode.
-    drop(private::open_file(&partial).map_err(io("creating a backup", &partial))?);
+    drop(cortex_core::open_private_file(&partial).map_err(io("creating a backup", &partial))?);
     connection
         .backup(MAIN_DB, &partial, None::<fn(rusqlite::backup::Progress)>)
         .map_err(sqlite("backing up the database"))?;
@@ -142,8 +142,26 @@ fn back_up(connection: &Connection, backups: &Path, version: u32) -> Result<Path
         .and_then(|copy| copy.sync_all())
         .map_err(io("flushing a backup", &partial))?;
     fs::rename(&partial, &target).map_err(io("placing a backup", &target))?;
-    private::sync_folder(backups).map_err(io("flushing the backups folder", backups))?;
+    sync_folder(backups).map_err(io("flushing the backups folder", backups))?;
     Ok(target)
+}
+
+/// Flushes `folder`'s list of entries to disk, so that a file just renamed into it survives a
+/// power cut. Windows offers no way to do this through the standard library; there it does
+/// nothing, and the file's own contents are flushed before the rename.
+#[cfg_attr(
+    not(unix),
+    allow(
+        clippy::unnecessary_wraps,
+        reason = "flushing can fail only on Unix, where it is done"
+    )
+)]
+fn sync_folder(folder: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    fs::File::open(folder)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = folder;
+    Ok(())
 }
 
 #[cfg(test)]

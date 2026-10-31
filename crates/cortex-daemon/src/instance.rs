@@ -10,8 +10,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use cortex_core::{RepoId, UserFolder};
-use cortex_store::{create_private_folder, open_private_file};
+use cortex_core::{RepoId, UserFolder, create_private_folder, open_private_file};
 
 /// The running daemon's hold on its repository, given up when dropped.
 #[derive(Debug)]
