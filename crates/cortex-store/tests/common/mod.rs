@@ -134,5 +134,6 @@ pub fn index(
         file: file(path_text)?,
         symbols,
         refs,
+        passes_on: Vec::new(),
     })
 }

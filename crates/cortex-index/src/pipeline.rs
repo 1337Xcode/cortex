@@ -250,10 +250,10 @@ pub fn index_repository(
     incremental::mark_started(writer)?;
     let is_whole = known.is_empty();
     let missing = missing_files(writer, &discovery)?;
-    let importers_of_gone = if is_whole {
-        BTreeSet::new()
+    let (importers_of_gone, mut names) = if is_whole {
+        (BTreeSet::new(), BTreeSet::new())
     } else {
-        incremental::importers(writer.queries(), &missing.iter().cloned().collect())?
+        incremental::around_removal(writer.queries(), &missing.iter().cloned().collect())?
     };
     remove_files(writer, &missing)?;
     let found: BTreeMap<&RepoPath, FileFlags> = discovery
@@ -324,7 +324,8 @@ pub fn index_repository(
                 .ok()
                 .and_then(|position| discovery.files.get(position).cloned())
         };
-        files_around(writer, &walked, &written, importers_of_gone)?
+        names.extend(written.iter().flat_map(|file| file.names.iter().cloned()));
+        files_around(writer, &walked, &written, (importers_of_gone, &names))?
     };
     let read_again = read_again(&around, &context)?;
     link(
@@ -358,26 +359,36 @@ pub(crate) struct Written {
     /// The names of its definitions that came or went, or of all of them when its language
     /// changed: where another file's references may now find something else.
     pub(crate) names: Vec<Identifier>,
+    /// Whether it passes on something other than before: its importers may find something else.
+    passes_on_otherwise: bool,
 }
 
-/// The files around this index's changes to read again for what their imports bind: those whose
-/// imports name a `written` file, `importers_of_gone`, whose imports named a removed one, and the
-/// files the written files and these reach through their imports; only files `file_of` knows and
-/// this index did not write.
+/// The files around this index's changes to read again for what their imports bind: the
+/// importers of the `written` files that now pass on something else, `importers_of_gone`, the
+/// importers of the removed files, and the files holding a reference named in `names`, the names
+/// whose definitions came or went, that goes through an import. Only files `file_of` knows and
+/// this index did not write, at most [`incremental::MAX_FILES_AROUND`] in path order. The files
+/// a name is merely followed through need no reading: what they pass on is stored.
 pub(crate) fn files_around(
     writer: &Writer,
     file_of: &dyn Fn(&RepoPath) -> Option<DiscoveredFile>,
     written: &[Written],
-    importers_of_gone: BTreeSet<RepoPath>,
+    (importers_of_gone, names): (BTreeSet<RepoPath>, &BTreeSet<Identifier>),
 ) -> Result<Vec<DiscoveredFile>, StoreError> {
-    let changed: BTreeSet<RepoPath> = written.iter().map(|file| file.path.clone()).collect();
+    let queries = writer.queries();
+    let changed: BTreeSet<&RepoPath> = written.iter().map(|file| &file.path).collect();
+    let passing: BTreeSet<RepoPath> = written
+        .iter()
+        .filter(|file| file.passes_on_otherwise)
+        .map(|file| file.path.clone())
+        .collect();
     let mut around = importers_of_gone;
-    around.extend(incremental::importers(writer.queries(), &changed)?);
-    let from: BTreeSet<RepoPath> = changed.iter().chain(&around).cloned().collect();
-    around.extend(incremental::reached(writer.queries(), &from)?);
+    around.extend(incremental::importers(queries, &passing)?);
+    around.extend(incremental::users_through_imports(queries, names)?);
     Ok(around
         .iter()
         .filter(|path| !changed.contains(*path))
+        .take(incremental::MAX_FILES_AROUND)
         .filter_map(file_of)
         .collect())
 }
@@ -614,10 +625,15 @@ fn write_batch(
                 continue;
             }
         };
+        let before = match known.and_then(|known| known.get(&prepared.index.file.path)) {
+            Some(row) => transaction.queries().passes_on(row.id)?,
+            None => Vec::new(),
+        };
         let change = transaction.replace_file(&prepared.index)?;
         report.files += 1;
         report.parsed += u64::from(prepared.index.file.flags.contains(FileFlags::PARSED));
         let names = changed_names(&prepared.index, &change, known);
+        let passes_on_otherwise = before != prepared.index.passes_on;
         let changed = change
             .changes
             .into_iter()
@@ -633,6 +649,7 @@ fn write_batch(
             symbols: change.symbols,
             is_new: change.is_new,
             names,
+            passes_on_otherwise,
         });
     }
     transaction.commit()?;
@@ -782,6 +799,7 @@ fn prepare(
                     file: record,
                     symbols: extraction.symbols,
                     refs: extraction.refs,
+                    passes_on: bindings.passes_on(),
                 },
                 left_out: extraction.left_out,
                 imported: FileImports {
@@ -914,6 +932,7 @@ fn file_only(file: FileRecord) -> FileIndex {
         file,
         symbols: Vec::new(),
         refs: Vec::new(),
+        passes_on: Vec::new(),
     }
 }
 

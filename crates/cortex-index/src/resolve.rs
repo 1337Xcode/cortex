@@ -24,7 +24,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{Identifier, Language, RefKind, RepoPath, Resolution, SymbolKind};
 use cortex_store::{
-    FileId, RefId, RefName, Resolved, StoreError, SymbolId, SymbolName, Target, Writer,
+    FileId, PassedOn, Queries, RefId, RefName, Resolved, StoreError, SymbolId, SymbolName, Target,
+    Writer,
 };
 
 use crate::bindings::{Bindings, Lookup, Reach};
@@ -41,26 +42,101 @@ enum Found {
     Several,
 }
 
-/// What the name pass knows of the files: each stored file's row by path, and the bindings of
-/// each file this index wrote, by row.
+/// What the name pass knows of the files: each stored file's row by path, the bindings of each
+/// file this pass read, by row, and what other files pass on, as stored.
 struct Written<'a> {
-    /// Every stored file's row.
+    /// Every stored file's row the pass may meet.
     files: BTreeMap<&'a RepoPath, FileId>,
-    /// The bindings of each written file.
+    /// The bindings of each file this pass read.
     bindings: BTreeMap<FileId, &'a Bindings>,
+    /// What the files this pass did not read pass on, as stored, by row.
+    stored: &'a BTreeMap<FileId, Vec<PassedOn>>,
 }
 
 impl<'a> Written<'a> {
-    /// What `bindings`, each written file's by path, say, with `files`, every stored file and its
-    /// row.
-    fn new(files: &'a [(RepoPath, FileId)], bindings: &'a BTreeMap<RepoPath, Bindings>) -> Self {
+    /// What `bindings`, each read file's by path, say, with `files`, the stored files and their
+    /// rows, and `stored`, what the other files pass on.
+    fn new(
+        files: &'a [(RepoPath, FileId)],
+        bindings: &'a BTreeMap<RepoPath, Bindings>,
+        stored: &'a BTreeMap<FileId, Vec<PassedOn>>,
+    ) -> Self {
         let files: BTreeMap<&RepoPath, FileId> =
             files.iter().map(|(path, id)| (path, *id)).collect();
         let bindings = bindings
             .iter()
             .filter_map(|(path, bindings)| Some((*files.get(path)?, bindings)))
             .collect();
-        Self { files, bindings }
+        Self {
+            files,
+            bindings,
+            stored,
+        }
+    }
+
+    /// What `file` passes on: from its bindings when this pass read it, else as stored.
+    fn passes(&self, file: FileId) -> Option<Passes<'a>> {
+        if let Some(bindings) = self.bindings.get(&file) {
+            return Some(Passes::Read(bindings));
+        }
+        self.stored.get(&file).map(|passed| Passes::Stored(passed))
+    }
+}
+
+/// What a file passes on of what its top-level imports bring in.
+#[derive(Clone, Copy)]
+enum Passes<'a> {
+    /// From its bindings, read in this pass.
+    Read(&'a Bindings),
+    /// As stored.
+    Stored(&'a [PassedOn]),
+}
+
+impl<'a> Passes<'a> {
+    /// What the imports that pass `name` on take: each one's name and the files it names.
+    fn taken_for(self, name: &Identifier) -> Vec<(&'a Identifier, &'a [RepoPath])> {
+        match self {
+            Self::Read(bindings) => bindings
+                .exports(name)
+                .iter()
+                .filter_map(|position| bindings.taken(*position))
+                .map(|taken| (&taken.name, taken.files.as_slice()))
+                .collect(),
+            Self::Stored(passed) => passed
+                .iter()
+                .filter_map(|passed| match passed {
+                    PassedOn::Name {
+                        name: passed_name,
+                        taken,
+                        files,
+                        ..
+                    } if passed_name == name => Some((taken, files.as_slice())),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
+    /// The files whose every name it passes on.
+    fn everything(self) -> Vec<&'a RepoPath> {
+        match self {
+            Self::Read(bindings) => bindings.everything().iter().collect(),
+            Self::Stored(passed) => passed
+                .iter()
+                .filter_map(|passed| match passed {
+                    PassedOn::Every(path) => Some(path),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether it passes on every name of a module outside the repository.
+    fn passes_on_outside(self) -> bool {
+        match self {
+            Self::Read(bindings) => bindings.passes_on_outside(),
+            Self::Stored(passed) => passed.contains(&PassedOn::Outside),
+        }
     }
 }
 
@@ -340,6 +416,8 @@ struct Scope {
     symbols: Vec<SymbolName>,
     /// The references to tie, by id: every reference of a file with bindings.
     refs: Vec<RefName>,
+    /// What the files a name may be followed through, and that the pass does not read, pass on.
+    stored: BTreeMap<FileId, Vec<PassedOn>>,
 }
 
 /// Ties every stored reference to the definition its file's imports or its name settle, or marks
@@ -363,6 +441,7 @@ pub(crate) fn resolve_names(
         files: queries.file_ids()?,
         symbols: queries.symbol_names()?,
         refs: queries.ref_names()?,
+        stored: queries.every_passes_on()?,
     };
     resolve(writer, &scope, bindings, Some(scip))
 }
@@ -384,17 +463,12 @@ pub(crate) fn resolve_names_around(
 ) -> Result<NamePass, StoreError> {
     let queries = writer.queries();
     let mut files: BTreeMap<RepoPath, FileId> = BTreeMap::new();
-    for path in bindings
-        .keys()
-        .chain(bindings.values().flat_map(Bindings::files))
-    {
-        if files.contains_key(path) {
-            continue;
-        }
+    for path in bindings.keys() {
         if let Some(row) = queries.file(path)? {
             files.insert(path.clone(), row.id);
         }
     }
+    let stored = reachable_surfaces(queries, bindings, &mut files)?;
     let mut refs: BTreeMap<RefId, RefName> = BTreeMap::new();
     for path in bindings.keys() {
         if let Some(file) = files.get(path) {
@@ -417,6 +491,10 @@ pub(crate) fn resolve_names_around(
     let mut wanted: BTreeSet<&Identifier> =
         refs.values().map(|reference| &reference.name).collect();
     wanted.extend(bindings.values().flat_map(Bindings::taken_names));
+    wanted.extend(stored.values().flatten().filter_map(|passed| match passed {
+        PassedOn::Name { taken, .. } => Some(taken),
+        PassedOn::Every(_) | PassedOn::Outside => None,
+    }));
     let mut symbols = Vec::new();
     for name in wanted {
         symbols.extend(queries.symbol_names_named(name)?);
@@ -429,6 +507,7 @@ pub(crate) fn resolve_names_around(
         files: files.into_iter().collect(),
         symbols,
         refs: refs.into_values().collect(),
+        stored,
     };
     let mut pass = resolve(writer, &scope, bindings, None)?;
     // Only the files read in this pass had every reference tied: another file's ties are read back
@@ -445,6 +524,57 @@ pub(crate) fn resolve_names_around(
     Ok(pass)
 }
 
+/// What the files a search from `bindings` can be followed through pass on, as stored, and the
+/// rows of every file it can look into, added to `files`: the files the bindings name, and the
+/// files those pass names on from, as far as a search follows. A file read in the pass is
+/// followed through its bindings instead.
+///
+/// # Errors
+///
+/// Store errors.
+fn reachable_surfaces(
+    queries: Queries<'_>,
+    bindings: &BTreeMap<RepoPath, Bindings>,
+    files: &mut BTreeMap<RepoPath, FileId>,
+) -> Result<BTreeMap<FileId, Vec<PassedOn>>, StoreError> {
+    let mut stored = BTreeMap::new();
+    let mut level: Vec<RepoPath> = bindings
+        .values()
+        .flat_map(Bindings::files)
+        .cloned()
+        .collect();
+    for depth in 0..=search::MAX_FILES_PASSED_THROUGH {
+        let mut next = Vec::new();
+        for path in level {
+            let file = if let Some(file) = files.get(&path) {
+                *file
+            } else {
+                let Some(row) = queries.file(&path)? else {
+                    continue;
+                };
+                files.insert(path.clone(), row.id);
+                row.id
+            };
+            // Past the last file followed, a search looks only at definitions.
+            let is_last = depth == search::MAX_FILES_PASSED_THROUGH;
+            if is_last || bindings.contains_key(&path) || stored.contains_key(&file) {
+                continue;
+            }
+            let passed = queries.passes_on(file)?;
+            for passed in &passed {
+                match passed {
+                    PassedOn::Name { files, .. } => next.extend(files.iter().cloned()),
+                    PassedOn::Every(path) => next.push(path.clone()),
+                    PassedOn::Outside => {}
+                }
+            }
+            stored.insert(file, passed);
+        }
+        level = next;
+    }
+    Ok(stored)
+}
+
 /// Ties each reference of `scope` as the module documentation says and writes those whose
 /// target changed. A reference `scip` ties is tied as it says; without `scip`, a stored SCIP tie
 /// stands.
@@ -454,7 +584,7 @@ fn resolve(
     bindings: &BTreeMap<RepoPath, Bindings>,
     scip: Option<&BTreeMap<RefId, SymbolId>>,
 ) -> Result<NamePass, StoreError> {
-    let written = Written::new(&scope.files, bindings);
+    let written = Written::new(&scope.files, bindings, &scope.stored);
     let definitions = Definitions::of(&scope.symbols);
     let mut memo = Memo::default();
     // A file's references come back in the order they were written, which is its lookups' order.

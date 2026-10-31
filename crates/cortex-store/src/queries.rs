@@ -1,12 +1,16 @@
 //! Read queries, shared by readers and by the writer's transactions.
 
+use std::collections::BTreeMap;
+
 use cortex_core::{EdgeType, FileFlags, Identifier, NodeKind, RepoPath};
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{StoreError, sqlite};
 use crate::ids::{FileId, NodeId, SymbolId};
 use crate::meta::MetaKey;
+use crate::passes_on;
 use crate::raw::{RawEdge, RawFile, RawRef, RawRefName, RawSymbol, RawSymbolName};
+use crate::records::PassedOn;
 use crate::rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow};
 use crate::schema;
 use crate::values;
@@ -277,6 +281,24 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawRefName::check).collect()
     }
 
+    /// What the file `file` passes on of what its top-level imports bring in.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn passes_on(self, file: FileId) -> Result<Vec<PassedOn>, StoreError> {
+        passes_on::of_file(self.connection, file)
+    }
+
+    /// What every file that passes anything on passes on, by file.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn every_passes_on(self) -> Result<BTreeMap<FileId, Vec<PassedOn>>, StoreError> {
+        passes_on::of_every_file(self.connection)
+    }
+
     /// The node of the file at `path`.
     ///
     /// # Errors
@@ -294,22 +316,42 @@ impl<'c> Queries<'c> {
             .map_err(sqlite("reading a file's node"))
     }
 
-    /// The path of the file `node` stands for, when it stands for a file.
+    /// The row and path of the file `node` stands for, when it stands for a file.
     ///
     /// # Errors
     ///
     /// SQLite errors and a stored path that cannot be read back.
-    pub fn node_file(self, node: NodeId) -> Result<Option<RepoPath>, StoreError> {
+    pub fn node_file(self, node: NodeId) -> Result<Option<(FileId, RepoPath)>, StoreError> {
+        self.file_by(schema::NODE_FILE, node.0)
+    }
+
+    /// The path of the file with the row `file`.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and a stored path that cannot be read back.
+    pub fn file_path(self, file: FileId) -> Result<Option<RepoPath>, StoreError> {
+        Ok(self
+            .file_by(schema::FILE_PATH_OF, file.get())?
+            .map(|(_, path)| path))
+    }
+
+    /// The row and path of the file `sql` selects with `key`.
+    fn file_by(
+        self,
+        sql: &'static str,
+        key: i64,
+    ) -> Result<Option<(FileId, RepoPath)>, StoreError> {
         let raw: Option<(i64, String)> = self
             .connection
-            .prepare_cached(schema::NODE_FILE)
+            .prepare_cached(sql)
             .and_then(|mut statement| {
                 statement
-                    .query_row([node.0], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .query_row([key], |row| Ok((row.get(0)?, row.get(1)?)))
                     .optional()
             })
-            .map_err(sqlite("reading a node's file"))?;
-        raw.map(|(id, path)| values::path(&path, "files.path", id))
+            .map_err(sqlite("reading a file's path"))?;
+        raw.map(|(id, path)| Ok((FileId(id), values::path(&path, "files.path", id)?)))
             .transpose()
     }
 

@@ -10,8 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{EdgeType, FileFlags, RepoPath};
-use cortex_store::{FileRow, MetaKey, NodeId, Queries, StoreError, Writer};
+use cortex_core::{EdgeType, FileFlags, Identifier, RefKind, RepoPath};
+use cortex_store::{FileId, FileRow, MetaKey, NodeId, Queries, StoreError, Writer};
 
 use crate::discover::DiscoveredFile;
 
@@ -21,7 +21,7 @@ const MAX_FILES_AWAY: usize = 4;
 
 /// The most files read again for their bindings around a change. Past this many the rest are left
 /// as they are, and names passed on through them may resolve less until every file is read again.
-const MAX_FILES_AROUND: usize = 10_000;
+pub(crate) const MAX_FILES_AROUND: usize = 10_000;
 
 /// The version of this Cortex, which the store records when an index completes.
 const CORTEX_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -117,8 +117,10 @@ pub(crate) fn unparsed(flags: FileFlags) -> FileFlags {
     FileFlags::from_bits(flags.bits() & !FileFlags::PARSED.bits())
 }
 
-/// The stored files whose imports name one of `files`, directly or through files that do, up to
-/// four files away; at most [`MAX_FILES_AROUND`].
+/// The stored files whose imports name one of `files`, directly or through importers that pass
+/// names on, up to four files away; at most [`MAX_FILES_AROUND`]. These are the files whose
+/// references through imports may find something else when `files` pass on something else or are
+/// removed.
 ///
 /// # Errors
 ///
@@ -132,32 +134,60 @@ pub(crate) fn importers(
     })
 }
 
-/// The stored files that `files` reach through their imports, directly or through the files they
-/// reach, up to four files away; at most [`MAX_FILES_AROUND`].
+/// What removing the stored files at `paths` concerns, read before they are removed: their
+/// importers, as [`importers`] finds them, and the names of their definitions, which other files'
+/// references may find something else for.
 ///
 /// # Errors
 ///
 /// Store errors.
-pub(crate) fn reached(
+pub(crate) fn around_removal(
     queries: Queries<'_>,
-    files: &BTreeSet<RepoPath>,
+    paths: &BTreeSet<RepoPath>,
+) -> Result<(BTreeSet<RepoPath>, BTreeSet<Identifier>), StoreError> {
+    let mut names = BTreeSet::new();
+    for path in paths {
+        let Some(row) = queries.file(path)? else {
+            continue;
+        };
+        let symbols = queries.symbols_in_file(row.id)?;
+        names.extend(symbols.into_iter().map(|symbol| symbol.name));
+    }
+    Ok((importers(queries, paths)?, names))
+}
+
+/// The stored files holding a reference named in `names` that goes through an import: references
+/// an index may tie otherwise when the definitions of those names came or went, and only with the
+/// file's imports read again.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn users_through_imports(
+    queries: Queries<'_>,
+    names: &BTreeSet<Identifier>,
 ) -> Result<BTreeSet<RepoPath>, StoreError> {
-    FileGraph::new(queries).walk(files, |node| {
-        let rows = queries.edges_from(node)?;
-        Ok(rows
-            .into_iter()
-            .filter(|row| row.edge_type == EdgeType::Structural)
-            .map(|row| row.edge.dst)
-            .collect())
-    })
+    let mut files = BTreeSet::new();
+    for name in names {
+        for reference in queries.ref_names_named(name)? {
+            if reference.goes_through_import || reference.kind == RefKind::Import {
+                files.insert(reference.file);
+            }
+        }
+    }
+    let mut paths = BTreeSet::new();
+    for file in files {
+        paths.extend(queries.file_path(file)?);
+    }
+    Ok(paths)
 }
 
 /// The stored files and their nodes, both ways, each read when first needed.
 struct FileGraph<'q> {
     /// Where files and nodes are read from.
     queries: Queries<'q>,
-    /// Each node read so far, with the path of the file it stands for, if any.
-    paths: BTreeMap<NodeId, Option<RepoPath>>,
+    /// Each node read so far, with the row and path of the file it stands for, if any.
+    files: BTreeMap<NodeId, Option<(FileId, RepoPath)>>,
 }
 
 impl<'q> FileGraph<'q> {
@@ -165,23 +195,23 @@ impl<'q> FileGraph<'q> {
     fn new(queries: Queries<'q>) -> Self {
         Self {
             queries,
-            paths: BTreeMap::new(),
+            files: BTreeMap::new(),
         }
     }
 
-    /// The path of the file `node` stands for, if it stands for one.
-    fn path_of(&mut self, node: NodeId) -> Result<Option<RepoPath>, StoreError> {
-        if let Some(path) = self.paths.get(&node) {
-            return Ok(path.clone());
+    /// The row and path of the file `node` stands for, if it stands for one.
+    fn file_of(&mut self, node: NodeId) -> Result<Option<(FileId, RepoPath)>, StoreError> {
+        if let Some(file) = self.files.get(&node) {
+            return Ok(file.clone());
         }
-        let path = self.queries.node_file(node)?;
-        self.paths.insert(node, path.clone());
-        Ok(path)
+        let file = self.queries.node_file(node)?;
+        self.files.insert(node, file.clone());
+        Ok(file)
     }
 
     /// The files `next` leads to from `start`, step by step up to [`MAX_FILES_AWAY`] steps, each a
-    /// file node `next` gives for one already found; without `start` itself, and at most
-    /// [`MAX_FILES_AROUND`].
+    /// file node `next` gives for `start` or for one already found that passes names on; without
+    /// `start` itself, and at most [`MAX_FILES_AROUND`].
     fn walk(
         mut self,
         start: &BTreeSet<RepoPath>,
@@ -196,7 +226,7 @@ impl<'q> FileGraph<'q> {
             let mut further = Vec::new();
             for node in frontier {
                 for linked in next(node)? {
-                    let Some(path) = self.path_of(linked)? else {
+                    let Some((file, path)) = self.file_of(linked)? else {
                         continue;
                     };
                     if start.contains(&path) || found.contains(&path) {
@@ -206,7 +236,10 @@ impl<'q> FileGraph<'q> {
                         return Ok(found);
                     }
                     found.insert(path);
-                    further.push(linked);
+                    // Only a file that passes names on can pass on what changed further.
+                    if !self.queries.passes_on(file)?.is_empty() {
+                        further.push(linked);
+                    }
                 }
             }
             frontier = further;

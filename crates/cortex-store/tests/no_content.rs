@@ -102,6 +102,7 @@ fn parser_index() -> TestResult<FileIndex> {
             use_of(Some(1), "strip", RefKind::Call, 5)?,
             use_of(Some(2), "upper", RefKind::Call, 8)?,
         ],
+        passes_on: Vec::new(),
     })
 }
 

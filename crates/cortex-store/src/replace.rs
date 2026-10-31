@@ -20,8 +20,8 @@ use crate::records::{
     ChangeKind, FileChange, FileIndex, FileRecord, FileRemoval, RefRecord, SymbolChange,
     SymbolRecord,
 };
-use crate::schema;
 use crate::values;
+use crate::{passes_on, schema};
 
 /// A stored symbol, as far as matching needs it.
 struct StoredSymbol {
@@ -74,6 +74,7 @@ pub(crate) fn replace_file(
         })?;
         refs.push(insert_ref(connection, file, symbol, reference)?);
     }
+    passes_on::write(connection, file, &index.passes_on)?;
     Ok(FileChange {
         file,
         file_node,
@@ -182,6 +183,7 @@ pub(crate) fn remove_file(
     connection
         .execute(schema::REFS_DELETE_IN_FILE, [file.get()])
         .map_err(sqlite("deleting references"))?;
+    passes_on::delete(connection, file)?;
     if let Some(node) = Queries::new(connection).file_node(file)? {
         remove_node(connection, node)?;
     }

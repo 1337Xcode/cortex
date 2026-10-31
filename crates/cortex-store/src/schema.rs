@@ -14,13 +14,19 @@ pub(crate) struct Migration {
 
 /// Every migration, in order. A migration that has been published is never edited; a change is a
 /// new migration at the end.
-pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("../migrations/0001_index.sql"),
-}];
+pub(crate) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("../migrations/0001_index.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("../migrations/0002_passes_on.sql"),
+    },
+];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 1;
+pub(crate) const SCHEMA_VERSION: u32 = 2;
 
 /// How many objects the database defines; 0 for a new, empty database.
 pub(crate) const COUNT_OBJECTS: &str = "SELECT count(*) FROM sqlite_schema";
@@ -156,10 +162,22 @@ pub(crate) const FILE_NODE_AT: &str = "SELECT n.node_id FROM files AS f JOIN nod
 /// The id and path of the file a node stands for.
 pub(crate) const NODE_FILE: &str = "SELECT f.file_id, f.path FROM nodes AS n JOIN files AS f \
      ON f.file_id = n.ref_id WHERE n.node_id = ?1 AND n.kind = 'file'";
+/// The path of the file with a row id.
+pub(crate) const FILE_PATH_OF: &str = "SELECT file_id, path FROM files WHERE file_id = ?1";
 /// Whether a file is stored between two paths, exclusive: below a folder when they are the
 /// folder's path with `/` and with the next character, `0`, after it.
 pub(crate) const FILES_BETWEEN: &str =
     "SELECT EXISTS (SELECT 1 FROM files WHERE path > ?1 AND path < ?2)";
+/// Adds one row of what a file passes on.
+pub(crate) const PASSES_ON_INSERT: &str =
+    "INSERT INTO passes_on (file_id, position, name, taken, path) VALUES (?1, ?2, ?3, ?4, ?5)";
+/// Deletes what a file passes on.
+pub(crate) const PASSES_ON_DELETE: &str = "DELETE FROM passes_on WHERE file_id = ?1";
+/// What a file passes on, in the order it was written.
+pub(crate) const PASSES_ON_OF_FILE: &str = "SELECT file_id, position, name, taken, path      FROM passes_on WHERE file_id = ?1 ORDER BY rowid";
+/// What every file passes on, by file, in the order it was written.
+pub(crate) const PASSES_ON_EVERY: &str =
+    "SELECT file_id, position, name, taken, path      FROM passes_on ORDER BY file_id, rowid";
 /// Every file's id, path and node, by path.
 pub(crate) const FILE_NODES: &str = "SELECT f.file_id, f.path, n.node_id FROM files AS f \
      JOIN nodes AS n ON n.kind = 'file' AND n.ref_id = f.file_id ORDER BY f.path";
@@ -262,7 +280,7 @@ mod tests {
     }
 
     /// The columns of every table, typed from the index's table definitions.
-    fn expected_columns() -> [(&'static str, Vec<Column>); 7] {
+    fn expected_columns() -> [(&'static str, Vec<Column>); 8] {
         [
             (
                 "meta",
@@ -338,12 +356,22 @@ mod tests {
                 "search_index",
                 column_list(&[("node_id", "", 0), ("tokens", "", 0)]),
             ),
+            (
+                "passes_on",
+                column_list(&[
+                    ("file_id", "INTEGER", 0),
+                    ("position", "INTEGER", 0),
+                    ("name", "TEXT", 0),
+                    ("taken", "TEXT", 0),
+                    ("path", "TEXT", 0),
+                ]),
+            ),
         ]
     }
 
     /// The indexes of every table: those of the table definitions, plus `refs.dst_name`, `nodes.path`
     /// and the uniqueness of folder paths.
-    fn expected_indexes() -> [(&'static str, Vec<Index>); 6] {
+    fn expected_indexes() -> [(&'static str, Vec<Index>); 7] {
         [
             ("meta", index_list(&[(&["key"], true)])),
             (
@@ -378,6 +406,7 @@ mod tests {
                 "edges",
                 index_list(&[(&["src", "dst", "type"], true), (&["dst", "type"], false)]),
             ),
+            ("passes_on", index_list(&[(&["file_id"], false)])),
         ]
     }
 
@@ -423,7 +452,8 @@ mod tests {
     /// The tables, columns, keys and indexes are the table definitions typed below: names, types
     /// and primary keys as the index's tables define them. Two indexes are added, `refs.dst_name`
     /// for resolving references by name and `nodes.path` for finding the nodes under a path, and
-    /// folder paths are unique. Foreign keys refuse references to missing rows, and an edge goes
+    /// folder paths are unique; one table is added, `passes_on`, what each file passes on of its
+    /// imports, indexed by file. Foreign keys refuse references to missing rows, and an edge goes
     /// with either of its nodes.
     #[test]
     fn schema_matches_the_table_definitions() -> Result<(), Box<dyn std::error::Error>> {
@@ -445,6 +475,7 @@ mod tests {
                 "files",
                 "meta",
                 "nodes",
+                "passes_on",
                 "refs",
                 "search_index",
                 "symbols"
@@ -466,6 +497,10 @@ mod tests {
                 key("files", "src_file_id", "file_id", "NO ACTION"),
                 key("symbols", "dst_symbol_id", "symbol_id", "NO ACTION"),
             ]
+        );
+        assert_eq!(
+            foreign_keys(&connection, "passes_on")?,
+            [key("files", "file_id", "file_id", "NO ACTION")]
         );
         assert_eq!(
             foreign_keys(&connection, "edges")?,

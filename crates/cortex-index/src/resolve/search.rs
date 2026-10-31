@@ -21,7 +21,7 @@ use super::{Definitions, Found, Written, agreed};
 /// How many files that only pass a name on, by importing it themselves, are followed to find its
 /// definition. Package `__init__.py` files and TypeScript index files rarely chain more than two;
 /// the cap bounds the work a crafted chain can cause.
-const MAX_FILES_PASSED_THROUGH: usize = 4;
+pub(super) const MAX_FILES_PASSED_THROUGH: usize = 4;
 
 /// How many times one search for a name may look into a file, looks into one file at several
 /// depths included. An index file with a few hundred `export *` lines is searched whole; past the
@@ -90,8 +90,8 @@ impl<'a> Definitions<'a> {
 
     /// What `name` finds in the file `file`, reached having passed through `passed` files: by the
     /// file's own definition and its imports of the name, which must agree, and by its imports of
-    /// every name, as the module documentation says. A file this index did not write offers only
-    /// its definitions; past the cap, a file's imports are not followed.
+    /// every name, as the module documentation says. What a file passes on comes from its bindings
+    /// when the pass read it, else as stored; past the cap, a file's imports are not followed.
     fn in_file(
         &self,
         name: &'a Identifier,
@@ -101,16 +101,17 @@ impl<'a> Definitions<'a> {
         search: &mut Search<'a>,
     ) -> Option<Found> {
         let made = self.top_level.get(&(file, name.as_str())).copied();
-        let Some(bindings) = written.bindings.get(&file) else {
+        let Some(passing) = written.passes(file) else {
             return made;
         };
         let can_follow = passed < MAX_FILES_PASSED_THROUGH;
         let mut finds: Vec<Option<Found>> = made.into_iter().map(Some).collect();
-        for taken in bindings.exports(name) {
-            let import = bindings.taken(*taken).filter(|_| can_follow);
-            finds.push(import.and_then(|import| {
-                self.search(&import.name, &import.files, passed + 1, written, search)
-            }));
+        for (taken, files) in passing.taken_for(name) {
+            finds.push(if can_follow {
+                self.search(taken, files, passed + 1, written, search)
+            } else {
+                None
+            });
         }
         // INVARIANT: silent-when-unsure
         let named = consensus(&finds);
@@ -118,12 +119,12 @@ impl<'a> Definitions<'a> {
             return None;
         }
         let everything = if can_follow {
-            self.search(name, bindings.everything(), passed + 1, written, search)
+            self.search(name, passing.everything(), passed + 1, written, search)
         } else {
             None
         };
         match (named, everything) {
-            (None, Some(_)) if bindings.passes_on_outside() => Some(Found::Several),
+            (None, Some(_)) if passing.passes_on_outside() => Some(Found::Several),
             (None, found) | (found, None) => found,
             (Some(Found::One(a)), Some(Found::One(b))) if a == b => Some(Found::One(a)),
             (Some(_), Some(_)) => Some(Found::Several),

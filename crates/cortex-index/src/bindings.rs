@@ -30,7 +30,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{Identifier, RefKind, RepoPath, SymbolKind};
-use cortex_store::{RefRecord, SymbolRecord};
+use cortex_store::{PassedOn, RefRecord, SymbolRecord};
 
 use crate::extract::Extraction;
 use crate::imports::Targets;
@@ -123,6 +123,31 @@ impl Bindings {
     /// Every name the file's imports take.
     pub(crate) fn taken_names(&self) -> impl Iterator<Item = &Identifier> {
         self.taken.iter().map(|taken| &taken.name)
+    }
+
+    /// What the file passes on of what its top-level imports bring in, as the store keeps it:
+    /// each name it passes on with what its import takes, by name, then every name of the files
+    /// its `*` imports name, then whether one names a module outside the repository.
+    pub(crate) fn passes_on(&self) -> Vec<PassedOn> {
+        let mut passed = Vec::new();
+        for (name, positions) in &self.exports {
+            for position in positions {
+                let Some(taken) = self.taken.get(*position) else {
+                    continue;
+                };
+                passed.push(PassedOn::Name {
+                    position: u32::try_from(*position).unwrap_or(u32::MAX),
+                    name: name.clone(),
+                    taken: taken.name.clone(),
+                    files: taken.files.clone(),
+                });
+            }
+        }
+        passed.extend(self.everything.iter().cloned().map(PassedOn::Every));
+        if self.passes_on_outside {
+            passed.push(PassedOn::Outside);
+        }
+        passed
     }
 
     /// The bindings of the file read as `extraction`, whose imports name `targets` and reach their

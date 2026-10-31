@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use cortex_core::{FileFlags, Identifier, RepoPath, ScaleMode};
+use cortex_core::{FileFlags, RepoPath, ScaleMode};
 use cortex_store::{FileRow, StoreError, Writer};
 
 use crate::discover::DiscoveredFile;
@@ -63,9 +63,8 @@ pub fn index_paths(
     incremental::mark_started(writer)?;
     let mut rules = PathRules::new(WalkRules::of(root, &options.discover))?;
     let found = find(writer, &mut rules, &paths)?;
-    let mut names = defined_names(writer, &found.gone)?;
     let gone: BTreeSet<RepoPath> = found.gone.iter().map(|row| row.file.path.clone()).collect();
-    let importers_of_gone = incremental::importers(writer.queries(), &gone)?;
+    let (importers_of_gone, mut names) = incremental::around_removal(writer.queries(), &gone)?;
     pipeline::remove_files(writer, &gone.iter().cloned().collect::<Vec<_>>())?;
     let walked: BTreeMap<&RepoPath, FileFlags> = found
         .candidates
@@ -127,7 +126,7 @@ pub fn index_paths(
             flags: incremental::unparsed(row.flags),
         })
     };
-    let around = pipeline::files_around(writer, &file_of, &written, importers_of_gone)?;
+    let around = pipeline::files_around(writer, &file_of, &written, (importers_of_gone, &names))?;
     let read_again = pipeline::read_again(&around, &context)?;
     pipeline::link(
         writer,
@@ -189,19 +188,4 @@ fn find(
         }
     }
     Ok(found)
-}
-
-/// The names of the definitions in the stored files `gone`, about to be removed.
-fn defined_names(writer: &Writer, gone: &[FileRow]) -> Result<BTreeSet<Identifier>, StoreError> {
-    let queries = writer.queries();
-    let mut names = BTreeSet::new();
-    for row in gone {
-        names.extend(
-            queries
-                .symbols_in_file(row.id)?
-                .into_iter()
-                .map(|symbol| symbol.name),
-        );
-    }
-    Ok(names)
 }

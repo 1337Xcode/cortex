@@ -340,6 +340,7 @@ mod tests {
             },
             symbols: Vec::new(),
             refs: Vec::new(),
+            passes_on: Vec::new(),
         })
     }
 

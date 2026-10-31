@@ -20,6 +20,7 @@ mod lock;
 mod meta;
 mod migrate;
 mod nodes;
+mod passes_on;
 mod private;
 mod queries;
 mod raw;
@@ -38,8 +39,8 @@ pub use meta::MetaKey;
 pub use queries::Queries;
 pub use reader::Reader;
 pub use records::{
-    ChangeKind, EdgeRecord, FileChange, FileIndex, FileRecord, FileRemoval, RefRecord, Resolved,
-    SymbolChange, SymbolRecord, Target,
+    ChangeKind, EdgeRecord, FileChange, FileIndex, FileRecord, FileRemoval, PassedOn, RefRecord,
+    Resolved, SymbolChange, SymbolRecord, Target,
 };
 pub use rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow};
 pub use writer::{WriteTx, Writer, WriterOptions};

@@ -150,6 +150,7 @@ fn back_up(connection: &Connection, backups: &Path, version: u32) -> Result<Path
 mod tests {
     use super::*;
     use crate::connection::{self, Access};
+    use crate::schema::MIGRATIONS;
 
     /// The shipped first migration.
     const FIRST: Migration = schema::MIGRATIONS[0];
@@ -203,6 +204,33 @@ mod tests {
         assert_eq!(migrate(&mut connection, &[FIRST], &backups)?, None);
         assert_eq!(objects(&connection)?, before);
         assert_eq!(files_in(&backups)?, Vec::<String>::new());
+        Ok(())
+    }
+
+    /// A database of the first schema, with an index completed, gains the table of what files
+    /// pass on and loses the record of the completed index, so that the next index reads every
+    /// file and fills the table.
+    #[test]
+    fn the_second_schema_has_every_file_read_again() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let first = MIGRATIONS.first().copied().ok_or("no migration")?;
+        migrate(&mut connection, &[first], &backups)?;
+        connection.execute(
+            "INSERT INTO meta (key, value) VALUES ('cortex_version', '2.0.0')",
+            [],
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 2);
+        assert!(objects(&connection)?.contains(&"passes_on".to_owned()));
+        let completed: Option<String> = connection
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'cortex_version'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        assert_eq!(completed, None);
         Ok(())
     }
 

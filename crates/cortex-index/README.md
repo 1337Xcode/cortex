@@ -115,12 +115,17 @@ and as complete once done.
 A written file's definitions keep their ids when their qualified name and kind match the stored
 ones, and the report lists those whose signature or body changed.
 
-What a file's imports bind is not stored, so the files around a change are read again for it,
-without being written: those whose imports name a changed or removed file, up to four files away,
-and those the changed files and these reach through their imports, up to four files away (at
-most 10,000 files). Their references are tied again, and names passed on through them resolve as
-in a full index. A file added does not join files whose imports could not name it before until
-those change or every file is read again.
+Each parsed file's row keeps what it passes on of what its top-level imports bring in: each name
+it passes on, with the name its import takes and the files the import names, the files whose every
+name a `*` import passes on, and whether a `*` import names a module outside the repository. A
+name is followed through a file not read in an index by what is kept, as it would be through the
+file's imports. What a file's imports bind for its own references is not kept, so some files
+around a change are read again for it, without being written: the importers of a changed file that
+now passes on something else, and of a removed file, through importers that pass names on, up to
+four files away; and the files whose references named like a definition that came or went go
+through an import (at most 10,000 files). Their references are tied again. A file added does not
+join files whose imports could not name it before until those change or every file is read
+again.
 
 A file that may hold secrets, one over the size limit and one that is not text are written as the
 walk found them: path, language, size, modification time and flags. Every other file is read whole, and its size, its BLAKE3 hash and

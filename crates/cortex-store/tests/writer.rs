@@ -8,7 +8,7 @@ use cortex_core::{
     EdgeType, FileFlags, Language, RefKind, RepoId, Resolution, ScaleMode, SymbolKind,
 };
 use cortex_store::{
-    ChangeKind, EdgeRecord, EdgeRow, FileIndex, IndexCounts, MetaKey, RefName, Resolved,
+    ChangeKind, EdgeRecord, EdgeRow, FileIndex, IndexCounts, MetaKey, PassedOn, RefName, Resolved,
     StoreError, SymbolChange, SymbolName, SymbolRecord, Target,
 };
 
@@ -75,7 +75,7 @@ fn identity_is_recorded() -> TestResult {
     let writer = scratch.writer(1000)?;
     let expected_id = RepoId::of(scratch.root.path());
     let queries = writer.queries();
-    assert_eq!(queries.meta(MetaKey::SchemaVersion)?.as_deref(), Some("1"));
+    assert_eq!(queries.meta(MetaKey::SchemaVersion)?.as_deref(), Some("2"));
     assert_eq!(
         queries.meta(MetaKey::RepoId)?.as_deref(),
         Some(expected_id.as_str())
@@ -526,6 +526,53 @@ fn references_resolve_and_unresolve() -> TestResult {
     let names = reader.queries().ref_names_in_file(user.file)?;
     let flags: Vec<bool> = names.iter().map(|name| name.goes_through_import).collect();
     assert_eq!(flags, [true, true, false, false]);
+    Ok(())
+}
+
+/// What a file passes on is written with it and read back as written: a name taken from two
+/// files is one entry, a name taken from outside the repository keeps no file, every name of a
+/// file and of a module outside the repository are entries of their own. Writing the file again
+/// replaces them, and removing it removes them.
+#[test]
+fn what_a_file_passes_on_round_trips() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let passed = vec![
+        PassedOn::Name {
+            position: 0,
+            name: name("helper")?,
+            taken: name("help")?,
+            files: vec![path("a.py")?, path("b.py")?],
+        },
+        PassedOn::Name {
+            position: 1,
+            name: name("helper")?,
+            taken: name("helper")?,
+            files: Vec::new(),
+        },
+        PassedOn::Every(path("c.py")?),
+        PassedOn::Outside,
+    ];
+    let mut file = index("pkg/__init__.py", Vec::new(), Vec::new())?;
+    file.passes_on.clone_from(&passed);
+    let mut transaction = writer.transaction()?;
+    let change = transaction.replace_file(&file)?;
+    transaction.commit()?;
+    assert_eq!(writer.queries().passes_on(change.file)?, passed);
+    let every = writer.queries().every_passes_on()?;
+    assert_eq!(every.get(&change.file), Some(&passed));
+    let mut transaction = writer.transaction()?;
+    file.passes_on = vec![PassedOn::Outside];
+    transaction.replace_file(&file)?;
+    transaction.commit()?;
+    assert_eq!(
+        writer.queries().passes_on(change.file)?,
+        [PassedOn::Outside]
+    );
+    let mut transaction = writer.transaction()?;
+    transaction.remove_file(&path("pkg/__init__.py")?)?;
+    transaction.commit()?;
+    assert_eq!(writer.queries().every_passes_on()?.len(), 0);
     Ok(())
 }
 

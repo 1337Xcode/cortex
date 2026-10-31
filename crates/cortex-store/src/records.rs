@@ -82,6 +82,31 @@ pub struct FileIndex {
     pub symbols: Vec<SymbolRecord>,
     /// The names it uses.
     pub refs: Vec<RefRecord>,
+    /// What it passes on of what its top-level imports bring in.
+    pub passes_on: Vec<PassedOn>,
+}
+
+/// What a file passes on of what its top-level imports bring in, so that a name can be followed
+/// through the file without reading it again.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PassedOn {
+    /// The file passes `name` on, taken under `taken` from `files`, none when its import names
+    /// something outside the repository; `position` tells apart the imports that pass on one
+    /// name.
+    Name {
+        /// The import's position among the file's imports that pass names on.
+        position: u32,
+        /// The name the file passes on: the import's alias, else the name it takes.
+        name: Identifier,
+        /// The name the import takes.
+        taken: Identifier,
+        /// The files the import names.
+        files: Vec<RepoPath>,
+    },
+    /// Every name of the file at this path.
+    Every(RepoPath),
+    /// Every name of a module outside the repository.
+    Outside,
 }
 
 /// What became of one symbol when a file was replaced or removed.
