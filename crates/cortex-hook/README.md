@@ -15,7 +15,7 @@ CLI uses as well.
 
 | Item | What it is |
 | --- | --- |
-| `run` | `cortex hook`: the arguments after `hook`, the payload's input and the home folder in; nothing out. Every failure and panic ends in silence and a line in the hook log |
+| `run` | `cortex hook`: the arguments after `hook`, the payload's input and the home folder in; nothing out. When no daemon answers it starts one in the background (its own process group on Unix; detached, in a process group of its own and outside the agent's job when allowed on Windows) and does not wait for it. Every failure and panic ends in silence and a line in the hook log, by the event's hard timeout |
 | `ask` | Connects to a repository's daemon (its Unix socket, or its named pipe on Windows), sends the handshake and one request in a single write, and returns the daemon's handshake and answer, all before a deadline. The exchange runs on a thread of its own, since a named pipe takes no timeout; past the deadline the caller gets `TimedOut` and the thread is left to the process's exit |
 | `ClientError` | `NotRunning` (nothing listens), `TimedOut`, `Mismatch` (the daemon speaks another protocol, with its versions), `TooLarge` (the request does not fit a frame; refused before connecting), `NotTheDaemon` (on Windows, a pipe of the daemon's name held by a process other than the one the user's run folder names: it is told nothing), `Protocol` (an answer broke the protocol) and `Io` |
 | `adapter` | The adapter for the agent named on the command line (`claude`), or `None` |
@@ -37,7 +37,7 @@ cargo test -p cortex-hook
 
 The unit tests cover the payload's size cap and time limit, the repository lookup (links, the home
 folder), the panic guard and the log's rate limit and rotation. The `cortex hook` command itself is
-tested through the binary in `cortex-cli`'s `tests/hook.rs`.
+tested through the binary in `cortex-cli`'s `tests/hook.rs` and `tests/daemon_down.rs`.
 
 The client tests run a scripted daemon on a real socket or named pipe: an answer, a mismatch,
 silence until the deadline, a closed connection, broken frames, and no daemon at all.

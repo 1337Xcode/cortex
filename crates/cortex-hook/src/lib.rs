@@ -13,6 +13,7 @@ mod fail_open;
 mod log;
 mod root;
 mod run;
+mod spawn;
 mod stdin;
 
 pub use adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, adapter};

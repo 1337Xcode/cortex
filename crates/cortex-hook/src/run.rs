@@ -1,7 +1,7 @@
 //! `cortex hook --agent <agent> --event <event>`: what an agent runs at each of its hooks. The hook
 //! reads the payload, turns it into an event, hands the event to its repository's daemon before the
-//! event's deadline, and ends. Whatever happens it prints nothing and exits 0; what went wrong goes
-//! to the hook log.
+//! event's deadline (starting a daemon in the background when none runs), and ends. Whatever
+//! happens it prints nothing and exits 0; what went wrong goes to the hook log.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -16,7 +16,7 @@ use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter};
 use crate::client::{ClientError, ask};
 use crate::fail_open::{self, Outcome};
 use crate::stdin::{self, StdinError};
-use crate::{log, root};
+use crate::{log, root, spawn};
 
 /// How long the hook waits for its payload to end, counted from its start.
 const STDIN_TIMEOUT: Duration = Duration::from_millis(50);
@@ -52,6 +52,9 @@ enum Failure {
     /// The daemon answered with something other than taking the event.
     #[error("the daemon did not take the event")]
     NotTaken,
+    /// No daemon was running, and none could be started.
+    #[error("starting the daemon")]
+    StartDaemon(#[source] std::io::Error),
 }
 
 /// Runs the hook with `args`, the arguments that follow `hook` on the command line, the payload on
@@ -124,12 +127,20 @@ impl Hook {
         };
         let user = UserFolder::in_home(home.ok_or(Failure::NoHome)?);
         let files = user.run_files(&RepoId::of(&event.repo_root));
+        let root = event.repo_root.clone();
         let body = RequestBody::Event {
             event: Box::new(event),
         };
-        match ask(&files, Role::Hook, body, deadline(self.started, entry))?.body {
-            ResponseBody::Ack => Ok(()),
-            _ => Err(Failure::NotTaken),
+        match ask(&files, Role::Hook, body, deadline(self.started, entry)) {
+            Ok(answer) if answer.body == ResponseBody::Ack => Ok(()),
+            Ok(_) => Err(Failure::NotTaken),
+            // No daemon: start one and go on without it. The event that found none is not kept;
+            // the next hook finds the daemon listening.
+            Err(ClientError::NotRunning) => {
+                let program = std::env::current_exe().map_err(Failure::StartDaemon)?;
+                spawn::start_daemon(&program, &root).map_err(Failure::StartDaemon)
+            }
+            Err(error) => Err(error.into()),
         }
     }
 
@@ -207,9 +218,9 @@ fn unix_millis(time: SystemTime) -> i64 {
 fn describe(failure: &Failure) -> String {
     let mut text = failure.to_string();
     let io_source = match failure {
-        Failure::Stdin(StdinError::Io(error)) | Failure::Daemon(ClientError::Io(error)) => {
-            Some(error)
-        }
+        Failure::Stdin(StdinError::Io(error))
+        | Failure::Daemon(ClientError::Io(error))
+        | Failure::StartDaemon(error) => Some(error),
         _ => None,
     };
     if let Some(error) = io_source {

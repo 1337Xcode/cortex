@@ -1,0 +1,146 @@
+//! A hook that finds no daemon starts one in the background and returns at once, printing nothing;
+//! the daemon answers within seconds and indexes the repository, a file written meanwhile included.
+
+mod common;
+
+use std::fs::File;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+use common::{POLL_EVERY, READY_WITHIN, TestResult, isolate, wait_for};
+use cortex_core::ipc::{RequestBody, ResponseBody, Role};
+use cortex_core::{RepoId, RepoPath, RunFiles, UserFolder, canonical_root};
+use cortex_hook::ask;
+use cortex_store::Reader;
+
+/// A home folder with a repository in it, and the daemon a hook may start there: stopped, and the
+/// folder removed, when the test ends however it ends, so that no process outlives the test.
+struct Scene {
+    /// The home folder, removed on drop once the daemon has let go of it.
+    home: Option<tempfile::TempDir>,
+    /// Where the repository's daemon listens.
+    files: RunFiles,
+}
+
+impl Scene {
+    /// A home folder holding a repository marked for Cortex with one Python file.
+    fn new() -> TestResult<Self> {
+        let home = tempfile::tempdir()?;
+        let repo = home.path().join("repo");
+        std::fs::create_dir_all(repo.join(".cortex"))?;
+        std::fs::write(repo.join("app.py"), "def kept():\n    pass\n")?;
+        let files =
+            UserFolder::in_home(home.path()).run_files(&RepoId::of(&canonical_root(&repo)?));
+        Ok(Self {
+            home: Some(home),
+            files,
+        })
+    }
+
+    /// The home folder.
+    fn home(&self) -> TestResult<&Path> {
+        Ok(self.home.as_ref().ok_or("no home folder")?.path())
+    }
+
+    /// The repository, canonical.
+    fn repo(&self) -> TestResult<PathBuf> {
+        Ok(canonical_root(&self.home()?.join("repo"))?)
+    }
+}
+
+impl Drop for Scene {
+    fn drop(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // A daemon that never started, or already stopped, cannot be asked: nothing to stop.
+        let _ = ask(&self.files, Role::Cli, RequestBody::Shutdown, deadline);
+        let _ = wait_for(|| Ok(!self.files.pid_path().exists()));
+        // On Windows the daemon holds handles it inherited from the hook until its process ends,
+        // a moment after its process-id file goes: the folder is removed once they are released.
+        if let Some(home) = self.home.take() {
+            let path = home.keep();
+            let _ = wait_for(|| Ok(std::fs::remove_dir_all(&path).is_ok()));
+        }
+    }
+}
+
+/// Runs `cortex hook --agent claude --event SessionStart` with `payload` on stdin and `home` as the
+/// home folder: whether it ended silently with exit code 0, and how long it took. Its output goes
+/// to files: on Windows the daemon it starts inherits the hook's handles, so a pipe would stay open
+/// until the daemon exits.
+fn session_start(payload: &[u8], home: &Path) -> TestResult<(bool, Duration)> {
+    let (out, err) = (home.join("hook.out"), home.join("hook.err"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command
+        .args(["hook", "--agent", "claude", "--event", "SessionStart"])
+        .stdin(Stdio::piped())
+        .stdout(File::create(&out)?)
+        .stderr(File::create(&err)?);
+    isolate(&mut command, home);
+    let started = Instant::now();
+    let mut child = command.spawn()?;
+    child
+        .stdin
+        .take()
+        .ok_or("stdin is not piped")?
+        .write_all(payload)?;
+    let status = child.wait()?;
+    let took = started.elapsed();
+    let is_silent = status.code() == Some(0)
+        && std::fs::read(&out)?.is_empty()
+        && std::fs::read(&err)?.is_empty();
+    Ok((is_silent, took))
+}
+
+/// With no daemon running, a session's start through the hook returns silently within the hook's
+/// hard timeout (1.5 s), well before a daemon could have indexed anything; a daemon then answers,
+/// and a file written after the hook returned is indexed.
+#[test]
+fn a_hook_starts_the_daemon_and_does_not_wait() -> TestResult {
+    let scene = Scene::new()?;
+    let (home, repo) = (scene.home()?, scene.repo()?);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "session_id": "s1",
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "cwd": repo,
+    }))?;
+    // The first start of a freshly built binary can take seconds (a virus scanner reads it), which
+    // the timed call below must not pay.
+    Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .arg("version")
+        .stdout(Stdio::null())
+        .status()?;
+
+    let (is_silent, took) = session_start(&payload, home)?;
+    assert!(is_silent);
+    assert!(took < Duration::from_millis(1_500), "{took:?}");
+    std::fs::write(repo.join("later.py"), "def later():\n    pass\n")?;
+
+    let answers = || -> TestResult<bool> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        Ok(matches!(
+            ask(&scene.files, Role::Cli, RequestBody::Status, deadline),
+            Ok(answer) if matches!(answer.body, ResponseBody::Status(_))
+        ))
+    };
+    let later = RepoPath::new("later.py")?;
+    let is_indexed = || -> TestResult<bool> {
+        let Ok(reader) = Reader::open(&repo.join(".cortex"), 0) else {
+            return Ok(false);
+        };
+        Ok(reader.queries().file(&later)?.is_some())
+    };
+    // A debug build loads every grammar before its first index: the daemon gets the time the other
+    // daemon tests give it.
+    let since = Instant::now();
+    while !(answers()? && is_indexed()?) {
+        assert!(
+            since.elapsed() < READY_WITHIN,
+            "no daemon answered with the file indexed"
+        );
+        std::thread::sleep(POLL_EVERY);
+    }
+    Ok(())
+}
