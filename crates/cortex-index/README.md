@@ -95,6 +95,9 @@ The walk honours `.gitignore` and `.cortexignore` files in every folder, `.git/i
 global gitignore (its patterns relative to the repository root) and `index.extra_ignores`, with
 git's precedence: the extra patterns first, then the deepest folder up, `.cortexignore` before
 `.gitignore`, then `.git/info/exclude`, then the global file. It includes hidden files.
+`.git/info/exclude` and `.git/info/attributes` are read from the repository's own `.git` folder; in
+a worktree or a submodule, whose `.git` is a file naming another folder, they are not, since a
+repository could name a folder on another machine there.
 
 `.gitattributes` files in every folder and `.git/info/attributes` are read with git's precedence,
 and `-linguist-generated` or `-linguist-vendored` clears a flag the path would give. Each
