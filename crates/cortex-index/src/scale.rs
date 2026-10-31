@@ -115,6 +115,41 @@ pub(crate) fn settle_mode(
 mod tests {
     use super::*;
 
+    /// The walk's source files, counted before any is read: 20,001 Python files make a repository
+    /// huge and 20,000 do not; a generated file, a vendored one and one in no language Cortex
+    /// reads do not count.
+    #[test]
+    fn huge_by_files_counts_source_files_only() -> Result<(), cortex_core::PathError> {
+        let file = |number: usize, language, flags| {
+            Ok::<_, cortex_core::PathError>(DiscoveredFile {
+                path: cortex_core::RepoPath::new(&format!("f{number}.py"))?,
+                language,
+                size_bytes: 1,
+                mtime_ns: 1,
+                flags,
+            })
+        };
+        let python = Some(cortex_core::Language::Python);
+        let mut files = (0..20_000)
+            .map(|number| file(number, python, FileFlags::empty()))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert!(!is_huge_by_files(&files));
+        for (number, (language, flags)) in [
+            (python, FileFlags::GENERATED),
+            (python, FileFlags::VENDORED),
+            (None, FileFlags::empty()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            files.push(file(20_000 + number, language, flags)?);
+        }
+        assert!(!is_huge_by_files(&files));
+        files.push(file(30_000, python, FileFlags::empty())?);
+        assert!(is_huge_by_files(&files));
+        Ok(())
+    }
+
     /// Each boundary from both sides, worked out from the thresholds: huge is tested first, so a
     /// repository of few files but over a million lines is huge; tiny before small, so 50 files
     /// with 4,999 lines are tiny.

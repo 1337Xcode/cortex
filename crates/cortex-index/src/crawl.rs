@@ -153,6 +153,7 @@ mod tests {
             ("c/4.py", 5),
             ("c/5.py", 5),
         ])?;
+        assert_eq!(crawl.waiting(), 5);
         assert_eq!(
             names(&crawl.next(10)),
             ["b/3.py", "a/2.py", "a/1.py", "c/4.py", "c/5.py"]
