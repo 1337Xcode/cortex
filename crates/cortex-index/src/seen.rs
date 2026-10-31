@@ -23,6 +23,16 @@ pub(crate) fn is_rules_file(path: &RepoPath) -> bool {
     RULES_FILES.contains(&path.file_name()) || path.as_str().starts_with(".git/info/")
 }
 
+/// Whether the file at `path` is reached from `root`, whose canonical form is `canonical_root`, as
+/// the walk reaches files: through folders, never links, and under the spelling it has on disk. A
+/// folder on the path replaced by a link since the walk could lead outside the repository, and on a
+/// file system that ignores case, the old spelling of a file renamed in case alone still opens.
+pub(crate) fn is_reached_directly(root: &Path, canonical_root: &Path, path: &RepoPath) -> bool {
+    path.to_native(root)
+        .canonicalize()
+        .is_ok_and(|canonical| canonical == path.to_native(canonical_root))
+}
+
 /// What the walk would find at a path.
 pub(crate) enum PathState {
     /// A file, as the walk would describe it.
@@ -79,6 +89,8 @@ pub(crate) struct PathRules {
     walk: WalkRules,
     /// The repository's root as written and, where it differs, as the file system spells it.
     roots: Vec<PathBuf>,
+    /// The root as the file system spells it, when it can be read.
+    canonical_root: Option<PathBuf>,
     /// The repository-wide rules.
     repository: RepositoryRules,
     /// The rules of each folder looked at, by path.
@@ -89,13 +101,13 @@ impl PathRules {
     /// The rules of the repository `walk` describes.
     pub(crate) fn new(walk: WalkRules) -> Result<Self, DiscoverError> {
         let repository = walk.repository()?;
+        let canonical_root = walk.root.canonicalize().ok();
         let mut roots = vec![walk.root.clone()];
-        if let Ok(canonical) = walk.root.canonicalize() {
-            roots.push(canonical);
-        }
+        roots.extend(canonical_root.clone());
         Ok(Self {
             walk,
             roots,
+            canonical_root,
             repository,
             folders: BTreeMap::new(),
         })
@@ -134,22 +146,17 @@ impl PathRules {
         let Some(folder) = self.folder_of(path, false) else {
             return PathState::Absent;
         };
-        // The walk enters folders only, never a link to one.
-        let mut above = path.parent();
-        while let Some(at) = above.filter(|at| *at != RepoPath::root()) {
-            let native = at.to_native(&self.walk.root);
-            if !fs::symlink_metadata(&native).is_ok_and(|metadata| metadata.is_dir()) {
-                return PathState::Absent;
-            }
-            above = at.parent();
-        }
         let native = path.to_native(&self.walk.root);
         let metadata = match fs::symlink_metadata(&native) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return PathState::Absent,
             Err(_) => return PathState::Unreadable,
         };
-        if !metadata.is_file() {
+        let is_reached = self
+            .canonical_root
+            .as_deref()
+            .is_some_and(|canonical| is_reached_directly(&self.walk.root, canonical, path));
+        if !metadata.is_file() || !is_reached {
             return PathState::Absent;
         }
         let verdict = self.repository.verdict(&folder, path);

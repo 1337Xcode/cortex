@@ -146,6 +146,10 @@ pub(crate) const REF_NAMES: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.ds
 pub(crate) const REF_NAMES_NAMED: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
      r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
      JOIN files AS f ON f.file_id = r.src_file_id WHERE r.dst_name = ?1 ORDER BY r.ref_id";
+/// As [`REF_NAMES`], for the references tied to one symbol.
+pub(crate) const REF_NAMES_TO: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
+     r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
+     JOIN files AS f ON f.file_id = r.src_file_id WHERE r.dst_symbol_id = ?1 ORDER BY r.ref_id";
 /// As [`REF_NAMES`], for the references in one file.
 pub(crate) const REF_NAMES_IN_FILE: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
      r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \

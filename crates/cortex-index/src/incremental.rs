@@ -118,6 +118,30 @@ pub(crate) fn unparsed(flags: FileFlags) -> FileFlags {
     FileFlags::from_bits(flags.bits() & !FileFlags::PARSED.bits())
 }
 
+/// Files found around a change, and whether [`MAX_FILES_AROUND`] cut the search short: then
+/// some files that should be read again are not, and the index must not count as complete.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Neighbours {
+    /// The files found.
+    pub(crate) files: BTreeSet<RepoPath>,
+    /// Whether the cap left files out.
+    pub(crate) is_cut: bool,
+}
+
+impl Neighbours {
+    /// These files and `other`'s, at most [`MAX_FILES_AROUND`], in path order; cut when either
+    /// was or when together they are more.
+    pub(crate) fn join(self, other: Neighbours) -> Neighbours {
+        let mut files = self.files;
+        files.extend(other.files);
+        let is_cut = self.is_cut || other.is_cut || files.len() > MAX_FILES_AROUND;
+        Neighbours {
+            files: files.into_iter().take(MAX_FILES_AROUND).collect(),
+            is_cut,
+        }
+    }
+}
+
 /// The stored files whose imports name one of `files`, directly or through importers that pass
 /// names on, up to four files away; at most [`MAX_FILES_AROUND`]. These are the files whose
 /// references through imports may find something else when `files` pass on something else or are
@@ -129,7 +153,7 @@ pub(crate) fn unparsed(flags: FileFlags) -> FileFlags {
 pub(crate) fn importers(
     queries: Queries<'_>,
     files: &BTreeSet<RepoPath>,
-) -> Result<BTreeSet<RepoPath>, StoreError> {
+) -> Result<Neighbours, StoreError> {
     FileGraph::new(queries).walk(files, |node| {
         queries.sources_into(node, EdgeType::Structural)
     })
@@ -145,7 +169,7 @@ pub(crate) fn importers(
 pub(crate) fn around_removal(
     queries: Queries<'_>,
     paths: &BTreeSet<RepoPath>,
-) -> Result<(BTreeSet<RepoPath>, BTreeSet<Identifier>), StoreError> {
+) -> Result<(Neighbours, BTreeSet<Identifier>), StoreError> {
     let mut names = BTreeSet::new();
     for path in paths {
         let Some(row) = queries.file(path)? else {
@@ -217,7 +241,7 @@ impl<'q> FileGraph<'q> {
         mut self,
         start: &BTreeSet<RepoPath>,
         next: impl Fn(NodeId) -> Result<Vec<NodeId>, StoreError>,
-    ) -> Result<BTreeSet<RepoPath>, StoreError> {
+    ) -> Result<Neighbours, StoreError> {
         let mut found: BTreeSet<RepoPath> = BTreeSet::new();
         let mut frontier: Vec<NodeId> = Vec::new();
         for path in start {
@@ -234,7 +258,10 @@ impl<'q> FileGraph<'q> {
                         continue;
                     }
                     if found.len() == MAX_FILES_AROUND {
-                        return Ok(found);
+                        return Ok(Neighbours {
+                            files: found,
+                            is_cut: true,
+                        });
                     }
                     found.insert(path);
                     // Only a file that passes names on can pass on what changed further.
@@ -245,6 +272,51 @@ impl<'q> FileGraph<'q> {
             }
             frontier = further;
         }
-        Ok(found)
+        Ok(Neighbours {
+            files: found,
+            is_cut: false,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Joined neighbours keep the first files in path order up to the cap and say they were cut
+    /// when the two together are more than the cap, or when either was cut already.
+    #[test]
+    fn joined_neighbours_are_cut_at_the_cap() -> Result<(), cortex_core::PathError> {
+        let files = |range: std::ops::Range<usize>| {
+            range
+                .map(|number| RepoPath::new(&format!("f{number:05}.py")))
+                .collect::<Result<BTreeSet<_>, _>>()
+        };
+        let small = Neighbours {
+            files: files(0..2)?,
+            is_cut: false,
+        }
+        .join(Neighbours {
+            files: files(1..3)?,
+            is_cut: false,
+        });
+        assert_eq!((small.files.len(), small.is_cut), (3, false));
+        let big = Neighbours {
+            files: files(0..6_000)?,
+            is_cut: false,
+        }
+        .join(Neighbours {
+            files: files(6_000..10_001)?,
+            is_cut: false,
+        });
+        assert_eq!((big.files.len(), big.is_cut), (MAX_FILES_AROUND, true));
+        assert_eq!(big.files.last().map(RepoPath::as_str), Some("f09999.py"));
+        let inherited = Neighbours {
+            files: files(0..1)?,
+            is_cut: true,
+        }
+        .join(Neighbours::default());
+        assert!(inherited.is_cut);
+        Ok(())
     }
 }

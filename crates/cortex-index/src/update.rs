@@ -115,7 +115,7 @@ pub fn index_paths(
     let queries = writer.queries();
     let file_of = |path: &RepoPath| {
         let row = queries.file(path).ok()??.file;
-        if !pipeline::is_reached_directly(root, canonical_root.as_deref()?, path) {
+        if !seen::is_reached_directly(root, canonical_root.as_deref()?, path) {
             return None;
         }
         Some(DiscoveredFile {
@@ -126,7 +126,8 @@ pub fn index_paths(
             flags: incremental::unparsed(row.flags),
         })
     };
-    let around = pipeline::files_around(writer, &file_of, &written, (importers_of_gone, &names))?;
+    let (around, is_cut) =
+        pipeline::files_around(writer, &file_of, &written, (importers_of_gone, &names))?;
     let read_again = pipeline::read_again(&around, &context)?;
     pipeline::link(
         writer,
@@ -139,7 +140,10 @@ pub fn index_paths(
         folders::write_folders(writer)?;
     }
     (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
-    incremental::mark_complete(writer)?;
+    // Files around the change left out by the cap keep stale ties: the next index reads them all.
+    if !is_cut {
+        incremental::mark_complete(writer)?;
+    }
     Ok(report)
 }
 

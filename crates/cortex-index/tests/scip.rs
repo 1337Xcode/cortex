@@ -280,3 +280,88 @@ fn lines_the_index_does_not_settle_tie_nothing() -> TestResult {
     );
     Ok(())
 }
+
+/// An edit to a file the SCIP index describes makes its word on that file out of date: indexing
+/// the edited file's path drops the ties the index gave into it, as a full index drops them. The
+/// call `run()` in `app.py` was tied to `jobs.py` by the index; once `jobs.py` changes, `run` has
+/// two definitions in reach and stays unresolved, while `lib.helper()` keeps its tie.
+#[test]
+fn an_edit_drops_the_index_s_ties_into_the_edited_file() -> TestResult {
+    use std::num::NonZeroUsize;
+
+    use cortex_core::{ModeSetting, RepoId, RepoPath};
+    use cortex_index::{DiscoverOptions, IndexOptions, index_paths};
+    use cortex_store::{Writer, WriterOptions};
+
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("lib.py", "def helper():\n    pass\n"),
+            ("tools.py", "def run():\n    pass\n"),
+            ("jobs.py", "def run():\n    pass\n"),
+            (
+                "app.py",
+                "import lib\n\n\ndef main():\n    lib.helper()\n    run()\n",
+            ),
+        ],
+    )?;
+    let helper = symbol("lib/helper().");
+    let jobs_run = symbol("jobs/run().");
+    write_index(
+        root,
+        vec![
+            document("lib.py", vec![packed(&helper, 0, true)]),
+            document("jobs.py", vec![packed(&jobs_run, 0, true)]),
+            document(
+                "app.py",
+                vec![packed(&helper, 4, false), packed(&jobs_run, 5, false)],
+            ),
+        ],
+    )?;
+    let earlier = SystemTime::now() - Duration::from_secs(3600);
+    for path in ["lib.py", "tools.py", "jobs.py", "app.py"] {
+        File::options()
+            .write(true)
+            .open(root.join(path))?
+            .set_modified(earlier)?;
+    }
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("call", "helper", 5, Some(("lib.py", "helper", "scip"))),
+            ("call", "run", 6, Some(("jobs.py", "run", "scip"))),
+        ])
+    );
+    std::fs::write(root.join("jobs.py"), "def run():\n    return 1\n")?;
+    let mut writer = Writer::open(&WriterOptions {
+        folder: &root.join(".cortex"),
+        repo_id: &RepoId::of(root),
+        mmap_bytes: 0,
+        now_ms: common::NOW_MS,
+    })?;
+    let options = IndexOptions {
+        discover: DiscoverOptions {
+            max_file_bytes: DEFAULT_LIMIT,
+            extra_ignores: &[],
+            global_gitignore: None,
+        },
+        parse_timeout: GENEROUS,
+        threads: NonZeroUsize::MIN,
+        now_ms: common::NOW_MS,
+        mode: ModeSetting::Auto,
+    };
+    let edited = [RepoPath::new("jobs.py")?];
+    index_paths(root, &common::grammars()?, &mut writer, &options, &edited)?;
+    drop(writer);
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("call", "helper", 5, Some(("lib.py", "helper", "scip"))),
+            ("call", "run", 6, None),
+        ])
+    );
+    Ok(())
+}

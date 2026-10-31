@@ -44,11 +44,12 @@ use crate::file_imports::{self, FileImports};
 use crate::folders;
 use crate::grammar::Grammars;
 use crate::imports::Project;
-use crate::incremental;
+use crate::incremental::{self, Neighbours};
 use crate::resolve;
 use crate::safe_read;
 use crate::scale::{self, RepoSize};
 use crate::scip::{self, ScipOutcome};
+use crate::seen;
 use crate::symbol_edges;
 use crate::test_targets;
 
@@ -251,7 +252,7 @@ pub fn index_repository(
     let is_whole = known.is_empty();
     let missing = missing_files(writer, &discovery)?;
     let (importers_of_gone, mut names) = if is_whole {
-        (BTreeSet::new(), BTreeSet::new())
+        (Neighbours::default(), BTreeSet::new())
     } else {
         incremental::around_removal(writer.queries(), &missing.iter().cloned().collect())?
     };
@@ -314,8 +315,8 @@ pub fn index_repository(
         mode: ScaleMode::Tiny,
     };
     let written = write_files(writer, &candidates, &context, &mut report)?;
-    let around = if is_whole {
-        Vec::new()
+    let (around, is_cut) = if is_whole {
+        (Vec::new(), false)
     } else {
         let walked = |path: &RepoPath| {
             discovery
@@ -337,7 +338,10 @@ pub fn index_repository(
     )?;
     folders::write_folders(writer)?;
     (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
-    incremental::mark_complete(writer)?;
+    // Files around the change left out by the cap keep stale ties: the next index reads them all.
+    if !is_cut {
+        incremental::mark_complete(writer)?;
+    }
     Ok(report)
 }
 
@@ -367,14 +371,15 @@ pub(crate) struct Written {
 /// importers of the `written` files that now pass on something else, `importers_of_gone`, the
 /// importers of the removed files, and the files holding a reference named in `names`, the names
 /// whose definitions came or went, that goes through an import. Only files `file_of` knows and
-/// this index did not write, at most [`incremental::MAX_FILES_AROUND`] in path order. The files
-/// a name is merely followed through need no reading: what they pass on is stored.
+/// this index did not write, at most [`incremental::MAX_FILES_AROUND`] in path order, with
+/// whether the cap cut them short. The files a name is merely followed through need no reading:
+/// what they pass on is stored.
 pub(crate) fn files_around(
     writer: &Writer,
     file_of: &dyn Fn(&RepoPath) -> Option<DiscoveredFile>,
     written: &[Written],
-    (importers_of_gone, names): (BTreeSet<RepoPath>, &BTreeSet<Identifier>),
-) -> Result<Vec<DiscoveredFile>, StoreError> {
+    (importers_of_gone, names): (Neighbours, &BTreeSet<Identifier>),
+) -> Result<(Vec<DiscoveredFile>, bool), StoreError> {
     let queries = writer.queries();
     let changed: BTreeSet<&RepoPath> = written.iter().map(|file| &file.path).collect();
     let passing: BTreeSet<RepoPath> = written
@@ -382,15 +387,16 @@ pub(crate) fn files_around(
         .filter(|file| file.passes_on_otherwise)
         .map(|file| file.path.clone())
         .collect();
-    let mut around = importers_of_gone;
-    around.extend(incremental::importers(queries, &passing)?);
-    around.extend(incremental::users_through_imports(queries, names)?);
-    Ok(around
-        .iter()
-        .filter(|path| !changed.contains(*path))
-        .take(incremental::MAX_FILES_AROUND)
-        .filter_map(file_of)
-        .collect())
+    let users = Neighbours {
+        files: incremental::users_through_imports(queries, names)?,
+        is_cut: false,
+    };
+    let mut around = importers_of_gone
+        .join(incremental::importers(queries, &passing)?)
+        .join(users);
+    around.files.retain(|path| !changed.contains(path));
+    let files = around.files.iter().filter_map(file_of).collect();
+    Ok((files, around.is_cut))
 }
 
 /// Reads and parses `files` again for what their imports bind, without writing them; a file that
@@ -470,8 +476,15 @@ pub(crate) fn link(
         }
         Pass::Around(names) => {
             report.scip = ScipOutcome::NotRead;
+            // The SCIP index's word on a file written now is out of date, as a full index finds.
+            let has_scip = root.join(scip::INDEX_FILE).exists();
+            let stale_scip = if has_scip {
+                affected.clone()
+            } else {
+                BTreeSet::new()
+            };
             (
-                resolve::resolve_names_around(writer, &bindings, names)?,
+                resolve::resolve_names_around(writer, &bindings, names, &stale_scip)?,
                 false,
             )
         }
@@ -504,7 +517,9 @@ pub(crate) fn load_project(
     let canonical_root = root.canonicalize().ok();
     let read = |path: &RepoPath| {
         let flags = flags_of(path)?;
-        if has_any(flags, &UNREAD) || !is_reached_directly(root, canonical_root.as_deref()?, path) {
+        if has_any(flags, &UNREAD)
+            || !seen::is_reached_directly(root, canonical_root.as_deref()?, path)
+        {
             return None;
         }
         let bytes = safe_read::read_whole(&path.to_native(root), max_file_bytes).ok()?;
@@ -512,15 +527,6 @@ pub(crate) fn load_project(
     };
     let found = found.iter().map(|path| (*path).clone());
     Ok(Project::load(stored.into_iter().chain(found), &read))
-}
-
-/// Whether the file at `path` is reached from `root`, whose canonical form is `canonical_root`,
-/// through no link, as the walk reaches files. A stored path is read again only then: a folder on
-/// it replaced by a link since the walk could lead outside the repository.
-pub(crate) fn is_reached_directly(root: &Path, canonical_root: &Path, path: &RepoPath) -> bool {
-    path.to_native(root)
-        .canonicalize()
-        .is_ok_and(|canonical| canonical == path.to_native(canonical_root))
 }
 
 /// Every stored file the walk did not find, except those it could not see: below a folder it

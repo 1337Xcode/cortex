@@ -443,6 +443,34 @@ proptest! {
     }
 }
 
+/// A file renamed in case alone, as the watcher reports it with both spellings, is stored under its
+/// new name only, as a fresh index stores it, whether or not the file system tells the two apart.
+#[test]
+fn a_file_renamed_in_case_is_stored_once() -> TestResult {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("repo");
+    std::fs::create_dir(&root)?;
+    std::fs::write(root.join("Foo.py"), "def foo():\n    pass\n")?;
+    std::fs::write(root.join("app.py"), "foo()\n")?;
+    let grammars = grammars()?;
+    let kept_folder = scratch.path().join("kept");
+    let mut kept = writer(&kept_folder, &root)?;
+    index_repository(&root, &grammars, &mut kept, &options())?;
+    std::fs::rename(root.join("Foo.py"), root.join("foo.py"))?;
+    let renamed = [RepoPath::new("Foo.py")?, RepoPath::new("foo.py")?];
+    index_paths(&root, &grammars, &mut kept, &options(), &renamed)?;
+    let fresh_folder = scratch.path().join("fresh");
+    index_repository(
+        &root,
+        &grammars,
+        &mut writer(&fresh_folder, &root)?,
+        &options(),
+    )?;
+    let (left, right) = (snapshot(&kept_folder)?, snapshot(&fresh_folder)?);
+    assert!(left == right, "{}", differences(&left, &right));
+    Ok(())
+}
+
 /// `c5` comes to import `x` from `c6` as well as define it, so `x` is ambiguous there, five files
 /// from `chain_user.py`: its tie to `c5` must go, and stay gone when `chain_user.py` is edited.
 #[test]

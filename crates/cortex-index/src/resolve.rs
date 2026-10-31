@@ -428,6 +428,9 @@ struct Scope {
     refs: Vec<RefName>,
     /// What the files a name may be followed through, and that the pass does not read, pass on.
     stored: BTreeMap<FileId, Vec<PassedOn>>,
+    /// Definitions a stored SCIP tie no longer holds for: those of files changed since the SCIP
+    /// index was written, which a full index leaves out of what the SCIP index says.
+    stale_scip: BTreeSet<SymbolId>,
 }
 
 /// Ties every stored reference to the definition its file's imports or its name settle, or marks
@@ -452,6 +455,7 @@ pub(crate) fn resolve_names(
         symbols: queries.symbol_names()?,
         refs: queries.ref_names()?,
         stored: queries.every_passes_on()?,
+        stale_scip: BTreeSet::new(),
     };
     resolve(writer, &scope, bindings, Some(scip))
 }
@@ -461,7 +465,8 @@ pub(crate) fn resolve_names(
 /// `names`, the names whose definitions changed. Only the definitions of the names those
 /// references and the imports look for are read. Every other reference would keep its target,
 /// since neither its file nor the definitions its name finds changed. The SCIP index is not read
-/// again: a reference it tied keeps its tie.
+/// again: a reference it tied keeps its tie, unless the tie is to one of `stale_scip`, the
+/// definitions of a file changed since the SCIP index was written.
 ///
 /// # Errors
 ///
@@ -470,6 +475,7 @@ pub(crate) fn resolve_names_around(
     writer: &mut Writer,
     bindings: &BTreeMap<RepoPath, Bindings>,
     names: &BTreeSet<Identifier>,
+    stale_scip: &BTreeSet<SymbolId>,
 ) -> Result<NamePass, StoreError> {
     let queries = writer.queries();
     let mut files: BTreeMap<RepoPath, FileId> = BTreeMap::new();
@@ -498,6 +504,17 @@ pub(crate) fn resolve_names_around(
                 .map(|r| (r.id, r)),
         );
     }
+    for symbol in stale_scip {
+        let tied = queries
+            .ref_names_to(*symbol)?
+            .into_iter()
+            .filter(|reference| {
+                reference
+                    .target
+                    .is_some_and(|target| target.resolution == Resolution::Scip)
+            });
+        refs.extend(tied.map(|r| (r.id, r)));
+    }
     let mut wanted: BTreeSet<&Identifier> =
         refs.values().map(|reference| &reference.name).collect();
     wanted.extend(bindings.values().flat_map(Bindings::taken_names));
@@ -515,6 +532,7 @@ pub(crate) fn resolve_names_around(
         symbols,
         refs: refs.into_values().collect(),
         stored,
+        stale_scip: stale_scip.clone(),
     };
     let mut pass = resolve(writer, &scope, bindings, None)?;
     // Only the files read in this pass had every reference tied: another file's ties are read back
@@ -652,9 +670,9 @@ fn resolve(
                 symbol: *symbol,
                 resolution: Resolution::Scip,
             }),
-            None => reference
-                .target
-                .filter(|target| target.resolution == Resolution::Scip),
+            None => reference.target.filter(|target| {
+                target.resolution == Resolution::Scip && !scope.stale_scip.contains(&target.symbol)
+            }),
         };
         let (target, goes_through_import) = match scip_tie {
             Some(tie) => (Some(tie), false),

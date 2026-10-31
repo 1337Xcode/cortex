@@ -311,6 +311,18 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawRefName::check).collect()
     }
 
+    /// The references tied to `symbol`, as [`Queries::ref_names`] gives them, by id.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn ref_names_to(self, symbol: SymbolId) -> Result<Vec<RefName>, StoreError> {
+        let raw = self
+            .collect(schema::REF_NAMES_TO, symbol.get(), RawRefName::read)
+            .map_err(sqlite("reading reference names"))?;
+        raw.into_iter().map(RawRefName::check).collect()
+    }
+
     /// The references in `file`, as [`Queries::ref_names`] gives them, in the order they were
     /// written.
     ///
