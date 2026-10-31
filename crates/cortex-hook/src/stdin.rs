@@ -25,6 +25,9 @@ pub(crate) enum StdinError {
     /// Standard input could not be read.
     #[error("reading the payload")]
     Io(#[source] io::Error),
+    /// The thread reading the payload stopped without a result.
+    #[error("the payload's reader stopped")]
+    ReaderStopped,
 }
 
 /// Reads `input` to its end before `deadline`.
@@ -51,7 +54,10 @@ pub(crate) fn read_payload(
     let remaining = deadline.saturating_duration_since(Instant::now());
     let payload = receiver
         .recv_timeout(remaining)
-        .map_err(|_| StdinError::TimedOut)?
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => StdinError::TimedOut,
+            mpsc::RecvTimeoutError::Disconnected => StdinError::ReaderStopped,
+        })?
         .map_err(StdinError::Io)?;
     if payload.len() > MAX_PAYLOAD_BYTES {
         return Err(StdinError::TooLong);
@@ -106,5 +112,30 @@ mod tests {
         assert!(waited >= Duration::from_millis(50), "{waited:?}");
         assert!(waited < Duration::from_secs(2), "{waited:?}");
         drop(hold);
+    }
+
+    /// A reader that panics.
+    struct Broken;
+
+    impl Read for Broken {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            #[allow(clippy::panic, reason = "a reader that breaks is what is tested")]
+            {
+                panic!("the reader broke")
+            }
+        }
+    }
+
+    /// A reader that dies is told apart from one that is slow: the hook knows at once.
+    #[test]
+    fn a_dead_reader_is_not_a_slow_one() {
+        let started = Instant::now();
+        let dead = read_payload(Broken, started + Duration::from_secs(10));
+        assert!(matches!(dead, Err(StdinError::ReaderStopped)), "{dead:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
     }
 }

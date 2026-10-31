@@ -25,11 +25,14 @@ pub(crate) fn locate(cwd: &Path, home: Option<&Path>) -> Option<Located> {
         .find(|folder| folder.join(MARKER).is_dir())?
         .to_path_buf();
     // The agent's spelling of the root drops as many folders from its working folder as lie
-    // between the canonical working folder and the root: through a link, the names differ.
+    // between the canonical working folder and the root: through a link, the names differ. A link
+    // that leads into the repository below its root gives a folder that is not the root, kept only
+    // when it leads to the root itself.
     let depth = canonical.components().count() - root.components().count();
     let agent_root = cwd
         .ancestors()
         .nth(depth)
+        .filter(|spelled| canonical_root(spelled).is_ok_and(|resolved| resolved == root))
         .map_or_else(|| root.clone(), Path::to_path_buf);
     Some(Located {
         cwd: canonical,
@@ -74,6 +77,15 @@ mod tests {
         assert_eq!(locate(&loose, Some(&home)), None);
         assert_eq!(locate(&home, Some(&home)), None);
         assert_eq!(locate(&repo.join("missing"), Some(&home)), None);
+        std::fs::write(repo.join("src/file.txt"), "text")?;
+        assert_eq!(locate(&repo.join("src/file.txt"), Some(&home)), None);
+        // A repository inside another is its own.
+        let nested = repo.join("src/inner/nested");
+        std::fs::create_dir_all(nested.join(MARKER))?;
+        assert_eq!(
+            locate(&nested, Some(&home)).map(|located| located.root),
+            Some(nested.clone())
+        );
         // Outside the home folder the search goes up as far as it must: here, to the marked base.
         let outside = base.join("outside");
         std::fs::create_dir(&outside)?;
@@ -100,6 +112,18 @@ mod tests {
         assert_eq!(located.root, repo);
         assert_eq!(located.cwd, repo.join("src"));
         assert_eq!(located.agent_root, link);
+
+        // A link into the repository below its root: `deep` leads to `real/src/a`, so from
+        // `deep/b` the root is three folders up the canonical path (past `b`, `a` and `src`),
+        // while three folders up the agent's path is the folder above `base`, which is not the
+        // root. The root keeps its canonical spelling.
+        std::fs::create_dir_all(repo.join("src/a/b"))?;
+        let deep = base.join("deep");
+        // `cmd` reads a `/` as the start of a switch: the target is joined a folder at a time.
+        make_link(&repo.join("src").join("a"), &deep)?;
+        let below = locate(&deep.join("b"), None).ok_or("no root")?;
+        assert_eq!(below.root, repo);
+        assert_eq!(below.agent_root, repo);
         Ok(())
     }
 

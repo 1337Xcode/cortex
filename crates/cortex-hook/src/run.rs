@@ -6,7 +6,7 @@
 use std::ffi::OsString;
 use std::io::Read;
 use std::panic::AssertUnwindSafe;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
@@ -14,8 +14,9 @@ use cortex_core::{RepoId, Ulid, UserFolder};
 
 use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter};
 use crate::client::{ClientError, ask};
+use crate::fail_open::{self, Outcome};
 use crate::stdin::{self, StdinError};
-use crate::{fail_open, log, root};
+use crate::{log, root};
 
 /// How long the hook waits for its payload to end, counted from its start.
 const STDIN_TIMEOUT: Duration = Duration::from_millis(50);
@@ -55,19 +56,15 @@ enum Failure {
 
 /// Runs the hook with `args`, the arguments that follow `hook` on the command line, the payload on
 /// `input` (standard input) and `home` the user's home folder. It never fails, never panics past
-/// this call and never prints.
+/// this call, never prints, and returns by the event's hard timeout.
 pub fn run(args: &[OsString], input: impl Read + Send + 'static, home: Option<&Path>) {
-    let mut hook = Hook {
+    let hook = Hook {
         started: Instant::now(),
         now: SystemTime::now(),
-        home,
+        home: home.map(Path::to_path_buf),
         names: None,
     };
-    let finished = fail_open::guard(AssertUnwindSafe(|| {
-        if let Err(failure) = hook.handle(args, input) {
-            hook.note(&describe(&failure));
-        }
-    }));
+    let finished = fail_open::guard(AssertUnwindSafe(|| hook.clone().call(args, input)));
     if !finished {
         // Noting the panic runs guarded too: nothing may escape to the agent.
         fail_open::guard(AssertUnwindSafe(|| hook.note("the hook panicked")));
@@ -75,42 +72,62 @@ pub fn run(args: &[OsString], input: impl Read + Send + 'static, home: Option<&P
 }
 
 /// One hook call: when it started, where the user's home is, and the agent and event once known.
-struct Hook<'a> {
+#[derive(Debug, Clone)]
+struct Hook {
     /// When the hook started, for its deadlines.
     started: Instant,
     /// The clock at the start, for the event's time and id.
     now: SystemTime,
     /// The user's home folder, if the operating system reports one.
-    home: Option<&'a Path>,
+    home: Option<PathBuf>,
     /// The agent's and the event's names, once the arguments name ones Cortex knows.
     names: Option<(&'static str, &'static str)>,
 }
 
-impl Hook<'_> {
+impl Hook {
+    /// Reads the arguments, then does the rest on a thread of its own, waited for no longer than
+    /// the event's hard timeout.
+    fn call(mut self, args: &[OsString], input: impl Read + Send + 'static) {
+        let (adapter, entry) = match hook_of(args) {
+            Ok(found) => found,
+            Err(failure) => return self.note(&describe(&failure)),
+        };
+        self.names = Some((adapter.agent().name(), entry.event_name));
+        let worker = self.clone();
+        // The whole of the work, file system calls included, ends by the event's hard timeout.
+        let outcome = fail_open::within(self.started + entry.hard_timeout, move || {
+            if let Err(failure) = worker.handle(adapter, entry, input) {
+                worker.note(&describe(&failure));
+            }
+        });
+        match outcome {
+            Outcome::Finished => {}
+            Outcome::Panicked => self.note("the hook panicked"),
+            Outcome::OutOfTime => self.note("the hook ran out of time"),
+        }
+    }
+
     /// Reads the payload from `input`, normalizes it, and hands the event to the daemon.
     fn handle(
-        &mut self,
-        args: &[OsString],
+        &self,
+        adapter: &'static dyn Adapter,
+        entry: &'static HookEntry,
         input: impl Read + Send + 'static,
     ) -> Result<(), Failure> {
-        let (agent, event_name) = parse(args)?;
-        let adapter = adapter(agent).ok_or(Failure::UnknownAgent)?;
-        let entry = entry(adapter, event_name).ok_or(Failure::UnknownEvent)?;
-        self.names = Some((adapter.agent().name(), entry.event_name));
         let payload = stdin::read_payload(input, self.started + STDIN_TIMEOUT)?;
-        let home = self.home;
+        let home = self.home.as_deref();
         let locate = |cwd: &Path| root::locate(cwd, home);
-        let stamp = stamp(self.now);
-        let Some(event) = adapter.normalize(entry.event_name, &payload, &locate, stamp)? else {
+        let Some(event) =
+            adapter.normalize(entry.event_name, &payload, &locate, stamp(self.now))?
+        else {
             return Ok(());
         };
         let user = UserFolder::in_home(home.ok_or(Failure::NoHome)?);
         let files = user.run_files(&RepoId::of(&event.repo_root));
-        let deadline = self.started + entry.hard_timeout.saturating_sub(EXIT_MARGIN);
         let body = RequestBody::Event {
             event: Box::new(event),
         };
-        match ask(&files, Role::Hook, body, deadline)?.body {
+        match ask(&files, Role::Hook, body, deadline(self.started, entry))?.body {
             ResponseBody::Ack => Ok(()),
             _ => Err(Failure::NotTaken),
         }
@@ -119,7 +136,7 @@ impl Hook<'_> {
     /// Writes `what` to the hook log with the call's time, agent and event. A log that cannot be
     /// written is left unwritten: nothing else can be told.
     fn note(&self, what: &str) {
-        let Some(home) = self.home else {
+        let Some(home) = self.home.as_deref() else {
             return;
         };
         let (agent, event) = self.names.unwrap_or(("-", "-"));
@@ -127,6 +144,18 @@ impl Hook<'_> {
         let folder = UserFolder::in_home(home).logs_folder();
         drop(log::write(&folder, SystemTime::now(), &line));
     }
+}
+
+/// The adapter and the hook the arguments name.
+fn hook_of(args: &[OsString]) -> Result<(&'static dyn Adapter, &'static HookEntry), Failure> {
+    let (agent, event_name) = parse(args)?;
+    let adapter = adapter(agent).ok_or(Failure::UnknownAgent)?;
+    let entry = adapter
+        .hooks()
+        .iter()
+        .find(|entry| entry.event_name == event_name)
+        .ok_or(Failure::UnknownEvent)?;
+    Ok((adapter, entry))
 }
 
 /// The agent's and the event's names from `--agent <agent> --event <event>`, in either order.
@@ -147,12 +176,10 @@ fn parse(args: &[OsString]) -> Result<(&str, &str), Failure> {
     agent.zip(event).ok_or(Failure::Arguments)
 }
 
-/// The hook `adapter` registers under `event_name`.
-fn entry(adapter: &dyn Adapter, event_name: &str) -> Option<&'static HookEntry> {
-    adapter
-        .hooks()
-        .iter()
-        .find(|entry| entry.event_name == event_name)
+/// When the daemon's answer is due: the event's hard timeout after the hook's start, less
+/// [`EXIT_MARGIN`].
+fn deadline(started: Instant, entry: &HookEntry) -> Instant {
+    started + entry.hard_timeout.saturating_sub(EXIT_MARGIN)
 }
 
 /// The event's id and time: the clock at the start, and an id whose random part is BLAKE3 of the
@@ -225,12 +252,36 @@ mod tests {
         }
     }
 
-    /// Two stamps of one instant in one process are equal; the time is in milliseconds.
+    /// The daemon's answer is due 15 ms before the hard timeout: 485 ms after the start for a
+    /// tool's result, 285 ms before a read, 1,485 ms at a session's start.
+    #[test]
+    fn the_answer_is_due_before_the_hard_timeout() -> Result<(), Box<dyn std::error::Error>> {
+        let started = Instant::now();
+        for (event, due_ms) in [
+            ("PostToolUse", 485),
+            ("PreToolUse", 285),
+            ("SessionStart", 1_485),
+        ] {
+            let (_, entry) = hook_of(&args(&["--agent", "claude", "--event", event]))
+                .map_err(|failure| failure.to_string())?;
+            assert_eq!(
+                deadline(started, entry),
+                started + Duration::from_millis(due_ms),
+                "{event}"
+            );
+        }
+        Ok(())
+    }
+
+    /// An event's time is the start's, in milliseconds; two hooks started in the same millisecond
+    /// get different ids.
     #[test]
     fn the_stamp_is_the_start_time() {
         let now = UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
-        assert_eq!(stamp(now), stamp(now));
+        let a_little_later = now + Duration::from_micros(250);
         assert_eq!(stamp(now).ts_ms, 1_700_000_000_123);
+        assert_eq!(stamp(a_little_later).ts_ms, 1_700_000_000_123);
+        assert_ne!(stamp(now).event_id, stamp(a_little_later).event_id);
         assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_secs(1)), 0);
     }
 }

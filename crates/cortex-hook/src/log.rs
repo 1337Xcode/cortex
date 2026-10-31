@@ -23,8 +23,13 @@ const KEPT_FILES: usize = 5;
 /// the log's modification time: a burst of failures costs one line a second, not one per call.
 const MIN_GAP: Duration = Duration::from_secs(1);
 
+/// Most characters of a line the log keeps: more than any message the hook writes.
+const MAX_LINE_CHARS: usize = 1_000;
+
 /// Appends `line` to the log in `folder` at `now`, unless the log was written less than
-/// [`MIN_GAP`] before. Returns whether the line was written.
+/// [`MIN_GAP`] before. Returns whether the line was written. The line keeps its first
+/// [`MAX_LINE_CHARS`] characters, each control character, a line break included, written as a
+/// space: one failure is one line, whatever text reached it.
 ///
 /// # Errors
 ///
@@ -48,8 +53,19 @@ pub(crate) fn write(folder: &Path, now: SystemTime, line: &str) -> io::Result<bo
         Err(error) if error.kind() == io::ErrorKind::NotFound => create_private_folder(folder)?,
         Err(error) => return Err(error),
     }
-    let mut file = append_private_file(&path)?;
-    file.write_all(format!("{line}\n").as_bytes())?;
+    let mut text: String = line
+        .chars()
+        .take(MAX_LINE_CHARS)
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    text.push('\n');
+    append_private_file(&path)?.write_all(text.as_bytes())?;
     Ok(true)
 }
 
@@ -95,6 +111,18 @@ mod tests {
         assert!(!write(&folder, first + Duration::from_millis(500), "two")?);
         assert!(write(&folder, first + Duration::from_secs(2), "three")?);
         assert_eq!(fs::read_to_string(folder.join(FILE_NAME))?, "one\nthree\n");
+        Ok(())
+    }
+
+    /// A line break or other control character in a line becomes a space, and a line keeps its
+    /// first 1,000 characters: 1,500 letters after `a\nb\t` leave `a b ` and 996 letters.
+    #[test]
+    fn a_line_stays_one_bounded_line() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let line = format!("a\nb\t{}", "é".repeat(1_500));
+        assert!(write(scratch.path(), SystemTime::now(), &line)?);
+        let written = fs::read_to_string(scratch.path().join(FILE_NAME))?;
+        assert_eq!(written, format!("a b {}\n", "é".repeat(996)));
         Ok(())
     }
 
