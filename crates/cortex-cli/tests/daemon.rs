@@ -4,13 +4,13 @@
 
 use std::error::Error;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use cortex_core::Identifier;
-use cortex_store::Reader;
+use cortex_core::{Identifier, RepoId};
+use cortex_store::{MetaKey, Reader};
 
 /// Result type for these tests: any failure fails the test.
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -185,6 +185,31 @@ fn indexes_watches_and_holds_the_writer() -> TestResult {
             && stderr.contains("another writer holds"),
         "{stderr}"
     );
+    Ok(())
+}
+
+/// A root spelled through a subfolder and `..`, and on Windows in upper case, is one repository
+/// with its plain spelling: the store is written in the root's `.cortex/` and carries the id of
+/// the root as the operating system resolves it.
+#[test]
+fn every_spelling_of_the_root_names_one_repository() -> TestResult {
+    let scratch = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let repo = scratch.path().join("repo");
+    std::fs::create_dir_all(repo.join("sub"))?;
+    std::fs::write(repo.join("app.py"), "def kept():\n    pass\n")?;
+    let mut spelling = repo.join("sub").join("..");
+    if cfg!(windows) {
+        let text = spelling.to_str().ok_or("a path that is not UTF-8")?;
+        spelling = PathBuf::from(text.to_uppercase());
+    }
+    let daemon = Daemon::start(&spelling, home.path())?;
+    assert_eq!(daemon.first_line()?, ONE_WRITTEN);
+    drop(daemon);
+    let reader = Reader::open(&repo.join(".cortex"), 0)?;
+    let stored = reader.queries().meta(MetaKey::RepoId)?;
+    let resolved = RepoId::of(&std::fs::canonicalize(&repo)?);
+    assert_eq!(stored.as_deref(), Some(resolved.as_str()));
     Ok(())
 }
 

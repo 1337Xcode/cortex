@@ -6,8 +6,10 @@ modes and settings.
 
 ## What it must never do
 
-- Read or write files, open sockets, start processes or depend on a crate that does. Every other
-  crate depends on this one, including the hook client, which must start fast.
+- Open or write files, open sockets, start processes or depend on a crate that does. Every other
+  crate depends on this one, including the hook client, which must start fast. The one call it
+  makes to the file system resolves a folder to its canonical form (`canonical_root`), so that
+  every crate names a repository the same way.
 - Accept a path that leaves the repository or a stored name that spans lines: these types are
   where those rules hold.
 
@@ -16,6 +18,7 @@ modes and settings.
 | Item | What it is |
 | --- | --- |
 | `RepoPath` | A path relative to the repository root with `/` separators; `from_native` converts a platform path inside the root, including Windows verbatim (`\\?\`) spellings |
+| `canonical_root` | A folder in its canonical form: absolute, links and `..` resolved, names spelled as stored, no Windows verbatim prefix; every spelling of one folder gives one result |
 | `RepoId` | The 16-character id of a repository on this machine, from the BLAKE3 hash of its canonical root |
 | `ContentHash`, `ShortHash` | BLAKE3 hashes of 32 bytes (file contents) and 16 bytes (symbols, anchors) |
 | `Language`, `Tier` | The 21 languages and formats with their stored names; Tier A gets symbols, Tier B keys or headings |

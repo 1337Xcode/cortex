@@ -173,7 +173,7 @@ fn has_drive_prefix(text: &str) -> bool {
 
 /// `path` without the Windows verbatim prefix: `\\?\C:\x` becomes `C:\x` and `\\?\UNC\host\x`
 /// becomes `\\host\x`. Other paths are returned as they are.
-fn without_verbatim_prefix(path: &Path) -> PathBuf {
+pub(crate) fn without_verbatim_prefix(path: &Path) -> PathBuf {
     let Some(text) = path.to_str() else {
         return path.to_path_buf();
     };

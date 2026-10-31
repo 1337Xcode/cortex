@@ -17,6 +17,7 @@ mod kinds;
 mod language;
 mod path;
 mod repo_id;
+mod root;
 mod scale_mode;
 mod tokens;
 
@@ -31,5 +32,6 @@ pub use kinds::{EdgeType, FileFlags, NodeKind, RefKind, Resolution, SymbolKind};
 pub use language::{Language, Tier};
 pub use path::{PathError, RepoPath};
 pub use repo_id::RepoId;
+pub use root::canonical_root;
 pub use scale_mode::ScaleMode;
 pub use tokens::identifier_tokens;

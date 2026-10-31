@@ -2,22 +2,19 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
+use cortex_core::canonical_root;
 
-/// The repository root `given` names, or the current folder, as an absolute path.
+/// The repository root `given` names, or the current folder, in its canonical form, so that every
+/// spelling of one folder names one repository.
 ///
 /// # Errors
 ///
-/// The current folder cannot be read, or the root is not a folder.
+/// The current folder cannot be read, or the root is missing, unreachable or not a folder.
 pub(crate) fn root(given: Option<&Path>) -> anyhow::Result<PathBuf> {
     let given = match given {
         Some(root) => root.to_owned(),
         None => std::env::current_dir().context("reading the current folder")?,
     };
-    let absolute = std::path::absolute(&given)
-        .with_context(|| format!("making {} absolute", given.display()))?;
-    if !absolute.is_dir() {
-        bail!("{} is not a folder", absolute.display());
-    }
-    Ok(absolute)
+    canonical_root(&given).with_context(|| format!("finding the folder {}", given.display()))
 }

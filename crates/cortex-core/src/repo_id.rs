@@ -3,6 +3,8 @@
 use std::fmt;
 use std::path::Path;
 
+use crate::path::without_verbatim_prefix;
+
 /// Number of hexadecimal characters in a repository id: short enough to keep the daemon's socket
 /// path under the macOS length limit, long enough that two repositories on one machine do not
 /// collide.
@@ -15,14 +17,13 @@ const REPO_ID_LEN: usize = 16;
 pub struct RepoId(String);
 
 impl RepoId {
-    /// The id of the repository whose canonical root is `root`. The Windows verbatim prefix
-    /// (`\\?\`) that `canonicalize` adds is left out of the hash, so both spellings of one root
-    /// give one id.
+    /// The id of the repository whose canonical root is `root` (see
+    /// [`canonical_root`](crate::canonical_root)). The Windows verbatim prefix (`\\?\`) that
+    /// canonicalizing adds is left out of the hash, so both spellings of one root give one id.
     #[must_use]
     pub fn of(root: &Path) -> Self {
-        let text = root.as_os_str().as_encoded_bytes();
-        let bytes = strip_verbatim(text);
-        let mut id = crate::ContentHash::of(bytes).to_string();
+        let root = without_verbatim_prefix(root);
+        let mut id = crate::ContentHash::of(root.as_os_str().as_encoded_bytes()).to_string();
         id.truncate(REPO_ID_LEN);
         Self(id)
     }
@@ -31,14 +32,6 @@ impl RepoId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-/// `bytes` without a leading `\\?\` before a drive letter.
-fn strip_verbatim(bytes: &[u8]) -> &[u8] {
-    match bytes.strip_prefix(br"\\?\") {
-        Some(rest) if rest.get(1) == Some(&b':') => rest,
-        _ => bytes,
     }
 }
 
@@ -73,6 +66,10 @@ mod tests {
         );
         assert_eq!(RepoId::of(Path::new(r"C:\work\repo")), id);
         assert_eq!(RepoId::of(Path::new(r"\\?\C:\work\repo")), id);
+        assert_eq!(
+            RepoId::of(Path::new(r"\\?\UNC\host\share\repo")),
+            RepoId::of(Path::new(r"\\host\share\repo"))
+        );
         assert_ne!(RepoId::of(Path::new(r"C:\work\other")), id);
     }
 
