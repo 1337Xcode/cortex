@@ -1,6 +1,7 @@
 //! The budget checks of `cargo xtask verify --full`: runs the benchmarks, reads the samples
-//! criterion wrote, and fails when the 95th percentile of a benchmark's samples is over its
-//! budget. Each budget's line is printed with the measured value, within budget or not.
+//! criterion wrote, and fails when the 95th percentile of a benchmark's runs is over its budget.
+//! Each sample must hold one run, so that the percentile is of runs and not of their means. Each
+//! budget's line is printed with the measured value, within budget or not.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -78,8 +79,7 @@ pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
             .with_context(|| format!("reading {}", path.display()))?;
         let samples: Samples =
             serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        let measured =
-            p95(&samples).with_context(|| format!("no samples in {}", path.display()))?;
+        let measured = p95(&samples).with_context(|| format!("reading {}", path.display()))?;
         let verdict = if measured <= budget.limit {
             "within"
         } else {
@@ -104,46 +104,50 @@ fn target_dir(root: &Path) -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from)
 }
 
-/// The 95th percentile, by nearest rank, of the time one iteration took in each sample; `None`
-/// without samples.
-fn p95(samples: &Samples) -> Option<Duration> {
-    let mut per_iteration: Vec<f64> = samples
-        .iters
-        .iter()
-        .zip(&samples.times)
-        .filter(|(iterations, _)| **iterations > 0.0)
-        .map(|(iterations, nanoseconds)| nanoseconds / iterations)
-        .collect();
-    per_iteration.sort_by(f64::total_cmp);
+/// The 95th percentile, by nearest rank, of the samples' times, each sample one run.
+///
+/// # Errors
+///
+/// No samples, or a sample of more than one run: its time would be a mean, hiding the slow runs
+/// the percentile is there to show.
+fn p95(samples: &Samples) -> anyhow::Result<Duration> {
+    if let Some(runs) = samples.iters.iter().find(|runs| **runs != 1.0) {
+        bail!("a sample holds {runs} runs; the percentile must be of single runs");
+    }
+    let mut times = samples.times.clone();
+    times.sort_by(f64::total_cmp);
     // Nearest rank: the smallest value with at least 95% of the samples at or below it.
-    let rank = (per_iteration.len() * 95).div_ceil(100);
-    let nanoseconds = *per_iteration.get(rank.checked_sub(1)?)?;
-    Some(Duration::from_secs_f64(nanoseconds / 1e9))
+    let rank = (times.len() * 95).div_ceil(100);
+    let nanoseconds = rank
+        .checked_sub(1)
+        .and_then(|index| times.get(index))
+        .context("no samples")?;
+    Ok(Duration::from_secs_f64(nanoseconds / 1e9))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Twenty samples of one iteration taking 1 to 20 ms: 95% of 20 is 19, so the 19th smallest,
-    /// 19 ms. Samples of several iterations count the time of one; none makes no percentile.
+    /// Twenty samples of one run taking 1 to 20 ms: 95% of 20 is 19, so the 19th smallest, 19 ms.
+    /// Samples of several runs are refused, and no samples make no percentile.
     #[test]
-    fn p95_is_the_nearest_rank() {
+    fn p95_is_the_nearest_rank_of_single_runs() -> anyhow::Result<()> {
         let twenty = Samples {
             iters: vec![1.0; 20],
             times: (1..=20).rev().map(|ms| f64::from(ms) * 1e6).collect(),
         };
-        assert_eq!(p95(&twenty), Some(Duration::from_millis(19)));
+        assert_eq!(p95(&twenty)?, Duration::from_millis(19));
         let grouped = Samples {
-            iters: vec![4.0, 2.0],
-            times: vec![40e6, 30e6],
+            iters: vec![1.0, 4.0],
+            times: vec![10e6, 40e6],
         };
-        // 10 ms and 15 ms an iteration; 95% of 2 rounds up to 2, the larger.
-        assert_eq!(p95(&grouped), Some(Duration::from_millis(15)));
+        assert!(p95(&grouped).is_err());
         let none = Samples {
             iters: Vec::new(),
             times: Vec::new(),
         };
-        assert_eq!(p95(&none), None);
+        assert!(p95(&none).is_err());
+        Ok(())
     }
 }
