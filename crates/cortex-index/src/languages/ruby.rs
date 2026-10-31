@@ -34,6 +34,7 @@ pub const SPEC: Spec = Spec {
         imports: include_str!("../../queries/ruby-imports.scm"),
         qualified_by: &[],
         // Classes, modules and methods have a body, a constant its value.
+        closed_scopes: &[],
         body_paths: &[&["body"], &["right"]],
         // Minitest's and Test::Unit's file names, and RSpec's.
         test_files: &[

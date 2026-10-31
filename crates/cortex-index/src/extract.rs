@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use cortex_core::{Language, RepoPath};
+use cortex_core::{Language, RepoPath, SymbolKind};
 use cortex_store::{RefRecord, SymbolRecord};
 use thiserror::Error;
 use tree_sitter::{ParseOptions, ParseState, Parser, QueryCursor, Tree};
@@ -15,7 +15,7 @@ use crate::grammar::Grammars;
 use crate::path_rules::is_test_file;
 use crate::references::{Qualifier, build_references};
 use crate::specifiers::{Import, read_imports};
-use crate::symbols::build_symbols;
+use crate::symbols::{build_symbols, innermost_at};
 use crate::tags::{Tag, read_tags};
 
 /// What one file defines, uses and imports.
@@ -148,6 +148,10 @@ impl Extractor {
         );
         let (refs, qualifiers) =
             build_references(&tags, source, &symbols, grammar.spec.qualified_by);
+        let mut imports = imported.imports;
+        for import in &mut imports {
+            import.module_depth = module_depth(&symbols, import.line, grammar.spec.closed_scopes);
+        }
         let left_out = LeftOut {
             definitions: read.broken_definitions + unrecorded(definitions, symbols.len()),
             references: read.broken_references + unrecorded(references, refs.len()),
@@ -157,10 +161,26 @@ impl Extractor {
             symbols,
             refs,
             qualifiers,
-            imports: imported.imports,
+            imports,
             left_out,
         })
     }
+}
+
+/// How many of `symbols` of the `closed` kinds hold `line` after their first line.
+fn module_depth(symbols: &[SymbolRecord], line: u32, closed: &[SymbolKind]) -> u32 {
+    if closed.is_empty() {
+        return 0;
+    }
+    let mut depth = 0;
+    let mut at = innermost_at(symbols, line);
+    while let Some(symbol) = at.and_then(|position| symbols.get(position)) {
+        if closed.contains(&symbol.kind) {
+            depth += 1;
+        }
+        at = symbol.parent;
+    }
+    depth
 }
 
 /// `tags`, in the order of their names, with `names`, the references to the names the file's

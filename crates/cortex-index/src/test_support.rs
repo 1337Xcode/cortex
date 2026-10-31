@@ -27,6 +27,7 @@ pub(crate) const fn python_spec(tags: &'static [&'static str], imports: &'static
         queries: tags,
         imports,
         qualified_by: &[],
+        closed_scopes: &[],
         body_paths: &[],
         test_files: &[],
         test_functions: &[],
@@ -92,6 +93,7 @@ pub(crate) fn import(specifier: &str, imported: Imported) -> Result<Import, Iden
         alias: None,
         line: 1,
         is_reexport: false,
+        module_depth: 0,
     })
 }
 

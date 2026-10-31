@@ -19,6 +19,7 @@ pub const SPEC: Spec = Spec {
         imports: "",
         qualified_by: &[],
         // A heading has no body: it is all header.
+        closed_scopes: &[],
         body_paths: &[],
         // A document holds no tests.
         test_files: &[],

@@ -23,6 +23,7 @@ pub const SPEC: Spec = Spec {
         qualified_by: &[],
         // Functions, classes, namespaces and enums have a body; a macro, a constant or a member
         // constant its value.
+        closed_scopes: &[],
         body_paths: &[&["body"], &["value"], &["default_value"]],
         // Google Test's names, and the Unity and CMocka names C uses.
         test_files: &[

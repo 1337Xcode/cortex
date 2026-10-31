@@ -22,6 +22,7 @@ pub const SPEC: Spec = Spec {
             ("member_expression", "object"),
             ("nested_type_identifier", "module"),
         ],
+        closed_scopes: &[],
         body_paths: BODY_PATHS,
         // The names Jest, Vitest and Mocha look for.
         test_files: &[

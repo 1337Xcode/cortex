@@ -29,6 +29,7 @@ pub const SPEC: Spec = Spec {
         ],
         // Functions and methods have a body, a constant its value, and a named type the type it
         // stands for.
+        closed_scopes: &[],
         body_paths: &[&["body"], &["value"], &["type"]],
         test_files: &[NamePattern::Suffix("_test.go")],
         // What `go test` runs: tests, benchmarks, examples and fuzz targets.

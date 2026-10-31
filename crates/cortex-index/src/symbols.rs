@@ -46,6 +46,23 @@ struct Recorder<'a> {
     records: Vec<SymbolRecord>,
 }
 
+/// The innermost of `symbols`, records as [`build_symbols`] makes them, whose lines hold `line`
+/// after their first: where something written on that line is made. Records come in the order of
+/// their starts and nest, so it is the last one starting before the line or one around that one.
+pub(crate) fn innermost_at(symbols: &[SymbolRecord], line: u32) -> Option<usize> {
+    let mut at = symbols
+        .partition_point(|symbol| symbol.start_line < line)
+        .checked_sub(1);
+    while let Some(position) = at {
+        let symbol = symbols.get(position)?;
+        if line <= symbol.end_line {
+            return Some(position);
+        }
+        at = symbol.parent;
+    }
+    None
+}
+
 /// The definitions among `tags` as records, in the order of their starts, each after the record
 /// of the definition it sits in.
 pub(crate) fn build_symbols(

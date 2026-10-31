@@ -70,8 +70,9 @@ pub(crate) fn module_names(
         .collect()
 }
 
-/// What a resolver reads of an import: its module, and the name it takes, if any.
-type Kind<'a> = (&'a str, Option<&'a str>);
+/// What a resolver reads of an import: its module, the name it takes, if any, and how deep in
+/// inline modules it is made.
+type Kind<'a> = (&'a str, Option<&'a str>, u32);
 
 /// What a resolver reads of `import`.
 fn kind_of(import: &Import) -> Kind<'_> {
@@ -79,12 +80,12 @@ fn kind_of(import: &Import) -> Kind<'_> {
         Imported::Name(name) => Some(name.as_str()),
         Imported::Module | Imported::All | Imported::Default => None,
     };
-    (import.specifier.as_str(), taken)
+    (import.specifier.as_str(), taken, import.module_depth)
 }
 
 /// Each kind of import in `imports` once, with how many times it appears. Imports are alike when
-/// they take the same name, or no name, from the same module, which is all a resolver reads of
-/// them, so alike imports name the same files.
+/// they take the same name, or no name, from the same module at the same depth in inline modules,
+/// which is all a resolver reads of them, so alike imports name the same files.
 fn alike(imports: &[Import]) -> Vec<(&Import, u32)> {
     let mut kinds: BTreeMap<Kind<'_>, (&Import, u32)> = BTreeMap::new();
     for import in imports {

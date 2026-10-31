@@ -20,6 +20,7 @@ pub const SPEC: Spec = Spec {
         qualified_by: &[],
         // Classes, objects, traits and functions have a body. A value's has a field of its own,
         // which is not read as a body, so a constant is all header.
+        closed_scopes: &[],
         body_paths: &[&["body"]],
         // The names ScalaTest, MUnit and JUnit suites take, and those sbt runs as integration
         // tests, for the links from a test file to what it tests.

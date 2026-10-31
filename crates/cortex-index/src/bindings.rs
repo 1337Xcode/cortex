@@ -7,8 +7,9 @@
 //! functions, methods and modules around it, to the file. The first of these that makes the name
 //! itself, or has an import taking it under that name, decides: a definition there leaves the
 //! name to the definitions of the file, an import there binds it. A class body is no scope for the
-//! methods in it: they reach its names through `self` or `this`. A name written after a
-//! qualifier, `x.strip()` or `orders.Place()`, is not bound by an import of the bare name.
+//! methods in it: they reach its names through `self` or `this`. A Rust module sees nothing of the
+//! scopes around it: the walk stops at it. A name written after a qualifier, `x.strip()` or
+//! `orders.Place()`, is not bound by an import of the bare name.
 //!
 //! A qualifier that is a plain name is looked up through the same scopes. When imports there
 //! give it a module (a Go package, a namespace, a Python or Rust module), the name after it is
@@ -35,6 +36,7 @@ use crate::extract::Extraction;
 use crate::imports::Targets;
 use crate::references::Qualifier;
 use crate::specifiers::{Import, Imported};
+use crate::symbols::innermost_at;
 
 /// One name an import takes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,11 +112,12 @@ pub(crate) struct Bindings {
 impl Bindings {
     /// The bindings of the file read as `extraction`, whose imports name `targets` and reach their
     /// modules by `module_names` when they take them whole with no alias, one of each for each
-    /// import in order.
+    /// import in order; definitions of the `closed` kinds see nothing of the scopes around them.
     pub(crate) fn of(
         extraction: &Extraction,
         targets: &[Targets],
         module_names: &[Option<Identifier>],
+        closed: &[SymbolKind],
     ) -> Self {
         let pairs = pair_own_references(extraction);
         let scopes = import_scopes(extraction, &pairs);
@@ -147,7 +150,7 @@ impl Bindings {
                 (Imported::All | Imported::Default, _) => {}
             }
         }
-        read.finish(extraction, &pairs)
+        read.finish(extraction, &pairs, closed)
     }
 
     /// What the file's imports take, at `position`.
@@ -293,9 +296,15 @@ impl<'e> Read<'e> {
     }
 
     /// The bindings, with a lookup for each reference of `extraction`, whose own references
-    /// `pairs` pairs with their imports. Each scope's imports of a name become one group, alike
-    /// imports and reaches in it once.
-    fn finish(self, extraction: &Extraction, pairs: &[Option<(usize, usize)>]) -> Bindings {
+    /// `pairs` pairs with their imports, in a language whose definitions of the `closed` kinds see
+    /// nothing around them. Each scope's imports of a name become one group, alike imports and
+    /// reaches in it once.
+    fn finish(
+        self,
+        extraction: &Extraction,
+        pairs: &[Option<(usize, usize)>],
+        closed: &[SymbolKind],
+    ) -> Bindings {
         let Read {
             mut bindings,
             takers,
@@ -323,7 +332,7 @@ impl<'e> Read<'e> {
             });
             reach_groups.insert(key, position);
         }
-        let scopes = Scopes::of(&extraction.symbols);
+        let scopes = Scopes::of(&extraction.symbols, closed);
         bindings.lookups = extraction
             .refs
             .iter()
@@ -400,35 +409,26 @@ fn import_scopes(extraction: &Extraction, pairs: &[Option<(usize, usize)>]) -> V
             };
             match own {
                 Some(reference) => extraction.refs.get(*reference).and_then(|own| own.symbol),
-                None => scope_at_line(&extraction.symbols, import.line),
+                None => innermost_at(&extraction.symbols, import.line),
             }
         })
         .collect()
-}
-
-/// The innermost of `symbols` whose lines hold `line` after their first: where an import that
-/// has no reference of its own is made.
-fn scope_at_line(symbols: &[SymbolRecord], line: u32) -> Option<usize> {
-    symbols
-        .iter()
-        .enumerate()
-        .filter(|(_, symbol)| symbol.start_line < line && line <= symbol.end_line)
-        .map(|(position, _)| position)
-        .next_back()
 }
 
 /// A file's definitions, as a lookup walks the scopes around a use.
 struct Scopes<'e> {
     /// The definitions.
     symbols: &'e [SymbolRecord],
+    /// The kinds of definition that see nothing of the scopes around them.
+    closed: &'e [SymbolKind],
     /// Each name made directly in a scope, with that scope: a definition with no qualifier, whose
     /// qualified name is its parent's joined to its name, or its name at the top.
     plain: BTreeSet<(Option<usize>, &'e str)>,
 }
 
 impl<'e> Scopes<'e> {
-    /// The scopes of `symbols`.
-    fn of(symbols: &'e [SymbolRecord]) -> Self {
+    /// The scopes of `symbols`, those of the `closed` kinds seeing nothing around them.
+    fn of(symbols: &'e [SymbolRecord], closed: &'e [SymbolKind]) -> Self {
         let plain = symbols
             .iter()
             .filter(
@@ -442,7 +442,11 @@ impl<'e> Scopes<'e> {
             )
             .map(|symbol| (symbol.parent, symbol.name.as_str()))
             .collect();
-        Self { symbols, plain }
+        Self {
+            symbols,
+            closed,
+            plain,
+        }
     }
 
     /// The entry of `imports` for `name` in the first scope around `reference`, from the
@@ -454,7 +458,7 @@ impl<'e> Scopes<'e> {
         name: &'m Identifier,
         imports: &'m BTreeMap<(Option<usize>, &Identifier), T>,
     ) -> Option<&'m T> {
-        for scope in scopes_around(reference.symbol, self.symbols) {
+        for scope in scopes_around(reference.symbol, self.symbols, self.closed) {
             if self.plain.contains(&(scope, name.as_str())) {
                 return None;
             }
@@ -467,18 +471,24 @@ impl<'e> Scopes<'e> {
 }
 
 /// The scopes a use sitting in the definition at `at` sees, innermost first: that definition,
-/// then each function, method, test or module around it, then the top of the file (`None`).
-fn scopes_around(at: Option<usize>, symbols: &[SymbolRecord]) -> Vec<Option<usize>> {
+/// then each function, method, test or module around it, then the top of the file (`None`); none
+/// past a definition of the `closed` kinds, which sees nothing around it.
+fn scopes_around(
+    at: Option<usize>,
+    symbols: &[SymbolRecord],
+    closed: &[SymbolKind],
+) -> Vec<Option<usize>> {
     let mut scopes = vec![at];
-    let mut current = at.and_then(|position| symbols.get(position)?.parent);
-    while let Some(position) = current {
-        let Some(symbol) = symbols.get(position) else {
-            break;
-        };
-        if is_scope(symbol.kind) {
-            scopes.push(Some(position));
+    let mut current = at;
+    while let Some(symbol) = current.and_then(|position| symbols.get(position)) {
+        if closed.contains(&symbol.kind) {
+            return scopes;
         }
         current = symbol.parent;
+        let around = current.and_then(|position| symbols.get(position));
+        if around.is_some_and(|around| is_scope(around.kind)) {
+            scopes.push(current);
+        }
     }
     if at.is_some() {
         scopes.push(None);
@@ -558,7 +568,7 @@ mod tests {
 
     /// The bindings of `read`, whose imports name `targets` and give no module a name.
     fn bind(read: &Extraction, targets: &[Targets]) -> Bindings {
-        Bindings::of(read, targets, &vec![None; targets.len()])
+        Bindings::of(read, targets, &vec![None; targets.len()], &[])
     }
 
     /// The files `module` names.

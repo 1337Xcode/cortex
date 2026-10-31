@@ -25,6 +25,7 @@ pub const SPEC: Spec = Spec {
         imports: include_str!("../../queries/java-imports.scm"),
         qualified_by: &[],
         // Types, methods and constructors have a body, a constant its value.
+        closed_scopes: &[],
         body_paths: &[&["body"], &["value"]],
         // The names Maven and Gradle run as unit and integration tests.
         test_files: &[

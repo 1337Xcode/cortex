@@ -19,6 +19,7 @@ pub const SPEC: Spec = Spec {
         imports: "",
         qualified_by: &[],
         // Keys and tables have no body field; their patterns capture where the header ends.
+        closed_scopes: &[],
         body_paths: &[],
         // A TOML file holds no tests.
         test_files: &[],

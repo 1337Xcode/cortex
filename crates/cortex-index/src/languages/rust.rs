@@ -1,6 +1,6 @@
 //! Rust: how a file is recognised as this language, and how it is parsed.
 
-use cortex_core::Language;
+use cortex_core::{Language, SymbolKind};
 
 use super::{Spec, TagsSpec};
 
@@ -31,6 +31,7 @@ pub const SPEC: Spec = Spec {
         ],
         // Items with braces have a body, a constant or static its value, and a type alias the
         // type it stands for.
+        closed_scopes: &[SymbolKind::Module],
         body_paths: &[&["body"], &["value"], &["type"]],
         // Every file under `tests/` is a test file; inside any file, `#[test]` marks a test.
         test_files: &[],

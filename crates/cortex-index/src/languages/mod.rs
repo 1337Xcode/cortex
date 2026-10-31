@@ -3,7 +3,7 @@
 //!
 //! Adding a language means adding its file and one line in [`ALL`].
 
-use cortex_core::Language;
+use cortex_core::{Language, SymbolKind};
 
 use crate::path_rules::NamePattern;
 
@@ -67,6 +67,11 @@ pub struct TagsSpec {
     /// language whose imports name files lists its forms; one whose imports name none may list
     /// none, since its uses are tied by name alone.
     pub qualified_by: &'static [(&'static str, &'static str)],
+    /// The kinds of definition whose bodies see none of the names of the scopes around them, only
+    /// their own and what they import: Rust's modules, which reach the names around them through
+    /// paths such as `super::`. A path an import reads from the module it is made in starts from
+    /// the innermost of these around it.
+    pub closed_scopes: &'static [SymbolKind],
     /// The paths of grammar fields that lead from a definition's node to its body, tried in order.
     /// A definition's header, which its signature hash covers, runs up to the last part before its
     /// body, leaving out comments in between; a definition no path leads to a body from is all

@@ -19,6 +19,7 @@ pub const SPEC: Spec = Spec {
         imports: include_str!("../../queries/kotlin-imports.scm"),
         qualified_by: &[],
         // The grammar names no field for a body, so the query captures each definition's body.
+        closed_scopes: &[],
         body_paths: &[],
         // The names Gradle and Maven run as unit and integration tests.
         test_files: &[

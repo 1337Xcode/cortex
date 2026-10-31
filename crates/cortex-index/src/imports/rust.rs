@@ -291,7 +291,8 @@ impl Resolver for Rust {
     }
 
     fn targets(&self, files: &Files, importer: &RepoPath, import: &Import) -> Targets {
-        let Some((module, is_known)) = self.walk(files, importer, import.specifier.as_str()) else {
+        let path = (import.specifier.as_str(), import.module_depth);
+        let Some((module, is_known)) = self.walk(files, importer, path) else {
             return Targets::default();
         };
         let submodule = match &import.imported {
@@ -319,23 +320,42 @@ impl Resolver for Rust {
 }
 
 impl Rust {
-    /// The module `path`, the module part of a `use` path, names from the file at `importer`, and
-    /// whether its file is known: not when it is a crate root the importer may not belong to,
-    /// whose modules are still the files a walk reaches. `None` when the path names a crate outside
-    /// the repository or a part has no file of its own.
-    fn walk(&self, files: &Files, importer: &RepoPath, path: &str) -> Option<(Module, bool)> {
+    /// The module `path`, the module part of a `use` path made `depth` inline modules deep, names
+    /// from the file at `importer`, and whether its file is known: not when it is a crate root the
+    /// importer may not belong to, whose modules are still the files a walk reaches. `None` when
+    /// the path names a crate outside the repository or a part has no file of its own. Inside an
+    /// inline module, `self` is that module and the first `super`s climb the inline modules, whose
+    /// items no file of their own holds, so such a path names nothing until it leaves them; a
+    /// plain first name can only be a crate there.
+    fn walk(
+        &self,
+        files: &Files,
+        importer: &RepoPath,
+        (path, depth): (&str, u32),
+    ) -> Option<(Module, bool)> {
         let package = folders_above(importer).find_map(|folder| self.packages.get(&folder))?;
         let package = package.as_ref()?;
         let owner = package.owning_root(importer);
         let is_root_known = owner.as_ref().is_some_and(|(_, is_known)| *is_known);
         let root = owner.and_then(|(file, _)| Module::root(file));
         let own = own_module(importer, root.as_ref())?;
-        let mut parts = path.split("::");
+        let mut parts = path.split("::").peekable();
         let mut module = match parts.next()? {
             "crate" => root.clone()?,
+            "self" if depth > 0 => return None,
             "self" => own,
-            "super" => parent(files, &own, root.as_ref())?,
-            first => match child(files, &own, first) {
+            "super" => {
+                let mut climbs: u32 = 1;
+                while parts.next_if_eq(&"super").is_some() {
+                    climbs += 1;
+                }
+                let mut module = own;
+                for _ in 0..climbs.checked_sub(depth)? {
+                    module = parent(files, &module, root.as_ref())?;
+                }
+                module
+            }
+            first => match child(files, &own, first).filter(|_| depth == 0) {
                 Some(inner) => inner,
                 None => Module::root(package.crates.get(first)?.clone())?,
             },
@@ -862,5 +882,49 @@ path = "src/cli/main.rs"
                 "{specifier}"
             );
         }
+    }
+
+    /// Inside inline modules, `self` names nothing and the first `super`s climb the inline modules
+    /// of the file: one module deep in `src/api/routes.rs`, `super` is the file's own module and
+    /// `super::super` its parent, while two deep `super` is still inside the file. A plain first
+    /// name there can only be a crate, not one of the file's own modules: `order` is
+    /// `src/models/order.rs` from `src/models.rs` only outside inline modules.
+    #[test]
+    fn inline_modules_take_the_first_steps_of_a_path() -> Result<(), Box<dyn Error>> {
+        let files = Files::new(
+            SOURCES
+                .iter()
+                .chain(MANIFESTS.iter().map(|(at, _)| at))
+                .map(|at| path(at)),
+        );
+        let read = |at: &RepoPath| {
+            MANIFESTS
+                .iter()
+                .find(|(manifest, _)| path(manifest) == *at)
+                .map(|(_, text)| (*text).to_owned())
+        };
+        let resolver = load(&files, &read);
+        let routes = "src/api/routes.rs";
+        let cases = [
+            (routes, "super", 0, named(&["src/api/mod.rs"], None)),
+            (routes, "super", 1, named(&[routes], None)),
+            (routes, "super::super", 1, named(&["src/api/mod.rs"], None)),
+            (routes, "super", 2, named(&[], None)),
+            (routes, "self", 1, named(&[], None)),
+            (
+                "src/models.rs",
+                "order",
+                0,
+                named(&["src/models/order.rs"], None),
+            ),
+            ("src/models.rs", "order", 1, named(&[], None)),
+        ];
+        for (importer, specifier, depth, expected) in cases {
+            let mut whole = import(specifier, Imported::Module)?;
+            whole.module_depth = depth;
+            let found = named_by(&resolver.targets(&files, &path(importer), &whole));
+            assert_eq!(found, expected, "{importer} {specifier} {depth}");
+        }
+        Ok(())
     }
 }

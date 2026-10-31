@@ -128,7 +128,8 @@ Each reference is then tied to a definition when what its file says settles whic
 A bare name, written with nothing before it, may be bound by an import. It is looked up the way
 these languages scope names: from the definition the use sits in outwards, through the functions,
 methods and modules around it, to the top of the file; a class body is skipped, since its methods
-reach its names through `self` or `this`. The first of these that defines the name, or has an
+reach its names through `self` or `this`, and the walk stops at a Rust module, which sees nothing
+of the scopes around it. The first of these that defines the name, or has an
 import that brings it in under that name, decides. A definition there leaves the name to the rules
 below; imports there bind it. A bound name is the imports': it is tied through them
 (confidence 0.8) when every import binding it there finds the same definition, and stays
@@ -217,7 +218,10 @@ once per index, as the walk found them, and never one that may hold secrets.
   out. When two `go.mod` files declare the same module, the one in a folder above the importer is
   used.
 - Rust. A path that starts with `crate`, `self` or `super` is walked from the importer's own
-  crate root or module. One that starts with the name of the package's library, or of a package
+  crate root or module. Inside an inline module (`mod tests { ... }`), `self` is that module and
+  the first `super`s climb the inline modules of the file, whose items no file of their own holds,
+  so such a path names nothing until it leaves them; a path starting with another name there can
+  only be a crate. One that starts with the name of the package's library, or of a package
   of the repository it depends on by `path` (directly or through its workspace), is walked from
   that crate's library root. Each part is looked for as `x.rs`, then `x/mod.rs`. Crate roots are
   Cargo's targets: the library, `src/main.rs`, the build script, and the binaries, tests,

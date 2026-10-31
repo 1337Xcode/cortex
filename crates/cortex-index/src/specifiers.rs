@@ -41,6 +41,10 @@ pub struct Import {
     /// Whether the statement only passes what it takes on to the file's importers, binding
     /// nothing in the file itself, as TypeScript's `export { x } from "./x"` does.
     pub is_reexport: bool,
+    /// How many definitions that close their scope, Rust's inline modules, the import is made
+    /// in: a path read from the module the import is made in, Rust's `self::` or `super::`,
+    /// starts from the innermost of them.
+    pub module_depth: u32,
 }
 
 /// What a file's imports query found.
@@ -182,6 +186,7 @@ fn import_of(parts: &Parts<'_>, source: &[u8]) -> Option<((usize, usize), Import
         alias,
         line: line_number(taken.start_position().row)?,
         is_reexport: parts.reexport.is_some(),
+        module_depth: 0,
     };
     Some(((statement.start_byte(), taken.start_byte()), import))
 }
@@ -284,6 +289,7 @@ mod tests {
             alias: None,
             line: 1,
             is_reexport: false,
+            module_depth: 0,
         };
         assert_eq!(
             read(&RUN, "import a.b.c.d\nimport x.y\n")?,

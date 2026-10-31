@@ -19,6 +19,7 @@ pub const SPEC: Spec = Spec {
         imports: "",
         qualified_by: &[],
         // A key's value is its body, so its header is the key.
+        closed_scopes: &[],
         body_paths: &[&["value"]],
         // A JSON file holds no tests.
         test_files: &[],

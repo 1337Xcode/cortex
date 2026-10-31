@@ -19,6 +19,7 @@ pub const SPEC: Spec = Spec {
         imports: "",
         qualified_by: &[],
         // Statements have no body field; their patterns capture where the header ends.
+        closed_scopes: &[],
         body_paths: &[],
         // Tests in SQL take no form the index can tell.
         test_files: &[],

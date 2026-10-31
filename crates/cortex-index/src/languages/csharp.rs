@@ -20,6 +20,7 @@ pub const SPEC: Spec = Spec {
         qualified_by: &[],
         // Types, namespaces, methods and constructors have a body. A constant's value has no
         // field of its own, so a constant is all header.
+        closed_scopes: &[],
         body_paths: &[&["body"]],
         // The names test projects usually give their files. No test goes by its name in C#, so
         // these mark only the files, for the links from a test file to what it tests.

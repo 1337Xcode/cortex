@@ -27,6 +27,7 @@ pub const SPEC: Spec = Spec {
         // Functions, methods and classes have a body. A declaration, property, field or
         // assignment holding a function has the function's body; one holding another value has
         // the value, as an exported assignment does.
+        closed_scopes: &[],
         body_paths: &[
             &["body"],
             &["value", "body"],

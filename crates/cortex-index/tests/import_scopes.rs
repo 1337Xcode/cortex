@@ -497,3 +497,50 @@ fn a_skipped_file_s_other_references_go_by_name_again() -> TestResult {
     );
     Ok(())
 }
+
+/// A Rust module sees nothing of the scopes around it, and `super` inside an inline module starts
+/// from that module. In `src/a.rs`, `helper()` in `top` is bound by the file's `use` of
+/// `util::helper`; in `mod inner`, which brings in everything of `other`, the file's `use` does
+/// not reach, and `helper()` goes by its name, finding three. In `mod tests`, `super::helper` is
+/// the file's own `helper`, the one it brings in from `util`, and `super::super::helper` the
+/// crate root's.
+#[test]
+fn rust_modules_see_nothing_around_them() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("Cargo.toml", "[package]\nname = \"shop\"\n"),
+            (
+                "src/lib.rs",
+                "pub mod a;\npub mod util;\npub mod other;\n\npub fn helper() {}\n",
+            ),
+            ("src/util.rs", "pub fn helper() {}\n"),
+            ("src/other.rs", "pub fn helper() {}\n"),
+            (
+                "src/a.rs",
+                "use crate::util::helper;\n\npub fn top() {\n    helper();\n}\n\nmod inner {\n    \
+                 use crate::other::*;\n\n    pub fn run() {\n        helper();\n    }\n}\n\n\
+                 mod tests {\n    use super::helper;\n    use super::super::helper as root_helper;\n\n    \
+                 fn t() {\n        helper();\n        root_helper();\n    }\n}\n",
+            ),
+        ],
+    )?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    let util = Some(("src/util.rs", "helper", "import_path"));
+    let crate_root = Some(("src/lib.rs", "helper", "import_path"));
+    assert_eq!(
+        ties(root, "src/a.rs")?,
+        expected(&[
+            ("import", "helper", 1, util),
+            ("call", "helper", 4, util),
+            ("call", "helper", 11, None),
+            ("import", "helper", 16, util),
+            ("import", "helper", 17, crate_root),
+            ("call", "helper", 20, util),
+            ("call", "root_helper", 21, crate_root),
+        ])
+    );
+    Ok(())
+}

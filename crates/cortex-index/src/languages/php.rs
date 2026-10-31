@@ -20,6 +20,7 @@ pub const SPEC: Spec = Spec {
         qualified_by: &[],
         // Classes, functions, methods and namespaces have a body. A constant's value has no field
         // of its own, so a constant is all header.
+        closed_scopes: &[],
         body_paths: &[&["body"]],
         // PHPUnit's file names and test method names.
         test_files: &[NamePattern::Suffix("Test.php")],

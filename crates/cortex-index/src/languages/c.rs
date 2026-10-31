@@ -21,6 +21,7 @@ pub const SPEC: Spec = Spec {
         imports: include_str!("../../queries/c-imports.scm"),
         qualified_by: &[],
         // Functions, structs, unions and enums have a body, a macro or a constant its value.
+        closed_scopes: &[],
         body_paths: &[&["body"], &["value"]],
         // The names Unity and CMocka tests usually take.
         test_files: &[NamePattern::Prefix("test_"), NamePattern::Suffix("_test.c")],

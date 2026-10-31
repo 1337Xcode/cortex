@@ -26,6 +26,7 @@ pub const SPEC: Spec = Spec {
         imports: include_str!("../../queries/bash-imports.scm"),
         qualified_by: &[],
         // A function has a body. A constant spans its assignment, which has none.
+        closed_scopes: &[],
         body_paths: &[&["body"]],
         // The names shell test scripts usually take.
         test_files: &[

@@ -25,6 +25,7 @@ pub const SPEC: Spec = Spec {
         qualified_by: &[("attribute", "object")],
         // Functions and classes have a body, and so does a decorated one, inside it. An
         // assignment's value and a type alias's type change without changing what the name is.
+        closed_scopes: &[],
         body_paths: &[&["body"], &["right"], &["definition", "body"]],
         // pytest's default file names.
         test_files: &[

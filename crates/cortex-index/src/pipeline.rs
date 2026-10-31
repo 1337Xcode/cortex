@@ -457,7 +457,8 @@ fn prepare(
                 &extraction.imports,
             );
             let names = file_imports::module_names(context.project, language, &extraction.imports);
-            let bindings = Bindings::of(&extraction, &targets, &names);
+            let closed = context.grammars.get(language).spec.closed_scopes;
+            let bindings = Bindings::of(&extraction, &targets, &names, closed);
             Ok(Outcome::Ready(Box::new(Prepared {
                 index: FileIndex {
                     file: record,

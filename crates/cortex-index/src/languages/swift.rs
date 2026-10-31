@@ -20,6 +20,7 @@ pub const SPEC: Spec = Spec {
         qualified_by: &[],
         // Types, protocols, functions and initializers have a body. A constant's value has no
         // field of its own, so a constant is all header.
+        closed_scopes: &[],
         body_paths: &[&["body"]],
         // The names test files take in Swift packages and Xcode projects, as `OrderTests.swift`.
         test_files: &[
