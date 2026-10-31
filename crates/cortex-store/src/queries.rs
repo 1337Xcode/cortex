@@ -285,8 +285,8 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawSymbolName::check).collect()
     }
 
-    /// The files holding a reference named `name` that goes through an import: tied through one,
-    /// left untied by one, or an import's own.
+    /// The files holding a reference named `name` that goes through an import, tied through one
+    /// or left untied by one. An import's own reference counts, unless the SCIP index tied it.
     ///
     /// # Errors
     ///
@@ -295,19 +295,12 @@ impl<'c> Queries<'c> {
         self,
         name: &Identifier,
     ) -> Result<Vec<FileId>, StoreError> {
-        let params = (
+        self.collect(
+            schema::FILES_WITH_REFS_THROUGH_IMPORTS,
             name.as_str(),
-            Resolution::ImportPath.name(),
-            RefKind::Import.name(),
-        );
-        self.connection
-            .prepare_cached(schema::FILES_WITH_REFS_THROUGH_IMPORTS)
-            .and_then(|mut statement| {
-                statement
-                    .query_map(params, |row| row.get(0).map(FileId))?
-                    .collect()
-            })
-            .map_err(sqlite("reading files with references through imports"))
+            |row| row.get(0).map(FileId),
+        )
+        .map_err(sqlite("reading files with references through imports"))
     }
 
     /// The references named `name` that go by their name, as [`Queries::ref_names`] gives them,

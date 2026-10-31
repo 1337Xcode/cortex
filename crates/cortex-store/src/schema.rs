@@ -23,10 +23,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("../migrations/0002_passes_on.sql"),
     },
+    Migration {
+        version: 3,
+        sql: include_str!("../migrations/0003_refs_through_imports.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 2;
+pub(crate) const SCHEMA_VERSION: u32 = 3;
 
 /// How many objects the database defines; 0 for a new, empty database.
 pub(crate) const COUNT_OBJECTS: &str = "SELECT count(*) FROM sqlite_schema";
@@ -137,10 +141,11 @@ pub(crate) const REFS_IN_FILE: &str = "SELECT ref_id, src_file_id, src_symbol_id
 pub(crate) const REF_NAMES: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, r.kind, \
      r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
      JOIN files AS f ON f.file_id = r.src_file_id ORDER BY r.ref_id";
-/// The files holding a reference of one name that goes through an import: tied through one
-/// (`import_path`, the second parameter) or an import's own (the third parameter, its kind).
+/// The files holding a reference of one name that goes through an import, tied or not. The
+/// condition on `resolution` is the one `refs_through_imports` is defined with, written the same,
+/// as SQLite requires before it uses that index.
 pub(crate) const FILES_WITH_REFS_THROUGH_IMPORTS: &str = "SELECT DISTINCT src_file_id FROM refs \
-     WHERE dst_name = ?1 AND (resolution = ?2 OR kind = ?3) ORDER BY src_file_id";
+     WHERE dst_name = ?1 AND resolution = 'import_path' ORDER BY src_file_id";
 /// As [`REF_NAMES`], for the references of one name that go by it: neither an import's own (the
 /// third parameter, its kind) nor going through one (`import_path`, the second parameter).
 pub(crate) const REF_NAMES_BY_NAME: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
@@ -249,7 +254,7 @@ mod tests {
     type Column = (String, String, i64);
 
     /// One index: its columns in order, and whether it is unique.
-    type Index = (Vec<String>, bool);
+    type Index = (Vec<String>, bool, bool);
 
     /// The columns of `table`.
     fn columns(connection: &Connection, table: &str) -> rusqlite::Result<Vec<Column>> {
@@ -260,21 +265,22 @@ mod tests {
             .collect()
     }
 
-    /// The indexes of `table`, sorted.
+    /// The indexes of `table`, each with its columns, whether it is unique and whether it is
+    /// partial, sorted.
     fn indexes(connection: &Connection, table: &str) -> rusqlite::Result<Vec<Index>> {
         let mut statement =
-            connection.prepare(r#"SELECT name, "unique" FROM pragma_index_list(?1)"#)?;
-        let listed: Vec<(String, bool)> = statement
-            .query_map([table], |row| Ok((row.get(0)?, row.get(1)?)))?
+            connection.prepare(r#"SELECT name, "unique", partial FROM pragma_index_list(?1)"#)?;
+        let listed: Vec<(String, bool, bool)> = statement
+            .query_map([table], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
             .collect::<rusqlite::Result<_>>()?;
         let mut found = Vec::new();
-        for (name, is_unique) in listed {
+        for (name, is_unique, is_partial) in listed {
             let mut statement =
                 connection.prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")?;
             let names: Vec<String> = statement
                 .query_map([name], |row| row.get(0))?
                 .collect::<rusqlite::Result<_>>()?;
-            found.push((names, is_unique));
+            found.push((names, is_unique, is_partial));
         }
         found.sort();
         Ok(found)
@@ -289,12 +295,12 @@ mod tests {
     }
 
     /// An index list typed by hand.
-    fn index_list(entries: &[(&[&str], bool)]) -> Vec<Index> {
+    fn index_list(entries: &[(&[&str], bool, bool)]) -> Vec<Index> {
         let mut list: Vec<Index> = entries
             .iter()
-            .map(|(names, is_unique)| {
+            .map(|(names, is_unique, is_partial)| {
                 let names = names.iter().map(|name| (*name).to_owned()).collect();
-                (names, *is_unique)
+                (names, *is_unique, *is_partial)
             })
             .collect();
         list.sort();
@@ -391,45 +397,75 @@ mod tests {
         ]
     }
 
-    /// The indexes of every table: those of the table definitions, plus `refs.dst_name`, `nodes.path`
-    /// and the uniqueness of folder paths.
+    /// The indexes of every table: those of the table definitions, plus `refs.dst_name`, the
+    /// references through imports by name, `nodes.path` and the uniqueness of folder paths, the last
+    /// two partial. Each entry: columns, unique, partial.
     fn expected_indexes() -> [(&'static str, Vec<Index>); 7] {
         [
-            ("meta", index_list(&[(&["key"], true)])),
+            ("meta", index_list(&[(&["key"], true, false)])),
             (
                 "files",
-                index_list(&[(&["path"], true), (&["lang"], false)]),
+                index_list(&[(&["path"], true, false), (&["lang"], false, false)]),
             ),
             (
                 "symbols",
                 index_list(&[
-                    (&["file_id"], false),
-                    (&["name"], false),
-                    (&["qual_name"], false),
+                    (&["file_id"], false, false),
+                    (&["name"], false, false),
+                    (&["qual_name"], false, false),
                 ]),
             ),
             (
                 "refs",
                 index_list(&[
-                    (&["dst_symbol_id"], false),
-                    (&["src_file_id"], false),
-                    (&["dst_name"], false),
+                    (&["dst_symbol_id"], false, false),
+                    (&["src_file_id"], false, false),
+                    (&["dst_name"], false, false),
+                    (&["dst_name"], false, true),
                 ]),
             ),
             (
                 "nodes",
                 index_list(&[
-                    (&["kind", "ref_id"], true),
-                    (&["path"], false),
-                    (&["path"], true),
+                    (&["kind", "ref_id"], true, false),
+                    (&["path"], false, false),
+                    (&["path"], true, true),
                 ]),
             ),
             (
                 "edges",
-                index_list(&[(&["src", "dst", "type"], true), (&["dst", "type"], false)]),
+                index_list(&[
+                    (&["src", "dst", "type"], true, false),
+                    (&["dst", "type"], false, false),
+                ]),
             ),
-            ("passes_on", index_list(&[(&["file_id"], false)])),
+            ("passes_on", index_list(&[(&["file_id"], false, false)])),
         ]
+    }
+
+    /// Which files hold a reference of a name that goes through an import is read from the index of
+    /// those references alone, as the query plan shows, and the condition both write is the
+    /// resolution's stored name.
+    #[test]
+    fn references_through_imports_are_found_by_their_index()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let connection = Connection::open_in_memory()?;
+        for migration in MIGRATIONS {
+            connection.execute_batch(migration.sql)?;
+        }
+        let mut statement = connection
+            .prepare(&["EXPLAIN QUERY PLAN ", FILES_WITH_REFS_THROUGH_IMPORTS].concat())?;
+        let steps: Vec<String> = statement
+            .query_map(["run"], |row| row.get(3))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert!(
+            steps
+                .iter()
+                .any(|step| step.contains("USING INDEX refs_through_imports")),
+            "{steps:?}"
+        );
+        assert_eq!(cortex_core::Resolution::ImportPath.name(), "import_path");
+        Ok(())
     }
 
     /// Migration numbers start at 1, rise by 1, and end at the version this build reads.

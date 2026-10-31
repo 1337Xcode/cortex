@@ -220,7 +220,8 @@ mod tests {
             "INSERT INTO meta (key, value) VALUES ('cortex_version', '2.0.0')",
             [],
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let second = MIGRATIONS.get(..2).ok_or("fewer than two migrations")?;
+        migrate(&mut connection, second, &backups)?;
         assert_eq!(schema_version(&connection)?, 2);
         assert!(objects(&connection)?.contains(&"passes_on".to_owned()));
         let completed: Option<String> = connection
@@ -231,6 +232,33 @@ mod tests {
             )
             .optional()?;
         assert_eq!(completed, None);
+        Ok(())
+    }
+
+    /// A database of the second schema, with an index completed, gains the index of references
+    /// through imports and keeps the record of the completed index: the new index is built from
+    /// rows already there, so no file needs reading again.
+    #[test]
+    fn the_third_schema_keeps_the_index_complete() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let second = MIGRATIONS.get(..2).ok_or("fewer than two migrations")?;
+        migrate(&mut connection, second, &backups)?;
+        connection.execute(
+            "INSERT INTO meta (key, value) VALUES ('cortex_version', '2.0.0')",
+            [],
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 3);
+        assert!(objects(&connection)?.contains(&"refs_through_imports".to_owned()));
+        let completed: Option<String> = connection
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'cortex_version'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        assert_eq!(completed.as_deref(), Some("2.0.0"));
         Ok(())
     }
 
