@@ -383,6 +383,16 @@ impl<'c> Queries<'c> {
         passes_on::of_every_file(self.connection)
     }
 
+    /// The names files pass `taken` on as, other than `taken` itself, in name order: an import
+    /// of one of them may find a definition named `taken`.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored names that cannot be read back.
+    pub fn names_passed_on_as(self, taken: &Identifier) -> Result<Vec<Identifier>, StoreError> {
+        passes_on::aliases(self.connection, taken)
+    }
+
     /// The node of the file at `path`.
     ///
     /// # Errors

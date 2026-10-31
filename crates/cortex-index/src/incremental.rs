@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{EdgeType, FileFlags, RepoPath};
+use cortex_core::{EdgeType, FileFlags, Identifier, RepoPath};
 use cortex_store::{
     FileId, FileRow, MetaKey, NodeId, Queries, RefId, StoreError, SymbolId, Writer,
 };
@@ -192,9 +192,9 @@ pub(crate) fn around_removal(
     Ok((importers(queries, paths)?.join(tied), names))
 }
 
-/// The stored files holding a reference named in `names` that goes through an import: references
-/// an index may tie otherwise when the definitions of those names came or went, and only with the
-/// file's imports read again.
+/// The stored files holding a reference that goes through an import named in `names` or as a file
+/// passes one of them on (see [`passed_on_as`]): references an index may tie otherwise when the
+/// definitions of those names came or went, and only with the file's imports read again.
 ///
 /// # Errors
 ///
@@ -204,10 +204,40 @@ pub(crate) fn users_through_imports(
     names: &NameChanges,
 ) -> Result<BTreeSet<RepoPath>, StoreError> {
     let mut files = BTreeSet::new();
-    for name in names.names() {
-        files.extend(queries.files_with_refs_through_imports(name)?);
+    for name in passed_on_as(queries, names.names())? {
+        files.extend(queries.files_with_refs_through_imports(&name)?);
     }
     paths_of(queries, files)
+}
+
+/// `names` and every name a file passes one of them on as (`from c2 import x as y` passes `x` on as
+/// `y`), and the names those are passed on as, as many files deep as a search for a name follows:
+/// an import of `y` may find a definition named `x`.
+///
+/// # Errors
+///
+/// Store errors.
+fn passed_on_as(
+    queries: Queries<'_>,
+    names: BTreeSet<&Identifier>,
+) -> Result<BTreeSet<Identifier>, StoreError> {
+    let mut found: BTreeSet<Identifier> = names.into_iter().cloned().collect();
+    let mut last: Vec<Identifier> = found.iter().cloned().collect();
+    for _ in 0..search::MAX_FILES_PASSED_THROUGH {
+        let mut next = Vec::new();
+        for name in &last {
+            for alias in queries.names_passed_on_as(name)? {
+                if found.insert(alias.clone()) {
+                    next.push(alias);
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        last = next;
+    }
+    Ok(found)
 }
 
 /// The stored files holding a reference the SCIP index tied to a definition in one of `files`,

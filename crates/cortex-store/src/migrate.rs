@@ -248,9 +248,37 @@ mod tests {
             "INSERT INTO meta (key, value) VALUES ('cortex_version', '2.0.0')",
             [],
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let third = MIGRATIONS.get(..3).ok_or("fewer than three migrations")?;
+        migrate(&mut connection, third, &backups)?;
         assert_eq!(schema_version(&connection)?, 3);
         assert!(objects(&connection)?.contains(&"refs_through_imports".to_owned()));
+        let completed: Option<String> = connection
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'cortex_version'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        assert_eq!(completed.as_deref(), Some("2.0.0"));
+        Ok(())
+    }
+
+    /// A database of the third schema, with an index completed, gains the index of names passed on
+    /// as others and keeps the record of the completed index: the new index is built from rows
+    /// already there.
+    #[test]
+    fn the_fourth_schema_keeps_the_index_complete() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let third = MIGRATIONS.get(..3).ok_or("fewer than three migrations")?;
+        migrate(&mut connection, third, &backups)?;
+        connection.execute(
+            "INSERT INTO meta (key, value) VALUES ('cortex_version', '2.0.0')",
+            [],
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 4);
+        assert!(objects(&connection)?.contains(&"passes_on_aliases".to_owned()));
         let completed: Option<String> = connection
             .query_row(
                 "SELECT value FROM meta WHERE key = 'cortex_version'",

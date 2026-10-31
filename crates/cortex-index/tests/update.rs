@@ -20,8 +20,9 @@ use proptest::prelude::*;
 /// The repository every case starts from: Python with a package that passes a name on and a test,
 /// TypeScript with an index file that passes names on, by name and by `*`, a chain of Python
 /// files passing `x` on, as deep as a search for a name follows (`chain_user.py` takes `x` from
-/// `c1`, which takes it from `c2`, and so on to `c5`, which defines it), and `worker.py`, which
-/// calls names after the module it imports, one that module defines and one it does not.
+/// `c1`, which takes it from `c2`, and so on to `c5`, which defines it), `worker.py`, which calls
+/// names after the module it imports, one that module defines and one it does not, and
+/// `x_user.py`, which takes `y` from `x_alias.py`, which passes `c5`'s `x` on as `y`.
 const FIXTURE: &[(&str, &str)] = &[
     ("chain/__init__.py", ""),
     ("chain/c1.py", "from chain.c2 import x\n"),
@@ -56,6 +57,8 @@ const FIXTURE: &[(&str, &str)] = &[
         "import { greet, more } from \"./index\";\ngreet();\nmore();\n",
     ),
     ("worker.py", "import util\n\nutil.tool()\nutil.more()\n"),
+    ("x_alias.py", "from chain.c5 import x as y\n"),
+    ("x_user.py", "from x_alias import y\n\ny()\n"),
 ];
 
 /// Names edits define and call: some already defined, so that definitions come and go under names
@@ -530,6 +533,15 @@ fn a_definition_moved_to_another_file_is_found_there() -> TestResult {
         ],
         ("util.py", "tools.py"),
     )
+}
+
+/// `c5` comes to define `x` twice: `x_user.py`'s import of `y`, which `x_alias.py` passes `x` on
+/// as, finds two definitions and is untied, though `x_user.py` names no `x`; restored, it is tied
+/// again.
+#[test]
+fn a_name_passed_on_as_another_indexes_as_everything_does() -> TestResult {
+    // chain/c5.py sorts 6th; name 5 is `x`.
+    check_edits(&[Edit::Define(6, 5), Edit::Restore(6)])
 }
 
 /// `util.py` comes to define `more` and then no longer does: `worker.py`'s call of `more` after

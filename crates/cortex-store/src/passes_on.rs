@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use cortex_core::RepoPath;
+use cortex_core::{Identifier, RepoPath};
 use rusqlite::{Connection, Row};
 
 use crate::error::{StoreError, sqlite};
@@ -84,6 +84,28 @@ pub(crate) fn write(
         }
     }
     Ok(())
+}
+
+/// The names files pass `taken` on as, other than `taken` itself, in name order.
+///
+/// # Errors
+///
+/// SQLite errors and stored names that cannot be read back.
+pub(crate) fn aliases(
+    connection: &Connection,
+    taken: &Identifier,
+) -> Result<Vec<Identifier>, StoreError> {
+    let raw: Vec<(String, i64)> = connection
+        .prepare_cached(schema::PASSES_ON_ALIASES)
+        .and_then(|mut statement| {
+            statement
+                .query_map([taken.as_str()], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect()
+        })
+        .map_err(sqlite("reading the names a name is passed on as"))?;
+    raw.iter()
+        .map(|(name, row)| values::identifier(name, "passes_on.name", *row))
+        .collect()
 }
 
 /// Deletes what the file `file` passes on.

@@ -27,10 +27,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 3,
         sql: include_str!("../migrations/0003_refs_through_imports.sql"),
     },
+    Migration {
+        version: 4,
+        sql: include_str!("../migrations/0004_passes_on_aliases.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 3;
+pub(crate) const SCHEMA_VERSION: u32 = 4;
 
 /// How many objects the database defines; 0 for a new, empty database.
 pub(crate) const COUNT_OBJECTS: &str = "SELECT count(*) FROM sqlite_schema";
@@ -200,6 +204,10 @@ pub(crate) const PASSES_ON_INSERT: &str =
     "INSERT INTO passes_on (file_id, position, name, taken, path) VALUES (?1, ?2, ?3, ?4, ?5)";
 /// Deletes what a file passes on.
 pub(crate) const PASSES_ON_DELETE: &str = "DELETE FROM passes_on WHERE file_id = ?1";
+/// The names files pass one name (the parameter) on as, other than that name, each with one of its
+/// rows' ids. The condition on the two names is `passes_on_aliases`'s own, written the same.
+pub(crate) const PASSES_ON_ALIASES: &str = "SELECT name, MIN(rowid) FROM passes_on \
+     WHERE taken = ?1 AND name <> taken GROUP BY name ORDER BY name";
 /// What a file passes on, in the order it was written.
 pub(crate) const PASSES_ON_OF_FILE: &str = "SELECT file_id, position, name, taken, path      FROM passes_on WHERE file_id = ?1 ORDER BY rowid";
 /// What every file passes on, by file, in the order it was written.
@@ -398,8 +406,9 @@ mod tests {
     }
 
     /// The indexes of every table: those of the table definitions, plus `refs.dst_name`, the
-    /// references through imports by name, `nodes.path` and the uniqueness of folder paths, the last
-    /// two partial. Each entry: columns, unique, partial.
+    /// references through imports by name, `nodes.path`, the uniqueness of folder paths and the
+    /// names passed on as others, the second and the last two partial. Each entry: columns, unique,
+    /// partial.
     fn expected_indexes() -> [(&'static str, Vec<Index>); 7] {
         [
             ("meta", index_list(&[(&["key"], true, false)])),
@@ -439,7 +448,10 @@ mod tests {
                     (&["dst", "type"], false, false),
                 ]),
             ),
-            ("passes_on", index_list(&[(&["file_id"], false, false)])),
+            (
+                "passes_on",
+                index_list(&[(&["file_id"], false, false), (&["taken"], false, true)]),
+            ),
         ]
     }
 
@@ -465,6 +477,29 @@ mod tests {
             "{steps:?}"
         );
         assert_eq!(cortex_core::Resolution::ImportPath.name(), "import_path");
+        Ok(())
+    }
+
+    /// The names a name is passed on as are read from the index of those rows alone, as the query
+    /// plan shows.
+    #[test]
+    fn names_passed_on_as_others_are_found_by_their_index() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let connection = Connection::open_in_memory()?;
+        for migration in MIGRATIONS {
+            connection.execute_batch(migration.sql)?;
+        }
+        let mut statement =
+            connection.prepare(&["EXPLAIN QUERY PLAN ", PASSES_ON_ALIASES].concat())?;
+        let steps: Vec<String> = statement
+            .query_map(["x"], |row| row.get(3))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert!(
+            steps
+                .iter()
+                .any(|step| step.contains("USING INDEX passes_on_aliases")),
+            "{steps:?}"
+        );
         Ok(())
     }
 
