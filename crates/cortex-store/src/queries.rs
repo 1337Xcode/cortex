@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use cortex_core::{EdgeType, FileFlags, Identifier, Language, NodeKind, RepoPath};
+use cortex_core::{
+    EdgeType, FileFlags, Identifier, Language, NodeKind, RefKind, RepoPath, Resolution,
+};
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{StoreError, sqlite};
@@ -240,22 +242,6 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawSymbolName::check).collect()
     }
 
-    /// The symbols named `name`, as [`Queries::symbol_names`] gives them, by id.
-    ///
-    /// # Errors
-    ///
-    /// SQLite errors and stored values that cannot be read back.
-    pub fn symbol_names_named(self, name: &Identifier) -> Result<Vec<SymbolName>, StoreError> {
-        let raw = self
-            .collect(
-                schema::SYMBOL_NAMES_NAMED,
-                name.as_str(),
-                RawSymbolName::read,
-            )
-            .map_err(sqlite("reading symbol names"))?;
-        raw.into_iter().map(RawSymbolName::check).collect()
-    }
-
     /// The symbols in `files`, as [`Queries::symbol_names`] gives them, by id.
     ///
     /// # Errors
@@ -299,14 +285,47 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawSymbolName::check).collect()
     }
 
-    /// The references named `name`, as [`Queries::ref_names`] gives them, by id.
+    /// The files holding a reference named `name` that goes through an import: tied through one,
+    /// left untied by one, or an import's own.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn files_with_refs_through_imports(
+        self,
+        name: &Identifier,
+    ) -> Result<Vec<FileId>, StoreError> {
+        let params = (
+            name.as_str(),
+            Resolution::ImportPath.name(),
+            RefKind::Import.name(),
+        );
+        self.connection
+            .prepare_cached(schema::FILES_WITH_REFS_THROUGH_IMPORTS)
+            .and_then(|mut statement| {
+                statement
+                    .query_map(params, |row| row.get(0).map(FileId))?
+                    .collect()
+            })
+            .map_err(sqlite("reading files with references through imports"))
+    }
+
+    /// The references named `name` that go by their name, as [`Queries::ref_names`] gives them,
+    /// by id: none that goes through an import or is an import's own.
     ///
     /// # Errors
     ///
     /// SQLite errors and stored values that cannot be read back.
-    pub fn ref_names_named(self, name: &Identifier) -> Result<Vec<RefName>, StoreError> {
-        let raw = self
-            .collect(schema::REF_NAMES_NAMED, name.as_str(), RawRefName::read)
+    pub fn ref_names_by_name(self, name: &Identifier) -> Result<Vec<RefName>, StoreError> {
+        let params = (
+            name.as_str(),
+            Resolution::ImportPath.name(),
+            RefKind::Import.name(),
+        );
+        let raw: Vec<RawRefName> = self
+            .connection
+            .prepare_cached(schema::REF_NAMES_BY_NAME)
+            .and_then(|mut statement| statement.query_map(params, RawRefName::read)?.collect())
             .map_err(sqlite("reading reference names"))?;
         raw.into_iter().map(RawRefName::check).collect()
     }

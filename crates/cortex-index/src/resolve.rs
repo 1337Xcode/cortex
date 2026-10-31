@@ -29,6 +29,7 @@ use cortex_store::{
 };
 
 use crate::bindings::{Bindings, Lookup, Reach};
+use crate::name_changes::{NameChanges, may_find_otherwise};
 
 /// How many references are written per transaction.
 const RESOLUTIONS_PER_TRANSACTION: usize = 4096;
@@ -397,7 +398,7 @@ fn members(family: Language) -> Vec<Language> {
 }
 
 /// The language family `language` belongs to, named by its first member.
-fn family(language: Language) -> Language {
+pub(crate) fn family(language: Language) -> Language {
     match language {
         Language::Tsx | Language::JavaScript => Language::TypeScript,
         Language::Cpp => Language::C,
@@ -474,7 +475,7 @@ pub(crate) fn resolve_names(
 pub(crate) fn resolve_names_around(
     writer: &mut Writer,
     bindings: &BTreeMap<RepoPath, Bindings>,
-    names: &BTreeSet<Identifier>,
+    names: &NameChanges,
     stale_scip: &BTreeSet<SymbolId>,
 ) -> Result<NamePass, StoreError> {
     let queries = writer.queries();
@@ -496,14 +497,11 @@ pub(crate) fn resolve_names_around(
             );
         }
     }
-    for name in names {
-        refs.extend(
-            queries
-                .ref_names_named(name)?
-                .into_iter()
-                .map(|r| (r.id, r)),
-        );
-    }
+    refs.extend(
+        by_name_elsewhere(queries, names)?
+            .into_iter()
+            .map(|r| (r.id, r)),
+    );
     for symbol in stale_scip {
         let tied = queries
             .ref_names_to(*symbol)?
@@ -547,6 +545,46 @@ pub(crate) fn resolve_names_around(
         }
     }
     Ok(pass)
+}
+
+/// The references elsewhere going by a name whose definitions changed, where what the name finds
+/// may now differ: in a family whose count of the name's definitions reached one or none, before
+/// or after (see [`may_find_otherwise`]), and in every family for a name whose definitions moved
+/// between families. References that go through an import keep their ties in a file the pass
+/// does not read, and are not read.
+///
+/// # Errors
+///
+/// Store errors.
+fn by_name_elsewhere(
+    queries: Queries<'_>,
+    names: &NameChanges,
+) -> Result<Vec<RefName>, StoreError> {
+    let (counted, moved) = names.counted();
+    let mut refs = Vec::new();
+    for name in moved {
+        refs.extend(queries.ref_names_by_name(name)?);
+    }
+    for ((name, named_family), delta) in counted {
+        if moved.contains(name) {
+            continue;
+        }
+        let found = queries.symbol_names_named_in(name, &members(*named_family), 3)?;
+        let after = i64::try_from(found.len()).unwrap_or(i64::MAX);
+        if !may_find_otherwise(after, *delta) {
+            continue;
+        }
+        let in_family = queries
+            .ref_names_by_name(name)?
+            .into_iter()
+            .filter(|reference| {
+                reference
+                    .language
+                    .is_some_and(|language| family(language) == *named_family)
+            });
+        refs.extend(in_family);
+    }
+    Ok(refs)
 }
 
 /// The definitions the pass needs for the names it looks for, `wanted`: every definition in a file

@@ -100,11 +100,6 @@ pub(crate) const SYMBOLS_NAMED: &str =
 pub(crate) const SYMBOL_NAMES: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name, \
      s.parent_id IS NULL AND s.qual_name = s.name, s.kind \
      FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id ORDER BY s.symbol_id";
-/// As [`SYMBOL_NAMES`], for the symbols of one name.
-pub(crate) const SYMBOL_NAMES_NAMED: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name, \
-     s.parent_id IS NULL AND s.qual_name = s.name, s.kind \
-     FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id WHERE s.name = ?1 \
-     ORDER BY s.symbol_id";
 
 /// As [`SYMBOL_NAMES`], for the symbols in the files whose ids a JSON array lists.
 pub(crate) const SYMBOL_NAMES_IN_FILES: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name, \
@@ -142,10 +137,16 @@ pub(crate) const REFS_IN_FILE: &str = "SELECT ref_id, src_file_id, src_symbol_id
 pub(crate) const REF_NAMES: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, r.kind, \
      r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
      JOIN files AS f ON f.file_id = r.src_file_id ORDER BY r.ref_id";
-/// As [`REF_NAMES`], for the references of one name.
-pub(crate) const REF_NAMES_NAMED: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
+/// The files holding a reference of one name that goes through an import: tied through one
+/// (`import_path`, the second parameter) or an import's own (the third parameter, its kind).
+pub(crate) const FILES_WITH_REFS_THROUGH_IMPORTS: &str = "SELECT DISTINCT src_file_id FROM refs \
+     WHERE dst_name = ?1 AND (resolution = ?2 OR kind = ?3) ORDER BY src_file_id";
+/// As [`REF_NAMES`], for the references of one name that go by it: neither an import's own (the
+/// third parameter, its kind) nor going through one (`import_path`, the second parameter).
+pub(crate) const REF_NAMES_BY_NAME: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
      r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
-     JOIN files AS f ON f.file_id = r.src_file_id WHERE r.dst_name = ?1 ORDER BY r.ref_id";
+     JOIN files AS f ON f.file_id = r.src_file_id WHERE r.dst_name = ?1 \
+     AND (r.resolution IS NULL OR r.resolution <> ?2) AND r.kind <> ?3 ORDER BY r.ref_id";
 /// As [`REF_NAMES`], for the references tied to one symbol.
 pub(crate) const REF_NAMES_TO: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
      r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \

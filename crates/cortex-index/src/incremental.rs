@@ -10,10 +10,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{EdgeType, FileFlags, Identifier, RefKind, RepoPath};
+use cortex_core::{EdgeType, FileFlags, RepoPath};
 use cortex_store::{FileId, FileRow, MetaKey, NodeId, Queries, StoreError, Writer};
 
 use crate::discover::DiscoveredFile;
+use crate::name_changes::NameChanges;
 use crate::resolve::search;
 
 /// How many files away from a change the files read again for their bindings may be: a search for
@@ -169,14 +170,15 @@ pub(crate) fn importers(
 pub(crate) fn around_removal(
     queries: Queries<'_>,
     paths: &BTreeSet<RepoPath>,
-) -> Result<(Neighbours, BTreeSet<Identifier>), StoreError> {
-    let mut names = BTreeSet::new();
+) -> Result<(Neighbours, NameChanges), StoreError> {
+    let mut names = NameChanges::default();
     for path in paths {
         let Some(row) = queries.file(path)? else {
             continue;
         };
-        let symbols = queries.symbols_in_file(row.id)?;
-        names.extend(symbols.into_iter().map(|symbol| symbol.name));
+        for symbol in queries.symbols_in_file(row.id)? {
+            names.went(&symbol.name, row.file.language);
+        }
     }
     Ok((importers(queries, paths)?, names))
 }
@@ -190,15 +192,11 @@ pub(crate) fn around_removal(
 /// Store errors.
 pub(crate) fn users_through_imports(
     queries: Queries<'_>,
-    names: &BTreeSet<Identifier>,
+    names: &NameChanges,
 ) -> Result<BTreeSet<RepoPath>, StoreError> {
     let mut files = BTreeSet::new();
-    for name in names {
-        for reference in queries.ref_names_named(name)? {
-            if reference.goes_through_import || reference.kind == RefKind::Import {
-                files.insert(reference.file);
-            }
-        }
+    for name in names.names() {
+        files.extend(queries.files_with_refs_through_imports(name)?);
     }
     let mut paths = BTreeSet::new();
     for file in files {

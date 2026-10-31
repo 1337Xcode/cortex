@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use cortex_core::{ContentHash, FileFlags, Identifier, Language, ModeSetting, RepoPath, ScaleMode};
+use cortex_core::{ContentHash, FileFlags, Language, ModeSetting, RepoPath, ScaleMode};
 use cortex_store::{
     ChangeKind, FileChange, FileIndex, FileRecord, FileRow, StoreError, SymbolChange, SymbolId,
     Target, Writer,
@@ -45,6 +45,7 @@ use crate::folders;
 use crate::grammar::Grammars;
 use crate::imports::Project;
 use crate::incremental::{self, Neighbours};
+use crate::name_changes::NameChanges;
 use crate::resolve;
 use crate::safe_read;
 use crate::scale::{self, RepoSize};
@@ -252,7 +253,7 @@ pub fn index_repository(
     let is_whole = known.is_empty();
     let missing = missing_files(writer, &discovery)?;
     let (importers_of_gone, mut names) = if is_whole {
-        (Neighbours::default(), BTreeSet::new())
+        (Neighbours::default(), NameChanges::default())
     } else {
         incremental::around_removal(writer.queries(), &missing.iter().cloned().collect())?
     };
@@ -325,7 +326,9 @@ pub fn index_repository(
                 .ok()
                 .and_then(|position| discovery.files.get(position).cloned())
         };
-        names.extend(written.iter().flat_map(|file| file.names.iter().cloned()));
+        for file in &written {
+            names.extend(file.names.clone());
+        }
         files_around(writer, &walked, &written, (importers_of_gone, &names))?
     };
     let read_again = read_again(&around, &context)?;
@@ -360,9 +363,9 @@ pub(crate) struct Written {
     symbols: Vec<SymbolId>,
     /// Whether it was not stored before.
     pub(crate) is_new: bool,
-    /// The names of its definitions that came or went, or of all of them when its language
-    /// changed: where another file's references may now find something else.
-    pub(crate) names: Vec<Identifier>,
+    /// Its definitions that came or went, or all of them when its language changed: where another
+    /// file's references may now find something else.
+    pub(crate) names: NameChanges,
     /// Whether it passes on something other than before: its importers may find something else.
     passes_on_otherwise: bool,
 }
@@ -378,7 +381,7 @@ pub(crate) fn files_around(
     writer: &Writer,
     file_of: &dyn Fn(&RepoPath) -> Option<DiscoveredFile>,
     written: &[Written],
-    (importers_of_gone, names): (Neighbours, &BTreeSet<Identifier>),
+    (importers_of_gone, names): (Neighbours, &NameChanges),
 ) -> Result<(Vec<DiscoveredFile>, bool), StoreError> {
     let queries = writer.queries();
     let changed: BTreeSet<&RepoPath> = written.iter().map(|file| &file.path).collect();
@@ -434,7 +437,7 @@ pub(crate) enum Pass<'n> {
     },
     /// The references a change of chosen paths concerns: those in the files written and read
     /// again, and those named in these names, whose definitions came or went.
-    Around(&'n BTreeSet<Identifier>),
+    Around(&'n NameChanges),
 }
 
 /// Ties references as `pass` says and writes the graph's edges once files are written: `files`
@@ -662,25 +665,32 @@ fn write_batch(
     Ok(written)
 }
 
-/// The names of the definitions of `index` that `change` added or removed, or of every one of them
-/// when the file's language differs from the one `known` stored: a definition counts in its
-/// language family.
+/// The definitions of `index` that `change` added or removed, counted in the file's language
+/// family, or every one of them as moved when the file's language differs from the one `known`
+/// stored: a definition counts in its language family.
 fn changed_names(
     index: &FileIndex,
     change: &FileChange,
     known: Option<&BTreeMap<RepoPath, FileRow>>,
-) -> Vec<Identifier> {
+) -> NameChanges {
+    let mut names = NameChanges::default();
     let stored = known.and_then(|known| known.get(&index.file.path));
-    let came_or_went = change
-        .changes
-        .iter()
-        .filter(|symbol| matches!(symbol.kind, ChangeKind::Added | ChangeKind::Removed))
-        .map(|symbol| symbol.name.clone());
-    if stored.is_some_and(|row| row.file.language != index.file.language) {
-        let every = index.symbols.iter().map(|symbol| symbol.name.clone());
-        return every.chain(came_or_went).collect();
+    let language = index.file.language;
+    let has_moved = stored.is_some_and(|row| row.file.language != language);
+    for symbol in &change.changes {
+        match symbol.kind {
+            _ if has_moved => names.moved(&symbol.name),
+            ChangeKind::Added => names.came(&symbol.name, language),
+            ChangeKind::Removed => names.went(&symbol.name, language),
+            ChangeKind::Signature | ChangeKind::Body => {}
+        }
     }
-    came_or_went.collect()
+    if has_moved {
+        for symbol in &index.symbols {
+            names.moved(&symbol.name);
+        }
+    }
+    names
 }
 
 /// Prepares `batch` on the context's threads, each with an extractor of its own, and returns what

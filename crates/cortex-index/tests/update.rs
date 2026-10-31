@@ -18,9 +18,10 @@ use cortex_store::{NodeId, Queries, Reader, SymbolId, Writer, WriterOptions};
 use proptest::prelude::*;
 
 /// The repository every case starts from: Python with a package that passes a name on and a test,
-/// TypeScript with an index file that passes names on, by name and by `*`, and a chain of Python
-/// files passing `x` on, as deep as a search for a name follows: `chain_user.py` takes `x` from
-/// `c1`, which takes it from `c2`, and so on to `c5`, which defines it.
+/// TypeScript with an index file that passes names on, by name and by `*`, a chain of Python
+/// files passing `x` on, as deep as a search for a name follows (`chain_user.py` takes `x` from
+/// `c1`, which takes it from `c2`, and so on to `c5`, which defines it), and `worker.py`, which
+/// calls names after the module it imports, one that module defines and one it does not.
 const FIXTURE: &[(&str, &str)] = &[
     ("chain/__init__.py", ""),
     ("chain/c1.py", "from chain.c2 import x\n"),
@@ -54,6 +55,7 @@ const FIXTURE: &[(&str, &str)] = &[
         "web/app.ts",
         "import { greet, more } from \"./index\";\ngreet();\nmore();\n",
     ),
+    ("worker.py", "import util\n\nutil.tool()\nutil.more()\n"),
 ];
 
 /// Names edits define and call: some already defined, so that definitions come and go under names
@@ -443,21 +445,22 @@ proptest! {
     }
 }
 
-/// A file renamed in case alone, as the watcher reports it with both spellings, is stored under its
-/// new name only, as a fresh index stores it, whether or not the file system tells the two apart.
-#[test]
-fn a_file_renamed_in_case_is_stored_once() -> TestResult {
+/// Writes `files` to a fresh repository and indexes it, renames the file at `from` to `to` and
+/// indexes both paths, as the watcher reports a rename, and checks that the store holds what a
+/// store built from scratch holds.
+fn check_rename(files: &[(&str, &str)], (from, to): (&str, &str)) -> TestResult {
     let scratch = tempfile::tempdir()?;
     let root = scratch.path().join("repo");
     std::fs::create_dir(&root)?;
-    std::fs::write(root.join("Foo.py"), "def foo():\n    pass\n")?;
-    std::fs::write(root.join("app.py"), "foo()\n")?;
+    for (path, content) in files {
+        std::fs::write(root.join(path), content)?;
+    }
     let grammars = grammars()?;
     let kept_folder = scratch.path().join("kept");
     let mut kept = writer(&kept_folder, &root)?;
     index_repository(&root, &grammars, &mut kept, &options())?;
-    std::fs::rename(root.join("Foo.py"), root.join("foo.py"))?;
-    let renamed = [RepoPath::new("Foo.py")?, RepoPath::new("foo.py")?];
+    std::fs::rename(root.join(from), root.join(to))?;
+    let renamed = [RepoPath::new(from)?, RepoPath::new(to)?];
     index_paths(&root, &grammars, &mut kept, &options(), &renamed)?;
     let fresh_folder = scratch.path().join("fresh");
     index_repository(
@@ -469,6 +472,55 @@ fn a_file_renamed_in_case_is_stored_once() -> TestResult {
     let (left, right) = (snapshot(&kept_folder)?, snapshot(&fresh_folder)?);
     assert!(left == right, "{}", differences(&left, &right));
     Ok(())
+}
+
+/// A file renamed in case alone, as the watcher reports it with both spellings, is stored under its
+/// new name only, as a fresh index stores it, whether or not the file system tells the two apart.
+#[test]
+fn a_file_renamed_in_case_is_stored_once() -> TestResult {
+    check_rename(
+        &[("Foo.py", "def foo():\n    pass\n"), ("app.py", "foo()\n")],
+        ("Foo.py", "foo.py"),
+    )
+}
+
+/// The one definition of `tool` moves to a file of another name: the name still has one
+/// definition, but a call that found it by name alone must now find it at the new path.
+#[test]
+fn a_definition_moved_to_another_file_is_found_there() -> TestResult {
+    check_rename(
+        &[
+            ("util.py", "def tool():\n    pass\n"),
+            ("app.py", "tool()\n"),
+        ],
+        ("util.py", "tools.py"),
+    )
+}
+
+/// `util.py` comes to define `more` and then no longer does: `worker.py`'s call of `more` after
+/// the module `util` is tied to that definition and untied again, though `worker.py` is not edited.
+#[test]
+fn a_name_after_an_imported_module_indexes_as_everything_does() -> TestResult {
+    // util.py sorts 12th, before web/ and worker.py; name 3 is `more`.
+    check_edits(&[Edit::Define(12, 3), Edit::Restore(12)])
+}
+
+/// `app.py` calls `tool`, which it does not import, while the name's definitions go from one (in
+/// `util.py`) to two, three, two, one and none. The call finds the one definition, and nothing
+/// while there are several or none: the counts from one to two, two to one and one to none change
+/// what it finds, though `app.py` is not edited; two to three and three to two do not.
+#[test]
+fn a_name_defined_once_then_several_times_indexes_as_everything_does() -> TestResult {
+    // Files sort as: app.py 0, ... chain/c6.py 7, chain_user.py 8, ... util.py 12. Name 1 is
+    // `tool`.
+    check_edits(&[
+        Edit::Call(0, 1),
+        Edit::Define(8, 1),
+        Edit::Define(7, 1),
+        Edit::Restore(8),
+        Edit::Restore(7),
+        Edit::Remove(12),
+    ])
 }
 
 /// `c5` comes to import `x` from `c6` as well as define it, so `x` is ambiguous there, five files

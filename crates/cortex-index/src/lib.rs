@@ -34,6 +34,7 @@ mod incremental;
 mod languages;
 mod lines;
 mod locals;
+mod name_changes;
 mod name_text;
 mod node_lookup;
 mod path_rules;

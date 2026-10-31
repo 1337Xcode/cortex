@@ -109,7 +109,9 @@ pub fn index_paths(
         mode: ScaleMode::Tiny,
     };
     let written = pipeline::write_files(writer, &found.candidates, &context, &mut report)?;
-    names.extend(written.iter().flat_map(|file| file.names.iter().cloned()));
+    for file in &written {
+        names.extend(file.names.clone());
+    }
     let has_new_files = !gone.is_empty() || written.iter().any(|file| file.is_new);
     let canonical_root = root.canonicalize().ok();
     let queries = writer.queries();
