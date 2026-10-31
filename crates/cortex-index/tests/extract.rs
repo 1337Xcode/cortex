@@ -264,13 +264,19 @@ type Reached<'a> = (&'a str, &'a str, u32, Option<&'a str>);
 
 /// Each use is read with what is written before its name in a qualifying form of its language:
 /// a package, a module, a namespace, a value or a type. A bare name has nothing before it, and a
-/// qualifier too long to store as a name is still a qualifier.
+/// qualifier too long to store as a name is still a qualifier. A qualifier whose source a 400-byte
+/// comment pads is read for its tokens, `a.b`.
 #[test]
 fn references_know_what_they_are_reached_through() -> TestResult {
     let long = "a".repeat(300);
     let python = format!(
         "import shop.models\nfrom text import strip\n\ndef f(line):\n    shop.models.Order()\n    \
          line.strip()\n    strip(line)\n    {long}.go()\n"
+    );
+    let comment = "x".repeat(400);
+    let typescript = format!(
+        "import {{ map }} from \"./util\";\napi.fetch();\nitems.map(f);\nmap(items);\n\
+         let p: geo.Point;\na./*{comment}*/b.c();\n"
     );
     let cases: [(&str, Language, &str, &[Reached<'_>]); 6] = [
         (
@@ -288,14 +294,14 @@ fn references_know_what_they_are_reached_through() -> TestResult {
         (
             "app.ts",
             Language::TypeScript,
-            "import { map } from \"./util\";\napi.fetch();\nitems.map(f);\nmap(items);\n\
-             let p: geo.Point;\n",
+            &typescript,
             &[
                 ("import", "map", 1, None),
                 ("call", "fetch", 2, Some("api")),
                 ("call", "map", 3, Some("items")),
                 ("call", "map", 4, None),
                 ("type_ref", "Point", 5, Some("geo")),
+                ("call", "c", 6, Some("a.b")),
             ],
         ),
         (

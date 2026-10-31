@@ -907,6 +907,7 @@ path = "src/cli/main.rs"
         let routes = "src/api/routes.rs";
         let cases = [
             (routes, "super", 0, named(&["src/api/mod.rs"], None)),
+            (routes, "self", 0, named(&[routes], None)),
             (routes, "super", 1, named(&[routes], None)),
             (routes, "super::super", 1, named(&["src/api/mod.rs"], None)),
             (routes, "super", 2, named(&[], None)),

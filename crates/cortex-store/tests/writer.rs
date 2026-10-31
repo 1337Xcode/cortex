@@ -825,6 +825,44 @@ fn source_size_and_scale_mode() -> TestResult {
     Ok(())
 }
 
+/// Every file's row is listed by path; the nodes the edges of a type into a node start from are
+/// listed, none for a node no such edge reaches; a stored file's time can be set alone, which
+/// says whether the file is stored.
+#[test]
+fn file_rows_edge_sources_into_and_times() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let b = transaction.replace_file(&index("b.py", Vec::new(), Vec::new())?)?;
+    let a = transaction.replace_file(&index("a.py", Vec::new(), Vec::new())?)?;
+    let to_b = EdgeRecord {
+        dst: b.file_node,
+        weight: 0.8,
+        count: 1,
+        last_seq: 0,
+        is_directed: true,
+    };
+    transaction.replace_edges(a.file_node, EdgeType::Structural, &[to_b])?;
+    let queries = transaction.queries();
+    let rows: Vec<String> = queries
+        .file_rows()?
+        .into_iter()
+        .map(|row| row.file.path.as_str().to_owned())
+        .collect();
+    assert_eq!(rows, ["a.py", "b.py"]);
+    assert_eq!(
+        queries.sources_into(b.file_node, EdgeType::Structural)?,
+        [a.file_node]
+    );
+    assert_eq!(queries.sources_into(a.file_node, EdgeType::Structural)?, []);
+    assert_eq!(queries.sources_into(b.file_node, EdgeType::CoChange)?, []);
+    assert!(transaction.set_file_mtime(&path("a.py")?, 42)?);
+    assert!(!transaction.set_file_mtime(&path("gone.py")?, 42)?);
+    let row = transaction.queries().file(&path("a.py")?)?;
+    assert_eq!(row.map(|row| row.file.mtime_ns), Some(42));
+    Ok(())
+}
+
 /// Every symbol's node is listed by symbol, and the nodes edges of one type start from are listed
 /// by node: a file node with structural edges, a symbol node with co-change edges only.
 #[test]

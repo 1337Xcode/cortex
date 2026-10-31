@@ -305,6 +305,8 @@ mod tests {
             ("github.com/mattn/go-isatty", None),
             ("example.com", None),
             ("v2", None),
+            ("example.com/shop/v", Some("v")),
+            ("example.com/x/_tools", Some("_tools")),
         ];
         for (path, expected) in cases {
             let name = package_name(path);
