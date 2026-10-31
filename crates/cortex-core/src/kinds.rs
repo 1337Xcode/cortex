@@ -2,39 +2,7 @@
 //!
 //! These values are written to the database, so each name and number is fixed once chosen.
 
-/// Declares an enum whose variants each have one stored name, with `ALL`, `name` and
-/// `from_name`.
-macro_rules! named_kind {
-    (
-        $(#[$meta:meta])*
-        $kind:ident { $( $(#[$variant_meta:meta])* $variant:ident => $name:literal ),+ $(,)? }
-    ) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub enum $kind {
-            $( $(#[$variant_meta])* $variant, )+
-        }
-
-        impl $kind {
-            /// Every value, in declaration order.
-            pub const ALL: &'static [Self] = &[ $( Self::$variant, )+ ];
-
-            /// The stored name.
-            #[must_use]
-            pub fn name(self) -> &'static str {
-                match self {
-                    $( Self::$variant => $name, )+
-                }
-            }
-
-            /// The value with this stored name.
-            #[must_use]
-            pub fn from_name(name: &str) -> Option<Self> {
-                Self::ALL.iter().copied().find(|value| value.name() == name)
-            }
-        }
-    };
-}
+use crate::named::named_kind;
 
 named_kind! {
     /// What a symbol is.

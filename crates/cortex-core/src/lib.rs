@@ -11,20 +11,27 @@
 #![warn(clippy::pedantic)]
 
 mod config;
+mod event;
 mod hash;
 mod identifier;
 mod kinds;
 mod language;
+mod named;
 mod path;
 mod repo_id;
 mod root;
 mod scale_mode;
 mod tokens;
+mod ulid;
 
 pub use config::{
     Config, ConfigError, ConfigLayer, DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES,
     DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, LoadedConfig, MAX_MMAP_BYTES, ModeSetting,
     load as load_config,
+};
+pub use event::{
+    Agent, CompactTrigger, Event, HookKind, LineRange, LineRangeError, MAX_COMMAND_CHARS,
+    ShellCommand, ShellCommandError, StartSource, ToolKind, ToolResult, ToolTarget,
 };
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
@@ -35,3 +42,4 @@ pub use repo_id::RepoId;
 pub use root::canonical_root;
 pub use scale_mode::ScaleMode;
 pub use tokens::identifier_tokens;
+pub use ulid::{Ulid, UlidError};

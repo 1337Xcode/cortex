@@ -26,6 +26,8 @@ modes and settings.
 | `SymbolKind`, `RefKind`, `Resolution`, `NodeKind`, `EdgeType`, `FileFlags` | The kinds of record the index keeps, with the names, numbers and bits stored for them; a `Resolution` also gives the confidence of a reference resolved that way |
 | `identifier_tokens` | Splits a name or a path into the lower-case words a search matches: at anything but a letter or a digit, at a capital after a small letter or a digit, and at the last capital of a run when a small letter follows (`parseHTTPRequest` gives `parse`, `http`, `request`) |
 | `ScaleMode` | `tiny`, `small`, `medium` or `huge`: how fully a repository of a given size is served |
+| `Event` | One hook call, normalized: the agent, its session, the point in its loop (`HookKind`), the tool (`ToolKind`), what the tool aimed at (`ToolTarget`: a repository path, checked `LineRange`s, a pattern, a `ShellCommand` cut to 1,000 characters) and how it ended (`ToolResult`: exit code, success, interruption, output size), never file contents or tool output; serialized with names for every kind and checked when read |
+| `Ulid` | A sortable unique id: UTC milliseconds, then 80 bits from the BLAKE3 hash of a seed the caller gives; written as 26 characters, and only that spelling is read back |
 | `Config`, `load_config` | The settings in effect: defaults, then `~/.cortex/config.toml`, then `.cortex/config.toml`; unknown keys warn, unusable values are errors naming the file and key. Keys: `mode`, `index.max_file_bytes`, `index.extra_ignores`, `index.parse_timeout_ms`, `index.crawl_files_per_second`, `daemon.idle_shutdown_minutes`, `store.mmap_bytes` |
 
 ## Tests

@@ -62,6 +62,8 @@ tree-sitter-swift = "0.7.4"
 tree-sitter-toml-ng = "0.7.0"
 tree-sitter-typescript = "0.23.2"
 tree-sitter-yaml = "0.7.2"
+# Without its default features: they bring a random number generator Cortex does not use.
+ulid = { version = "3.0.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

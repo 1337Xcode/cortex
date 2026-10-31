@@ -186,6 +186,21 @@ pub(crate) fn without_verbatim_prefix(path: &Path) -> PathBuf {
     }
 }
 
+impl serde::Serialize for RepoPath {
+    /// The stored form, as a string.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RepoPath {
+    /// A path from its stored form, checked as [`RepoPath::new`] checks it.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        Self::new(&text).map_err(serde::de::Error::custom)
+    }
+}
+
 impl fmt::Display for RepoPath {
     /// The stored form, `/` between folders.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
