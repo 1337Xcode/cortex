@@ -9,6 +9,12 @@
 mod adapter;
 mod claude;
 mod client;
+mod fail_open;
+mod log;
+mod root;
+mod run;
+mod stdin;
 
 pub use adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, adapter};
 pub use client::{Answer, ClientError, ask};
+pub use run::run;

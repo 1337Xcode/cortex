@@ -32,10 +32,29 @@ pub fn create_private_folder(folder: &Path) -> io::Result<()> {
 ///
 /// The file cannot be opened or created, or its mode cannot be set.
 pub fn open_private_file(path: &Path) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
+    open_private(
+        path,
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false),
+    )
+}
+
+/// Opens `path` for appending, creating it when it does not exist, and makes it private.
+///
+/// # Errors
+///
+/// The file cannot be opened or created, or its mode cannot be set.
+pub fn append_private_file(path: &Path) -> io::Result<File> {
+    open_private(path, OpenOptions::new().append(true).create(true))
+}
+
+/// Opens `path` with `options`, a new file created private and a wider mode narrowed.
+fn open_private(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    std::os::unix::fs::OpenOptionsExt::mode(options, 0o600);
     let file = options.open(path)?;
     #[cfg(unix)]
     file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
@@ -74,6 +93,10 @@ mod tests {
         drop(open_private_file(&file)?);
         assert_eq!(mode(&folder)?, 0o700);
         assert_eq!(mode(&file)?, 0o600);
+
+        let log = folder.join("hook.log");
+        drop(append_private_file(&log)?);
+        assert_eq!(mode(&log)?, 0o600);
         Ok(())
     }
 }

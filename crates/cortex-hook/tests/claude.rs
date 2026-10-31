@@ -1186,7 +1186,8 @@ proptest! {
             payload.insert("session_id".to_owned(), S1.into());
             payload.insert("cwd".to_owned(), native(r"C:\repo").into());
         }
-        let bytes = serde_json::to_vec(&payload).map_err(|error| TestCaseError::fail(error.to_string()))?;
+        let bytes = serde_json::to_vec(&payload)
+            .map_err(|error| TestCaseError::fail(error.to_string()))?;
         let claude = adapter("claude").ok_or_else(|| TestCaseError::fail("no adapter"))?;
         for entry in claude.hooks() {
             if let Ok(Some(event)) = claude.normalize(entry.event_name, &bytes, &locate, stamp()) {

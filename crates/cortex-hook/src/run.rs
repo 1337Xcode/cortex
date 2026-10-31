@@ -1,0 +1,236 @@
+//! `cortex hook --agent <agent> --event <event>`: what an agent runs at each of its hooks. The hook
+//! reads the payload, turns it into an event, hands the event to its repository's daemon before the
+//! event's deadline, and ends. Whatever happens it prints nothing and exits 0; what went wrong goes
+//! to the hook log.
+
+use std::ffi::OsString;
+use std::io::Read;
+use std::panic::AssertUnwindSafe;
+use std::path::Path;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use cortex_core::ipc::{RequestBody, ResponseBody, Role};
+use cortex_core::{RepoId, Ulid, UserFolder};
+
+use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter};
+use crate::client::{ClientError, ask};
+use crate::stdin::{self, StdinError};
+use crate::{fail_open, log, root};
+
+/// How long the hook waits for its payload to end, counted from its start.
+const STDIN_TIMEOUT: Duration = Duration::from_millis(50);
+
+/// What the hook keeps of an event's hard timeout for itself: the daemon's answer is due this long
+/// before the hard timeout, so the hook exits before the agent gives up on it.
+const EXIT_MARGIN: Duration = Duration::from_millis(15);
+
+/// Why a hook call recorded nothing. Each message names what failed, never the payload's text.
+#[derive(Debug, thiserror::Error)]
+enum Failure {
+    /// The arguments are not the two the installer writes.
+    #[error("the arguments are not `--agent <agent> --event <event>`")]
+    Arguments,
+    /// No adapter has the agent's name.
+    #[error("Cortex has no adapter for that agent")]
+    UnknownAgent,
+    /// The agent's adapter registers no hook of that name.
+    #[error("Cortex registers no hook for that event")]
+    UnknownEvent,
+    /// No payload was read.
+    #[error(transparent)]
+    Stdin(#[from] StdinError),
+    /// The payload made no event.
+    #[error(transparent)]
+    Payload(#[from] NormalizeError),
+    /// The operating system reports no home folder, so the run files cannot be found.
+    #[error("the operating system reports no home folder")]
+    NoHome,
+    /// The daemon could not be asked.
+    #[error(transparent)]
+    Daemon(#[from] ClientError),
+    /// The daemon answered with something other than taking the event.
+    #[error("the daemon did not take the event")]
+    NotTaken,
+}
+
+/// Runs the hook with `args`, the arguments that follow `hook` on the command line, the payload on
+/// `input` (standard input) and `home` the user's home folder. It never fails, never panics past
+/// this call and never prints.
+pub fn run(args: &[OsString], input: impl Read + Send + 'static, home: Option<&Path>) {
+    let mut hook = Hook {
+        started: Instant::now(),
+        now: SystemTime::now(),
+        home,
+        names: None,
+    };
+    let finished = fail_open::guard(AssertUnwindSafe(|| {
+        if let Err(failure) = hook.handle(args, input) {
+            hook.note(&describe(&failure));
+        }
+    }));
+    if !finished {
+        // Noting the panic runs guarded too: nothing may escape to the agent.
+        fail_open::guard(AssertUnwindSafe(|| hook.note("the hook panicked")));
+    }
+}
+
+/// One hook call: when it started, where the user's home is, and the agent and event once known.
+struct Hook<'a> {
+    /// When the hook started, for its deadlines.
+    started: Instant,
+    /// The clock at the start, for the event's time and id.
+    now: SystemTime,
+    /// The user's home folder, if the operating system reports one.
+    home: Option<&'a Path>,
+    /// The agent's and the event's names, once the arguments name ones Cortex knows.
+    names: Option<(&'static str, &'static str)>,
+}
+
+impl Hook<'_> {
+    /// Reads the payload from `input`, normalizes it, and hands the event to the daemon.
+    fn handle(
+        &mut self,
+        args: &[OsString],
+        input: impl Read + Send + 'static,
+    ) -> Result<(), Failure> {
+        let (agent, event_name) = parse(args)?;
+        let adapter = adapter(agent).ok_or(Failure::UnknownAgent)?;
+        let entry = entry(adapter, event_name).ok_or(Failure::UnknownEvent)?;
+        self.names = Some((adapter.agent().name(), entry.event_name));
+        let payload = stdin::read_payload(input, self.started + STDIN_TIMEOUT)?;
+        let home = self.home;
+        let locate = |cwd: &Path| root::locate(cwd, home);
+        let stamp = stamp(self.now);
+        let Some(event) = adapter.normalize(entry.event_name, &payload, &locate, stamp)? else {
+            return Ok(());
+        };
+        let user = UserFolder::in_home(home.ok_or(Failure::NoHome)?);
+        let files = user.run_files(&RepoId::of(&event.repo_root));
+        let deadline = self.started + entry.hard_timeout.saturating_sub(EXIT_MARGIN);
+        let body = RequestBody::Event {
+            event: Box::new(event),
+        };
+        match ask(&files, Role::Hook, body, deadline)?.body {
+            ResponseBody::Ack => Ok(()),
+            _ => Err(Failure::NotTaken),
+        }
+    }
+
+    /// Writes `what` to the hook log with the call's time, agent and event. A log that cannot be
+    /// written is left unwritten: nothing else can be told.
+    fn note(&self, what: &str) {
+        let Some(home) = self.home else {
+            return;
+        };
+        let (agent, event) = self.names.unwrap_or(("-", "-"));
+        let line = format!("{} {agent} {event}: {what}", unix_millis(self.now));
+        let folder = UserFolder::in_home(home).logs_folder();
+        drop(log::write(&folder, SystemTime::now(), &line));
+    }
+}
+
+/// The agent's and the event's names from `--agent <agent> --event <event>`, in either order.
+fn parse(args: &[OsString]) -> Result<(&str, &str), Failure> {
+    let (mut agent, mut event) = (None, None);
+    let mut args = args.iter();
+    while let Some(flag) = args.next() {
+        let value = args
+            .next()
+            .and_then(|value| value.to_str())
+            .ok_or(Failure::Arguments)?;
+        match flag.to_str() {
+            Some("--agent") if agent.is_none() => agent = Some(value),
+            Some("--event") if event.is_none() => event = Some(value),
+            _ => return Err(Failure::Arguments),
+        }
+    }
+    agent.zip(event).ok_or(Failure::Arguments)
+}
+
+/// The hook `adapter` registers under `event_name`.
+fn entry(adapter: &dyn Adapter, event_name: &str) -> Option<&'static HookEntry> {
+    adapter
+        .hooks()
+        .iter()
+        .find(|entry| entry.event_name == event_name)
+}
+
+/// The event's id and time: the clock at the start, and an id whose random part is BLAKE3 of the
+/// process id and the clock's nanoseconds, so that hooks started in the same millisecond differ.
+fn stamp(now: SystemTime) -> Stamp {
+    let since_epoch = now.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let mut seed = std::process::id().to_le_bytes().to_vec();
+    seed.extend_from_slice(&since_epoch.as_nanos().to_le_bytes());
+    let ts_ms = unix_millis(now);
+    Stamp {
+        event_id: Ulid::from_seed(u64::try_from(ts_ms).unwrap_or(0), &seed),
+        ts_ms,
+    }
+}
+
+/// `time` in UTC milliseconds; a clock set before 1970 reads as 0.
+fn unix_millis(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH).map_or(0, |since| {
+        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+    })
+}
+
+/// What went wrong, with the operating system's reason for a failed read or connection. A
+/// payload's parse error is not followed: its message may quote the payload.
+fn describe(failure: &Failure) -> String {
+    let mut text = failure.to_string();
+    let io_source = match failure {
+        Failure::Stdin(StdinError::Io(error)) | Failure::Daemon(ClientError::Io(error)) => {
+            Some(error)
+        }
+        _ => None,
+    };
+    if let Some(error) = io_source {
+        text.push_str(": ");
+        text.push_str(&error.to_string());
+    }
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The arguments.
+    fn args(list: &[&str]) -> Vec<OsString> {
+        list.iter().map(OsString::from).collect()
+    }
+
+    /// The two flags are read in either order; anything else, missing, repeated or extra, is
+    /// refused.
+    #[test]
+    fn only_the_two_flags_are_read() {
+        let named = |list: &[&str]| {
+            parse(&args(list))
+                .ok()
+                .map(|(a, e)| (a.to_owned(), e.to_owned()))
+        };
+        let expected = Some(("claude".to_owned(), "Stop".to_owned()));
+        assert_eq!(named(&["--agent", "claude", "--event", "Stop"]), expected);
+        assert_eq!(named(&["--event", "Stop", "--agent", "claude"]), expected);
+        for refused in [
+            &["--agent", "claude"][..],
+            &["--agent", "claude", "--event"],
+            &["--agent", "claude", "--event", "Stop", "--extra", "x"],
+            &["--agent", "claude", "--agent", "codex", "--event", "Stop"],
+            &["--help"],
+            &[],
+        ] {
+            assert_eq!(named(refused), None, "{refused:?}");
+        }
+    }
+
+    /// Two stamps of one instant in one process are equal; the time is in milliseconds.
+    #[test]
+    fn the_stamp_is_the_start_time() {
+        let now = UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
+        assert_eq!(stamp(now), stamp(now));
+        assert_eq!(stamp(now).ts_ms, 1_700_000_000_123);
+        assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_secs(1)), 0);
+    }
+}

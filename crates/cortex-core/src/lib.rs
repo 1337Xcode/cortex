@@ -47,7 +47,7 @@ pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
 pub use kinds::{EdgeType, FileFlags, NodeKind, RefKind, Resolution, SymbolKind};
 pub use language::{Language, Tier};
 pub use path::{PathError, RepoPath};
-pub use private::{create_private_folder, open_private_file};
+pub use private::{append_private_file, create_private_folder, open_private_file};
 pub use repo_id::RepoId;
 pub use root::canonical_root;
 pub use scale_mode::ScaleMode;

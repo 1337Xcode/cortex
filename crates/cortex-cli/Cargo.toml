@@ -23,6 +23,7 @@ cortex-store = { path = "../cortex-store" }
 
 [dev-dependencies]
 interprocess.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]
