@@ -43,6 +43,32 @@ pub(crate) fn known_files(queries: Queries<'_>) -> Result<BTreeMap<RepoPath, Fil
         .collect())
 }
 
+/// The stored files parsed before, whatever Cortex parsed them: from `known` when it holds every
+/// stored file, else read from the store.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn parsed_files(
+    queries: Queries<'_>,
+    known: &BTreeMap<RepoPath, FileRow>,
+) -> Result<BTreeSet<RepoPath>, StoreError> {
+    let is_parsed = |row: &FileRow| row.file.flags.contains(FileFlags::PARSED);
+    if !known.is_empty() {
+        return Ok(known
+            .values()
+            .filter(|row| is_parsed(row))
+            .map(|row| row.file.path.clone())
+            .collect());
+    }
+    Ok(queries
+        .file_rows()?
+        .into_iter()
+        .filter(is_parsed)
+        .map(|row| row.file.path)
+        .collect())
+}
+
 /// Whether `file`, as the walk found it, is as `known` holds it: the same modification time,
 /// size, language and flags, but for whether it was parsed.
 pub(crate) fn is_unchanged(file: &DiscoveredFile, known: &FileRow) -> bool {

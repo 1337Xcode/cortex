@@ -68,8 +68,10 @@ fn crawl_order(root: &Path, asked: &[RepoPath]) -> TestResult<Vec<String>> {
 /// parse, not the generated or vendored ones; asked for `app.py`, it gives that first, then its
 /// neighbour `lib.py`. Parsed alone, `app.py` cannot tie its import, since `lib.py` defines nothing
 /// yet; once `lib.py` is parsed, `app.py`, which imports it, is read again and its names tied.
-/// Indexed again, the parsed files stay parsed, a changed parsed file is parsed again, and a new
-/// file only enters the inventory. Left to its size, the repository stays huge while its last
+/// When only `lib.py` changes, `app.py` is read again whole and keeps its ties. Indexed again, the
+/// parsed files stay parsed, a changed parsed file is parsed again, and a new file only enters the
+/// inventory. After an index by another version of Cortex, what was parsed is parsed again and
+/// the rest stays inventory. Left to its size, the repository stays huge while its last
 /// index recorded huge; that index counts it tiny, so the next one parses the files waiting.
 #[test]
 fn huge_mode_parses_on_demand() -> TestResult {
@@ -112,6 +114,17 @@ fn huge_mode_parses_on_demand() -> TestResult {
             ("call", "helper", 3, helper)
         ])
     );
+    let lib_changed = "def helper():\n    pass\n\n\ndef other():\n    pass\n";
+    write_all(root, &[("src/lib.py", lib_changed)])?;
+    let changed = index_with_mode(root, limits, HUGE)?;
+    assert_eq!((changed.files, changed.parsed), (1, 1));
+    assert_eq!(
+        ties(root, "src/app.py")?,
+        expected(&[
+            ("import", "helper", 1, helper),
+            ("call", "helper", 3, helper)
+        ])
+    );
     write_all(
         root,
         &[
@@ -123,6 +136,12 @@ fn huge_mode_parses_on_demand() -> TestResult {
     assert_eq!((again.files, again.parsed), (2, 1));
     assert!(is_parsed(root, "src/app.py")? && is_parsed(root, "src/lib.py")?);
     assert!(!is_parsed(root, "src/new.py")?);
+    assert_eq!(crawl_order(root, &[])?, ["src/new.py", "notes.md"]);
+    rusqlite::Connection::open(root.join(".cortex").join("cortex.db"))?
+        .execute_batch("UPDATE meta SET value = '0.0.1' WHERE key = 'cortex_version'")?;
+    let upgraded = index_with_mode(root, limits, HUGE)?;
+    assert_eq!((upgraded.files, upgraded.parsed), (6, 2));
+    assert!(is_parsed(root, "src/app.py")? && is_parsed(root, "src/lib.py")?);
     assert_eq!(crawl_order(root, &[])?, ["src/new.py", "notes.md"]);
     let sticky = index_with_mode(root, limits, ModeSetting::Auto)?;
     assert_eq!((sticky.parsed, sticky.mode), (0, ScaleMode::Tiny));

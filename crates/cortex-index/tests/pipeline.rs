@@ -51,7 +51,7 @@ const FIXTURE: [(&str, &[u8]); 8] = [
 ];
 
 /// What the store holds for one file.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Stored {
     /// Its language.
     language: Option<Language>,
@@ -723,12 +723,12 @@ fn threads_change_nothing_stored() -> TestResult {
     Ok(())
 }
 
-/// A file that takes longer to parse than allowed is skipped and reported: a new one is not
-/// written, and one stored before keeps its rows and ids. The file after it is still written. With
-/// no time at all, parsing stops at its first look at the clock, which a file of 5,000 functions
-/// certainly reaches.
+/// A file that takes longer to parse than allowed is reported. A new one is written as read,
+/// defining nothing, and is not tried again until it changes; one stored as parsed keeps its rows
+/// and ids. The file after it is still written. With no time at all, parsing stops at its first
+/// look at the clock, which a file of 5,000 functions certainly reaches.
 #[test]
-fn a_file_out_of_time_is_skipped_and_reported() -> TestResult {
+fn a_file_out_of_time_is_reported_and_tried_again_when_it_changes() -> TestResult {
     let repo = tempfile::tempdir()?;
     let root = repo.path();
     let slow: String = (0..5000)
@@ -736,8 +736,9 @@ fn a_file_out_of_time_is_skipped_and_reported() -> TestResult {
         .collect();
     write_dated(root, "slow.py", slow.as_bytes())?;
     write_dated(root, "z.txt", b"after\n")?;
+    // slow.py is Python source of 5,000 functions of two lines each.
     let out_of_time = IndexReport {
-        files: 1,
+        files: 2,
         parsed: 0,
         unchanged: 0,
         removed: 0,
@@ -746,39 +747,50 @@ fn a_file_out_of_time_is_skipped_and_reported() -> TestResult {
         left_out: Vec::new(),
         changed_symbols: Vec::new(),
         scip: ScipOutcome::Absent,
-        // Only z.txt is stored, in no language.
         size: RepoSize {
-            source_files: 0,
-            lines: 0,
+            source_files: 1,
+            lines: 10_000,
         },
         mode: ScaleMode::Tiny,
     };
     assert_eq!(index(root, 1, Duration::ZERO, DEFAULT_LIMIT)?, out_of_time);
-    assert_eq!(stored(root, "slow.py")?, None);
+    let read = unparsed(
+        Some(Language::Python),
+        FileFlags::empty(),
+        10_000,
+        slow.as_bytes(),
+    )?;
+    assert_eq!(stored(root, "slow.py")?, Some(read.clone()));
     assert_eq!(
         stored(root, "z.txt")?,
         Some(unparsed(None, FileFlags::empty(), 1, b"after\n")?)
     );
+    // Unchanged, it is not tried again, whatever the time allowed.
+    let unchanged = index(root, 1, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!((unchanged.files, unchanged.unchanged), (0, 2));
+    assert_eq!(stored(root, "slow.py")?, Some(read));
+    // One more function makes it changed: read and parsed again, now in time.
+    let with_g = format!("{slow}def g():\n    pass\n");
+    write_dated(root, "slow.py", with_g.as_bytes())?;
     index(root, 1, GENEROUS, DEFAULT_LIMIT)?;
     let parsed = stored(root, "slow.py")?.ok_or("no slow.py")?;
     assert_eq!(
         (parsed.flags, parsed.symbols.len()),
-        (FileFlags::PARSED, 5000)
+        (FileFlags::PARSED, 5001)
     );
     let ids = symbol_ids(root, "slow.py")?;
-    // One more function makes slow.py changed, to be read and parsed again; out of time, it keeps
-    // its stored rows, 5,000 functions of two lines each, and counts as source. z.txt is unchanged.
+    // Changed again and out of time, it keeps its stored rows: 5,001 functions, 10,002 lines.
     write_dated(
         root,
         "slow.py",
-        format!("{slow}def g():\n    pass\n").as_bytes(),
+        format!("{with_g}def h():\n    pass\n").as_bytes(),
     )?;
     let kept = IndexReport {
         files: 0,
         unchanged: 1,
         size: RepoSize {
             source_files: 1,
-            lines: 10_000,
+            lines: 10_002,
         },
         ..out_of_time
     };

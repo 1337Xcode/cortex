@@ -152,16 +152,14 @@ enum Outcome {
     Touched(RepoPath, i64),
     /// Nothing to write: the file at this path was skipped, for this reason.
     Skipped(RepoPath, FileProblem),
+    /// It was read but not parsed, for this reason: its row is written as read, defining nothing.
+    Unparsed(Box<FileRecord>, FileProblem),
 }
 
 impl Outcome {
     /// A file ready to write without being parsed: it defines, uses and imports nothing.
     fn unparsed(file: FileRecord) -> Self {
-        Self::Ready(Box::new(Prepared {
-            index: file_only(file),
-            left_out: LeftOut::default(),
-            imported: FileImports::default(),
-        }))
+        Self::Ready(Box::new(Prepared::unparsed(file)))
     }
 }
 
@@ -174,6 +172,17 @@ struct Prepared {
     left_out: LeftOut,
     /// What its imports name: files, and the names they bind.
     imported: FileImports,
+}
+
+impl Prepared {
+    /// A file ready to write without being parsed: it defines, uses and imports nothing.
+    fn unparsed(file: FileRecord) -> Self {
+        Self {
+            index: file_only(file),
+            left_out: LeftOut::default(),
+            imported: FileImports::default(),
+        }
+    }
 }
 
 /// What is left to do with a file once it has been read as far as its flags allow.
@@ -203,8 +212,9 @@ struct Context<'a> {
     /// The stored files, by path, whose contents a file read is compared with: one that hashes as
     /// stored is not parsed. `None` when every file read is parsed.
     known: Option<&'a BTreeMap<RepoPath, FileRow>>,
-    /// Whether a file never parsed is written as the walk found it, unread, as huge mode does.
-    is_inventory: bool,
+    /// In huge mode, the stored files parsed before, whatever Cortex parsed them: any other file
+    /// is written as the walk found it, unread. `None` when every file is read.
+    parsed_before: Option<&'a BTreeSet<RepoPath>>,
     /// The size above which a file is not read.
     max_file_bytes: u64,
     /// How long one file may take to parse and read.
@@ -251,12 +261,17 @@ pub fn index_repository(
         .collect();
     let project = load_project(root, writer, &found, options.discover.max_file_bytes)?;
     let is_inventory = scale::takes_inventory(writer, options.mode, &discovery.files)?;
+    let parsed_before = if is_inventory {
+        Some(incremental::parsed_files(writer.queries(), &known)?)
+    } else {
+        None
+    };
     let context = Context {
         root,
         grammars,
         project: &project,
         known: Some(&known),
-        is_inventory,
+        parsed_before: parsed_before.as_ref(),
         max_file_bytes: options.discover.max_file_bytes,
         parse_timeout: options.parse_timeout,
         threads: options.threads,
@@ -302,11 +317,7 @@ pub fn index_repository(
         };
         files_around(writer, &walked, &written, importers_of_gone)?
     };
-    let again = Context {
-        known: None,
-        ..context
-    };
-    let read_again = read_again(&around, &again)?;
+    let read_again = read_again(&around, &context)?;
     link(writer, root, (written, read_again), is_whole, &mut report)?;
     folders::write_folders(writer)?;
     (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
@@ -316,9 +327,10 @@ pub fn index_repository(
     Ok(report)
 }
 
-/// Reads, parses and writes the stored files at `paths` now, changed or not, and ties their
-/// references and those of the files around them, as huge mode does for the files an agent reads
-/// or edits and for the crawler's. A path the store does not hold is left out.
+/// Reads, parses and writes the stored files at `paths` now, unless they hash as stored, and ties
+/// their references and those of the files around them, as huge mode does for the files an agent
+/// reads or edits and for the crawler's. A path the store does not hold is left out, and a path
+/// given twice is parsed once.
 ///
 /// # Errors
 ///
@@ -356,14 +368,15 @@ pub fn parse_files(
         root,
         grammars,
         project: &project,
-        known: None,
-        is_inventory: false,
+        known: Some(&stored),
+        parsed_before: None,
         max_file_bytes: options.discover.max_file_bytes,
         parse_timeout: options.parse_timeout,
         threads: options.threads,
         now_ms: options.now_ms,
     };
-    let files: Vec<DiscoveredFile> = paths.iter().filter_map(&file_of).collect();
+    let paths: BTreeSet<&RepoPath> = paths.iter().collect();
+    let files: Vec<DiscoveredFile> = paths.into_iter().filter_map(&file_of).collect();
     let mut report = IndexReport {
         files: 0,
         parsed: 0,
@@ -431,9 +444,16 @@ fn read_again(
     files: &[DiscoveredFile],
     context: &Context<'_>,
 ) -> Result<Vec<(RepoPath, FileImports)>, IndexError> {
+    // Every file is read whole: compared with the store, an unchanged file would come back as
+    // touched, and in huge mode one never parsed as inventory, both without its imports.
+    let whole = Context {
+        known: None,
+        parsed_before: None,
+        ..*context
+    };
     let mut imports = Vec::new();
     for batch in files.chunks(FILES_PER_BATCH) {
-        for outcome in prepare_batch(batch, context)? {
+        for outcome in prepare_batch(batch, &whole)? {
             if let Outcome::Ready(prepared) = outcome {
                 imports.push((prepared.index.file.path, prepared.imported));
             }
@@ -587,31 +607,39 @@ fn write_batch(
     let mut written = Vec::new();
     let mut transaction = writer.transaction()?;
     for outcome in outcomes {
-        match outcome {
-            Outcome::Ready(prepared) => {
-                let change = transaction.replace_file(&prepared.index)?;
-                report.files += 1;
-                report.parsed += u64::from(prepared.index.file.flags.contains(FileFlags::PARSED));
-                let changed = change.changes.into_iter().filter(|symbol| {
-                    matches!(symbol.kind, ChangeKind::Signature | ChangeKind::Body)
-                });
-                report.changed_symbols.extend(changed);
-                let path = prepared.index.file.path;
-                if !prepared.left_out.is_empty() {
-                    report.left_out.push((path.clone(), prepared.left_out));
-                }
-                written.push(Written {
-                    path,
-                    imported: prepared.imported,
-                    symbols: change.symbols,
-                });
+        let prepared = match outcome {
+            Outcome::Ready(prepared) => prepared,
+            Outcome::Unparsed(file, problem) => {
+                report.problems.push((file.path.clone(), problem));
+                Box::new(Prepared::unparsed(*file))
             }
             Outcome::Touched(path, mtime_ns) => {
                 transaction.set_file_mtime(&path, mtime_ns)?;
                 report.unchanged += 1;
+                continue;
             }
-            Outcome::Skipped(path, problem) => report.problems.push((path, problem)),
+            Outcome::Skipped(path, problem) => {
+                report.problems.push((path, problem));
+                continue;
+            }
+        };
+        let change = transaction.replace_file(&prepared.index)?;
+        report.files += 1;
+        report.parsed += u64::from(prepared.index.file.flags.contains(FileFlags::PARSED));
+        let changed = change
+            .changes
+            .into_iter()
+            .filter(|symbol| matches!(symbol.kind, ChangeKind::Signature | ChangeKind::Body));
+        report.changed_symbols.extend(changed);
+        let path = prepared.index.file.path;
+        if !prepared.left_out.is_empty() {
+            report.left_out.push((path.clone(), prepared.left_out));
         }
+        written.push(Written {
+            path,
+            imported: prepared.imported,
+            symbols: change.symbols,
+        });
     }
     transaction.commit()?;
     Ok(written)
@@ -694,7 +722,10 @@ fn prepare(
     context: &Context<'_>,
     extractor: &mut Extractor,
 ) -> Result<Outcome, ExtractError> {
-    if context.is_inventory && !was_parsed(file, context) {
+    if context
+        .parsed_before
+        .is_some_and(|parsed| !parsed.contains(&file.path))
+    {
         return Ok(Outcome::unparsed(record_of(file, context.now_ms)));
     }
     let (mut record, language, source) =
@@ -745,18 +776,23 @@ fn prepare(
                 },
             })))
         }
-        Err(ExtractError::TimedOut { .. }) => {
+        // A file stored as parsed keeps its rows. Any other is written as read, so that it is
+        // tried again when it changes rather than at every index.
+        Err(ExtractError::TimedOut { .. }) if is_stored_parsed(&record.path, context) => {
             Ok(Outcome::Skipped(record.path, FileProblem::TimedOut))
+        }
+        Err(ExtractError::TimedOut { .. }) => {
+            Ok(Outcome::Unparsed(Box::new(record), FileProblem::TimedOut))
         }
         Err(error) => Err(error),
     }
 }
 
-/// Whether the store holds `file` as parsed before.
-fn was_parsed(file: &DiscoveredFile, context: &Context<'_>) -> bool {
+/// Whether the stored files the context compares with hold the file at `path` as parsed.
+fn is_stored_parsed(path: &RepoPath, context: &Context<'_>) -> bool {
     context
         .known
-        .and_then(|known| known.get(&file.path))
+        .and_then(|known| known.get(path))
         .is_some_and(|row| row.file.flags.contains(FileFlags::PARSED))
 }
 
@@ -805,8 +841,8 @@ fn is_parseable(language: Option<Language>, flags: FileFlags) -> bool {
 }
 
 /// Whether the stored `file` waits to be parsed: huge mode took inventory of it, unread, and it
-/// is one Cortex parses. A file read whose parse failed or ran out of time does not wait; it is
-/// tried again when it changes.
+/// is one Cortex parses. A file read whose parse ran out of time is stored as read and does not
+/// wait; it is tried again when it changes.
 #[must_use]
 pub fn waits_to_be_parsed(file: &FileRecord) -> bool {
     file.content_hash.is_none()
@@ -1075,7 +1111,7 @@ mod tests {
             grammars: &grammars,
             project: &Project::load(Vec::new(), &|_| None),
             known: None,
-            is_inventory: false,
+            parsed_before: None,
             max_file_bytes: 1000,
             parse_timeout: Duration::from_secs(60),
             threads: NonZeroUsize::MIN,
@@ -1104,6 +1140,9 @@ mod tests {
                 }
                 Outcome::Skipped(path, problem) => {
                     (*position, path.as_str(), Some(*problem), Vec::new())
+                }
+                Outcome::Unparsed(file, problem) => {
+                    (*position, file.path.as_str(), Some(*problem), Vec::new())
                 }
                 Outcome::Touched(path, _) => (*position, path.as_str(), None, Vec::new()),
             })

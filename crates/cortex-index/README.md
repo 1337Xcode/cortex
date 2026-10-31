@@ -17,7 +17,9 @@ The indexer: which files a repository has, what they are, and what they define a
   text of a definition or an expression. A name is one line of at most 256 bytes; a definition
   whose name or qualified name is longer is left out, with everything inside it.
 - Go on parsing or querying a file once it has had `index.parse_timeout_ms`. The parser and the
-  queries check the time as they work and stop, and the file is reported as timed out.
+  queries check the time as they work and stop, and the file is reported as timed out. A file
+  stored as parsed keeps its rows; any other is stored as read, defining nothing, and is parsed
+  again only when it changes.
 
 ## Entry points
 
@@ -30,7 +32,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Extractor` | Parses one file and reads what it defines, uses and imports; one per thread |
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition, the names its imports take among them, each with what is written before it (`Qualifier`); and the modules it imports, with what it takes (the module, one name, every name or the default export), the name it binds and whether it only passes what it takes on |
 | `index_repository` | Indexes a repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file that changed since the last index, ties references to the definitions their names settle, joins files and definitions in the graph, keeps a node for each folder that holds files, and records the scale mode; reports the definitions whose signature or body changed |
-| `IndexOptions`, `IndexReport`, `FileProblem`, `ScipOutcome`, `ScipProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, the files skipped because they could not be read, took too long to parse or panicked while being read, and what became of the repository's SCIP index |
+| `IndexOptions`, `IndexReport`, `FileProblem`, `ScipOutcome`, `ScipProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, the files that could not be read, took too long to parse or panicked while being read, and what became of the repository's SCIP index |
 | `parse_files` | Reads, parses and writes chosen stored files now, changed or not, and ties their references and those of the files around them, as huge mode does for the files an agent reads or edits |
 | `Crawl` | The order in which huge mode parses the files it took inventory of: files asked for, then the other waiting files of their folders, then the rest, the most recently changed first; each handed out once |
 | `watch`, `Watcher`, `Change`, `WatchError` | Watches a repository and reports its changes from a thread of its own: the paths the walk would find that were created, changed, removed or renamed, or a change to everything; stops when the `Watcher` is dropped |
