@@ -6,7 +6,7 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use cortex_core::{ConfigLayer, LoadedConfig, load_config};
+use cortex_core::{ConfigLayer, LoadedConfig, UserFolder, load_config};
 
 /// The largest configuration file read. A larger one is refused instead of being read whole.
 const MAX_CONFIG_BYTES: u64 = 1_048_576;
@@ -18,7 +18,7 @@ const MAX_CONFIG_BYTES: u64 = 1_048_576;
 /// A file that cannot be read, is over 1 MiB, is not valid TOML or gives a known key an unusable
 /// value.
 pub(crate) fn load(root: &Path) -> anyhow::Result<LoadedConfig> {
-    let user = std::env::home_dir().map(|home| home.join(".cortex").join("config.toml"));
+    let user = UserFolder::of_current_user().map(|folder| folder.config_path());
     let repository = root.join(".cortex").join("config.toml");
     let mut texts = Vec::new();
     for path in user.iter().chain([&repository]) {

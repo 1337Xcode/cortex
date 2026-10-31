@@ -14,6 +14,7 @@ mod config;
 mod event;
 mod hash;
 mod identifier;
+pub mod ipc;
 mod kinds;
 mod language;
 mod named;
@@ -23,6 +24,7 @@ mod root;
 mod scale_mode;
 mod tokens;
 mod ulid;
+mod user_folder;
 
 pub use config::{
     Config, ConfigError, ConfigLayer, DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES,
@@ -43,3 +45,4 @@ pub use root::canonical_root;
 pub use scale_mode::ScaleMode;
 pub use tokens::identifier_tokens;
 pub use ulid::{Ulid, UlidError};
+pub use user_folder::{RunFiles, UserFolder};

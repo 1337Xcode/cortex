@@ -28,6 +28,8 @@ modes and settings.
 | `ScaleMode` | `tiny`, `small`, `medium` or `huge`: how fully a repository of a given size is served |
 | `Event` | One hook call, normalized: the agent, its session, the point in its loop (`HookKind`), the tool (`ToolKind`), what the tool aimed at (`ToolTarget`: a repository path, checked `LineRange`s, a pattern, a `ShellCommand` cut to 1,000 characters) and how it ended (`ToolResult`: exit code, success, interruption, output size), never file contents or tool output; serialized with names for every kind and checked when read |
 | `Ulid` | A sortable unique id: UTC milliseconds, then 80 bits from the BLAKE3 hash of a seed the caller gives; written as 26 characters, and only that spelling is read back |
+| `ipc` | The messages the hook, the CLI and a daemon exchange (`Request`, `Response`, the `Hello` handshake), framed as a 4-byte little-endian length and at most 1 MiB of JSON (`encode`, `decode`, `read_frame`, `write_frame`); `Protocol` (majors must match) and `CortexVersion` (ordered as semantic versioning orders versions). The envelope, `Hello`, `Mismatch` and `Shutdown` never change shape |
+| `UserFolder`, `RunFiles` | `~/.cortex` and what it holds: `config.toml`, `logs/`, and per repository id the daemon's socket (`run/<id>.sock`), named pipe (`cortex-<id>`), lock and process-id files |
 | `Config`, `load_config` | The settings in effect: defaults, then `~/.cortex/config.toml`, then `.cortex/config.toml`; unknown keys warn, unusable values are errors naming the file and key. Keys: `mode`, `index.max_file_bytes`, `index.extra_ignores`, `index.parse_timeout_ms`, `index.crawl_files_per_second`, `daemon.idle_shutdown_minutes`, `store.mmap_bytes` |
 
 ## Tests
