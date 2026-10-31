@@ -239,25 +239,26 @@ the caller's.
 ## Indexing chosen paths
 
 `index_paths` indexes the files at the paths it is given, the ones that changed, without walking the
-repository. Each path is judged by the walk's own rules: a file the walk would find there is written
-unless it is stored as it is, one gone or no longer found is removed, and one that cannot be read
-now is left as stored. A path under a folder that is a link, as the walk would never enter it,
-counts as gone, and a stored file is read again only when no link has come between the root and the
-file. Then the files around the change are read again for what their imports bind, as a full index
-does, and only the references the change can concern are tied again: those in the files written and
-read again, and those elsewhere tied by name alone whose name's definitions came or went in their
-language family, unless the family holds two or more of them both before and after, which leaves
-such a reference untied either way. Of the definitions, it reads those in the files it looks into
-and, for the name a reference goes by, the first two in the reference's language family: enough to
-tell one from several. The SCIP index is not read again: the ties it gave stay, except those into
-the files written or removed, which a full index would no longer take from it; the files holding
-them are read again, and those references are tied by the rules. A file saved again with the same
-contents is written too when its new time is later than the SCIP index's, since that time puts it
-out of the index's word. The store ends as a full index would leave it, except for a file whose time
-moves back to before the SCIP index was written: it comes under the index's word again only at the
-next full index. A path that is or was a folder, a file of rules about which files count that the
-walk reads (one in a folder the walk leaves out governs nothing it finds), the SCIP index itself,
-and a store whose last index did not finish make it index the whole repository instead.
+repository. Each path is judged by the walk's own rules: a file the walk would find there is read,
+whatever its time and size say, and written unless its contents are as stored, when only its new
+time is, one gone or no longer found is removed, and one that cannot be read now is left as stored.
+A path under a folder that is a link, as the walk would never enter it, counts as gone, and a stored
+file is read again only when no link has come between the root and the file. Then the files around
+the change are read again for what their imports bind, as a full index does, and only the references
+the change can concern are tied again: those in the files written and read again, and those
+elsewhere tied by name alone whose name's definitions came or went in their language family, unless
+the family holds two or more of them both before and after, which leaves such a reference untied
+either way. Of the definitions, it reads those in the files it looks into and, for the name a
+reference goes by, the first two in the reference's language family: enough to tell one from
+several. The SCIP index is not read again: the ties it gave stay, except those into the files
+written or removed, which a full index would no longer take from it; the files holding them are read
+again, and those references are tied by the rules. A file saved again with the same contents is
+written too when its new time is later than the SCIP index's, since that time puts it out of the
+index's word. The store ends as a full index would leave it, except for a file whose time moves back
+to before the SCIP index was written: it comes under the index's word again only at the next full
+index. A path that is or was a folder, a file of rules about which files count that the walk reads
+(one in a folder the walk leaves out governs nothing it finds), the SCIP index itself, and a store
+whose last index did not finish make it index the whole repository instead.
 
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts

@@ -8,6 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::{TestResult, expected, index, index_changed, ties, touch, write_all};
+use cortex_core::Identifier;
 use cortex_store::{ChangeKind, MetaKey, Reader};
 
 /// A time limit no test file comes near, even in a debug build.
@@ -130,6 +131,37 @@ fn a_file_changed_but_not_yet_indexed_is_not_read_again() -> TestResult {
             ("call", "helper", 5, None),
         ])
     );
+    Ok(())
+}
+
+/// Whether the store of the repository at `root` holds a definition named `name`.
+fn defines(root: &Path, name: &str) -> TestResult<bool> {
+    let reader = Reader::open(&root.join(".cortex"), 0)?;
+    Ok(!reader
+        .queries()
+        .symbols_named(&Identifier::new(name)?)?
+        .is_empty())
+}
+
+/// A file whose path is indexed is read whatever its time and size say: rewritten at the same size
+/// and given back its stored time, as a rewrite within one tick of a coarse clock leaves it, its
+/// new definition is stored and the old one gone.
+#[test]
+fn a_changed_path_is_read_whatever_its_time_says() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(root, &[("a.py", "def alpha():\n    pass\n")])?;
+    index(root, 1, GENEROUS, DEFAULT_LIMIT)?;
+    let stored = stored_mtime(root, "a.py")?.ok_or("a.py is not stored")?;
+    write_all(root, &[("a.py", "def gamma():\n    pass\n")])?;
+    let stored = std::time::UNIX_EPOCH + Duration::from_nanos(u64::try_from(stored)?);
+    std::fs::File::options()
+        .write(true)
+        .open(root.join("a.py"))?
+        .set_modified(stored)?;
+    index_changed(root, &["a.py"])?;
+    assert!(defines(root, "gamma")?);
+    assert!(!defines(root, "alpha")?);
     Ok(())
 }
 

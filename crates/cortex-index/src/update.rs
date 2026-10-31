@@ -21,7 +21,6 @@ use crate::discover::DiscoveredFile;
 use crate::grammar::Grammars;
 use crate::pipeline::{
     self, Context, IndexError, IndexOptions, IndexReport, Pass, index_repository,
-    waits_to_be_parsed,
 };
 use crate::scale::{self, RepoSize};
 use crate::scip::{self, ScipOutcome};
@@ -31,14 +30,13 @@ use crate::{folders, incremental};
 /// What the chosen paths hold, against the store.
 #[derive(Default)]
 struct Found {
-    /// The files to read and write: new, changed, or waiting to be parsed.
+    /// The files to read: every file found, since a path is given because it changed. One whose
+    /// contents are as stored gets only its new time.
     candidates: Vec<DiscoveredFile>,
     /// The stored rows of the candidates stored before.
     known: BTreeMap<RepoPath, FileRow>,
     /// The stored files no longer found.
     gone: Vec<FileRow>,
-    /// How many files were found as stored.
-    unchanged: u64,
 }
 
 /// Indexes the files at `paths` of the repository at `root` now, as the module documentation
@@ -97,7 +95,7 @@ pub fn index_paths(
     let mut report = IndexReport {
         files: 0,
         parsed: 0,
-        unchanged: found.unchanged,
+        unchanged: 0,
         removed: pipeline::count(gone.len()),
         walk_problems: Vec::new(),
         problems: Vec::new(),
@@ -182,13 +180,9 @@ fn find(
             // As the walk keeps a file it cannot inspect, so does an index of its path.
             PathState::Unreadable => {}
             PathState::File(file) => {
+                // Its time and size are not trusted to say it is unchanged: a file rewritten at
+                // the same size within one tick of a coarse clock keeps both.
                 if let Some(row) = stored {
-                    let is_kept =
-                        incremental::is_unchanged(&file, &row) && !waits_to_be_parsed(&row.file);
-                    if is_kept {
-                        found.unchanged += 1;
-                        continue;
-                    }
                     found.known.insert((*path).clone(), row);
                 }
                 found.candidates.push(file);
