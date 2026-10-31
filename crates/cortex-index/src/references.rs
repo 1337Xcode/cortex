@@ -1,7 +1,7 @@
 //! The names a file uses as the index records them: each with its kind, its line and the
 //! definition it sits in, and what it is reached through, if anything is written before it.
 
-use cortex_core::Identifier;
+use cortex_core::{Identifier, MAX_IDENTIFIER_BYTES};
 use cortex_store::{RefRecord, SymbolRecord};
 use tree_sitter::Node;
 
@@ -71,6 +71,12 @@ pub(crate) fn build_references(
     (refs, qualifiers)
 }
 
+/// Bytes of source past which the part written before a name is taken as no name without reading
+/// it. A name is at most [`MAX_IDENTIFIER_BYTES`] bytes, and the comments and spacing between its
+/// tokens rarely come near three times as much again; reading a longer part would cost time for
+/// every name of a long chain of calls, each reached through all the calls before it.
+const MAX_QUALIFIER_SOURCE_BYTES: usize = 4 * MAX_IDENTIFIER_BYTES;
+
 /// What the name at `name` is reached through: the part written before it in the qualifying form,
 /// among `qualified_by`, that holds it.
 fn qualifier_of(name: Node<'_>, qualified_by: &[(&str, &str)], source: &[u8]) -> Qualifier {
@@ -84,6 +90,9 @@ fn qualifier_of(name: Node<'_>, qualified_by: &[(&str, &str)], source: &[u8]) ->
         .find(|part| part.end_byte() <= name.start_byte());
     match before {
         None => Qualifier::None,
+        Some(part) if part.end_byte() - part.start_byte() > MAX_QUALIFIER_SOURCE_BYTES => {
+            Qualifier::Other
+        }
         Some(part) => match name_text(part, source).and_then(|text| Identifier::new(&text).ok()) {
             Some(text) => Qualifier::Name(text),
             None => Qualifier::Other,
