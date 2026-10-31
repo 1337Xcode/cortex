@@ -14,8 +14,12 @@ use cortex_core::ipc::{
     CORTEX_VERSION, Hello, Mismatch, Protocol, Request, RequestBody, Response, ResponseBody, Role,
     encode, read_frame,
 };
-use cortex_core::{Endpoint, RepoId, RunFiles, UserFolder, canonical_root};
+use cortex_core::{
+    Agent, Endpoint, Event, EventKind, HookKind, Identifier, RepoId, RepoPath, RunFiles, ToolKind,
+    ToolTarget, Ulid, UserFolder, canonical_root,
+};
 use cortex_hook::ask;
+use cortex_store::Reader;
 use interprocess::local_socket::{
     ConnectOptions, GenericFilePath, GenericNamespaced, Stream, ToFsName, ToNsName,
 };
@@ -171,6 +175,99 @@ fn a_broken_client_changes_nothing() -> TestResult {
     assert!(
         line.starts_with(&format!("daemon: running (process {}", daemon.child.id())),
         "{line}"
+    );
+    Ok(())
+}
+
+/// Events sent to the daemon are recorded: a session start, a prompt that starts task 1 and a read
+/// after it ran become the session, the task and three rows; the moment before the read is
+/// answered and not kept. Status then reports nothing waiting and nothing lost.
+#[test]
+fn events_sent_to_the_daemon_are_recorded() -> TestResult {
+    let (repo, home) = repository()?;
+    let _daemon = ready_daemon(repo.path(), home.path())?;
+    let files = run_files(repo.path(), home.path())?;
+    let root = canonical_root(repo.path())?;
+    let event = |hook: HookKind, ts_ms: i64| -> TestResult<Event> {
+        Ok(Event {
+            event_id: Ulid::from_seed(u64::try_from(ts_ms)?, b"server"),
+            ts_ms,
+            agent: Agent::Claude,
+            agent_version: None,
+            session_id: Identifier::new("s1")?,
+            parent_session_id: None,
+            cwd: root.clone(),
+            repo_root: root.clone(),
+            hook,
+            source: None,
+            tool: None,
+            tool_target: None,
+            tool_result: None,
+            prompt_text: None,
+            transcript_path: None,
+            model: None,
+            subagent_type: None,
+            compact_trigger: None,
+            end_reason: None,
+        })
+    };
+    let read = |hook: HookKind, ts_ms: i64| -> TestResult<Event> {
+        Ok(Event {
+            tool: Some(ToolKind::Read),
+            tool_target: Some(ToolTarget {
+                path: Some(RepoPath::new("app.py")?),
+                ..ToolTarget::default()
+            }),
+            ..event(hook, ts_ms)?
+        })
+    };
+    let prompt = Event {
+        prompt_text: Some("look at app".to_owned()),
+        ..event(HookKind::Prompt, 20)?
+    };
+    for sent in [
+        event(HookKind::SessionStart, 10)?,
+        prompt,
+        read(HookKind::PreTool, 30)?,
+        read(HookKind::PostTool, 40)?,
+    ] {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let body = RequestBody::Event {
+            event: Box::new(sent),
+        };
+        assert_eq!(
+            ask(&files, Role::Hook, body, deadline)?.body,
+            ResponseBody::Ack
+        );
+    }
+    let session = Identifier::new("s1")?;
+    let rows = || -> TestResult<Vec<(EventKind, i64)>> {
+        let reader = Reader::open(&repo.path().join(".cortex"), 0)?;
+        Ok(reader
+            .queries()
+            .events_of_session(&session)?
+            .into_iter()
+            .map(|row| (row.record.kind, row.record.ts_ms))
+            .collect())
+    };
+    common::wait_for(|| Ok(rows()?.len() >= 3))?;
+    assert_eq!(
+        rows()?,
+        [
+            (EventKind::SessionStart, 10),
+            (EventKind::Prompt, 20),
+            (EventKind::Read, 40)
+        ]
+    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command.args(["status", "--root"]).arg(repo.path());
+    isolate(&mut command, home.path());
+    let stdout = String::from_utf8(command.output()?.stdout)?;
+    assert!(
+        stdout.contains(
+            "\nqueue: 0 events and 0 changes waiting; 0 events dropped, 0 batches not recorded\n"
+        ),
+        "{stdout}"
     );
     Ok(())
 }

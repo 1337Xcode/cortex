@@ -1,13 +1,19 @@
-//! What waits for the writer: the watcher's changes, word that the watcher stopped, and a request
-//! to stop. One lock and one condition variable, so the writer sleeps until something arrives or a
-//! deadline passes.
+//! What waits for the writer: hook events, the watcher's changes, word that the watcher stopped,
+//! and a request to stop, with the counts the daemon's status reports. One lock and one condition
+//! variable, so the writer sleeps until something arrives or a deadline passes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use cortex_core::RepoPath;
+use cortex_core::{Event, HookKind, RepoPath, ToolKind};
 use cortex_index::Change;
+
+/// How many hook events may wait for the writer. When the inbox is full, a read or a search gives
+/// way first: an arriving one is dropped, or the oldest waiting one makes room for an edit, a
+/// prompt or a session's event. Only when every waiting event is of those does an arriving one go.
+/// Every drop is counted.
+pub(crate) const MAX_EVENTS: usize = 10_000;
 
 /// How many changes may wait for the writer. A change that finds the inbox full is dropped and an
 /// overflow marked, so that the changes drained next are indexed as a change to everything, the
@@ -26,6 +32,12 @@ pub(crate) struct Inbox {
 /// What waits in the inbox.
 #[derive(Debug, Default)]
 struct State {
+    /// Hook events, oldest first.
+    events: VecDeque<Event>,
+    /// Hook events dropped since the daemon started.
+    events_dropped: u64,
+    /// Batches of events the writer could not record, since the daemon started.
+    failed_batches: u64,
     /// The watcher's changes, oldest first.
     changes: Vec<Change>,
     /// Whether a change was dropped since the last drain.
@@ -41,6 +53,8 @@ struct State {
 pub(crate) enum Work {
     /// Stop.
     Stop,
+    /// Record these events, oldest first.
+    Events(Vec<Event>),
     /// Index what changed.
     Changed(Changed),
     /// The watcher stopped: changes are no longer seen.
@@ -59,7 +73,54 @@ pub(crate) enum Changed {
     Paths(Vec<RepoPath>),
 }
 
+/// The inbox's counts, for the daemon's status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Counts {
+    /// Hook events waiting.
+    pub(crate) events_waiting: usize,
+    /// Changes waiting.
+    pub(crate) changes_waiting: usize,
+    /// Hook events dropped since the daemon started.
+    pub(crate) events_dropped: u64,
+    /// Batches of events the writer could not record, since the daemon started.
+    pub(crate) failed_batches: u64,
+}
+
 impl Inbox {
+    /// Puts in a hook event, making room as [`MAX_EVENTS`] says when the inbox is full.
+    pub(crate) fn push_event(&self, event: Event) {
+        let mut state = self.lock();
+        if state.events.len() >= MAX_EVENTS {
+            state.events_dropped += 1;
+            if is_droppable(&event) {
+                return;
+            }
+            match state.events.iter().position(is_droppable) {
+                Some(oldest) => drop(state.events.remove(oldest)),
+                None => return,
+            }
+        }
+        state.events.push_back(event);
+        drop(state);
+        self.arrived.notify_one();
+    }
+
+    /// Counts a batch of events the writer could not record.
+    pub(crate) fn count_failed_batch(&self) {
+        self.lock().failed_batches += 1;
+    }
+
+    /// What waits, and what was lost.
+    pub(crate) fn counts(&self) -> Counts {
+        let state = self.lock();
+        Counts {
+            events_waiting: state.events.len(),
+            changes_waiting: state.changes.len(),
+            events_dropped: state.events_dropped,
+            failed_batches: state.failed_batches,
+        }
+    }
+
     /// Puts in a change from the watcher, or drops it and marks the overflow when the inbox holds
     /// [`MAX_CHANGES`].
     pub(crate) fn push_change(&self, change: Change) {
@@ -85,14 +146,17 @@ impl Inbox {
         self.arrived.notify_one();
     }
 
-    /// Waits until a change, a stop or word of the watcher arrives, or `until` passes (never,
-    /// when `None`), and says what to do: a stop first, then every change waiting, drained into
-    /// one, then that the watcher stopped.
+    /// Waits until an event, a change, a stop or word of the watcher arrives, or `until` passes
+    /// (never, when `None`), and says what to do: a stop first, then every event waiting, then
+    /// every change waiting, drained into one, then that the watcher stopped.
     pub(crate) fn wait(&self, until: Option<Instant>) -> Work {
         let mut state = self.lock();
         loop {
             if state.is_stopping {
                 return Work::Stop;
+            }
+            if !state.events.is_empty() {
+                return Work::Events(state.events.drain(..).collect());
             }
             if !state.changes.is_empty() || state.is_overflowed {
                 return Work::Changed(drain(&mut state));
@@ -123,6 +187,16 @@ impl Inbox {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Whether an event may give way when the inbox is full: a read or a search, recorded after it
+/// ran.
+fn is_droppable(event: &Event) -> bool {
+    event.hook == HookKind::PostTool
+        && matches!(
+            event.tool,
+            Some(ToolKind::Read | ToolKind::Grep | ToolKind::Glob)
+        )
 }
 
 /// Every change waiting, as one: everything when any of them is, or when one was dropped, else
@@ -217,6 +291,93 @@ mod tests {
         inbox.stop();
         assert_eq!(inbox.wait(None), Work::Stop);
         assert_eq!(inbox.wait(None), Work::Stop);
+        Ok(())
+    }
+
+    /// An event of `hook`, with `tool` for a tool event, at `ts_ms`.
+    fn event(
+        hook: HookKind,
+        tool: Option<ToolKind>,
+        ts_ms: i64,
+    ) -> Result<Event, Box<dyn std::error::Error>> {
+        Ok(Event {
+            event_id: cortex_core::Ulid::from_seed(u64::try_from(ts_ms)?, b"inbox"),
+            ts_ms,
+            agent: cortex_core::Agent::Claude,
+            agent_version: None,
+            session_id: cortex_core::Identifier::new("s1")?,
+            parent_session_id: None,
+            cwd: std::path::PathBuf::from("/repo"),
+            repo_root: std::path::PathBuf::from("/repo"),
+            hook,
+            source: None,
+            tool,
+            tool_target: None,
+            tool_result: None,
+            prompt_text: None,
+            transcript_path: None,
+            model: None,
+            subagent_type: None,
+            compact_trigger: None,
+            end_reason: None,
+        })
+    }
+
+    /// The times of the events a wait drains.
+    fn times(work: Work) -> Vec<i64> {
+        match work {
+            Work::Events(events) => events.iter().map(|event| event.ts_ms).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Events come out oldest first, before any change waiting with them.
+    #[test]
+    fn events_come_first_and_in_order() -> Result<(), Box<dyn std::error::Error>> {
+        let inbox = Inbox::default();
+        inbox.push_change(paths(&["a.py"])?);
+        inbox.push_event(event(HookKind::Prompt, None, 1)?);
+        inbox.push_event(event(HookKind::Stop, None, 2)?);
+        assert_eq!(times(inbox.wait(None)), [1, 2]);
+        assert!(matches!(inbox.wait(None), Work::Changed(_)));
+        Ok(())
+    }
+
+    /// In a full inbox an arriving read is dropped; an arriving edit takes the place of the oldest
+    /// read waiting; with only edits, prompts and session events waiting, an arriving edit is
+    /// dropped. Each drop is counted, and nothing waits past the cap.
+    #[test]
+    fn reads_and_searches_give_way_when_full() -> Result<(), Box<dyn std::error::Error>> {
+        let inbox = Inbox::default();
+        let read = |ts_ms| event(HookKind::PostTool, Some(ToolKind::Read), ts_ms);
+        let edit = |ts_ms| event(HookKind::PostTool, Some(ToolKind::Edit), ts_ms);
+        inbox.push_event(edit(0)?);
+        inbox.push_event(read(1)?);
+        inbox.push_event(read(2)?);
+        for ts_ms in 3..i64::try_from(MAX_EVENTS)? {
+            inbox.push_event(event(HookKind::Prompt, None, ts_ms)?);
+        }
+        assert_eq!(inbox.counts().events_waiting, MAX_EVENTS);
+        inbox.push_event(read(20_000)?);
+        inbox.push_event(edit(20_001)?);
+        let counts = inbox.counts();
+        assert_eq!(
+            (counts.events_waiting, counts.events_dropped),
+            (MAX_EVENTS, 2)
+        );
+        let drained = times(inbox.wait(None));
+        assert_eq!(drained.get(..3), Some(&[0, 2, 3][..]));
+        assert_eq!(drained.last(), Some(&20_001));
+        for ts_ms in 0..i64::try_from(MAX_EVENTS)? {
+            inbox.push_event(edit(ts_ms)?);
+        }
+        inbox.push_event(edit(30_000)?);
+        let counts = inbox.counts();
+        assert_eq!(
+            (counts.events_waiting, counts.events_dropped),
+            (MAX_EVENTS, 3)
+        );
+        assert!(!times(inbox.wait(None)).contains(&30_000));
         Ok(())
     }
 

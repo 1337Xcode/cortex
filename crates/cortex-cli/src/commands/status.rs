@@ -39,7 +39,9 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     for warning in &loaded.warnings {
         output::note(&format!("warning: {warning}"))?;
     }
-    output::line(&daemon_line(&root))?;
+    for line in daemon_lines(&root) {
+        output::line(&line)?;
+    }
     let folder = root.join(".cortex");
     let reader = match Reader::open(&folder, 0) {
         Ok(reader) => reader,
@@ -60,23 +62,36 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The line saying whether the daemon of the repository at `root` runs, from its own answer.
-fn daemon_line(root: &Path) -> String {
+/// The lines saying whether the daemon of the repository at `root` runs and what waits for it,
+/// from its own answer.
+fn daemon_lines(root: &Path) -> Vec<String> {
     let Some(user) = UserFolder::of_current_user() else {
-        return "daemon: unknown, no home folder to find it from".to_owned();
+        return vec!["daemon: unknown, no home folder to find it from".to_owned()];
     };
     let files = user.run_files(&RepoId::of(root));
     let deadline = Instant::now() + ANSWER_WITHIN;
-    match ask(&files, Role::Cli, RequestBody::Status, deadline) {
+    let line = match ask(&files, Role::Cli, RequestBody::Status, deadline) {
         Ok(Answer {
             body: ResponseBody::Status(report),
             ..
-        }) => format!(
-            "daemon: running (process {}, Cortex {}, up {} s)",
-            report.pid,
-            report.cortex_version,
-            report.uptime_ms / 1000
-        ),
+        }) => {
+            return vec![
+                format!(
+                    "daemon: running (process {}, Cortex {}, up {} s)",
+                    report.pid,
+                    report.cortex_version,
+                    report.uptime_ms / 1000
+                ),
+                format!(
+                    "queue: {} events and {} changes waiting; {} events dropped, {} batches \
+                     not recorded",
+                    report.events_waiting,
+                    report.changes_waiting,
+                    report.events_dropped,
+                    report.failed_batches
+                ),
+            ];
+        }
         Ok(_) => "daemon: running, but it did not answer with its status".to_owned(),
         Err(ClientError::NotRunning) => "daemon: not running".to_owned(),
         Err(ClientError::TimedOut) => "daemon: not answering".to_owned(),
@@ -85,7 +100,8 @@ fn daemon_line(root: &Path) -> String {
             theirs.cortex_version
         ),
         Err(other) => format!("daemon: unreachable ({other})"),
-    }
+    };
+    vec![line]
 }
 
 /// The status of the store in `folder` that `queries` reads, with the mode `setting`.

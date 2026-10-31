@@ -8,6 +8,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use cortex_core::HookKind;
 use cortex_core::ipc::{
     CORTEX_VERSION, FrameError, LENGTH_PREFIX_BYTES, Mismatch, Protocol, Request, RequestBody,
     Response, ResponseBody, StatusReport, Welcome, body_len, decode, encode,
@@ -104,7 +105,14 @@ impl Server {
                 RequestBody::Status => (ResponseBody::Status(self.report()), false),
                 RequestBody::Shutdown => (ResponseBody::Ack, true),
                 RequestBody::Hello(_) => (error("a connection says hello once"), true),
-                RequestBody::Event { .. } => (error("this daemon does not take events yet"), false),
+                RequestBody::Event { event } => {
+                    // The moment before a tool runs is answered, not recorded: the tool's result
+                    // is, once it ran.
+                    if event.hook != HookKind::PreTool {
+                        self.inbox.push_event(*event);
+                    }
+                    (ResponseBody::Ack, false)
+                }
             };
             write_response(&mut writer, request.request_id, body).await?;
             if is_shutdown {
@@ -118,11 +126,16 @@ impl Server {
 
     /// The daemon's state.
     fn report(&self) -> StatusReport {
+        let counts = self.inbox.counts();
         StatusReport {
             cortex_version: CORTEX_VERSION.to_owned(),
             protocol: Protocol::CURRENT,
             pid: std::process::id(),
             uptime_ms: u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            events_waiting: u64::try_from(counts.events_waiting).unwrap_or(u64::MAX),
+            changes_waiting: u64::try_from(counts.changes_waiting).unwrap_or(u64::MAX),
+            events_dropped: counts.events_dropped,
+            failed_batches: counts.failed_batches,
         }
     }
 }

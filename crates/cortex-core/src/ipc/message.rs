@@ -127,4 +127,16 @@ pub struct StatusReport {
     pub pid: u32,
     /// How long it has run, in milliseconds.
     pub uptime_ms: u64,
+    /// Hook events waiting for the writer.
+    #[serde(default)]
+    pub events_waiting: u64,
+    /// File changes waiting for the writer.
+    #[serde(default)]
+    pub changes_waiting: u64,
+    /// Hook events dropped because too many waited, since the daemon started.
+    #[serde(default)]
+    pub events_dropped: u64,
+    /// Batches of events the writer could not record, since the daemon started.
+    #[serde(default)]
+    pub failed_batches: u64,
 }

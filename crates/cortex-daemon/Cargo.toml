@@ -12,6 +12,7 @@ publish.workspace = true
 anyhow.workspace = true
 cortex-core = { path = "../cortex-core" }
 cortex-index = { path = "../cortex-index" }
+cortex-learn = { path = "../cortex-learn" }
 cortex-store = { path = "../cortex-store" }
 interprocess = { workspace = true, features = ["tokio"] }
 tokio = { workspace = true, features = ["io-util", "rt-multi-thread", "sync", "time"] }
