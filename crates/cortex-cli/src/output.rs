@@ -18,6 +18,17 @@ pub(crate) fn line(text: &str) -> anyhow::Result<()> {
     writeln!(stdout, "{text}").context("writing to stdout")
 }
 
+/// Writes one line about the process itself, such as a long-running command's progress or a
+/// configuration warning, to stderr, after `cortex: `.
+///
+/// # Errors
+///
+/// Fails when stderr cannot be written.
+pub(crate) fn note(text: &str) -> anyhow::Result<()> {
+    let mut stderr = io::stderr().lock();
+    writeln!(stderr, "cortex: {text}").context("writing to stderr")
+}
+
 /// Writes a failed command's error, with its chain of causes, to stderr as one line.
 ///
 /// A failure to write the message itself is ignored: there is nowhere left to report it.
