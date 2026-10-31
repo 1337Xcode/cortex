@@ -21,7 +21,7 @@ use cortex_store::Writer;
 const CRAWL_PERIOD: Duration = Duration::from_secs(1);
 
 /// The daemon's state between changes: the writer and the files waiting to be parsed.
-pub(super) struct Host<'a> {
+pub(crate) struct Host<'a> {
     /// The repository's root folder.
     root: &'a Path,
     /// Every language's grammar, loaded once.
@@ -40,7 +40,7 @@ pub(super) struct Host<'a> {
 impl<'a> Host<'a> {
     /// A host over `writer` for the repository at `root`, with the settings in effect and the
     /// walk's options, nothing waiting yet.
-    pub(super) fn new(
+    pub(crate) fn new(
         root: &'a Path,
         grammars: Arc<Grammars>,
         (config, discover): (&'a Config, DiscoverOptions<'a>),
@@ -62,7 +62,7 @@ impl<'a> Host<'a> {
     /// # Errors
     ///
     /// A failed index, or a store error while listing.
-    pub(super) fn index(&mut self, touched: &[RepoPath]) -> anyhow::Result<IndexReport> {
+    pub(crate) fn index(&mut self, touched: &[RepoPath]) -> anyhow::Result<IndexReport> {
         let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
         let options = self.options(threads);
         let report = index_repository(self.root, &self.grammars, &mut self.writer, &options)
@@ -74,7 +74,7 @@ impl<'a> Host<'a> {
     }
 
     /// How many files wait to be parsed.
-    pub(super) fn waiting(&self) -> usize {
+    pub(crate) fn waiting(&self) -> usize {
         self.crawl.waiting()
     }
 
@@ -84,7 +84,7 @@ impl<'a> Host<'a> {
     /// # Errors
     ///
     /// A failed index or parse, or a watcher that stopped.
-    pub(super) fn serve(
+    pub(crate) fn serve(
         mut self,
         queue: &Receiver<Change>,
         overflowed: &AtomicBool,
@@ -191,7 +191,7 @@ fn changed(first: Change, queue: &Receiver<Change>, overflowed: &AtomicBool) -> 
 }
 
 /// The time now in UTC milliseconds; a clock set before 1970 reads as 0.
-pub(super) fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| {

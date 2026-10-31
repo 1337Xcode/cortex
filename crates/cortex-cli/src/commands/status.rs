@@ -8,7 +8,9 @@ use cortex_core::{FileFlags, ModeSetting};
 use cortex_index::waits_to_be_parsed;
 use cortex_store::{MetaKey, Queries, Reader, StoreError, is_writer_running};
 
-use crate::{output, repository, settings};
+use cortex_daemon::settings;
+
+use crate::{output, repository};
 
 /// The arguments of `cortex status`.
 #[derive(Debug, clap::Args)]

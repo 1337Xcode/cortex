@@ -66,6 +66,8 @@ pub(crate) fn find(root: &Path) -> anyhow::Result<Option<PathBuf>> {
 /// `--system`), says `core.excludesFile` is. Without git installed, no configuration can name a
 /// file: the setting counts as unset, and the default is where git would look.
 fn excludes_file(root: &Path, scope: &str) -> anyhow::Result<Setting> {
+    // INVARIANT: local-only (git is asked to read its configuration and nothing else: no
+    // command that reaches a remote)
     let spawned = Command::new("git")
         .args(["config", scope, "--get", "--type=path", "core.excludesFile"])
         .current_dir(root)

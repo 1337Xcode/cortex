@@ -254,6 +254,7 @@ dependencies = [
  "anyhow",
  "clap",
  "cortex-core",
+ "cortex-daemon",
  "cortex-index",
  "cortex-store",
  "tempfile",
@@ -271,6 +272,17 @@ dependencies = [
  "thiserror 2.0.21",
  "toml",
  "ulid",
+]
+
+[[package]]
+name = "cortex-daemon"
+version = "2.0.0-dev"
+dependencies = [
+ "anyhow",
+ "cortex-core",
+ "cortex-index",
+ "cortex-store",
+ "tempfile",
 ]
 
 [[package]]

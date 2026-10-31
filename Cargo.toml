@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/cortex-cli",
     "crates/cortex-core",
+    "crates/cortex-daemon",
     "crates/cortex-index",
     "crates/cortex-learn",
     "crates/cortex-store",

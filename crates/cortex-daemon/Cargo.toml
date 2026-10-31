@@ -1,0 +1,21 @@
+[package]
+name = "cortex-daemon"
+description = "The Cortex daemon: one process per repository that keeps its index and is its only writer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cortex-core = { path = "../cortex-core" }
+cortex-index = { path = "../cortex-index" }
+cortex-store = { path = "../cortex-store" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

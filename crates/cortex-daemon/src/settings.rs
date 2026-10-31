@@ -17,7 +17,7 @@ const MAX_CONFIG_BYTES: u64 = 1_048_576;
 ///
 /// A file that cannot be read, is over 1 MiB, is not valid TOML or gives a known key an unusable
 /// value.
-pub(crate) fn load(root: &Path) -> anyhow::Result<LoadedConfig> {
+pub fn load(root: &Path) -> anyhow::Result<LoadedConfig> {
     let user = UserFolder::of_current_user().map(|folder| folder.config_path());
     let repository = root.join(".cortex").join("config.toml");
     let mut texts = Vec::new();
