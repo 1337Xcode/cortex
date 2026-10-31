@@ -7,7 +7,7 @@ use std::fs::File;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use common::{TestResult, expected, index, index_changed, ties, write_all};
+use common::{TestResult, expected, index, index_changed, ties, touch, write_all};
 use cortex_index::{ScipOutcome, ScipProblem};
 use protobuf::Message;
 use scip::types::{Document, Index, MultiLineRange, Occurrence, SingleLineRange};
@@ -512,6 +512,43 @@ fn ties_into_a_removed_file_are_tied_again() -> TestResult {
     assert_eq!(
         ties(root, "app.py")?,
         expected(&[("call", "run", 5, Some(("app.py", "run", "same_file")))])
+    );
+    Ok(())
+}
+
+/// A file written again with the same contents gets a newer time, which puts it out of the SCIP
+/// index's word as a full index decides: the ties the index gave into it, and out of it, are tied
+/// again by the rules. Touching `jobs.py` unties what the index tied to its `run`; touching
+/// `app.py` unties its own references.
+#[test]
+fn a_touched_file_leaves_the_index_s_word() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    index_imports_the_index_ties(root)?;
+    touch(root, "jobs.py")?;
+    index_changed(root, &["jobs.py"])?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("import", "run", 2, Some(("jobs.py", "run", "import_path"))),
+            ("call", "helper", 4, Some(("lib.py", "helper", "scip"))),
+            ("call", "run", 5, Some(("jobs.py", "run", "import_path"))),
+        ])
+    );
+    touch(root, "app.py")?;
+    index_changed(root, &["app.py"])?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("import", "run", 2, Some(("jobs.py", "run", "import_path"))),
+            (
+                "call",
+                "helper",
+                4,
+                Some(("lib.py", "helper", "import_path"))
+            ),
+            ("call", "run", 5, Some(("jobs.py", "run", "import_path"))),
+        ])
     );
     Ok(())
 }

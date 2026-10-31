@@ -157,18 +157,26 @@ pub(crate) fn read_index(
     Ok((outcome, ties))
 }
 
+/// When the SCIP index of the repository at `root` was written, in nanoseconds since the epoch;
+/// `None` when there is none or its time cannot be read. A file whose time is later is out of the
+/// index's word.
+pub(crate) fn written_ns(root: &Path) -> Option<i64> {
+    written_at(&std::fs::symlink_metadata(root.join(INDEX_FILE)).ok()?)
+}
+
+/// When the file `metadata` describes was written, in nanoseconds since the epoch.
+fn written_at(metadata: &std::fs::Metadata) -> Option<i64> {
+    let since = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    i64::try_from(since.as_nanos()).ok()
+}
+
 /// The index at `path` and when it was written, in nanoseconds since the epoch; `None` when there
 /// is none.
 fn load(path: &Path) -> Result<Option<(Read, i64)>, ScipProblem> {
     // When it was written is read first, so an index replaced while it is read is not taken as
     // newer than its contents.
     let written_ns = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .and_then(|since| i64::try_from(since.as_nanos()).ok())
-            .ok_or(ScipProblem::Unreadable)?,
+        Ok(metadata) => written_at(&metadata).ok_or(ScipProblem::Unreadable)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(ScipProblem::Unreadable),
     };

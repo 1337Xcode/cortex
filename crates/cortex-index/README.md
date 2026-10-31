@@ -105,15 +105,14 @@ are literal. Matching is case-sensitive on every platform.
 
 ## Indexing a repository
 
-`index_repository` writes every file the walk finds that changed since the last index. A file
-found as stored, with the same modification time, size, language and flags, is kept without
-being read; one whose contents hash as stored gets only its new time. The first index, one
-after a Cortex of another version wrote the store, and one after an index or a parse that stopped
-partway (the process killed, a write failed) write every file: the rules perhaps changed, or
-references were left half tied. An index or a parse marks the store as under way before it writes
-and as complete once done.
-A written file's definitions keep their ids when their qualified name and kind match the stored
-ones, and the report lists those whose signature or body changed.
+`index_repository` writes every file the walk finds that changed since the last index. A file found
+as stored, with the same modification time, size, language and flags, is kept without being read;
+one whose contents hash as stored gets only its new time. The first index, one after a Cortex of
+another version wrote the store, and one after an index or a parse that stopped partway (the process
+killed, a write failed) write every file: the rules perhaps changed, or references were left half
+tied. An index or a parse marks the store as under way before it writes and as complete once done. A
+written file's definitions keep their ids when their qualified name and kind match the stored ones,
+and the report lists those whose signature or body changed.
 
 Each parsed file's row keeps what it passes on of what its top-level imports bring in: each name it
 passes on, with the name its import takes and the files the import names, the files whose every name
@@ -129,10 +128,10 @@ added does not join files whose imports could not name it before until those cha
 read again.
 
 A file that may hold secrets, one over the size limit and one that is not text are written as the
-walk found them: path, language, size, modification time and flags. Every other file is read whole, and its size, its BLAKE3 hash and
-its line count (one per line feed, and one more for text after the last) are recorded. It is
-parsed when Cortex parses its language and it is neither generated nor vendored; its definitions
-and references are written with it, and it gets the `PARSED` flag.
+walk found them: path, language, size, modification time and flags. Every other file is read whole,
+and its size, its BLAKE3 hash and its line count (one per line feed, and one more for text after the
+last) are recorded. It is parsed when Cortex parses its language and it is neither generated nor
+vendored; its definitions and references are written with it, and it gets the `PARSED` flag.
 
 A name a file's queries find but cannot keep is left out and counted: one a syntax error
 touches, alone, the definitions inside it recorded as if it were not there; one that is not a
@@ -169,22 +168,21 @@ without it.
 A bare name, written with nothing before it, may be bound by an import. It is looked up the way
 these languages scope names: from the definition the use sits in outwards, through the functions,
 methods and modules around it, to the top of the file; a class body is skipped, since its methods
-reach its names through `self` or `this`, and the walk stops at a Rust module, which sees nothing
-of the scopes around it. The first of these that defines the name, or has an
-import that brings it in under that name, decides. A definition there leaves the name to the rules
-below; imports there bind it. A bound name is the imports': it is tied through them
-(confidence 0.8) when every import binding it there finds the same definition, and stays
-unresolved otherwise. What an import finds is the one definition of the name it takes, made
-directly in the files it names, in no other definition and with no qualifier (so not a method of
-a class or of an `impl` block). A file that does not define the name but passes it on, by name or
-with `*`, as a package's `__init__.py` or a TypeScript index file does, is followed, at most four
-files deep and with at most 256 looks into files in all; a search that does not finish within
-those finds nothing. A file's own definition of the name and its imports of the name must lead to
-the same definition, or the name is ambiguous, since which holds can depend on what runs (a
-`try` import with a fallback). Its `*` imports make the name ambiguous when they find another
-definition, as a later `*` import wins in Python; they decide alone only when nothing else in the
-file speaks of the name and none of them names a module outside the repository. A namespace
-(`export * as ns`) is not followed. Imports repeated in a file are resolved once.
+reach its names through `self` or `this`, and the walk stops at a Rust module, which sees nothing of
+the scopes around it. The first of these that defines the name, or has an import that brings it in
+under that name, decides. A definition there leaves the name to the rules below; imports there bind
+it. A bound name is the imports': it is tied through them (confidence 0.8) when every import binding
+it there finds the same definition, and stays unresolved otherwise. What an import finds is the one
+definition of the name it takes, made directly in the files it names, in no other definition and
+with no qualifier (so not a method of a class or of an `impl` block). A file that does not define
+the name but passes it on, by name or with `*`, as a package's `__init__.py` or a TypeScript index
+file does, is followed, at most four files deep and with at most 256 looks into files in all; a
+search that does not finish within those finds nothing. A file's own definition of the name and its
+imports of the name must lead to the same definition, or the name is ambiguous, since which holds
+can depend on what runs (a `try` import with a fallback). Its `*` imports make the name ambiguous
+when they find another definition, as a later `*` import wins in Python; they decide alone only when
+nothing else in the file speaks of the name and none of them names a module outside the repository.
+A namespace (`export * as ns`) is not followed. Imports repeated in a file are resolved once.
 
 Some imports bind no bare name. A re-export (`export { x } from`, `export * from`) only passes
 names on. An import of every name (`from x import *`, Go's dot import) does too, since which names
@@ -253,8 +251,11 @@ such a reference untied either way. Of the definitions, it reads those in the fi
 and, for the name a reference goes by, the first two in the reference's language family: enough to
 tell one from several. The SCIP index is not read again: the ties it gave stay, except those into
 the files written or removed, which a full index would no longer take from it; the files holding
-them are read again, and those references are tied by the rules. The store ends as a full index
-would leave it. A path that is or was a folder, a file of rules about which files count that the
+them are read again, and those references are tied by the rules. A file saved again with the same
+contents is written too when its new time is later than the SCIP index's, since that time puts it
+out of the index's word. The store ends as a full index would leave it, except for a file whose time
+moves back to before the SCIP index was written: it comes under the index's word again only at the
+next full index. A path that is or was a folder, a file of rules about which files count that the
 walk reads (one in a folder the walk leaves out governs nothing it finds), the SCIP index itself,
 and a store whose last index did not finish make it index the whole repository instead.
 

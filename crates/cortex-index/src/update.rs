@@ -92,6 +92,7 @@ pub fn index_paths(
         parse_timeout: options.parse_timeout,
         threads: options.threads,
         now_ms: options.now_ms,
+        scip_written_ns: scip::written_ns(root),
     };
     let mut report = IndexReport {
         files: 0,

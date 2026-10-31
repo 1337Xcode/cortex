@@ -126,6 +126,17 @@ pub fn write(root: &Path, path: &str, text: &[u8]) -> TestResult {
     Ok(())
 }
 
+/// Sets the modification time of the file at `path` under `root` an hour from now, keeping its
+/// contents.
+pub fn touch(root: &Path, path: &str) -> TestResult {
+    let later = std::time::SystemTime::now() + Duration::from_secs(3600);
+    File::options()
+        .write(true)
+        .open(root.join(path))?
+        .set_modified(later)?;
+    Ok(())
+}
+
 /// Keeps the file at `path` from being opened by this process while the returned value lives: on
 /// Unix by removing every permission, on Windows by holding it open with no sharing.
 pub fn lock_out(path: &Path) -> std::io::Result<Option<File>> {

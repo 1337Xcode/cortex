@@ -226,6 +226,10 @@ pub(crate) struct Context<'a> {
     pub(crate) threads: NonZeroUsize,
     /// The indexing time in UTC milliseconds.
     pub(crate) now_ms: i64,
+    /// When the repository's SCIP index was written, if it has one: a file with its contents as
+    /// stored but a later time is written whole, not only touched, since that time puts it out of
+    /// the index's word, as a full index decides.
+    pub(crate) scip_written_ns: Option<i64>,
 }
 
 /// Indexes the repository at `root` into `writer`'s store: walks it, removes the stored files the
@@ -287,6 +291,7 @@ pub fn index_repository(
         parse_timeout: options.parse_timeout,
         threads: options.threads,
         now_ms: options.now_ms,
+        scip_written_ns: scip::written_ns(root),
     };
     let candidates: Vec<DiscoveredFile> = discovery
         .files
@@ -823,12 +828,14 @@ fn prepare(
     }
     let (mut record, language, source) =
         match read(file, context.root, context.max_file_bytes, context.now_ms) {
-            Read::Done(Outcome::Ready(prepared)) if is_as_stored(&prepared.index.file, context) => {
+            Read::Done(Outcome::Ready(prepared))
+                if is_only_touched(&prepared.index.file, context) =>
+            {
                 let file = prepared.index.file;
                 return Ok(Outcome::Touched(file.path, file.mtime_ns));
             }
             Read::Done(outcome) => return Ok(outcome),
-            Read::Parse { record, .. } if is_as_stored(&record, context) => {
+            Read::Parse { record, .. } if is_only_touched(&record, context) => {
                 return Ok(Outcome::Touched(record.path, record.mtime_ns));
             }
             Read::Parse {
@@ -888,6 +895,15 @@ fn is_stored_parsed(path: &RepoPath, context: &Context<'_>) -> bool {
         .known
         .and_then(|known| known.get(path))
         .is_some_and(|row| row.file.flags.contains(FileFlags::PARSED))
+}
+
+/// Whether `record` needs only its new time written: its contents are as stored, and that time does
+/// not put it out of the SCIP index's word.
+fn is_only_touched(record: &FileRecord, context: &Context<'_>) -> bool {
+    let leaves_scip = context
+        .scip_written_ns
+        .is_some_and(|written_ns| record.mtime_ns > written_ns);
+    is_as_stored(record, context) && !leaves_scip
 }
 
 /// Whether the file `record` describes, just read, holds what the store holds for it: the same
@@ -1211,6 +1227,7 @@ mod tests {
             parse_timeout: Duration::from_secs(60),
             threads: NonZeroUsize::MIN,
             now_ms: 9,
+            scip_written_ns: None,
         };
         let batch = names
             .into_iter()

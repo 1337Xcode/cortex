@@ -4,11 +4,10 @@
 
 mod common;
 
-use std::fs::File;
 use std::path::Path;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-use common::{TestResult, expected, index, index_changed, ties, write_all};
+use common::{TestResult, expected, index, index_changed, ties, touch, write_all};
 use cortex_store::{ChangeKind, MetaKey, Reader};
 
 /// A time limit no test file comes near, even in a debug build.
@@ -16,16 +15,6 @@ const GENEROUS: Duration = Duration::from_secs(60);
 
 /// The default size limit, 1 MiB.
 const DEFAULT_LIMIT: u64 = 1_048_576;
-
-/// Sets the modification time of the file at `path` under `root` an hour from now.
-fn touch(root: &Path, path: &str) -> TestResult {
-    let later = SystemTime::now() + Duration::from_secs(3600);
-    File::options()
-        .write(true)
-        .open(root.join(path))?
-        .set_modified(later)?;
-    Ok(())
-}
 
 /// The stored modification time of the file at `path` under `root`.
 fn stored_mtime(root: &Path, path: &str) -> TestResult<Option<i64>> {
