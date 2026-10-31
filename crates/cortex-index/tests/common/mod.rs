@@ -14,7 +14,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use cortex_core::{ModeSetting, RepoId, RepoPath};
-use cortex_index::{DiscoverOptions, Grammars, IndexOptions, IndexReport, index_repository};
+use cortex_index::{
+    DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
+};
 use cortex_store::{Reader, SymbolId, Writer, WriterOptions};
 
 /// Result type for these tests: any failure fails the test.
@@ -78,6 +80,40 @@ pub fn index_with_mode(
         mode,
     };
     Ok(index_repository(root, &grammars()?, &mut writer, &options)?)
+}
+
+/// Indexes the files at `paths` of the repository at `root` into its `.cortex` folder, as the
+/// daemon does when they change: on one thread, with a minute for each file and the default size
+/// limit, 1 MiB.
+pub fn index_changed(root: &Path, paths: &[&str]) -> TestResult<IndexReport> {
+    let mut writer = Writer::open(&WriterOptions {
+        folder: &root.join(".cortex"),
+        repo_id: &RepoId::of(root),
+        mmap_bytes: 0,
+        now_ms: NOW_MS,
+    })?;
+    let options = IndexOptions {
+        discover: DiscoverOptions {
+            max_file_bytes: 1_048_576,
+            extra_ignores: &[],
+            global_gitignore: None,
+        },
+        parse_timeout: Duration::from_secs(60),
+        threads: NonZeroUsize::MIN,
+        now_ms: NOW_MS,
+        mode: ModeSetting::Auto,
+    };
+    let changed: Vec<RepoPath> = paths
+        .iter()
+        .map(|path| RepoPath::new(path))
+        .collect::<Result<_, _>>()?;
+    Ok(index_paths(
+        root,
+        &grammars()?,
+        &mut writer,
+        &options,
+        &changed,
+    )?)
 }
 
 /// Writes `text` to `path` under `root`, creating folders as needed.

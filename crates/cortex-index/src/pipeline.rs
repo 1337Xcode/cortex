@@ -36,7 +36,7 @@ use thiserror::Error;
 
 use crate::bindings::Bindings;
 use crate::discover::{
-    DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, Problem, ProblemKind, discover,
+    self, DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, Problem, ProblemKind, discover,
 };
 use crate::extract::{ExtractError, Extractor, LeftOut};
 use crate::file_edges;
@@ -441,7 +441,9 @@ pub(crate) fn files_around(
 }
 
 /// Reads and parses `files` again for what their imports bind, without writing them; a file that
-/// cannot be read or parsed now is left out.
+/// cannot be read or parsed now is left out, and so is one that changed since it was stored: its
+/// stored references belong to the stored version, and the imports of the new one would be
+/// matched to them in the wrong order. Its own change, once indexed, writes it whole.
 pub(crate) fn read_again(
     files: &[DiscoveredFile],
     context: &Context<'_>,
@@ -453,6 +455,11 @@ pub(crate) fn read_again(
         parsed_before: None,
         ..*context
     };
+    let files: Vec<DiscoveredFile> = files
+        .iter()
+        .filter(|file| discover::is_as_described(context.root, file))
+        .cloned()
+        .collect();
     let mut imports = Vec::new();
     for batch in files.chunks(FILES_PER_BATCH) {
         for outcome in prepare_batch(batch, &whole)? {

@@ -417,6 +417,17 @@ impl Found {
     }
 }
 
+/// Whether the file `file` describes is still on disk as described: the same size and
+/// modification time, as the walk compares files.
+pub(crate) fn is_as_described(root: &Path, file: &DiscoveredFile) -> bool {
+    fs::symlink_metadata(file.path.to_native(root)).is_ok_and(|metadata| {
+        metadata.len() == file.size_bytes
+            && metadata
+                .modified()
+                .is_ok_and(|time| mtime_ns(time) == file.mtime_ns)
+    })
+}
+
 /// `time` in nanoseconds since the Unix epoch, clamped to what 64 bits hold.
 fn mtime_ns(time: SystemTime) -> i64 {
     match time.duration_since(UNIX_EPOCH) {

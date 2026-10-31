@@ -8,7 +8,7 @@ use std::fs::File;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use common::{TestResult, expected, index, ties, write_all};
+use common::{TestResult, expected, index, index_changed, ties, write_all};
 use cortex_store::{ChangeKind, MetaKey, Reader};
 
 /// A time limit no test file comes near, even in a debug build.
@@ -92,6 +92,54 @@ fn importers_of_a_changed_file_are_tied_again() -> TestResult {
     assert_eq!(
         ties(root, "app.py")?,
         expected(&[("import", "helper", 1, None), ("call", "helper", 3, None)])
+    );
+    Ok(())
+}
+
+/// A file around a change that has itself changed since it was stored, its own change not yet
+/// indexed, is not read again: its stored references belong to its stored version, and the
+/// imports of its new one would be matched to them in the wrong order. `app.py` takes `helper`
+/// from `lib.py`; `lib.py` drops `helper` while `app.py` gains an import of `thing` and a call of
+/// it before its call of `helper`. Indexing `lib.py` leaves `app.py`'s call of `helper` untied,
+/// not tied to `thing`; indexing `app.py` then ties its new import and call.
+#[test]
+fn a_file_changed_but_not_yet_indexed_is_not_read_again() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("lib.py", "def helper():\n    pass\n"),
+            ("other.py", "def thing():\n    pass\n"),
+            ("app.py", "from lib import helper\n\nhelper()\n"),
+        ],
+    )?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    write_all(
+        root,
+        &[
+            ("lib.py", "def renamed():\n    pass\n"),
+            (
+                "app.py",
+                "from lib import helper\nfrom other import thing\n\nthing()\nhelper()\n",
+            ),
+        ],
+    )?;
+    index_changed(root, &["lib.py"])?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[("import", "helper", 1, None), ("call", "helper", 3, None)])
+    );
+    index_changed(root, &["app.py"])?;
+    let thing = Some(("other.py", "thing", "import_path"));
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("import", "helper", 1, None),
+            ("import", "thing", 2, thing),
+            ("call", "thing", 4, thing),
+            ("call", "helper", 5, None),
+        ])
     );
     Ok(())
 }

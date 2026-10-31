@@ -4,14 +4,11 @@
 mod common;
 
 use std::fs::File;
-use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use common::{TestResult, expected, index, ties, write_all};
-use cortex_core::{ModeSetting, RepoId, RepoPath};
-use cortex_index::{DiscoverOptions, IndexOptions, ScipOutcome, ScipProblem, index_paths};
-use cortex_store::{Writer, WriterOptions};
+use common::{TestResult, expected, index, index_changed, ties, write_all};
+use cortex_index::{ScipOutcome, ScipProblem};
 use protobuf::Message;
 use scip::types::{Document, Index, MultiLineRange, Occurrence, SingleLineRange};
 
@@ -62,34 +59,6 @@ fn backdate(root: &Path, paths: &[&str]) -> TestResult {
             .open(root.join(path))?
             .set_modified(earlier)?;
     }
-    Ok(())
-}
-
-/// Indexes the files at `paths` of the repository at `root`, as the daemon does when they change,
-/// with the default size limit.
-fn index_changed(root: &Path, paths: &[&str]) -> TestResult {
-    let mut writer = Writer::open(&WriterOptions {
-        folder: &root.join(".cortex"),
-        repo_id: &RepoId::of(root),
-        mmap_bytes: 0,
-        now_ms: common::NOW_MS,
-    })?;
-    let options = IndexOptions {
-        discover: DiscoverOptions {
-            max_file_bytes: DEFAULT_LIMIT,
-            extra_ignores: &[],
-            global_gitignore: None,
-        },
-        parse_timeout: GENEROUS,
-        threads: NonZeroUsize::MIN,
-        now_ms: common::NOW_MS,
-        mode: ModeSetting::Auto,
-    };
-    let changed: Vec<RepoPath> = paths
-        .iter()
-        .map(|path| RepoPath::new(path))
-        .collect::<Result<_, _>>()?;
-    index_paths(root, &common::grammars()?, &mut writer, &options, &changed)?;
     Ok(())
 }
 
