@@ -57,11 +57,12 @@ pub fn index_paths(
     paths: &[RepoPath],
 ) -> Result<IndexReport, IndexError> {
     let paths: BTreeSet<&RepoPath> = paths.iter().collect();
-    if !incremental::is_complete(writer.queries())? || concerns_everything(root, writer, &paths)? {
+    let mut rules = PathRules::new(WalkRules::of(root, &options.discover))?;
+    let is_complete = incremental::is_complete(writer.queries())?;
+    if !is_complete || concerns_everything((root, writer), &mut rules, &paths)? {
         return index_repository(root, grammars, writer, options);
     }
     incremental::mark_started(writer)?;
-    let mut rules = PathRules::new(WalkRules::of(root, &options.discover))?;
     let found = find(writer, &mut rules, &paths)?;
     let gone: BTreeSet<RepoPath> = found.gone.iter().map(|row| row.file.path.clone()).collect();
     let (around_gone, mut names) = incremental::around_removal(writer.queries(), &gone)?;
@@ -148,15 +149,16 @@ pub fn index_paths(
     Ok(report)
 }
 
-/// Whether a change at `paths` concerns more than the files there: a file of rules, the SCIP
-/// index, or a folder, now or in the store.
+/// Whether a change at `paths` of the repository at `root`, stored by `writer`, concerns more than
+/// the files there: a file of rules the walk reads, as `rules` tells, the SCIP index, or a folder,
+/// now or in the store.
 fn concerns_everything(
-    root: &Path,
-    writer: &Writer,
+    (root, writer): (&Path, &Writer),
+    rules: &mut PathRules,
     paths: &BTreeSet<&RepoPath>,
 ) -> Result<bool, StoreError> {
     for path in paths {
-        let is_special = seen::is_rules_file(path) || path.as_str() == scip::INDEX_FILE;
+        let is_special = rules.changes_rules(path) || path.as_str() == scip::INDEX_FILE;
         if is_special || path.to_native(root).is_dir() || writer.queries().has_files_under(path)? {
             return Ok(true);
         }

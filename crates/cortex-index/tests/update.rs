@@ -13,7 +13,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use common::{NOW_MS, TestResult, grammars};
 use cortex_core::{EdgeType, ModeSetting, RepoId, RepoPath, Resolution};
-use cortex_index::{DiscoverOptions, IndexOptions, index_paths, index_repository};
+use cortex_index::{DiscoverOptions, IndexOptions, ScipOutcome, index_paths, index_repository};
 use cortex_store::{NodeId, Queries, Reader, SymbolId, Writer, WriterOptions};
 use proptest::prelude::*;
 
@@ -471,6 +471,41 @@ fn check_rename(files: &[(&str, &str)], (from, to): (&str, &str)) -> TestResult 
     )?;
     let (left, right) = (snapshot(&kept_folder)?, snapshot(&fresh_folder)?);
     assert!(left == right, "{}", differences(&left, &right));
+    Ok(())
+}
+
+/// A file of rules in a folder the walk leaves out governs nothing the walk finds: indexing its path
+/// indexes that path alone, which leaves the SCIP index unread. A file of rules the walk reads, at
+/// the root or the repository's own under `.git/info`, makes the whole repository indexed again,
+/// which looks for the SCIP index and finds none.
+#[test]
+fn rules_in_an_ignored_folder_index_only_their_path() -> TestResult {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("repo");
+    std::fs::create_dir_all(root.join("node_modules/pkg"))?;
+    std::fs::write(root.join(".gitignore"), "node_modules/\n")?;
+    std::fs::write(root.join("node_modules/pkg/index.js"), "x\n")?;
+    std::fs::write(root.join("app.py"), "app = 1\n")?;
+    let grammars = grammars()?;
+    let mut kept = writer(&scratch.path().join("kept"), &root)?;
+    index_repository(&root, &grammars, &mut kept, &options())?;
+    std::fs::write(root.join("node_modules/pkg/.gitignore"), "dist/\n")?;
+    let ignored = [RepoPath::new("node_modules/pkg/.gitignore")?];
+    let report = index_paths(&root, &grammars, &mut kept, &options(), &ignored)?;
+    assert_eq!(report.scip, ScipOutcome::NotRead);
+    std::fs::write(root.join(".gitignore"), "node_modules/\ndist/\n")?;
+    let read = [RepoPath::new(".gitignore")?];
+    let report = index_paths(&root, &grammars, &mut kept, &options(), &read)?;
+    assert_eq!(report.scip, ScipOutcome::Absent);
+    std::fs::create_dir_all(root.join(".git/info"))?;
+    std::fs::write(
+        root.join(".git/info/exclude"),
+        "app.py
+",
+    )?;
+    let own = [RepoPath::new(".git/info/exclude")?];
+    let report = index_paths(&root, &grammars, &mut kept, &options(), &own)?;
+    assert_eq!(report.scip, ScipOutcome::Absent);
     Ok(())
 }
 

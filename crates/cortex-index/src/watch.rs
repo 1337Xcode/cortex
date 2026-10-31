@@ -2,10 +2,10 @@
 //! been quiet for 200 ms, then sorted by the walk's own rules: paths under `.git` or `.cortex`,
 //! and paths the ignore files and patterns leave out, are dropped; created, changed, removed and
 //! renamed paths (both names of a rename) are reported together. More than 500 paths within
-//! 2 seconds, as a branch switch or a large checkout makes, or a change to a file of rules
-//! (`.gitignore`, `.cortexignore`, `.gitattributes`, `.git/info`), is reported as a change to
-//! everything, to be looked at whole rather than path by path. So is an error from the watcher,
-//! which may have lost events.
+//! 2 seconds, as a branch switch or a large checkout makes, or a change to a file of rules the walk
+//! reads (`.gitignore`, `.cortexignore`, `.gitattributes`, `.git/info`; not one in a folder the
+//! walk leaves out), is reported as a change to everything, to be looked at whole rather than path
+//! by path. So is an error from the watcher, which may have lost events.
 //!
 //! Events are sorted on a thread of the watcher's own, which keeps the rules of each folder it
 //! has looked at; they are loaded again when a file of rules changes.
@@ -22,7 +22,7 @@ use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, ne
 use thiserror::Error;
 
 use crate::discover::{DiscoverError, DiscoverOptions};
-use crate::seen::{PathRules, WalkRules, is_rules_file};
+use crate::seen::{PathRules, WalkRules};
 
 /// How long a path must be quiet before its events are reported.
 const DEBOUNCE: Duration = Duration::from_millis(200);
@@ -135,7 +135,7 @@ fn sort_events(
         let paths: BTreeSet<RepoPath> = natives
             .filter_map(|native| filter.relative(native))
             .collect();
-        if paths.iter().any(is_rules_file) {
+        if paths.iter().any(|path| filter.changes_rules(path)) {
             filter.reload();
             recent.clear();
             report(Change::Everything);

@@ -119,6 +119,29 @@ fn a_rules_change_is_a_change_to_everything() -> TestResult {
     Ok(())
 }
 
+/// A file of rules in a folder the walk leaves out governs nothing the walk finds, so changing it
+/// is no change to everything, nor to any path: installing packages writes many such files.
+#[test]
+fn rules_in_an_ignored_folder_change_nothing() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            (".gitignore", "node_modules/\n"),
+            ("node_modules/pkg/index.js", "x\n"),
+            ("a.py", "a = 1\n"),
+        ],
+    )?;
+    let (_watcher, receiver) = watched(root)?;
+    write(root, "node_modules/pkg/.gitignore", b"dist/\n")?;
+    write(root, "a.py", b"a = 2\n")?;
+    let changes = changes_until(&receiver, |changes| paths(changes).contains("a.py"))?;
+    assert!(!changes.contains(&Change::Everything), "{changes:?}");
+    assert_eq!(paths(&changes), ["a.py".to_owned()].into(), "{changes:?}");
+    Ok(())
+}
+
 /// More than 500 paths changed within 2 seconds, as a checkout makes, is a change to
 /// everything.
 #[test]

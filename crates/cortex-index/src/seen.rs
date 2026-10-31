@@ -18,9 +18,12 @@ use crate::rules::{FolderRules, Reading, RepositoryRules};
 /// The names of the files that hold rules about which files the walk finds.
 const RULES_FILES: [&str; 3] = [".gitignore", ".cortexignore", ".gitattributes"];
 
+/// Where the repository's own rules are kept, outside any folder the walk enters.
+const REPOSITORY_RULES: &str = ".git/info/";
+
 /// Whether `path` holds rules about which files the walk finds.
-pub(crate) fn is_rules_file(path: &RepoPath) -> bool {
-    RULES_FILES.contains(&path.file_name()) || path.as_str().starts_with(".git/info/")
+fn is_rules_file(path: &RepoPath) -> bool {
+    RULES_FILES.contains(&path.file_name()) || path.as_str().starts_with(REPOSITORY_RULES)
 }
 
 /// Whether the file at `path` is reached from `root`, whose canonical form is `canonical_root`, as
@@ -111,6 +114,21 @@ impl PathRules {
             repository,
             folders: BTreeMap::new(),
         })
+    }
+
+    /// Whether a change at `path` can change which files the walk finds: `path` holds rules, and
+    /// the walk reads them, as the repository's own or from a folder it enters. Rules in a folder
+    /// the walk leaves out govern nothing it finds, as installed packages' own ignore files.
+    pub(crate) fn changes_rules(&mut self, path: &RepoPath) -> bool {
+        if !is_rules_file(path) {
+            return false;
+        }
+        if path.as_str().starts_with(REPOSITORY_RULES) {
+            return true;
+        }
+        path.parent()
+            .filter(|folder| *folder != RepoPath::root())
+            .is_none_or(|folder| self.is_seen(&folder))
     }
 
     /// Reads the rules again, after a file of rules changed.
