@@ -192,9 +192,11 @@ fn check_peer(stream: &Stream, daemon_pid_path: &Path) -> Result<(), ClientError
         return Ok(());
     }
     let server = stream.peer_creds().map_err(ClientError::Io)?.pid();
+    // Read as the platform's process id type, `u32` on Windows and `i32` elsewhere, so that this
+    // line compiles on every platform.
     let daemon = std::fs::read_to_string(daemon_pid_path)
         .ok()
-        .and_then(|text| text.trim().parse::<u32>().ok());
+        .and_then(|text| text.trim().parse().ok());
     if server.is_some() && server == daemon {
         Ok(())
     } else {
