@@ -276,9 +276,59 @@ mod tests {
             "INSERT INTO meta (key, value) VALUES ('cortex_version', '2.0.0')",
             [],
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let fourth = MIGRATIONS.get(..4).ok_or("fewer than four migrations")?;
+        migrate(&mut connection, fourth, &backups)?;
         assert_eq!(schema_version(&connection)?, 4);
         assert!(objects(&connection)?.contains(&"passes_on_aliases".to_owned()));
+        let completed: Option<String> = connection
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'cortex_version'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        assert_eq!(completed.as_deref(), Some("2.0.0"));
+        Ok(())
+    }
+
+    /// A database of the fourth schema, with an index completed and a file stored, gains the
+    /// tables of sessions, tasks and events, empty, and keeps the file and the record of the
+    /// completed index: nothing the index wrote changes.
+    #[test]
+    fn the_fifth_schema_adds_activity_and_keeps_the_index() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let fourth = MIGRATIONS.get(..4).ok_or("fewer than four migrations")?;
+        migrate(&mut connection, fourth, &backups)?;
+        connection.execute(
+            "INSERT INTO meta (key, value) VALUES ('cortex_version', '2.0.0')",
+            [],
+        )?;
+        connection.execute(
+            "INSERT INTO files (path, bytes, mtime_ns, flags, indexed_at) \
+             VALUES ('src/a.py', 10, 1, 0, 2)",
+            [],
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 5);
+        let found = objects(&connection)?;
+        for table in [
+            "sessions",
+            "tasks",
+            "events",
+            "events_task",
+            "events_session_ts",
+        ] {
+            assert!(found.contains(&table.to_owned()), "{table}");
+        }
+        let counts: (i64, i64, i64, i64) = connection.query_row(
+            "SELECT (SELECT count(*) FROM sessions), (SELECT count(*) FROM tasks), \
+             (SELECT count(*) FROM events), (SELECT count(*) FROM files)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(counts, (0, 0, 0, 1));
         let completed: Option<String> = connection
             .query_row(
                 "SELECT value FROM meta WHERE key = 'cortex_version'",

@@ -10,6 +10,7 @@
 
 #![warn(clippy::pedantic)]
 
+mod activity;
 mod connection;
 mod error;
 mod folders;
@@ -32,6 +33,7 @@ mod schema;
 mod values;
 mod writer;
 
+pub use activity::{EventRecord, EventRow, SessionRecord, SessionRow, TaskRecord, TaskRow};
 pub use error::StoreError;
 pub use ids::{FileId, NodeId, RefId, SymbolId};
 pub use lock::is_writer_running;

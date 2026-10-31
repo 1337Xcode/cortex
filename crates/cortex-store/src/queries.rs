@@ -30,6 +30,11 @@ impl<'c> Queries<'c> {
         Self { connection }
     }
 
+    /// The connection the queries run on, for the query modules of other tables.
+    pub(crate) fn connection(self) -> &'c Connection {
+        self.connection
+    }
+
     /// The value stored under `key`.
     ///
     /// # Errors

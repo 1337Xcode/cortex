@@ -2,9 +2,10 @@
 
 use std::path::Path;
 
-use cortex_core::{EdgeType, RepoId, RepoPath, ScaleMode};
+use cortex_core::{EdgeType, Identifier, RepoId, RepoPath, ScaleMode, TaskOutcome, Ulid};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
+use crate::activity::{self, EventRecord, SessionRecord, TaskRecord};
 use crate::connection::{self, Access};
 use crate::error::{StoreError, io, sqlite};
 use crate::folders;
@@ -267,6 +268,64 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn remove_folder_node(&mut self, path: &RepoPath) -> Result<bool, StoreError> {
         self.atomically(|connection| folders::remove_folder_node(connection, path))
+    }
+
+    /// Adds the session, or updates a stored one: facts given replace those stored, facts not
+    /// given keep theirs, the first start time stays, and the session is live again.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::NotText`] for a path that is not UTF-8, [`StoreError::TransactionLost`], and
+    /// SQLite errors.
+    pub fn record_session(&mut self, session: &SessionRecord) -> Result<(), StoreError> {
+        self.atomically(|connection| activity::record_session(connection, session))
+    }
+
+    /// Marks the session ended at `ended_at_ms`. `false` when no such session is stored.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn end_session(
+        &mut self,
+        session_id: &Identifier,
+        ended_at_ms: i64,
+    ) -> Result<bool, StoreError> {
+        self.atomically(|connection| activity::end_session(connection, session_id, ended_at_ms))
+    }
+
+    /// Adds the task, numbered one past every task stored, and returns its number.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors, including a session that is not stored
+    /// and a task id already used.
+    pub fn start_task(&mut self, task: &TaskRecord) -> Result<u64, StoreError> {
+        self.atomically(|connection| activity::start_task(connection, task))
+    }
+
+    /// Ends the open task `task_id` with `outcome` at `ended_at_ms`. `false` when no such task is
+    /// open.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn end_task(
+        &mut self,
+        task_id: Ulid,
+        ended_at_ms: i64,
+        outcome: TaskOutcome,
+    ) -> Result<bool, StoreError> {
+        self.atomically(|connection| activity::end_task(connection, task_id, ended_at_ms, outcome))
+    }
+
+    /// Appends the event and returns its number.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn append_event(&mut self, event: &EventRecord) -> Result<u64, StoreError> {
+        self.atomically(|connection| activity::append_event(connection, event))
     }
 
     /// Read queries that also see this transaction's changes.

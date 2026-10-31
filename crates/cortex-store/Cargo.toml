@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 cortex-core = { path = "../cortex-core" }
 rusqlite.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

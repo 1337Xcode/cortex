@@ -31,10 +31,64 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 4,
         sql: include_str!("../migrations/0004_passes_on_aliases.sql"),
     },
+    Migration {
+        version: 5,
+        sql: include_str!("../migrations/0005_sessions_tasks_events.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCHEMA_VERSION: u32 = 5;
+
+/// Adds a session, or for one already stored takes the facts given over those kept and makes it
+/// live again; it keeps its first start time. `?9` is the live status's stored name.
+pub(crate) const SESSION_UPSERT: &str = "INSERT INTO sessions (session_id, agent, agent_version, \
+     model, parent_session_id, cwd, transcript_path, started_at, ended_at, status) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9) \
+     ON CONFLICT (session_id) DO UPDATE SET agent = excluded.agent, \
+     agent_version = coalesce(excluded.agent_version, agent_version), \
+     model = coalesce(excluded.model, model), \
+     parent_session_id = coalesce(excluded.parent_session_id, parent_session_id), \
+     cwd = coalesce(excluded.cwd, cwd), \
+     transcript_path = coalesce(excluded.transcript_path, transcript_path), \
+     ended_at = NULL, status = excluded.status";
+/// Ends a session: its end time and the ended status's stored name.
+pub(crate) const SESSION_END: &str =
+    "UPDATE sessions SET ended_at = ?2, status = ?3 WHERE session_id = ?1";
+/// A session's row, with its row id first.
+pub(crate) const SESSION_BY_ID: &str = "SELECT rowid, session_id, agent, agent_version, model, \
+     parent_session_id, cwd, transcript_path, started_at, ended_at, status FROM sessions \
+     WHERE session_id = ?1";
+/// Adds a task numbered one past every task stored, and returns the number.
+pub(crate) const TASK_INSERT: &str = "INSERT INTO tasks (task_id, session_id, seq, started_at, \
+     prompt_hash, prompt_excerpt) \
+     VALUES (?1, ?2, (SELECT coalesce(max(seq), 0) + 1 FROM tasks), ?3, ?4, ?5) RETURNING seq";
+/// Ends a task that is open: its end time and its outcome's stored name.
+pub(crate) const TASK_END: &str =
+    "UPDATE tasks SET ended_at = ?2, outcome = ?3 WHERE task_id = ?1 AND ended_at IS NULL";
+/// A task's row, with its row id first.
+pub(crate) const TASK_BY_ID: &str = "SELECT rowid, task_id, session_id, seq, started_at, ended_at, \
+     prompt_hash, prompt_excerpt, holdout, outcome FROM tasks WHERE task_id = ?1";
+/// A session's latest task that has not ended; the columns are those of [`TASK_BY_ID`].
+pub(crate) const TASK_OPEN_OF_SESSION: &str = "SELECT rowid, task_id, session_id, seq, \
+     started_at, ended_at, prompt_hash, prompt_excerpt, holdout, outcome FROM tasks \
+     WHERE session_id = ?1 AND ended_at IS NULL ORDER BY seq DESC LIMIT 1";
+/// Appends an event and returns its number.
+pub(crate) const EVENT_INSERT: &str = "INSERT INTO events (task_id, session_id, ts, kind, \
+     node_id, path, range_start, range_end, meta) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+     RETURNING seq";
+/// A task's events, in the order they were stored.
+pub(crate) const EVENTS_OF_TASK: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, \
+     path, range_start, range_end, meta FROM events WHERE task_id = ?1 ORDER BY seq";
+/// A session's events by time, then in the order they were stored; the columns are those of
+/// [`EVENTS_OF_TASK`].
+pub(crate) const EVENTS_OF_SESSION: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, \
+     path, range_start, range_end, meta FROM events WHERE session_id = ?1 ORDER BY ts, seq";
+
+/// Events numbered after ?1, in order, at most ?2 of them; the columns are those of
+/// [`EVENTS_OF_TASK`].
+pub(crate) const EVENTS_AFTER: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, path, \
+     range_start, range_end, meta FROM events WHERE seq > ?1 ORDER BY seq LIMIT ?2";
 
 /// How many objects the database defines; 0 for a new, empty database.
 pub(crate) const COUNT_OBJECTS: &str = "SELECT count(*) FROM sqlite_schema";
@@ -406,11 +460,63 @@ mod tests {
         ]
     }
 
+    /// The columns of the tables of sessions, tasks and events, typed from their table
+    /// definitions.
+    fn expected_activity_columns() -> [(&'static str, Vec<Column>); 3] {
+        [
+            (
+                "sessions",
+                column_list(&[
+                    ("session_id", "TEXT", 1),
+                    ("agent", "TEXT", 0),
+                    ("agent_version", "TEXT", 0),
+                    ("model", "TEXT", 0),
+                    ("parent_session_id", "TEXT", 0),
+                    ("cwd", "TEXT", 0),
+                    ("transcript_path", "TEXT", 0),
+                    ("started_at", "INTEGER", 0),
+                    ("ended_at", "INTEGER", 0),
+                    ("status", "TEXT", 0),
+                ]),
+            ),
+            (
+                "tasks",
+                column_list(&[
+                    ("task_id", "TEXT", 1),
+                    ("session_id", "TEXT", 0),
+                    ("seq", "INTEGER", 0),
+                    ("started_at", "INTEGER", 0),
+                    ("ended_at", "INTEGER", 0),
+                    ("prompt_hash", "BLOB", 0),
+                    ("prompt_excerpt", "TEXT", 0),
+                    ("holdout", "INTEGER", 0),
+                    ("outcome", "TEXT", 0),
+                    ("outcome_evidence", "TEXT", 0),
+                ]),
+            ),
+            (
+                "events",
+                column_list(&[
+                    ("seq", "INTEGER", 1),
+                    ("task_id", "TEXT", 0),
+                    ("session_id", "TEXT", 0),
+                    ("ts", "INTEGER", 0),
+                    ("kind", "TEXT", 0),
+                    ("node_id", "INTEGER", 0),
+                    ("path", "TEXT", 0),
+                    ("range_start", "INTEGER", 0),
+                    ("range_end", "INTEGER", 0),
+                    ("meta", "TEXT", 0),
+                ]),
+            ),
+        ]
+    }
+
     /// The indexes of every table: those of the table definitions, plus `refs.dst_name`, the
     /// references through imports by name, `nodes.path`, the uniqueness of folder paths and the
     /// names passed on as others, the second and the last two partial. Each entry: columns, unique,
     /// partial.
-    fn expected_indexes() -> [(&'static str, Vec<Index>); 7] {
+    fn expected_indexes() -> [(&'static str, Vec<Index>); 10] {
         [
             ("meta", index_list(&[(&["key"], true, false)])),
             (
@@ -452,6 +558,18 @@ mod tests {
             (
                 "passes_on",
                 index_list(&[(&["file_id"], false, false), (&["taken"], false, true)]),
+            ),
+            ("sessions", index_list(&[(&["session_id"], true, false)])),
+            (
+                "tasks",
+                index_list(&[(&["task_id"], true, false), (&["seq"], true, false)]),
+            ),
+            (
+                "events",
+                index_list(&[
+                    (&["task_id"], false, false),
+                    (&["session_id", "ts"], false, false),
+                ]),
             ),
         ]
     }
@@ -566,16 +684,22 @@ mod tests {
             tables,
             [
                 "edges",
+                "events",
                 "files",
                 "meta",
                 "nodes",
                 "passes_on",
                 "refs",
                 "search_index",
-                "symbols"
+                "sessions",
+                "symbols",
+                "tasks"
             ]
         );
-        for (table, expected) in &expected_columns() {
+        for (table, expected) in expected_columns()
+            .iter()
+            .chain(&expected_activity_columns())
+        {
             assert_eq!(&columns(&connection, table)?, expected, "{table}");
         }
         for (table, expected) in &expected_indexes() {
@@ -595,6 +719,10 @@ mod tests {
         assert_eq!(
             foreign_keys(&connection, "passes_on")?,
             [key("files", "file_id", "file_id", "NO ACTION")]
+        );
+        assert_eq!(
+            foreign_keys(&connection, "tasks")?,
+            [key("sessions", "session_id", "session_id", "NO ACTION")]
         );
         assert_eq!(
             foreign_keys(&connection, "edges")?,

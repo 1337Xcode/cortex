@@ -10,6 +10,7 @@
 
 #![warn(clippy::pedantic)]
 
+mod activity;
 mod config;
 mod event;
 mod hash;
@@ -26,6 +27,10 @@ mod tokens;
 mod ulid;
 mod user_folder;
 
+pub use activity::{
+    EventKind, EventMeta, EventSource, PROMPT_EXCERPT_CHARS, PromptExcerpt, SessionStatus,
+    TaskOutcome,
+};
 pub use config::{
     Config, ConfigError, ConfigLayer, DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES,
     DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, LoadedConfig, MAX_MMAP_BYTES, ModeSetting,

@@ -116,6 +116,13 @@ pub enum StoreError {
         /// The row's id.
         row: i64,
     },
+    /// A value to store cannot be written as the text its column holds: a path that is not
+    /// UTF-8.
+    #[error("{column} cannot hold a value that is not UTF-8 text")]
+    NotText {
+        /// The table and column, such as `sessions.cwd`.
+        column: &'static str,
+    },
     /// An update named a row that does not exist.
     #[error("no row {id} in {table}")]
     UnknownRow {
