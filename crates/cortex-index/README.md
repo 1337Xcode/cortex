@@ -126,15 +126,17 @@ inspect.
 Each reference is then tied to a definition when what its file says settles which one.
 
 First, a SCIP index at the repository's root (`index.scip`), written by the user's or a CI job's
-own indexer, ties what it settles at confidence 1.0; Cortex runs no indexer. A reference
-occurrence whose symbol the index defines exactly once ties the stored reference with the
-symbol's name on the occurrence's line to the stored definition with that name around the
-definition's line. Only lines are read from a range, so a document's position encoding does not
-matter. A document is left out when its path is not a stored file's or its file changed after the
-index was written, and so is every symbol it defines; symbols local to a document are left out,
-and so is any occurrence the store cannot match one for one. An index over 256 MiB, or that is not
-a regular file or not a SCIP index, is refused and reported, and the rules below tie as they would
-without it.
+own indexer, ties what it settles at confidence 1.0; Cortex runs no indexer. A symbol the index
+defines exactly once, as a namespace, type, term or method, maps to the stored definition with
+its name around the definition's line. On each line, the stored references of one name are tied
+to it when the index has as many reference occurrences of that name there and all of them are
+that symbol; a line where the name also stands for something the index does not know, or for a
+parameter or local, ties nothing. Only lines are read from a range, so a document's position
+encoding does not matter. A document is left out when its path is not a stored file's or its file
+changed after the index was written, and so is every symbol it defines. The index is read one
+document and one occurrence at a time; one over 256 MiB, 5 million occurrences or a million
+distinct symbols, not a regular file, or not a SCIP index is refused and reported, and the rules
+below tie as they would without it.
 
 A bare name, written with nothing before it, may be bound by an import. It is looked up the way
 these languages scope names: from the definition the use sits in outwards, through the functions,

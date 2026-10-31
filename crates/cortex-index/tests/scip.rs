@@ -219,3 +219,64 @@ fn an_index_that_cannot_be_used_is_refused() -> TestResult {
     assert_eq!(report.scip, ScipOutcome::Refused(ScipProblem::NotAFile));
     Ok(())
 }
+
+/// A line the index does not settle one for one ties nothing from it. Line 6 of `app.py` calls
+/// `ext.run`, which the index does not know, and `lib.run`, which it does: one occurrence of `run`
+/// against two stored references, so the rules tie them, `lib.run` through its import and
+/// `ext.run` to nothing. In `m.py` the index says line 2 calls the parameter `run`, a definition
+/// Cortex does not store, so the call is left to the rules, which find the function of that name
+/// in the file.
+#[test]
+fn lines_the_index_does_not_settle_tie_nothing() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("lib.py", "def run():\n    pass\n"),
+            (
+                "app.py",
+                "import lib\nimport ext\n\n\ndef main():\n    x = ext.run(lib.run())\n",
+            ),
+            ("m.py", "def run(run):\n    run()\n"),
+        ],
+    )?;
+    let lib_run = symbol("lib/run().");
+    let parameter = "scip-java maven shop 0.1 m/run().(run)";
+    write_index(
+        root,
+        vec![
+            document("lib.py", vec![packed(&lib_run, 0, true)]),
+            document("app.py", vec![packed(&lib_run, 5, false)]),
+            document(
+                "m.py",
+                vec![
+                    packed(&symbol("m/run()."), 0, true),
+                    packed(parameter, 0, true),
+                    packed(parameter, 1, false),
+                ],
+            ),
+        ],
+    )?;
+    let report = index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(
+        report.scip,
+        ScipOutcome::Read {
+            documents: 3,
+            left_out: 0,
+            tied: 0
+        }
+    );
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("call", "run", 6, None),
+            ("call", "run", 6, Some(("lib.py", "run", "import_path"))),
+        ])
+    );
+    assert_eq!(
+        ties(root, "m.py")?,
+        expected(&[("call", "run", 2, Some(("m.py", "run", "same_file")))])
+    );
+    Ok(())
+}
