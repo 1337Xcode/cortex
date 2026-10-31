@@ -18,7 +18,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use cortex_core::{Language, RepoPath};
+use cortex_core::{Identifier, Language, RepoPath};
 use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 
@@ -224,6 +224,12 @@ impl Resolver for Ecmascript {
             module: found.into_iter().collect(),
             submodule: None,
         }
+    }
+
+    fn module_name(&self, _specifier: &str) -> Option<Identifier> {
+        // A module imported whole, `import "./styles.css"`, is loaded for what loading it does; a
+        // namespace import is always given its name.
+        None
     }
 }
 

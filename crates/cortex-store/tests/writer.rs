@@ -337,10 +337,10 @@ fn node_ids_are_never_reused() -> TestResult {
 }
 
 /// Every symbol's and every reference's name is listed by id, with its file and that file's
-/// language. A symbol says whether it is defined directly in its file: `helper` and `main` are;
-/// `main.inner` sits in `main`, and `Order.new` carries the qualifier `Order` with no parent, as a
-/// method in an `impl` block does. A reference comes with its kind, its line and what it is tied
-/// to.
+/// language. A symbol comes with its kind and says whether it is defined directly in its file:
+/// `helper`, `main` and the module `tests` are; `main.inner` sits in `main`, and `Order.new`
+/// carries the qualifier `Order` with no parent, as a method in an `impl` block does. A
+/// reference comes with its kind, its line and what it is tied to.
 #[test]
 fn names_are_listed_with_their_files() -> TestResult {
     let scratch = Scratch::new()?;
@@ -353,6 +353,7 @@ fn names_are_listed_with_their_files() -> TestResult {
             symbol(SymbolKind::Function, "main", None, ("s", "b"))?,
             symbol(SymbolKind::Function, "main.inner", Some(1), ("s", "b"))?,
             symbol(SymbolKind::Method, "Order.new", None, ("s", "b"))?,
+            symbol(SymbolKind::Module, "tests", None, ("s", "b"))?,
         ],
         vec![
             reference(None, "os", RefKind::Import, 1)?,
@@ -371,22 +372,24 @@ fn names_are_listed_with_their_files() -> TestResult {
     transaction.commit()?;
     let queries = writer.queries();
     let python = Some(Language::Python);
-    let symbol_name = |position: usize, text: &str, is_top_level| -> TestResult<SymbolName> {
+    let symbol_name = |position: usize, text: &str, is_top_level, kind| -> TestResult<SymbolName> {
         Ok(SymbolName {
             id: a.symbols[position],
             file: a.file,
             language: python,
             name: name(text)?,
             is_top_level,
+            kind,
         })
     };
     assert_eq!(
         queries.symbol_names()?,
         [
-            symbol_name(0, "helper", true)?,
-            symbol_name(1, "main", true)?,
-            symbol_name(2, "inner", false)?,
-            symbol_name(3, "new", false)?,
+            symbol_name(0, "helper", true, SymbolKind::Function)?,
+            symbol_name(1, "main", true, SymbolKind::Function)?,
+            symbol_name(2, "inner", false, SymbolKind::Function)?,
+            symbol_name(3, "new", false, SymbolKind::Method)?,
+            symbol_name(4, "tests", true, SymbolKind::Module)?,
         ]
     );
     let ref_name = |position: usize, text: &str, kind, line, target| -> TestResult<RefName> {

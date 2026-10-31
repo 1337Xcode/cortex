@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{Language, RepoPath};
+use cortex_core::{Identifier, Language, RepoPath};
 
 use super::{Files, ReadText, Resolver, Targets, folders_above, joined};
 use crate::specifiers::Import;
@@ -54,6 +54,10 @@ impl Resolver for Go {
             submodule: None,
         }
     }
+
+    fn module_name(&self, specifier: &str) -> Option<Identifier> {
+        package_name(specifier)
+    }
 }
 
 impl Go {
@@ -85,6 +89,52 @@ impl Go {
 fn is_import_path(path: &str) -> bool {
     path.split('/')
         .all(|element| !element.is_empty() && !element.chars().all(|mark| mark == '.'))
+}
+
+/// The name code reaches the package at import `path` by when the import gives it none, by the
+/// convention Go packages follow: the path's last element, or the one before when the last is a
+/// major version (`example.com/shop/v2` is `shop`), cut before a version ending
+/// (`gopkg.in/yaml.v3` is `yaml`). `None` when that is no Go identifier. A package that declares
+/// another name is not reached by its path.
+fn package_name(path: &str) -> Option<Identifier> {
+    let mut elements = path.rsplit('/');
+    let last = elements.next()?;
+    let element = if is_major_version(last) {
+        elements.next()?
+    } else {
+        last
+    };
+    let name = match element.rsplit_once('.') {
+        Some((stem, ending)) if is_version(ending) => stem,
+        _ => element,
+    };
+    if !is_identifier(name) {
+        return None;
+    }
+    Identifier::new(name).ok()
+}
+
+/// Whether `text` is a version: `v` and a number, as `v0` or `v3`.
+fn is_version(text: &str) -> bool {
+    text.strip_prefix('v').is_some_and(|number| {
+        !number.is_empty() && number.bytes().all(|digit| digit.is_ascii_digit())
+    })
+}
+
+/// Whether the path element `element` is a major version that ends a module path: `v2` and up,
+/// written without a leading zero. A module's versions 0 and 1 take no such element, so a package
+/// folder named `v1` is named `v1`.
+fn is_major_version(element: &str) -> bool {
+    is_version(element) && !element.starts_with("v0") && element != "v1"
+}
+
+/// Whether `name` is a Go identifier: a letter or `_`, then letters, digits and `_`.
+fn is_identifier(name: &str) -> bool {
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_alphabetic() || first == '_')
+        && characters.all(|character| character.is_alphanumeric() || character == '_')
 }
 
 /// Whether `file`, in a package folder, belongs to the package as the Go tool builds it: a `.go`
@@ -237,5 +287,28 @@ mod tests {
         let found = resolved(&paths, &modules, "other/main.go", &["example.com/dup/a"])?;
         assert_eq!(found, [Vec::<String>::new()]);
         Ok(())
+    }
+
+    /// A package is reached by its path's last element, or by the element before a major version
+    /// from 2 up, with a version ending cut off; a name that is no Go identifier reaches nothing.
+    #[test]
+    fn packages_are_named_by_their_path() {
+        let cases = [
+            ("example.com/shop/orders", Some("orders")),
+            ("fmt", Some("fmt")),
+            ("example.com/shop/v2", Some("shop")),
+            ("example.com/shop/v10", Some("shop")),
+            ("k8s.io/api/core/v1", Some("v1")),
+            ("example.com/api/v02", Some("v02")),
+            ("gopkg.in/yaml.v3", Some("yaml")),
+            ("gopkg.in/check.v1", Some("check")),
+            ("github.com/mattn/go-isatty", None),
+            ("example.com", None),
+            ("v2", None),
+        ];
+        for (path, expected) in cases {
+            let name = package_name(path);
+            assert_eq!(name.as_ref().map(Identifier::as_str), expected, "{path}");
+        }
     }
 }

@@ -106,6 +106,8 @@ pub struct SymbolName {
     /// Whether it is defined directly in its file: in no other definition, and with no qualifier,
     /// so that its qualified name is its name. These are the names a module offers its importers.
     pub is_top_level: bool,
+    /// What kind of definition it is.
+    pub kind: SymbolKind,
 }
 
 /// A stored reference's name, the file it is in and what it is tied to, as resolution reads them.

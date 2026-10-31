@@ -8,17 +8,22 @@
 //! own file, or else the one among the files of its language family. Anything less certain stays
 //! unresolved.
 //!
+//! A name written after a qualifier that imports give a module is that module's: it is tied to
+//! the one definition of the name the module makes or passes on, when every such import finds the
+//! same one, and stays unresolved otherwise, as it does when an import gives the qualifier
+//! something outside the repository.
+//!
 //! A family is a group of languages whose code calls each other's definitions directly:
 //! TypeScript, TSX and JavaScript; C and C++; Java, Kotlin and Scala. Every other language is a
 //! family of its own, so a Python call is never tied to a function of another language that
 //! happens to share its name.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{Identifier, Language, RefKind, RepoPath, Resolution};
+use cortex_core::{Identifier, Language, RefKind, RepoPath, Resolution, SymbolKind};
 use cortex_store::{FileId, RefName, Resolved, StoreError, SymbolId, SymbolName, Target, Writer};
 
-use crate::bindings::{Bindings, Lookup};
+use crate::bindings::{Bindings, Lookup, Reach};
 
 /// How many references are written per transaction.
 const RESOLUTIONS_PER_TRANSACTION: usize = 4096;
@@ -86,9 +91,11 @@ struct Search<'a> {
 
 /// What earlier lookups found, so that each is made once per index.
 #[derive(Default)]
-struct Memo {
+struct Memo<'a> {
     /// What each file's import at a position, among those that take a name, finds.
     imports: BTreeMap<(FileId, usize), Option<Found>>,
+    /// What each name finds in each module a file reaches, by the module's position.
+    members: BTreeMap<(FileId, usize, &'a Identifier), Option<Found>>,
 }
 
 /// The definitions of each name, per file and per language family.
@@ -99,6 +106,8 @@ struct Definitions<'a> {
     top_level: BTreeMap<(FileId, &'a str), Found>,
     /// By language family and name.
     in_family: BTreeMap<(Language, &'a str), Found>,
+    /// The definitions of modules.
+    modules: BTreeSet<SymbolId>,
 }
 
 impl<'a> Definitions<'a> {
@@ -108,9 +117,13 @@ impl<'a> Definitions<'a> {
             in_file: BTreeMap::new(),
             top_level: BTreeMap::new(),
             in_family: BTreeMap::new(),
+            modules: BTreeSet::new(),
         };
         for symbol in symbols {
             let name = symbol.name.as_str();
+            if symbol.kind == SymbolKind::Module {
+                definitions.modules.insert(symbol.id);
+            }
             count(&mut definitions.in_file, (symbol.file, name), symbol.id);
             if symbol.is_top_level {
                 count(&mut definitions.top_level, (symbol.file, name), symbol.id);
@@ -128,15 +141,16 @@ impl<'a> Definitions<'a> {
 
     /// What `reference`, at `position` among its file's references, is tied to. In a file this
     /// index wrote, as its bindings say: an import's own reference through its import, a bound
-    /// name through the imports that bind it, either only that way; any other reference by its
-    /// name. In a file it did not write, whose imports were not read: a tie through an import
-    /// stays as it was, and any other reference goes by its name.
+    /// name through the imports that bind it, a name after a qualifier through the modules the
+    /// qualifier's imports reach, each only that way; any other reference by its name. In a file
+    /// it did not write, whose imports were not read: a tie through an import stays as it was,
+    /// and any other reference goes by its name.
     fn target(
         &self,
         reference: &'a RefName,
         position: usize,
         written: &Written<'a>,
-        memo: &mut Memo,
+        memo: &mut Memo<'a>,
     ) -> Option<Target> {
         let Some(bindings) = written.bindings.get(&reference.file) else {
             let is_through_import = reference.kind == RefKind::Import
@@ -160,6 +174,21 @@ impl<'a> Definitions<'a> {
                     .collect();
                 agreed(&finds)
             }
+            Some(Lookup::Member(reaches)) => {
+                if self.names_a_definition(reference.file, reaches, written, memo) {
+                    return self.by_name(reference);
+                }
+                let finds: Vec<Option<Found>> = reaches
+                    .iter()
+                    .map(|reach| match reach {
+                        Reach::Module(module) | Reach::Submodule { module, .. } => {
+                            self.in_module(reference.file, *module, &reference.name, written, memo)
+                        }
+                        Reach::Outside => None,
+                    })
+                    .collect();
+                agreed(&finds)
+            }
             // A reference past the file's lookups means the two lists came apart; such a one goes
             // by its name, as it would without imports.
             Some(Lookup::ByName) | None if reference.kind != RefKind::Import => {
@@ -179,7 +208,7 @@ impl<'a> Definitions<'a> {
         file: FileId,
         taken: usize,
         written: &Written<'a>,
-        memo: &mut Memo,
+        memo: &mut Memo<'a>,
     ) -> Option<Found> {
         if let Some(found) = memo.imports.get(&(file, taken)) {
             return *found;
@@ -190,6 +219,49 @@ impl<'a> Definitions<'a> {
             .and_then(|bindings| bindings.taken(taken))
             .and_then(|import| self.defined_in(&import.name, &import.files, written));
         memo.imports.insert((file, taken), found);
+        found
+    }
+
+    /// Whether one of `reaches`, from the written file `file`, is a submodule whose name the
+    /// import's own module makes as something other than a module: then the qualifier names that
+    /// definition, a class or a value, not the submodule.
+    fn names_a_definition(
+        &self,
+        file: FileId,
+        reaches: &[Reach],
+        written: &Written<'a>,
+        memo: &mut Memo<'a>,
+    ) -> bool {
+        reaches.iter().any(|reach| {
+            let Reach::Submodule { taken, .. } = reach else {
+                return false;
+            };
+            match self.through_import(file, *taken, written, memo) {
+                Some(Found::One(symbol)) => !self.modules.contains(&symbol),
+                Some(Found::Several) => true,
+                None => false,
+            }
+        })
+    }
+
+    /// What `name` finds in the module at `module` among those the written file `file` reaches:
+    /// made directly in the module's files, or passed on by them.
+    fn in_module(
+        &self,
+        file: FileId,
+        module: usize,
+        name: &'a Identifier,
+        written: &Written<'a>,
+        memo: &mut Memo<'a>,
+    ) -> Option<Found> {
+        if let Some(found) = memo.members.get(&(file, module, name)) {
+            return *found;
+        }
+        let found = written
+            .bindings
+            .get(&file)
+            .and_then(|bindings| self.defined_in(name, bindings.module(module), written));
+        memo.members.insert((file, module, name), found);
         found
     }
 

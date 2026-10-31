@@ -142,11 +142,23 @@ nothing. A namespace (`export * as ns`) is not followed.
 Some imports bind no bare name. A re-export (`export { x } from`, `export * from`) only passes
 names on. An import of every name (`from x import *`, Go's dot import) does too, since which names
 it brings in depends on each language's rules of visibility and order. A default import binds
-nothing, since no definition says it is the default. A name written after something, as in
-`line.strip()`, `orders.Place()` or `Order::new()`, is never bound by an import of the bare name;
-each language whose imports name files lists the forms of its grammar that write a name after
-something, beside its parsing rules. Parameters and local variables are not known, so one named
-like an import does not hide it.
+nothing, since no definition says it is the default. Parameters and local variables are not
+known, so one named like an import does not hide it.
+
+A name written after something, as in `line.strip()` or `orders.Place()`, is never bound by an
+import of the bare name; each language whose imports name files lists the forms of its grammar
+that write a name after something, beside its parsing rules. When what is written before the name
+is a plain name, that name is looked up through the same scopes. If the imports there give it a
+module, the name is that module's: it is tied (0.8) when they all find the same definition, made
+in the module's files or passed on by them, and stays unresolved otherwise. These imports give a
+module: Go's, by the package's alias or the last element of its path (the one before a major
+version such as `v2`; the blank name `_` reaches nothing); a namespace import
+(`import * as api`); Python's `import shop.models`, as `shop.models` or its alias, and
+`from shop import models` when `models` is a submodule that `shop` does not define as something
+else; Rust's `use crate::models` of a module file, and a path brought in whole. If they give it
+something outside the repository, as `http.Error` or `os.path.join` do, the name stays
+unresolved. If an import gives it a definition of the repository, a class or a value, the name
+goes by its own name, since only that definition's members could make it.
 
 An import's own reference is tied through its own import or not at all. Any other reference that
 no import binds is tied to the one definition with its name in its own file (0.6), or else to the

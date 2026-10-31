@@ -23,7 +23,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{Language, RepoPath};
+use cortex_core::{Identifier, Language, RepoPath};
 use toml::{Table, Value};
 
 use super::{Files, ReadText, Resolver, Targets, folders_above, joined};
@@ -306,6 +306,15 @@ impl Resolver for Rust {
             },
             submodule,
         }
+    }
+
+    fn module_name(&self, specifier: &str) -> Option<Identifier> {
+        let last = specifier.rsplit("::").next()?;
+        // `crate`, `self` and `super` start paths; they are no module's own name.
+        if matches!(last, "crate" | "self" | "super") {
+            return None;
+        }
+        Identifier::new(last).ok()
     }
 }
 
@@ -830,5 +839,28 @@ path = "src/cli/main.rs"
             ),
         ];
         check(&cases)
+    }
+
+    /// A module brought in whole is reached by its path's last part; `crate`, `self` and `super`
+    /// name no module of their own.
+    #[test]
+    fn whole_modules_are_named_by_their_last_part() {
+        let rust = load(&Files::new(Vec::new()), &|_| None);
+        let cases = [
+            ("serde", Some("serde")),
+            ("std::io", Some("io")),
+            ("crate::models", Some("models")),
+            ("crate", None),
+            ("super", None),
+            ("self", None),
+        ];
+        for (specifier, expected) in cases {
+            let name = rust.module_name(specifier);
+            assert_eq!(
+                name.as_ref().map(Identifier::as_str),
+                expected,
+                "{specifier}"
+            );
+        }
     }
 }

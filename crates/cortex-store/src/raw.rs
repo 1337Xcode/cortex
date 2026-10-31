@@ -238,6 +238,8 @@ pub(crate) struct RawSymbolName {
     name: String,
     /// Whether `parent_id` is null and `qual_name` is `name`.
     is_top_level: bool,
+    /// `kind`.
+    kind: String,
 }
 
 impl RawSymbolName {
@@ -249,6 +251,7 @@ impl RawSymbolName {
             lang: row.get(2)?,
             name: row.get(3)?,
             is_top_level: row.get(4)?,
+            kind: row.get(5)?,
         })
     }
 
@@ -260,6 +263,7 @@ impl RawSymbolName {
             language: values::language(self.lang, self.file)?,
             name: values::identifier(&self.name, "symbols.name", self.id)?,
             is_top_level: self.is_top_level,
+            kind: values::kind(&self.kind, SymbolKind::from_name, "symbols.kind", self.id)?,
         })
     }
 }

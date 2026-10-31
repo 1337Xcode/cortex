@@ -456,7 +456,8 @@ fn prepare(
                 language,
                 &extraction.imports,
             );
-            let bindings = Bindings::of(&extraction, &targets);
+            let names = file_imports::module_names(context.project, language, &extraction.imports);
+            let bindings = Bindings::of(&extraction, &targets, &names);
             Ok(Outcome::Ready(Box::new(Prepared {
                 index: FileIndex {
                     file: record,

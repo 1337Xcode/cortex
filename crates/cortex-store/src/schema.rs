@@ -85,7 +85,7 @@ pub(crate) const SYMBOLS_NAMED: &str =
 /// Every symbol's id, file, file language and name, and whether it is defined directly in its
 /// file (in no other definition, its qualified name its name), by id.
 pub(crate) const SYMBOL_NAMES: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name, \
-     s.parent_id IS NULL AND s.qual_name = s.name \
+     s.parent_id IS NULL AND s.qual_name = s.name, s.kind \
      FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id ORDER BY s.symbol_id";
 
 /// Adds an unresolved reference and returns its id.

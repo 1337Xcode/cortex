@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{Language, RepoPath};
+use cortex_core::{Identifier, Language, RepoPath};
 
 use crate::specifiers::Import;
 
@@ -37,6 +37,11 @@ trait Resolver: Send + Sync {
     /// The files `import`, written in the file at `importer`, names. Only the import's module and,
     /// when it takes one name, that name are read: imports alike in those name the same files.
     fn targets(&self, files: &Files, importer: &RepoPath, import: &Import) -> Targets;
+
+    /// The name a file that imports the module `specifier` whole, with no alias, reaches it by:
+    /// Python's dotted module, Go's package name, the last part of a Rust path. `None` when the
+    /// language binds no name for such an import.
+    fn module_name(&self, specifier: &str) -> Option<Identifier>;
 }
 
 /// The files one import names.
@@ -140,12 +145,24 @@ impl Project {
         language: Language,
         import: &Import,
     ) -> Targets {
-        self.resolvers
-            .iter()
-            .find(|resolver| resolver.reads(language))
+        self.resolver(language)
             .map_or_else(Targets::default, |resolver| {
                 resolver.targets(&self.files, importer, import)
             })
+    }
+
+    /// The name a file written in `language` reaches the module `specifier` by when it imports
+    /// it whole with no alias; none when no resolver reads the language or it binds no name.
+    pub(crate) fn module_name(&self, language: Language, specifier: &str) -> Option<Identifier> {
+        self.resolver(language)?.module_name(specifier)
+    }
+
+    /// The resolver that reads imports written in `language`, if one does.
+    fn resolver(&self, language: Language) -> Option<&dyn Resolver> {
+        self.resolvers
+            .iter()
+            .find(|resolver| resolver.reads(language))
+            .map(AsRef::as_ref)
     }
 }
 

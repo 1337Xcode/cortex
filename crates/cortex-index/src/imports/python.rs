@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{Language, RepoPath};
+use cortex_core::{Identifier, Language, RepoPath};
 
 use super::{Files, ReadText, Resolver, Targets, folders_above};
 use crate::specifiers::{Import, Imported};
@@ -89,6 +89,10 @@ impl Resolver for Python {
             Some(package) => located(files, package, &module, name),
             None => Targets::default(),
         }
+    }
+
+    fn module_name(&self, specifier: &str) -> Option<Identifier> {
+        Identifier::new(specifier).ok()
     }
 }
 

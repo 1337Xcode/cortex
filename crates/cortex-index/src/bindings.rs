@@ -10,6 +10,13 @@
 //! methods in it: they reach its names through `self` or `this`. A name written after a
 //! qualifier, `x.strip()` or `orders.Place()`, is not bound by an import of the bare name.
 //!
+//! A qualifier that is a plain name is looked up through the same scopes. When imports there
+//! give it a module (a Go package, a namespace, a Python or Rust module), the name after it is
+//! that module's, found among the module's files; when they give it something outside the
+//! repository, the name is outside too and stays unresolved. When an import gives it a
+//! definition of the repository, a class or a value, the name is one of that definition's
+//! members, which only the name itself can find.
+//!
 //! An import of every name (`*`) binds no bare name: which names it brings in depends on each
 //! language's rules of visibility and order. It does pass names on, as an import that takes a name
 //! does: a file importing a name from this one finds it through them. A re-export, which only
@@ -26,7 +33,7 @@ use cortex_store::{RefRecord, SymbolRecord};
 use crate::extract::Extraction;
 use crate::imports::Targets;
 use crate::references::Qualifier;
-use crate::specifiers::Imported;
+use crate::specifiers::{Import, Imported};
 
 /// One name an import takes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +56,28 @@ pub(crate) enum Lookup {
     /// A bare name bound by these imports, by position: the one definition they all find, or
     /// nothing.
     Bound(Vec<usize>),
+    /// A name written after a qualifier that imports give these modules or outside things: the
+    /// one definition the modules all make or pass on, or nothing.
+    Member(Vec<Reach>),
+}
+
+/// What a qualifier reaches through one import that binds its name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reach {
+    /// A module of the repository, by position among the modules the file's imports reach.
+    Module(usize),
+    /// The module of the name an import takes, by position among the modules, unless the
+    /// import's own module makes that name as something other than a module: Python's
+    /// `from shop import models` reaches `shop/models.py` unless `shop/__init__.py` defines
+    /// `models`. `taken` is the import's position among the imports that take a name.
+    Submodule {
+        /// The import's position among the imports that take a name.
+        taken: usize,
+        /// The submodule's position among the modules.
+        module: usize,
+    },
+    /// Something outside the repository, whose members are outside too.
+    Outside,
 }
 
 /// What one file's imports bring into it and pass on.
@@ -61,6 +90,8 @@ pub(crate) struct Bindings {
     exports: BTreeMap<Identifier, Vec<usize>>,
     /// The files whose every name the file's top-level `*` imports pass on.
     everything: BTreeSet<RepoPath>,
+    /// The files of each module a qualifier reaches through the file's imports.
+    modules: Vec<Vec<RepoPath>>,
     /// For each reference of the file, in the order they are written to the store, where its
     /// definition is looked for first.
     lookups: Vec<Lookup>,
@@ -70,50 +101,75 @@ pub(crate) struct Bindings {
 /// in (`None` at the top of the file) and the name it binds.
 type Bound<'a> = BTreeMap<(Option<usize>, &'a Identifier), Vec<usize>>;
 
+/// What the imports binding each name reach when it is written as a qualifier, by the scope they
+/// are made in and the name: a module or something outside, or `None` for a definition of the
+/// repository.
+type Reaching<'a> = BTreeMap<(Option<usize>, &'a Identifier), Vec<Option<Reach>>>;
+
 impl Bindings {
-    /// The bindings of the file read as `extraction`, whose imports name `targets`, one for each
+    /// The bindings of the file read as `extraction`, whose imports name `targets` and reach their
+    /// modules by `module_names` when they take them whole with no alias, one of each for each
     /// import in order.
-    pub(crate) fn of(extraction: &Extraction, targets: &[Targets]) -> Self {
+    pub(crate) fn of(
+        extraction: &Extraction,
+        targets: &[Targets],
+        module_names: &[Option<Identifier>],
+    ) -> Self {
         let pairs = pair_own_references(extraction);
-        let own_reference: BTreeMap<usize, usize> = pairs
-            .iter()
-            .flatten()
-            .map(|(reference, taken)| (*taken, *reference))
-            .collect();
-        let mut bindings = Self::default();
-        let mut bound: Bound<'_> = BTreeMap::new();
-        for (import, files) in extraction.imports.iter().zip(targets) {
+        let scopes = import_scopes(extraction, &pairs);
+        let mut read = Read::default();
+        let made = extraction.imports.iter().zip(targets).zip(module_names);
+        for (((import, files), module_name), scope) in made.zip(scopes) {
+            let binds_here = !import.is_reexport;
             match (&import.imported, &import.alias) {
-                (Imported::Name(name), alias) => {
-                    let position = bindings.taken.len();
-                    bindings.taken.push(Taken {
-                        name: name.clone(),
-                        files: files.module.clone(),
-                    });
-                    let scope = match own_reference.get(&position) {
-                        Some(reference) => {
-                            extraction.refs.get(*reference).and_then(|own| own.symbol)
-                        }
-                        None => scope_at_line(&extraction.symbols, import.line),
-                    };
-                    let name = alias.as_ref().unwrap_or(name);
-                    if scope.is_none() {
-                        let passed_on = bindings.exports.entry(name.clone()).or_default();
-                        passed_on.push(position);
-                    }
-                    if !import.is_reexport {
-                        bound.entry((scope, name)).or_default().push(position);
-                    }
-                }
+                (Imported::Name(name), _) => read.take(import, name, files, scope),
                 (Imported::All, None) => {
-                    if scope_at_line(&extraction.symbols, import.line).is_none() {
-                        bindings.everything.extend(files.module.iter().cloned());
+                    if scope.is_none() {
+                        read.bindings
+                            .everything
+                            .extend(files.module.iter().cloned());
                     }
                 }
-                (Imported::All, Some(_)) | (Imported::Module | Imported::Default, _) => {}
+                (Imported::Module, alias) => {
+                    if let Some(name) = alias.as_ref().or(module_name.as_ref()) {
+                        let reach = read.bindings.reach(&files.module);
+                        read.reach(scope, name, Some(reach));
+                    }
+                }
+                (Imported::All, Some(alias)) if binds_here => {
+                    let reach = read.bindings.reach(&files.module);
+                    read.reach(scope, alias, Some(reach));
+                }
+                // A default import binds a definition of its module, or something outside.
+                (Imported::Default, Some(alias)) if binds_here => {
+                    let reach = files.module.is_empty().then_some(Reach::Outside);
+                    read.reach(scope, alias, reach);
+                }
+                (Imported::All | Imported::Default, _) => {}
             }
         }
-        bindings.lookups = lookups(extraction, &pairs, &bound);
+        let scopes = Scopes::of(&extraction.symbols);
+        let Read {
+            mut bindings,
+            bound,
+            reaching,
+        } = read;
+        bindings.lookups = extraction
+            .refs
+            .iter()
+            .zip(&extraction.qualifiers)
+            .zip(&pairs)
+            .map(|((reference, qualifier), pair)| {
+                if reference.kind == RefKind::Import {
+                    return Lookup::Import(pair.map(|(_, taken)| taken));
+                }
+                match qualifier {
+                    Qualifier::None => scopes.bare(reference, &bound),
+                    Qualifier::Name(qualifier) => scopes.member(reference, qualifier, &reaching),
+                    Qualifier::Other => Lookup::ByName,
+                }
+            })
+            .collect();
         bindings
     }
 
@@ -132,10 +188,88 @@ impl Bindings {
         &self.everything
     }
 
+    /// The files of the module at `position` among those the file's imports reach.
+    pub(crate) fn module(&self, position: usize) -> &[RepoPath] {
+        self.modules.get(position).map_or(&[], Vec::as_slice)
+    }
+
     /// Where the definition of the reference at `position` of the file's references is looked
     /// for first; `None` past the last.
     pub(crate) fn lookup(&self, position: usize) -> Option<&Lookup> {
         self.lookups.get(position)
+    }
+
+    /// What a qualifier reaches through an import of the whole module at `files`: that module, or
+    /// something outside the repository when it has no file here.
+    fn reach(&mut self, files: &[RepoPath]) -> Reach {
+        if files.is_empty() {
+            return Reach::Outside;
+        }
+        Reach::Module(self.add_module(files.to_vec()))
+    }
+
+    /// Adds the module at `files`, giving its position among the modules the file reaches.
+    fn add_module(&mut self, files: Vec<RepoPath>) -> usize {
+        self.modules.push(files);
+        self.modules.len() - 1
+    }
+}
+
+/// A file's bindings while its imports are read, with the names they bind there.
+#[derive(Default)]
+struct Read<'e> {
+    /// The bindings so far.
+    bindings: Bindings,
+    /// The imports binding each bare name.
+    bound: Bound<'e>,
+    /// What the imports binding each name reach when it is written as a qualifier.
+    reaching: Reaching<'e>,
+}
+
+impl<'e> Read<'e> {
+    /// Reads `import`, which takes `name`, made in `scope` and naming `files`. Made at the top of
+    /// the file, it passes the name on; unless it is a re-export, it binds the name, under its
+    /// alias if it has one, and what it reaches as a qualifier: the submodule of that name, else
+    /// the definition its module makes, or something outside when the module is.
+    fn take(
+        &mut self,
+        import: &'e Import,
+        name: &'e Identifier,
+        files: &Targets,
+        scope: Option<usize>,
+    ) {
+        let position = self.bindings.taken.len();
+        self.bindings.taken.push(Taken {
+            name: name.clone(),
+            files: files.module.clone(),
+        });
+        let bound_as = import.alias.as_ref().unwrap_or(name);
+        if scope.is_none() {
+            let passed_on = self.bindings.exports.entry(bound_as.clone()).or_default();
+            passed_on.push(position);
+        }
+        if import.is_reexport {
+            return;
+        }
+        self.bound
+            .entry((scope, bound_as))
+            .or_default()
+            .push(position);
+        let reach = match &files.submodule {
+            Some(submodule) => Some(Reach::Submodule {
+                taken: position,
+                module: self.bindings.add_module(vec![submodule.clone()]),
+            }),
+            None if files.module.is_empty() => Some(Reach::Outside),
+            None => None,
+        };
+        self.reach(scope, bound_as, reach);
+    }
+
+    /// Notes that `name`, written as a qualifier in `scope`, reaches `reach` through one more
+    /// import, `None` being a definition of the repository.
+    fn reach(&mut self, scope: Option<usize>, name: &'e Identifier, reach: Option<Reach>) {
+        self.reaching.entry((scope, name)).or_default().push(reach);
     }
 }
 
@@ -165,6 +299,35 @@ fn pair_own_references(extraction: &Extraction) -> Vec<Option<(usize, usize)>> {
         .collect()
 }
 
+/// The scope each import of `extraction` is made in, in order: the definition its own reference
+/// sits in when `pairs` pairs it with one, else the innermost definition whose lines hold its line
+/// after their first; `None` at the top of the file.
+fn import_scopes(extraction: &Extraction, pairs: &[Option<(usize, usize)>]) -> Vec<Option<usize>> {
+    let own_reference: BTreeMap<usize, usize> = pairs
+        .iter()
+        .flatten()
+        .map(|(reference, taken)| (*taken, *reference))
+        .collect();
+    let mut takers = 0;
+    extraction
+        .imports
+        .iter()
+        .map(|import| {
+            let own = match import.imported {
+                Imported::Name(_) => {
+                    takers += 1;
+                    own_reference.get(&(takers - 1))
+                }
+                Imported::Module | Imported::All | Imported::Default => None,
+            };
+            match own {
+                Some(reference) => extraction.refs.get(*reference).and_then(|own| own.symbol),
+                None => scope_at_line(&extraction.symbols, import.line),
+            }
+        })
+        .collect()
+}
+
 /// The innermost of `symbols` whose lines hold `line` after their first: where an import that
 /// has no reference of its own is made.
 fn scope_at_line(symbols: &[SymbolRecord], line: u32) -> Option<usize> {
@@ -176,49 +339,77 @@ fn scope_at_line(symbols: &[SymbolRecord], line: u32) -> Option<usize> {
         .next_back()
 }
 
-/// Where the definition of each reference of `extraction` is looked for first, given `pairs`,
-/// the import each own reference stands for, and `bound`, the imports binding bare names.
-fn lookups(
-    extraction: &Extraction,
-    pairs: &[Option<(usize, usize)>],
-    bound: &Bound<'_>,
-) -> Vec<Lookup> {
-    let plain = plain_definitions(&extraction.symbols);
-    extraction
-        .refs
-        .iter()
-        .zip(&extraction.qualifiers)
-        .zip(pairs)
-        .map(|((reference, qualifier), pair)| {
-            if reference.kind == RefKind::Import {
-                return Lookup::Import(pair.map(|(_, taken)| taken));
-            }
-            if *qualifier != Qualifier::None {
-                return Lookup::ByName;
-            }
-            bare_lookup(reference, &extraction.symbols, &plain, bound)
-        })
-        .collect()
+/// A file's definitions, as a lookup walks the scopes around a use.
+struct Scopes<'e> {
+    /// The definitions.
+    symbols: &'e [SymbolRecord],
+    /// Each name made directly in a scope, with that scope: a definition with no qualifier, whose
+    /// qualified name is its parent's joined to its name, or its name at the top.
+    plain: BTreeSet<(Option<usize>, &'e str)>,
 }
 
-/// Where the bare name `reference` uses is looked for: the first scope, from the definition it
-/// sits in outwards, that makes the name or has imports binding it.
-fn bare_lookup(
-    reference: &RefRecord,
-    symbols: &[SymbolRecord],
-    plain: &BTreeSet<(Option<usize>, &str)>,
-    bound: &Bound<'_>,
-) -> Lookup {
-    let name = &reference.dst_name;
-    for scope in scopes_around(reference.symbol, symbols) {
-        if plain.contains(&(scope, name.as_str())) {
-            return Lookup::ByName;
-        }
-        if let Some(imports) = bound.get(&(scope, name)) {
-            return Lookup::Bound(imports.clone());
+impl<'e> Scopes<'e> {
+    /// The scopes of `symbols`.
+    fn of(symbols: &'e [SymbolRecord]) -> Self {
+        let plain = symbols
+            .iter()
+            .filter(
+                |symbol| match symbol.parent.and_then(|position| symbols.get(position)) {
+                    None => symbol.qual_name == symbol.name,
+                    Some(parent) => {
+                        symbol.qual_name.as_str()
+                            == format!("{}.{}", parent.qual_name.as_str(), symbol.name.as_str())
+                    }
+                },
+            )
+            .map(|symbol| (symbol.parent, symbol.name.as_str()))
+            .collect();
+        Self { symbols, plain }
+    }
+
+    /// Where the bare name `reference` uses is looked for: through the imports binding it in the
+    /// first scope around it that makes the name or has such imports, else by its name.
+    fn bare(&self, reference: &RefRecord, bound: &Bound<'_>) -> Lookup {
+        match self.first(reference, &reference.dst_name, bound) {
+            Some(imports) => Lookup::Bound(imports.clone()),
+            None => Lookup::ByName,
         }
     }
-    Lookup::ByName
+
+    /// Where the name `reference` uses after `qualifier` is looked for: in what the imports
+    /// binding the qualifier reach, in the first scope around it that makes the qualifier's name
+    /// or has such imports, else by its own name. A qualifier one of them binds to a definition
+    /// of the repository leaves the name to its own name: that definition's members could make it.
+    fn member(
+        &self,
+        reference: &RefRecord,
+        qualifier: &Identifier,
+        reaching: &Reaching<'_>,
+    ) -> Lookup {
+        self.first(reference, qualifier, reaching)
+            .and_then(|reaches| reaches.iter().copied().collect::<Option<Vec<Reach>>>())
+            .map_or(Lookup::ByName, Lookup::Member)
+    }
+
+    /// The entry of `imports` for `name` in the first scope around `reference`, from the
+    /// definition it sits in outwards, that makes the name or has an entry for it; `None` when
+    /// that scope makes it, or no scope does either.
+    fn first<'m, T>(
+        &self,
+        reference: &RefRecord,
+        name: &'m Identifier,
+        imports: &'m BTreeMap<(Option<usize>, &Identifier), T>,
+    ) -> Option<&'m T> {
+        for scope in scopes_around(reference.symbol, self.symbols) {
+            if self.plain.contains(&(scope, name.as_str())) {
+                return None;
+            }
+            if let Some(entry) = imports.get(&(scope, name)) {
+                return Some(entry);
+            }
+        }
+        None
+    }
 }
 
 /// The scopes a use sitting in the definition at `at` sees, innermost first: that definition,
@@ -250,31 +441,12 @@ fn is_scope(kind: SymbolKind) -> bool {
     )
 }
 
-/// Each name `symbols` makes directly in a scope, with that scope: a definition with no
-/// qualifier, whose qualified name is its parent's joined to its name, or its name at the top.
-fn plain_definitions(symbols: &[SymbolRecord]) -> BTreeSet<(Option<usize>, &str)> {
-    symbols
-        .iter()
-        .filter(
-            |symbol| match symbol.parent.and_then(|position| symbols.get(position)) {
-                None => symbol.qual_name == symbol.name,
-                Some(parent) => {
-                    symbol.qual_name.as_str()
-                        == format!("{}.{}", parent.qual_name.as_str(), symbol.name.as_str())
-                }
-            },
-        )
-        .map(|symbol| (symbol.parent, symbol.name.as_str()))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use cortex_core::{IdentifierError, ShortHash};
 
     use super::*;
     use crate::extract::LeftOut;
-    use crate::specifiers::Import;
     use crate::test_support::{import, import_name, path};
 
     /// A definition of `kind` named `qual_name`'s last part, in the definition at `parent`, over
@@ -330,6 +502,11 @@ mod tests {
         }
     }
 
+    /// The bindings of `read`, whose imports name `targets` and give no module a name.
+    fn bind(read: &Extraction, targets: &[Targets]) -> Bindings {
+        Bindings::of(read, targets, &vec![None; targets.len()])
+    }
+
     /// The files `module` names.
     fn files(module: &[&str]) -> Targets {
         Targets {
@@ -354,7 +531,7 @@ mod tests {
             ],
             vec![import_name("./a", "a")?, b],
         );
-        let bindings = Bindings::of(&read, &[files(&["a.ts"]), files(&["b.ts"])]);
+        let bindings = bind(&read, &[files(&["a.ts"]), files(&["b.ts"])]);
         let lookups: Vec<Option<&Lookup>> = (0..4).map(|at| bindings.lookup(at)).collect();
         assert_eq!(
             lookups,
@@ -389,7 +566,7 @@ mod tests {
             ],
             vec![top, inside],
         );
-        let bindings = Bindings::of(&read, &[files(&["src/y.rs"]), files(&["src/x.rs"])]);
+        let bindings = bind(&read, &[files(&["src/y.rs"]), files(&["src/x.rs"])]);
         assert_eq!(bindings.lookup(0), Some(&Lookup::ByName));
         assert_eq!(bindings.lookup(1), Some(&Lookup::ByName));
         let everything: Vec<&RepoPath> = bindings.everything().iter().collect();
@@ -413,7 +590,7 @@ mod tests {
             vec![passed],
         );
         let x = Identifier::new("X")?;
-        let bindings = Bindings::of(&read, &[files(&["src/types.ts"])]);
+        let bindings = bind(&read, &[files(&["src/types.ts"])]);
         assert_eq!(bindings.lookup(0), Some(&Lookup::Import(Some(0))));
         assert_eq!(bindings.lookup(1), Some(&Lookup::ByName));
         assert_eq!(bindings.exports(&x), [0]);
@@ -436,7 +613,7 @@ mod tests {
             vec![local],
         );
         let helper = Identifier::new("helper")?;
-        let bindings = Bindings::of(&read, &[files(&["src/helpers.ts"])]);
+        let bindings = bind(&read, &[files(&["src/helpers.ts"])]);
         assert_eq!(bindings.lookup(0), Some(&Lookup::Bound(vec![0])));
         assert_eq!(bindings.lookup(1), Some(&Lookup::ByName));
         assert_eq!(bindings.exports(&helper), &[] as &[usize]);

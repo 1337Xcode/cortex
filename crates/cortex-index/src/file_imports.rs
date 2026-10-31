@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{Language, RepoPath};
+use cortex_core::{Identifier, Language, RepoPath};
 
 use crate::bindings::Bindings;
 use crate::file_edges::ImportCounts;
@@ -52,6 +52,22 @@ pub(crate) fn resolve_imports(
         }
     }
     (counts, targets)
+}
+
+/// The name each of `imports`, written in `language`, reaches its module by when it takes the
+/// whole module with no alias, as the language names such a module; `None` for every other import.
+pub(crate) fn module_names(
+    project: &Project,
+    language: Language,
+    imports: &[Import],
+) -> Vec<Option<Identifier>> {
+    imports
+        .iter()
+        .map(|import| match (&import.imported, &import.alias) {
+            (Imported::Module, None) => project.module_name(language, import.specifier.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// What a resolver reads of an import: its module, and the name it takes, if any.

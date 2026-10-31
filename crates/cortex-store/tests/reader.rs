@@ -107,9 +107,9 @@ fn corrupt<T>(read: Result<T, StoreError>) -> Option<(&'static str, i64)> {
 }
 
 /// A damaged value in a name row is reported with its column and row, never read as something
-/// else: a language Cortex does not know (by the file's id), a name that is not one line (by the
-/// symbol's or the reference's id), a target without its resolution, and a confidence that is not
-/// the resolution's. Each value is damaged on its own and repaired before the next.
+/// else: a language Cortex does not know (by the file's id), a name that is not one line and a
+/// kind Cortex does not know (by the symbol's or the reference's id), a target without its
+/// resolution, and a confidence that is not the resolution's. Each value is damaged on its own and repaired before the next.
 #[test]
 fn damaged_name_rows_are_reported() -> TestResult {
     let scratch = Scratch::new()?;
@@ -156,6 +156,11 @@ fn damaged_name_rows_are_reported() -> TestResult {
     let damaged = corrupt(scratch.reader()?.queries().symbol_names());
     assert_eq!(damaged, Some(("symbols.name", symbol_id)));
     damage("UPDATE symbols SET name = 'helper'")?;
+
+    damage("UPDATE symbols SET kind = 'functions'")?;
+    let damaged = corrupt(scratch.reader()?.queries().symbol_names());
+    assert_eq!(damaged, Some(("symbols.kind", symbol_id)));
+    damage("UPDATE symbols SET kind = 'function'")?;
 
     damage("UPDATE refs SET dst_name = 'two' || char(10) || 'lines'")?;
     let damaged = corrupt(scratch.reader()?.queries().ref_names());
