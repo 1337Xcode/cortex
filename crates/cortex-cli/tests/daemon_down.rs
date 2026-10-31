@@ -52,9 +52,19 @@ impl Scene {
 
 impl Drop for Scene {
     fn drop(&mut self) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        // A daemon that never started, or already stopped, cannot be asked: nothing to stop.
-        let _ = ask(&self.files, Role::Cli, RequestBody::Shutdown, deadline);
+        // A daemon the hook started may still be starting when the test ends early: it is asked to
+        // stop until it says it will, for ten seconds, more than a daemon takes to bind; one that
+        // never started, or already stopped, cannot be asked.
+        let until = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < until {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let stops = ask(&self.files, Role::Cli, RequestBody::Shutdown, deadline)
+                .is_ok_and(|answer| answer.body == ResponseBody::Ack);
+            if stops {
+                break;
+            }
+            std::thread::sleep(POLL_EVERY);
+        }
         let _ = wait_for(|| Ok(!self.files.pid_path().exists()));
         // On Windows the daemon holds handles it inherited from the hook until its process ends,
         // a moment after its process-id file goes: the folder is removed once they are released.
@@ -93,9 +103,9 @@ fn session_start(payload: &[u8], home: &Path) -> TestResult<(bool, Duration)> {
     Ok((is_silent, took))
 }
 
-/// With no daemon running, a session's start through the hook returns silently within the hook's
-/// hard timeout (1.5 s), well before a daemon could have indexed anything; a daemon then answers,
-/// and a file written after the hook returned is indexed.
+/// With no daemon running, a session's start through the hook returns silently and within its
+/// hard timeout (1.5 s), so without a line in the hook log; a daemon then answers, and a file
+/// written after the hook returned is indexed.
 #[test]
 fn a_hook_starts_the_daemon_and_does_not_wait() -> TestResult {
     let scene = Scene::new()?;
@@ -115,7 +125,12 @@ fn a_hook_starts_the_daemon_and_does_not_wait() -> TestResult {
 
     let (is_silent, took) = session_start(&payload, home)?;
     assert!(is_silent);
-    assert!(took < Duration::from_millis(1_500), "{took:?}");
+    // A hook held past its hard timeout would log that it ran out of time; this one logged
+    // nothing. How long the call took includes starting a process, which a busy machine slows: the
+    // bound only catches a hook that waited for the daemon to be ready.
+    let log = UserFolder::in_home(home).logs_folder().join("hook.log");
+    assert!(!log.exists(), "{:?}", std::fs::read_to_string(&log));
+    assert!(took < Duration::from_secs(10), "{took:?}");
     std::fs::write(repo.join("later.py"), "def later():\n    pass\n")?;
 
     let answers = || -> TestResult<bool> {

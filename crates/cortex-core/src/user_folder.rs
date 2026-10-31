@@ -112,6 +112,13 @@ impl RunFiles {
     pub fn pid_path(&self) -> PathBuf {
         self.folder.join(format!("{}.pid", self.repo_id))
     }
+
+    /// The file whose modification time says when a hook last started the daemon: `<id>.start` in
+    /// the run folder.
+    #[must_use]
+    pub fn start_path(&self) -> PathBuf {
+        self.folder.join(format!("{}.start", self.repo_id))
+    }
 }
 
 #[cfg(test)]
@@ -134,6 +141,7 @@ mod tests {
         assert_eq!(files.socket_path(), run.join(format!("{id}.sock")));
         assert_eq!(files.lock_path(), run.join(format!("{id}.lock")));
         assert_eq!(files.pid_path(), run.join(format!("{id}.pid")));
+        assert_eq!(files.start_path(), run.join(format!("{id}.start")));
         assert_eq!(files.pipe_name(), format!("cortex-{id}"));
         let endpoint = if cfg!(windows) {
             Endpoint::Pipe(format!("cortex-{id}"))

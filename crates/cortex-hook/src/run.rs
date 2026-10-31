@@ -138,7 +138,10 @@ impl Hook {
             // the next hook finds the daemon listening.
             Err(ClientError::NotRunning) => {
                 let program = std::env::current_exe().map_err(Failure::StartDaemon)?;
-                spawn::start_daemon(&program, &root).map_err(Failure::StartDaemon)
+                // A start made by another hook moments ago is under way: nothing to do.
+                spawn::start_daemon(&program, &root, &files, self.now)
+                    .map(drop)
+                    .map_err(Failure::StartDaemon)
             }
             Err(error) => Err(error.into()),
         }
