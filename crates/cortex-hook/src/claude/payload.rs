@@ -85,6 +85,9 @@ pub(super) struct ToolInput {
     /// The shell command.
     #[serde(deserialize_with = "lenient")]
     pub(super) command: Option<String>,
+    /// Whether the shell runs in the background: its result then comes before it has finished.
+    #[serde(deserialize_with = "lenient")]
+    pub(super) run_in_background: Option<bool>,
 }
 
 /// What a tool gave back.
@@ -123,7 +126,8 @@ pub(super) struct ReadFile {
     pub(super) total_lines: Option<i64>,
 }
 
-/// One stretch of lines an edit changed, in the file as it is after the edit.
+/// One stretch of an edit's diff, in the file as it is after the edit: the changed lines and up to
+/// three unchanged ones on each side.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(super) struct Hunk {
@@ -133,6 +137,52 @@ pub(super) struct Hunk {
     /// How many lines it has.
     #[serde(deserialize_with = "lenient")]
     pub(super) new_lines: Option<i64>,
+    /// What each line of the diff does, read from its first character only.
+    #[serde(deserialize_with = "lenient")]
+    pub(super) lines: Option<Vec<LineMark>>,
+}
+
+/// What one line of a diff does, as its first character says. The rest of the line, the code, is
+/// never kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LineMark {
+    /// ` `: a line the edit left as it was.
+    Unchanged,
+    /// `+`: a line the edit added.
+    Added,
+    /// `-`: a line the edit removed.
+    Removed,
+    /// Anything else, such as `\ No newline at end of file`.
+    Other,
+}
+
+impl<'de> Deserialize<'de> for LineMark {
+    /// The mark of a diff line; anything but a string is not one.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_str(MarkVisitor)
+    }
+}
+
+/// Reads a diff line's first character.
+struct MarkVisitor;
+
+impl Visitor<'_> for MarkVisitor {
+    type Value = LineMark;
+
+    /// What the visitor reads.
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a line of a diff")
+    }
+
+    /// The mark of the line `text`.
+    fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<LineMark, E> {
+        Ok(match text.as_bytes().first() {
+            Some(b' ') => LineMark::Unchanged,
+            Some(b'+') => LineMark::Added,
+            Some(b'-') => LineMark::Removed,
+            _ => LineMark::Other,
+        })
+    }
 }
 
 /// Reads a field as `T`, or as absent when it is `null` or of another type. The field's JSON is

@@ -84,7 +84,8 @@ pub struct Stamp {
 /// Why a payload makes no event.
 #[derive(Debug, thiserror::Error)]
 pub enum NormalizeError {
-    /// The payload is not the JSON the agent sends.
+    /// The payload is not the JSON the agent sends. The parser's own message may quote the
+    /// payload, so it is never shown or logged: only this one is.
     #[error("the payload is not the agent's hook JSON")]
     Json(#[from] serde_json::Error),
     /// The payload names no session, or a session id that is not one line of at most 256 bytes.

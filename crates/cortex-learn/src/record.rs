@@ -11,14 +11,10 @@
 use std::collections::BTreeMap;
 
 use cortex_core::{
-    ContentHash, Event, EventKind, EventMeta, HookKind, Identifier, LineRange, PromptExcerpt,
-    TaskOutcome, ToolKind, Ulid,
+    ContentHash, Event, EventKind, EventMeta, HookKind, Identifier, LineRange, MAX_RANGES,
+    PromptExcerpt, TaskOutcome, ToolKind, Ulid,
 };
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
-
-/// Most rows one edit is recorded as, one per stretch of changed lines. An edit reported in more
-/// stretches, such as a whole file rewritten, is recorded as one edit of the whole file.
-pub const MAX_HUNK_ROWS: usize = 16;
 
 /// Most sessions the recorder remembers. Past that it forgets them all and reads each one again
 /// from the store when its next event comes, so memory stays bounded however long it runs.
@@ -273,13 +269,14 @@ fn session_of(event: &Event) -> SessionRecord {
 }
 
 /// The line range of each row the event is recorded as: one row per range, or one row with no
-/// range when there is none or more than [`MAX_HUNK_ROWS`].
+/// range when there is none or more than [`MAX_RANGES`]: an edit of that many stretches is one of
+/// the whole file.
 fn ranges_of(event: &Event) -> Vec<Option<LineRange>> {
     let ranges = event
         .tool_target
         .as_ref()
         .map_or(&[][..], |target| target.ranges.as_slice());
-    if ranges.is_empty() || ranges.len() > MAX_HUNK_ROWS {
+    if ranges.is_empty() || ranges.len() > MAX_RANGES {
         return vec![None];
     }
     ranges.iter().copied().map(Some).collect()

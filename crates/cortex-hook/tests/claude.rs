@@ -1,9 +1,15 @@
 //! Every captured Claude Code payload normalized, against events written out by hand from the
 //! fixtures; the payloads that make no event or no usable one; and inputs that must never panic.
 
+#![allow(
+    clippy::indexing_slicing,
+    reason = "the payloads edited here are JSON objects, where indexing a missing key adds it"
+)]
+
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+use cortex_core::ipc::{LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES, Request, RequestBody, encode};
 use cortex_core::{
     Agent, CompactTrigger, Event, HookKind, Identifier, LineRange, RepoPath, ShellCommand,
     StartSource, ToolKind, ToolResult, ToolTarget, Ulid,
@@ -29,15 +35,16 @@ fn fixtures() -> PathBuf {
 }
 
 /// A path the fixtures write in Windows form, in this platform's form: as captured on Windows;
-/// elsewhere the repository `C:\repo` is `/repo` and the home folder `C:\Users\dev` is `/home/dev`.
+/// elsewhere the home folder `C:\Users\dev` is `/home/dev`, and any other `C:\x` is `/x`.
 fn native(windows: &str) -> String {
     if cfg!(windows) {
         return windows.to_owned();
     }
-    windows
+    let unix = windows
         .replace(r"C:\Users\dev", "/home/dev")
-        .replace(r"C:\repo", "/repo")
-        .replace('\\', "/")
+        .replace('\\', "/");
+    unix.strip_prefix("C:")
+        .map_or_else(|| unix.clone(), str::to_owned)
 }
 
 /// The fixture `name`, its paths in this platform's form.
@@ -140,11 +147,13 @@ fn tool(
     })
 }
 
-/// The event from the Explore subagent `agent` of session S1.
+/// The event from the subagent `agent` of session S1, whose own transcript the payload does not
+/// give.
 fn subagent(event: Event, agent: &str) -> TestResult<Event> {
     Ok(Event {
         session_id: id(&format!("{S1}/{agent}"))?,
         parent_session_id: Some(id(S1)?),
+        transcript_path: None,
         ..event
     })
 }
@@ -218,8 +227,10 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
         ))))
     };
     let ops = "calc/ops.py";
-    // The Explore subagent searched with `path` set to the repository's root folder.
+    // The Explore subagent searched with `path` set to the repository's root folder; the other
+    // searches name no path, and searched the working folder, which is the root too.
     let everywhere = search(r"\badd\b", Some(RepoPath::root()));
+    let here = || Some(RepoPath::root());
     Ok(vec![
         ("post-compact-manual.json", None),
         (
@@ -255,7 +266,7 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
             Some(tool(
                 PostTool,
                 S1,
-                (ToolKind::Edit, file(ops, &[(10, 13)])?, ok(None, None)),
+                (ToolKind::Edit, file(ops, &[(13, 13)])?, ok(None, None)),
             )?),
         ),
         (
@@ -299,7 +310,7 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
             Some(tool(
                 PostTool,
                 S1,
-                (ToolKind::Glob, search("**/*.py", None), ok(None, None)),
+                (ToolKind::Glob, search("**/*.py", here()), ok(None, None)),
             )?),
         ),
         (
@@ -315,7 +326,7 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
             Some(tool(
                 PostTool,
                 S1,
-                (ToolKind::Grep, search("def divide", None), ok(None, None)),
+                (ToolKind::Grep, search("def divide", here()), ok(None, None)),
             )?),
         ),
         (
@@ -386,7 +397,7 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
             Some(tool(
                 PreTool,
                 S1,
-                (ToolKind::Glob, search("**/*.py", None), None),
+                (ToolKind::Glob, search("**/*.py", here()), None),
             )?),
         ),
         (
@@ -402,7 +413,7 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
             Some(tool(
                 PreTool,
                 S1,
-                (ToolKind::Grep, search("def divide", None), None),
+                (ToolKind::Grep, search("def divide", here()), None),
             )?),
         ),
         (
@@ -483,20 +494,17 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
         ),
         (
             "subagent-stop-internal.json",
-            Some(subagent(
-                Event {
-                    transcript_path: agent_transcript("fixtureagent0002"),
-                    ..base(HookKind::SubagentStop, S1)?
-                },
-                "fixtureagent0002",
-            )?),
+            Some(Event {
+                transcript_path: agent_transcript("fixtureagent0002"),
+                ..subagent(base(HookKind::SubagentStop, S1)?, "fixtureagent0002")?
+            }),
         ),
         (
             "subagent-stop.json",
-            Some(explore(Event {
+            Some(Event {
                 transcript_path: agent_transcript("fixtureagent0001"),
-                ..base(HookKind::SubagentStop, S1)?
-            })?),
+                ..explore(base(HookKind::SubagentStop, S1)?)?
+            }),
         ),
         (
             "user-prompt-submit.json",
@@ -652,48 +660,308 @@ fn long_prompts_are_cut_and_bad_names_left_out() -> TestResult {
 }
 
 /// The fixture `name` with `edit` applied to its JSON, normalized as event `event_name` with the
-/// repository found by `locate`.
+/// repository found by `locate`: the event, or `None` when the payload makes none.
+fn normalized(
+    name: &str,
+    event_name: &str,
+    locate: &dyn Fn(&Path) -> Option<Located>,
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> TestResult<Option<Event>> {
+    let mut value: serde_json::Value = serde_json::from_slice(&payload(name)?)?;
+    edit(&mut value);
+    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
+    Ok(claude.normalize(event_name, &serde_json::to_vec(&value)?, locate, stamp())?)
+}
+
+/// As [`normalized`], for a payload that makes an event.
 fn edited(
     name: &str,
     event_name: &str,
     locate: &dyn Fn(&Path) -> Option<Located>,
     edit: impl FnOnce(&mut serde_json::Value),
 ) -> TestResult<Event> {
-    let mut value: serde_json::Value = serde_json::from_slice(&payload(name)?)?;
-    edit(&mut value);
-    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
-    Ok(claude
-        .normalize(event_name, &serde_json::to_vec(&value)?, locate, stamp())?
-        .ok_or("no event")?)
+    Ok(normalized(name, event_name, locate, edit)?.ok_or("no event")?)
 }
 
 /// A tool's path is in the repository under the root as the agent spells it (here through a link,
-/// `C:\repo-link`) and under the root as it is on disk (`C:\repo`); a path under neither has no
-/// repository path, and the read is still recorded.
+/// `C:\repo-link`) and under the root as it is on disk (`C:\repo`), a relative path under the
+/// agent's working folder; a tool aimed at a path under neither makes no event at all, nor does one
+/// whose path climbs with `..`, which is never followed. A search that names no path searched the
+/// working folder, here `calc`.
 #[test]
 fn tool_paths_under_either_spelling_of_the_root() -> TestResult {
     let linked = |_: &Path| {
         Some(Located {
-            cwd: root(),
+            cwd: root().join("calc"),
             root: root(),
             agent_root: PathBuf::from(native(r"C:\repo-link")),
         })
     };
-    let read = |file: &str| -> TestResult<Option<ToolTarget>> {
-        let path = native(file);
-        Ok(
-            edited("pre-tool-use-read.json", "PreToolUse", &linked, |value| {
-                value["tool_input"]["file_path"] = path.into();
-            })?
-            .tool_target,
+    let cwd = native(r"C:\repo-link\calc");
+    let read = |file: &str| -> TestResult<Option<Event>> {
+        let (cwd, file) = (cwd.clone(), file.to_owned());
+        normalized(
+            "pre-tool-use-read.json",
+            "PreToolUse",
+            &linked,
+            move |value| {
+                value["cwd"] = cwd.into();
+                value["tool_input"]["file_path"] = file.into();
+            },
+        )
+    };
+    let target = |event: Option<Event>| event.and_then(|event| event.tool_target);
+    let ops = file("calc/ops.py", &[])?;
+    assert_eq!(target(read(&native(r"C:\repo-link\calc\ops.py"))?), ops);
+    assert_eq!(target(read(&native(r"C:\repo\calc\ops.py"))?), ops);
+    assert_eq!(target(read("ops.py")?), ops);
+    assert_eq!(read(&native(r"C:\elsewhere\ops.py"))?, None);
+    assert_eq!(read(&native(r"C:\repo-link\calc\..\ops.py"))?, None);
+    if cfg!(windows) {
+        assert_eq!(target(read(r"\\?\C:\repo\calc\ops.py")?), ops);
+    }
+    let search = |path: Option<&str>| -> TestResult<Option<Event>> {
+        let (cwd, path) = (cwd.clone(), path.map(str::to_owned));
+        normalized(
+            "pre-tool-use-grep.json",
+            "PreToolUse",
+            &linked,
+            move |value| {
+                value["cwd"] = cwd.into();
+                if let Some(path) = path {
+                    value["tool_input"]["path"] = path.into();
+                }
+            },
         )
     };
     assert_eq!(
-        read(r"C:\repo-link\calc\ops.py")?,
-        file("calc/ops.py", &[])?
+        target(search(None)?).and_then(|target| target.path),
+        Some(RepoPath::new("calc")?)
     );
-    assert_eq!(read(r"C:\repo\calc\ops.py")?, file("calc/ops.py", &[])?);
-    assert_eq!(read(r"C:\elsewhere\ops.py")?, Some(ToolTarget::default()));
+    assert_eq!(search(Some(".."))?, None);
+    assert_eq!(search(Some(&native(r"C:\elsewhere")))?, None);
+    Ok(())
+}
+
+/// The ranges an edit records for the hunks `patch`, as Claude Code writes them after an edit.
+fn edit_ranges(patch: serde_json::Value) -> TestResult<Vec<(u32, u32)>> {
+    let event = edited("post-tool-use-edit.json", "PostToolUse", &locate, |value| {
+        value["tool_response"]["structuredPatch"] = patch;
+    })?;
+    Ok(event
+        .tool_target
+        .map(|target| target.ranges)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|range| (range.start_line(), range.end_line()))
+        .collect())
+}
+
+/// One hunk from line `new_start`, its diff lines marked by `marks` (one character each).
+fn hunk(new_start: u32, marks: &str) -> serde_json::Value {
+    let lines: Vec<String> = marks.chars().map(|mark| format!("{mark}code")).collect();
+    let new_lines = marks.chars().filter(|mark| *mark != '-').count();
+    serde_json::json!({
+        "oldStart": new_start, "oldLines": 0, "newStart": new_start, "newLines": new_lines,
+        "lines": lines,
+    })
+}
+
+/// An edit records the lines it changed, without the unchanged lines around them. Worked by hand,
+/// counting lines in the file after the edit:
+/// - from 10, `   -+`: 10, 11, 12 unchanged, the removed line replaced at 13: 13..13 (the
+///   captured edit);
+/// - from 5, `   --   `: 5, 6, 7 unchanged, two lines removed before 8: the line before the gap,
+///   7..7;
+/// - from 8, `   -`: 8, 9, 10 unchanged, then the end of the file removed: 10..10;
+/// - from 1, `++   `: lines 1 and 2 added: 1..2;
+/// - from 1, `+  -+`: 1 added, 2 and 3 unchanged, 4 replaced: 1..4;
+/// - two hunks, as an edit of two places makes, give two ranges;
+/// - a hunk without its lines counts whole: from 20 for 3 lines, 20..22;
+/// - 17 hunks are more than an event holds: the whole file, no ranges; 16 are kept.
+#[test]
+fn edits_record_the_lines_they_changed() -> TestResult {
+    let one = |start, marks| edit_ranges(serde_json::json!([hunk(start, marks)]));
+    assert_eq!(one(10, "   -+")?, [(13, 13)]);
+    assert_eq!(one(5, "   --   ")?, [(7, 7)]);
+    assert_eq!(one(8, "   -")?, [(10, 10)]);
+    assert_eq!(one(1, "++   ")?, [(1, 2)]);
+    assert_eq!(one(1, "+  -+")?, [(1, 4)]);
+    assert_eq!(
+        edit_ranges(serde_json::json!([hunk(3, " + "), hunk(40, " -+ ")]))?,
+        [(4, 4), (41, 41)]
+    );
+    assert_eq!(
+        edit_ranges(serde_json::json!([{ "newStart": 20, "newLines": 3 }]))?,
+        [(20, 22)]
+    );
+    let hunks = |count: u32| {
+        (0..count)
+            .map(|at| hunk(at * 10 + 1, "+"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(edit_ranges(hunks(17).into())?, []);
+    assert_eq!(edit_ranges(hunks(16).into())?.len(), 16);
+    Ok(())
+}
+
+/// After it ran, a read records the lines it returned: the first 5 of a 14-line file are 1..5.
+/// Before it runs, an offset without a limit asks for no lines Cortex can know. A read that failed
+/// returned no lines.
+#[test]
+fn reads_record_the_lines_they_returned() -> TestResult {
+    let first_five = edited("post-tool-use-read.json", "PostToolUse", &locate, |value| {
+        value["tool_response"]["file"]["numLines"] = 5.into();
+    })?;
+    assert_eq!(first_five.tool_target, file("calc/ops.py", &[(1, 5)])?);
+    let open_ended = edited(
+        "pre-tool-use-read-range.json",
+        "PreToolUse",
+        &locate,
+        |value| {
+            value["tool_input"]
+                .as_object_mut()
+                .map(|input| input.remove("limit"));
+        },
+    )?;
+    assert_eq!(open_ended.tool_target, file("calc/ops.py", &[])?);
+    let missing = edited(
+        "post-tool-use-read-range.json",
+        "PostToolUseFailure",
+        &locate,
+        |value| {
+            value
+                .as_object_mut()
+                .map(|payload| payload.remove("tool_response"));
+            value["error"] = "File does not exist.".into();
+        },
+    )?;
+    assert_eq!(missing.tool_target, file("calc/ops.py", &[])?);
+    assert_eq!(missing.tool_result, failed(None, 20));
+    Ok(())
+}
+
+/// A failed shell's exit code is the `N` of `Exit code N`, a code past `i32::MAX` read as its 32
+/// bits (4294967295 is -1); another message gives none. A shell that runs on in the background, or
+/// was interrupted, has no exit code yet however its result came.
+#[test]
+fn exit_codes_and_shells_that_have_not_finished() -> TestResult {
+    let failure = |message: &str, is_interrupt: bool| -> TestResult<Option<ToolResult>> {
+        let message = message.to_owned();
+        Ok(edited(
+            "post-tool-use-failure-bash.json",
+            "PostToolUseFailure",
+            &locate,
+            move |value| {
+                value["error"] = message.into();
+                value["is_interrupt"] = is_interrupt.into();
+            },
+        )?
+        .tool_result)
+    };
+    assert_eq!(
+        failure("Exit code 127\nnot found", false)?,
+        failed(Some(127), 23)
+    );
+    assert_eq!(
+        failure("Exit code 4294967295", false)?,
+        failed(Some(-1), 20)
+    );
+    assert_eq!(failure("Exit code -2", false)?, failed(Some(-2), 12));
+    assert_eq!(failure("Command timed out", false)?, failed(None, 17));
+    let interrupted = failure("Exit code 130", true)?.ok_or("no result")?;
+    assert_eq!(
+        (interrupted.exit_code, interrupted.is_interrupted),
+        (Some(130), true)
+    );
+
+    let background = edited("post-tool-use-bash.json", "PostToolUse", &locate, |value| {
+        value["tool_input"]["run_in_background"] = true.into();
+    })?;
+    assert_eq!(background.tool_result, ok(None, Some(523)));
+    let stopped = edited("post-tool-use-bash.json", "PostToolUse", &locate, |value| {
+        value["tool_response"]["interrupted"] = true.into();
+    })?;
+    assert_eq!(
+        stopped.tool_result,
+        Some(ToolResult {
+            exit_code: None,
+            is_success: true,
+            is_interrupted: true,
+            output_bytes: Some(523),
+        })
+    );
+    Ok(())
+}
+
+/// A search pattern and a command keep their first 1,000 characters, counted as characters: 1,500
+/// two-byte letters keep 1,000.
+#[test]
+fn patterns_and_commands_are_cut_to_a_thousand_characters() -> TestResult {
+    let long = "é".repeat(1_500);
+    let grep = edited("pre-tool-use-grep.json", "PreToolUse", &locate, |value| {
+        value["tool_input"]["pattern"] = long.clone().into();
+    })?;
+    let pattern = grep
+        .tool_target
+        .and_then(|target| target.pattern)
+        .ok_or("no pattern")?;
+    assert_eq!(pattern, "é".repeat(1_000));
+    let bash = edited("pre-tool-use-bash.json", "PreToolUse", &locate, |value| {
+        value["tool_input"]["command"] = long.into();
+    })?;
+    let command = bash
+        .tool_target
+        .and_then(|target| target.command)
+        .ok_or("no command")?;
+    assert_eq!(command.as_str(), "é".repeat(1_000));
+    Ok(())
+}
+
+/// A main session started as a named agent sends that agent's type with its events: it is no
+/// subagent, so the event carries no subagent type.
+#[test]
+fn only_subagents_have_a_subagent_type() -> TestResult {
+    let stop = edited("stop.json", "Stop", &locate, |value| {
+        value["agent_type"] = "reviewer".into();
+    })?;
+    assert_eq!(stop, base(HookKind::Stop, S1)?);
+    Ok(())
+}
+
+/// The largest event a payload can make still fits a frame: a prompt of 200,000 control
+/// characters, each written as six bytes in JSON, cut to 131,072 of them, with a session id at the
+/// 256-byte limit.
+#[test]
+fn the_largest_event_fits_a_frame() -> TestResult {
+    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
+    let payload = serde_json::json!({
+        "session_id": "s".repeat(256),
+        "cwd": native(r"C:\repo"),
+        "transcript_path": native(r"C:\Users\dev\.claude\projects\C--repo\session.jsonl"),
+        "prompt": "\u{1}".repeat(200_000),
+    });
+    let event = claude
+        .normalize(
+            "UserPromptSubmit",
+            &serde_json::to_vec(&payload)?,
+            &locate,
+            stamp(),
+        )?
+        .ok_or("no event")?;
+    let request = Request {
+        request_id: 1,
+        body: RequestBody::Event {
+            event: Box::new(event),
+        },
+    };
+    let frame = encode(&request)?;
+    assert!(
+        frame.len() <= MAX_FRAME_BYTES + LENGTH_PREFIX_BYTES,
+        "{}",
+        frame.len()
+    );
+    assert!(frame.len() > 786_432, "{}", frame.len());
     Ok(())
 }
 

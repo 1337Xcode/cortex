@@ -19,6 +19,11 @@ use crate::{Identifier, RepoPath, Ulid};
 /// short enough that a long script costs nothing to carry.
 pub const MAX_COMMAND_CHARS: usize = 1_000;
 
+/// Most line ranges a tool target holds. An edit that changed more stretches than this, such as a
+/// file rewritten throughout, is an edit of the whole file and holds none; the bound also keeps an
+/// event small.
+pub const MAX_RANGES: usize = 16;
+
 /// One hook call, normalized.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {

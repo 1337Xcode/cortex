@@ -38,7 +38,7 @@ pub use config::{
 };
 pub use event::{
     Agent, CompactTrigger, Event, HookKind, LineRange, LineRangeError, MAX_COMMAND_CHARS,
-    ShellCommand, ShellCommandError, StartSource, ToolKind, ToolResult, ToolTarget,
+    MAX_RANGES, ShellCommand, ShellCommandError, StartSource, ToolKind, ToolResult, ToolTarget,
 };
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};

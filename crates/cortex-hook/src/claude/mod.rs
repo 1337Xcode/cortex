@@ -3,6 +3,7 @@
 
 mod normalize;
 mod payload;
+mod tool;
 
 use std::path::Path;
 use std::time::Duration;

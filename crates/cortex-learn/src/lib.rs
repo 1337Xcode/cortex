@@ -5,4 +5,4 @@
 
 mod record;
 
-pub use record::{MAX_HUNK_ROWS, Recorder};
+pub use record::Recorder;
