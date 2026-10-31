@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use cortex_core::{RepoId, RepoPath};
+use cortex_core::{ModeSetting, RepoId, RepoPath};
 use cortex_index::{DiscoverOptions, Grammars, IndexOptions, IndexReport, index_repository};
 use cortex_store::{Reader, SymbolId, Writer, WriterOptions};
 
@@ -38,12 +38,27 @@ pub fn grammars() -> Result<Arc<Grammars>, Box<dyn Error>> {
 pub const NOW_MS: i64 = 1_700_000_000_000;
 
 /// Indexes the repository at `root` into its `.cortex` folder on `threads` threads, allowing each
-/// file `parse_timeout` and reading no file over `max_file_bytes`.
+/// file `parse_timeout` and reading no file over `max_file_bytes`, its scale mode chosen from its
+/// size.
 pub fn index(
     root: &Path,
     threads: usize,
     parse_timeout: Duration,
     max_file_bytes: u64,
+) -> TestResult<IndexReport> {
+    index_with_mode(
+        root,
+        (threads, parse_timeout, max_file_bytes),
+        ModeSetting::Auto,
+    )
+}
+
+/// Indexes the repository at `root` as [`index`] does with the threads, time limit and size limit
+/// of `limits`, its scale mode set by `mode`.
+pub fn index_with_mode(
+    root: &Path,
+    (threads, parse_timeout, max_file_bytes): (usize, Duration, u64),
+    mode: ModeSetting,
 ) -> TestResult<IndexReport> {
     let mut writer = Writer::open(&WriterOptions {
         folder: &root.join(".cortex"),
@@ -60,6 +75,7 @@ pub fn index(
         parse_timeout,
         threads: NonZeroUsize::new(threads).ok_or("no threads")?,
         now_ms: NOW_MS,
+        mode,
     };
     Ok(index_repository(root, &grammars()?, &mut writer, &options)?)
 }

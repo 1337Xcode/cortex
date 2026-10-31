@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use cortex_core::{ContentHash, FileFlags, Language, RepoPath};
+use cortex_core::{ContentHash, FileFlags, Language, ModeSetting, RepoPath, ScaleMode};
 use cortex_store::{FileIndex, FileRecord, StoreError, Writer};
 use thiserror::Error;
 
@@ -43,6 +43,7 @@ use crate::grammar::Grammars;
 use crate::imports::Project;
 use crate::resolve;
 use crate::safe_read;
+use crate::scale::{self, RepoSize};
 use crate::scip::{self, ScipOutcome};
 use crate::symbol_edges;
 use crate::test_targets;
@@ -75,6 +76,8 @@ pub struct IndexOptions<'a> {
     pub threads: NonZeroUsize,
     /// The time in UTC milliseconds, recorded as each written file's indexing time.
     pub now_ms: i64,
+    /// The scale mode, chosen from the repository's size or pinned (`mode`).
+    pub mode: ModeSetting,
 }
 
 /// What an index wrote, and what it could not do.
@@ -95,6 +98,10 @@ pub struct IndexReport {
     pub left_out: Vec<(RepoPath, LeftOut)>,
     /// What became of the repository's SCIP index.
     pub scip: ScipOutcome,
+    /// The repository's size, as the scale modes count it.
+    pub size: RepoSize,
+    /// The scale mode recorded for it.
+    pub mode: ScaleMode,
 }
 
 /// Why a file the walk found was skipped. A skipped file is not written: what the store held for
@@ -230,6 +237,11 @@ pub fn index_repository(
         problems: Vec::new(),
         left_out: Vec::new(),
         scip: ScipOutcome::Absent,
+        size: RepoSize {
+            source_files: 0,
+            lines: 0,
+        },
+        mode: ScaleMode::Tiny,
     };
     let imports = write_files(writer, &discovery.files, &context, &mut report)?;
     let (scip, scip_ties) = scip::read_index(root, writer.queries())?;
@@ -248,6 +260,7 @@ pub fn index_repository(
     symbol_edges::write_symbol_edges(writer, &ties)?;
     file_edges::write_import_edges(writer, &counts, &test_targets)?;
     folders::write_folders(writer)?;
+    (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
     Ok(report)
 }
 
@@ -878,6 +891,11 @@ mod tests {
             problems: Vec::new(),
             left_out: Vec::new(),
             scip: ScipOutcome::Absent,
+            size: RepoSize {
+                source_files: 0,
+                lines: 0,
+            },
+            mode: ScaleMode::Tiny,
         };
         let skipped = |path: &str, problem| -> Result<Outcome, cortex_core::PathError> {
             Ok(Outcome::Skipped(RepoPath::new(path)?, problem))

@@ -131,6 +131,9 @@ pub(crate) const FOLDER_NODES: &str =
 /// Every file's id, path and node, by path.
 pub(crate) const FILE_NODES: &str = "SELECT f.file_id, f.path, n.node_id FROM files AS f \
      JOIN nodes AS n ON n.kind = 'file' AND n.ref_id = f.file_id ORDER BY f.path";
+/// How many files have a language and none of the flags given, and how many lines they hold.
+pub(crate) const SOURCE_SIZE: &str = "SELECT count(*), coalesce(sum(loc), 0) FROM files \
+     WHERE lang IS NOT NULL AND flags & ?1 = 0";
 /// Every symbol's id and node, by symbol id.
 pub(crate) const SYMBOL_NODES: &str =
     "SELECT ref_id, node_id FROM nodes WHERE kind = 'symbol' ORDER BY ref_id";

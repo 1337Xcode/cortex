@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use cortex_core::{EdgeType, RepoId, RepoPath};
+use cortex_core::{EdgeType, RepoId, RepoPath, ScaleMode};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::connection::{self, Access};
@@ -173,6 +173,20 @@ impl WriteTx<'_> {
     /// exist. Either all resolutions are written or none.
     pub fn set_resolutions(&mut self, resolutions: &[Resolved]) -> Result<(), StoreError> {
         self.atomically(|connection| links::set_resolutions(connection, resolutions))
+    }
+
+    /// Records `mode` as the scale mode the index was built for.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn set_scale_mode(&mut self, mode: ScaleMode) -> Result<(), StoreError> {
+        self.atomically(|connection| {
+            connection
+                .execute(schema::META_SET, (MetaKey::ScaleMode.name(), mode.name()))
+                .map(drop)
+                .map_err(sqlite("writing the scale mode"))
+        })
     }
 
     /// Replaces the edges of `edge_type` that start at `src` with `edges`.

@@ -187,6 +187,14 @@ reference again, the kept references of skipped files included, and writes only 
 target changed; a skipped file's import references and its ties through imports stay as they
 were, since its imports were not read.
 
+Last, the index counts the repository as the scale modes do and records its mode. A source file
+is a stored file in a language Cortex reads that is not generated, vendored, binary, over the
+size limit or one that may hold secrets; its lines count. More than 20,000 source files or a
+million lines make the repository huge; else fewer than 50 files or 5,000 lines make it tiny;
+else at most 250 files make it small; else it is medium. A mode set in `IndexOptions::mode`
+(`mode` in the configuration) is recorded whatever the size. `IndexReport` gives the size and the
+mode, and `mode_for` the mode for any size.
+
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts
 when activation spreads is the containment type's weight, applied where the graph is read. A

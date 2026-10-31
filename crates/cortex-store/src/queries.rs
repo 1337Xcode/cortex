@@ -1,6 +1,6 @@
 //! Read queries, shared by readers and by the writer's transactions.
 
-use cortex_core::{EdgeType, Identifier, NodeKind, RepoPath};
+use cortex_core::{EdgeType, FileFlags, Identifier, NodeKind, RepoPath};
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{StoreError, sqlite};
@@ -142,6 +142,25 @@ impl<'c> Queries<'c> {
     /// SQLite errors and stored paths that cannot be read back.
     pub fn file_nodes(self) -> Result<Vec<(RepoPath, NodeId)>, StoreError> {
         self.paths_with_nodes(schema::FILE_NODES, "files.path")
+    }
+
+    /// How many stored files have a language and none of the flags in `without`, and how many
+    /// lines those files hold.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and counts that cannot be read back.
+    pub fn source_size(self, without: FileFlags) -> Result<(u64, u64), StoreError> {
+        let (files, lines): (i64, i64) = self
+            .connection
+            .query_row(schema::SOURCE_SIZE, [without.bits()], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(sqlite("counting source files"))?;
+        Ok((
+            values::number(files, "files", 0)?,
+            values::number(lines, "files.loc", 0)?,
+        ))
     }
 
     /// Every symbol's node, by symbol id.

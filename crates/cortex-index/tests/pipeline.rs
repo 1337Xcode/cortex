@@ -11,8 +11,12 @@ use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
 use common::{NOW_MS, TestResult, index, lock_out, write};
-use cortex_core::{ContentHash, EdgeType, FileFlags, Language, RepoPath, Resolution, SymbolKind};
-use cortex_index::{FileProblem, IndexReport, LeftOut, Problem, ProblemKind, ScipOutcome};
+use cortex_core::{
+    ContentHash, EdgeType, FileFlags, Language, RepoPath, Resolution, ScaleMode, SymbolKind,
+};
+use cortex_index::{
+    FileProblem, IndexReport, LeftOut, Problem, ProblemKind, RepoSize, ScipOutcome,
+};
 use cortex_store::{FileRow, NodeId, Reader, RefRow, SymbolRow};
 
 /// A time limit no test file comes near, even in a debug build.
@@ -315,6 +319,13 @@ fn every_file_is_written_as_its_kind_allows() -> TestResult {
         problems: Vec::new(),
         left_out: Vec::new(),
         scip: ScipOutcome::Absent,
+        // Source: orders.py (7 lines) and README.md (3); the others are vendored, generated,
+        // secret, too large, binary or in no language.
+        size: RepoSize {
+            source_files: 2,
+            lines: 10,
+        },
+        mode: ScaleMode::Tiny,
     };
     assert_eq!(report, expected);
     let parsed = FileFlags::PARSED;
@@ -584,6 +595,12 @@ fn a_second_index_follows_the_changes() -> TestResult {
         problems: Vec::new(),
         left_out: Vec::new(),
         scip: ScipOutcome::Absent,
+        // Source: orders.py (7 lines and 4 more), new.py (2) and README.md, kept with its 3.
+        size: RepoSize {
+            source_files: 3,
+            lines: 16,
+        },
+        mode: ScaleMode::Tiny,
     };
     assert_eq!(report, expected);
     assert_eq!(stored(root, "notes.txt")?, None);
@@ -717,6 +734,12 @@ fn a_file_out_of_time_is_skipped_and_reported() -> TestResult {
         problems: vec![(RepoPath::new("slow.py")?, FileProblem::TimedOut)],
         left_out: Vec::new(),
         scip: ScipOutcome::Absent,
+        // Only z.txt is stored, in no language.
+        size: RepoSize {
+            source_files: 0,
+            lines: 0,
+        },
+        mode: ScaleMode::Tiny,
     };
     assert_eq!(index(root, 1, Duration::ZERO, DEFAULT_LIMIT)?, out_of_time);
     assert_eq!(stored(root, "slow.py")?, None);
@@ -731,7 +754,15 @@ fn a_file_out_of_time_is_skipped_and_reported() -> TestResult {
         (FileFlags::PARSED, 5000)
     );
     let ids = symbol_ids(root, "slow.py")?;
-    assert_eq!(index(root, 1, Duration::ZERO, DEFAULT_LIMIT)?, out_of_time);
+    // Kept as stored before, slow.py now counts: 5,000 functions of two lines each.
+    let kept = IndexReport {
+        size: RepoSize {
+            source_files: 1,
+            lines: 10_000,
+        },
+        ..out_of_time
+    };
+    assert_eq!(index(root, 1, Duration::ZERO, DEFAULT_LIMIT)?, kept);
     assert_eq!(stored(root, "slow.py")?, Some(parsed));
     assert_eq!(symbol_ids(root, "slow.py")?, ids);
     Ok(())

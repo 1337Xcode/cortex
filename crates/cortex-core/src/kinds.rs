@@ -208,7 +208,7 @@ impl FileFlags {
 
     /// These flags with `other` added.
     #[must_use]
-    pub fn with(self, other: Self) -> Self {
+    pub const fn with(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
 }

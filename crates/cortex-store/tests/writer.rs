@@ -4,10 +4,12 @@
 mod common;
 
 use common::{Scratch, TestResult, index, name, path, reference, symbol};
-use cortex_core::{EdgeType, Language, RefKind, RepoId, Resolution, SymbolKind};
+use cortex_core::{
+    EdgeType, FileFlags, Language, RefKind, RepoId, Resolution, ScaleMode, SymbolKind,
+};
 use cortex_store::{
-    ChangeKind, EdgeRecord, EdgeRow, IndexCounts, MetaKey, RefName, Resolved, StoreError,
-    SymbolChange, SymbolName, SymbolRecord, Target,
+    ChangeKind, EdgeRecord, EdgeRow, FileIndex, IndexCounts, MetaKey, RefName, Resolved,
+    StoreError, SymbolChange, SymbolName, SymbolRecord, Target,
 };
 
 /// The version the workspace manifest declares; a version bump updates this literal on purpose.
@@ -773,6 +775,48 @@ fn stored_paths_are_listed_in_byte_order() -> TestResult {
         .map(|written| Ok((path(written)?, ids[written])))
         .collect::<TestResult<Vec<_>>>()?;
     assert_eq!(queries.file_ids()?, with_ids);
+    Ok(())
+}
+
+/// The source size counts files that have a language and none of the flags left out, and their
+/// lines: `a.py` (3 lines) and `b.md` (2) count; `gen.py` is generated, `notes.txt` has no language.
+/// The scale mode is recorded in meta.
+#[test]
+fn source_size_and_scale_mode() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let file = |path: &str, language, lines, flags| -> TestResult<FileIndex> {
+        let mut file = index(path, Vec::new(), Vec::new())?;
+        file.file.language = language;
+        file.file.line_count = Some(lines);
+        file.file.flags = flags;
+        Ok(file)
+    };
+    transaction.replace_file(&file("a.py", Some(Language::Python), 3, FileFlags::PARSED)?)?;
+    transaction.replace_file(&file(
+        "b.md",
+        Some(Language::Markdown),
+        2,
+        FileFlags::empty(),
+    )?)?;
+    transaction.replace_file(&file(
+        "gen.py",
+        Some(Language::Python),
+        40,
+        FileFlags::GENERATED,
+    )?)?;
+    transaction.replace_file(&file("notes.txt", None, 9, FileFlags::empty())?)?;
+    assert_eq!(
+        transaction.queries().source_size(FileFlags::GENERATED)?,
+        (2, 5)
+    );
+    transaction.set_scale_mode(ScaleMode::Small)?;
+    transaction.commit()?;
+    assert_eq!(
+        writer.queries().meta(MetaKey::ScaleMode)?.as_deref(),
+        Some("small")
+    );
     Ok(())
 }
 
