@@ -26,7 +26,8 @@ const GENERATOR_VERSION: u32 = 2;
 const COMPLETE_MARK: &str = "generated.txt";
 
 /// The synthetic repository's root, generated when missing. It lives in the system's temporary
-/// folder, outside any repository, and is reused by later runs.
+/// folder, outside any repository, and is reused by later runs; [`CHANGED_FILE`], which a run
+/// edits, is written back as generated.
 ///
 /// # Errors
 ///
@@ -36,6 +37,8 @@ pub fn repository() -> io::Result<PathBuf> {
         .join("cortex-bench")
         .join(format!("synthetic-10k-v{GENERATOR_VERSION}"));
     if root.join(COMPLETE_MARK).exists() {
+        let (_, source) = module(0, 0);
+        std::fs::write(root.join(CHANGED_FILE), source)?;
         return Ok(root);
     }
     for folder in 0..FOLDERS {
@@ -53,27 +56,98 @@ pub fn repository() -> io::Result<PathBuf> {
 /// The repository-relative path of the file the reparse benchmark changes.
 pub const CHANGED_FILE: &str = "pkg00/m000.py";
 
-/// Writes variant `variant` of [`CHANGED_FILE`] into the repository at `root`: its own source
-/// with one more function whose body depends on the variant, so that each variant differs from
-/// the last.
-///
-/// # Errors
-///
-/// I/O errors.
-pub fn change_file(root: &Path, variant: u64) -> io::Result<()> {
-    let (_, mut source) = module(0, 0);
-    let _ = write!(
-        source,
-        "\n\ndef changed_{variant}(value):\n    return value + {variant}\n"
-    );
-    std::fs::write(root.join(CHANGED_FILE), source)
+/// One kind of edit the reparse benchmark makes to [`CHANGED_FILE`], each changing one thing.
+#[derive(Debug, Clone, Copy)]
+pub enum Edit {
+    /// The added function's body changes.
+    Body,
+    /// The added function is renamed, to a name no other file defines.
+    Rename,
+    /// A function named `total`, as is a method of every file's class, comes or goes.
+    CommonName,
+    /// A call in the added function's body to a function the file imports comes or goes.
+    Call,
+}
+
+impl Edit {
+    /// The kind of edit sample `sample` makes: each kind in turn.
+    pub fn of_sample(sample: usize) -> Edit {
+        match sample % 4 {
+            0 => Edit::Body,
+            1 => Edit::Rename,
+            2 => Edit::CommonName,
+            _ => Edit::Call,
+        }
+    }
+}
+
+/// [`CHANGED_FILE`] as the benchmark has edited it: its generated source with one function added,
+/// `changed_N`, and the edits made so far.
+#[derive(Debug, Default)]
+pub struct Changes {
+    /// The number in the added function's name.
+    name: u64,
+    /// The number the added function's body adds.
+    body: u64,
+    /// Whether the added function calls a function the file imports.
+    has_call: bool,
+    /// Whether the file defines a function named `total`.
+    has_total: bool,
+}
+
+impl Changes {
+    /// Makes `edit` and writes the file into the repository at `root`.
+    ///
+    /// # Errors
+    ///
+    /// I/O errors.
+    pub fn make(&mut self, root: &Path, edit: Edit) -> io::Result<()> {
+        match edit {
+            Edit::Body => self.body += 1,
+            Edit::Rename => self.name += 1,
+            Edit::CommonName => self.has_total = !self.has_total,
+            Edit::Call => self.has_call = !self.has_call,
+        }
+        self.write(root)
+    }
+
+    /// Writes the file as edited so far into the repository at `root`.
+    ///
+    /// # Errors
+    ///
+    /// I/O errors.
+    pub fn write(&self, root: &Path) -> io::Result<()> {
+        let (_, mut source) = module(0, 0);
+        let [(folder, file), _] = imported(0, 0);
+        let call = if self.has_call {
+            format!(" + helper_{folder}_{file}_0(value)")
+        } else {
+            String::new()
+        };
+        let _ = write!(
+            source,
+            "\n\ndef changed_{}(value):\n    return value + {}{call}\n",
+            self.name, self.body
+        );
+        if self.has_total {
+            source.push_str("\n\ndef total(value):\n    return value * 2\n");
+        }
+        std::fs::write(root.join(CHANGED_FILE), source)
+    }
+}
+
+/// The two files file `file` of folder `folder` imports from, as folder and file numbers: two and
+/// four folders on, so of the same language, at spread-out positions.
+fn imported(folder: usize, file: usize) -> [(usize, usize); 2] {
+    [
+        ((folder + 2) % FOLDERS, (file * 7 + 3) % FILES_PER_FOLDER),
+        ((folder + 4) % FOLDERS, (file * 13 + 5) % FILES_PER_FOLDER),
+    ]
 }
 
 /// The file name and source of file `file` of folder `folder`.
 fn module(folder: usize, file: usize) -> (String, String) {
-    // Imported files: two folders on, of the same language, at spread-out positions.
-    let first = ((folder + 2) % FOLDERS, (file * 7 + 3) % FILES_PER_FOLDER);
-    let second = ((folder + 4) % FOLDERS, (file * 13 + 5) % FILES_PER_FOLDER);
+    let [first, second] = imported(folder, file);
     if folder.is_multiple_of(2) {
         (
             format!("m{file:03}.py"),

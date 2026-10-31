@@ -1,6 +1,6 @@
 //! Indexing benchmarks over the synthetic 10,000-file repository: the first index, and the index
-//! of one changed file's path, as the daemon runs it on every change. `cargo xtask verify --full`
-//! reads their samples and checks them against the budgets.
+//! of one changed file's path, as the daemon runs it on every change, for four kinds of edit in
+//! turn. `cargo xtask verify --full` reads their samples and checks them against the budgets.
 
 mod synthetic;
 
@@ -105,19 +105,26 @@ fn indexing(criterion: &mut Criterion) {
             total
         });
     });
-    group.sample_size(30);
+    // Ten samples of each kind of edit.
+    group.sample_size(40);
+    let mut changes = synthetic::Changes::default();
+    #[allow(clippy::expect_used)]
+    changes.write(&root).expect("changing a file");
     let mut writer = writer(&root);
     index(&root, &grammars, &mut writer);
     #[allow(clippy::expect_used)]
     let changed = [RepoPath::new(synthetic::CHANGED_FILE).expect("a valid path")];
-    let mut variant = 0;
+    let mut sample = 0;
     group.bench_function("one_file_changed_10k", |bencher| {
         bencher.iter_custom(|iterations| {
+            // One kind of edit per sample, the next kind in the next sample: a slow kind makes
+            // whole samples slow instead of averaging into the others'.
+            let edit = synthetic::Edit::of_sample(sample);
+            sample += 1;
             let mut total = Duration::ZERO;
             for _ in 0..iterations {
-                variant += 1;
                 #[allow(clippy::expect_used)]
-                synthetic::change_file(&root, variant).expect("changing a file");
+                changes.make(&root, edit).expect("changing a file");
                 // The daemon sees a change once the path has been quiet for the watcher's 200 ms.
                 // Read at once instead, a file just written is often scanned by the system's
                 // malware protection first, which no index of a watched change waits for.
