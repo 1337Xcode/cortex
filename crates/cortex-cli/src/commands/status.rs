@@ -1,16 +1,23 @@
-//! `cortex status`: whether the repository's daemon runs, whether its index is ready, the scale
-//! mode, and how many files are stored, parsed and waiting to be parsed. The store is only read.
+//! `cortex status`: whether the repository's daemon runs (asked of the daemon itself), whether its
+//! index is ready, the scale mode, and how many files are stored, parsed and waiting to be parsed.
+//! The store is only read.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use cortex_core::{FileFlags, ModeSetting};
+use cortex_core::ipc::{RequestBody, ResponseBody, Role};
+use cortex_core::{FileFlags, ModeSetting, RepoId, UserFolder};
+use cortex_daemon::settings;
+use cortex_hook::{Answer, ClientError, ask};
 use cortex_index::waits_to_be_parsed;
 use cortex_store::{MetaKey, Queries, Reader, StoreError, is_writer_running};
 
-use cortex_daemon::settings;
-
 use crate::{output, repository};
+
+/// How long the daemon has to answer. It answers status from memory, so a daemon that takes longer
+/// is stuck, not busy.
+const ANSWER_WITHIN: Duration = Duration::from_secs(2);
 
 /// The arguments of `cortex status`.
 #[derive(Debug, clap::Args)]
@@ -32,6 +39,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     for warning in &loaded.warnings {
         output::note(&format!("warning: {warning}"))?;
     }
+    output::line(&daemon_line(&root))?;
     let folder = root.join(".cortex");
     let reader = match Reader::open(&folder, 0) {
         Ok(reader) => reader,
@@ -52,21 +60,47 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The line saying whether the daemon of the repository at `root` runs, from its own answer.
+fn daemon_line(root: &Path) -> String {
+    let Some(user) = UserFolder::of_current_user() else {
+        return "daemon: unknown, no home folder to find it from".to_owned();
+    };
+    let files = user.run_files(&RepoId::of(root));
+    let deadline = Instant::now() + ANSWER_WITHIN;
+    match ask(&files, Role::Cli, RequestBody::Status, deadline) {
+        Ok(Answer {
+            body: ResponseBody::Status(report),
+            ..
+        }) => format!(
+            "daemon: running (process {}, Cortex {}, up {} s)",
+            report.pid,
+            report.cortex_version,
+            report.uptime_ms / 1000
+        ),
+        Ok(_) => "daemon: running, but it did not answer with its status".to_owned(),
+        Err(ClientError::NotRunning) => "daemon: not running".to_owned(),
+        Err(ClientError::TimedOut) => "daemon: not answering".to_owned(),
+        Err(ClientError::Mismatch(theirs)) => format!(
+            "daemon: running Cortex {}, which speaks another protocol",
+            theirs.cortex_version
+        ),
+        Err(other) => format!("daemon: unreachable ({other})"),
+    }
+}
+
 /// The status of the store in `folder` that `queries` reads, with the mode `setting`.
 fn status_lines(
     folder: &Path,
     queries: Queries<'_>,
     setting: ModeSetting,
 ) -> anyhow::Result<Vec<String>> {
-    let is_running = is_writer_running(folder)?;
     let index = if queries.meta(MetaKey::CortexVersion)?.is_some() {
         "ready"
-    } else if is_running {
+    } else if is_writer_running(folder)? {
         "not ready, an index is under way"
     } else {
         "not ready, the last index did not finish; the next one reads every file again"
     };
-    let daemon = if is_running { "running" } else { "not running" };
     let mut mode = queries
         .meta(MetaKey::ScaleMode)?
         .unwrap_or_else(|| "not counted yet".to_owned());
@@ -90,7 +124,6 @@ fn status_lines(
         files.push_str(&format!(", {waiting} waiting to be parsed"));
     }
     Ok(vec![
-        format!("daemon: {daemon}"),
         format!("index: {index}"),
         format!("mode: {mode}"),
         format!("files: {files}"),

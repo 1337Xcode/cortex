@@ -32,8 +32,10 @@ cortex version
 
 `cortex daemon` indexes the repository (the current folder when `--root` is left out) into its
 `.cortex` folder, then watches it and indexes each change, and stops after a while with nothing to
-do. `cortex status` tells whether a daemon is running, whether the index is ready, the repository's
-scale mode and how many files are stored and parsed.
+do. One daemon serves a repository; it listens on a socket (a named pipe on Windows) only its user
+can open. `cortex status` asks the daemon whether it runs (its process, version and uptime), and
+tells whether the index is ready, the repository's scale mode and how many files are stored and
+parsed.
 
 ## What has been measured
 

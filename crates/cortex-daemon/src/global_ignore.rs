@@ -11,18 +11,17 @@
 //! repository's root, as git resolves it there.
 
 use std::ffi::OsString;
-use std::io::{ErrorKind, Read};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 
+use crate::child;
+
 /// How long git may take to answer before the global gitignore is left unread.
 const GIT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// How often a running git is checked on.
-const POLL_EVERY: Duration = Duration::from_millis(10);
 
 /// The exit code of `git config --get` for a key that is not set.
 const UNSET: i32 = 1;
@@ -66,67 +65,34 @@ pub(crate) fn find(root: &Path) -> anyhow::Result<Option<PathBuf>> {
 /// `--system`), says `core.excludesFile` is. Without git installed, no configuration can name a
 /// file: the setting counts as unset, and the default is where git would look.
 fn excludes_file(root: &Path, scope: &str) -> anyhow::Result<Setting> {
+    let mut git = Command::new("git");
     // INVARIANT: local-only (git is asked to read its configuration and nothing else: no
     // command that reaches a remote)
-    let spawned = Command::new("git")
-        .args(["config", scope, "--get", "--type=path", "core.excludesFile"])
+    git.args(["config", scope, "--get", "--type=path", "core.excludesFile"])
         .current_dir(root)
         .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn();
-    let mut git = match spawned {
-        Ok(git) => git,
+        .env_remove("GIT_WORK_TREE");
+    let answer = match child::capture(&mut git, GIT_TIMEOUT, MAX_ANSWER_BYTES) {
+        Ok(answer) => answer,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Setting::Unset),
         Err(error) => return Err(error).context("running git to find the global gitignore"),
     };
-    // The answer is read while git runs, so that git never waits on a full pipe.
-    let stdout = git.stdout.take().context("git's output")?;
-    let reader = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut answer = Vec::new();
-        stdout.take(MAX_ANSWER_BYTES).read_to_end(&mut answer)?;
-        Ok(answer)
-    });
-    let status = wait(&mut git)?;
-    let answer = reader
-        .join()
-        .map_err(|_| anyhow::anyhow!("reading git's output stopped unexpectedly"))?
-        .context("reading git's output")?;
-    if status.code() == Some(UNSET) {
+    if answer.status.code() == Some(UNSET) {
         return Ok(Setting::Unset);
     }
-    if !status.success() {
-        bail!("git could not read its configuration ({status})");
+    if !answer.status.success() {
+        bail!("git could not read its configuration ({})", answer.status);
     }
-    if u64::try_from(answer.len()).is_ok_and(|length| length >= MAX_ANSWER_BYTES) {
+    if answer.is_cut {
         bail!("git's answer is longer than a path");
     }
-    let answer = String::from_utf8(answer).context("git's answer is not UTF-8")?;
+    let answer = String::from_utf8(answer.stdout).context("git's answer is not UTF-8")?;
     let path = answer.trim_end_matches(['\r', '\n']);
     Ok(if path.is_empty() {
         Setting::Empty
     } else {
         Setting::File(PathBuf::from(path))
     })
-}
-
-/// Waits for `git` to exit, at most [`GIT_TIMEOUT`], and stops it past that.
-fn wait(git: &mut Child) -> anyhow::Result<ExitStatus> {
-    let start = Instant::now();
-    loop {
-        if let Some(status) = git.try_wait().context("waiting for git")? {
-            return Ok(status);
-        }
-        if start.elapsed() > GIT_TIMEOUT {
-            // Git may exit between the check and the kill; either way it is not waited for again.
-            drop(git.kill());
-            drop(git.wait());
-            bail!("git did not answer within {} s", GIT_TIMEOUT.as_secs());
-        }
-        std::thread::sleep(POLL_EVERY);
-    }
 }
 
 /// The user's home folder as git finds it: `HOME`; on Windows, without it, `HOMEDRIVE` followed by

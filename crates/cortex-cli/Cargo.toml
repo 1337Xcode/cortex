@@ -17,10 +17,12 @@ anyhow.workspace = true
 clap.workspace = true
 cortex-core = { path = "../cortex-core" }
 cortex-daemon = { path = "../cortex-daemon" }
+cortex-hook = { path = "../cortex-hook" }
 cortex-index = { path = "../cortex-index" }
 cortex-store = { path = "../cortex-store" }
 
 [dev-dependencies]
+interprocess.workspace = true
 tempfile.workspace = true
 
 [lints]

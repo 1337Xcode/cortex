@@ -64,11 +64,11 @@ fn index(root: &Path, writer: &mut Writer) -> TestResult {
     Ok(())
 }
 
-/// A repository without a store says so. A store whose first index has not finished is not ready
-/// and has no mode. After an index of two Python files and a text file, held open by a writer as
-/// a daemon holds it: the daemon runs, the index is ready, two files of three were parsed and the
-/// repository is tiny. With the writer gone and the mode pinned to small, the daemon no longer
-/// runs, and the mode is the one the last index recorded, with the pinned one beside it.
+/// With no daemon running: a repository without a store says so. A store whose first index has
+/// not finished, its writer held open as an index holds it, is not ready, with the index under
+/// way, and has no mode. After an index of two Python files and a text file the index is ready,
+/// two files of three were parsed and the repository is tiny. With the writer gone and the mode
+/// pinned to small, the mode is the one the last index recorded, with the pinned one beside it.
 #[test]
 fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -79,7 +79,7 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
     assert_eq!(
         none.stdout,
         format!(
-            "no index in {}; `cortex daemon` builds one\n",
+            "daemon: not running\nno index in {}; `cortex daemon` builds one\n",
             root.display()
         )
     );
@@ -90,14 +90,14 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
     let empty = status(root, home.path())?;
     assert_eq!(
         empty.stdout,
-        "daemon: running\nindex: not ready, an index is under way\n\
+        "daemon: not running\nindex: not ready, an index is under way\n\
          mode: not counted yet\nfiles: 0 stored, 0 parsed\n"
     );
     index(root, &mut writer)?;
     let ready = status(root, home.path())?;
     assert_eq!(
         ready.stdout,
-        "daemon: running\nindex: ready\nmode: tiny\nfiles: 3 stored, 2 parsed\n"
+        "daemon: not running\nindex: ready\nmode: tiny\nfiles: 3 stored, 2 parsed\n"
     );
     drop(writer);
     std::fs::write(root.join(".cortex/config.toml"), "mode = \"small\"\n")?;

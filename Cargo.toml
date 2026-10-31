@@ -45,6 +45,7 @@ syn = { version = "3.0.9", default-features = false, features = ["full", "parsin
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 toml = "1.1.8"
+tokio = "1.54.1"
 tree-sitter = "0.27.1"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.2"
@@ -68,6 +69,7 @@ tree-sitter-typescript = "0.23.2"
 tree-sitter-yaml = "0.7.2"
 # Without its default features: they bring a random number generator Cortex does not use.
 ulid = { version = "3.0.0", default-features = false }
+widestring = "1.0.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

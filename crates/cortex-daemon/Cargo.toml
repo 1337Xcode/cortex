@@ -13,6 +13,11 @@ anyhow.workspace = true
 cortex-core = { path = "../cortex-core" }
 cortex-index = { path = "../cortex-index" }
 cortex-store = { path = "../cortex-store" }
+interprocess = { workspace = true, features = ["tokio"] }
+tokio = { workspace = true, features = ["io-util", "rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+widestring.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

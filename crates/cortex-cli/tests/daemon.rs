@@ -2,100 +2,14 @@
 //! configuration applies: it indexes and says so, indexes a file again after it changes, refuses a
 //! second daemon on the same repository, and in huge mode parses what it took inventory of.
 
-use std::error::Error;
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+mod common;
 
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use common::{Daemon, TestResult, daemon_command, isolate, wait_for};
 use cortex_core::{Identifier, RepoId};
 use cortex_store::{MetaKey, Reader};
-
-/// Result type for these tests: any failure fails the test.
-type TestResult<T = ()> = Result<T, Box<dyn Error>>;
-
-/// Long enough for a debug build to load every grammar and index a few files.
-const READY_WITHIN: Duration = Duration::from_secs(120);
-
-/// Long enough for the watcher's 200 ms of quiet, or the crawler's first batch, and an index of a
-/// few files.
-const SEEN_WITHIN: Duration = Duration::from_secs(60);
-
-/// How often a condition is checked while waiting for it.
-const POLL_EVERY: Duration = Duration::from_millis(50);
-
-/// A running daemon, stopped when dropped, and the lines it writes to stderr.
-struct Daemon {
-    /// The process.
-    child: Child,
-    /// Its stderr, a line at a time.
-    lines: mpsc::Receiver<String>,
-}
-
-impl Daemon {
-    /// Starts `cortex daemon` on `root`, with `home` as the user's home folder.
-    fn start(root: &Path, home: &Path) -> TestResult<Self> {
-        let mut child = daemon_command(root, home)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let stderr = child.stderr.take().ok_or("stderr is not piped")?;
-        let (sender, lines) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                if sender.send(line).is_err() {
-                    break;
-                }
-            }
-        });
-        Ok(Self { child, lines })
-    }
-
-    /// The first line the daemon writes, waited for.
-    fn first_line(&self) -> TestResult<String> {
-        Ok(self.lines.recv_timeout(READY_WITHIN)?)
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        // The test is over: a daemon that already stopped cannot be killed, and that is fine.
-        drop(self.child.kill());
-        drop(self.child.wait());
-    }
-}
-
-/// `cortex daemon --root <root>` with `home` as the user's home folder, and git's configuration
-/// read from there only.
-fn daemon_command(root: &Path, home: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.args(["daemon", "--root"]).arg(root);
-    isolate(&mut command, home);
-    command
-}
-
-/// Makes `command` see `home` as the user's home folder and read no git configuration but what is
-/// there.
-fn isolate(command: &mut Command, home: &Path) {
-    command
-        .env("HOME", home)
-        .env("USERPROFILE", home)
-        .env("GIT_CONFIG_NOSYSTEM", "1");
-    for name in [
-        "GIT_CONFIG_GLOBAL",
-        "GIT_CONFIG_COUNT",
-        "GIT_CONFIG_PARAMETERS",
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "XDG_CONFIG_HOME",
-        "HOMEDRIVE",
-        "HOMEPATH",
-    ] {
-        command.env_remove(name);
-    }
-}
 
 /// Runs git with `args` in `folder`, with `home` as the user's home folder.
 fn git(folder: &Path, home: &Path, args: &[&str]) -> TestResult {
@@ -147,18 +61,6 @@ fn has_definition(root: &Path, name: &str) -> TestResult<bool> {
         .queries()
         .symbols_named(&Identifier::new(name)?)?
         .is_empty())
-}
-
-/// Waits until `condition` holds, for at most [`SEEN_WITHIN`].
-fn wait_for(condition: impl Fn() -> TestResult<bool>) -> TestResult {
-    let start = Instant::now();
-    while !condition()? {
-        if start.elapsed() > SEEN_WITHIN {
-            return Err("the condition did not hold in time".into());
-        }
-        std::thread::sleep(POLL_EVERY);
-    }
-    Ok(())
 }
 
 /// The daemon indexes the one file, says it is ready, and indexes the file again once it changes;
