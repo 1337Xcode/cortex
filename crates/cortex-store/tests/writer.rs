@@ -1347,3 +1347,22 @@ fn a_writer_in_another_process_is_refused() -> TestResult {
     scratch.writer(3)?;
     Ok(())
 }
+
+/// The largest memory map the configuration accepts is one the bundled SQLite takes: a store opens
+/// with it, and with one byte more the setting does not read back and the store is refused.
+#[test]
+fn the_largest_configured_memory_map_is_taken() -> TestResult {
+    let scratch = Scratch::new()?;
+    let repo_id = cortex_core::RepoId::of(scratch.root.path());
+    let open = |mmap_bytes| {
+        cortex_store::Writer::open(&cortex_store::WriterOptions {
+            folder: &scratch.folder,
+            repo_id: &repo_id,
+            mmap_bytes,
+            now_ms: 1,
+        })
+    };
+    drop(open(cortex_core::MAX_MMAP_BYTES)?);
+    assert!(open(cortex_core::MAX_MMAP_BYTES + 1).is_err());
+    Ok(())
+}

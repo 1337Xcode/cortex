@@ -27,6 +27,11 @@ pub const DEFAULT_IDLE_SHUTDOWN_MINUTES: u64 = 30;
 /// database straight from the operating system's file cache instead of copying it into its own.
 pub const DEFAULT_MMAP_BYTES: u64 = 268_435_456;
 
+/// The largest `store.mmap_bytes`: the most the bundled SQLite maps (its `SQLITE_MAX_MMAP_SIZE`,
+/// 0x7fff0000 bytes). Asked for more, SQLite maps that much, and the store, which reads each setting
+/// back, would refuse to open.
+pub const MAX_MMAP_BYTES: u64 = 2_147_418_112;
+
 /// The default for `index.crawl_files_per_second`: how many files the background crawler parses
 /// a second in huge mode, on one thread. A file parses in a few milliseconds, so this keeps the
 /// crawler to a fraction of one core; 100,000 files take under 20 minutes.
@@ -199,8 +204,9 @@ impl Config {
                     positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
             }
             "store.mmap_bytes" => {
-                self.mmap_bytes =
-                    whole_number(value).ok_or_else(|| refuse("a whole number, 0 or more"))?;
+                self.mmap_bytes = whole_number(value)
+                    .filter(|bytes| *bytes <= MAX_MMAP_BYTES)
+                    .ok_or_else(|| refuse("a whole number from 0 to 2147418112"))?;
             }
             "index.crawl_files_per_second" => {
                 self.crawl_files_per_second =
@@ -367,12 +373,17 @@ mod tests {
             (
                 "store.mmap_bytes = -1",
                 "store.mmap_bytes",
-                "a whole number, 0 or more",
+                "a whole number from 0 to 2147418112",
             ),
             (
                 "store.mmap_bytes = \"256MB\"",
                 "store.mmap_bytes",
-                "a whole number, 0 or more",
+                "a whole number from 0 to 2147418112",
+            ),
+            (
+                "store.mmap_bytes = 2147418113",
+                "store.mmap_bytes",
+                "a whole number from 0 to 2147418112",
             ),
         ];
         for (text, key, expected) in cases {
