@@ -28,6 +28,9 @@ allow = [
     "Unicode-DFS-2016",
     # A public domain dedication, as permissive as a licence gets: the file watcher `notify` uses it.
     "CC0-1.0",
+    # The zero-clause BSD licence: permission to use with no conditions at all. Two crates the
+    # local socket library `interprocess` uses carry it.
+    "0BSD",
 ]
 confidence-threshold = 0.93
 # The allow list is policy, not an inventory: a licence no dependency uses yet is fine.

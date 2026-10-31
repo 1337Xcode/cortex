@@ -1,0 +1,20 @@
+[package]
+name = "cortex-hook"
+description = "The Cortex hook client: agent adapters, normalization, and the fail-open client of the daemon."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+cortex-core = { path = "../cortex-core" }
+interprocess.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

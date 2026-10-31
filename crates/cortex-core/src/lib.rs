@@ -50,4 +50,4 @@ pub use root::canonical_root;
 pub use scale_mode::ScaleMode;
 pub use tokens::identifier_tokens;
 pub use ulid::{Ulid, UlidError};
-pub use user_folder::{RunFiles, UserFolder};
+pub use user_folder::{Endpoint, RunFiles, UserFolder};

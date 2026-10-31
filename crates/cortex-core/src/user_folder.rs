@@ -58,6 +58,15 @@ impl UserFolder {
     }
 }
 
+/// Where a daemon listens, in the form its platform uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Endpoint {
+    /// A Unix domain socket at this path.
+    Socket(PathBuf),
+    /// A Windows named pipe with this name, without its `\\.\pipe\` prefix.
+    Pipe(String),
+}
+
 /// Where one repository's daemon listens and what marks it as running, all named by the
 /// repository's id.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +89,16 @@ impl RunFiles {
     #[must_use]
     pub fn pipe_name(&self) -> String {
         format!("cortex-{}", self.repo_id)
+    }
+
+    /// Where the daemon listens on this platform: its named pipe on Windows, its socket elsewhere.
+    #[must_use]
+    pub fn endpoint(&self) -> Endpoint {
+        if cfg!(windows) {
+            Endpoint::Pipe(self.pipe_name())
+        } else {
+            Endpoint::Socket(self.socket_path())
+        }
     }
 
     /// The file whose lock the running daemon holds: `<id>.lock` in the run folder.
@@ -116,5 +135,11 @@ mod tests {
         assert_eq!(files.lock_path(), run.join(format!("{id}.lock")));
         assert_eq!(files.pid_path(), run.join(format!("{id}.pid")));
         assert_eq!(files.pipe_name(), format!("cortex-{id}"));
+        let endpoint = if cfg!(windows) {
+            Endpoint::Pipe(format!("cortex-{id}"))
+        } else {
+            Endpoint::Socket(run.join(format!("{id}.sock")))
+        };
+        assert_eq!(files.endpoint(), endpoint);
     }
 }
