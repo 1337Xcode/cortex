@@ -5,12 +5,12 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use cortex_core::{
-    Agent, CompactTrigger, ContentHash, Event, EventKind, EventMeta, HookKind, Identifier,
-    LineRange, RepoId, RepoPath, SessionStatus, ShellCommand, StartSource, TaskOutcome, ToolKind,
-    ToolResult, ToolTarget, Ulid,
+    Agent, CompactTrigger, ContentHash, Event, EventKind, EventMeta, FileFlags, HookKind,
+    Identifier, Language, LineRange, RepoId, RepoPath, SessionStatus, ShellCommand, StartSource,
+    TaskOutcome, ToolKind, ToolResult, ToolTarget, Ulid,
 };
 use cortex_learn::Recorder;
-use cortex_store::{EventRecord, Writer, WriterOptions};
+use cortex_store::{EventRecord, FileIndex, FileRecord, Writer, WriterOptions};
 
 /// Result type for these tests: any failure fails the test.
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -626,4 +626,107 @@ fn files_hold(folder: &Path, text: &str) -> TestResult<bool> {
         }
     }
     Ok(false)
+}
+
+/// A subagent's event that does not name the session that started it still belongs to that
+/// session's open task: the store keeps the subagent's parent from its start, and a recorder that
+/// remembers nothing (a restarted daemon) reads it there.
+#[test]
+fn a_subagent_s_parent_is_read_from_the_store() -> TestResult {
+    let mut store = Store::new()?;
+    let asked = prompt("s1", 100, "find the parser")?;
+    let task = Some(task_of(&asked)?);
+    let started = Event {
+        parent_session_id: Some(name("s1")?),
+        ..event(HookKind::SubagentStart, "s1/a1", 200)?
+    };
+    store.record(
+        &mut Recorder::new(false),
+        &[start("s1", 50, StartSource::Startup)?, asked, started],
+    )?;
+    let read = tool(
+        HookKind::PostTool,
+        ("s1/a1", 300),
+        (ToolKind::Read, target("a.py", &[])?, None),
+    )?;
+    store.record(&mut Recorder::new(false), &[read])?;
+    let last = store.events()?.pop().ok_or("the read")?;
+    assert_eq!((last.kind, last.task_id), (EventKind::Read, task));
+    Ok(())
+}
+
+/// A row about an indexed file names the file's graph node, as the store gives it; a row about a
+/// folder names none.
+#[test]
+fn rows_name_an_indexed_file_s_node() -> TestResult {
+    let mut store = Store::new()?;
+    let path = RepoPath::new("calc/ops.py")?;
+    let mut transaction = store.writer.transaction()?;
+    transaction.replace_file(&FileIndex {
+        file: FileRecord {
+            path: path.clone(),
+            language: Some(Language::Python),
+            size_bytes: 10,
+            line_count: Some(1),
+            content_hash: Some(ContentHash::of(
+                b"x = 1
+",
+            )),
+            mtime_ns: 1,
+            flags: FileFlags::empty(),
+            indexed_at_ms: 1,
+        },
+        symbols: Vec::new(),
+        refs: Vec::new(),
+        passes_on: Vec::new(),
+    })?;
+    transaction.commit()?;
+    let node = store.writer.queries().file_node_at(&path)?;
+    assert!(node.is_some());
+    let events = [
+        tool(
+            HookKind::PostTool,
+            ("s1", 10),
+            (ToolKind::Read, target("calc/ops.py", &[])?, None),
+        )?,
+        tool(
+            HookKind::PostTool,
+            ("s1", 20),
+            (ToolKind::Grep, target("calc", &[])?, None),
+        )?,
+    ];
+    store.record(&mut Recorder::new(false), &events)?;
+    let nodes: Vec<_> = store
+        .events()?
+        .into_iter()
+        .map(|record| record.node_id)
+        .collect();
+    assert_eq!(nodes, [node, None]);
+    Ok(())
+}
+
+/// Past the 1,000 sessions a recorder remembers, it forgets them and reads them again: a task
+/// opened before 1,000 other sessions started is still found and ended by its session's Stop.
+#[test]
+fn sessions_past_the_memory_bound_are_read_again() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false);
+    let asked = prompt("s0", 10, "first")?;
+    let task = task_of(&asked)?;
+    let mut events = vec![start("s0", 5, StartSource::Startup)?, asked];
+    for number in 1..=1_001 {
+        events.push(start(
+            &format!("s{number}"),
+            100 + number,
+            StartSource::Startup,
+        )?);
+    }
+    events.push(event(HookKind::Stop, "s0", 5_000)?);
+    store.record(&mut recorder, &events)?;
+    let ended = store.writer.queries().task(task)?.ok_or("the task")?;
+    assert_eq!(
+        (ended.ended_at_ms, ended.outcome),
+        (Some(5_000), Some(TaskOutcome::Unknown))
+    );
+    Ok(())
 }

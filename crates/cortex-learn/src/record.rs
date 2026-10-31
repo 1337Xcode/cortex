@@ -8,7 +8,7 @@
 //! ends is marked `unknown`: telling success from failure needs the outcome rules, which are not
 //! part of the record.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use cortex_core::{
     ContentHash, Event, EventKind, EventMeta, HookKind, Identifier, LineRange, PromptExcerpt,
@@ -25,13 +25,13 @@ pub const MAX_HUNK_ROWS: usize = 16;
 const MAX_REMEMBERED_SESSIONS: usize = 1_000;
 
 /// Turns each event into rows, remembering per session what the store would otherwise be asked
-/// on every event: that the session is stored, and its open task.
+/// on every event: that the session is stored with its parent, and its open task.
 #[derive(Debug, Default)]
 pub struct Recorder {
     /// Whether a task keeps the first characters of its prompt (`privacy.store_prompt_excerpt`).
     keeps_prompt_excerpt: bool,
-    /// Sessions known to be stored.
-    stored_sessions: BTreeSet<Identifier>,
+    /// Sessions known to be stored, each with the session that started it, if any.
+    parents: BTreeMap<Identifier, Option<Identifier>>,
     /// Each remembered session's open task, or `None` when it has none.
     open_tasks: BTreeMap<Identifier, Option<Ulid>>,
 }
@@ -63,7 +63,9 @@ impl Recorder {
         match event.hook {
             HookKind::SessionStart | HookKind::SubagentStart => {
                 transaction.record_session(&session_of(event))?;
-                self.remember_stored(&event.session_id);
+                // Stored now; its parent, which the store may keep from an earlier start, is read
+                // again when needed.
+                self.parents.remove(&event.session_id);
             }
             _ => self.register(transaction, event)?,
         }
@@ -102,7 +104,7 @@ impl Recorder {
         }
         if matches!(event.hook, HookKind::SessionEnd | HookKind::SubagentStop) {
             transaction.end_session(&event.session_id, event.ts_ms)?;
-            self.stored_sessions.remove(&event.session_id);
+            self.parents.remove(&event.session_id);
             self.open_tasks.remove(&event.session_id);
         }
         Ok(())
@@ -110,36 +112,59 @@ impl Recorder {
 
     /// Stores the event's session from what the event says, unless it is already stored.
     fn register(&mut self, transaction: &mut WriteTx<'_>, event: &Event) -> Result<(), StoreError> {
-        if self.stored_sessions.contains(&event.session_id) {
+        if self.parents.contains_key(&event.session_id) {
             return Ok(());
         }
-        if transaction.queries().session(&event.session_id)?.is_none() {
+        let parent = if let Some(stored) = transaction.queries().session(&event.session_id)? {
+            stored.record.parent_session_id
+        } else {
             transaction.record_session(&session_of(event))?;
-        }
-        self.remember_stored(&event.session_id);
+            event.parent_session_id.clone()
+        };
+        self.remember_parent(&event.session_id, parent);
         Ok(())
     }
 
-    /// Remembers that `session_id` is stored.
-    fn remember_stored(&mut self, session_id: &Identifier) {
-        if self.stored_sessions.len() >= MAX_REMEMBERED_SESSIONS {
-            self.stored_sessions.clear();
+    /// The session that started `session_id`, if any, remembered or read from the store.
+    fn parent_of(
+        &mut self,
+        transaction: &WriteTx<'_>,
+        session_id: &Identifier,
+    ) -> Result<Option<Identifier>, StoreError> {
+        if let Some(parent) = self.parents.get(session_id) {
+            return Ok(parent.clone());
         }
-        self.stored_sessions.insert(session_id.clone());
+        let parent = transaction
+            .queries()
+            .session(session_id)?
+            .and_then(|stored| stored.record.parent_session_id);
+        self.remember_parent(session_id, parent.clone());
+        Ok(parent)
+    }
+
+    /// Remembers that `session_id` is stored, started by `parent`.
+    fn remember_parent(&mut self, session_id: &Identifier, parent: Option<Identifier>) {
+        if self.parents.len() >= MAX_REMEMBERED_SESSIONS {
+            self.parents.clear();
+        }
+        self.parents.insert(session_id.clone(), parent);
     }
 
     /// The task the event belongs to: its session's open task, or for a subagent's event, the
-    /// open task of the session that started the subagent.
+    /// open task of the session that started the subagent, as the event names it or else as the
+    /// store keeps it.
     fn task_of(
         &mut self,
         transaction: &WriteTx<'_>,
         event: &Event,
     ) -> Result<Option<Ulid>, StoreError> {
-        let owner = event
-            .parent_session_id
-            .as_ref()
-            .unwrap_or(&event.session_id);
-        self.open_task(transaction, owner)
+        let owner = match &event.parent_session_id {
+            Some(parent) => parent.clone(),
+            None => self
+                .parent_of(transaction, &event.session_id)?
+                .unwrap_or_else(|| event.session_id.clone()),
+        };
+        self.open_task(transaction, &owner)
     }
 
     /// The open task of `session_id`, remembered or read from the store.
