@@ -656,7 +656,8 @@ fn every_file_gone_is_removed() -> TestResult {
     Ok(())
 }
 
-/// Files in a folder the walk cannot list stay as they were stored, and the folder is reported.
+/// Files in a folder the walk cannot list stay as they were stored, and the folder is reported;
+/// the unchanged file beside it is kept, as every unchanged file is.
 /// Unix only: a test there can take a folder's permissions away from its owner, which Windows
 /// does not offer without rewriting the folder's access list.
 #[cfg(unix)]
@@ -673,7 +674,8 @@ fn files_in_a_folder_the_walk_cannot_list_are_kept() -> TestResult {
     let report = index(root, 2, GENEROUS, DEFAULT_LIMIT);
     std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o700))?;
     let report = report?;
-    assert_eq!((report.files, report.removed), (1, 0));
+    // open.txt is unchanged and kept; nothing below the locked folder is removed.
+    assert_eq!((report.files, report.unchanged, report.removed), (0, 1, 0));
     let unlisted = Problem {
         path: Some(RepoPath::new("locked")?),
         kind: ProblemKind::Unreadable,
