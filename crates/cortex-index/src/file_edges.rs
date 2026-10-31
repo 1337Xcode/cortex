@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 use cortex_core::{EdgeType, RepoPath, Resolution};
 use cortex_store::{EdgeRecord, NodeId, StoreError, Writer};
 
+use crate::node_lookup::NodeLookup;
+
 /// How many importers have their edges written in one transaction: a commit costs little next to
 /// this many files' edges, and the transaction stays short.
 const IMPORTERS_PER_TRANSACTION: usize = 4096;
@@ -19,7 +21,8 @@ pub(crate) type ImportCounts = BTreeMap<RepoPath, u32>;
 
 /// Replaces the structural edges from each file of `importers` with edges to the files its
 /// imports name, and, for a test among `test_targets`, to the file it tests by its base name. A
-/// file or target without a node gets no edge.
+/// file or target without a node gets no edge. Nodes are read all at once when `is_every_file`,
+/// as after every file was written, else as needed.
 ///
 /// # Errors
 ///
@@ -28,34 +31,47 @@ pub(crate) fn write_import_edges(
     writer: &mut Writer,
     importers: &[(RepoPath, ImportCounts)],
     test_targets: &BTreeMap<RepoPath, RepoPath>,
+    is_every_file: bool,
 ) -> Result<(), StoreError> {
-    let nodes: BTreeMap<RepoPath, NodeId> = writer.queries().file_nodes()?.into_iter().collect();
-    for batch in importers.chunks(IMPORTERS_PER_TRANSACTION) {
-        let mut transaction = writer.transaction()?;
-        for (importer, counts) in batch {
-            let Some(src) = nodes.get(importer) else {
+    let queries = writer.queries();
+    let mut nodes = if is_every_file {
+        NodeLookup::every(queries.file_nodes()?)
+    } else {
+        NodeLookup::as_needed(move |path: &RepoPath| queries.file_node_at(path))
+    };
+    let mut sources: Vec<(NodeId, Vec<EdgeRecord>)> = Vec::new();
+    for (importer, counts) in importers {
+        let Some(src) = nodes.get(importer)? else {
+            continue;
+        };
+        let imported = counts
+            .iter()
+            .map(|(target, count)| (target, Resolution::ImportPath, *count));
+        let tested = test_targets
+            .get(importer)
+            .map(|target| (target, Resolution::NameOnly, 1));
+        let mut edges = Vec::new();
+        for (target, tied, count) in imported.chain(tested) {
+            let Some(dst) = nodes.get(target)? else {
                 continue;
             };
-            let imported = counts
-                .iter()
-                .map(|(target, count)| (target, Resolution::ImportPath, *count));
-            let tested = test_targets
-                .get(importer)
-                .map(|target| (target, Resolution::NameOnly, 1));
-            let edges: Vec<EdgeRecord> = imported
-                .chain(tested)
-                .filter_map(|(target, tied, count)| {
-                    Some(EdgeRecord {
-                        dst: *nodes.get(target)?,
-                        weight: tied.confidence(),
-                        count,
-                        // No task observed it: the code itself says so.
-                        last_seq: 0,
-                        is_directed: true,
-                    })
-                })
-                .collect();
-            transaction.replace_edges(*src, EdgeType::Structural, &edges)?;
+            edges.push(EdgeRecord {
+                dst,
+                weight: tied.confidence(),
+                count,
+                // No task observed it: the code itself says so.
+                last_seq: 0,
+                is_directed: true,
+            });
+        }
+        sources.push((src, edges));
+    }
+    // The lookup reads through the writer, which writes next.
+    drop(nodes);
+    for batch in sources.chunks(IMPORTERS_PER_TRANSACTION) {
+        let mut transaction = writer.transaction()?;
+        for (src, edges) in batch {
+            transaction.replace_edges(*src, EdgeType::Structural, edges)?;
         }
         transaction.commit()?;
     }

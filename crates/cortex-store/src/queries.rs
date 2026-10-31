@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use cortex_core::{EdgeType, FileFlags, Identifier, NodeKind, RepoPath};
+use cortex_core::{EdgeType, FileFlags, Identifier, Language, NodeKind, RepoPath};
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{StoreError, sqlite};
@@ -256,6 +256,49 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawSymbolName::check).collect()
     }
 
+    /// The symbols in `files`, as [`Queries::symbol_names`] gives them, by id.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn symbol_names_in_files(self, files: &[FileId]) -> Result<Vec<SymbolName>, StoreError> {
+        let ids = json_array(files.iter().map(|file| file.get().to_string()));
+        let raw = self
+            .collect(schema::SYMBOL_NAMES_IN_FILES, ids, RawSymbolName::read)
+            .map_err(sqlite("reading symbol names"))?;
+        raw.into_iter().map(RawSymbolName::check).collect()
+    }
+
+    /// The first `limit` symbols named `name` by id, as [`Queries::symbol_names`] gives them, in
+    /// files of `languages`: enough to tell one definition from several.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn symbol_names_named_in(
+        self,
+        name: &Identifier,
+        languages: &[Language],
+        limit: u32,
+    ) -> Result<Vec<SymbolName>, StoreError> {
+        // Language names are fixed lower-case words: quoted, they need no escaping.
+        let names = json_array(
+            languages
+                .iter()
+                .map(|language| format!("\"{}\"", language.name())),
+        );
+        let raw: Vec<RawSymbolName> = self
+            .connection
+            .prepare_cached(schema::SYMBOL_NAMES_NAMED_IN_LANGUAGES)
+            .and_then(|mut statement| {
+                statement
+                    .query_map((name.as_str(), names, limit), RawSymbolName::read)?
+                    .collect()
+            })
+            .map_err(sqlite("reading symbol names"))?;
+        raw.into_iter().map(RawSymbolName::check).collect()
+    }
+
     /// The references named `name`, as [`Queries::ref_names`] gives them, by id.
     ///
     /// # Errors
@@ -504,4 +547,10 @@ impl<'c> Queries<'c> {
         let mut statement = self.connection.prepare_cached(sql)?;
         statement.query_map([], read)?.collect()
     }
+}
+
+/// `values`, each already written as JSON, as a JSON array: the form `json_each` reads a list of
+/// bound values from.
+fn json_array(values: impl Iterator<Item = String>) -> String {
+    format!("[{}]", values.collect::<Vec<_>>().join(","))
 }

@@ -484,7 +484,7 @@ pub(crate) fn link(
         .map(|(_, source, target)| (source, target))
         .collect();
     symbol_edges::write_symbol_edges(writer, &ties, only)?;
-    file_edges::write_import_edges(writer, &counts, &test_targets)?;
+    file_edges::write_import_edges(writer, &counts, &test_targets, is_whole)?;
     Ok(())
 }
 

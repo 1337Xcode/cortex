@@ -20,6 +20,9 @@ use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
 /// The default per-file time limit, `index.parse_timeout_ms`.
 const PARSE_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// How long the watcher waits for a path to be quiet before it reports the change.
+const WATCHER_QUIET: Duration = Duration::from_millis(200);
+
 /// The default size limit, `index.max_file_bytes`.
 const MAX_FILE_BYTES: u64 = 1_048_576;
 
@@ -115,6 +118,10 @@ fn indexing(criterion: &mut Criterion) {
                 variant += 1;
                 #[allow(clippy::expect_used)]
                 synthetic::change_file(&root, variant).expect("changing a file");
+                // The daemon sees a change once the path has been quiet for the watcher's 200 ms.
+                // Read at once instead, a file just written is often scanned by the system's
+                // malware protection first, which no index of a watched change waits for.
+                std::thread::sleep(WATCHER_QUIET);
                 let start = Instant::now();
                 update(&root, &grammars, &mut writer, &changed);
                 total += start.elapsed();

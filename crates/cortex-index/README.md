@@ -245,8 +245,9 @@ be read now is left as stored. A path under a folder that is a link, as the walk
 enter it, counts as gone, and a stored file is read again only when no link has come between the
 root and the file. Then the files around the change are read again for what their imports bind,
 as a full index does, and only the references the change can concern are tied again: those in the
-files written and read again, and those elsewhere named like a definition that came or went, with
-the definitions of the names they look for. The SCIP index is not read again; the ties it gave
+files written and read again, and those elsewhere named like a definition that came or went. Of
+the definitions, it reads those in the files it looks into and, for the name a reference goes by,
+the first two in the reference's language family: enough to tell one from several. The SCIP index is not read again; the ties it gave
 stay. The store ends as a full index would leave it. A path that is or was a folder, a file of
 rules about which files count, the SCIP index itself, and a store whose last index did not finish
 make it index the whole repository instead.

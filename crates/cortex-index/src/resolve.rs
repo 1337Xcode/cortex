@@ -386,6 +386,16 @@ fn tie(found: Found, resolution: Resolution) -> Option<Target> {
     }
 }
 
+/// The languages of the family named by `family`, as [`family`] names it.
+fn members(family: Language) -> Vec<Language> {
+    match family {
+        Language::TypeScript => vec![Language::TypeScript, Language::Tsx, Language::JavaScript],
+        Language::C => vec![Language::C, Language::Cpp],
+        Language::Java => vec![Language::Java, Language::Kotlin, Language::Scala],
+        other => vec![other],
+    }
+}
+
 /// The language family `language` belongs to, named by its first member.
 fn family(language: Language) -> Language {
     match language {
@@ -495,10 +505,7 @@ pub(crate) fn resolve_names_around(
         PassedOn::Name { taken, .. } => Some(taken),
         PassedOn::Every(_) | PassedOn::Outside => None,
     }));
-    let mut symbols = Vec::new();
-    for name in wanted {
-        symbols.extend(queries.symbol_names_named(name)?);
-    }
+    let symbols = definitions_for(queries, &wanted, &files, &refs)?;
     let bound: BTreeSet<FileId> = bindings
         .keys()
         .filter_map(|path| files.get(path).copied())
@@ -522,6 +529,47 @@ pub(crate) fn resolve_names_around(
         }
     }
     Ok(pass)
+}
+
+/// The definitions the pass needs for the names it looks for, `wanted`: every definition in a file
+/// it may look into, the `files` it reads or follows and the files of the references `refs` it
+/// ties, and, for the name a reference goes by, the first two in the reference's language family,
+/// which tell one definition there from several. A name finds nothing else: no other file is
+/// looked into, and the family needs no more than two to be ambiguous.
+///
+/// # Errors
+///
+/// Store errors.
+fn definitions_for(
+    queries: Queries<'_>,
+    wanted: &BTreeSet<&Identifier>,
+    files: &BTreeMap<RepoPath, FileId>,
+    refs: &BTreeMap<RefId, RefName>,
+) -> Result<Vec<SymbolName>, StoreError> {
+    let looked_into: BTreeSet<FileId> = files
+        .values()
+        .copied()
+        .chain(refs.values().map(|reference| reference.file))
+        .collect();
+    let looked_into: Vec<FileId> = looked_into.into_iter().collect();
+    let mut symbols: BTreeMap<SymbolId, SymbolName> = BTreeMap::new();
+    for symbol in queries.symbol_names_in_files(&looked_into)? {
+        if wanted.contains(&symbol.name) {
+            symbols.insert(symbol.id, symbol);
+        }
+    }
+    let mut families: BTreeSet<(&Identifier, Language)> = BTreeSet::new();
+    for reference in refs.values() {
+        if let Some(language) = reference.language {
+            families.insert((&reference.name, family(language)));
+        }
+    }
+    for (name, family) in families {
+        for symbol in queries.symbol_names_named_in(name, &members(family), 2)? {
+            symbols.insert(symbol.id, symbol);
+        }
+    }
+    Ok(symbols.into_values().collect())
 }
 
 /// What the files a search from `bindings` can be followed through pass on, as stored, and the

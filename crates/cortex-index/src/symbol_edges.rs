@@ -10,55 +10,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::EdgeType;
-use cortex_store::{EdgeRecord, NodeId, Queries, StoreError, SymbolId, Target, Writer};
+use cortex_store::{EdgeRecord, NodeId, StoreError, SymbolId, Target, Writer};
+
+use crate::node_lookup::NodeLookup;
 
 /// How many definitions have their edges written in one transaction: a commit costs little next to
 /// this many definitions' edges, and the transaction stays short.
 const SOURCES_PER_TRANSACTION: usize = 4096;
-
-/// The nodes of definitions: every one read at once when every definition's edges are rewritten,
-/// else each read when first needed.
-struct Nodes<'q> {
-    /// Where nodes are read from.
-    queries: Queries<'q>,
-    /// The nodes read so far; a definition without a node maps to `None`.
-    known: BTreeMap<SymbolId, Option<NodeId>>,
-    /// Whether every definition's node was read at once.
-    is_complete: bool,
-}
-
-impl<'q> Nodes<'q> {
-    /// The nodes `queries` reads, every one at once when `is_complete`.
-    fn new(queries: Queries<'q>, is_complete: bool) -> Result<Self, StoreError> {
-        let known = if is_complete {
-            queries
-                .symbol_nodes()?
-                .into_iter()
-                .map(|(symbol, node)| (symbol, Some(node)))
-                .collect()
-        } else {
-            BTreeMap::new()
-        };
-        Ok(Self {
-            queries,
-            known,
-            is_complete,
-        })
-    }
-
-    /// The node of `symbol`, if it has one.
-    fn get(&mut self, symbol: SymbolId) -> Result<Option<NodeId>, StoreError> {
-        if let Some(node) = self.known.get(&symbol) {
-            return Ok(*node);
-        }
-        if self.is_complete {
-            return Ok(None);
-        }
-        let node = self.queries.symbol_node(symbol)?;
-        self.known.insert(symbol, node);
-        Ok(node)
-    }
-}
 
 /// Replaces the structural edges of every definition, or of those in `only`, with edges to the
 /// definitions `ties`, each a reference's definition and target, point to; such a definition that
@@ -73,13 +31,17 @@ pub(crate) fn write_symbol_edges(
     only: Option<&BTreeSet<SymbolId>>,
 ) -> Result<(), StoreError> {
     let queries = writer.queries();
-    let mut nodes = Nodes::new(queries, only.is_none())?;
+    let mut nodes = if only.is_none() {
+        NodeLookup::every(queries.symbol_nodes()?)
+    } else {
+        NodeLookup::as_needed(move |symbol: &SymbolId| queries.symbol_node(*symbol))
+    };
     let mut edges: BTreeMap<NodeId, BTreeMap<NodeId, EdgeRecord>> = BTreeMap::new();
     for (source, target) in ties {
         if only.is_some_and(|only| !only.contains(source)) {
             continue;
         }
-        let (Some(src), Some(dst)) = (nodes.get(*source)?, nodes.get(target.symbol)?) else {
+        let (Some(src), Some(dst)) = (nodes.get(source)?, nodes.get(&target.symbol)?) else {
             continue;
         };
         if src == dst {
@@ -105,18 +67,20 @@ pub(crate) fn write_symbol_edges(
     // has some now.
     if let Some(only) = only {
         for source in only {
-            if let Some(node) = nodes.get(*source)? {
+            if let Some(node) = nodes.get(source)? {
                 edges.entry(node).or_default();
             }
         }
     } else {
-        let definitions: BTreeSet<NodeId> = nodes.known.into_values().flatten().collect();
+        let definitions: BTreeSet<NodeId> = nodes.read().collect();
         for stale in queries.edge_sources(EdgeType::Structural)? {
             if definitions.contains(&stale) {
                 edges.entry(stale).or_default();
             }
         }
     }
+    // The lookup reads through the writer, which writes next.
+    drop(nodes);
     let sources: Vec<(NodeId, Vec<EdgeRecord>)> = edges
         .into_iter()
         .map(|(src, targets)| (src, targets.into_values().collect()))

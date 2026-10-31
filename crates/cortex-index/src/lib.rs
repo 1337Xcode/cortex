@@ -35,6 +35,7 @@ mod languages;
 mod lines;
 mod locals;
 mod name_text;
+mod node_lookup;
 mod path_rules;
 mod pattern_rules;
 mod patterns;

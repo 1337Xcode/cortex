@@ -106,6 +106,18 @@ pub(crate) const SYMBOL_NAMES_NAMED: &str = "SELECT s.symbol_id, s.file_id, f.la
      FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id WHERE s.name = ?1 \
      ORDER BY s.symbol_id";
 
+/// As [`SYMBOL_NAMES`], for the symbols in the files whose ids a JSON array lists.
+pub(crate) const SYMBOL_NAMES_IN_FILES: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name, \
+     s.parent_id IS NULL AND s.qual_name = s.name, s.kind \
+     FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id \
+     WHERE s.file_id IN (SELECT value FROM json_each(?1)) ORDER BY s.symbol_id";
+/// As [`SYMBOL_NAMES`], for the first symbols of one name, by id, in files of the languages a JSON
+/// array lists, at most as many as the third parameter.
+pub(crate) const SYMBOL_NAMES_NAMED_IN_LANGUAGES: &str = "SELECT s.symbol_id, s.file_id, f.lang, \
+     s.name, s.parent_id IS NULL AND s.qual_name = s.name, s.kind \
+     FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id \
+     WHERE s.name = ?1 AND f.lang IN (SELECT value FROM json_each(?2)) \
+     ORDER BY s.symbol_id LIMIT ?3";
 /// Adds an unresolved reference and returns its id.
 pub(crate) const REF_INSERT: &str = "INSERT INTO refs (src_file_id, src_symbol_id, dst_name, \
      dst_symbol_id, kind, line, resolution, confidence) \
