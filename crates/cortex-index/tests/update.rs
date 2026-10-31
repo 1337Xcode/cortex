@@ -1,7 +1,8 @@
 //! Indexing chosen paths against the oracle of indexing everything: after any sequence of edits,
-//! a store kept by `index_paths` over the changed paths holds exactly what a store kept by
-//! `index_repository` holds, row for row (ids aside, which depend on the order rows were written):
-//! files, definitions, references with their targets, and every edge of the graph.
+//! a store kept by `index_paths` over the changed paths, and a store kept by `index_repository`
+//! after each edit, both hold exactly what a store built from scratch holds, row for row (ids
+//! aside, which depend on the order rows were written): files, definitions, references with their
+//! targets, and every edge of the graph.
 
 mod common;
 
@@ -17,8 +18,18 @@ use cortex_store::{NodeId, Queries, Reader, SymbolId, Writer, WriterOptions};
 use proptest::prelude::*;
 
 /// The repository every case starts from: Python with a package that passes a name on and a test,
-/// TypeScript with an index file that passes names on, by name and by `*`.
+/// TypeScript with an index file that passes names on, by name and by `*`, and a chain of Python
+/// files passing `x` on, as deep as a search for a name follows: `chain_user.py` takes `x` from
+/// `c1`, which takes it from `c2`, and so on to `c5`, which defines it.
 const FIXTURE: &[(&str, &str)] = &[
+    ("chain/__init__.py", ""),
+    ("chain/c1.py", "from chain.c2 import x\n"),
+    ("chain/c2.py", "from chain.c3 import x\n"),
+    ("chain/c3.py", "from chain.c4 import x\n"),
+    ("chain/c4.py", "from chain.c5 import x\n"),
+    ("chain/c5.py", "def x():\n    pass\n"),
+    ("chain/c6.py", "def x():\n    pass\n"),
+    ("chain_user.py", "from chain.c1 import x\n\nx()\n"),
     ("pkg/__init__.py", "from pkg.core import helper\n"),
     (
         "pkg/core.py",
@@ -47,7 +58,7 @@ const FIXTURE: &[(&str, &str)] = &[
 
 /// Names edits define and call: some already defined, so that definitions come and go under names
 /// in use and references find one definition, several or none.
-const NAMES: [&str; 5] = ["helper", "tool", "greet", "more", "fresh"];
+const NAMES: [&str; 7] = ["helper", "tool", "greet", "more", "fresh", "x", "run"];
 
 /// One edit of the repository.
 #[derive(Debug, Clone)]
@@ -64,6 +75,8 @@ enum Edit {
     AddFile(usize, usize),
     /// Removes the `web` folder whole, as a checkout can.
     RemoveFolder,
+    /// Adds to the first file an import of the name from the second, when both are Python.
+    Import(usize, usize, usize),
 }
 
 /// Any edit; files and names are picked by index, modulo what there is.
@@ -75,6 +88,8 @@ fn edit() -> impl Strategy<Value = Edit> {
         1 => (0..16_usize).prop_map(Edit::Remove),
         2 => (0..NAMES.len(), 0..NAMES.len()).prop_map(|(define, call)| Edit::AddFile(define, call)),
         1 => Just(Edit::RemoveFolder),
+        2 => (0..24_usize, 0..24_usize, 0..NAMES.len())
+            .prop_map(|(file, from, name)| Edit::Import(file, from, name)),
     ]
 }
 
@@ -161,6 +176,20 @@ impl Tree<'_> {
                     NAMES.get(call).copied().unwrap_or("fresh")
                 );
                 self.write(&path, content)?;
+                Ok(vec![path])
+            }
+            Edit::Import(file, from, name) => {
+                let (Some(path), Some(source)) = (self.pick(file), self.pick(from)) else {
+                    return Ok(Vec::new());
+                };
+                let (Some(module), true) = (source.strip_suffix(".py"), path.ends_with(".py"))
+                else {
+                    return Ok(Vec::new());
+                };
+                let name = NAMES.get(name).copied().unwrap_or("fresh");
+                let old = self.files.get(&path).cloned().unwrap_or_default();
+                let module = module.trim_end_matches("/__init__").replace('/', ".");
+                self.write(&path, format!("from {module} import {name}\n{old}"))?;
                 Ok(vec![path])
             }
             Edit::RemoveFolder => {
@@ -382,14 +411,23 @@ fn check_edits(edits: &[Edit]) -> TestResult {
             .collect::<Result<_, _>>()?;
         index_paths(&root, &grammars, &mut by_paths, &options(), &changed)?;
         index_repository(&root, &grammars, &mut whole, &options())?;
-        let (left, right) = (snapshot(&paths_folder)?, snapshot(&whole_folder)?);
-        if left != right {
-            return Err(format!(
-                "after edit {step} of {edits:?}:
-{}",
-                differences(&left, &right)
-            )
-            .into());
+        let fresh_folder = scratch.path().join(format!("fresh{step}"));
+        index_repository(
+            &root,
+            &grammars,
+            &mut writer(&fresh_folder, &root)?,
+            &options(),
+        )?;
+        let fresh = snapshot(&fresh_folder)?;
+        for (name, folder) in [("by paths", &paths_folder), ("whole", &whole_folder)] {
+            let kept = snapshot(folder)?;
+            if kept != fresh {
+                return Err(format!(
+                    "after edit {step} of {edits:?}, kept {name} against fresh:\n{}",
+                    differences(&kept, &fresh)
+                )
+                .into());
+            }
         }
     }
     Ok(())
@@ -403,6 +441,15 @@ proptest! {
     fn paths_index_as_everything_does(edits in prop::collection::vec(edit(), 1..7)) {
         check_edits(&edits).map_err(|error| TestCaseError::fail(error.to_string()))?;
     }
+}
+
+/// `c5` comes to import `x` from `c6` as well as define it, so `x` is ambiguous there, five files
+/// from `chain_user.py`: its tie to `c5` must go, and stay gone when `chain_user.py` is edited.
+#[test]
+fn a_name_passed_on_five_deep_indexes_as_everything_does() -> TestResult {
+    // Files sort as: app.py 0, chain/__init__.py 1, chain/c1.py 2, ... chain/c5.py 6,
+    // chain/c6.py 7, chain_user.py 8.
+    check_edits(&[Edit::Import(6, 7, 5), Edit::Call(8, 5)])
 }
 
 /// A file restored, a name defined where it was not, and a file removed: the stores stay alike,

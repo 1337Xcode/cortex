@@ -21,7 +21,7 @@ use super::{Definitions, Found, Written, agreed};
 /// How many files that only pass a name on, by importing it themselves, are followed to find its
 /// definition. Package `__init__.py` files and TypeScript index files rarely chain more than two;
 /// the cap bounds the work a crafted chain can cause.
-pub(super) const MAX_FILES_PASSED_THROUGH: usize = 4;
+pub(crate) const MAX_FILES_PASSED_THROUGH: usize = 4;
 
 /// How many times one search for a name may look into a file, looks into one file at several
 /// depths included. An index file with a few hundred `export *` lines is searched whole; past the

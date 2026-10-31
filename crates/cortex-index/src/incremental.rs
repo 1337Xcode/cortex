@@ -14,10 +14,11 @@ use cortex_core::{EdgeType, FileFlags, Identifier, RefKind, RepoPath};
 use cortex_store::{FileId, FileRow, MetaKey, NodeId, Queries, StoreError, Writer};
 
 use crate::discover::DiscoveredFile;
+use crate::resolve::search;
 
-/// How many files away from a change the files read again for their bindings may be: as far as a
-/// search for a name passes through files.
-const MAX_FILES_AWAY: usize = 4;
+/// How many files away from a change the files read again for their bindings may be: a search for
+/// a name passes through this many files less one and looks into the last.
+const MAX_FILES_AWAY: usize = search::MAX_FILES_PASSED_THROUGH + 1;
 
 /// The most files read again for their bindings around a change. Past this many the rest are left
 /// as they are, and names passed on through them may resolve less until every file is read again.

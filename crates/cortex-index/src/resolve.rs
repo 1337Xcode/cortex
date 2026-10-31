@@ -18,7 +18,7 @@
 //! family of its own, so a Python call is never tied to a function of another language that
 //! happens to share its name.
 
-mod search;
+pub(crate) mod search;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -603,17 +603,19 @@ fn reachable_surfaces(
                 files.insert(path.clone(), row.id);
                 row.id
             };
-            // Past the last file followed, a search looks only at definitions.
-            let is_last = depth == search::MAX_FILES_PASSED_THROUGH;
-            if is_last || bindings.contains_key(&path) || stored.contains_key(&file) {
+            if bindings.contains_key(&path) || stored.contains_key(&file) {
                 continue;
             }
             let passed = queries.passes_on(file)?;
-            for passed in &passed {
-                match passed {
-                    PassedOn::Name { files, .. } => next.extend(files.iter().cloned()),
-                    PassedOn::Every(path) => next.push(path.clone()),
-                    PassedOn::Outside => {}
+            // A search looks into the last file it reaches, whose passing a name on makes the
+            // name ambiguous there, but follows nothing further.
+            if depth < search::MAX_FILES_PASSED_THROUGH {
+                for passed in &passed {
+                    match passed {
+                        PassedOn::Name { files, .. } => next.extend(files.iter().cloned()),
+                        PassedOn::Every(path) => next.push(path.clone()),
+                        PassedOn::Outside => {}
+                    }
                 }
             }
             stored.insert(file, passed);
