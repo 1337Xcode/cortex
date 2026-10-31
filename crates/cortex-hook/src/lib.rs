@@ -6,6 +6,9 @@
 
 #![warn(clippy::pedantic)]
 
+mod adapter;
+mod claude;
 mod client;
 
+pub use adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, adapter};
 pub use client::{Answer, ClientError, ask};

@@ -11,9 +11,12 @@ publish.workspace = true
 [dependencies]
 cortex-core = { path = "../cortex-core" }
 interprocess.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 tempfile.workspace = true
 
 [lints]
