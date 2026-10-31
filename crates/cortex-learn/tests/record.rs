@@ -596,7 +596,10 @@ fn prompts_commands_and_patterns_stay_out_of_the_database() -> TestResult {
     let mut recorder = Recorder::new(false);
     store.record(&mut recorder, &events)?;
     let folder = store.folder();
-    drop(store);
+    // Close the database before scanning its files, and keep the temporary folder until the scan
+    // is done.
+    let Store { root, writer } = store;
+    drop(writer);
     for marker in [
         "PROMPTTAIL",
         "PROMPTMARKER7F3A",
@@ -608,6 +611,7 @@ fn prompts_commands_and_patterns_stay_out_of_the_database() -> TestResult {
             "{marker} reached the database"
         );
     }
+    drop(root);
     Ok(())
 }
 
