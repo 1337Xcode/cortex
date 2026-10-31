@@ -236,6 +236,8 @@ pub(crate) struct RawSymbolName {
     lang: Option<String>,
     /// `name`.
     name: String,
+    /// Whether `parent_id` is null and `qual_name` is `name`.
+    is_top_level: bool,
 }
 
 impl RawSymbolName {
@@ -246,6 +248,7 @@ impl RawSymbolName {
             file: row.get(1)?,
             lang: row.get(2)?,
             name: row.get(3)?,
+            is_top_level: row.get(4)?,
         })
     }
 
@@ -256,6 +259,7 @@ impl RawSymbolName {
             file: FileId(self.file),
             language: values::language(self.lang, self.file)?,
             name: values::identifier(&self.name, "symbols.name", self.id)?,
+            is_top_level: self.is_top_level,
         })
     }
 }
@@ -270,6 +274,10 @@ pub(crate) struct RawRefName {
     lang: Option<String>,
     /// `dst_name`.
     dst_name: String,
+    /// `kind`.
+    kind: String,
+    /// `line`.
+    line: i64,
     /// `dst_symbol_id`.
     dst_symbol: Option<i64>,
     /// `resolution`.
@@ -286,21 +294,26 @@ impl RawRefName {
             file: row.get(1)?,
             lang: row.get(2)?,
             dst_name: row.get(3)?,
-            dst_symbol: row.get(4)?,
-            resolution: row.get(5)?,
-            confidence: row.get(6)?,
+            kind: row.get(4)?,
+            line: row.get(5)?,
+            dst_symbol: row.get(6)?,
+            resolution: row.get(7)?,
+            confidence: row.get(8)?,
         })
     }
 
     /// The row with every value checked, the stored confidence against the target's resolution.
     pub(crate) fn check(self) -> Result<RefName, StoreError> {
-        let target = target(self.dst_symbol, self.resolution, self.id)?;
-        checked_confidence(self.confidence, target, self.id)?;
+        let row = self.id;
+        let target = target(self.dst_symbol, self.resolution, row)?;
+        checked_confidence(self.confidence, target, row)?;
         Ok(RefName {
-            id: RefId(self.id),
+            id: RefId(row),
             file: FileId(self.file),
             language: values::language(self.lang, self.file)?,
-            name: values::identifier(&self.dst_name, "refs.dst_name", self.id)?,
+            name: values::identifier(&self.dst_name, "refs.dst_name", row)?,
+            kind: values::kind(&self.kind, RefKind::from_name, "refs.kind", row)?,
+            line: values::number(self.line, "refs.line", row)?,
             target,
         })
     }

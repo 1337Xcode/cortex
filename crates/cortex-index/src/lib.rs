@@ -16,11 +16,13 @@
 
 #![warn(clippy::pedantic)]
 
+mod bindings;
 mod deadline;
 mod detect;
 mod discover;
 mod extract;
 mod file_edges;
+mod file_imports;
 mod folders;
 mod gitattributes;
 mod grammar;

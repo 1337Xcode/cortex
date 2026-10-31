@@ -162,6 +162,16 @@ fn damaged_name_rows_are_reported() -> TestResult {
     assert_eq!(damaged, Some(("refs.dst_name", ref_id)));
     damage("UPDATE refs SET dst_name = 'helper'")?;
 
+    damage("UPDATE refs SET kind = 'calls'")?;
+    let damaged = corrupt(scratch.reader()?.queries().ref_names());
+    assert_eq!(damaged, Some(("refs.kind", ref_id)));
+    damage("UPDATE refs SET kind = 'call'")?;
+
+    damage("UPDATE refs SET line = -1")?;
+    let damaged = corrupt(scratch.reader()?.queries().ref_names());
+    assert_eq!(damaged, Some(("refs.line", ref_id)));
+    damage("UPDATE refs SET line = 2")?;
+
     damage("UPDATE refs SET resolution = NULL")?;
     let damaged = corrupt(scratch.reader()?.queries().ref_names());
     assert_eq!(damaged, Some(("refs.resolution", ref_id)));

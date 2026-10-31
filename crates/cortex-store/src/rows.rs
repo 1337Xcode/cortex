@@ -103,6 +103,9 @@ pub struct SymbolName {
     pub language: Option<Language>,
     /// Its name.
     pub name: Identifier,
+    /// Whether it is defined directly in its file: in no other definition, and with no qualifier,
+    /// so that its qualified name is its name. These are the names a module offers its importers.
+    pub is_top_level: bool,
 }
 
 /// A stored reference's name, the file it is in and what it is tied to, as resolution reads them.
@@ -116,6 +119,10 @@ pub struct RefName {
     pub language: Option<Language>,
     /// The name used.
     pub name: Identifier,
+    /// How it is used.
+    pub kind: RefKind,
+    /// The 1-based line of the use.
+    pub line: u32,
     /// The symbol it is tied to, if any.
     pub target: Option<Target>,
 }

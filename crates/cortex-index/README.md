@@ -123,13 +123,40 @@ A stored file the walk no longer finds is removed, unless the walk reported a pr
 or at a folder above it: a folder it could not list or did not enter, or a file it could not
 inspect.
 
-Each reference is then tied to the one definition with its name in its own file (confidence 0.6),
-or else to the one definition with its name among the files of its language family (0.3). The
-families are TypeScript, TSX and JavaScript; C and C++; Java, Kotlin and Scala; every other
-language is a family of its own, so a call is never tied to a function of another language that
-shares its name. A name with several definitions in reach stays unresolved. Every full index
-resolves every stored reference again, the kept references of skipped files included, and
-writes only the ones whose target changed.
+Each reference is then tied to a definition when what its file says settles which one.
+
+A bare name, written with nothing before it, may be bound by an import. It is looked up the way
+these languages scope names: from the definition the use sits in outwards, through the functions,
+methods and modules around it, to the top of the file; a class body is skipped, since its methods
+reach its names through `self` or `this`. The first of these that defines the name, or has an
+import that brings it in under that name, decides. A definition there leaves the name to the rules
+below; imports there bind it. A bound name is the imports': it is tied through them
+(confidence 0.8) when every import binding it there finds the same definition, and stays
+unresolved otherwise. What an import finds is the one definition of the name it takes, made
+directly in the files it names, in no other definition and with no qualifier (so not a method of
+a class or of an `impl` block). A file that does not define the name but passes it on, by name or
+with `*`, as a package's `__init__.py` or a TypeScript index file does, is followed, at most four
+files deep and through at most 256 files in all; a search that does not finish within those finds
+nothing. A namespace (`export * as ns`) is not followed.
+
+Some imports bind no bare name. A re-export (`export { x } from`, `export * from`) only passes
+names on. An import of every name (`from x import *`, Go's dot import) does too, since which names
+it brings in depends on each language's rules of visibility and order. A default import binds
+nothing, since no definition says it is the default. A name written after something, as in
+`line.strip()`, `orders.Place()` or `Order::new()`, is never bound by an import of the bare name;
+each language whose imports name files lists the forms of its grammar that write a name after
+something, beside its parsing rules. Parameters and local variables are not known, so one named
+like an import does not hide it.
+
+An import's own reference is tied through its own import or not at all. Any other reference that
+no import binds is tied to the one definition with its name in its own file (0.6), or else to the
+one definition with its name among the files of its language family (0.3). The families are
+TypeScript, TSX and JavaScript; C and C++; Java, Kotlin and Scala; every other language is a family
+of its own, so a call is never tied to a function of another language that shares its name. A name
+with several definitions in reach stays unresolved. Every full index resolves every stored
+reference again, the kept references of skipped files included, and writes only the ones whose
+target changed; a skipped file's import references and its ties through imports stay as they
+were, since its imports were not read.
 
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts

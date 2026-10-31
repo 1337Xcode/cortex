@@ -337,7 +337,10 @@ fn node_ids_are_never_reused() -> TestResult {
 }
 
 /// Every symbol's and every reference's name is listed by id, with its file and that file's
-/// language, and each reference with what it is tied to.
+/// language. A symbol says whether it is defined directly in its file: `helper` and `main` are;
+/// `main.inner` sits in `main`, and `Order.new` carries the qualifier `Order` with no parent, as a
+/// method in an `impl` block does. A reference comes with its kind, its line and what it is tied
+/// to.
 #[test]
 fn names_are_listed_with_their_files() -> TestResult {
     let scratch = Scratch::new()?;
@@ -348,8 +351,11 @@ fn names_are_listed_with_their_files() -> TestResult {
         vec![
             symbol(SymbolKind::Function, "helper", None, ("s", "b"))?,
             symbol(SymbolKind::Function, "main", None, ("s", "b"))?,
+            symbol(SymbolKind::Function, "main.inner", Some(1), ("s", "b"))?,
+            symbol(SymbolKind::Method, "Order.new", None, ("s", "b"))?,
         ],
         vec![
+            reference(None, "os", RefKind::Import, 1)?,
             reference(Some(1), "helper", RefKind::Call, 5)?,
             reference(Some(1), "print", RefKind::Call, 6)?,
         ],
@@ -359,46 +365,47 @@ fn names_are_listed_with_their_files() -> TestResult {
         resolution: Resolution::SameFile,
     };
     transaction.set_resolutions(&[Resolved {
-        reference: a.refs[0],
+        reference: a.refs[1],
         target: Some(target),
     }])?;
     transaction.commit()?;
     let queries = writer.queries();
     let python = Some(Language::Python);
+    let symbol_name = |position: usize, text: &str, is_top_level| -> TestResult<SymbolName> {
+        Ok(SymbolName {
+            id: a.symbols[position],
+            file: a.file,
+            language: python,
+            name: name(text)?,
+            is_top_level,
+        })
+    };
     assert_eq!(
         queries.symbol_names()?,
         [
-            SymbolName {
-                id: a.symbols[0],
-                file: a.file,
-                language: python,
-                name: name("helper")?,
-            },
-            SymbolName {
-                id: a.symbols[1],
-                file: a.file,
-                language: python,
-                name: name("main")?,
-            },
+            symbol_name(0, "helper", true)?,
+            symbol_name(1, "main", true)?,
+            symbol_name(2, "inner", false)?,
+            symbol_name(3, "new", false)?,
         ]
     );
+    let ref_name = |position: usize, text: &str, kind, line, target| -> TestResult<RefName> {
+        Ok(RefName {
+            id: a.refs[position],
+            file: a.file,
+            language: python,
+            name: name(text)?,
+            kind,
+            line,
+            target,
+        })
+    };
     assert_eq!(
         queries.ref_names()?,
         [
-            RefName {
-                id: a.refs[0],
-                file: a.file,
-                language: python,
-                name: name("helper")?,
-                target: Some(target),
-            },
-            RefName {
-                id: a.refs[1],
-                file: a.file,
-                language: python,
-                name: name("print")?,
-                target: None,
-            },
+            ref_name(0, "os", RefKind::Import, 1, None)?,
+            ref_name(1, "helper", RefKind::Call, 5, Some(target))?,
+            ref_name(2, "print", RefKind::Call, 6, None)?,
         ]
     );
     Ok(())
@@ -741,16 +748,27 @@ fn stored_paths_are_listed_in_byte_order() -> TestResult {
     let scratch = Scratch::new()?;
     let mut writer = scratch.writer(1)?;
     let mut transaction = writer.transaction()?;
+    let mut ids = std::collections::BTreeMap::new();
     for written in ["b.py", "a/x.py", "gone.py", "B.py", "a-b.py"] {
-        transaction.replace_file(&index(written, Vec::new(), Vec::new())?)?;
+        let file = transaction.replace_file(&index(written, Vec::new(), Vec::new())?)?;
+        ids.insert(written, file.file);
     }
     transaction.remove_file(&path("gone.py")?)?;
     transaction.commit()?;
-    let expected = ["B.py", "a-b.py", "a/x.py", "b.py"]
+    let order = ["B.py", "a-b.py", "a/x.py", "b.py"];
+    let expected = order
         .into_iter()
         .map(path)
         .collect::<TestResult<Vec<_>>>()?;
-    assert_eq!(scratch.reader()?.queries().file_paths()?, expected);
+    let reader = scratch.reader()?;
+    let queries = reader.queries();
+    assert_eq!(queries.file_paths()?, expected);
+    // The same order with each file's row, as written.
+    let with_ids = order
+        .into_iter()
+        .map(|written| Ok((path(written)?, ids[written])))
+        .collect::<TestResult<Vec<_>>>()?;
+    assert_eq!(queries.file_ids()?, with_ids);
     Ok(())
 }
 

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-use common::{TestResult, index, lock_out, write};
+use common::{TestResult, index, lock_out, write_all};
 use cortex_core::{EdgeType, RepoPath};
 use cortex_index::{Problem, ProblemKind};
 use cortex_store::{NodeId, Reader};
@@ -24,14 +24,6 @@ const IMPORT_PATH_CONFIDENCE: f64 = 0.8;
 
 /// One importer's edges: its path, then each file its imports name with how many of them do.
 type Edges = (String, Vec<(String, u32)>);
-
-/// Writes each file of `files`, by path and text, under `root`.
-fn write_all(root: &Path, files: &[(&str, &str)]) -> TestResult {
-    for (path, text) in files {
-        write(root, path, text.as_bytes())?;
-    }
-    Ok(())
-}
 
 /// Each file of the repository at `root` with structural edges, in path order, with the files
 /// its edges reach in path order and the count of each. Every structural edge is checked to

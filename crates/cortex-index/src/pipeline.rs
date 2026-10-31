@@ -14,10 +14,11 @@
 //! where it was.
 //!
 //! A parsed file's imports are resolved as it is prepared, against every file the walk found or
-//! the store keeps, and its import edges are written once every file has its node. A skipped
-//! file keeps the edges it had.
+//! the store keeps. Once every file is written, the names its imports bind are tied to their
+//! definitions and its import edges are written. A skipped file keeps the edges and the ties
+//! through imports it had.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
@@ -30,11 +31,13 @@ use cortex_core::{ContentHash, FileFlags, Language, RepoPath};
 use cortex_store::{FileIndex, FileRecord, StoreError, Writer};
 use thiserror::Error;
 
+use crate::bindings::Bindings;
 use crate::discover::{
     DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, Problem, ProblemKind, discover,
 };
 use crate::extract::{ExtractError, Extractor, LeftOut};
-use crate::file_edges::{self, ImportCounts};
+use crate::file_edges;
+use crate::file_imports::{self, FileImports};
 use crate::folders;
 use crate::grammar::Grammars;
 use crate::imports::Project;
@@ -124,7 +127,7 @@ pub enum IndexError {
 #[derive(Debug, PartialEq, Eq)]
 enum Outcome {
     /// It is ready to write.
-    Ready(Prepared),
+    Ready(Box<Prepared>),
     /// Nothing to write: the file at this path was skipped, for this reason.
     Skipped(RepoPath, FileProblem),
 }
@@ -132,11 +135,11 @@ enum Outcome {
 impl Outcome {
     /// A file ready to write without being parsed: it defines, uses and imports nothing.
     fn unparsed(file: FileRecord) -> Self {
-        Self::Ready(Prepared {
+        Self::Ready(Box::new(Prepared {
             index: file_only(file),
             left_out: LeftOut::default(),
-            imported: ImportCounts::new(),
-        })
+            imported: FileImports::default(),
+        }))
     }
 }
 
@@ -147,8 +150,8 @@ struct Prepared {
     index: FileIndex,
     /// What its queries found but left out.
     left_out: LeftOut,
-    /// The files its imports name, each with how many of its imports name it.
-    imported: ImportCounts,
+    /// What its imports name: files, and the names they bind.
+    imported: FileImports,
 }
 
 /// What is left to do with a file once it has been read as far as its flags allow.
@@ -187,8 +190,8 @@ struct Context<'a> {
 
 /// Indexes the repository at `root` into `writer`'s store: walks it, removes the stored files the
 /// walk no longer finds, reads, parses and writes every file it found, ties each reference to the
-/// definition its name settles, joins each parsed file to the files its imports name, then gives
-/// each folder holding stored files its node and containment edges.
+/// definition its file's imports or its name settle, joins each parsed file to the files its
+/// imports name, then gives each folder holding stored files its node and containment edges.
 ///
 /// # Errors
 ///
@@ -223,8 +226,12 @@ pub fn index_repository(
         left_out: Vec::new(),
     };
     let imports = write_files(writer, &discovery.files, &context, &mut report)?;
-    resolve::resolve_names(writer)?;
-    file_edges::write_import_edges(writer, &imports)?;
+    let (counts, bindings): (Vec<_>, BTreeMap<_, _>) = imports
+        .into_iter()
+        .map(|(path, imported)| ((path.clone(), imported.counts), (path, imported.bindings)))
+        .unzip();
+    resolve::resolve_names(writer, &bindings)?;
+    file_edges::write_import_edges(writer, &counts)?;
     folders::write_folders(writer)?;
     Ok(report)
 }
@@ -302,13 +309,13 @@ fn is_unseen(path: &RepoPath, unseen: &BTreeSet<&RepoPath>) -> bool {
 }
 
 /// Prepares the files in batches and writes each batch in one transaction while the next one is
-/// prepared. Returns each written file with the files its imports name, in path order.
+/// prepared. Returns each written file with what its imports name, in path order.
 fn write_files(
     writer: &mut Writer,
     files: &[DiscoveredFile],
     context: &Context<'_>,
     report: &mut IndexReport,
-) -> Result<Vec<(RepoPath, ImportCounts)>, IndexError> {
+) -> Result<Vec<(RepoPath, FileImports)>, IndexError> {
     thread::scope(|scope| {
         let mut imports = Vec::new();
         let mut batches = files.chunks(FILES_PER_BATCH);
@@ -327,12 +334,12 @@ fn write_files(
 }
 
 /// Writes one batch's files in one transaction, in order, and counts them in `report`. Returns
-/// each written file with the files its imports name.
+/// each written file with what its imports name.
 fn write_batch(
     writer: &mut Writer,
     outcomes: Vec<Outcome>,
     report: &mut IndexReport,
-) -> Result<Vec<(RepoPath, ImportCounts)>, StoreError> {
+) -> Result<Vec<(RepoPath, FileImports)>, StoreError> {
     let mut imports = Vec::new();
     let mut transaction = writer.transaction()?;
     for outcome in outcomes {
@@ -443,21 +450,22 @@ fn prepare(
     match extractor.extract(&record.path, language, &source) {
         Ok(extraction) => {
             record.flags = record.flags.with(FileFlags::PARSED);
-            let imported = file_edges::imported_files(
+            let (counts, targets) = file_imports::resolve_imports(
                 context.project,
                 &record.path,
                 language,
                 &extraction.imports,
             );
-            Ok(Outcome::Ready(Prepared {
+            let bindings = Bindings::of(&extraction, &targets);
+            Ok(Outcome::Ready(Box::new(Prepared {
                 index: FileIndex {
                     file: record,
                     symbols: extraction.symbols,
                     refs: extraction.refs,
                 },
                 left_out: extraction.left_out,
-                imported,
-            }))
+                imported: FileImports { counts, bindings },
+            })))
         }
         Err(ExtractError::TimedOut { .. }) => {
             Ok(Outcome::Skipped(record.path, FileProblem::TimedOut))
@@ -851,18 +859,23 @@ mod tests {
             references: 0,
             imports: 1,
         };
-        let some_imported = ImportCounts::from([(RepoPath::new("a.txt")?, 2)]);
+        let some_imported = || -> Result<FileImports, cortex_core::PathError> {
+            Ok(FileImports {
+                counts: [(RepoPath::new("a.txt")?, 2)].into(),
+                bindings: crate::bindings::Bindings::default(),
+            })
+        };
         let outcomes = vec![
-            Outcome::Ready(Prepared {
+            Outcome::Ready(Box::new(Prepared {
                 index: file_only(record("a.txt", FileFlags::PARSED)?),
                 left_out: LeftOut::default(),
-                imported: ImportCounts::new(),
-            }),
-            Outcome::Ready(Prepared {
+                imported: FileImports::default(),
+            })),
+            Outcome::Ready(Box::new(Prepared {
                 index: file_only(record("b.txt", FileFlags::PARSED)?),
                 left_out: some_left_out,
-                imported: some_imported.clone(),
-            }),
+                imported: some_imported()?,
+            })),
             skipped("kept.txt", FileProblem::Unreadable)?,
             skipped("new.txt", FileProblem::Panicked)?,
             skipped("slow.txt", FileProblem::TimedOut)?,
@@ -871,8 +884,8 @@ mod tests {
         assert_eq!(
             imports,
             [
-                (RepoPath::new("a.txt")?, ImportCounts::new()),
-                (RepoPath::new("b.txt")?, some_imported)
+                (RepoPath::new("a.txt")?, FileImports::default()),
+                (RepoPath::new("b.txt")?, some_imported()?)
             ]
         );
         assert_eq!((report.files, report.parsed), (2, 2));

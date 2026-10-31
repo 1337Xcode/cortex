@@ -61,11 +61,20 @@ impl<'c> Queries<'c> {
     ///
     /// SQLite errors and stored paths that cannot be read back.
     pub fn file_paths(self) -> Result<Vec<RepoPath>, StoreError> {
+        Ok(self.file_ids()?.into_iter().map(|(path, _)| path).collect())
+    }
+
+    /// Every stored file's path with its row, in the order [`RepoPath`] sorts the paths.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored paths that cannot be read back.
+    pub fn file_ids(self) -> Result<Vec<(RepoPath, FileId)>, StoreError> {
         let raw: Vec<(i64, String)> = self
             .collect_all(schema::FILE_PATHS, |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(sqlite("reading file paths"))?;
         raw.iter()
-            .map(|(id, path)| values::path(path, "files.path", *id))
+            .map(|(id, path)| Ok((values::path(path, "files.path", *id)?, FileId(*id))))
             .collect()
     }
 

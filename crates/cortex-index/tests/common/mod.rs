@@ -5,6 +5,7 @@
     reason = "each test file uses a different part of these helpers"
 )]
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::{self, File};
 use std::num::NonZeroUsize;
@@ -12,9 +13,9 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use cortex_core::RepoId;
+use cortex_core::{RepoId, RepoPath};
 use cortex_index::{DiscoverOptions, Grammars, IndexOptions, IndexReport, index_repository};
-use cortex_store::{Writer, WriterOptions};
+use cortex_store::{Reader, SymbolId, Writer, WriterOptions};
 
 /// Result type for these tests: any failure fails the test.
 pub type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -91,4 +92,69 @@ pub fn lock_out(path: &Path) -> std::io::Result<Option<File>> {
             .open(path)
             .map(Some)
     }
+}
+
+/// What a reference is tied to, as a test reads it: the target's file and qualified name, and how
+/// it was tied.
+pub type Target = (String, String, &'static str);
+
+/// One stored reference, as a test reads it: its kind, name and line, and its target.
+pub type Tie = (&'static str, String, u32, Option<Target>);
+
+/// Writes each file of `files`, by path and text, under `root`.
+pub fn write_all(root: &Path, files: &[(&str, &str)]) -> TestResult {
+    for (path, text) in files {
+        write(root, path, text.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Every reference stored for the file at `path` of the repository at `root`, in the order it was
+/// written, with what it is tied to.
+pub fn ties(root: &Path, path: &str) -> TestResult<Vec<Tie>> {
+    let reader = Reader::open(&root.join(".cortex"), 0)?;
+    let queries = reader.queries();
+    let files = queries.file_ids()?;
+    let mut symbols: BTreeMap<SymbolId, (String, String)> = BTreeMap::new();
+    for (file_path, id) in &files {
+        for symbol in queries.symbols_in_file(*id)? {
+            let name = symbol.qual_name.as_str().to_owned();
+            symbols.insert(symbol.id, (file_path.as_str().to_owned(), name));
+        }
+    }
+    let wanted = RepoPath::new(path)?;
+    let (_, id) = files
+        .iter()
+        .find(|(file_path, _)| *file_path == wanted)
+        .ok_or("no such file")?;
+    let mut found = Vec::new();
+    for reference in queries.refs_in_file(*id)? {
+        let target = match reference.target {
+            Some(target) => {
+                let (file, name) = symbols
+                    .get(&target.symbol)
+                    .ok_or("a target with no symbol")?;
+                Some((file.clone(), name.clone(), target.resolution.name()))
+            }
+            None => None,
+        };
+        let name = reference.dst_name.as_str().to_owned();
+        found.push((reference.kind.name(), name, reference.line, target));
+    }
+    Ok(found)
+}
+
+/// An expected target: the file, the qualified name and how the reference was tied.
+pub type Expected<'a> = Option<(&'a str, &'a str, &'static str)>;
+
+/// The expected references: kind, name, line, and the target, if any.
+pub fn expected(refs: &[(&'static str, &str, u32, Expected<'_>)]) -> Vec<Tie> {
+    refs.iter()
+        .map(|(kind, name, line, target)| {
+            let target = target.map(|(file, qual_name, resolution)| {
+                (file.to_owned(), qual_name.to_owned(), resolution)
+            });
+            (*kind, (*name).to_owned(), *line, target)
+        })
+        .collect()
 }

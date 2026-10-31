@@ -82,8 +82,10 @@ pub(crate) const SYMBOLS_IN_FILE: &str = concat!(
 pub(crate) const SYMBOLS_NAMED: &str =
     concat!(symbol_columns!(), "WHERE name = ?1 ORDER BY symbol_id");
 
-/// Every symbol's id, file, file language and name, by id.
-pub(crate) const SYMBOL_NAMES: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name \
+/// Every symbol's id, file, file language and name, and whether it is defined directly in its
+/// file (in no other definition, its qualified name its name), by id.
+pub(crate) const SYMBOL_NAMES: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name, \
+     s.parent_id IS NULL AND s.qual_name = s.name \
      FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id ORDER BY s.symbol_id";
 
 /// Adds an unresolved reference and returns its id.
@@ -103,9 +105,10 @@ pub(crate) const REFS_IN_FILE: &str = "SELECT ref_id, src_file_id, src_symbol_id
      dst_symbol_id, kind, line, resolution, confidence FROM refs WHERE src_file_id = ?1 \
      ORDER BY ref_id";
 
-/// Every reference's id, file, file language, name, target, resolution and confidence, by id.
-pub(crate) const REF_NAMES: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
-     r.dst_symbol_id, r.resolution, r.confidence FROM refs AS r \
+/// Every reference's id, file, file language, name, kind, line, target, resolution and
+/// confidence, by id.
+pub(crate) const REF_NAMES: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, r.kind, \
+     r.line, r.dst_symbol_id, r.resolution, r.confidence FROM refs AS r \
      JOIN files AS f ON f.file_id = r.src_file_id ORDER BY r.ref_id";
 
 /// Adds the node for a row, or updates its path, and returns its id.
