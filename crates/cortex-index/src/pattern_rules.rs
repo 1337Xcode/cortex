@@ -187,14 +187,15 @@ pub(crate) fn check_import_pattern(
         ImportCapture::Alias,
         ImportCapture::All,
         ImportCapture::Default,
+        ImportCapture::Reexport,
     ];
     if optional
         .into_iter()
         .any(|sort| use_of_sort(sort) == Use::Many)
     {
         return Err(Problem::Shape(
-            "may capture @import.module.end, @import.name, @import.alias, @import.all and \
-             @import.default once each at most",
+            "may capture @import.module.end, @import.name, @import.alias, @import.all, \
+             @import.default and @import.reexport once each at most",
         ));
     }
     Ok(())

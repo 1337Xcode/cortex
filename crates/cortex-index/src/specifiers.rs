@@ -38,6 +38,9 @@ pub struct Import {
     /// every name, its alias, else its module. That is the line its statement starts on, unless
     /// the statement spans several lines.
     pub line: u32,
+    /// Whether the statement only passes what it takes on to the file's importers, binding
+    /// nothing in the file itself, as TypeScript's `export { x } from "./x"` does.
+    pub is_reexport: bool,
 }
 
 /// What a file's imports query found.
@@ -70,6 +73,8 @@ struct Parts<'tree> {
     all: Option<Node<'tree>>,
     /// The mark that the default export is taken.
     default: Option<Node<'tree>>,
+    /// The mark that the statement only passes what it takes on.
+    reexport: Option<Node<'tree>>,
 }
 
 /// What the imports query finds in the tree under `root`; `None` when the deadline passed before
@@ -137,6 +142,7 @@ fn parts_of<'tree>(captures: &[QueryCapture<'tree>], meanings: &[ImportCapture])
             Some(ImportCapture::Alias) => &mut parts.alias,
             Some(ImportCapture::All) => &mut parts.all,
             Some(ImportCapture::Default) => &mut parts.default,
+            Some(ImportCapture::Reexport) => &mut parts.reexport,
             Some(ImportCapture::Helper) | None => continue,
         };
         *slot = Some(capture.node);
@@ -175,6 +181,7 @@ fn import_of(parts: &Parts<'_>, source: &[u8]) -> Option<((usize, usize), Import
         imported,
         alias,
         line: line_number(taken.start_position().row)?,
+        is_reexport: parts.reexport.is_some(),
     };
     Some(((statement.start_byte(), taken.start_byte()), import))
 }
@@ -276,6 +283,7 @@ mod tests {
             imported: Imported::Name(Identifier::new("d")?),
             alias: None,
             line: 1,
+            is_reexport: false,
         };
         assert_eq!(
             read(&RUN, "import a.b.c.d\nimport x.y\n")?,

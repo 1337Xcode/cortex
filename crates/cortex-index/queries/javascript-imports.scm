@@ -40,13 +40,14 @@
 
 ; Re-exports: `export { format, parse as parseOrder } from "./format"`, `export * from "./types"`
 ; and `export * as helpers from "./helpers"`. A name may be re-exported as the default:
-; `export { Shape as default } from "./shape"`.
+; `export { Shape as default } from "./shape"`. A re-export passes names on to the file's
+; importers and binds none in the file itself.
 ((export_statement
   (export_clause
     (export_specifier
       name: (identifier) @import.name
       alias: [(identifier) "default"]? @import.alias))
-  source: (string (string_fragment) @import.module)) @import
+  source: (string (string_fragment) @import.module)) @import @import.reexport
   (#not-eq? @import.name "default"))
 ; The default export re-exported: `export { default } from "./widget"` and
 ; `export { default as Card } from "./card"`.
@@ -55,14 +56,14 @@
     (export_specifier
       name: [(identifier) "default"] @import.default
       alias: (identifier)? @import.alias))
-  source: (string (string_fragment) @import.module)) @import
+  source: (string (string_fragment) @import.module)) @import @import.reexport
   (#eq? @import.default "default"))
 (export_statement
   "*" @import.all
-  source: (string (string_fragment) @import.module)) @import
+  source: (string (string_fragment) @import.module)) @import @import.reexport
 (export_statement
   (namespace_export (identifier) @import.alias) @import.all
-  source: (string (string_fragment) @import.module)) @import
+  source: (string (string_fragment) @import.module)) @import @import.reexport
 
 ; `require("fs")` and `import("./lazy")`, with the module written as a plain string. The name a
 ; `require` is assigned to is not read.

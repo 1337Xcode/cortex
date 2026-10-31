@@ -105,6 +105,9 @@ pub(crate) enum ImportCapture {
     All,
     /// The mark that the module's default export is taken.
     Default,
+    /// The mark that the statement only passes what it takes on to the file's importers, binding
+    /// nothing in the file itself.
+    Reexport,
     /// A node only a text predicate looks at.
     Helper,
 }
@@ -361,6 +364,7 @@ fn import_capture(name: &str) -> Option<ImportCapture> {
         "import.alias" => Some(ImportCapture::Alias),
         "import.all" => Some(ImportCapture::All),
         "import.default" => Some(ImportCapture::Default),
+        "import.reexport" => Some(ImportCapture::Reexport),
         _ if is_helper(name) => Some(ImportCapture::Helper),
         _ => None,
     }
@@ -468,6 +472,10 @@ mod tests {
         assert_eq!(
             import_capture("import.default"),
             Some(ImportCapture::Default)
+        );
+        assert_eq!(
+            import_capture("import.reexport"),
+            Some(ImportCapture::Reexport)
         );
         assert_eq!(import_capture("_require"), Some(ImportCapture::Helper));
         assert_eq!(import_capture("import.names"), None);
@@ -750,8 +758,8 @@ mod tests {
             error_of(&NO_STATEMENT),
             Some(problem("needs exactly one @import"))
         );
-        let at_most_once = "may capture @import.module.end, @import.name, @import.alias, @import.all \
-                            and @import.default once each at most";
+        let at_most_once = "may capture @import.module.end, @import.name, @import.alias, \
+                            @import.all, @import.default and @import.reexport once each at most";
         assert_eq!(error_of(&MANY_NAMES), Some(problem(at_most_once)));
         assert_eq!(error_of(&TWO_ENDS), Some(problem(at_most_once)));
     }

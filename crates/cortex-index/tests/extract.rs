@@ -158,7 +158,7 @@ fn tsx() -> TestResult {
 /// choosing beside plain names, one renamed (line 1), re-exported as it is (line 2) or under a
 /// name (line 3). A name re-exported as the default stays a name, with `default` as its alias
 /// (line 4). The same in TypeScript and TSX, whose grammar reads `default` there as an
-/// identifier, not as JavaScript's keyword.
+/// identifier, not as JavaScript's keyword. Re-exports are marked as passing names on.
 #[test]
 fn default_in_braces_is_the_default_export() -> TestResult {
     let source = "import { default as Base, useState, useMemo as memo } from \"react\";\n\
@@ -195,6 +195,18 @@ fn default_in_braces_is_the_default_export() -> TestResult {
                 ("./card", "name:card".to_owned(), None, 3),
                 ("./shape", "name:Shape".to_owned(), Some("default"), 4)
             ],
+            "{language:?}"
+        );
+        // The three imports of line 1 bind their names in the file; the re-exports of lines 2 to
+        // 4 only pass theirs on.
+        let reexports: Vec<bool> = extraction
+            .imports
+            .iter()
+            .map(|import| import.is_reexport)
+            .collect();
+        assert_eq!(
+            reexports,
+            [false, false, false, true, true, true, true],
             "{language:?}"
         );
     }

@@ -91,6 +91,7 @@ pub(crate) fn import(specifier: &str, imported: Imported) -> Result<Import, Iden
         imported,
         alias: None,
         line: 1,
+        is_reexport: false,
     })
 }
 
