@@ -44,9 +44,14 @@ tree-sitter-typescript.workspace = true
 tree-sitter-yaml.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 proptest.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
+
+[[bench]]
+name = "index"
+harness = false
 
 [lints]
 workspace = true

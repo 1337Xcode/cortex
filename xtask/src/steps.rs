@@ -10,7 +10,7 @@ use anyhow::{Context, bail};
 
 use crate::architecture::Metadata;
 use crate::invariants::CompiledCode;
-use crate::{architecture, compiled, invariants, lints};
+use crate::{architecture, budgets, compiled, invariants, lints};
 
 /// Top-level folders whose sources may carry invariant tags.
 const TAGGED_SOURCE_DIRS: &[&str] = &["crates", "ui", "xtask"];
@@ -58,7 +58,7 @@ pub(crate) fn verify(full: bool) -> anyhow::Result<()> {
     run_cargo(&root, "tests", &["test", "--workspace", "--locked"])?;
     run_cargo(&root, "cargo deny", &["deny", "check"])?;
     if full {
-        println!("xtask: budgets: no benchmarks are registered yet");
+        budgets::check(&root)?;
     }
     Ok(())
 }
@@ -77,7 +77,7 @@ fn cargo_program() -> OsString {
 }
 
 /// Runs one cargo command in the workspace root with its output passed through.
-fn run_cargo(root: &Path, step: &str, args: &[&str]) -> anyhow::Result<()> {
+pub(crate) fn run_cargo(root: &Path, step: &str, args: &[&str]) -> anyhow::Result<()> {
     println!("xtask: {step}");
     let status = Command::new(cargo_program())
         .args(args)
