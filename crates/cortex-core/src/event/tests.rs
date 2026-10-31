@@ -125,3 +125,22 @@ fn commands_are_cut_by_characters() {
     assert_eq!(cut.as_str().len(), 2 * MAX_COMMAND_CHARS);
     assert_eq!(ShellCommand::cut("cargo test").as_str(), "cargo test");
 }
+
+/// Debug output, which may end up in a log, shows the lengths of the prompt, the search pattern
+/// and the command, never their text.
+#[test]
+fn debug_output_withholds_prompts_patterns_and_commands() -> TestResult {
+    let shown = format!("{:?}", full_event()?);
+    for text in ["fix divide", "def divide", "pytest -q"] {
+        assert!(!shown.contains(text), "{text} in {shown}");
+    }
+    for length in [
+        "<10 characters withheld>",
+        "<10 characters withheld>",
+        "<9 characters withheld>",
+    ] {
+        assert!(shown.contains(length), "{length} not in {shown}");
+    }
+    assert!(shown.contains("calc/ops.py"), "{shown}");
+    Ok(())
+}

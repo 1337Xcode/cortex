@@ -7,6 +7,7 @@
 
 mod kinds;
 
+use std::fmt;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,7 @@ use crate::{Identifier, RepoPath, Ulid};
 pub const MAX_COMMAND_CHARS: usize = 1_000;
 
 /// One hook call, normalized.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     /// The event's id, made by the adapter.
     pub event_id: Ulid,
@@ -75,7 +76,7 @@ pub struct Event {
 }
 
 /// What a tool call aimed at.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ToolTarget {
     /// The file or folder, when it is inside the repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -177,7 +178,7 @@ impl TryFrom<RangeLines> for LineRange {
 }
 
 /// A shell command, cut to at most [`MAX_COMMAND_CHARS`] characters.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ShellCommand(String);
 
@@ -221,6 +222,77 @@ impl From<ShellCommand> for String {
     /// The command's text.
     fn from(command: ShellCommand) -> Self {
         command.0
+    }
+}
+
+/// A text that must not reach a log, shown as its length instead.
+struct Withheld(usize);
+
+impl Withheld {
+    /// The length of `text`, in characters.
+    fn of(text: &str) -> Self {
+        Self(text.chars().count())
+    }
+}
+
+impl fmt::Debug for Withheld {
+    /// `<n characters withheld>`.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "<{} characters withheld>", self.0)
+    }
+}
+
+impl fmt::Debug for Event {
+    /// Every field, the prompt's text withheld: debug output may end up in a log.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Event")
+            .field("event_id", &self.event_id)
+            .field("ts_ms", &self.ts_ms)
+            .field("agent", &self.agent)
+            .field("agent_version", &self.agent_version)
+            .field("session_id", &self.session_id)
+            .field("parent_session_id", &self.parent_session_id)
+            .field("cwd", &self.cwd)
+            .field("repo_root", &self.repo_root)
+            .field("hook", &self.hook)
+            .field("source", &self.source)
+            .field("tool", &self.tool)
+            .field("tool_target", &self.tool_target)
+            .field("tool_result", &self.tool_result)
+            .field(
+                "prompt_text",
+                &self.prompt_text.as_deref().map(Withheld::of),
+            )
+            .field("transcript_path", &self.transcript_path)
+            .field("model", &self.model)
+            .field("subagent_type", &self.subagent_type)
+            .field("compact_trigger", &self.compact_trigger)
+            .field("end_reason", &self.end_reason)
+            .finish()
+    }
+}
+
+impl fmt::Debug for ToolTarget {
+    /// Every field, the search pattern and the command withheld.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ToolTarget")
+            .field("path", &self.path)
+            .field("ranges", &self.ranges)
+            .field("pattern", &self.pattern.as_deref().map(Withheld::of))
+            .field("command", &self.command)
+            .finish()
+    }
+}
+
+impl fmt::Debug for ShellCommand {
+    /// The command's length, its text withheld.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("ShellCommand")
+            .field(&Withheld::of(&self.0))
+            .finish()
     }
 }
 
