@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use cortex_core::RepoPath;
 use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer_opt};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, NoCache, new_debouncer_opt};
 use thiserror::Error;
 
 use crate::discover::{DiscoverError, DiscoverOptions};
@@ -62,7 +62,7 @@ pub enum WatchError {
 /// A repository being watched. Dropping it stops watching; no change is reported after that.
 pub struct Watcher {
     /// The source of events, gathered and quieted.
-    debouncer: Option<Debouncer<RecommendedWatcher, RecommendedCache>>,
+    debouncer: Option<Debouncer<RecommendedWatcher, NoCache>>,
     /// The thread that sorts events into changes.
     sorter: Option<JoinHandle<()>>,
 }
@@ -101,11 +101,15 @@ pub fn watch(
     // Links are not followed, as the walk does not follow them: a change outside the repository
     // must not be reported as one inside it.
     let config = notify::Config::default().with_follow_symlinks(false);
-    let mut debouncer = new_debouncer_opt::<_, RecommendedWatcher, RecommendedCache>(
+    // No file id cache: the debouncer's own, on Windows and macOS, walks every folder it watches
+    // and every folder created in it, following links and opening each file for its id, a walk
+    // that would leave the repository and touch files that may hold secrets. It only pairs the two
+    // names of a rename, and both are reported without it.
+    let mut debouncer = new_debouncer_opt::<_, RecommendedWatcher, NoCache>(
         DEBOUNCE,
         None,
         handler,
-        RecommendedCache::new(),
+        NoCache::new(),
         config,
     )?;
     debouncer.watch(root, RecursiveMode::Recursive)?;
