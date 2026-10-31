@@ -1,6 +1,6 @@
 //! Writes that tie rows together: the targets of references and the edges of the graph.
 
-use cortex_core::EdgeType;
+use cortex_core::{EdgeType, Resolution};
 use rusqlite::Connection;
 
 use crate::error::{StoreError, sqlite};
@@ -25,6 +25,9 @@ pub(crate) fn set_resolutions(
                 Some(target.resolution.name()),
                 target.resolution.confidence(),
             )),
+            None if resolved.goes_through_import => {
+                statement.execute((id, None::<i64>, Some(Resolution::ImportPath.name()), 0.0))
+            }
             None => statement.execute((id, None::<i64>, None::<&str>, 0.0)),
         }
         .map_err(sqlite("resolving references"))?;

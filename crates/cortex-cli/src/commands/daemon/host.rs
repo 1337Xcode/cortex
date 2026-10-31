@@ -11,8 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, bail};
 use cortex_core::{Config, RepoPath};
 use cortex_index::{
-    Change, Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_repository,
-    parse_files,
+    Change, Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths,
+    index_repository,
 };
 use cortex_store::Writer;
 
@@ -97,7 +97,10 @@ impl<'a> Host<'a> {
             };
             match received {
                 Ok(change) => {
-                    self.index(&touched(change, queue))?;
+                    match changed(change, queue) {
+                        Changed::Everything(touched) => drop(self.index(&touched)?),
+                        Changed::Paths(paths) => self.update(&paths)?,
+                    }
                     last_change = Instant::now();
                 }
                 Err(RecvTimeoutError::Timeout) if self.waiting() > 0 => {
@@ -110,12 +113,21 @@ impl<'a> Host<'a> {
         }
     }
 
+    /// Indexes the files at `paths`, which changed, on every core.
+    fn update(&mut self, paths: &[RepoPath]) -> anyhow::Result<()> {
+        let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+        let options = self.options(threads);
+        index_paths(self.root, &self.grammars, &mut self.writer, &options, paths)
+            .context("indexing changed files")?;
+        Ok(())
+    }
+
     /// Parses the next `index.crawl_files_per_second` waiting files on one thread.
     fn crawl_batch(&mut self) -> anyhow::Result<()> {
         let count = usize::try_from(self.config.crawl_files_per_second).unwrap_or(usize::MAX);
         let batch = self.crawl.next(count);
         let options = self.options(NonZeroUsize::MIN);
-        parse_files(
+        index_paths(
             self.root,
             &self.grammars,
             &mut self.writer,
@@ -142,16 +154,32 @@ impl<'a> Host<'a> {
     }
 }
 
-/// The paths `first` and every change already queued behind it name, in path order. A change to
-/// everything names none: the index reads the whole tree in any case.
-fn touched(first: Change, queue: &Receiver<Change>) -> Vec<RepoPath> {
-    let mut touched = BTreeSet::new();
+/// What `first` and every change already queued behind it changed together.
+enum Changed {
+    /// Everything is to be indexed; the paths named besides, in path order, are asked for first in
+    /// huge mode.
+    Everything(Vec<RepoPath>),
+    /// Only these paths, in path order.
+    Paths(Vec<RepoPath>),
+}
+
+/// What `first` and every change already queued behind it changed together: everything when any
+/// of them did, else the paths they name.
+fn changed(first: Change, queue: &Receiver<Change>) -> Changed {
+    let mut paths = BTreeSet::new();
+    let mut is_everything = false;
     for change in std::iter::once(first).chain(queue.try_iter()) {
-        if let Change::Paths(paths) = change {
-            touched.extend(paths);
+        match change {
+            Change::Paths(named) => paths.extend(named),
+            Change::Everything => is_everything = true,
         }
     }
-    touched.into_iter().collect()
+    let paths = paths.into_iter().collect();
+    if is_everything {
+        Changed::Everything(paths)
+    } else {
+        Changed::Paths(paths)
+    }
 }
 
 /// The time now in UTC milliseconds; a clock set before 1970 reads as 0.

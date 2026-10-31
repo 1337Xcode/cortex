@@ -45,6 +45,7 @@ mod rules;
 mod safe_read;
 mod scale;
 mod scip;
+mod seen;
 mod specifiers;
 mod symbol_edges;
 mod symbols;
@@ -52,6 +53,7 @@ mod tags;
 #[cfg(test)]
 mod test_support;
 mod test_targets;
+mod update;
 mod watch;
 
 pub use crawl::Crawl;
@@ -62,12 +64,12 @@ pub use discover::{
 pub use extract::{ExtractError, Extraction, Extractor, LeftOut};
 pub use grammar::{GrammarError, Grammars};
 pub use pipeline::{
-    FileProblem, IndexError, IndexOptions, IndexReport, index_repository, parse_files,
-    waits_to_be_parsed,
+    FileProblem, IndexError, IndexOptions, IndexReport, index_repository, waits_to_be_parsed,
 };
 pub use references::Qualifier;
 pub use rules::MAX_REPORTED_LINES;
 pub use scale::{RepoSize, mode_for};
 pub use scip::{ScipOutcome, ScipProblem};
 pub use specifiers::{Import, Imported};
+pub use update::index_paths;
 pub use watch::{Change, WatchError, Watcher, watch};

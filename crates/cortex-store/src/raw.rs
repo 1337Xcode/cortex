@@ -171,10 +171,11 @@ impl RawRef {
         })
     }
 
-    /// The row with every value checked. A target and a resolution come together or not at all.
+    /// The row with every value checked. A target comes with its resolution; a resolution comes
+    /// alone only as `import_path`.
     pub(crate) fn check(self) -> Result<RefRow, StoreError> {
         let row = self.id;
-        let target = target(self.dst_symbol, self.resolution, row)?;
+        let (target, goes_through_import) = target(self.dst_symbol, self.resolution, row)?;
         Ok(RefRow {
             id: RefId(row),
             file: FileId(self.file),
@@ -183,24 +184,33 @@ impl RawRef {
             kind: values::kind(&self.kind, RefKind::from_name, "refs.kind", row)?,
             line: values::number(self.line, "refs.line", row)?,
             target,
+            goes_through_import,
             confidence: checked_confidence(self.confidence, target, row)?,
         })
     }
 }
 
-/// The target of the reference in `row`, from its stored symbol and resolution, which come
-/// together or not at all.
+/// The target of the reference in `row`, from its stored symbol and resolution, and whether the
+/// reference goes through an import. A symbol comes with its resolution; a resolution without a
+/// symbol is `import_path` only, for a reference whose import settles nothing.
 fn target(
     symbol: Option<i64>,
     resolution: Option<String>,
     row: i64,
-) -> Result<Option<Target>, StoreError> {
+) -> Result<(Option<Target>, bool), StoreError> {
+    let resolution = resolution
+        .map(|name| values::kind(&name, Resolution::from_name, "refs.resolution", row))
+        .transpose()?;
     match (symbol, resolution) {
-        (Some(symbol), Some(name)) => Ok(Some(Target {
-            symbol: SymbolId(symbol),
-            resolution: values::kind(&name, Resolution::from_name, "refs.resolution", row)?,
-        })),
-        (None, None) => Ok(None),
+        (Some(symbol), Some(resolution)) => {
+            let target = Target {
+                symbol: SymbolId(symbol),
+                resolution,
+            };
+            Ok((Some(target), resolution == Resolution::ImportPath))
+        }
+        (None, Some(Resolution::ImportPath)) => Ok((None, true)),
+        (None, None) => Ok((None, false)),
         _ => Err(StoreError::Corrupt {
             column: "refs.resolution",
             row,
@@ -312,7 +322,7 @@ impl RawRefName {
     /// The row with every value checked, the stored confidence against the target's resolution.
     pub(crate) fn check(self) -> Result<RefName, StoreError> {
         let row = self.id;
-        let target = target(self.dst_symbol, self.resolution, row)?;
+        let (target, goes_through_import) = target(self.dst_symbol, self.resolution, row)?;
         checked_confidence(self.confidence, target, row)?;
         Ok(RefName {
             id: RefId(row),
@@ -323,6 +333,7 @@ impl RawRefName {
             line: values::number(self.line, "refs.line", row)?,
             symbol: self.src_symbol.map(SymbolId),
             target,
+            goes_through_import,
         })
     }
 }

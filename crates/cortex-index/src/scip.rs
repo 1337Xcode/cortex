@@ -30,7 +30,7 @@ use scip::types::Occurrence;
 use crate::safe_read::{ReadError, read_whole};
 
 /// The index file, at the repository's root.
-const INDEX_FILE: &str = "index.scip";
+pub(crate) const INDEX_FILE: &str = "index.scip";
 
 /// The largest index read. An index of a large repository runs to tens of megabytes.
 const MAX_INDEX_BYTES: u64 = 256 * 1024 * 1024;
@@ -74,6 +74,8 @@ pub enum ScipOutcome {
     },
     /// It could not be used.
     Refused(ScipProblem),
+    /// It was not read again: an index of chosen paths keeps the ties it gave before.
+    NotRead,
 }
 
 /// Why a repository's SCIP index could not be used.

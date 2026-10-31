@@ -7,7 +7,9 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use cortex_core::{FileFlags, Identifier, Language, NodeKind, RepoPath, ShortHash, SymbolKind};
+use cortex_core::{
+    FileFlags, Identifier, Language, NodeKind, RepoPath, Resolution, ShortHash, SymbolKind,
+};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{StoreError, sqlite};
@@ -335,7 +337,7 @@ fn update_symbol(
 fn remove_symbol(connection: &Connection, old: StoredSymbol) -> Result<SymbolChange, StoreError> {
     connection
         .prepare_cached(schema::REFS_UNRESOLVE_TO)
-        .and_then(|mut statement| statement.execute([old.id.get()]))
+        .and_then(|mut statement| statement.execute((old.id.get(), Resolution::ImportPath.name())))
         .map_err(sqlite("unresolving references"))?;
     if let Some(node) = Queries::new(connection).symbol_node(old.id)? {
         remove_node(connection, node)?;

@@ -110,6 +110,21 @@ pub(crate) struct Bindings {
 }
 
 impl Bindings {
+    /// Every file the bindings name: those imports take names from, those `*` imports pass on,
+    /// and those that hold the modules qualifiers reach.
+    pub(crate) fn files(&self) -> impl Iterator<Item = &RepoPath> {
+        self.taken
+            .iter()
+            .flat_map(|taken| &taken.files)
+            .chain(&self.everything)
+            .chain(self.modules.iter().flatten())
+    }
+
+    /// Every name the file's imports take.
+    pub(crate) fn taken_names(&self) -> impl Iterator<Item = &Identifier> {
+        self.taken.iter().map(|taken| &taken.name)
+    }
+
     /// The bindings of the file read as `extraction`, whose imports name `targets` and reach their
     /// modules by `module_names` when they take them whole with no alias, one of each for each
     /// import in order; definitions of the `closed` kinds see nothing of the scopes around them.

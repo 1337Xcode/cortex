@@ -33,7 +33,7 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition, the names its imports take among them, each with what is written before it (`Qualifier`); and the modules it imports, with what it takes (the module, one name, every name or the default export), the name it binds and whether it only passes what it takes on |
 | `index_repository` | Indexes a repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file that changed since the last index, ties references to the definitions their names settle, joins files and definitions in the graph, keeps a node for each folder that holds files, and records the scale mode; reports the definitions whose signature or body changed |
 | `IndexOptions`, `IndexReport`, `FileProblem`, `ScipOutcome`, `ScipProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, the files that could not be read, took too long to parse or panicked while being read, and what became of the repository's SCIP index |
-| `parse_files` | Reads, parses and writes chosen stored files now, changed or not, and ties their references and those of the files around them, as huge mode does for the files an agent reads or edits |
+| `index_paths` | Indexes the files at chosen paths now, as the walk would find them: writes the new and changed ones, parsed in huge mode too, removes those gone, and ties again only the references the change concerns. The daemon runs it for the paths the watcher reports and for each crawl batch |
 | `Crawl` | The order in which huge mode parses the files it took inventory of: files asked for, then the other waiting files of their folders, then the rest, the most recently changed first; each handed out once |
 | `watch`, `Watcher`, `Change`, `WatchError` | Watches a repository and reports its changes from a thread of its own: the paths the walk would find that were created, changed, removed or renamed, or a change to everything; stops when the `Watcher` is dropped |
 
@@ -207,8 +207,10 @@ TypeScript, TSX and JavaScript; C and C++; Java, Kotlin and Scala; every other l
 of its own, so a call is never tied to a function of another language that shares its name. A name
 with several definitions in reach stays unresolved. Every full index resolves every stored
 reference again, the kept references of skipped files included, and writes only the ones whose
-target changed; a skipped file's import references and its ties through imports stay as they
-were, since its imports were not read.
+target changed. A reference that goes through an import is stored with the `import_path`
+resolution even when its import settles nothing, so a skipped file's references that go through
+an import stay as they were, tied or not, since its imports were not read; its other references go
+by their names.
 
 Last, the index counts the repository as the scale modes do and records its mode. A source file
 is a stored file in a language Cortex reads that is not generated, vendored, binary, over the
@@ -224,11 +226,25 @@ parsed before are kept or parsed again as in any index. Huge mode applies when t
 huge or, left to the size, when the last index recorded huge or the walk finds more than 20,000
 source files. Lines are not known before files are read, so a repository huge by its lines alone
 is found so by its first index, which reads every file. When an index no longer takes inventory,
-it parses every file still waiting. `parse_files` parses the files an agent touches, and `Crawl`
+it parses every file still waiting. `index_paths` parses the files an agent touches, and `Crawl`
 orders the rest, each file and each folder's neighbours queued once however often they are asked
 for; how fast to crawl, `index.crawl_files_per_second` in the configuration (100 by default), is
-the caller's. `parse_files` reads a stored path again only when no link has come between the root
-and the file since the walk found it.
+the caller's.
+
+## Indexing chosen paths
+
+`index_paths` indexes the files at the paths it is given, the ones that changed, without walking
+the repository. Each path is judged by the walk's own rules: a file the walk would find there is
+written unless it is stored as it is, one gone or no longer found is removed, and one that cannot
+be read now is left as stored. A path under a folder that is a link, as the walk would never
+enter it, counts as gone, and a stored file is read again only when no link has come between the
+root and the file. Then the files around the change are read again for what their imports bind,
+as a full index does, and only the references the change can concern are tied again: those in the
+files written and read again, and those elsewhere named like a definition that came or went, with
+the definitions of the names they look for. The SCIP index is not read again; the ties it gave
+stay. The store ends as a full index would leave it. A path that is or was a folder, a file of
+rules about which files count, the SCIP index itself, and a store whose last index did not finish
+make it index the whole repository instead.
 
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts

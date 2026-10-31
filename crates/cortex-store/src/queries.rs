@@ -236,6 +236,98 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawSymbolName::check).collect()
     }
 
+    /// The symbols named `name`, as [`Queries::symbol_names`] gives them, by id.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn symbol_names_named(self, name: &Identifier) -> Result<Vec<SymbolName>, StoreError> {
+        let raw = self
+            .collect(
+                schema::SYMBOL_NAMES_NAMED,
+                name.as_str(),
+                RawSymbolName::read,
+            )
+            .map_err(sqlite("reading symbol names"))?;
+        raw.into_iter().map(RawSymbolName::check).collect()
+    }
+
+    /// The references named `name`, as [`Queries::ref_names`] gives them, by id.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn ref_names_named(self, name: &Identifier) -> Result<Vec<RefName>, StoreError> {
+        let raw = self
+            .collect(schema::REF_NAMES_NAMED, name.as_str(), RawRefName::read)
+            .map_err(sqlite("reading reference names"))?;
+        raw.into_iter().map(RawRefName::check).collect()
+    }
+
+    /// The references in `file`, as [`Queries::ref_names`] gives them, in the order they were
+    /// written.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn ref_names_in_file(self, file: FileId) -> Result<Vec<RefName>, StoreError> {
+        let raw = self
+            .collect(schema::REF_NAMES_IN_FILE, file.get(), RawRefName::read)
+            .map_err(sqlite("reading reference names"))?;
+        raw.into_iter().map(RawRefName::check).collect()
+    }
+
+    /// The node of the file at `path`.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn file_node_at(self, path: &RepoPath) -> Result<Option<NodeId>, StoreError> {
+        self.connection
+            .prepare_cached(schema::FILE_NODE_AT)
+            .and_then(|mut statement| {
+                statement
+                    .query_row([path.as_str()], |row| row.get(0))
+                    .optional()
+            })
+            .map(|node| node.map(NodeId))
+            .map_err(sqlite("reading a file's node"))
+    }
+
+    /// The path of the file `node` stands for, when it stands for a file.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and a stored path that cannot be read back.
+    pub fn node_file(self, node: NodeId) -> Result<Option<RepoPath>, StoreError> {
+        let raw: Option<(i64, String)> = self
+            .connection
+            .prepare_cached(schema::NODE_FILE)
+            .and_then(|mut statement| {
+                statement
+                    .query_row([node.0], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .optional()
+            })
+            .map_err(sqlite("reading a node's file"))?;
+        raw.map(|(id, path)| values::path(&path, "files.path", id))
+            .transpose()
+    }
+
+    /// Whether any stored file is below the folder `folder`.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn has_files_under(self, folder: &RepoPath) -> Result<bool, StoreError> {
+        // Paths below `a/b` sort from `a/b/` up to `a/b0`, `0` following `/`.
+        let low = format!("{folder}/");
+        let high = format!("{folder}0");
+        self.connection
+            .prepare_cached(schema::FILES_BETWEEN)
+            .and_then(|mut statement| statement.query_row([low, high], |row| row.get(0)))
+            .map_err(sqlite("looking for files below a folder"))
+    }
+
     /// Every reference's name, with the file it is in, that file's language and what the
     /// reference is tied to, by id.
     ///

@@ -294,46 +294,60 @@ impl Walk<'_> {
         verdict: Verdict,
         reading: &mut Reading<'_>,
     ) -> Option<DiscoveredFile> {
-        let inspected = entry
-            .metadata()
-            .ok()
-            .and_then(|metadata| Some((metadata.len(), mtime_ns(metadata.modified().ok()?))));
-        let Some((size_bytes, mtime_ns)) = inspected else {
+        let found = entry.metadata().ok().and_then(|metadata| {
+            classify(
+                &entry.path(),
+                &metadata,
+                &path,
+                verdict,
+                self.max_file_bytes,
+            )
+        });
+        if found.is_none() {
             reading.problems.push(Problem {
                 path: Some(path),
                 kind: ProblemKind::Unreadable,
             });
-            return None;
-        };
-        let mut found = Found::from_path(&path);
-        let mut start = None;
-        // A file that may hold secrets is never opened, and one over the limit is never read.
-        if !found.is_secret() && size_bytes > self.max_file_bytes {
-            found.fixed = found.fixed.with(FileFlags::TOO_LARGE);
-        } else if !found.is_secret() {
-            let Ok(bytes) = safe_read::read_start(&entry.path(), head::HEAD_BYTES) else {
-                reading.problems.push(Problem {
-                    path: Some(path),
-                    kind: ProblemKind::Unreadable,
-                });
-                return None;
-            };
-            let judged = head::judge(&bytes);
-            if judged.is_binary {
-                found.fixed = found.fixed.with(FileFlags::BINARY);
-            }
-            found.is_generated |= judged.is_generated;
-            start = Some(bytes);
         }
-        let language = detect::detect(&path, start.as_deref(), verdict.language);
-        Some(DiscoveredFile {
-            flags: found.flags(verdict),
-            language,
-            path,
-            size_bytes,
-            mtime_ns,
-        })
+        found
     }
+}
+
+/// The file at `native`, stored as `path`, as the walk describes it: its size and time from
+/// `metadata`, its flags from its path, `verdict` (what its attributes say) and, unless it may hold
+/// secrets or is over `max_file_bytes`, its first bytes. `None` when its time or its first bytes
+/// cannot be read.
+pub(crate) fn classify(
+    native: &Path,
+    metadata: &fs::Metadata,
+    path: &RepoPath,
+    verdict: Verdict,
+    max_file_bytes: u64,
+) -> Option<DiscoveredFile> {
+    let size_bytes = metadata.len();
+    let mtime_ns = mtime_ns(metadata.modified().ok()?);
+    let mut found = Found::from_path(path);
+    let mut start = None;
+    // A file that may hold secrets is never opened, and one over the limit is never read.
+    if !found.is_secret() && size_bytes > max_file_bytes {
+        found.fixed = found.fixed.with(FileFlags::TOO_LARGE);
+    } else if !found.is_secret() {
+        let bytes = safe_read::read_start(native, head::HEAD_BYTES).ok()?;
+        let judged = head::judge(&bytes);
+        if judged.is_binary {
+            found.fixed = found.fixed.with(FileFlags::BINARY);
+        }
+        found.is_generated |= judged.is_generated;
+        start = Some(bytes);
+    }
+    let language = detect::detect(path, start.as_deref(), verdict.language);
+    Some(DiscoveredFile {
+        flags: found.flags(verdict),
+        language,
+        path: path.clone(),
+        size_bytes,
+        mtime_ns,
+    })
 }
 
 /// The entries of the folder at `native`, stored as `path`, sorted by name, without following

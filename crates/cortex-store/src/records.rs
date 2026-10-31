@@ -154,6 +154,10 @@ pub struct Resolved {
     pub reference: RefId,
     /// Its target.
     pub target: Option<Target>,
+    /// Whether, untied, it goes through an import that settles nothing: stored as an
+    /// `import_path` resolution without a symbol. A tied reference's resolution says how it was
+    /// tied, and this is not read.
+    pub goes_through_import: bool,
 }
 
 /// An edge from a node, as [`crate::WriteTx::replace_edges`] takes it.

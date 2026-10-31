@@ -94,6 +94,11 @@ pub(crate) const SYMBOLS_NAMED: &str =
 pub(crate) const SYMBOL_NAMES: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name, \
      s.parent_id IS NULL AND s.qual_name = s.name, s.kind \
      FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id ORDER BY s.symbol_id";
+/// As [`SYMBOL_NAMES`], for the symbols of one name.
+pub(crate) const SYMBOL_NAMES_NAMED: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name, \
+     s.parent_id IS NULL AND s.qual_name = s.name, s.kind \
+     FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id WHERE s.name = ?1 \
+     ORDER BY s.symbol_id";
 
 /// Adds an unresolved reference and returns its id.
 pub(crate) const REF_INSERT: &str = "INSERT INTO refs (src_file_id, src_symbol_id, dst_name, \
@@ -101,9 +106,11 @@ pub(crate) const REF_INSERT: &str = "INSERT INTO refs (src_file_id, src_symbol_i
      VALUES (?1, ?2, ?3, NULL, ?4, ?5, NULL, 0.0) RETURNING ref_id";
 /// Deletes every reference in a file.
 pub(crate) const REFS_DELETE_IN_FILE: &str = "DELETE FROM refs WHERE src_file_id = ?1";
-/// Marks every reference to a symbol unresolved.
+/// Marks every reference to a symbol unresolved; one that went through an import, the
+/// resolution given as the second parameter, keeps it.
 pub(crate) const REFS_UNRESOLVE_TO: &str = "UPDATE refs SET dst_symbol_id = NULL, \
-     resolution = NULL, confidence = 0.0 WHERE dst_symbol_id = ?1";
+     resolution = CASE resolution WHEN ?2 THEN ?2 END, confidence = 0.0 \
+     WHERE dst_symbol_id = ?1";
 /// Sets a reference's target, resolution and confidence, found by id.
 pub(crate) const REF_RESOLVE: &str = "UPDATE refs SET dst_symbol_id = ?2, resolution = ?3, \
      confidence = ?4 WHERE ref_id = ?1";
@@ -117,6 +124,14 @@ pub(crate) const REFS_IN_FILE: &str = "SELECT ref_id, src_file_id, src_symbol_id
 pub(crate) const REF_NAMES: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, r.kind, \
      r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
      JOIN files AS f ON f.file_id = r.src_file_id ORDER BY r.ref_id";
+/// As [`REF_NAMES`], for the references of one name.
+pub(crate) const REF_NAMES_NAMED: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
+     r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
+     JOIN files AS f ON f.file_id = r.src_file_id WHERE r.dst_name = ?1 ORDER BY r.ref_id";
+/// As [`REF_NAMES`], for the references in one file.
+pub(crate) const REF_NAMES_IN_FILE: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
+     r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
+     JOIN files AS f ON f.file_id = r.src_file_id WHERE r.src_file_id = ?1 ORDER BY r.ref_id";
 
 /// Adds the node for a row, or updates its path, and returns its id.
 pub(crate) const NODE_UPSERT: &str = "INSERT INTO nodes (kind, ref_id, path) VALUES (?1, ?2, ?3) \
@@ -135,6 +150,16 @@ pub(crate) const FOLDER_NODE_INSERT: &str =
 /// Every folder node's id and path, by path.
 pub(crate) const FOLDER_NODES: &str =
     "SELECT node_id, path, node_id FROM nodes WHERE kind = 'dir' ORDER BY path";
+/// The node of the file at a path.
+pub(crate) const FILE_NODE_AT: &str = "SELECT n.node_id FROM files AS f JOIN nodes AS n \
+     ON n.kind = 'file' AND n.ref_id = f.file_id WHERE f.path = ?1";
+/// The id and path of the file a node stands for.
+pub(crate) const NODE_FILE: &str = "SELECT f.file_id, f.path FROM nodes AS n JOIN files AS f \
+     ON f.file_id = n.ref_id WHERE n.node_id = ?1 AND n.kind = 'file'";
+/// Whether a file is stored between two paths, exclusive: below a folder when they are the
+/// folder's path with `/` and with the next character, `0`, after it.
+pub(crate) const FILES_BETWEEN: &str =
+    "SELECT EXISTS (SELECT 1 FROM files WHERE path > ?1 AND path < ?2)";
 /// Every file's id, path and node, by path.
 pub(crate) const FILE_NODES: &str = "SELECT f.file_id, f.path, n.node_id FROM files AS f \
      JOIN nodes AS n ON n.kind = 'file' AND n.ref_id = f.file_id ORDER BY f.path";

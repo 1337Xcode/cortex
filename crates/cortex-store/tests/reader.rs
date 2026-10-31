@@ -127,6 +127,7 @@ fn damaged_name_rows_are_reported() -> TestResult {
     transaction.set_resolutions(&[Resolved {
         reference: change.refs[0],
         target: Some(target),
+        goes_through_import: false,
     }])?;
     transaction.commit()?;
     drop(writer);

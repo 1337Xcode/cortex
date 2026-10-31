@@ -375,6 +375,7 @@ fn names_are_listed_with_their_files() -> TestResult {
     transaction.set_resolutions(&[Resolved {
         reference: a.refs[1],
         target: Some(target),
+        goes_through_import: false,
     }])?;
     transaction.commit()?;
     let queries = writer.queries();
@@ -409,6 +410,8 @@ fn names_are_listed_with_their_files() -> TestResult {
             line,
             symbol: symbol.map(|at| a.symbols[at]),
             target,
+            goes_through_import: target
+                .is_some_and(|target: Target| target.resolution == Resolution::ImportPath),
         })
     };
     assert_eq!(
@@ -423,7 +426,8 @@ fn names_are_listed_with_their_files() -> TestResult {
 }
 
 /// Resolving a reference stores its target and its resolution's confidence; removing the target
-/// leaves the reference unresolved again.
+/// leaves the reference unresolved again, one that went through an import still marked so. An
+/// untied reference whose import settles nothing is stored and read back so.
 #[test]
 fn references_resolve_and_unresolve() -> TestResult {
     let scratch = Scratch::new()?;
@@ -460,6 +464,7 @@ fn references_resolve_and_unresolve() -> TestResult {
                 symbol: target.symbols[0],
                 resolution,
             }),
+            goes_through_import: resolution == Resolution::ImportPath,
         })
         .collect();
     transaction.set_resolutions(&resolved)?;
@@ -493,10 +498,34 @@ fn references_resolve_and_unresolve() -> TestResult {
     let refs = reader.queries().refs_in_file(user.file)?;
     let stored: Vec<_> = refs
         .iter()
-        .map(|reference| (reference.target, reference.confidence))
+        .map(|reference| {
+            (
+                reference.target,
+                reference.goes_through_import,
+                reference.confidence,
+            )
+        })
         .collect();
-    assert_eq!(stored, [(None, 0.0); 4]);
+    assert_eq!(
+        stored,
+        [
+            (None, false, 0.0),
+            (None, true, 0.0),
+            (None, false, 0.0),
+            (None, false, 0.0)
+        ]
+    );
     assert_eq!(reader.queries().counts()?.resolved_refs, 0);
+    let mut transaction = writer.transaction()?;
+    transaction.set_resolutions(&[Resolved {
+        reference: user.refs[0],
+        target: None,
+        goes_through_import: true,
+    }])?;
+    transaction.commit()?;
+    let names = reader.queries().ref_names_in_file(user.file)?;
+    let flags: Vec<bool> = names.iter().map(|name| name.goes_through_import).collect();
+    assert_eq!(flags, [true, true, false, false]);
     Ok(())
 }
 
@@ -516,6 +545,7 @@ fn resolving_a_missing_reference_is_refused() -> TestResult {
         .set_resolutions(&[Resolved {
             reference: change.refs[0],
             target: None,
+            goes_through_import: false,
         }])
         .err();
     let expected = change.refs[0].get();
@@ -549,6 +579,7 @@ fn removing_a_file_deletes_everything_about_it() -> TestResult {
             symbol: target.symbols[0],
             resolution: Resolution::NameOnly,
         }),
+        goes_through_import: false,
     }])?;
     let edge = |dst| EdgeRecord {
         dst,
@@ -1093,6 +1124,7 @@ fn a_stale_symbol_id_resolves_nothing() -> TestResult {
                 symbol: helper.symbols[0],
                 resolution: Resolution::Scip,
             }),
+            goes_through_import: false,
         }])
         .err();
     assert_eq!(
@@ -1134,10 +1166,12 @@ fn a_refused_resolution_writes_none_of_its_batch() -> TestResult {
             symbol: target.symbols[0],
             resolution: Resolution::SameFile,
         }),
+        goes_through_import: false,
     };
     let missing = Resolved {
         reference: gone.refs[0],
         target: None,
+        goes_through_import: false,
     };
     let error = transaction.set_resolutions(&[resolved, missing]).err();
     assert!(

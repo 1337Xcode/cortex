@@ -60,6 +60,9 @@ pub struct RefRow {
     pub line: u32,
     /// The symbol it was tied to, if any.
     pub target: Option<Target>,
+    /// Whether it goes through an import: tied through one, or untied because its import
+    /// settles nothing.
+    pub goes_through_import: bool,
     /// The stored confidence: the resolution's, or 0 when unresolved.
     pub confidence: f64,
 }
@@ -129,4 +132,7 @@ pub struct RefName {
     pub symbol: Option<SymbolId>,
     /// The symbol it is tied to, if any.
     pub target: Option<Target>,
+    /// Whether it goes through an import: tied through one, or untied because its import
+    /// settles nothing.
+    pub goes_through_import: bool,
 }

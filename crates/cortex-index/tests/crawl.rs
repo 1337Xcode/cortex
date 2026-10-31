@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use common::{NOW_MS, TestResult, expected, grammars, index_with_mode, ties, write_all};
 use cortex_core::{FileFlags, ModeSetting, RepoId, RepoPath, ScaleMode};
-use cortex_index::{Crawl, DiscoverOptions, IndexOptions, IndexReport, parse_files};
+use cortex_index::{Crawl, DiscoverOptions, IndexOptions, IndexReport, index_paths};
 use cortex_store::{Reader, Writer, WriterOptions};
 
 /// A time limit no test file comes near, even in a debug build.
@@ -28,7 +28,7 @@ fn is_parsed(root: &Path, path: &str) -> TestResult<bool> {
     Ok(row.is_some_and(|row| row.file.flags.contains(FileFlags::PARSED)))
 }
 
-/// Parses the stored files at `paths` of the repository at `root` now.
+/// Indexes the files at `paths` of the repository at `root` now.
 fn parse(root: &Path, paths: &[RepoPath]) -> TestResult<IndexReport> {
     let mut writer = Writer::open(&WriterOptions {
         folder: &root.join(".cortex"),
@@ -47,7 +47,7 @@ fn parse(root: &Path, paths: &[RepoPath]) -> TestResult<IndexReport> {
         now_ms: NOW_MS,
         mode: HUGE,
     };
-    Ok(parse_files(
+    Ok(index_paths(
         root,
         &grammars()?,
         &mut writer,

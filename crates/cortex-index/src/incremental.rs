@@ -127,8 +127,7 @@ pub(crate) fn importers(
     queries: Queries<'_>,
     files: &BTreeSet<RepoPath>,
 ) -> Result<BTreeSet<RepoPath>, StoreError> {
-    let graph = FileGraph::read(queries)?;
-    graph.walk(files, |node| {
+    FileGraph::new(queries).walk(files, |node| {
         queries.sources_into(node, EdgeType::Structural)
     })
 }
@@ -143,8 +142,7 @@ pub(crate) fn reached(
     queries: Queries<'_>,
     files: &BTreeSet<RepoPath>,
 ) -> Result<BTreeSet<RepoPath>, StoreError> {
-    let graph = FileGraph::read(queries)?;
-    graph.walk(files, |node| {
+    FileGraph::new(queries).walk(files, |node| {
         let rows = queries.edges_from(node)?;
         Ok(rows
             .into_iter()
@@ -154,52 +152,60 @@ pub(crate) fn reached(
     })
 }
 
-/// The stored files and their nodes, both ways.
-struct FileGraph {
-    /// Each file's node, by path.
-    nodes: BTreeMap<RepoPath, NodeId>,
-    /// Each file node's path.
-    paths: BTreeMap<NodeId, RepoPath>,
+/// The stored files and their nodes, both ways, each read when first needed.
+struct FileGraph<'q> {
+    /// Where files and nodes are read from.
+    queries: Queries<'q>,
+    /// Each node read so far, with the path of the file it stands for, if any.
+    paths: BTreeMap<NodeId, Option<RepoPath>>,
 }
 
-impl FileGraph {
-    /// The stored files and their nodes.
-    fn read(queries: Queries<'_>) -> Result<Self, StoreError> {
-        let nodes: BTreeMap<RepoPath, NodeId> = queries.file_nodes()?.into_iter().collect();
-        let paths = nodes
-            .iter()
-            .map(|(path, node)| (*node, path.clone()))
-            .collect();
-        Ok(Self { nodes, paths })
+impl<'q> FileGraph<'q> {
+    /// The files and nodes `queries` reads.
+    fn new(queries: Queries<'q>) -> Self {
+        Self {
+            queries,
+            paths: BTreeMap::new(),
+        }
+    }
+
+    /// The path of the file `node` stands for, if it stands for one.
+    fn path_of(&mut self, node: NodeId) -> Result<Option<RepoPath>, StoreError> {
+        if let Some(path) = self.paths.get(&node) {
+            return Ok(path.clone());
+        }
+        let path = self.queries.node_file(node)?;
+        self.paths.insert(node, path.clone());
+        Ok(path)
     }
 
     /// The files `next` leads to from `start`, step by step up to [`MAX_FILES_AWAY`] steps, each a
     /// file node `next` gives for one already found; without `start` itself, and at most
     /// [`MAX_FILES_AROUND`].
     fn walk(
-        &self,
+        mut self,
         start: &BTreeSet<RepoPath>,
         next: impl Fn(NodeId) -> Result<Vec<NodeId>, StoreError>,
     ) -> Result<BTreeSet<RepoPath>, StoreError> {
         let mut found: BTreeSet<RepoPath> = BTreeSet::new();
-        let mut frontier: Vec<NodeId> = start
-            .iter()
-            .filter_map(|path| self.nodes.get(path).copied())
-            .collect();
+        let mut frontier: Vec<NodeId> = Vec::new();
+        for path in start {
+            frontier.extend(self.queries.file_node_at(path)?);
+        }
         for _ in 0..MAX_FILES_AWAY {
             let mut further = Vec::new();
             for node in frontier {
                 for linked in next(node)? {
-                    let Some(path) = self.paths.get(&linked) else {
+                    let Some(path) = self.path_of(linked)? else {
                         continue;
                     };
-                    if start.contains(path) || found.contains(path) {
+                    if start.contains(&path) || found.contains(&path) {
                         continue;
                     }
                     if found.len() == MAX_FILES_AROUND {
                         return Ok(found);
                     }
-                    found.insert(path.clone());
+                    found.insert(path);
                     further.push(linked);
                 }
             }

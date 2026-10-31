@@ -1,5 +1,5 @@
-//! Indexing benchmarks over the synthetic 10,000-file repository: the first index, and an index
-//! after one file changed, as the daemon runs it on every change. `cargo xtask verify --full`
+//! Indexing benchmarks over the synthetic 10,000-file repository: the first index, and the index
+//! of one changed file's path, as the daemon runs it on every change. `cargo xtask verify --full`
 //! reads their samples and checks them against the budgets.
 
 mod synthetic;
@@ -9,8 +9,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use cortex_core::RepoPath;
 use cortex_core::{ModeSetting, RepoId};
-use cortex_index::{DiscoverOptions, Grammars, IndexOptions, IndexReport, index_repository};
+use cortex_index::{
+    DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
+};
 use cortex_store::{Writer, WriterOptions};
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
 
@@ -20,9 +23,9 @@ const PARSE_TIMEOUT: Duration = Duration::from_secs(1);
 /// The default size limit, `index.max_file_bytes`.
 const MAX_FILE_BYTES: u64 = 1_048_576;
 
-/// Indexes the repository at `root` with `writer` on every core, as the daemon does.
-fn index(root: &Path, grammars: &Arc<Grammars>, writer: &mut Writer) -> IndexReport {
-    let options = IndexOptions {
+/// The options of an index on every core, as the daemon runs it.
+fn options() -> IndexOptions<'static> {
+    IndexOptions {
         discover: DiscoverOptions {
             max_file_bytes: MAX_FILE_BYTES,
             extra_ignores: &[],
@@ -32,10 +35,22 @@ fn index(root: &Path, grammars: &Arc<Grammars>, writer: &mut Writer) -> IndexRep
         threads: std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN),
         now_ms: now_ms(),
         mode: ModeSetting::Auto,
-    };
+    }
+}
+
+/// Indexes the repository at `root` with `writer`, as the daemon does first.
+fn index(root: &Path, grammars: &Arc<Grammars>, writer: &mut Writer) -> IndexReport {
     // A benchmark that cannot index has nothing to measure.
     #[allow(clippy::expect_used)]
-    index_repository(root, grammars, writer, &options).expect("indexing the synthetic repository")
+    index_repository(root, grammars, writer, &options()).expect("indexing the synthetic repository")
+}
+
+/// Indexes the files at `paths` of the repository at `root` with `writer`, as the daemon does
+/// when they change.
+fn update(root: &Path, grammars: &Arc<Grammars>, writer: &mut Writer, paths: &[RepoPath]) {
+    // A benchmark that cannot index has nothing to measure.
+    #[allow(clippy::expect_used)]
+    index_paths(root, grammars, writer, &options(), paths).expect("indexing a changed file");
 }
 
 /// Opens the writer of the repository at `root`.
@@ -90,6 +105,8 @@ fn indexing(criterion: &mut Criterion) {
     group.sample_size(30);
     let mut writer = writer(&root);
     index(&root, &grammars, &mut writer);
+    #[allow(clippy::expect_used)]
+    let changed = [RepoPath::new(synthetic::CHANGED_FILE).expect("a valid path")];
     let mut variant = 0;
     group.bench_function("one_file_changed_10k", |bencher| {
         bencher.iter_custom(|iterations| {
@@ -99,7 +116,7 @@ fn indexing(criterion: &mut Criterion) {
                 #[allow(clippy::expect_used)]
                 synthetic::change_file(&root, variant).expect("changing a file");
                 let start = Instant::now();
-                index(&root, &grammars, &mut writer);
+                update(&root, &grammars, &mut writer, &changed);
                 total += start.elapsed();
             }
             total

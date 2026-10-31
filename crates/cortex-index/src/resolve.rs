@@ -118,50 +118,48 @@ impl<'a> Definitions<'a> {
         definitions
     }
 
-    /// What `reference`, at `position` among its file's references, is tied to. In a file this
-    /// index wrote, as its bindings say: an import's own reference through its import, a bound
-    /// name through the imports that bind it, a name after a qualifier through the modules the
-    /// qualifier's imports reach, each only that way; any other reference by its name. In a file
-    /// it did not write, whose imports were not read: a tie through an import stays as it was,
-    /// and any other reference goes by its name.
+    /// What `reference`, at `position` among its file's references, is tied to, and whether it
+    /// goes through an import. In a file this pass read, as its bindings say: an import's own
+    /// reference through its import, a bound name through the imports that bind it, a name after a
+    /// qualifier through the modules the qualifier's imports reach, each only that way; any other
+    /// reference by its name. In a file it did not read, whose imports are not known: a reference
+    /// that goes through an import stays as it was, tied or not, and any other goes by its name.
     fn target(
         &self,
         reference: &'a RefName,
         position: usize,
         written: &Written<'a>,
         memo: &mut Memo<'a>,
-    ) -> Option<Target> {
+    ) -> (Option<Target>, bool) {
         let file = reference.file;
         let Some(bindings) = written.bindings.get(&file) else {
-            let is_through_import = reference.kind == RefKind::Import
-                || reference
-                    .target
-                    .is_some_and(|target| target.resolution == Resolution::ImportPath);
-            return if is_through_import {
-                reference.target
-            } else {
-                self.by_name(reference)
-            };
+            if reference.goes_through_import || reference.kind == RefKind::Import {
+                return (reference.target, true);
+            }
+            return (self.by_name(reference), false);
         };
         let found = match bindings.lookup(position) {
             Some(Lookup::Import(Some(taken))) => self.through_import(file, *taken, written, memo),
             Some(Lookup::Bound(group)) => self.through_bound(file, *group, written, memo),
             Some(Lookup::Member(group)) => {
                 if self.gives_a_definition(file, *group, written, memo) {
-                    return self.by_name(reference);
+                    return (self.by_name(reference), false);
                 }
                 self.through_member(file, (*group, &reference.name), written, memo)
             }
             // A reference past the file's lookups means the two lists came apart; such a one goes
             // by its name, as it would without imports.
             Some(Lookup::ByName) | None if reference.kind != RefKind::Import => {
-                return self.by_name(reference);
+                return (self.by_name(reference), false);
             }
             Some(Lookup::Import(None) | Lookup::ByName) | None => None,
         };
         // A name an import binds is that import's: what the imports cannot settle stays unresolved.
         // INVARIANT: silent-when-unsure
-        found.and_then(|found| tie(found, Resolution::ImportPath))
+        (
+            found.and_then(|found| tie(found, Resolution::ImportPath)),
+            true,
+        )
     }
 
     /// What the written file `file`'s imports find for what they take at `taken`: its name made
@@ -324,10 +322,24 @@ fn family(language: Language) -> Language {
 
 /// What the name pass tied.
 pub(crate) struct NamePass {
-    /// Each tied reference that sits in a definition, as that definition and its target.
-    pub(crate) ties: Vec<(SymbolId, Target)>,
+    /// Each tied reference it read that sits in a definition, as its file, that definition and
+    /// its target.
+    pub(crate) ties: Vec<(FileId, SymbolId, Target)>,
     /// The definitions holding a reference whose target changed.
     pub(crate) changed_sources: BTreeSet<SymbolId>,
+    /// The files holding a reference whose target changed.
+    pub(crate) changed_files: BTreeSet<FileId>,
+}
+
+/// The stored rows a name pass reads.
+struct Scope {
+    /// Each stored file the pass may meet, with its row.
+    files: Vec<(RepoPath, FileId)>,
+    /// The definitions the references, and the imports, may find: every definition of each name
+    /// they look for.
+    symbols: Vec<SymbolName>,
+    /// The references to tie, by id: every reference of a file with bindings.
+    refs: Vec<RefName>,
 }
 
 /// Ties every stored reference to the definition its file's imports or its name settle, or marks
@@ -347,36 +359,137 @@ pub(crate) fn resolve_names(
     scip: &BTreeMap<RefId, SymbolId>,
 ) -> Result<NamePass, StoreError> {
     let queries = writer.queries();
-    let files = queries.file_ids()?;
-    let symbols = queries.symbol_names()?;
-    let refs = queries.ref_names()?;
-    let written = Written::new(&files, bindings);
-    let definitions = Definitions::of(&symbols);
+    let scope = Scope {
+        files: queries.file_ids()?,
+        symbols: queries.symbol_names()?,
+        refs: queries.ref_names()?,
+    };
+    resolve(writer, &scope, bindings, Some(scip))
+}
+
+/// Ties again the references a change can concern, as [`resolve_names`] would tie them: every
+/// reference in the files `bindings` holds, read in this pass, and every reference named in
+/// `names`, the names whose definitions changed. Only the definitions of the names those
+/// references and the imports look for are read. Every other reference would keep its target,
+/// since neither its file nor the definitions its name finds changed. The SCIP index is not read
+/// again: a reference it tied keeps its tie.
+///
+/// # Errors
+///
+/// Store errors; the transactions committed before stay written.
+pub(crate) fn resolve_names_around(
+    writer: &mut Writer,
+    bindings: &BTreeMap<RepoPath, Bindings>,
+    names: &BTreeSet<Identifier>,
+) -> Result<NamePass, StoreError> {
+    let queries = writer.queries();
+    let mut files: BTreeMap<RepoPath, FileId> = BTreeMap::new();
+    for path in bindings
+        .keys()
+        .chain(bindings.values().flat_map(Bindings::files))
+    {
+        if files.contains_key(path) {
+            continue;
+        }
+        if let Some(row) = queries.file(path)? {
+            files.insert(path.clone(), row.id);
+        }
+    }
+    let mut refs: BTreeMap<RefId, RefName> = BTreeMap::new();
+    for path in bindings.keys() {
+        if let Some(file) = files.get(path) {
+            refs.extend(
+                queries
+                    .ref_names_in_file(*file)?
+                    .into_iter()
+                    .map(|r| (r.id, r)),
+            );
+        }
+    }
+    for name in names {
+        refs.extend(
+            queries
+                .ref_names_named(name)?
+                .into_iter()
+                .map(|r| (r.id, r)),
+        );
+    }
+    let mut wanted: BTreeSet<&Identifier> =
+        refs.values().map(|reference| &reference.name).collect();
+    wanted.extend(bindings.values().flat_map(Bindings::taken_names));
+    let mut symbols = Vec::new();
+    for name in wanted {
+        symbols.extend(queries.symbol_names_named(name)?);
+    }
+    let bound: BTreeSet<FileId> = bindings
+        .keys()
+        .filter_map(|path| files.get(path).copied())
+        .collect();
+    let scope = Scope {
+        files: files.into_iter().collect(),
+        symbols,
+        refs: refs.into_values().collect(),
+    };
+    let mut pass = resolve(writer, &scope, bindings, None)?;
+    // Only the files read in this pass had every reference tied: another file's ties are read back
+    // whole once its changed targets are written, so that each of its definitions has them all.
+    pass.ties.retain(|(file, _, _)| bound.contains(file));
+    let queries = writer.queries();
+    for file in pass.changed_files.difference(&bound) {
+        for reference in queries.ref_names_in_file(*file)? {
+            if let (Some(source), Some(target)) = (reference.symbol, reference.target) {
+                pass.ties.push((*file, source, target));
+            }
+        }
+    }
+    Ok(pass)
+}
+
+/// Ties each reference of `scope` as the module documentation says and writes those whose
+/// target changed. A reference `scip` ties is tied as it says; without `scip`, a stored SCIP tie
+/// stands.
+fn resolve(
+    writer: &mut Writer,
+    scope: &Scope,
+    bindings: &BTreeMap<RepoPath, Bindings>,
+    scip: Option<&BTreeMap<RefId, SymbolId>>,
+) -> Result<NamePass, StoreError> {
+    let written = Written::new(&scope.files, bindings);
+    let definitions = Definitions::of(&scope.symbols);
     let mut memo = Memo::default();
     // A file's references come back in the order they were written, which is its lookups' order.
     let mut positions: BTreeMap<FileId, usize> = BTreeMap::new();
     let mut changed: Vec<Resolved> = Vec::new();
     let mut ties = Vec::new();
     let mut changed_sources = BTreeSet::new();
-    for reference in &refs {
+    let mut changed_files = BTreeSet::new();
+    for reference in &scope.refs {
         let next = positions.entry(reference.file).or_insert(0);
         let position = *next;
         *next += 1;
-        let target = match scip.get(&reference.id) {
-            Some(symbol) => Some(Target {
+        let scip_tie = match scip {
+            Some(scip) => scip.get(&reference.id).map(|symbol| Target {
                 symbol: *symbol,
                 resolution: Resolution::Scip,
             }),
+            None => reference
+                .target
+                .filter(|target| target.resolution == Resolution::Scip),
+        };
+        let (target, goes_through_import) = match scip_tie {
+            Some(tie) => (Some(tie), false),
             None => definitions.target(reference, position, &written, &mut memo),
         };
         if let (Some(symbol), Some(target)) = (reference.symbol, target) {
-            ties.push((symbol, target));
+            ties.push((reference.file, symbol, target));
         }
-        if target != reference.target {
+        if target != reference.target || goes_through_import != reference.goes_through_import {
+            changed_files.insert(reference.file);
             changed_sources.extend(reference.symbol);
             changed.push(Resolved {
                 reference: reference.id,
                 target,
+                goes_through_import,
             });
         }
     }
@@ -388,6 +501,7 @@ pub(crate) fn resolve_names(
     Ok(NamePass {
         ties,
         changed_sources,
+        changed_files,
     })
 }
 
