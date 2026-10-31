@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use cortex_core::RepoPath;
 use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer_opt};
 use thiserror::Error;
 
 use crate::discover::{DiscoverError, DiscoverOptions, MAX_FOLDER_DEPTH, PRUNED_NAMES};
@@ -34,13 +34,19 @@ const MAX_PATHS_IN_WINDOW: usize = 500;
 /// The window [`MAX_PATHS_IN_WINDOW`] counts paths over.
 const BATCH_WINDOW: Duration = Duration::from_secs(2);
 
+/// How many batches of events may wait for the sorting thread; past this the file system
+/// watcher's own thread waits too, so a slow consumer holds memory to this bound.
+const WAITING_BATCHES: usize = 1024;
+
 /// The names of the files that hold rules about which files the walk finds.
 const RULES_FILES: [&str; 3] = [".gitignore", ".cortexignore", ".gitattributes"];
 
 /// What changed in a watched repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
-    /// These paths, which the walk would find or found: created, changed, removed or renamed.
+    /// These paths, which the walk would find or found: created, changed, removed or renamed. A
+    /// folder created, removed or renamed may be reported by its own path alone, which stands for
+    /// everything under it.
     Paths(BTreeSet<RepoPath>),
     /// Too much, or the rules about which files count: everything is to be looked at again.
     Everything,
@@ -98,8 +104,19 @@ pub fn watch(
     };
     // The rules are read once here, so that a repository whose rules cannot be read is refused.
     walk.repository()?;
-    let (sender, receiver) = mpsc::channel();
-    let mut debouncer = new_debouncer(DEBOUNCE, None, sender)?;
+    let (sender, receiver) = mpsc::sync_channel(WAITING_BATCHES);
+    // A send fails only once the sorting thread has stopped, when nothing is left to report to.
+    let handler = move |events: DebounceEventResult| drop(sender.send(events));
+    // Links are not followed, as the walk does not follow them: a change outside the repository
+    // must not be reported as one inside it.
+    let config = notify::Config::default().with_follow_symlinks(false);
+    let mut debouncer = new_debouncer_opt::<_, RecommendedWatcher, RecommendedCache>(
+        DEBOUNCE,
+        None,
+        handler,
+        RecommendedCache::new(),
+        config,
+    )?;
     debouncer.watch(root, RecursiveMode::Recursive)?;
     let sorter = thread::spawn(move || sort_events(&receiver, walk, report));
     Ok(Watcher {

@@ -21,8 +21,12 @@ pub struct Crawl {
     rest: Vec<RepoPath>,
     /// The files still waiting.
     waiting: BTreeSet<RepoPath>,
-    /// The waiting files of each folder, by path.
+    /// The waiting files of each folder, in path order.
     by_folder: BTreeMap<RepoPath, Vec<RepoPath>>,
+    /// The files asked for so far, each queued once.
+    asked: BTreeSet<RepoPath>,
+    /// The folders whose waiting files are queued as neighbours, each once.
+    asked_folders: BTreeSet<RepoPath>,
 }
 
 impl Crawl {
@@ -62,25 +66,33 @@ impl Crawl {
             crawl.waiting.insert(path.clone());
             crawl.rest.push(path);
         }
+        for paths in crawl.by_folder.values_mut() {
+            paths.sort();
+        }
         crawl
     }
 
     /// Puts the waiting files among `paths` first, in order, and the other waiting files of their
-    /// folders after them, in path order.
+    /// folders after them, in path order. A file or a folder asked for again is not queued again,
+    /// so the queues never hold more than twice the waiting files.
     pub fn request(&mut self, paths: &[RepoPath]) {
         for path in paths {
             if !self.waiting.contains(path) {
                 continue;
             }
-            self.requested.push_back(path.clone());
-            let beside = path
-                .parent()
-                .and_then(|folder| self.by_folder.get(&folder))
-                .map_or(&[][..], Vec::as_slice);
-            let mut beside = beside.to_vec();
-            beside.sort();
-            self.neighbours
-                .extend(beside.into_iter().filter(|other| other != path));
+            if self.asked.insert(path.clone()) {
+                self.requested.push_back(path.clone());
+            }
+            let Some(folder) = path.parent() else {
+                continue;
+            };
+            if !self.asked_folders.insert(folder.clone()) {
+                continue;
+            }
+            if let Some(beside) = self.by_folder.get(&folder) {
+                let others = beside.iter().filter(|other| *other != path).cloned();
+                self.neighbours.extend(others);
+            }
         }
     }
 
@@ -166,6 +178,20 @@ mod tests {
         assert_eq!(crawl.next(0), Vec::<RepoPath>::new());
         assert_eq!(names(&crawl.next(10)), ["b/3.py"]);
         assert_eq!(crawl.next(10), Vec::<RepoPath>::new());
+        Ok(())
+    }
+
+    /// A file asked for a thousand times is queued once, and its folder's other files once.
+    #[test]
+    fn requests_asked_again_are_queued_once() -> Result<(), PathError> {
+        let mut crawl = crawl(&[("a/1.py", 10), ("a/2.py", 20), ("a/3.py", 30)])?;
+        let one = RepoPath::new("a/1.py")?;
+        for _ in 0..1000 {
+            crawl.request(std::slice::from_ref(&one));
+        }
+        crawl.request(&[RepoPath::new("a/2.py")?]);
+        assert_eq!((crawl.requested.len(), crawl.neighbours.len()), (2, 2));
+        assert_eq!(names(&crawl.next(10)), ["a/1.py", "a/2.py", "a/3.py"]);
         Ok(())
     }
 }

@@ -152,3 +152,23 @@ fn huge_mode_parses_on_demand() -> TestResult {
     assert_eq!(crawl_order(root, &[])?, Vec::<String>::new());
     Ok(())
 }
+
+/// A stored file whose folder became a link to outside the repository after the walk is not read
+/// again: what lies outside never reaches the store. Links need privileges to create on Windows,
+/// so this runs on Unix only.
+#[cfg(unix)]
+#[test]
+fn a_folder_replaced_by_a_link_is_not_read() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(root, &[("src/a.py", "def inside():\n    pass\n")])?;
+    index_with_mode(root, (2, GENEROUS, DEFAULT_LIMIT), HUGE)?;
+    std::fs::write(outside.path().join("a.py"), "def outside():\n    pass\n")?;
+    std::fs::remove_dir_all(root.join("src"))?;
+    std::os::unix::fs::symlink(outside.path(), root.join("src"))?;
+    let report = parse(root, &[RepoPath::new("src/a.py")?])?;
+    assert_eq!((report.files, report.parsed), (0, 0));
+    assert!(!is_parsed(root, "src/a.py")?);
+    Ok(())
+}

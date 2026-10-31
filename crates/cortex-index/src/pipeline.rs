@@ -350,8 +350,12 @@ pub fn parse_files(
         .into_iter()
         .map(|row| (row.file.path.clone(), row))
         .collect();
+    let canonical_root = root.canonicalize().ok();
     let file_of = |path: &RepoPath| {
         let row = &stored.get(path)?.file;
+        if !is_reached_directly(root, canonical_root.as_deref()?, path) {
+            return None;
+        }
         Some(DiscoveredFile {
             path: row.path.clone(),
             language: row.language,
@@ -514,9 +518,10 @@ fn load_project(
     max_file_bytes: u64,
 ) -> Result<Project, StoreError> {
     let stored = writer.queries().file_paths()?;
+    let canonical_root = root.canonicalize().ok();
     let read = |path: &RepoPath| {
         let flags = found.get(path).copied()?;
-        if has_any(flags, &UNREAD) {
+        if has_any(flags, &UNREAD) || !is_reached_directly(root, canonical_root.as_deref()?, path) {
             return None;
         }
         let bytes = safe_read::read_whole(&path.to_native(root), max_file_bytes).ok()?;
@@ -524,6 +529,15 @@ fn load_project(
     };
     let found = found.keys().map(|path| (*path).clone());
     Ok(Project::load(stored.into_iter().chain(found), &read))
+}
+
+/// Whether the file at `path` is reached from `root`, whose canonical form is `canonical_root`,
+/// through no link, as the walk reaches files. A stored path is read again only then: a folder on
+/// it replaced by a link since the walk could lead outside the repository.
+fn is_reached_directly(root: &Path, canonical_root: &Path, path: &RepoPath) -> bool {
+    path.to_native(root)
+        .canonicalize()
+        .is_ok_and(|canonical| canonical == path.to_native(canonical_root))
 }
 
 /// Every stored file the walk did not find, except those it could not see: below a folder it

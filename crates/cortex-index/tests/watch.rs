@@ -133,3 +133,23 @@ fn many_paths_at_once_are_a_change_to_everything() -> TestResult {
     changes_until(&receiver, |changes| changes.contains(&Change::Everything))?;
     Ok(())
 }
+
+/// A change under a link to a folder outside the repository is not reported, as the walk does not
+/// follow links either; a file written after it is. Links need privileges to create on Windows,
+/// so this runs on Unix only.
+#[cfg(unix)]
+#[test]
+fn changes_behind_a_link_are_not_reported() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(root, &[("a.py", "a = 1\n")])?;
+    write(outside.path(), "x.py", b"x = 1\n")?;
+    std::os::unix::fs::symlink(outside.path(), root.join("link"))?;
+    let (_watcher, receiver) = watched(root)?;
+    write(outside.path(), "x.py", b"x = 2\n")?;
+    write(root, "a.py", b"a = 2\n")?;
+    let changes = changes_until(&receiver, |changes| paths(changes).contains("a.py"))?;
+    assert_eq!(paths(&changes), ["a.py".to_owned()].into(), "{changes:?}");
+    Ok(())
+}

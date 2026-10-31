@@ -225,8 +225,10 @@ huge or, left to the size, when the last index recorded huge or the walk finds m
 source files. Lines are not known before files are read, so a repository huge by its lines alone
 is found so by its first index, which reads every file. When an index no longer takes inventory,
 it parses every file still waiting. `parse_files` parses the files an agent touches, and `Crawl`
-orders the rest; how fast to crawl, `index.crawl_files_per_second` in the configuration (100 by
-default), is the caller's.
+orders the rest, each file and each folder's neighbours queued once however often they are asked
+for; how fast to crawl, `index.crawl_files_per_second` in the configuration (100 by default), is
+the caller's. `parse_files` reads a stored path again only when no link has come between the root
+and the file since the walk found it.
 
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts
@@ -246,7 +248,9 @@ path has been quiet for 200 ms, then sorted by the walk's own rules: paths under
 changed, removed or renamed (both names), are reported together. More than 500 of them within 2
 seconds, as a branch switch or a large checkout makes, a change to `.gitignore`, `.cortexignore`,
 `.gitattributes` or `.git/info`, or an error from the file system watcher, is reported as a change
-to everything instead. What to do about a change, an index of what changed, is the caller's.
+to everything instead. A folder created, removed or renamed may be reported by its own path
+alone, which stands for everything under it. Links are not followed, as the walk does not follow
+them. What to do about a change, an index of what changed, is the caller's.
 
 ## Imports
 
