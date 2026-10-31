@@ -28,6 +28,9 @@ pub(super) struct Host<'a> {
     grammars: Arc<Grammars>,
     /// The settings in effect.
     config: &'a Config,
+    /// Which files the walk finds: the size limit and the ignore patterns, the user's global
+    /// gitignore among them.
+    discover: DiscoverOptions<'a>,
     /// The store's one writer.
     writer: Writer,
     /// The files huge mode took inventory of, in the order they are parsed.
@@ -35,17 +38,19 @@ pub(super) struct Host<'a> {
 }
 
 impl<'a> Host<'a> {
-    /// A host over `writer` for the repository at `root`, nothing waiting yet.
+    /// A host over `writer` for the repository at `root`, with the settings in effect and the
+    /// walk's options, nothing waiting yet.
     pub(super) fn new(
         root: &'a Path,
         grammars: Arc<Grammars>,
-        config: &'a Config,
+        (config, discover): (&'a Config, DiscoverOptions<'a>),
         writer: Writer,
     ) -> Self {
         Self {
             root,
             grammars,
             config,
+            discover,
             writer,
             crawl: Crawl::default(),
         }
@@ -146,11 +151,7 @@ impl<'a> Host<'a> {
     /// The options of an index or a parse on `threads` threads, timed now.
     fn options(&self, threads: NonZeroUsize) -> IndexOptions<'a> {
         IndexOptions {
-            discover: DiscoverOptions {
-                max_file_bytes: self.config.max_file_bytes,
-                extra_ignores: &self.config.extra_ignores,
-                global_gitignore: None,
-            },
+            discover: self.discover,
             parse_timeout: Duration::from_millis(self.config.parse_timeout_ms),
             threads,
             now_ms: now_ms(),

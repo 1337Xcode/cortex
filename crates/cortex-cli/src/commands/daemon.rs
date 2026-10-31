@@ -20,7 +20,7 @@ use cortex_index::{Change, DiscoverOptions, Grammars, IndexReport, watch};
 use cortex_store::{Writer, WriterOptions};
 
 use self::host::Host;
-use crate::{output, repository, settings};
+use crate::{global_ignore, output, repository, settings};
 
 /// How many changes may wait for the writer. A change that finds the queue full is dropped and the
 /// queue marked as overflowed, so that the changes drained next are indexed as a change to
@@ -58,10 +58,19 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     })
     .with_context(|| format!("opening the store in {}", folder.display()))?;
     let (sender, queue) = mpsc::sync_channel::<Change>(QUEUE_CHANGES);
+    let global_gitignore = match global_ignore::find(&root) {
+        Ok(found) => found,
+        Err(error) => {
+            output::note(&format!(
+                "warning: the global gitignore is not read: {error:#}"
+            ))?;
+            None
+        }
+    };
     let discover = DiscoverOptions {
         max_file_bytes: config.max_file_bytes,
         extra_ignores: &config.extra_ignores,
-        global_gitignore: None,
+        global_gitignore: global_gitignore.as_deref(),
     };
     let overflowed = Arc::new(AtomicBool::new(false));
     let marks = Arc::clone(&overflowed);
@@ -73,7 +82,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         }
     })
     .context("watching the repository")?;
-    let mut host = Host::new(&root, grammars, &config, writer);
+    let mut host = Host::new(&root, grammars, (&config, discover), writer);
     let report = host.index(&[])?;
     output::note(&ready_line(&report, host.waiting()))?;
     host.serve(&queue, &overflowed)?;

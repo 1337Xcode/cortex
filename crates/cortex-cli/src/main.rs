@@ -4,6 +4,7 @@
 //! stderr with exit code 1. Each command lives in its own module under `commands`.
 
 mod commands;
+mod global_ignore;
 mod output;
 mod repository;
 mod settings;

@@ -67,16 +67,78 @@ impl Drop for Daemon {
     }
 }
 
-/// `cortex daemon --root <root>` with `home` as the user's home folder.
+/// `cortex daemon --root <root>` with `home` as the user's home folder, and git's configuration
+/// read from there only.
 fn daemon_command(root: &Path, home: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command
-        .args(["daemon", "--root"])
-        .arg(root)
-        .env("HOME", home)
-        .env("USERPROFILE", home);
+    command.args(["daemon", "--root"]).arg(root);
+    isolate(&mut command, home);
     command
 }
+
+/// Makes `command` see `home` as the user's home folder and read no git configuration but what is
+/// there.
+fn isolate(command: &mut Command, home: &Path) {
+    command
+        .env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    for name in [
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "XDG_CONFIG_HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+    ] {
+        command.env_remove(name);
+    }
+}
+
+/// Runs git with `args` in `folder`, with `home` as the user's home folder.
+fn git(folder: &Path, home: &Path, args: &[&str]) -> TestResult {
+    let mut command = Command::new("git");
+    command.args(args).current_dir(folder);
+    isolate(&mut command, home);
+    let status = command.status()?;
+    if !status.success() {
+        return Err(format!("git {args:?} failed: {status}").into());
+    }
+    Ok(())
+}
+
+/// A path git reads from its configuration: with slashes, since git takes a backslash there as an
+/// escape.
+fn for_git(path: &Path) -> TestResult<String> {
+    Ok(path
+        .to_str()
+        .ok_or("a path that is not UTF-8")?
+        .replace('\\', "/"))
+}
+
+/// The ready line of a daemon on a repository holding `app.py` and `build_out/out.py`, after
+/// `setup` has prepared the repository and the home folder, in that order.
+fn ready_line_with(setup: impl FnOnce(&Path, &Path) -> TestResult) -> TestResult<String> {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    std::fs::write(repo.path().join("app.py"), "def kept():\n    pass\n")?;
+    std::fs::create_dir(repo.path().join("build_out"))?;
+    std::fs::write(
+        repo.path().join("build_out/out.py"),
+        "def ignored():\n    pass\n",
+    )?;
+    setup(repo.path(), home.path())?;
+    let daemon = Daemon::start(repo.path(), home.path())?;
+    daemon.first_line()
+}
+
+/// The ready line when only `app.py` is indexed: `build_out/` is ignored.
+const ONE_WRITTEN: &str = "cortex: daemon ready: mode tiny; files: 1 written, 0 unchanged";
+
+/// The ready line when `build_out/out.py` is indexed too.
+const TWO_WRITTEN: &str = "cortex: daemon ready: mode tiny; files: 2 written, 0 unchanged";
 
 /// Whether the store of the repository at `root` holds a definition named `name`.
 fn has_definition(root: &Path, name: &str) -> TestResult<bool> {
@@ -123,6 +185,67 @@ fn indexes_watches_and_holds_the_writer() -> TestResult {
             && stderr.contains("another writer holds"),
         "{stderr}"
     );
+    Ok(())
+}
+
+/// The user's global gitignore applies, found as git finds it: `core.excludesFile` in the home
+/// folder's `.gitconfig` names a file that ignores `build_out/`.
+#[test]
+fn the_global_gitignore_applies() -> TestResult {
+    let line = ready_line_with(|_, home| {
+        let ignore = home.join("global-ignore");
+        std::fs::write(&ignore, "build_out/\n")?;
+        let config = format!("[core]\n\texcludesFile = {}\n", for_git(&ignore)?);
+        std::fs::write(home.join(".gitconfig"), config)?;
+        Ok(())
+    })?;
+    assert_eq!(line, ONE_WRITTEN);
+    Ok(())
+}
+
+/// With `core.excludesFile` unset, git's default file applies: `.config/git/ignore` in the home
+/// folder.
+#[test]
+fn git_s_default_global_gitignore_applies() -> TestResult {
+    let line = ready_line_with(|_, home| {
+        std::fs::create_dir_all(home.join(".config/git"))?;
+        std::fs::write(home.join(".config/git/ignore"), "build_out/\n")?;
+        Ok(())
+    })?;
+    assert_eq!(line, ONE_WRITTEN);
+    Ok(())
+}
+
+/// `core.excludesFile` set to nothing turns the global gitignore off, as in git: the default file
+/// is not read either.
+#[test]
+fn an_empty_excludes_file_reads_no_global_gitignore() -> TestResult {
+    let line = ready_line_with(|_, home| {
+        std::fs::create_dir_all(home.join(".config/git"))?;
+        std::fs::write(home.join(".config/git/ignore"), "build_out/\n")?;
+        std::fs::write(home.join(".gitconfig"), "[core]\n\texcludesFile =\n")?;
+        Ok(())
+    })?;
+    assert_eq!(line, TWO_WRITTEN);
+    Ok(())
+}
+
+/// A repository's own configuration cannot name the global gitignore, which the daemon would open:
+/// `core.excludesFile` in its `.git/config` is not read.
+#[test]
+fn a_repository_cannot_name_the_global_gitignore() -> TestResult {
+    let line = ready_line_with(|repo, home| {
+        let ignore = repo.join("ignore-build");
+        std::fs::write(&ignore, "build_out/\n")?;
+        git(repo, home, &["init", "-q"])?;
+        git(
+            repo,
+            home,
+            &["config", "core.excludesFile", &for_git(&ignore)?],
+        )?;
+        Ok(())
+    })?;
+    assert_eq!(line, TWO_WRITTEN.replace("2 written", "3 written"));
     Ok(())
 }
 
