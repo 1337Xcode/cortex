@@ -7,7 +7,9 @@
 //! configuration holds whatever the size. Hysteresis, keeping a mode near a boundary, is upkeep's.
 
 use cortex_core::{FileFlags, ModeSetting, ScaleMode};
-use cortex_store::{StoreError, Writer};
+use cortex_store::{MetaKey, StoreError, Writer};
+
+use crate::discover::DiscoveredFile;
 
 /// More source files than this make a repository huge.
 const HUGE_ABOVE_FILES: u64 = 20_000;
@@ -30,6 +32,37 @@ const NOT_SOURCE: FileFlags = FileFlags::GENERATED
     .with(FileFlags::BINARY)
     .with(FileFlags::TOO_LARGE)
     .with(FileFlags::SECRET_PATTERN);
+
+/// Whether an index of the walk's `files` takes inventory of the files never parsed, as huge mode
+/// does: when `setting` pins huge or, left to the size, when the last index recorded huge or the
+/// files are more than 20,000 source files. Lines are not known before files are read, so a
+/// repository huge by its lines alone is found so by its first index, which reads every file.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn takes_inventory(
+    writer: &Writer,
+    setting: ModeSetting,
+    files: &[DiscoveredFile],
+) -> Result<bool, StoreError> {
+    if let ModeSetting::Pinned(mode) = setting {
+        return Ok(mode == ScaleMode::Huge);
+    }
+    let recorded = writer.queries().meta(MetaKey::ScaleMode)?;
+    let was_huge = recorded.as_deref().and_then(ScaleMode::from_name) == Some(ScaleMode::Huge);
+    Ok(was_huge || is_huge_by_files(files))
+}
+
+/// Whether the walk's `files` make a repository huge by their number alone, before any is read:
+/// more than 20,000 source files.
+fn is_huge_by_files(files: &[DiscoveredFile]) -> bool {
+    let source = files
+        .iter()
+        .filter(|file| file.language.is_some() && file.flags.bits() & NOT_SOURCE.bits() == 0)
+        .count();
+    u64::try_from(source).unwrap_or(u64::MAX) > HUGE_ABOVE_FILES
+}
 
 /// A repository's size as the scale modes count it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

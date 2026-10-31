@@ -31,6 +31,8 @@ The indexer: which files a repository has, what they are, and what they define a
 | `Extraction`, `Import` | A file's definitions, with kind, qualified name, enclosing definition, span and hashes; the names it uses, with kind, line and enclosing definition, the names its imports take among them, each with what is written before it (`Qualifier`); and the modules it imports, with what it takes (the module, one name, every name or the default export), the name it binds and whether it only passes what it takes on |
 | `index_repository` | Indexes a repository into the store: walks it, removes the stored files it no longer finds, reads, parses and writes every file that changed since the last index, ties references to the definitions their names settle, joins files and definitions in the graph, keeps a node for each folder that holds files, and records the scale mode; reports the definitions whose signature or body changed |
 | `IndexOptions`, `IndexReport`, `FileProblem`, `ScipOutcome`, `ScipProblem` | The walk's options, the time limit per file, the number of threads and the indexing time; how many files were written, parsed and removed, what the walk could not do, the files skipped because they could not be read, took too long to parse or panicked while being read, and what became of the repository's SCIP index |
+| `parse_files` | Reads, parses and writes chosen stored files now, changed or not, and ties their references and those of the files around them, as huge mode does for the files an agent reads or edits |
+| `Crawl` | The order in which huge mode parses the files it took inventory of: files asked for, then the other waiting files of their folders, then the rest, the most recently changed first; each handed out once |
 | `watch`, `Watcher`, `Change`, `WatchError` | Watches a repository and reports its changes from a thread of its own: the paths the walk would find that were created, changed, removed or renamed, or a change to everything; stops when the `Watcher` is dropped |
 
 ## What a file's flags mean
@@ -210,6 +212,16 @@ million lines make the repository huge; else fewer than 50 files or 5,000 lines 
 else at most 250 files make it small; else it is medium. A mode set in `IndexOptions::mode`
 (`mode` in the configuration) is recorded whatever the size. `IndexReport` gives the size and the
 mode, and `mode_for` the mode for any size.
+
+An index in huge mode takes inventory of the files it never parsed instead of reading them: each is
+written as the walk found it, with its path, language, size, modification time and flags. Files
+parsed before are kept or parsed again as in any index. Huge mode applies when the mode is set to
+huge or, left to the size, when the last index recorded huge or the walk finds more than 20,000
+source files. Lines are not known before files are read, so a repository huge by its lines alone
+is found so by its first index, which reads every file. When an index no longer takes inventory,
+it parses every file still waiting. `parse_files` parses the files an agent touches, and `Crawl`
+orders the rest; how fast to crawl, `index.crawl_files_per_second` in the configuration (100 by
+default), is the caller's.
 
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts

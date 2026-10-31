@@ -203,6 +203,8 @@ struct Context<'a> {
     /// The stored files, by path, whose contents a file read is compared with: one that hashes as
     /// stored is not parsed. `None` when every file read is parsed.
     known: Option<&'a BTreeMap<RepoPath, FileRow>>,
+    /// Whether a file never parsed is written as the walk found it, unread, as huge mode does.
+    is_inventory: bool,
     /// The size above which a file is not read.
     max_file_bytes: u64,
     /// How long one file may take to parse and read.
@@ -242,12 +244,19 @@ pub fn index_repository(
         incremental::importers(writer.queries(), &missing.iter().cloned().collect())?
     };
     remove_files(writer, &missing)?;
-    let project = load_project(root, writer, &discovery, options.discover.max_file_bytes)?;
+    let found: BTreeMap<&RepoPath, FileFlags> = discovery
+        .files
+        .iter()
+        .map(|file| (&file.path, file.flags))
+        .collect();
+    let project = load_project(root, writer, &found, options.discover.max_file_bytes)?;
+    let is_inventory = scale::takes_inventory(writer, options.mode, &discovery.files)?;
     let context = Context {
         root,
         grammars,
         project: &project,
         known: Some(&known),
+        is_inventory,
         max_file_bytes: options.discover.max_file_bytes,
         parse_timeout: options.parse_timeout,
         threads: options.threads,
@@ -257,9 +266,10 @@ pub fn index_repository(
         .files
         .iter()
         .filter(|file| {
-            known
-                .get(&file.path)
-                .is_none_or(|row| !incremental::is_unchanged(file, row))
+            known.get(&file.path).is_none_or(|row| {
+                !incremental::is_unchanged(file, row)
+                    || (!is_inventory && waits_to_be_parsed(&row.file))
+            })
         })
         .cloned()
         .collect();
@@ -283,7 +293,14 @@ pub fn index_repository(
     let around = if is_whole {
         Vec::new()
     } else {
-        files_around(writer, &discovery, &written, importers_of_gone)?
+        let walked = |path: &RepoPath| {
+            discovery
+                .files
+                .binary_search_by(|file| file.path.cmp(path))
+                .ok()
+                .and_then(|position| discovery.files.get(position).cloned())
+        };
+        files_around(writer, &walked, &written, importers_of_gone)?
     };
     let again = Context {
         known: None,
@@ -296,6 +313,78 @@ pub fn index_repository(
     let mut transaction = writer.transaction()?;
     transaction.set_cortex_version()?;
     transaction.commit()?;
+    Ok(report)
+}
+
+/// Reads, parses and writes the stored files at `paths` now, changed or not, and ties their
+/// references and those of the files around them, as huge mode does for the files an agent reads
+/// or edits and for the crawler's. A path the store does not hold is left out.
+///
+/// # Errors
+///
+/// [`IndexError::Store`] when a read or a write fails, [`IndexError::Grammar`] when a language's
+/// grammar cannot be used, and [`IndexError::WorkerPanicked`].
+pub fn parse_files(
+    root: &Path,
+    grammars: &Arc<Grammars>,
+    writer: &mut Writer,
+    options: &IndexOptions<'_>,
+    paths: &[RepoPath],
+) -> Result<IndexReport, IndexError> {
+    let stored: BTreeMap<RepoPath, FileRow> = writer
+        .queries()
+        .file_rows()?
+        .into_iter()
+        .map(|row| (row.file.path.clone(), row))
+        .collect();
+    let file_of = |path: &RepoPath| {
+        let row = &stored.get(path)?.file;
+        Some(DiscoveredFile {
+            path: row.path.clone(),
+            language: row.language,
+            size_bytes: row.size_bytes,
+            mtime_ns: row.mtime_ns,
+            flags: incremental::unparsed(row.flags),
+        })
+    };
+    let found: BTreeMap<&RepoPath, FileFlags> = stored
+        .iter()
+        .map(|(path, row)| (path, row.file.flags))
+        .collect();
+    let project = load_project(root, writer, &found, options.discover.max_file_bytes)?;
+    let context = Context {
+        root,
+        grammars,
+        project: &project,
+        known: None,
+        is_inventory: false,
+        max_file_bytes: options.discover.max_file_bytes,
+        parse_timeout: options.parse_timeout,
+        threads: options.threads,
+        now_ms: options.now_ms,
+    };
+    let files: Vec<DiscoveredFile> = paths.iter().filter_map(&file_of).collect();
+    let mut report = IndexReport {
+        files: 0,
+        parsed: 0,
+        unchanged: 0,
+        removed: 0,
+        walk_problems: Vec::new(),
+        problems: Vec::new(),
+        left_out: Vec::new(),
+        changed_symbols: Vec::new(),
+        scip: ScipOutcome::Absent,
+        size: RepoSize {
+            source_files: 0,
+            lines: 0,
+        },
+        mode: ScaleMode::Huge,
+    };
+    let written = write_files(writer, &files, &context, &mut report)?;
+    let around = files_around(writer, &file_of, &written, BTreeSet::new())?;
+    let read_again = read_again(&around, &context)?;
+    link(writer, root, (written, read_again), false, &mut report)?;
+    (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
     Ok(report)
 }
 
@@ -316,11 +405,11 @@ struct Written {
 
 /// The files around this index's changes to read again for what their imports bind: those whose
 /// imports name a `written` file, `importers_of_gone`, whose imports named a removed one, and the
-/// files the written files and these reach through their imports; only files the walk found and
+/// files the written files and these reach through their imports; only files `file_of` knows and
 /// this index did not write.
 fn files_around(
     writer: &Writer,
-    discovery: &Discovery,
+    file_of: &dyn Fn(&RepoPath) -> Option<DiscoveredFile>,
     written: &[Written],
     importers_of_gone: BTreeSet<RepoPath>,
 ) -> Result<Vec<DiscoveredFile>, StoreError> {
@@ -329,11 +418,10 @@ fn files_around(
     around.extend(incremental::importers(writer.queries(), &changed)?);
     let from: BTreeSet<RepoPath> = changed.iter().chain(&around).cloned().collect();
     around.extend(incremental::reached(writer.queries(), &from)?);
-    Ok(discovery
-        .files
+    Ok(around
         .iter()
-        .filter(|file| around.contains(&file.path) && !changed.contains(&file.path))
-        .cloned()
+        .filter(|path| !changed.contains(*path))
+        .filter_map(file_of)
         .collect())
 }
 
@@ -392,29 +480,25 @@ fn link(
     Ok(())
 }
 
-/// What import resolution knows of the repository at `root`: every file the walk found or the
-/// store keeps. A project file is read only when the walk found it and its flags let it be read:
-/// one that may hold secrets is never opened.
+/// What import resolution knows of the repository at `root`: every file the store keeps or that
+/// is `found`, each with its flags. A project file is read only when it is found and its flags let
+/// it be read: one that may hold secrets is never opened.
 fn load_project(
     root: &Path,
     writer: &Writer,
-    discovery: &Discovery,
+    found: &BTreeMap<&RepoPath, FileFlags>,
     max_file_bytes: u64,
 ) -> Result<Project, StoreError> {
     let stored = writer.queries().file_paths()?;
-    let found = discovery.files.iter().map(|file| file.path.clone());
     let read = |path: &RepoPath| {
-        let position = discovery
-            .files
-            .binary_search_by(|file| file.path.cmp(path))
-            .ok()?;
-        let file = discovery.files.get(position)?;
-        if has_any(file.flags, &UNREAD) {
+        let flags = found.get(path).copied()?;
+        if has_any(flags, &UNREAD) {
             return None;
         }
         let bytes = safe_read::read_whole(&path.to_native(root), max_file_bytes).ok()?;
         String::from_utf8(bytes).ok()
     };
+    let found = found.keys().map(|path| (*path).clone());
     Ok(Project::load(stored.into_iter().chain(found), &read))
 }
 
@@ -610,6 +694,9 @@ fn prepare(
     context: &Context<'_>,
     extractor: &mut Extractor,
 ) -> Result<Outcome, ExtractError> {
+    if context.is_inventory && !was_parsed(file, context) {
+        return Ok(Outcome::unparsed(record_of(file, context.now_ms)));
+    }
     let (mut record, language, source) =
         match read(file, context.root, context.max_file_bytes, context.now_ms) {
             Read::Done(Outcome::Ready(prepared)) if is_as_stored(&prepared.index.file, context) => {
@@ -665,6 +752,14 @@ fn prepare(
     }
 }
 
+/// Whether the store holds `file` as parsed before.
+fn was_parsed(file: &DiscoveredFile, context: &Context<'_>) -> bool {
+    context
+        .known
+        .and_then(|known| known.get(&file.path))
+        .is_some_and(|row| row.file.flags.contains(FileFlags::PARSED))
+}
+
 /// Whether the file `record` describes, just read, holds what the store holds for it: the same
 /// contents by hash, language and flags.
 fn is_as_stored(record: &FileRecord, context: &Context<'_>) -> bool {
@@ -683,7 +778,44 @@ fn is_as_stored(record: &FileRecord, context: &Context<'_>) -> bool {
 /// whole, to hash it and count its lines, and then it is left to parse when Cortex parses its
 /// language and neither a tool nor a third party wrote it.
 fn read(file: &DiscoveredFile, root: &Path, max_file_bytes: u64, now_ms: i64) -> Read {
-    let mut record = FileRecord {
+    let mut record = record_of(file, now_ms);
+    if has_any(file.flags, &UNREAD) {
+        return Read::Done(Outcome::unparsed(record));
+    }
+    let Some(source) = read_contents(&mut record, root, max_file_bytes) else {
+        return Read::Done(Outcome::Skipped(record.path, FileProblem::Unreadable));
+    };
+    match file
+        .language
+        .filter(|_| is_parseable(file.language, file.flags))
+    {
+        Some(language) => Read::Parse {
+            record,
+            language,
+            source,
+        },
+        None => Read::Done(Outcome::unparsed(record)),
+    }
+}
+
+/// Whether a file in `language` with `flags` is read and parsed: Cortex parses its language, and
+/// it is neither unread for its kind nor written by a tool or a third party.
+fn is_parseable(language: Option<Language>, flags: FileFlags) -> bool {
+    language.is_some() && !has_any(flags, &UNREAD) && !has_any(flags, &UNPARSED)
+}
+
+/// Whether the stored `file` waits to be parsed: huge mode took inventory of it, unread, and it
+/// is one Cortex parses. A file read whose parse failed or ran out of time does not wait; it is
+/// tried again when it changes.
+pub(crate) fn waits_to_be_parsed(file: &FileRecord) -> bool {
+    file.content_hash.is_none()
+        && !file.flags.contains(FileFlags::PARSED)
+        && is_parseable(file.language, file.flags)
+}
+
+/// The row of `file` as the walk found it, unread, indexed at `now_ms`.
+fn record_of(file: &DiscoveredFile, now_ms: i64) -> FileRecord {
+    FileRecord {
         path: file.path.clone(),
         language: file.language,
         size_bytes: file.size_bytes,
@@ -692,20 +824,6 @@ fn read(file: &DiscoveredFile, root: &Path, max_file_bytes: u64, now_ms: i64) ->
         mtime_ns: file.mtime_ns,
         flags: file.flags,
         indexed_at_ms: now_ms,
-    };
-    if has_any(file.flags, &UNREAD) {
-        return Read::Done(Outcome::unparsed(record));
-    }
-    let Some(source) = read_contents(&mut record, root, max_file_bytes) else {
-        return Read::Done(Outcome::Skipped(record.path, FileProblem::Unreadable));
-    };
-    match file.language.filter(|_| !has_any(file.flags, &UNPARSED)) {
-        Some(language) => Read::Parse {
-            record,
-            language,
-            source,
-        },
-        None => Read::Done(Outcome::unparsed(record)),
     }
 }
 
@@ -956,6 +1074,7 @@ mod tests {
             grammars: &grammars,
             project: &Project::load(Vec::new(), &|_| None),
             known: None,
+            is_inventory: false,
             max_file_bytes: 1000,
             parse_timeout: Duration::from_secs(60),
             threads: NonZeroUsize::MIN,

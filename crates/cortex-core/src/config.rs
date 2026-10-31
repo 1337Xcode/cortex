@@ -27,6 +27,11 @@ pub const DEFAULT_IDLE_SHUTDOWN_MINUTES: u64 = 30;
 /// database straight from the operating system's file cache instead of copying it into its own.
 pub const DEFAULT_MMAP_BYTES: u64 = 268_435_456;
 
+/// The default for `index.crawl_files_per_second`: how many files the background crawler parses
+/// a second in huge mode, on one thread. A file parses in a few milliseconds, so this keeps the
+/// crawler to a fraction of one core; 100,000 files take under 20 minutes.
+pub const DEFAULT_CRAWL_FILES_PER_SECOND: u64 = 100;
+
 /// The scale mode setting: chosen from the repository's size, or pinned by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModeSetting {
@@ -57,6 +62,9 @@ pub struct Config {
     /// `store.mmap_bytes`: how much of the database SQLite maps into memory; 0 turns mapping off.
     /// Default [`DEFAULT_MMAP_BYTES`].
     pub mmap_bytes: u64,
+    /// `index.crawl_files_per_second`: how many files the background crawler parses a second in
+    /// huge mode. Default [`DEFAULT_CRAWL_FILES_PER_SECOND`].
+    pub crawl_files_per_second: u64,
 }
 
 impl Default for Config {
@@ -69,6 +77,7 @@ impl Default for Config {
             parse_timeout_ms: DEFAULT_PARSE_TIMEOUT_MS,
             idle_shutdown_minutes: DEFAULT_IDLE_SHUTDOWN_MINUTES,
             mmap_bytes: DEFAULT_MMAP_BYTES,
+            crawl_files_per_second: DEFAULT_CRAWL_FILES_PER_SECOND,
         }
     }
 }
@@ -193,6 +202,10 @@ impl Config {
                 self.mmap_bytes =
                     whole_number(value).ok_or_else(|| refuse("a whole number, 0 or more"))?;
             }
+            "index.crawl_files_per_second" => {
+                self.crawl_files_per_second =
+                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
+            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -251,6 +264,7 @@ mod tests {
                 parse_timeout_ms: 1000,
                 idle_shutdown_minutes: 30,
                 mmap_bytes: 256 * 1024 * 1024,
+                crawl_files_per_second: 100,
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -266,7 +280,8 @@ mod tests {
         );
         let repository = layer(
             "repository",
-            "[index]\nmax_file_bytes = 5000\nparse_timeout_ms = 250\n[daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n",
+            "[index]\nmax_file_bytes = 5000\nparse_timeout_ms = 250\ncrawl_files_per_second = 7\n\
+             [daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -278,6 +293,7 @@ mod tests {
                 parse_timeout_ms: 250,
                 idle_shutdown_minutes: 5,
                 mmap_bytes: 0,
+                crawl_files_per_second: 7,
             }
         );
         Ok(())

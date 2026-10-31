@@ -17,6 +17,7 @@
 #![warn(clippy::pedantic)]
 
 mod bindings;
+mod crawl;
 mod deadline;
 mod detect;
 mod discover;
@@ -53,13 +54,16 @@ mod test_support;
 mod test_targets;
 mod watch;
 
+pub use crawl::Crawl;
 pub use discover::{
     DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, MAX_FOLDER_DEPTH, Problem,
     ProblemKind, discover,
 };
 pub use extract::{ExtractError, Extraction, Extractor, LeftOut};
 pub use grammar::{GrammarError, Grammars};
-pub use pipeline::{FileProblem, IndexError, IndexOptions, IndexReport, index_repository};
+pub use pipeline::{
+    FileProblem, IndexError, IndexOptions, IndexReport, index_repository, parse_files,
+};
 pub use references::Qualifier;
 pub use rules::MAX_REPORTED_LINES;
 pub use scale::{RepoSize, mode_for};
