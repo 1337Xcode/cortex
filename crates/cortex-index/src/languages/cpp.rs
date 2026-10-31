@@ -20,6 +20,7 @@ pub const SPEC: Spec = Spec {
         // their declarator alone, and uses a capture Cortex reads differently.
         queries: &[include_str!("../../queries/cpp-tags.scm")],
         imports: include_str!("../../queries/cpp-imports.scm"),
+        qualified_by: &[],
         // Functions, classes, namespaces and enums have a body; a macro, a constant or a member
         // constant its value.
         body_paths: &[&["body"], &["value"], &["default_value"]],

@@ -21,6 +21,12 @@ pub const SPEC: Spec = Spec {
             tree_sitter_go::TAGS_QUERY,
         ],
         imports: include_str!("../../queries/go-imports.scm"),
+        // `orders.Place()`, `o.Total()` and the type `orders.Order`: a name reached through a
+        // package or a value.
+        qualified_by: &[
+            ("selector_expression", "operand"),
+            ("qualified_type", "package"),
+        ],
         // Functions and methods have a body, a constant its value, and a named type the type it
         // stands for.
         body_paths: &[&["body"], &["value"], &["type"]],

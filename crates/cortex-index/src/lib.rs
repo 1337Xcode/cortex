@@ -52,5 +52,6 @@ pub use discover::{
 pub use extract::{ExtractError, Extraction, Extractor, LeftOut};
 pub use grammar::{GrammarError, Grammars};
 pub use pipeline::{FileProblem, IndexError, IndexOptions, IndexReport, index_repository};
+pub use references::Qualifier;
 pub use rules::MAX_REPORTED_LINES;
 pub use specifiers::{Import, Imported};

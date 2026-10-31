@@ -13,7 +13,7 @@ use tree_sitter::{ParseOptions, ParseState, Parser, QueryCursor, Tree};
 use crate::deadline::Deadline;
 use crate::grammar::Grammars;
 use crate::path_rules::is_test_file;
-use crate::references::build_references;
+use crate::references::{Qualifier, build_references};
 use crate::specifiers::{Import, read_imports};
 use crate::symbols::build_symbols;
 use crate::tags::{Tag, read_tags};
@@ -26,6 +26,9 @@ pub struct Extraction {
     /// The names it uses, in the order they appear, each name an import takes among them as a
     /// reference of kind `import`.
     pub refs: Vec<RefRecord>,
+    /// What each of `refs` is reached through, in the same order. The store keeps no qualifier:
+    /// it serves tying the references while the file is indexed.
+    pub qualifiers: Vec<Qualifier>,
     /// The modules it imports, in the order they appear.
     pub imports: Vec<Import>,
     /// What its queries found that was left out.
@@ -143,7 +146,8 @@ impl Extractor {
             grammar.spec,
             is_test_file(path, grammar.spec.test_files),
         );
-        let refs = build_references(&tags, source, &symbols);
+        let (refs, qualifiers) =
+            build_references(&tags, source, &symbols, grammar.spec.qualified_by);
         let left_out = LeftOut {
             definitions: read.broken_definitions + unrecorded(definitions, symbols.len()),
             references: read.broken_references + unrecorded(references, refs.len()),
@@ -152,6 +156,7 @@ impl Extractor {
         Ok(Extraction {
             symbols,
             refs,
+            qualifiers,
             imports: imported.imports,
             left_out,
         })

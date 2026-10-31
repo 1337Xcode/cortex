@@ -21,6 +21,8 @@ pub const SPEC: Spec = Spec {
             tree_sitter_python::TAGS_QUERY,
         ],
         imports: include_str!("../../queries/python-imports.scm"),
+        // `models.Order()` and `line.strip()`: a name reached through a module or a value.
+        qualified_by: &[("attribute", "object")],
         // Functions and classes have a body, and so does a decorated one, inside it. An
         // assignment's value and a type alias's type change without changing what the name is.
         body_paths: &[&["body"], &["right"], &["definition", "body"]],

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use common::grammars;
 use cortex_core::{Language, RefKind, RepoPath, ShortHash, SymbolKind};
-use cortex_index::{ExtractError, Extraction, Extractor, Imported, LeftOut};
+use cortex_index::{ExtractError, Extraction, Extractor, Imported, LeftOut, Qualifier};
 
 /// What the tests return: any failure, with its cause.
 type TestResult = Result<(), Box<dyn Error>>;
@@ -243,6 +243,118 @@ fn imported_names_are_referenced_where_they_are_written() -> TestResult {
         .collect();
     assert_eq!(lines, [2, 3, 5, 8]);
     assert!(extraction.left_out.is_empty());
+    Ok(())
+}
+
+/// A use as the qualifier test reads it: kind, name, line and qualifier text, `[other]` for one
+/// too long to be a name.
+type Reached<'a> = (&'a str, &'a str, u32, Option<&'a str>);
+
+/// Each use is read with what is written before its name in a qualifying form of its language:
+/// a package, a module, a namespace, a value or a type. A bare name has nothing before it, and a
+/// qualifier too long to store as a name is still a qualifier.
+#[test]
+fn references_know_what_they_are_reached_through() -> TestResult {
+    let long = "a".repeat(300);
+    let python = format!(
+        "import shop.models\nfrom text import strip\n\ndef f(line):\n    shop.models.Order()\n    \
+         line.strip()\n    strip(line)\n    {long}.go()\n"
+    );
+    let cases: [(&str, Language, &str, &[Reached<'_>]); 6] = [
+        (
+            "app.py",
+            Language::Python,
+            &python,
+            &[
+                ("import", "strip", 2, None),
+                ("call", "Order", 5, Some("shop.models")),
+                ("call", "strip", 6, Some("line")),
+                ("call", "strip", 7, None),
+                ("call", "go", 8, Some("[other]")),
+            ],
+        ),
+        (
+            "app.ts",
+            Language::TypeScript,
+            "import { map } from \"./util\";\napi.fetch();\nitems.map(f);\nmap(items);\n\
+             let p: geo.Point;\n",
+            &[
+                ("import", "map", 1, None),
+                ("call", "fetch", 2, Some("api")),
+                ("call", "map", 3, Some("items")),
+                ("call", "map", 4, None),
+                ("type_ref", "Point", 5, Some("geo")),
+            ],
+        ),
+        (
+            "app.js",
+            Language::JavaScript,
+            "api.fetch();\nfetch();\n",
+            &[
+                ("call", "fetch", 1, Some("api")),
+                ("call", "fetch", 2, None),
+            ],
+        ),
+        (
+            "app.tsx",
+            Language::Tsx,
+            "api.fetch();\nlet p: geo.Point;\nfetch();\n",
+            &[
+                ("call", "fetch", 1, Some("api")),
+                ("type_ref", "Point", 2, Some("geo")),
+                ("call", "fetch", 3, None),
+            ],
+        ),
+        (
+            "main.go",
+            Language::Go,
+            "package main\n\nimport \"example.com/shop/orders\"\n\nfunc main() {\n\
+             \torders.Place()\n\to.Total()\n\tvar x orders.Order\n\tRun()\n}\n",
+            &[
+                ("call", "Place", 6, Some("orders")),
+                ("call", "Total", 7, Some("o")),
+                ("type_ref", "Order", 8, Some("orders")),
+                ("call", "Run", 9, None),
+            ],
+        ),
+        (
+            "src/main.rs",
+            Language::Rust,
+            "use crate::models;\n\nfn main() {\n    models::helper();\n    x.len();\n    \
+             let o: models::Order = Order::new();\n    run();\n}\n",
+            &[
+                ("import", "models", 1, Some("crate")),
+                ("call", "helper", 4, Some("models")),
+                ("call", "len", 5, Some("x")),
+                ("type_ref", "Order", 6, Some("models")),
+                ("call", "new", 6, Some("Order")),
+                ("call", "run", 7, None),
+            ],
+        ),
+    ];
+    for (path, language, source, expected) in cases {
+        let extraction = extract(path, language, source)?;
+        assert_eq!(extraction.refs.len(), extraction.qualifiers.len(), "{path}");
+        let found: Vec<Reached<'_>> = extraction
+            .refs
+            .iter()
+            .zip(&extraction.qualifiers)
+            .map(|(reference, qualifier)| {
+                let qualifier = match qualifier {
+                    Qualifier::None => None,
+                    Qualifier::Name(name) => Some(name.as_str()),
+                    Qualifier::Other => Some("[other]"),
+                };
+                (
+                    reference.kind.name(),
+                    reference.dst_name.as_str(),
+                    reference.line,
+                    qualifier,
+                )
+            })
+            .collect();
+        assert_eq!(found, expected, "{path}");
+    }
     Ok(())
 }
 

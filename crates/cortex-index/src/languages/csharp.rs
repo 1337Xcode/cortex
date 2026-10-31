@@ -17,6 +17,7 @@ pub const SPEC: Spec = Spec {
         // Cortex's own query: the grammar's uses a capture outside the tags format.
         queries: &[include_str!("../../queries/csharp-tags.scm")],
         imports: include_str!("../../queries/csharp-imports.scm"),
+        qualified_by: &[],
         // Types, namespaces, methods and constructors have a body. A constant's value has no
         // field of its own, so a constant is all header.
         body_paths: &[&["body"]],

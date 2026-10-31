@@ -22,6 +22,8 @@ pub const SPEC: Spec = Spec {
             include_str!("../../queries/jsx-tags.scm"),
         ],
         imports: include_str!("../../queries/javascript-imports.scm"),
+        // `api.fetch()`: a name reached through a value or a namespace.
+        qualified_by: &[("member_expression", "object")],
         // Functions, methods and classes have a body. A declaration, property, field or
         // assignment holding a function has the function's body; one holding another value has
         // the value, as an exported assignment does.

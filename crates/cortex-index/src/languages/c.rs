@@ -19,6 +19,7 @@ pub const SPEC: Spec = Spec {
         // their declarator alone.
         queries: &[include_str!("../../queries/c-tags.scm")],
         imports: include_str!("../../queries/c-imports.scm"),
+        qualified_by: &[],
         // Functions, structs, unions and enums have a body, a macro or a constant its value.
         body_paths: &[&["body"], &["value"]],
         // The names Unity and CMocka tests usually take.

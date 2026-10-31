@@ -17,6 +17,7 @@ pub const SPEC: Spec = Spec {
         // Cortex's own query: the grammar ships none.
         queries: &[include_str!("../../queries/kotlin-tags.scm")],
         imports: include_str!("../../queries/kotlin-imports.scm"),
+        qualified_by: &[],
         // The grammar names no field for a body, so the query captures each definition's body.
         body_paths: &[],
         // The names Gradle and Maven run as unit and integration tests.

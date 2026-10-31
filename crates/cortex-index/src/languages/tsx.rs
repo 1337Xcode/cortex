@@ -24,6 +24,12 @@ pub const SPEC: Spec = Spec {
             include_str!("../../queries/jsx-tags.scm"),
         ],
         imports: IMPORTS,
+        // `api.fetch()` and the type `geo.Point`: a name reached through a value or a
+        // namespace.
+        qualified_by: &[
+            ("member_expression", "object"),
+            ("nested_type_identifier", "module"),
+        ],
         body_paths: BODY_PATHS,
         // The names Jest, Vitest and Mocha look for.
         test_files: &[

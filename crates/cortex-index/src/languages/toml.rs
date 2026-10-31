@@ -17,6 +17,7 @@ pub const SPEC: Spec = Spec {
         queries: &[include_str!("../../queries/toml-tags.scm")],
         // A TOML file imports nothing.
         imports: "",
+        qualified_by: &[],
         // Keys and tables have no body field; their patterns capture where the header ends.
         body_paths: &[],
         // A TOML file holds no tests.

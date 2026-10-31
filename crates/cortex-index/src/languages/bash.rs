@@ -24,6 +24,7 @@ pub const SPEC: Spec = Spec {
         // Cortex's own query: the grammar ships none.
         queries: &[include_str!("../../queries/bash-tags.scm")],
         imports: include_str!("../../queries/bash-imports.scm"),
+        qualified_by: &[],
         // A function has a body. A constant spans its assignment, which has none.
         body_paths: &[&["body"]],
         // The names shell test scripts usually take.

@@ -32,6 +32,7 @@ pub const SPEC: Spec = Spec {
             tree_sitter_ruby::TAGS_QUERY,
         ],
         imports: include_str!("../../queries/ruby-imports.scm"),
+        qualified_by: &[],
         // Classes, modules and methods have a body, a constant its value.
         body_paths: &[&["body"], &["right"]],
         // Minitest's and Test::Unit's file names, and RSpec's.

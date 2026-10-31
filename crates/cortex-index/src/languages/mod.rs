@@ -60,6 +60,13 @@ pub struct TagsSpec {
     pub queries: &'static [&'static str],
     /// The query that finds each module a file imports, with what it takes and the name it binds.
     pub imports: &'static str,
+    /// The grammar's forms that reach a name through something written before it, each as the
+    /// kind of node holding both and the field of the part before the name: a `member_expression`
+    /// reaches its `property` through its `object`. A use whose name follows that part in one of
+    /// these is qualified by it, so an import that binds the bare name does not bind it. Every
+    /// language whose imports name files lists its forms; one whose imports name none may list
+    /// none, since its uses are tied by name alone.
+    pub qualified_by: &'static [(&'static str, &'static str)],
     /// The paths of grammar fields that lead from a definition's node to its body, tried in order.
     /// A definition's header, which its signature hash covers, runs up to the last part before its
     /// body, leaving out comments in between; a definition no path leads to a body from is all

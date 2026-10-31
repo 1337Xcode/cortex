@@ -17,6 +17,7 @@ pub const SPEC: Spec = Spec {
         // Cortex's own query: the grammar's reads kinds outside the tags format.
         queries: &[include_str!("../../queries/scala-tags.scm")],
         imports: include_str!("../../queries/scala-imports.scm"),
+        qualified_by: &[],
         // Classes, objects, traits and functions have a body. A value's has a field of its own,
         // which is not read as a body, so a constant is all header.
         body_paths: &[&["body"]],

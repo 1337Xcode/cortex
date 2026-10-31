@@ -17,6 +17,7 @@ pub const SPEC: Spec = Spec {
         // Cortex's own query: the grammar's own takes a method's whole class for the method.
         queries: &[include_str!("../../queries/swift-tags.scm")],
         imports: include_str!("../../queries/swift-imports.scm"),
+        qualified_by: &[],
         // Types, protocols, functions and initializers have a body. A constant's value has no
         // field of its own, so a constant is all header.
         body_paths: &[&["body"]],

@@ -17,6 +17,7 @@ pub const SPEC: Spec = Spec {
         queries: &[include_str!("../../queries/sql-tags.scm")],
         // A script imports nothing the index reads.
         imports: "",
+        qualified_by: &[],
         // Statements have no body field; their patterns capture where the header ends.
         body_paths: &[],
         // Tests in SQL take no form the index can tell.

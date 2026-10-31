@@ -22,6 +22,13 @@ pub const SPEC: Spec = Spec {
             include_str!("../../queries/rust-type-uses.scm"),
         ],
         imports: include_str!("../../queries/rust-imports.scm"),
+        // `x.len()`, `Order::new()` and the type `models::Order`: a name reached through a
+        // value, a type or a module path.
+        qualified_by: &[
+            ("field_expression", "value"),
+            ("scoped_identifier", "path"),
+            ("scoped_type_identifier", "path"),
+        ],
         // Items with braces have a body, a constant or static its value, and a type alias the
         // type it stands for.
         body_paths: &[&["body"], &["value"], &["type"]],

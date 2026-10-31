@@ -17,6 +17,7 @@ pub const SPEC: Spec = Spec {
         // Cortex's own query: the grammar's reads properties with a kind outside the format.
         queries: &[include_str!("../../queries/php-tags.scm")],
         imports: include_str!("../../queries/php-imports.scm"),
+        qualified_by: &[],
         // Classes, functions, methods and namespaces have a body. A constant's value has no field
         // of its own, so a constant is all header.
         body_paths: &[&["body"]],

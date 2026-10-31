@@ -26,6 +26,7 @@ pub(crate) const fn python_spec(tags: &'static [&'static str], imports: &'static
         grammar: python,
         queries: tags,
         imports,
+        qualified_by: &[],
         body_paths: &[],
         test_files: &[],
         test_functions: &[],

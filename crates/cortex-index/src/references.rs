@@ -1,21 +1,40 @@
 //! The names a file uses as the index records them: each with its kind, its line and the
-//! definition it sits in.
+//! definition it sits in, and what it is reached through, if anything is written before it.
 
 use cortex_core::Identifier;
 use cortex_store::{RefRecord, SymbolRecord};
+use tree_sitter::Node;
 
 use crate::lines::line_number;
+use crate::name_text::name_text;
 use crate::tags::{Role, Tag};
 
+/// What a use of a name is reached through: what is written before it in a qualifying form of its
+/// language, such as `orders` in `orders.Place()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Qualifier {
+    /// Nothing: the name stands alone, as in `place()` or `Order`.
+    None,
+    /// The name or expression written before it, as text: `orders` in `orders.Place()`,
+    /// `shop.models` in `shop.models.Order()`, `x.iter()` in `x.iter().map(f)`.
+    Name(Identifier),
+    /// Something written before it whose text is not a name Cortex can store, such as an
+    /// expression spanning lines.
+    Other,
+}
+
 /// The references among `tags`, which are in the order their names appear, as records, each tied
-/// to the smallest of `symbols` around its name. `symbols` are in the order of their starts, each
-/// after the one around it.
+/// to the smallest of `symbols` around its name, with what each is reached through as
+/// `qualified_by`, its language's qualifying forms, reads it, in the same order. `symbols` are in
+/// the order of their starts, each after the one around it.
 pub(crate) fn build_references(
     tags: &[Tag<'_>],
     source: &[u8],
     symbols: &[SymbolRecord],
-) -> Vec<RefRecord> {
+    qualified_by: &[(&str, &str)],
+) -> (Vec<RefRecord>, Vec<Qualifier>) {
     let mut refs = Vec::new();
+    let mut qualifiers = Vec::new();
     // The positions of the symbols that start before the current name and may hold it, outer
     // before inner, and of the next symbol to consider.
     let mut around: Vec<usize> = Vec::new();
@@ -47,8 +66,29 @@ pub(crate) fn build_references(
             kind,
             line,
         });
+        qualifiers.push(qualifier_of(tag.name, qualified_by, source));
     }
-    refs
+    (refs, qualifiers)
+}
+
+/// What the name at `name` is reached through: the part written before it in the qualifying form,
+/// among `qualified_by`, that holds it.
+fn qualifier_of(name: Node<'_>, qualified_by: &[(&str, &str)], source: &[u8]) -> Qualifier {
+    let Some(holder) = name.parent() else {
+        return Qualifier::None;
+    };
+    let before = qualified_by
+        .iter()
+        .filter(|(kind, _)| holder.kind() == *kind)
+        .filter_map(|(_, field)| holder.child_by_field_name(field))
+        .find(|part| part.end_byte() <= name.start_byte());
+    match before {
+        None => Qualifier::None,
+        Some(part) => match name_text(part, source).and_then(|text| Identifier::new(&text).ok()) {
+            Some(text) => Qualifier::Name(text),
+            None => Qualifier::Other,
+        },
+    }
 }
 
 /// Drops from the end of `around` the symbols that do not hold the bytes from `start` to `end`,
@@ -90,7 +130,8 @@ mod tests {
         let source = "a . b()\n";
         let names = |spec: &'static TagsSpec| {
             with_tags(spec, source, |tags| {
-                build_references(tags, source.as_bytes(), &[])
+                build_references(tags, source.as_bytes(), &[], &[])
+                    .0
                     .into_iter()
                     .map(|reference| reference.dst_name.as_str().to_owned())
                     .collect::<Vec<_>>()
@@ -98,6 +139,33 @@ mod tests {
         };
         assert_eq!(names(&PROSE)?, ["a . b"]);
         assert_eq!(names(&TOKENS)?, ["a.b"]);
+        Ok(())
+    }
+
+    /// A name is qualified by the part a qualifying form writes before it: in `a.b()` the name
+    /// `b` is reached through `a`, while `a`, which is that part itself, is reached through
+    /// nothing. Without the form listed, nothing qualifies anything.
+    #[test]
+    fn a_name_is_qualified_by_what_is_written_before_it() -> Result<(), Box<dyn Error>> {
+        static ATTRIBUTE: TagsSpec = python_spec(
+            &["(call function: (attribute attribute: (identifier) @name)) @reference.call"],
+            PLAIN_IMPORTS,
+        );
+        static OBJECT: TagsSpec = python_spec(
+            &["(call function: (attribute object: (identifier) @name)) @reference.call"],
+            PLAIN_IMPORTS,
+        );
+        let source = "a.b()\n";
+        let qualifiers = |spec: &'static TagsSpec, forms: &'static [(&str, &str)]| {
+            with_tags(spec, source, |tags| {
+                build_references(tags, source.as_bytes(), &[], forms).1
+            })
+        };
+        let attribute: &[(&str, &str)] = &[("attribute", "object")];
+        let a = Identifier::new("a")?;
+        assert_eq!(qualifiers(&ATTRIBUTE, attribute)?, [Qualifier::Name(a)]);
+        assert_eq!(qualifiers(&OBJECT, attribute)?, [Qualifier::None]);
+        assert_eq!(qualifiers(&ATTRIBUTE, &[])?, [Qualifier::None]);
         Ok(())
     }
 }

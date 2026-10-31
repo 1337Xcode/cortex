@@ -17,6 +17,7 @@ pub const SPEC: Spec = Spec {
         queries: &[include_str!("../../queries/yaml-tags.scm")],
         // A YAML file imports nothing.
         imports: "",
+        qualified_by: &[],
         // A key's value is its body, so its header is the key.
         body_paths: &[&["value"]],
         // A YAML file holds no tests.

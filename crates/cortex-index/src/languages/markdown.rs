@@ -17,6 +17,7 @@ pub const SPEC: Spec = Spec {
         queries: &[include_str!("../../queries/markdown-tags.scm")],
         // A document imports nothing.
         imports: "",
+        qualified_by: &[],
         // A heading has no body: it is all header.
         body_paths: &[],
         // A document holds no tests.
