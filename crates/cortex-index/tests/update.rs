@@ -607,6 +607,40 @@ fn a_new_folder_is_indexed_by_its_files() -> TestResult {
     Ok(())
 }
 
+/// A rules file named `.GitIgnore` is no `.gitignore` to the walk, which takes rules files from a
+/// folder's listing by exact name, nor to an index of chosen paths, whether or not the file system
+/// tells the two names apart: the file it lists stays indexed through an edit.
+#[test]
+fn a_rules_file_named_in_another_case_is_none() -> TestResult {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("repo");
+    std::fs::create_dir_all(root.join("sub"))?;
+    std::fs::write(root.join("sub/.GitIgnore"), "kept.py\n")?;
+    std::fs::write(root.join("sub/kept.py"), "def kept():\n    pass\n")?;
+    let grammars = grammars()?;
+    let kept_folder = scratch.path().join("kept");
+    let mut kept = writer(&kept_folder, &root)?;
+    index_repository(&root, &grammars, &mut kept, &options())?;
+    std::fs::write(root.join("sub/kept.py"), "def kept():\n    return 1\n")?;
+    index_paths(
+        &root,
+        &grammars,
+        &mut kept,
+        &options(),
+        &[RepoPath::new("sub/kept.py")?],
+    )?;
+    let fresh_folder = scratch.path().join("fresh");
+    index_repository(
+        &root,
+        &grammars,
+        &mut writer(&fresh_folder, &root)?,
+        &options(),
+    )?;
+    let (left, right) = (snapshot(&kept_folder)?, snapshot(&fresh_folder)?);
+    assert!(left == right, "{}", differences(&left, &right));
+    Ok(())
+}
+
 /// A file renamed in case alone, as the watcher reports it with both spellings, is stored under its
 /// new name only, as a fresh index stores it, whether or not the file system tells the two apart.
 #[test]

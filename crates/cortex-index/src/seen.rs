@@ -263,7 +263,12 @@ impl PathRules {
             max_bytes: self.walk.max_file_bytes,
             problems: &mut problems,
         };
-        let is_listed = |name: &str| native.join(name).is_file();
+        // As the walk does, rules files are taken from the folder's listing by exact name: on a
+        // file system that ignores case, asking for `.gitignore` would find a `.GitIgnore` too.
+        let listed: Vec<std::ffi::OsString> = fs::read_dir(&native)
+            .map(|entries| entries.flatten().map(|entry| entry.file_name()).collect())
+            .unwrap_or_default();
+        let is_listed = |name: &str| listed.iter().any(|entry| entry == name);
         let rules = Rc::new(FolderRules::load(
             &native,
             path.clone(),
