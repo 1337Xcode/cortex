@@ -3,7 +3,7 @@
 
 use std::error::Error;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -12,7 +12,9 @@ use cortex_core::ipc::{
     CORTEX_VERSION, Hello, Mismatch, Protocol, Request, RequestBody, Response, ResponseBody, Role,
     Welcome, read_frame, write_frame,
 };
-use cortex_core::{Endpoint, RepoId, RunFiles, UserFolder};
+use cortex_core::{
+    Agent, Endpoint, Event, HookKind, Identifier, RepoId, RunFiles, Ulid, UserFolder,
+};
 use cortex_hook::{ClientError, ask};
 use interprocess::local_socket::traits::Listener as _;
 use interprocess::local_socket::{
@@ -37,11 +39,21 @@ enum Script {
     Raw(Vec<u8>),
 }
 
-/// The run files of a repository of its own under a temporary home, the run folder created.
+/// The run files of a repository of its own under a temporary home, the run folder created and
+/// its process-id file naming this process, which plays the daemon.
 fn run_files(home: &Path) -> TestResult<RunFiles> {
     let user = UserFolder::in_home(home);
     std::fs::create_dir_all(user.run_folder())?;
-    Ok(user.run_files(&RepoId::of(home)))
+    let files = user.run_files(&RepoId::of(home));
+    std::fs::write(
+        files.pid_path(),
+        format!(
+            "{}
+",
+            std::process::id()
+        ),
+    )?;
+    Ok(files)
 }
 
 /// A listener at the endpoint of `files`.
@@ -241,5 +253,64 @@ fn broken_answers_break_the_protocol() -> TestResult {
         );
         drop(daemon.join());
     }
+    Ok(())
+}
+
+/// A request longer than a frame may be is refused before the endpoint is reached: with no daemon
+/// listening, the answer is that the request is too long, not that no daemon runs.
+#[test]
+fn a_request_too_long_is_never_sent() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let files = run_files(home.path())?;
+    let event = Event {
+        event_id: Ulid::from_seed(1, b"long"),
+        ts_ms: 1,
+        agent: Agent::Claude,
+        agent_version: None,
+        session_id: Identifier::new("s1")?,
+        parent_session_id: None,
+        cwd: PathBuf::from("/repo"),
+        repo_root: PathBuf::from("/repo"),
+        hook: HookKind::Prompt,
+        source: None,
+        tool: None,
+        tool_target: None,
+        tool_result: None,
+        prompt_text: Some("x".repeat(1_048_576)),
+        transcript_path: None,
+        model: None,
+        subagent_type: None,
+        compact_trigger: None,
+        end_reason: None,
+    };
+    let body = RequestBody::Event {
+        event: Box::new(event),
+    };
+    let result = ask(&files, Role::Hook, body, in_millis(5_000));
+    assert!(matches!(result, Err(ClientError::TooLarge)), "{result:?}");
+    Ok(())
+}
+
+/// On Windows, a pipe of the daemon's name held by a process the run folder does not name as the
+/// daemon (another user could create one while no daemon runs) is told nothing: the client hangs
+/// up before writing a byte.
+#[cfg(windows)]
+#[test]
+fn a_pipe_held_by_another_process_is_told_nothing() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let files = run_files(home.path())?;
+    std::fs::write(
+        files.pid_path(),
+        "4294967295
+",
+    )?;
+    let daemon = serve(&files, Script::Answer(Vec::new()))?;
+    let result = ask(&files, Role::Hook, RequestBody::Status, in_millis(5_000));
+    assert!(
+        matches!(result, Err(ClientError::NotTheDaemon)),
+        "{result:?}"
+    );
+    let served = daemon.join().map_err(|_| "the daemon thread panicked")?;
+    assert!(served.is_err(), "the impostor read {served:?}");
     Ok(())
 }

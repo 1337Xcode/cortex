@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use crate::{output, repository};
+use anyhow::Context;
+
+use crate::output;
 
 /// The arguments of `cortex daemon`.
 #[derive(Debug, clap::Args)]
@@ -13,12 +15,16 @@ pub(crate) struct Args {
     root: Option<PathBuf>,
 }
 
-/// Runs the daemon for the repository until it has been idle long enough.
+/// Runs the daemon for the repository until it has been idle long enough. The daemon names the
+/// repository by its canonical root itself.
 ///
 /// # Errors
 ///
-/// A root that is not a folder, and the daemon's own errors.
+/// The current folder cannot be read, and the daemon's own errors.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let root = repository::root(args.root.as_deref())?;
+    let root = match &args.root {
+        Some(root) => root.clone(),
+        None => std::env::current_dir().context("reading the current folder")?,
+    };
     cortex_daemon::run(&root, &mut |line| output::note(line))
 }

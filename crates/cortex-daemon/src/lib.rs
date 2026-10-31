@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use cortex_core::{RepoId, UserFolder};
+use cortex_core::{RepoId, UserFolder, canonical_root};
 use cortex_index::{Change, DiscoverOptions, Grammars, IndexReport, watch};
 use cortex_store::{Writer, WriterOptions};
 
@@ -41,16 +41,21 @@ const SERVER_THREADS: usize = 2;
 /// How long the connections still open get to finish when the daemon stops.
 const STOP_GRACE: Duration = Duration::from_secs(1);
 
-/// Runs the daemon for the repository whose canonical root is `root` until it is asked to stop or
-/// has been idle long enough. Each line a person running it in the foreground should see
+/// Runs the daemon for the repository whose root folder is `root`, in any spelling, until it is
+/// asked to stop or has been idle long enough. Each line a person running it in the foreground should see
 /// (configuration warnings, the ready line) goes to `note`.
 ///
 /// # Errors
 ///
-/// No home folder, another daemon serving the repository, an endpoint that cannot be bound, an
+/// A root that is not a folder, no home folder, another daemon serving the repository, an
+/// endpoint that cannot be bound, an
 /// unusable configuration, a store that cannot be opened, a watcher that cannot start or stops, a
 /// failed index, and a line `note` could not write.
 pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> anyhow::Result<()> {
+    // The repository is named by its canonical root, however the caller spelled it, so that the
+    // daemon's lock and endpoint are the ones hooks and commands look for.
+    let root =
+        &canonical_root(root).with_context(|| format!("finding the folder {}", root.display()))?;
     let user = UserFolder::of_current_user().context("finding the user's home folder")?;
     let repo_id = RepoId::of(root);
     let _instance = Instance::acquire(&user, &repo_id)?;

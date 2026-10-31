@@ -6,6 +6,7 @@
 //! behind: the hook process it belongs to exits right after, and the CLI soon after.
 
 use std::io::{self, Write};
+use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -15,8 +16,9 @@ use cortex_core::ipc::{
 };
 use cortex_core::{Endpoint, RunFiles};
 use interprocess::ConnectWaitMode;
+use interprocess::local_socket::traits::StreamCommon as _;
 use interprocess::local_socket::{
-    ConnectOptions, GenericFilePath, GenericNamespaced, Name, ToFsName, ToNsName,
+    ConnectOptions, GenericFilePath, GenericNamespaced, Name, Stream, ToFsName, ToNsName,
 };
 
 /// The request id of the handshake, the first request on a connection.
@@ -45,6 +47,13 @@ pub enum ClientError {
     /// An answer broke the protocol.
     #[error("the daemon's answer broke the protocol: {0}")]
     Protocol(&'static str),
+    /// The request is longer than a frame may be; it was not sent.
+    #[error("the request is longer than a frame may be")]
+    TooLarge,
+    /// The endpoint is held by a process other than the one the run files name as the daemon; it
+    /// was told nothing.
+    #[error("the endpoint is held by a process that is not this repository's daemon")]
+    NotTheDaemon,
     /// Talking to the daemon failed.
     #[error("talking to the daemon failed")]
     Io(#[source] io::Error),
@@ -78,7 +87,8 @@ pub struct Answer {
 ///
 /// [`ClientError::NotRunning`] when no daemon listens, [`ClientError::TimedOut`] when the deadline
 /// passes first (or has passed), [`ClientError::Mismatch`] when the daemon speaks another protocol,
-/// and the protocol and I/O errors of a broken exchange.
+/// [`ClientError::TooLarge`] for a request too long to send, [`ClientError::NotTheDaemon`] when
+/// another process holds the endpoint, and the protocol and I/O errors of a broken exchange.
 pub fn ask(
     files: &RunFiles,
     role: Role,
@@ -89,11 +99,16 @@ pub fn ask(
         .checked_duration_since(Instant::now())
         .filter(|remaining| !remaining.is_zero())
         .ok_or(ClientError::TimedOut)?;
+    let frames = frames_of(role, body)?;
     let endpoint = files.endpoint();
+    let daemon_pid_path = files.pid_path();
     let (sender, receiver) = mpsc::channel();
     std::thread::Builder::new()
         .name("cortex-ipc".to_owned())
-        .spawn(move || drop(sender.send(exchange(&endpoint, role, body, remaining))))
+        .spawn(move || {
+            let exchanged = exchange(&endpoint, &daemon_pid_path, &frames, remaining);
+            drop(sender.send(exchanged));
+        })
         .map_err(ClientError::Io)?;
     // INVARIANT: fail-open (the caller waits for the daemon no longer than its deadline)
     receiver
@@ -101,19 +116,9 @@ pub fn ask(
         .unwrap_or(Err(ClientError::TimedOut))
 }
 
-/// Connects within `connect_within`, sends the handshake and the request in one write, and reads
-/// both answers.
-fn exchange(
-    endpoint: &Endpoint,
-    role: Role,
-    body: RequestBody,
-    connect_within: Duration,
-) -> Result<Answer, ClientError> {
-    let mut stream = ConnectOptions::new()
-        .name(name_of(endpoint).map_err(ClientError::Io)?)
-        .wait_mode(ConnectWaitMode::Timeout(connect_within))
-        .connect_sync()
-        .map_err(connect_error)?;
+/// The handshake as `role` and the request with `body`, framed one after the other. Encoded before
+/// connecting, so that a request too long to send never reaches the endpoint.
+fn frames_of(role: Role, body: RequestBody) -> Result<Vec<u8>, ClientError> {
     let hello = Request {
         request_id: HELLO_ID,
         body: RequestBody::Hello(Hello {
@@ -122,13 +127,35 @@ fn exchange(
             role,
         }),
     };
-    let mut frames = encode(&hello)?;
-    frames.extend(encode(&Request {
+    let request = Request {
         request_id: REQUEST_ID,
         body,
-    })?);
+    };
+    let encoded = |request: &Request| match encode(request) {
+        Err(FrameError::TooLarge { .. }) => Err(ClientError::TooLarge),
+        other => other.map_err(ClientError::from),
+    };
+    let mut frames = encoded(&hello)?;
+    frames.extend(encoded(&request)?);
+    Ok(frames)
+}
+
+/// Connects within `connect_within`, makes sure the daemon holds the endpoint, sends the frames in
+/// one write, and reads both answers.
+fn exchange(
+    endpoint: &Endpoint,
+    daemon_pid_path: &Path,
+    frames: &[u8],
+    connect_within: Duration,
+) -> Result<Answer, ClientError> {
+    let mut stream = ConnectOptions::new()
+        .name(name_of(endpoint).map_err(ClientError::Io)?)
+        .wait_mode(ConnectWaitMode::Timeout(connect_within))
+        .connect_sync()
+        .map_err(connect_error)?;
+    check_peer(&stream, daemon_pid_path)?;
     stream
-        .write_all(&frames)
+        .write_all(frames)
         .and_then(|()| stream.flush())
         .map_err(ClientError::Io)?;
     let welcome = match read_frame::<Response>(&mut stream)? {
@@ -154,6 +181,25 @@ fn exchange(
         welcome,
         body: answer.body,
     })
+}
+
+/// Refuses an endpoint held by a process other than the daemon. On Windows any local user can
+/// create a pipe of the daemon's name while no daemon runs, and would then be sent prompts: the
+/// pipe server's process must be the one the user's own run folder names as the daemon. On Unix
+/// the socket lives in a folder only the user can open, so whoever listens there is the user's.
+fn check_peer(stream: &Stream, daemon_pid_path: &Path) -> Result<(), ClientError> {
+    if cfg!(unix) {
+        return Ok(());
+    }
+    let server = stream.peer_creds().map_err(ClientError::Io)?.pid();
+    let daemon = std::fs::read_to_string(daemon_pid_path)
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok());
+    if server.is_some() && server == daemon {
+        Ok(())
+    } else {
+        Err(ClientError::NotTheDaemon)
+    }
 }
 
 /// The socket name `endpoint` stands for: a socket file on Unix, a named pipe on Windows.
