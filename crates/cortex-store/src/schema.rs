@@ -147,10 +147,15 @@ pub(crate) const REF_NAMES_BY_NAME: &str = "SELECT r.ref_id, r.src_file_id, f.la
      r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
      JOIN files AS f ON f.file_id = r.src_file_id WHERE r.dst_name = ?1 \
      AND (r.resolution IS NULL OR r.resolution <> ?2) AND r.kind <> ?3 ORDER BY r.ref_id";
-/// As [`REF_NAMES`], for the references tied to one symbol.
-pub(crate) const REF_NAMES_TO: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
-     r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \
-     JOIN files AS f ON f.file_id = r.src_file_id WHERE r.dst_symbol_id = ?1 ORDER BY r.ref_id";
+/// The files holding a reference tied with one resolution (the second parameter) to a definition
+/// in one of the files whose ids a JSON array lists.
+pub(crate) const FILES_TIED_INTO: &str = "SELECT DISTINCT r.src_file_id FROM symbols AS s \
+     JOIN refs AS r ON r.dst_symbol_id = s.symbol_id \
+     WHERE s.file_id IN (SELECT value FROM json_each(?1)) AND r.resolution = ?2 \
+     ORDER BY r.src_file_id";
+/// The references tied with one resolution, with their files, by id.
+pub(crate) const REFS_TIED_AS: &str =
+    "SELECT ref_id, src_file_id FROM refs WHERE resolution = ?1 ORDER BY ref_id";
 /// As [`REF_NAMES`], for the references in one file.
 pub(crate) const REF_NAMES_IN_FILE: &str = "SELECT r.ref_id, r.src_file_id, f.lang, r.dst_name, \
      r.kind, r.line, r.dst_symbol_id, r.resolution, r.confidence, r.src_symbol_id FROM refs AS r \

@@ -151,18 +151,19 @@ inspect.
 
 Each reference is then tied to a definition when what its file says settles which one.
 
-First, a SCIP index at the repository's root (`index.scip`), written by the user's or a CI job's
-own indexer, ties what it settles at confidence 1.0; Cortex runs no indexer. A symbol the index
-defines exactly once, as a namespace, type, term or method, maps to the stored definition with
-its name around the definition's line. On each line, the stored references of one name are tied
-to it when the index has as many reference occurrences of that name there and all of them are
-that symbol; a line where the name also stands for something the index does not know, or for a
-parameter or local, ties nothing. Only lines are read from a range, so a document's position
-encoding does not matter. A document is left out when its path is not a stored file's or its file
-changed after the index was written, and so is every symbol it defines. The index is read one
-document and one occurrence at a time; one over 256 MiB, 5 million occurrences or a million
-distinct symbols, not a regular file, or not a SCIP index is refused and reported, and the rules
-below tie as they would without it.
+First, a SCIP index at the repository's root (`index.scip`), written by the user's or a CI job's own
+indexer, ties what it settles at confidence 1.0; Cortex runs no indexer. A symbol the index defines
+exactly once, as a namespace, type, term or method, maps to the stored definition with its name
+around the definition's line. On each line, the stored references of one name are tied to it when
+the index has as many reference occurrences of that name there and all of them are that symbol; a
+line where the name also stands for something the index does not know, or for a parameter or local,
+ties nothing. Only lines are read from a range, so a document's position encoding does not matter. A
+document is left out when its path is not a stored file's or its file changed after the index was
+written, and so is every symbol it defines. A reference the index tied before and no longer ties is
+tied by the rules below, its file read again for its imports. The index is read one document and one
+occurrence at a time; one over 256 MiB, 5 million occurrences or a million distinct symbols, not a
+regular file, or not a SCIP index is refused and reported, and the rules below tie as they would
+without it.
 
 A bare name, written with nothing before it, may be bound by an import. It is looked up the way
 these languages scope names: from the definition the use sits in outwards, through the functions,
@@ -238,20 +239,23 @@ the caller's.
 
 ## Indexing chosen paths
 
-`index_paths` indexes the files at the paths it is given, the ones that changed, without walking
-the repository. Each path is judged by the walk's own rules: a file the walk would find there is
-written unless it is stored as it is, one gone or no longer found is removed, and one that cannot
-be read now is left as stored. A path under a folder that is a link, as the walk would never
-enter it, counts as gone, and a stored file is read again only when no link has come between the
-root and the file. Then the files around the change are read again for what their imports bind,
-as a full index does, and only the references the change can concern are tied again: those in the
-files written and read again, and those elsewhere tied by name alone whose name's definitions came
-or went in their language family, unless the family holds two or more of them both before and
-after, which leaves such a reference untied either way. Of the definitions, it reads those in the files it looks into and, for the name a reference goes by,
-the first two in the reference's language family: enough to tell one from several. The SCIP index is not read again; the ties it gave
-stay. The store ends as a full index would leave it. A path that is or was a folder, a file of
-rules about which files count, the SCIP index itself, and a store whose last index did not finish
-make it index the whole repository instead.
+`index_paths` indexes the files at the paths it is given, the ones that changed, without walking the
+repository. Each path is judged by the walk's own rules: a file the walk would find there is written
+unless it is stored as it is, one gone or no longer found is removed, and one that cannot be read
+now is left as stored. A path under a folder that is a link, as the walk would never enter it,
+counts as gone, and a stored file is read again only when no link has come between the root and the
+file. Then the files around the change are read again for what their imports bind, as a full index
+does, and only the references the change can concern are tied again: those in the files written and
+read again, and those elsewhere tied by name alone whose name's definitions came or went in their
+language family, unless the family holds two or more of them both before and after, which leaves
+such a reference untied either way. Of the definitions, it reads those in the files it looks into
+and, for the name a reference goes by, the first two in the reference's language family: enough to
+tell one from several. The SCIP index is not read again: the ties it gave stay, except those into
+the files written or removed, which a full index would no longer take from it; the files holding
+them are read again, and those references are tied by the rules. The store ends as a full index
+would leave it. A path that is or was a folder, a file of rules about which files count, the SCIP
+index itself, and a store whose last index did not finish make it index the whole repository
+instead.
 
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts

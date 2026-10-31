@@ -4,11 +4,14 @@
 mod common;
 
 use std::fs::File;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use common::{TestResult, expected, index, ties, write_all};
-use cortex_index::{ScipOutcome, ScipProblem};
+use cortex_core::{ModeSetting, RepoId, RepoPath};
+use cortex_index::{DiscoverOptions, IndexOptions, ScipOutcome, ScipProblem, index_paths};
+use cortex_store::{Writer, WriterOptions};
 use protobuf::Message;
 use scip::types::{Document, Index, MultiLineRange, Occurrence, SingleLineRange};
 
@@ -46,6 +49,47 @@ fn write_index(root: &Path, documents: Vec<Document>) -> TestResult {
     let mut index = Index::new();
     index.documents = documents;
     std::fs::write(root.join("index.scip"), index.write_to_bytes()?)?;
+    Ok(())
+}
+
+/// Sets the modification time of the files at `paths` of the repository at `root` an hour back,
+/// before the SCIP index was written.
+fn backdate(root: &Path, paths: &[&str]) -> TestResult {
+    let earlier = SystemTime::now() - Duration::from_secs(3600);
+    for path in paths {
+        File::options()
+            .write(true)
+            .open(root.join(path))?
+            .set_modified(earlier)?;
+    }
+    Ok(())
+}
+
+/// Indexes the files at `paths` of the repository at `root`, as the daemon does when they change,
+/// with the default size limit.
+fn index_changed(root: &Path, paths: &[&str]) -> TestResult {
+    let mut writer = Writer::open(&WriterOptions {
+        folder: &root.join(".cortex"),
+        repo_id: &RepoId::of(root),
+        mmap_bytes: 0,
+        now_ms: common::NOW_MS,
+    })?;
+    let options = IndexOptions {
+        discover: DiscoverOptions {
+            max_file_bytes: DEFAULT_LIMIT,
+            extra_ignores: &[],
+            global_gitignore: None,
+        },
+        parse_timeout: GENEROUS,
+        threads: NonZeroUsize::MIN,
+        now_ms: common::NOW_MS,
+        mode: ModeSetting::Auto,
+    };
+    let changed: Vec<RepoPath> = paths
+        .iter()
+        .map(|path| RepoPath::new(path))
+        .collect::<Result<_, _>>()?;
+    index_paths(root, &common::grammars()?, &mut writer, &options, &changed)?;
     Ok(())
 }
 
@@ -287,12 +331,6 @@ fn lines_the_index_does_not_settle_tie_nothing() -> TestResult {
 /// two definitions in reach and stays unresolved, while `lib.helper()` keeps its tie.
 #[test]
 fn an_edit_drops_the_index_s_ties_into_the_edited_file() -> TestResult {
-    use std::num::NonZeroUsize;
-
-    use cortex_core::{ModeSetting, RepoId, RepoPath};
-    use cortex_index::{DiscoverOptions, IndexOptions, index_paths};
-    use cortex_store::{Writer, WriterOptions};
-
     let repo = tempfile::tempdir()?;
     let root = repo.path();
     write_all(
@@ -320,13 +358,7 @@ fn an_edit_drops_the_index_s_ties_into_the_edited_file() -> TestResult {
             ),
         ],
     )?;
-    let earlier = SystemTime::now() - Duration::from_secs(3600);
-    for path in ["lib.py", "tools.py", "jobs.py", "app.py"] {
-        File::options()
-            .write(true)
-            .open(root.join(path))?
-            .set_modified(earlier)?;
-    }
+    backdate(root, &["lib.py", "tools.py", "jobs.py", "app.py"])?;
     index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
     assert_eq!(
         ties(root, "app.py")?,
@@ -336,32 +368,181 @@ fn an_edit_drops_the_index_s_ties_into_the_edited_file() -> TestResult {
         ])
     );
     std::fs::write(root.join("jobs.py"), "def run():\n    return 1\n")?;
-    let mut writer = Writer::open(&WriterOptions {
-        folder: &root.join(".cortex"),
-        repo_id: &RepoId::of(root),
-        mmap_bytes: 0,
-        now_ms: common::NOW_MS,
-    })?;
-    let options = IndexOptions {
-        discover: DiscoverOptions {
-            max_file_bytes: DEFAULT_LIMIT,
-            extra_ignores: &[],
-            global_gitignore: None,
-        },
-        parse_timeout: GENEROUS,
-        threads: NonZeroUsize::MIN,
-        now_ms: common::NOW_MS,
-        mode: ModeSetting::Auto,
-    };
-    let edited = [RepoPath::new("jobs.py")?];
-    index_paths(root, &common::grammars()?, &mut writer, &options, &edited)?;
-    drop(writer);
+    index_changed(root, &["jobs.py"])?;
     assert_eq!(
         ties(root, "app.py")?,
         expected(&[
             ("call", "helper", 5, Some(("lib.py", "helper", "scip"))),
             ("call", "run", 6, None),
         ])
+    );
+    Ok(())
+}
+
+/// Writes a repository whose SCIP index ties every reference of `app.py`, indexes it whole and
+/// checks the ties. `app.py` takes `run` from `jobs.py` by an import (line 2) and calls it (line 5),
+/// and calls `helper` after the module `lib` it imports (line 4); without the index, each would be
+/// tied through the imports, as `import_path`.
+fn index_imports_the_index_ties(root: &Path) -> TestResult {
+    write_all(
+        root,
+        &[
+            ("lib.py", "def helper():\n    pass\n"),
+            ("jobs.py", "def run():\n    pass\n"),
+            (
+                "app.py",
+                "import lib\nfrom jobs import run\n\nlib.helper()\nrun()\n",
+            ),
+        ],
+    )?;
+    let helper = symbol("lib/helper().");
+    let run = symbol("jobs/run().");
+    write_index(
+        root,
+        vec![
+            document("lib.py", vec![packed(&helper, 0, true)]),
+            document("jobs.py", vec![packed(&run, 0, true)]),
+            document(
+                "app.py",
+                vec![
+                    packed(&run, 1, false),
+                    packed(&helper, 3, false),
+                    packed(&run, 4, false),
+                ],
+            ),
+        ],
+    )?;
+    backdate(root, &["lib.py", "jobs.py", "app.py"])?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("import", "run", 2, Some(("jobs.py", "run", "scip"))),
+            ("call", "helper", 4, Some(("lib.py", "helper", "scip"))),
+            ("call", "run", 5, Some(("jobs.py", "run", "scip"))),
+        ])
+    );
+    Ok(())
+}
+
+/// Once a file changes, the SCIP index's word on it is out of date: the references the index tied
+/// into it are tied again as a full index ties them, through the imports of their own files, which
+/// are read again for it though they did not change. Once `jobs.py` no longer defines `run`, its
+/// import and its call find nothing.
+#[test]
+fn ties_into_an_updated_file_go_through_imports_again() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    index_imports_the_index_ties(root)?;
+    std::fs::write(root.join("lib.py"), "def helper():\n    return 1\n")?;
+    std::fs::write(root.join("jobs.py"), "def run():\n    return 1\n")?;
+    index_changed(root, &["lib.py", "jobs.py"])?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("import", "run", 2, Some(("jobs.py", "run", "import_path"))),
+            (
+                "call",
+                "helper",
+                4,
+                Some(("lib.py", "helper", "import_path"))
+            ),
+            ("call", "run", 5, Some(("jobs.py", "run", "import_path"))),
+        ])
+    );
+    std::fs::write(root.join("jobs.py"), "def other():\n    pass\n")?;
+    index_changed(root, &["jobs.py"])?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("import", "run", 2, None),
+            (
+                "call",
+                "helper",
+                4,
+                Some(("lib.py", "helper", "import_path"))
+            ),
+            ("call", "run", 5, None),
+        ])
+    );
+    Ok(())
+}
+
+/// A full index over a store that holds the SCIP index's ties does the same for the files changed
+/// since, here `lib.py`, and, once the SCIP index is gone, for every tie it gave.
+#[test]
+fn a_full_index_ties_again_what_the_index_no_longer_ties() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    index_imports_the_index_ties(root)?;
+    std::fs::write(root.join("lib.py"), "def helper():\n    return 1\n")?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("import", "run", 2, Some(("jobs.py", "run", "scip"))),
+            (
+                "call",
+                "helper",
+                4,
+                Some(("lib.py", "helper", "import_path"))
+            ),
+            ("call", "run", 5, Some(("jobs.py", "run", "scip"))),
+        ])
+    );
+    std::fs::remove_file(root.join("index.scip"))?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("import", "run", 2, Some(("jobs.py", "run", "import_path"))),
+            (
+                "call",
+                "helper",
+                4,
+                Some(("lib.py", "helper", "import_path"))
+            ),
+            ("call", "run", 5, Some(("jobs.py", "run", "import_path"))),
+        ])
+    );
+    Ok(())
+}
+
+/// A file removed takes the SCIP index's ties into it along: the references tied there are tied
+/// again as a full index ties them. `app.py` defines `run` and calls it (line 5), and the index tied
+/// the call to `jobs.py`; once `jobs.py` is gone, the call is tied to the definition in its own
+/// file, though `app.py` neither imports `jobs.py` nor changes, and `run` keeps two definitions.
+#[test]
+fn ties_into_a_removed_file_are_tied_again() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("jobs.py", "def run():\n    pass\n"),
+            ("tools.py", "def run():\n    pass\n"),
+            ("app.py", "def run():\n    pass\n\n\nrun()\n"),
+        ],
+    )?;
+    let run = symbol("jobs/run().");
+    write_index(
+        root,
+        vec![
+            document("jobs.py", vec![packed(&run, 0, true)]),
+            document("app.py", vec![packed(&run, 4, false)]),
+        ],
+    )?;
+    backdate(root, &["jobs.py", "tools.py", "app.py"])?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[("call", "run", 5, Some(("jobs.py", "run", "scip")))])
+    );
+    std::fs::remove_file(root.join("jobs.py"))?;
+    index_changed(root, &["jobs.py"])?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[("call", "run", 5, Some(("app.py", "run", "same_file")))])
     );
     Ok(())
 }

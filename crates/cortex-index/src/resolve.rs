@@ -467,7 +467,8 @@ pub(crate) fn resolve_names(
 /// references and the imports look for are read. Every other reference would keep its target,
 /// since neither its file nor the definitions its name finds changed. The SCIP index is not read
 /// again: a reference it tied keeps its tie, unless the tie is to one of `stale_scip`, the
-/// definitions of a file changed since the SCIP index was written.
+/// definitions of the files written now, which a full index takes as changed since the SCIP index
+/// was written; the files holding such a reference are among those `bindings` holds.
 ///
 /// # Errors
 ///
@@ -502,17 +503,6 @@ pub(crate) fn resolve_names_around(
             .into_iter()
             .map(|r| (r.id, r)),
     );
-    for symbol in stale_scip {
-        let tied = queries
-            .ref_names_to(*symbol)?
-            .into_iter()
-            .filter(|reference| {
-                reference
-                    .target
-                    .is_some_and(|target| target.resolution == Resolution::Scip)
-            });
-        refs.extend(tied.map(|r| (r.id, r)));
-    }
     let mut wanted: BTreeSet<&Identifier> =
         refs.values().map(|reference| &reference.name).collect();
     wanted.extend(bindings.values().flat_map(Bindings::taken_names));

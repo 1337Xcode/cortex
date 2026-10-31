@@ -64,7 +64,7 @@ pub fn index_paths(
     let mut rules = PathRules::new(WalkRules::of(root, &options.discover))?;
     let found = find(writer, &mut rules, &paths)?;
     let gone: BTreeSet<RepoPath> = found.gone.iter().map(|row| row.file.path.clone()).collect();
-    let (importers_of_gone, mut names) = incremental::around_removal(writer.queries(), &gone)?;
+    let (around_gone, mut names) = incremental::around_removal(writer.queries(), &gone)?;
     pipeline::remove_files(writer, &gone.iter().cloned().collect::<Vec<_>>())?;
     let walked: BTreeMap<&RepoPath, FileFlags> = found
         .candidates
@@ -129,11 +129,10 @@ pub fn index_paths(
         })
     };
     let (around, is_cut) =
-        pipeline::files_around(writer, &file_of, &written, (importers_of_gone, &names))?;
+        pipeline::files_around(writer, &file_of, &written, (around_gone, &names))?;
     let read_again = pipeline::read_again(&around, &context)?;
     pipeline::link(
         writer,
-        root,
         (written, read_again),
         Pass::Around(&names),
         &mut report,

@@ -29,8 +29,8 @@ use std::time::Duration;
 
 use cortex_core::{ContentHash, FileFlags, Language, ModeSetting, RepoPath, ScaleMode};
 use cortex_store::{
-    ChangeKind, FileChange, FileIndex, FileRecord, FileRow, StoreError, SymbolChange, SymbolId,
-    Target, Writer,
+    ChangeKind, FileChange, FileIndex, FileRecord, FileRow, RefId, StoreError, SymbolChange,
+    SymbolId, Target, Writer,
 };
 use thiserror::Error;
 
@@ -252,7 +252,7 @@ pub fn index_repository(
     incremental::mark_started(writer)?;
     let is_whole = known.is_empty();
     let missing = missing_files(writer, &discovery)?;
-    let (importers_of_gone, mut names) = if is_whole {
+    let (around_gone, names) = if is_whole {
         (Neighbours::default(), NameChanges::default())
     } else {
         incremental::around_removal(writer.queries(), &missing.iter().cloned().collect())?
@@ -316,27 +316,26 @@ pub fn index_repository(
         mode: ScaleMode::Tiny,
     };
     let written = write_files(writer, &candidates, &context, &mut report)?;
+    let (scip, scip_ties) = scip::read_index(root, writer.queries())?;
+    report.scip = scip;
     let (around, is_cut) = if is_whole {
         (Vec::new(), false)
     } else {
-        let walked = |path: &RepoPath| {
-            discovery
-                .files
-                .binary_search_by(|file| file.path.cmp(path))
-                .ok()
-                .and_then(|position| discovery.files.get(position).cloned())
-        };
-        for file in &written {
-            names.extend(file.names.clone());
-        }
-        files_around(writer, &walked, &written, (importers_of_gone, &names))?
+        around_changes(
+            writer,
+            &discovery,
+            &written,
+            (around_gone, names, &scip_ties),
+        )?
     };
     let read_again = read_again(&around, &context)?;
     link(
         writer,
-        root,
         (written, read_again),
-        Pass::Everything { is_whole },
+        Pass::Everything {
+            is_whole,
+            scip_ties: &scip_ties,
+        },
         &mut report,
     )?;
     folders::write_folders(writer)?;
@@ -351,6 +350,33 @@ pub fn index_repository(
 /// `items` as a count.
 pub(crate) fn count(items: usize) -> u64 {
     u64::try_from(items).unwrap_or(u64::MAX)
+}
+
+/// The files an index that did not write every file reads again around its changes, as
+/// [`files_around`] finds them among the files the walk found, `discovery`: with `around_gone`, the
+/// files around the removed ones, the names whose definitions came or went, and the files holding
+/// a reference the SCIP index tied before and does not tie in `scip_ties`.
+fn around_changes(
+    writer: &Writer,
+    discovery: &Discovery,
+    written: &[Written],
+    (around_gone, mut names, scip_ties): (Neighbours, NameChanges, &BTreeMap<RefId, SymbolId>),
+) -> Result<(Vec<DiscoveredFile>, bool), StoreError> {
+    let walked = |path: &RepoPath| {
+        discovery
+            .files
+            .binary_search_by(|file| file.path.cmp(path))
+            .ok()
+            .and_then(|position| discovery.files.get(position).cloned())
+    };
+    for file in written {
+        names.extend(file.names.clone());
+    }
+    let untied = Neighbours {
+        files: incremental::lost_scip_users(writer.queries(), scip_ties)?,
+        is_cut: false,
+    };
+    files_around(writer, &walked, written, (around_gone.join(untied), &names))
 }
 
 /// A file this index wrote: what its imports bind, and the ids of its definitions.
@@ -368,20 +394,24 @@ pub(crate) struct Written {
     pub(crate) names: NameChanges,
     /// Whether it passes on something other than before: its importers may find something else.
     passes_on_otherwise: bool,
+    /// The files holding a reference the SCIP index tied into it before it was written.
+    scip_users: BTreeSet<RepoPath>,
 }
 
-/// The files around this index's changes to read again for what their imports bind: the
-/// importers of the `written` files that now pass on something else, `importers_of_gone`, the
-/// importers of the removed files, and the files holding a reference named in `names`, the names
-/// whose definitions came or went, that goes through an import. Only files `file_of` knows and
-/// this index did not write, at most [`incremental::MAX_FILES_AROUND`] in path order, with
-/// whether the cap cut them short. The files a name is merely followed through need no reading:
-/// what they pass on is stored.
+/// The files around this index's changes to read again for what their imports bind: `found`,
+/// those found before (around the removed files, as [`incremental::around_removal`] finds them,
+/// and the files whose ties a full index no longer gets from the SCIP index), the files holding
+/// the SCIP index's ties into the `written` files, the importers of the written files that now
+/// pass on something else, and the files holding a reference named in `names`, the names whose
+/// definitions came or went, that goes through an import. Only files `file_of` knows and this
+/// index did not write, at most [`incremental::MAX_FILES_AROUND`] in path order, with whether the
+/// cap cut them short. The files a name is merely followed through need no reading: what they
+/// pass on is stored.
 pub(crate) fn files_around(
     writer: &Writer,
     file_of: &dyn Fn(&RepoPath) -> Option<DiscoveredFile>,
     written: &[Written],
-    (importers_of_gone, names): (Neighbours, &NameChanges),
+    (found, names): (Neighbours, &NameChanges),
 ) -> Result<(Vec<DiscoveredFile>, bool), StoreError> {
     let queries = writer.queries();
     let changed: BTreeSet<&RepoPath> = written.iter().map(|file| &file.path).collect();
@@ -390,11 +420,19 @@ pub(crate) fn files_around(
         .filter(|file| file.passes_on_otherwise)
         .map(|file| file.path.clone())
         .collect();
+    let tied = Neighbours {
+        files: written
+            .iter()
+            .flat_map(|file| file.scip_users.iter().cloned())
+            .collect(),
+        is_cut: false,
+    };
     let users = Neighbours {
         files: incremental::users_through_imports(queries, names)?,
         is_cut: false,
     };
-    let mut around = importers_of_gone
+    let mut around = found
+        .join(tied)
         .join(incremental::importers(queries, &passing)?)
         .join(users);
     around.files.retain(|path| !changed.contains(path));
@@ -429,11 +467,13 @@ pub(crate) fn read_again(
 /// Which references a name pass ties again.
 #[derive(Clone, Copy)]
 pub(crate) enum Pass<'n> {
-    /// Every stored reference, with the SCIP index read again. With `is_whole`, every file was
-    /// written and every definition's edges are written again.
+    /// Every stored reference, with what the SCIP index ties as it reads now. With `is_whole`,
+    /// every file was written and every definition's edges are written again.
     Everything {
         /// Whether every file was written.
         is_whole: bool,
+        /// The definition the SCIP index ties each reference to, by reference.
+        scip_ties: &'n BTreeMap<RefId, SymbolId>,
     },
     /// The references a change of chosen paths concerns: those in the files written and read
     /// again, and those named in these names, whose definitions came or went.
@@ -446,7 +486,6 @@ pub(crate) enum Pass<'n> {
 /// references' targets changed are written again.
 pub(crate) fn link(
     writer: &mut Writer,
-    root: &Path,
     (written, read_again): (Vec<Written>, Vec<(RepoPath, FileImports)>),
     pass: Pass<'_>,
     report: &mut IndexReport,
@@ -469,25 +508,19 @@ pub(crate) fn link(
         bindings.insert(path, imported.bindings);
     }
     let (named, is_whole) = match pass {
-        Pass::Everything { is_whole } => {
-            let (scip, scip_ties) = scip::read_index(root, writer.queries())?;
-            report.scip = scip;
-            (
-                resolve::resolve_names(writer, &bindings, &scip_ties)?,
-                is_whole,
-            )
-        }
+        Pass::Everything {
+            is_whole,
+            scip_ties,
+        } => (
+            resolve::resolve_names(writer, &bindings, scip_ties)?,
+            is_whole,
+        ),
         Pass::Around(names) => {
             report.scip = ScipOutcome::NotRead;
-            // The SCIP index's word on a file written now is out of date, as a full index finds.
-            let has_scip = root.join(scip::INDEX_FILE).exists();
-            let stale_scip = if has_scip {
-                affected.clone()
-            } else {
-                BTreeSet::new()
-            };
+            // What the SCIP index says of a file written now is out of date, as a full index finds:
+            // its ties into the file give way, and their files are read again for their imports.
             (
-                resolve::resolve_names_around(writer, &bindings, names, &stale_scip)?,
+                resolve::resolve_names_around(writer, &bindings, names, &affected)?,
                 false,
             )
         }
@@ -634,10 +667,14 @@ fn write_batch(
                 continue;
             }
         };
-        let before = match known.and_then(|known| known.get(&prepared.index.file.path)) {
-            Some(row) => transaction.queries().passes_on(row.id)?,
-            None => Vec::new(),
-        };
+        let (before, scip_users) =
+            match known.and_then(|known| known.get(&prepared.index.file.path)) {
+                Some(row) => (
+                    transaction.queries().passes_on(row.id)?,
+                    incremental::scip_users(transaction.queries(), &[row.id])?,
+                ),
+                None => (Vec::new(), BTreeSet::new()),
+            };
         let change = transaction.replace_file(&prepared.index)?;
         report.files += 1;
         report.parsed += u64::from(prepared.index.file.flags.contains(FileFlags::PARSED));
@@ -659,6 +696,7 @@ fn write_batch(
             is_new: change.is_new,
             names,
             passes_on_otherwise,
+            scip_users,
         });
     }
     transaction.commit()?;

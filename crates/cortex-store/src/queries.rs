@@ -8,7 +8,7 @@ use cortex_core::{
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::error::{StoreError, sqlite};
-use crate::ids::{FileId, NodeId, SymbolId};
+use crate::ids::{FileId, NodeId, RefId, SymbolId};
 use crate::meta::MetaKey;
 use crate::passes_on;
 use crate::raw::{RawEdge, RawFile, RawRef, RawRefName, RawSymbol, RawSymbolName};
@@ -330,16 +330,33 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawRefName::check).collect()
     }
 
-    /// The references tied to `symbol`, as [`Queries::ref_names`] gives them, by id.
+    /// The files holding a reference the SCIP index tied to a definition in one of `files`.
     ///
     /// # Errors
     ///
-    /// SQLite errors and stored values that cannot be read back.
-    pub fn ref_names_to(self, symbol: SymbolId) -> Result<Vec<RefName>, StoreError> {
-        let raw = self
-            .collect(schema::REF_NAMES_TO, symbol.get(), RawRefName::read)
-            .map_err(sqlite("reading reference names"))?;
-        raw.into_iter().map(RawRefName::check).collect()
+    /// SQLite errors.
+    pub fn files_with_scip_ties_into(self, files: &[FileId]) -> Result<Vec<FileId>, StoreError> {
+        let ids = json_array(files.iter().map(|file| file.get().to_string()));
+        self.connection
+            .prepare_cached(schema::FILES_TIED_INTO)
+            .and_then(|mut statement| {
+                statement
+                    .query_map((ids, Resolution::Scip.name()), |row| row.get(0).map(FileId))?
+                    .collect()
+            })
+            .map_err(sqlite("reading files with SCIP ties"))
+    }
+
+    /// Every reference the SCIP index tied, with its file, by id.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn scip_ties(self) -> Result<Vec<(RefId, FileId)>, StoreError> {
+        self.collect(schema::REFS_TIED_AS, Resolution::Scip.name(), |row| {
+            Ok((RefId(row.get(0)?), FileId(row.get(1)?)))
+        })
+        .map_err(sqlite("reading SCIP ties"))
     }
 
     /// The references in `file`, as [`Queries::ref_names`] gives them, in the order they were

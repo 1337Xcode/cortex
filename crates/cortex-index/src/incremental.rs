@@ -11,7 +11,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{EdgeType, FileFlags, RepoPath};
-use cortex_store::{FileId, FileRow, MetaKey, NodeId, Queries, StoreError, Writer};
+use cortex_store::{
+    FileId, FileRow, MetaKey, NodeId, Queries, RefId, StoreError, SymbolId, Writer,
+};
 
 use crate::discover::DiscoveredFile;
 use crate::name_changes::NameChanges;
@@ -161,8 +163,9 @@ pub(crate) fn importers(
 }
 
 /// What removing the stored files at `paths` concerns, read before they are removed: their
-/// importers, as [`importers`] finds them, and the names of their definitions, which other files'
-/// references may find something else for.
+/// importers, as [`importers`] finds them, the files holding the SCIP index's ties into them, as
+/// [`scip_users`] finds them, and the names of their definitions, which other files' references
+/// may find something else for.
 ///
 /// # Errors
 ///
@@ -172,15 +175,21 @@ pub(crate) fn around_removal(
     paths: &BTreeSet<RepoPath>,
 ) -> Result<(Neighbours, NameChanges), StoreError> {
     let mut names = NameChanges::default();
+    let mut ids = Vec::new();
     for path in paths {
         let Some(row) = queries.file(path)? else {
             continue;
         };
+        ids.push(row.id);
         for symbol in queries.symbols_in_file(row.id)? {
             names.went(&symbol.name, row.file.language);
         }
     }
-    Ok((importers(queries, paths)?, names))
+    let tied = Neighbours {
+        files: scip_users(queries, &ids)?,
+        is_cut: false,
+    };
+    Ok((importers(queries, paths)?.join(tied), names))
 }
 
 /// The stored files holding a reference named in `names` that goes through an import: references
@@ -198,6 +207,52 @@ pub(crate) fn users_through_imports(
     for name in names.names() {
         files.extend(queries.files_with_refs_through_imports(name)?);
     }
+    paths_of(queries, files)
+}
+
+/// The stored files holding a reference the SCIP index tied to a definition in one of `files`,
+/// read before those are written or removed. Once they change, what the index says of them is out
+/// of date, and a full index ties such a reference otherwise: through its own file's imports,
+/// which must be read again for it.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn scip_users(
+    queries: Queries<'_>,
+    files: &[FileId],
+) -> Result<BTreeSet<RepoPath>, StoreError> {
+    paths_of(queries, queries.files_with_scip_ties_into(files)?)
+}
+
+/// The stored files holding a reference the SCIP index tied when last read and does not tie in
+/// `ties`, what it ties now: a full index ties such a reference through its own file's imports,
+/// which must be read again for it.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn lost_scip_users(
+    queries: Queries<'_>,
+    ties: &BTreeMap<RefId, SymbolId>,
+) -> Result<BTreeSet<RepoPath>, StoreError> {
+    let lost = queries
+        .scip_ties()?
+        .into_iter()
+        .filter(|(reference, _)| !ties.contains_key(reference))
+        .map(|(_, file)| file);
+    paths_of(queries, lost.collect::<BTreeSet<_>>())
+}
+
+/// The paths of the stored files `files`.
+///
+/// # Errors
+///
+/// Store errors.
+fn paths_of(
+    queries: Queries<'_>,
+    files: impl IntoIterator<Item = FileId>,
+) -> Result<BTreeSet<RepoPath>, StoreError> {
     let mut paths = BTreeSet::new();
     for file in files {
         paths.extend(queries.file_path(file)?);
