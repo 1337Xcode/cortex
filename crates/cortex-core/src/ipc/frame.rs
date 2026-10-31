@@ -5,8 +5,9 @@ use std::io::{self, Read, Write};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-/// Most bytes a frame's body may hold: 1 MiB. A hook payload is read with the same cap, so any
-/// event fits.
+/// Most bytes a frame's body may hold: 1 MiB, the cap hook payloads are read with too. An event
+/// adds fields of its own to what it takes from a payload, so one built from a payload near the cap
+/// may not fit, and is then refused when encoded.
 pub const MAX_FRAME_BYTES: usize = 1_048_576;
 
 /// Bytes in a frame's length prefix.

@@ -43,7 +43,9 @@ pub struct Hello {
     pub protocol: Protocol,
     /// The client's Cortex version.
     pub cortex_version: String,
-    /// Who the client is.
+    /// Who the client is; a role this version does not know reads as [`Role::Other`], so that a
+    /// client of any version is still answered.
+    #[serde(deserialize_with = "role_or_other")]
     pub role: Role,
 }
 
@@ -54,7 +56,15 @@ named_kind! {
         Hook => "hook",
         /// A `cortex` command a person runs.
         Cli => "cli",
+        /// A client of a kind this version does not know.
+        Other => "other",
     }
+}
+
+/// A role from its name, or [`Role::Other`] for a name this version does not know.
+fn role_or_other<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Role, D::Error> {
+    let name = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+    Ok(Role::from_name(&name).unwrap_or(Role::Other))
 }
 
 /// A daemon's response.

@@ -147,6 +147,31 @@ fn broken_frames_are_refused() {
     assert!(matches!(encode(&huge), Err(FrameError::TooLarge { .. })));
 }
 
+/// A handshake from a client of another version still reads: a role this version does not know
+/// reads as `other`, and fields it does not know are ignored, in the envelope, the Hello and the
+/// protocol, so that such a client can be told of the mismatch.
+#[test]
+fn a_handshake_from_any_version_reads() -> TestResult {
+    let json = concat!(
+        r#"{"request_id":1,"trace":"x","body":{"type":"hello","#,
+        r#""protocol":{"major":7,"minor":3,"patch":1},"cortex_version":"9.1.0","#,
+        r#""role":"plugin","features":["a","b"]}}"#
+    );
+    let request: Request = serde_json::from_str(json)?;
+    assert_eq!(
+        request,
+        Request {
+            request_id: 1,
+            body: RequestBody::Hello(Hello {
+                protocol: Protocol { major: 7, minor: 3 },
+                cortex_version: "9.1.0".to_owned(),
+                role: Role::Other,
+            }),
+        }
+    );
+    Ok(())
+}
+
 /// A prefix may announce exactly 1 MiB, and no more.
 #[test]
 fn the_cap_is_one_mebibyte() {

@@ -103,10 +103,11 @@ fn parse_number(part: &str) -> Option<u64> {
     part.parse().ok()
 }
 
-/// `part` as a pre-release identifier: a number, or letters, digits and `-`.
+/// `part` as a pre-release identifier: a number (no leading zero), or letters, digits and `-` with
+/// at least one that is not a digit.
 fn parse_identifier(part: &str) -> Option<PreRelease> {
-    if let Some(number) = parse_number(part) {
-        return Some(PreRelease::Number(number));
+    if !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()) {
+        return parse_number(part).map(PreRelease::Number);
     }
     let is_text = !part.is_empty()
         && part
@@ -193,6 +194,7 @@ mod tests {
             "2.0.0-",
             "2.0.0-a..b",
             "v2.0.0",
+            "1.0.0-01",
         ] {
             assert!(CortexVersion::parse(text).is_err(), "{text:?}");
         }
