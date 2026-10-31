@@ -4,6 +4,7 @@
 //! [`run`]. Removing a command means deleting all three.
 
 mod daemon;
+mod status;
 mod version;
 
 use clap::Subcommand;
@@ -15,6 +16,8 @@ pub(crate) enum Command {
     Version,
     /// Run the process that keeps a repository's index (started by Cortex itself).
     Daemon(daemon::Args),
+    /// Show whether the daemon runs, the index's state and the scale mode.
+    Status(status::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -26,5 +29,6 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
     match command {
         Command::Version => version::run(),
         Command::Daemon(args) => daemon::run(&args),
+        Command::Status(args) => status::run(&args),
     }
 }

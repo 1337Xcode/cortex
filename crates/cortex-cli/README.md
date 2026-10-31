@@ -16,6 +16,7 @@ entry points agents and the daemon call.
 | --- | --- |
 | `cortex version`, `cortex --version` | Prints `cortex <version>` |
 | `cortex daemon [--root <folder>]` | Keeps the repository's index, the current folder's when no root is given, as its only writer: indexes what changed since the last index, then watches the repository and indexes again after each change. In huge mode it parses the files it took inventory of, the changed ones first, `index.crawl_files_per_second` a second on one thread. Writes `cortex: daemon ready: ...` on stderr after the first index and stops after `daemon.idle_shutdown_minutes` without a change once nothing waits to be parsed. A second daemon on the same repository is refused |
+| `cortex status [--root <folder>]` | Prints whether a daemon holds the repository's store, whether the first index has finished, the scale mode the last index recorded (and the one the configuration pins, if any), and how many files are stored, parsed and waiting to be parsed; or that the repository has no index. Only reads the store |
 
 Adding a command means one new module in `src/commands/`, one variant of `Command` and one match
 arm in `src/commands/mod.rs`.

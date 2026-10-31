@@ -33,6 +33,7 @@ mod writer;
 
 pub use error::StoreError;
 pub use ids::{FileId, NodeId, RefId, SymbolId};
+pub use lock::is_writer_running;
 pub use meta::MetaKey;
 pub use queries::Queries;
 pub use reader::Reader;

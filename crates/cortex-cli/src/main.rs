@@ -5,6 +5,7 @@
 
 mod commands;
 mod output;
+mod repository;
 mod settings;
 
 use std::process::ExitCode;

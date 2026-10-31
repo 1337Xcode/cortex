@@ -9,17 +9,17 @@
 
 mod host;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use cortex_core::RepoId;
 use cortex_index::{Change, DiscoverOptions, Grammars, IndexReport, watch};
 use cortex_store::{Writer, WriterOptions};
 
 use self::host::Host;
-use crate::{output, settings};
+use crate::{output, repository, settings};
 
 /// How many changes may wait for the writer. A change that finds the queue full is dropped: the
 /// index the waiting changes start reads the whole tree, the dropped change's files included.
@@ -40,7 +40,7 @@ pub(crate) struct Args {
 /// A root that is not a folder, an unusable configuration, a store that cannot be opened (another
 /// daemon holds it), a watcher that cannot start or stops, and a failed index.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let root = root_of(args.root.as_deref())?;
+    let root = repository::root(args.root.as_deref())?;
     let loaded = settings::load(&root)?;
     for warning in &loaded.warnings {
         output::note(&format!("warning: {warning}"))?;
@@ -72,20 +72,6 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     host.serve(&queue)?;
     drop(watcher);
     Ok(())
-}
-
-/// The repository root `root` names, or the current folder, as an absolute path.
-fn root_of(root: Option<&Path>) -> anyhow::Result<PathBuf> {
-    let given = match root {
-        Some(root) => root.to_owned(),
-        None => std::env::current_dir().context("reading the current folder")?,
-    };
-    let absolute = std::path::absolute(&given)
-        .with_context(|| format!("making {} absolute", given.display()))?;
-    if !absolute.is_dir() {
-        bail!("{} is not a folder", absolute.display());
-    }
-    Ok(absolute)
 }
 
 /// The line that says the first index is done: what it wrote, the mode, and in huge mode how many

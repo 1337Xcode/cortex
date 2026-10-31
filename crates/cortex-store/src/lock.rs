@@ -8,7 +8,28 @@ use std::fs::{File, TryLockError};
 use std::path::Path;
 
 use crate::error::{StoreError, io};
-use crate::private;
+use crate::{layout, private};
+
+/// Whether a writer holds the lock of the store in `folder`. The lock is taken shared for an
+/// instant to find out, so a writer opening the store at that instant is refused as if another
+/// writer held it.
+///
+/// # Errors
+///
+/// I/O errors other than a missing lock file, which means no writer ever ran.
+pub fn is_writer_running(folder: &Path) -> Result<bool, StoreError> {
+    let path = layout::writer_lock(folder);
+    let file = match File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(io("opening the writer lock", &path)(error)),
+    };
+    match file.try_lock_shared() {
+        Ok(()) => Ok(false),
+        Err(TryLockError::WouldBlock) => Ok(true),
+        Err(TryLockError::Error(source)) => Err(io("checking the writer lock", &path)(source)),
+    }
+}
 
 /// A held writer lock, released when dropped.
 #[derive(Debug)]

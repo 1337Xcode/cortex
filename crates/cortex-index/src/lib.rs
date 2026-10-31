@@ -63,6 +63,7 @@ pub use extract::{ExtractError, Extraction, Extractor, LeftOut};
 pub use grammar::{GrammarError, Grammars};
 pub use pipeline::{
     FileProblem, IndexError, IndexOptions, IndexReport, index_repository, parse_files,
+    waits_to_be_parsed,
 };
 pub use references::Qualifier;
 pub use rules::MAX_REPORTED_LINES;

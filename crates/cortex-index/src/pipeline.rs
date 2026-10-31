@@ -807,7 +807,8 @@ fn is_parseable(language: Option<Language>, flags: FileFlags) -> bool {
 /// Whether the stored `file` waits to be parsed: huge mode took inventory of it, unread, and it
 /// is one Cortex parses. A file read whose parse failed or ran out of time does not wait; it is
 /// tried again when it changes.
-pub(crate) fn waits_to_be_parsed(file: &FileRecord) -> bool {
+#[must_use]
+pub fn waits_to_be_parsed(file: &FileRecord) -> bool {
     file.content_hash.is_none()
         && !file.flags.contains(FileFlags::PARSED)
         && is_parseable(file.language, file.flags)
