@@ -12,6 +12,7 @@
 
 mod global_ignore;
 mod host;
+mod instance;
 pub mod settings;
 
 use std::path::Path;
@@ -20,11 +21,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use anyhow::Context;
-use cortex_core::RepoId;
+use cortex_core::{RepoId, UserFolder};
 use cortex_index::{Change, DiscoverOptions, Grammars, IndexReport, watch};
 use cortex_store::{Writer, WriterOptions};
 
 use self::host::Host;
+use self::instance::Instance;
 
 /// How many changes may wait for the writer. A change that finds the queue full is dropped and the
 /// queue marked as overflowed, so that the changes drained next are indexed as a change to
@@ -37,9 +39,13 @@ const QUEUE_CHANGES: usize = 10_000;
 ///
 /// # Errors
 ///
-/// An unusable configuration, a store that cannot be opened (another daemon holds it), a watcher
-/// that cannot start or stops, a failed index, and a line `note` could not write.
+/// No home folder, another daemon serving the repository, an unusable configuration, a store
+/// that cannot be opened, a watcher that cannot start or stops, a failed index, and a line `note`
+/// could not write.
 pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> anyhow::Result<()> {
+    let user = UserFolder::of_current_user().context("finding the user's home folder")?;
+    let repo_id = RepoId::of(root);
+    let _instance = Instance::acquire(&user, &repo_id)?;
     let loaded = settings::load(root)?;
     for warning in &loaded.warnings {
         note(&format!("warning: {warning}"))?;
@@ -51,7 +57,7 @@ pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> any
     // second one)
     let writer = Writer::open(&WriterOptions {
         folder: &folder,
-        repo_id: &RepoId::of(root),
+        repo_id: &repo_id,
         mmap_bytes: config.mmap_bytes,
         now_ms: host::now_ms(),
     })

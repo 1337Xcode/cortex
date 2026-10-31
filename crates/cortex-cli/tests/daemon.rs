@@ -162,7 +162,7 @@ fn wait_for(condition: impl Fn() -> TestResult<bool>) -> TestResult {
 }
 
 /// The daemon indexes the one file, says it is ready, and indexes the file again once it changes;
-/// meanwhile a second daemon on the repository is refused, since the first holds the writer.
+/// meanwhile a second daemon on the repository is refused, naming the process that holds it.
 #[test]
 fn indexes_watches_and_holds_the_writer() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -180,10 +180,12 @@ fn indexes_watches_and_holds_the_writer() -> TestResult {
     let refused = daemon_command(repo.path(), home.path()).output()?;
     let stderr = String::from_utf8(refused.stderr)?;
     assert_eq!(refused.status.code(), Some(1), "{stderr}");
-    assert!(
-        stderr.starts_with("cortex: error: opening the store in ")
-            && stderr.contains("another writer holds"),
-        "{stderr}"
+    assert_eq!(
+        stderr.trim_end(),
+        format!(
+            "cortex: error: another daemon serves this repository (process {})",
+            daemon.child.id()
+        )
     );
     Ok(())
 }

@@ -10,7 +10,11 @@ use std::io;
 use std::path::Path;
 
 /// Creates `folder` and any missing parents, and makes `folder` private.
-pub(crate) fn create_folder(folder: &Path) -> io::Result<()> {
+///
+/// # Errors
+///
+/// The folder or a parent cannot be created, or its mode cannot be set.
+pub fn create_folder(folder: &Path) -> io::Result<()> {
     let mut builder = DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -23,7 +27,11 @@ pub(crate) fn create_folder(folder: &Path) -> io::Result<()> {
 
 /// Opens `path` for reading and writing, creating it when it does not exist and leaving its
 /// contents as they are, and makes it private.
-pub(crate) fn open_file(path: &Path) -> io::Result<File> {
+///
+/// # Errors
+///
+/// The file cannot be opened or created, or its mode cannot be set.
+pub fn open_file(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
