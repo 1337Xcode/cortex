@@ -31,14 +31,26 @@ impl NamePattern {
 }
 
 /// Names that may hold secrets, matched without regard to case against the file's name and every
-/// folder above it. Such a file is recorded by path and never opened.
+/// folder above it. Such a file is recorded by path and never opened. Besides environment files,
+/// keys, certificates and credentials files: every SSH key type's default name, the dotfiles that
+/// hold login tokens for downloads, package registries and databases, and certificate bundles under
+/// both their extensions.
 const SECRET_NAMES: &[NamePattern] = &[
     NamePattern::Prefix(".env"),
     NamePattern::Suffix(".pem"),
     NamePattern::Suffix(".key"),
     NamePattern::Prefix("id_rsa"),
+    NamePattern::Prefix("id_dsa"),
+    NamePattern::Prefix("id_ecdsa"),
+    NamePattern::Prefix("id_ed25519"),
     NamePattern::Contains("credentials"),
     NamePattern::Suffix(".p12"),
+    NamePattern::Suffix(".pfx"),
+    NamePattern::Exact(".netrc"),
+    NamePattern::Exact("_netrc"),
+    NamePattern::Exact(".npmrc"),
+    NamePattern::Exact(".pypirc"),
+    NamePattern::Exact(".pgpass"),
 ];
 
 /// Folders whose contents a third party wrote, at any depth.
@@ -145,6 +157,15 @@ mod tests {
             "aws_credentials",
             "config/Credentials.json",
             "store.p12",
+            "certs/Store.PFX",
+            "keys/id_ed25519",
+            "keys/id_ecdsa.pub",
+            "id_dsa",
+            ".netrc",
+            "home/_netrc",
+            "web/.npmrc",
+            ".pypirc",
+            "db/.pgpass",
             "config/credentials/aws.json",
             ".env.d/app.conf",
             "keys/prod.key/readme.md",
@@ -158,6 +179,9 @@ mod tests {
             "docs/pem.md",
             "credential.rs",
             "dev.env/readme.md",
+            "netrc.md",
+            "src/npmrc.ts",
+            "pfx_tool.py",
         ] {
             assert!(!is_secret(&RepoPath::new(name)?), "{name}");
         }

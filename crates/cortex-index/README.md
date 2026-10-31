@@ -5,9 +5,10 @@ The indexer: which files a repository has, what they are, and what they define a
 ## What it must never do
 
 - Open a file whose name, or the name of a folder above it, says it may hold secrets (`.env*`,
-  `*.pem`, `*.key`, `id_rsa*`, `*credentials*`, `*.p12`, in any case), rules files such as
-  `.gitignore` in those folders included. Such a file is recorded with what its folder listing
-  and its name say: path, size, modification time, flags and the language its name implies.
+  `*.pem`, `*.key`, `id_rsa*`, `id_dsa*`, `id_ecdsa*`, `id_ed25519*`, `*credentials*`, `*.p12`,
+  `*.pfx`, `.netrc`, `_netrc`, `.npmrc`, `.pypirc`, `.pgpass`, in any case), rules files such as
+  `.gitignore` in those folders included. Such a file is recorded with what its folder listing and
+  its name say: path, size, modification time, flags and the language its name implies.
 - Read a file larger than `index.max_file_bytes`, or anything but a regular file. A path is
   inspected without following links, opened, and checked again after opening; symbolic links and
   special files found in the walk are passed over and counted.
