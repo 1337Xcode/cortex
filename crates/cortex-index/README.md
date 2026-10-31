@@ -136,8 +136,13 @@ unresolved otherwise. What an import finds is the one definition of the name it 
 directly in the files it names, in no other definition and with no qualifier (so not a method of
 a class or of an `impl` block). A file that does not define the name but passes it on, by name or
 with `*`, as a package's `__init__.py` or a TypeScript index file does, is followed, at most four
-files deep and through at most 256 files in all; a search that does not finish within those finds
-nothing. A namespace (`export * as ns`) is not followed.
+files deep and with at most 256 looks into files in all; a search that does not finish within
+those finds nothing. A file's own definition of the name and its imports of the name must lead to
+the same definition, or the name is ambiguous, since which holds can depend on what runs (a
+`try` import with a fallback). Its `*` imports make the name ambiguous when they find another
+definition, as a later `*` import wins in Python; they decide alone only when nothing else in the
+file speaks of the name and none of them names a module outside the repository. A namespace
+(`export * as ns`) is not followed. Imports repeated in a file are resolved once.
 
 Some imports bind no bare name. A re-export (`export { x } from`, `export * from`) only passes
 names on. An import of every name (`from x import *`, Go's dot import) does too, since which names

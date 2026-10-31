@@ -18,6 +18,8 @@
 //! family of its own, so a Python call is never tied to a function of another language that
 //! happens to share its name.
 
+mod search;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{Identifier, Language, RefKind, RepoPath, Resolution, SymbolKind};
@@ -28,16 +30,6 @@ use crate::bindings::{Bindings, Lookup, Reach};
 /// How many references are written per transaction.
 const RESOLUTIONS_PER_TRANSACTION: usize = 4096;
 
-/// How many files that only pass a name on, by importing it themselves, are followed to find its
-/// definition. Package `__init__.py` files and TypeScript index files rarely chain more than two;
-/// the cap bounds the work a crafted chain can cause.
-const MAX_FILES_PASSED_THROUGH: usize = 4;
-
-/// How many times one search for a name may look into a file, looks into one file at several
-/// depths included. An index file with a few hundred `export *` lines is searched whole; past the
-/// budget the name is left unresolved, which bounds the work crafted re-exports can cause.
-const MAX_FILES_SEARCHED: usize = 256;
-
 /// What a name finds among some definitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Found {
@@ -45,16 +37,6 @@ enum Found {
     One(SymbolId),
     /// More than one.
     Several,
-}
-
-/// What two lookups find together: one definition when they find the same one, or when only one
-/// of them finds anything.
-fn merge(first: Option<Found>, second: Option<Found>) -> Option<Found> {
-    match (first, second) {
-        (None, found) | (found, None) => found,
-        (Some(Found::One(a)), Some(Found::One(b))) if a == b => Some(Found::One(a)),
-        _ => Some(Found::Several),
-    }
 }
 
 /// What the name pass knows of the files: each stored file's row by path, and the bindings of
@@ -80,21 +62,16 @@ impl<'a> Written<'a> {
     }
 }
 
-/// One search for a name: where it looked, with the fewest files passed through to get there,
-/// and how many more looks it may take.
-struct Search<'a> {
-    /// Each file and name looked into, with the fewest files passed through to get there.
-    searched: BTreeMap<(FileId, &'a Identifier), usize>,
-    /// The looks left.
-    budget: usize,
-}
-
-/// What earlier lookups found, so that each is made once per index.
+/// What earlier lookups found, so that each is made once per index whatever a file repeats.
 #[derive(Default)]
 struct Memo<'a> {
-    /// What each file's import at a position, among those that take a name, finds.
+    /// What each written file's imports find, by the position of what they take.
     imports: BTreeMap<(FileId, usize), Option<Found>>,
-    /// What each name finds in each module a file reaches, by the module's position.
+    /// What each written file's groups of imports binding one bare name find together.
+    bound: BTreeMap<(FileId, usize), Option<Found>>,
+    /// Whether each written file's group of imports binding one qualifier gives it a definition.
+    definitions: BTreeMap<(FileId, usize), bool>,
+    /// What each name finds after the qualifier a written file's group of imports binds.
     members: BTreeMap<(FileId, usize, &'a Identifier), Option<Found>>,
 }
 
@@ -152,7 +129,8 @@ impl<'a> Definitions<'a> {
         written: &Written<'a>,
         memo: &mut Memo<'a>,
     ) -> Option<Target> {
-        let Some(bindings) = written.bindings.get(&reference.file) else {
+        let file = reference.file;
+        let Some(bindings) = written.bindings.get(&file) else {
             let is_through_import = reference.kind == RefKind::Import
                 || reference
                     .target
@@ -164,30 +142,13 @@ impl<'a> Definitions<'a> {
             };
         };
         let found = match bindings.lookup(position) {
-            Some(Lookup::Import(Some(taken))) => {
-                self.through_import(reference.file, *taken, written, memo)
-            }
-            Some(Lookup::Bound(takens)) => {
-                let finds: Vec<Option<Found>> = takens
-                    .iter()
-                    .map(|taken| self.through_import(reference.file, *taken, written, memo))
-                    .collect();
-                agreed(&finds)
-            }
-            Some(Lookup::Member(reaches)) => {
-                if self.names_a_definition(reference.file, reaches, written, memo) {
+            Some(Lookup::Import(Some(taken))) => self.through_import(file, *taken, written, memo),
+            Some(Lookup::Bound(group)) => self.through_bound(file, *group, written, memo),
+            Some(Lookup::Member(group)) => {
+                if self.gives_a_definition(file, *group, written, memo) {
                     return self.by_name(reference);
                 }
-                let finds: Vec<Option<Found>> = reaches
-                    .iter()
-                    .map(|reach| match reach {
-                        Reach::Module(module) | Reach::Submodule { module, .. } => {
-                            self.in_module(reference.file, *module, &reference.name, written, memo)
-                        }
-                        Reach::Outside => None,
-                    })
-                    .collect();
-                agreed(&finds)
+                self.through_member(file, (*group, &reference.name), written, memo)
             }
             // A reference past the file's lookups means the two lists came apart; such a one goes
             // by its name, as it would without imports.
@@ -197,12 +158,12 @@ impl<'a> Definitions<'a> {
             Some(Lookup::Import(None) | Lookup::ByName) | None => None,
         };
         // A name an import binds is that import's: what the imports cannot settle stays unresolved.
+        // INVARIANT: silent-when-unsure
         found.and_then(|found| tie(found, Resolution::ImportPath))
     }
 
-    /// What the import at `taken`, among the imports of the written file `file` that take a
-    /// name, finds: its name made directly in the files it names, following files that pass it
-    /// on.
+    /// What the written file `file`'s imports find for what they take at `taken`: its name made
+    /// directly in the files they name, or passed on by them.
     fn through_import(
         &self,
         file: FileId,
@@ -222,17 +183,49 @@ impl<'a> Definitions<'a> {
         found
     }
 
-    /// Whether one of `reaches`, from the written file `file`, is a submodule whose name the
-    /// import's own module makes as something other than a module: then the qualifier names that
-    /// definition, a class or a value, not the submodule.
-    fn names_a_definition(
+    /// What the imports of the written file `file`'s group at `group`, binding one bare name,
+    /// find together: the one definition when they all find it.
+    fn through_bound(
         &self,
         file: FileId,
-        reaches: &[Reach],
+        group: usize,
+        written: &Written<'a>,
+        memo: &mut Memo<'a>,
+    ) -> Option<Found> {
+        if let Some(found) = memo.bound.get(&(file, group)) {
+            return *found;
+        }
+        let takens = written
+            .bindings
+            .get(&file)
+            .map_or(&[][..], |bindings| bindings.bound(group));
+        let finds: Vec<Option<Found>> = takens
+            .iter()
+            .map(|taken| self.through_import(file, *taken, written, memo))
+            .collect();
+        let found = agreed(&finds);
+        memo.bound.insert((file, group), found);
+        found
+    }
+
+    /// Whether the written file `file`'s group at `group`, binding one qualifier, gives it a
+    /// definition of the repository rather than modules: one of its imports takes the name of a
+    /// submodule that the import's own module makes as something other than a module.
+    fn gives_a_definition(
+        &self,
+        file: FileId,
+        group: usize,
         written: &Written<'a>,
         memo: &mut Memo<'a>,
     ) -> bool {
-        reaches.iter().any(|reach| {
+        if let Some(gives) = memo.definitions.get(&(file, group)) {
+            return *gives;
+        }
+        let reaches = written
+            .bindings
+            .get(&file)
+            .map_or(&[][..], |bindings| bindings.reached(group));
+        let gives = reaches.iter().any(|reach| {
             let Reach::Submodule { taken, .. } = reach else {
                 return false;
             };
@@ -241,27 +234,36 @@ impl<'a> Definitions<'a> {
                 Some(Found::Several) => true,
                 None => false,
             }
-        })
+        });
+        memo.definitions.insert((file, group), gives);
+        gives
     }
 
-    /// What `name` finds in the module at `module` among those the written file `file` reaches:
-    /// made directly in the module's files, or passed on by them.
-    fn in_module(
+    /// What `name`, written after the qualifier the written file `file`'s group at `group` binds,
+    /// finds: the one definition every module the group reaches makes or passes on, and nothing
+    /// when one of them is outside the repository.
+    fn through_member(
         &self,
         file: FileId,
-        module: usize,
-        name: &'a Identifier,
+        (group, name): (usize, &'a Identifier),
         written: &Written<'a>,
         memo: &mut Memo<'a>,
     ) -> Option<Found> {
-        if let Some(found) = memo.members.get(&(file, module, name)) {
+        if let Some(found) = memo.members.get(&(file, group, name)) {
             return *found;
         }
-        let found = written
-            .bindings
-            .get(&file)
-            .and_then(|bindings| self.defined_in(name, bindings.module(module), written));
-        memo.members.insert((file, module, name), found);
+        let bindings = written.bindings.get(&file);
+        let reaches = bindings.map_or(&[][..], |bindings| bindings.reached(group));
+        let finds: Vec<Option<Found>> = reaches
+            .iter()
+            .map(|reach| match reach {
+                Reach::Module(module) | Reach::Submodule { module, .. } => bindings
+                    .and_then(|bindings| self.defined_in(name, bindings.module(*module), written)),
+                Reach::Outside => None,
+            })
+            .collect();
+        let found = agreed(&finds);
+        memo.members.insert((file, group, name), found);
         found
     }
 
@@ -276,93 +278,10 @@ impl<'a> Definitions<'a> {
         let family = family(reference.language?);
         tie(*self.in_family.get(&(family, name))?, Resolution::NameOnly)
     }
-
-    /// What `name` finds made directly in `files`, following the files that only pass it on.
-    fn defined_in<'f>(
-        &self,
-        name: &'a Identifier,
-        files: impl IntoIterator<Item = &'f RepoPath>,
-        written: &Written<'a>,
-    ) -> Option<Found> {
-        let mut search = Search {
-            searched: BTreeMap::new(),
-            budget: MAX_FILES_SEARCHED,
-        };
-        self.search(name, files, 0, written, &mut search)
-    }
-
-    /// What `name` finds made directly in `files`, having passed through `passed` files. A file
-    /// that does not make it is followed through its top-level imports that bind it and its
-    /// imports of every name, while the cap allows. A file is not searched again for a name it
-    /// was searched for after passing through as few files or fewer; reached by a shorter way, it
-    /// is, since the cap may have cut the longer search short. The search stops as soon as it
-    /// finds two definitions, and finds two when it runs out of looks.
-    fn search<'f>(
-        &self,
-        name: &'a Identifier,
-        files: impl IntoIterator<Item = &'f RepoPath>,
-        passed: usize,
-        written: &Written<'a>,
-        search: &mut Search<'a>,
-    ) -> Option<Found> {
-        let mut found = None;
-        for path in files {
-            let Some(&file) = written.files.get(path) else {
-                continue;
-            };
-            let fewest = search.searched.entry((file, name)).or_insert(usize::MAX);
-            if *fewest <= passed {
-                continue;
-            }
-            *fewest = passed;
-            let Some(budget) = search.budget.checked_sub(1) else {
-                return Some(Found::Several);
-            };
-            search.budget = budget;
-            let here = match self.top_level.get(&(file, name.as_str())) {
-                Some(made) => Some(*made),
-                None if passed < MAX_FILES_PASSED_THROUGH => {
-                    self.passed_on(name, file, passed + 1, written, search)
-                }
-                None => None,
-            };
-            found = merge(found, here);
-            if found == Some(Found::Several) {
-                return found;
-            }
-        }
-        found
-    }
-
-    /// What `name` finds through the top-level imports of the written file `file` that bring it
-    /// in, having passed through `passed` files.
-    fn passed_on(
-        &self,
-        name: &'a Identifier,
-        file: FileId,
-        passed: usize,
-        written: &Written<'a>,
-        search: &mut Search<'a>,
-    ) -> Option<Found> {
-        let bindings = written.bindings.get(&file)?;
-        let mut found = None;
-        for taken in bindings.exports(name) {
-            let Some(import) = bindings.taken(*taken) else {
-                continue;
-            };
-            let through = self.search(&import.name, &import.files, passed, written, search);
-            found = merge(found, through);
-            if found == Some(Found::Several) {
-                return found;
-            }
-        }
-        let everything = self.search(name, bindings.everything(), passed, written, search);
-        merge(found, everything)
-    }
 }
 
-/// What several imports binding one name find together: the one definition when every one of
-/// them finds that same one, else nothing, since which import holds is not known.
+/// What several imports or routes to one name find together: the one definition when every one
+/// of them finds that same one, else nothing, since which one holds is not known.
 fn agreed(finds: &[Option<Found>]) -> Option<Found> {
     let mut agreed = None;
     for found in finds {

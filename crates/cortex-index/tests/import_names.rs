@@ -245,10 +245,10 @@ fn names_pass_through_at_most_four_files() -> TestResult {
 }
 
 /// A file reached the long way, where the cap cut the search short, is searched again when a
-/// shorter way reaches it. `hub.ts` passes `Diamond` on from `b1.ts`, which leads through `b2.ts`
-/// and `b3.ts` to `f.ts`, the fourth file passed through, where the search stops; `hub.ts` also
-/// brings in everything of `f.ts` directly, and from there `f.ts` passes `Diamond` on from
-/// `g.ts`, which makes it.
+/// shorter way reaches it. `hub.ts` brings in everything of `b1.ts`, which passes `Diamond` on
+/// through `b2.ts` and `b3.ts` to `f.ts`, the fourth file passed through, where the search stops;
+/// `hub.ts` also brings in everything of `f.ts` directly, and from there `f.ts` passes `Diamond`
+/// on from `g.ts`, which makes it.
 #[test]
 fn a_shorter_way_to_a_file_is_followed_again() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -258,7 +258,7 @@ fn a_shorter_way_to_a_file_is_followed_again() -> TestResult {
         &[
             (
                 "src/hub.ts",
-                "export { Diamond } from \"./b1\";\nexport * from \"./f\";\n",
+                "export * from \"./b1\";\nexport * from \"./f\";\n",
             ),
             ("src/b1.ts", "export { Diamond } from \"./b2\";\n"),
             ("src/b2.ts", "export { Diamond } from \"./b3\";\n"),
@@ -321,5 +321,84 @@ fn a_skipped_file_keeps_its_ties_through_imports() -> TestResult {
             .any(|problem| problem.path.as_ref() == Some(&app));
     assert!(is_skipped, "app.ts was read");
     assert_eq!(ties(root, "src/app.ts")?, tied);
+    Ok(())
+}
+
+/// A file that passes a name on must give one answer for it. Its own definition of the name and
+/// its imports of the name must lead to the same definition: `shop` imports `loads` from `fast`,
+/// outside the repository, or else from `.compat`, and `pkg` imports `dumps` from `fast` or else
+/// defines it, so which holds depends on what runs and both stay unresolved. Its `*` imports
+/// cannot stand in for an import of the name that finds nothing (TypeScript's explicit
+/// `export { parse } from "lib"` wins over `export * from "./local"`), and they make the name
+/// ambiguous when they find another definition (`later` defines `f`, then a later `*` import
+/// brings in `a.f`, which wins in Python). Routes that agree tie: `kit` passes `Thing` on both by
+/// name and with `*` from the one file that makes it.
+#[test]
+fn routes_through_a_file_must_agree() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            (
+                "shop/__init__.py",
+                "try:\n    from fast import loads\nexcept ImportError:\n    \
+                 from .compat import loads\n",
+            ),
+            ("shop/compat.py", "def loads(text):\n    return text\n"),
+            (
+                "pkg/__init__.py",
+                "try:\n    from fast import dumps\nexcept ImportError:\n    \
+                 def dumps(value):\n        return value\n",
+            ),
+            (
+                "later/__init__.py",
+                "def f():\n    pass\n\nfrom .a import *\n",
+            ),
+            ("later/a.py", "def f():\n    pass\n"),
+            (
+                "app.py",
+                "from shop import loads\nfrom pkg import dumps\nfrom later import f\n\n\
+                 loads(1)\ndumps(2)\nf()\n",
+            ),
+            (
+                "src/lib/index.ts",
+                "export { parse } from \"lib\";\nexport * from \"./local\";\n",
+            ),
+            ("src/lib/local.ts", "export function parse() {}\n"),
+            (
+                "src/kit/index.ts",
+                "export { Thing } from \"./thing\";\nexport * from \"./thing\";\n",
+            ),
+            ("src/kit/thing.ts", "export class Thing {}\n"),
+            (
+                "src/app.ts",
+                "import { parse } from \"./lib\";\nimport { Thing } from \"./kit\";\nparse();\n\
+                 new Thing();\n",
+            ),
+        ],
+    )?;
+    index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(
+        ties(root, "app.py")?,
+        expected(&[
+            ("import", "loads", 1, None),
+            ("import", "dumps", 2, None),
+            ("import", "f", 3, None),
+            ("call", "loads", 5, None),
+            ("call", "dumps", 6, None),
+            ("call", "f", 7, None),
+        ])
+    );
+    let thing = Some(("src/kit/thing.ts", "Thing", "import_path"));
+    assert_eq!(
+        ties(root, "src/app.ts")?,
+        expected(&[
+            ("import", "parse", 1, None),
+            ("import", "Thing", 2, thing),
+            ("call", "parse", 3, None),
+            ("call", "Thing", 4, thing),
+        ])
+    );
     Ok(())
 }
