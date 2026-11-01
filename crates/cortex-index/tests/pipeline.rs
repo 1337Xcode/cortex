@@ -323,6 +323,7 @@ fn every_file_is_written_as_its_kind_allows() -> TestResult {
         problems: Vec::new(),
         left_out: Vec::new(),
         changed_symbols: Vec::new(),
+        edited: Vec::new(),
         scip: ScipOutcome::Absent,
         // Source: orders.py (7 lines) and README.md (3); the others are vendored, generated,
         // secret, too large, binary or in no language.
@@ -606,6 +607,7 @@ fn a_second_index_follows_the_changes() -> TestResult {
         problems: Vec::new(),
         left_out: Vec::new(),
         changed_symbols: Vec::new(),
+        edited: Vec::new(),
         scip: ScipOutcome::Absent,
         // Source: orders.py (7 lines and 4 more), new.py (2) and README.md, kept with its 3.
         size: RepoSize {
@@ -788,6 +790,7 @@ fn a_file_out_of_time_is_reported_and_tried_again_when_it_changes() -> TestResul
         problems: vec![(RepoPath::new("slow.py")?, FileProblem::TimedOut)],
         left_out: Vec::new(),
         changed_symbols: Vec::new(),
+        edited: Vec::new(),
         scip: ScipOutcome::Absent,
         size: RepoSize {
             source_files: 1,

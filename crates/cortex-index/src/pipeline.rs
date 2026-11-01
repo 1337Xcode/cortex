@@ -113,6 +113,10 @@ pub struct IndexReport {
     pub left_out: Vec<(RepoPath, LeftOut)>,
     /// The definitions of written files whose signature or body changed, in the order written.
     pub changed_symbols: Vec<SymbolChange>,
+    /// The files an index of chosen paths found new, gone, or with other contents than stored (a
+    /// file whose contents are not read counts whenever it is written), in path order: the edits
+    /// the watcher saw. An index of the whole repository lists none.
+    pub edited: Vec<RepoPath>,
     /// What became of the repository's SCIP index.
     pub scip: ScipOutcome,
     /// The repository's size, as the scale modes count it.
@@ -375,6 +379,7 @@ impl IndexReport {
             problems: Vec::new(),
             left_out: Vec::new(),
             changed_symbols: Vec::new(),
+            edited: Vec::new(),
             scip,
             size: RepoSize {
                 source_files: 0,
@@ -427,6 +432,9 @@ pub(crate) struct Written {
     symbols: Vec<SymbolId>,
     /// Whether it was not stored before.
     pub(crate) is_new: bool,
+    /// Whether its contents differ from the stored ones: it is new, its hash changed, or its
+    /// contents are not read and so not known to be the same.
+    pub(crate) has_new_contents: bool,
     /// Its definitions that came or went, or all of them when its language changed: where another
     /// file's references may now find something else.
     pub(crate) names: NameChanges,
@@ -753,6 +761,10 @@ fn write_batch(
                 ),
                 None => (Vec::new(), BTreeSet::new()),
             };
+        let hash = prepared.index.file.content_hash;
+        let has_new_contents = known
+            .and_then(|known| known.get(&prepared.index.file.path))
+            .is_none_or(|row| hash.is_none() || row.file.content_hash != hash);
         let change = transaction.replace_file(&prepared.index)?;
         report.files += 1;
         report.parsed += u64::from(prepared.index.file.flags.contains(FileFlags::PARSED));
@@ -772,6 +784,7 @@ fn write_batch(
             imported: prepared.imported,
             symbols: change.symbols,
             is_new: change.is_new,
+            has_new_contents,
             names,
             passes_on_otherwise,
             scip_users,
@@ -1366,6 +1379,7 @@ mod tests {
             problems: Vec::new(),
             left_out: Vec::new(),
             changed_symbols: Vec::new(),
+            edited: Vec::new(),
             scip: ScipOutcome::Absent,
             size: RepoSize {
                 source_files: 0,

@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::{TestResult, expected, index, index_changed, ties, touch, write_all};
-use cortex_core::Identifier;
+use cortex_core::{Identifier, RepoPath};
 use cortex_store::{ChangeKind, MetaKey, Reader};
 
 /// A time limit no test file comes near, even in a debug build.
@@ -316,5 +316,44 @@ fn changed_definitions_are_reported() -> TestResult {
             ("place", ChangeKind::Body)
         ]
     );
+    Ok(())
+}
+
+/// An index of chosen paths reports the files it found edited, in path order: `b.py` has other
+/// contents, `c.py` is new and `d.py` is gone; `.env`, which may hold secrets and is never read,
+/// has a new time, so its contents may have changed too. `a.py` has a new time and the same
+/// contents: it is written again, its time now later than the SCIP index's (bytes that are no
+/// index, which only their time matters for here), but it is no edit. `notes.txt` was not among
+/// the paths. The first index, of the whole repository, reports none.
+#[test]
+fn edited_files_are_reported() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            ("a.py", "def a():\n    pass\n"),
+            ("b.py", "def b():\n    pass\n"),
+            ("d.py", "def d():\n    pass\n"),
+            (".env", "TOKEN=x\n"),
+            ("notes.txt", "notes\n"),
+            ("index.scip", "no index\n"),
+        ],
+    )?;
+    let first = index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    assert_eq!(first.edited, Vec::<RepoPath>::new());
+    touch(root, "a.py")?;
+    touch(root, ".env")?;
+    write_all(
+        root,
+        &[
+            ("b.py", "def b():\n    return 1\n"),
+            ("c.py", "def c():\n    pass\n"),
+        ],
+    )?;
+    std::fs::remove_file(root.join("d.py"))?;
+    let report = index_changed(root, &[".env", "a.py", "b.py", "c.py", "d.py"])?;
+    let edited: Vec<&str> = report.edited.iter().map(RepoPath::as_str).collect();
+    assert_eq!(edited, [".env", "b.py", "c.py", "d.py"]);
     Ok(())
 }
