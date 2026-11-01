@@ -51,6 +51,7 @@ fn full_event() -> Result<Event, Box<dyn std::error::Error>> {
         subagent_type: Some(Identifier::new("Explore")?),
         compact_trigger: Some(CompactTrigger::Manual),
         end_reason: Some(Identifier::new("other")?),
+        is_probe: false,
     })
 }
 

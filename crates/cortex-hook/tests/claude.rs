@@ -130,6 +130,7 @@ fn base(hook: HookKind, session: &str) -> TestResult<Event> {
         subagent_type: None,
         compact_trigger: None,
         end_reason: None,
+        is_probe: false,
     })
 }
 
@@ -656,6 +657,31 @@ fn long_prompts_are_cut_and_bad_names_left_out() -> TestResult {
         .ok_or("no event")?;
     assert_eq!(start.source, Some(StartSource::Startup));
     assert_eq!(start.prompt_text, None);
+    Ok(())
+}
+
+/// A payload marked `cortex_probe: true`, as `cortex doctor` sends, makes the same event with the
+/// probe flag set; a marker of another type reads as absent, and no marker as the agent's own.
+#[test]
+fn a_probe_is_marked() -> TestResult {
+    let marked = |marker: serde_json::Value| {
+        normalized("stop.json", "Stop", &locate, |payload| {
+            payload["cortex_probe"] = marker;
+        })
+    };
+    let probe = Event {
+        is_probe: true,
+        ..base(HookKind::Stop, S1)?
+    };
+    assert_eq!(marked(serde_json::json!(true))?, Some(probe));
+    assert_eq!(
+        marked(serde_json::json!("yes"))?,
+        Some(base(HookKind::Stop, S1)?)
+    );
+    assert_eq!(
+        marked(serde_json::json!(false))?,
+        Some(base(HookKind::Stop, S1)?)
+    );
     Ok(())
 }
 

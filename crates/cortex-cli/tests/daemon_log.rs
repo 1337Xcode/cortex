@@ -68,6 +68,7 @@ fn event(root: &Path, (hook, ts_ms): (HookKind, i64), prompt: Option<&str>) -> T
         subagent_type: None,
         compact_trigger: None,
         end_reason: None,
+        is_probe: false,
     })
 }
 

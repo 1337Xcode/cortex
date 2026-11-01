@@ -84,6 +84,7 @@ impl Repo {
             subagent_type: None,
             compact_trigger: None,
             end_reason: None,
+            is_probe: false,
         })
     }
 

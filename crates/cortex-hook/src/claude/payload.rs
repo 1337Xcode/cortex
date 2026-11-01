@@ -61,6 +61,9 @@ pub(super) struct Payload {
     /// Why the session ended.
     #[serde(deserialize_with = "lenient")]
     pub(super) reason: Option<String>,
+    /// Whether the call is `cortex doctor`'s probe rather than the agent's.
+    #[serde(deserialize_with = "lenient")]
+    pub(super) cortex_probe: Option<bool>,
 }
 
 /// What a tool was given.

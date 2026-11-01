@@ -93,6 +93,7 @@ fn frames_read_back_in_order() -> TestResult {
         subagent_type: None,
         compact_trigger: None,
         end_reason: None,
+        is_probe: false,
     };
     let first = Request {
         request_id: 1,

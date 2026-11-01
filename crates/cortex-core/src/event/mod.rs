@@ -78,6 +78,10 @@ pub struct Event {
     /// Why the session ended, as the agent names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_reason: Option<Identifier>,
+    /// Whether the event is a probe: `cortex doctor`'s synthetic hook call, which a daemon answers
+    /// as it answers the agent's and does not record.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_probe: bool,
 }
 
 /// What a tool call aimed at.
@@ -274,6 +278,7 @@ impl fmt::Debug for Event {
             .field("subagent_type", &self.subagent_type)
             .field("compact_trigger", &self.compact_trigger)
             .field("end_reason", &self.end_reason)
+            .field("is_probe", &self.is_probe)
             .finish()
     }
 }

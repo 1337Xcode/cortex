@@ -282,6 +282,7 @@ fn a_request_too_long_is_never_sent() -> TestResult {
         subagent_type: None,
         compact_trigger: None,
         end_reason: None,
+        is_probe: false,
     };
     let body = RequestBody::Event {
         event: Box::new(event),

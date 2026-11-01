@@ -222,8 +222,9 @@ impl Server {
             RequestBody::Event { event } => {
                 let hook = event.hook;
                 // The moment before a tool runs is answered, not recorded: the tool's result is,
-                // once it ran.
-                if hook != HookKind::PreTool {
+                // once it ran. A probe, `cortex doctor`'s, is answered like the agent's and
+                // recorded never: no session, task or event of it reaches the store.
+                if hook != HookKind::PreTool && !event.is_probe {
                     self.inbox.push_event(*event);
                 }
                 (ResponseBody::Ack, Some(hook))

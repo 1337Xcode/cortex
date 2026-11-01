@@ -81,6 +81,7 @@ fn read_event(root: &Path, ts_ms: i64) -> TestResult<Event> {
         subagent_type: None,
         compact_trigger: None,
         end_reason: None,
+        is_probe: false,
     })
 }
 

@@ -261,6 +261,7 @@ fn events_sent_to_the_daemon_are_recorded() -> TestResult {
             subagent_type: None,
             compact_trigger: None,
             end_reason: None,
+            is_probe: false,
         })
     };
     let read = |hook: HookKind, ts_ms: i64| -> TestResult<Event> {
@@ -336,6 +337,75 @@ fn events_sent_to_the_daemon_are_recorded() -> TestResult {
     }
     assert!(stdout.contains("\nerrors: none\n"), "{stdout}");
     assert!(!stdout.contains("look at app"), "{stdout}");
+    Ok(())
+}
+
+/// Probes are answered and leave no row: a probe session start and prompt from session `probe`
+/// get their acknowledgements, and once a real session start is stored after them, the store
+/// holds that session's row alone, and no session `probe`.
+#[test]
+fn probes_leave_no_rows() -> TestResult {
+    let (repo, home) = repository()?;
+    let _daemon = ready_daemon(repo.path(), home.path())?;
+    let files = run_files(repo.path(), home.path())?;
+    let root = canonical_root(repo.path())?;
+    let event = |hook: HookKind, session: &str, is_probe: bool| -> TestResult<Event> {
+        Ok(Event {
+            event_id: Ulid::from_seed(1, session.as_bytes()),
+            ts_ms: 10,
+            agent: Agent::Claude,
+            agent_version: None,
+            session_id: Identifier::new(session)?,
+            parent_session_id: None,
+            cwd: root.clone(),
+            repo_root: root.clone(),
+            hook,
+            source: None,
+            tool: None,
+            tool_target: None,
+            tool_result: None,
+            prompt_text: None,
+            transcript_path: None,
+            model: None,
+            subagent_type: None,
+            compact_trigger: None,
+            end_reason: None,
+            is_probe,
+        })
+    };
+    for sent in [
+        event(HookKind::SessionStart, "probe", true)?,
+        Event {
+            event_id: Ulid::from_seed(2, b"probe"),
+            ..event(HookKind::Prompt, "probe", true)?
+        },
+        event(HookKind::SessionStart, "real", false)?,
+    ] {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let body = RequestBody::Event {
+            event: Box::new(sent),
+        };
+        assert_eq!(
+            ask(&files, Role::Hook, body, deadline)?.body,
+            ResponseBody::Ack
+        );
+    }
+    let stored = || -> TestResult<Vec<(String, EventKind)>> {
+        let reader = Reader::open(&repo.path().join(".cortex"), 0)?;
+        Ok(reader
+            .queries()
+            .events_after(0, 10)?
+            .into_iter()
+            .map(|row| {
+                let session = row.record.session_id.map(|id| id.as_str().to_owned());
+                (session.unwrap_or_default(), row.record.kind)
+            })
+            .collect())
+    };
+    common::wait_for(|| Ok(!stored()?.is_empty()))?;
+    assert_eq!(stored()?, [("real".to_owned(), EventKind::SessionStart)]);
+    let reader = Reader::open(&repo.path().join(".cortex"), 0)?;
+    assert_eq!(reader.queries().session(&Identifier::new("probe")?)?, None);
     Ok(())
 }
 

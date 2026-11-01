@@ -79,6 +79,7 @@ pub(super) fn event(
             .as_deref()
             .filter(|_| entry.hook == HookKind::Compact)
             .and_then(CompactTrigger::from_name),
+        is_probe: payload.cortex_probe == Some(true),
         end_reason: payload
             .reason
             .as_deref()
