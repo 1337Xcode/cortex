@@ -41,8 +41,8 @@ struct State {
     failed_batches: u64,
     /// The writer's count of the checkpoints that failed.
     failed_checkpoints: CheckpointFailures,
-    /// The watcher's changes, oldest first.
-    changes: Vec<Change>,
+    /// The watcher's changes, oldest first, each with when it arrived, in UTC milliseconds.
+    changes: Vec<(Change, i64)>,
     /// Whether a change was dropped since the last drain.
     is_overflowed: bool,
     /// Whether the daemon was asked to stop.
@@ -72,8 +72,9 @@ pub(crate) enum Changed {
     /// Everything is to be indexed; the paths named besides, in path order, are asked for first in
     /// huge mode.
     Everything(Vec<RepoPath>),
-    /// Only these paths, in path order.
-    Paths(Vec<RepoPath>),
+    /// Only these paths, in path order, and when the first of the changes naming them arrived, in
+    /// UTC milliseconds: when the watcher saw the edits.
+    Paths(Vec<RepoPath>, i64),
 }
 
 /// The inbox's counts, for the daemon's status.
@@ -138,14 +139,14 @@ impl Inbox {
         }
     }
 
-    /// Puts in a change from the watcher, or drops it and marks the overflow when the inbox holds
-    /// [`MAX_CHANGES`].
-    pub(crate) fn push_change(&self, change: Change) {
+    /// Puts in a change from the watcher that arrived at `seen_ms`, in UTC milliseconds, or drops it
+    /// and marks the overflow when the inbox holds [`MAX_CHANGES`].
+    pub(crate) fn push_change(&self, change: Change, seen_ms: i64) {
         let mut state = self.lock();
         if state.changes.len() >= MAX_CHANGES {
             state.is_overflowed = true;
         } else {
-            state.changes.push(change);
+            state.changes.push((change, seen_ms));
         }
         drop(state);
         self.arrived.notify_one();
@@ -217,11 +218,16 @@ fn is_droppable(event: &Event) -> bool {
 }
 
 /// Every change waiting, as one: everything when any of them is, or when one was dropped, else
-/// the paths they name. The overflow mark is cleared with the changes.
+/// the paths they name, with when the first of them arrived. The overflow mark is cleared with the
+/// changes.
 fn drain(state: &mut State) -> Changed {
     let mut paths = BTreeSet::new();
     let mut is_everything = std::mem::take(&mut state.is_overflowed);
-    for change in state.changes.drain(..) {
+    // There is at least one change unless the overflow mark was set, so the time is a real one
+    // whenever paths are named.
+    let mut first_ms = i64::MAX;
+    for (change, seen_ms) in state.changes.drain(..) {
+        first_ms = first_ms.min(seen_ms);
         match change {
             Change::Paths(named) => paths.extend(named),
             Change::Everything => is_everything = true,
@@ -231,7 +237,7 @@ fn drain(state: &mut State) -> Changed {
     if is_everything {
         Changed::Everything(paths)
     } else {
-        Changed::Paths(paths)
+        Changed::Paths(paths, first_ms)
     }
 }
 
@@ -258,31 +264,31 @@ mod tests {
         };
         Some(match changed {
             Changed::Everything(paths) => (true, paths.iter().map(ToString::to_string).collect()),
-            Changed::Paths(paths) => (false, paths.iter().map(ToString::to_string).collect()),
+            Changed::Paths(paths, _) => (false, paths.iter().map(ToString::to_string).collect()),
         })
     }
 
-    /// Changes waiting together are drained into one, in path order; one change to everything
-    /// makes the whole batch one; a dropped change, marked as an overflow, does too, once.
+    /// Changes waiting together are drained into one, in path order, seen when the first of them
+    /// arrived; one change to everything makes the whole batch one; a dropped change, marked as an
+    /// overflow, does too, once.
     #[test]
     fn waiting_changes_drain_into_one() -> Result<(), cortex_core::PathError> {
         let inbox = Inbox::default();
-        inbox.push_change(paths(&["b.py"])?);
-        inbox.push_change(paths(&["a.py", "b.py"])?);
+        inbox.push_change(paths(&["b.py"])?, 30);
+        inbox.push_change(paths(&["a.py", "b.py"])?, 20);
         let names = |items: &[&str]| items.iter().map(ToString::to_string).collect::<Vec<_>>();
-        assert_eq!(
-            summary(inbox.wait(None)),
-            Some((false, names(&["a.py", "b.py"])))
-        );
-        inbox.push_change(paths(&["c.py"])?);
-        inbox.push_change(Change::Everything);
+        let drained = inbox.wait(None);
+        assert!(matches!(drained, Work::Changed(Changed::Paths(_, 20))));
+        assert_eq!(summary(drained), Some((false, names(&["a.py", "b.py"]))));
+        inbox.push_change(paths(&["c.py"])?, 1);
+        inbox.push_change(Change::Everything, 1);
         assert_eq!(summary(inbox.wait(None)), Some((true, names(&["c.py"]))));
         for _ in 0..MAX_CHANGES {
-            inbox.push_change(paths(&["d.py"])?);
+            inbox.push_change(paths(&["d.py"])?, 1);
         }
-        inbox.push_change(paths(&["e.py"])?);
+        inbox.push_change(paths(&["e.py"])?, 1);
         assert_eq!(summary(inbox.wait(None)), Some((true, names(&["d.py"]))));
-        inbox.push_change(paths(&["f.py"])?);
+        inbox.push_change(paths(&["f.py"])?, 1);
         assert_eq!(summary(inbox.wait(None)), Some((false, names(&["f.py"]))));
         Ok(())
     }
@@ -300,11 +306,11 @@ mod tests {
             Work::Timeout
         );
         assert!(start.elapsed() >= Duration::from_millis(50));
-        inbox.push_change(paths(&["w.py"])?);
+        inbox.push_change(paths(&["w.py"])?, 1);
         inbox.watcher_stopped();
         assert!(matches!(inbox.wait(None), Work::Changed(_)));
         assert_eq!(inbox.wait(None), Work::WatcherStopped);
-        inbox.push_change(paths(&["a.py"])?);
+        inbox.push_change(paths(&["a.py"])?, 1);
         inbox.stop();
         assert_eq!(inbox.wait(None), Work::Stop);
         assert_eq!(inbox.wait(None), Work::Stop);
@@ -352,7 +358,7 @@ mod tests {
     #[test]
     fn events_come_first_and_in_order() -> Result<(), Box<dyn std::error::Error>> {
         let inbox = Inbox::default();
-        inbox.push_change(paths(&["a.py"])?);
+        inbox.push_change(paths(&["a.py"])?, 1);
         inbox.push_event(event(HookKind::Prompt, None, 1)?);
         inbox.push_event(event(HookKind::Stop, None, 2)?);
         assert_eq!(times(inbox.wait(None)), [1, 2]);
@@ -404,7 +410,7 @@ mod tests {
         let inbox = std::sync::Arc::new(Inbox::default());
         let sender = std::sync::Arc::clone(&inbox);
         let change = paths(&["x.py"])?;
-        let thread = std::thread::spawn(move || sender.push_change(change));
+        let thread = std::thread::spawn(move || sender.push_change(change, 1));
         assert_eq!(
             summary(inbox.wait(None)),
             Some((false, vec!["x.py".to_owned()]))

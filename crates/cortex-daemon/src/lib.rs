@@ -142,9 +142,9 @@ fn index_and_serve(
 struct WatcherFeed(Arc<Inbox>);
 
 impl WatcherFeed {
-    /// Puts the change in the inbox.
+    /// Puts the change in the inbox, stamped with the time it arrived.
     fn push(&self, change: Change) {
-        self.0.push_change(change);
+        self.0.push_change(change, host::now_ms());
     }
 }
 

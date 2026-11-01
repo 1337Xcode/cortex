@@ -12,16 +12,20 @@ use std::collections::BTreeMap;
 
 use cortex_core::{
     ContentHash, Event, EventKind, EventMeta, HookKind, Identifier, LineRange, MAX_RANGES,
-    PromptExcerpt, TaskOutcome, ToolKind, Ulid,
+    PromptExcerpt, RepoPath, TaskOutcome, ToolKind, Ulid,
 };
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
+
+use crate::watcher_edits::ATTRIBUTION_WINDOW_MS;
 
 /// Most sessions the recorder remembers. Past that it forgets them all and reads each one again
 /// from the store when its next event comes, so memory stays bounded however long it runs.
 const MAX_REMEMBERED_SESSIONS: usize = 1_000;
 
 /// Turns each event into rows, remembering per session what the store would otherwise be asked
-/// on every event: that the session is stored with its parent, and its open task.
+/// on every event: that the session is stored with its parent, and its open task. It also
+/// remembers what an edit the watcher saw is weighed against: each live session's latest event,
+/// and the files hooks reported edited lately.
 #[derive(Debug, Default)]
 pub struct Recorder {
     /// Whether a task keeps the first characters of its prompt (`privacy.store_prompt_excerpt`).
@@ -30,6 +34,11 @@ pub struct Recorder {
     parents: BTreeMap<Identifier, Option<Identifier>>,
     /// Each remembered session's open task, or `None` when it has none.
     open_tasks: BTreeMap<Identifier, Option<Ulid>>,
+    /// The time of each live session's latest event.
+    latest_events: BTreeMap<Identifier, i64>,
+    /// The time of the latest edit of each file a hook reported within the attribution window of
+    /// the latest one.
+    reported_edits: BTreeMap<RepoPath, i64>,
 }
 
 impl Recorder {
@@ -98,12 +107,60 @@ impl Recorder {
                 meta: meta_of(event),
             })?;
         }
+        self.note_activity(event, kind);
         if matches!(event.hook, HookKind::SessionEnd | HookKind::SubagentStop) {
             transaction.end_session(&event.session_id, event.ts_ms)?;
             self.parents.remove(&event.session_id);
             self.open_tasks.remove(&event.session_id);
+            self.latest_events.remove(&event.session_id);
         }
         Ok(())
+    }
+
+    /// Remembers `event`, recorded as `kind`, as its session's latest, and the file it edited.
+    fn note_activity(&mut self, event: &Event, kind: EventKind) {
+        if self.latest_events.len() >= MAX_REMEMBERED_SESSIONS
+            && !self.latest_events.contains_key(&event.session_id)
+        {
+            self.latest_events.clear();
+        }
+        let latest = self
+            .latest_events
+            .entry(event.session_id.clone())
+            .or_insert(event.ts_ms);
+        *latest = (*latest).max(event.ts_ms);
+        let edited = event
+            .tool_target
+            .as_ref()
+            .and_then(|target| target.path.as_ref());
+        if let Some(path) = edited.filter(|_| kind == EventKind::Edit) {
+            let since_ms = event.ts_ms.saturating_sub(ATTRIBUTION_WINDOW_MS);
+            self.reported_edits.retain(|_, ts_ms| *ts_ms >= since_ms);
+            let reported = self
+                .reported_edits
+                .entry(path.clone())
+                .or_insert(event.ts_ms);
+            *reported = (*reported).max(event.ts_ms);
+        }
+    }
+
+    /// The live session whose latest event is the most recent and no earlier than `since_ms`; of
+    /// two as recent, the one whose id sorts first.
+    pub(crate) fn latest_session(&self, since_ms: i64) -> Option<Identifier> {
+        self.latest_events
+            .iter()
+            .filter(|(_, ts_ms)| **ts_ms >= since_ms)
+            .max_by(|(one, one_ms), (other, other_ms)| {
+                one_ms.cmp(other_ms).then_with(|| other.cmp(one))
+            })
+            .map(|(session_id, _)| session_id.clone())
+    }
+
+    /// Whether a hook reported an edit of `path` at most `margin_ms` before or after `at_ms`.
+    pub(crate) fn has_reported_edit(&self, path: &RepoPath, at_ms: i64, margin_ms: i64) -> bool {
+        self.reported_edits
+            .get(path)
+            .is_some_and(|ts_ms| ts_ms.abs_diff(at_ms) <= margin_ms.unsigned_abs())
     }
 
     /// Stores the event's session from what the event says, unless it is already stored.
@@ -154,12 +211,22 @@ impl Recorder {
         transaction: &WriteTx<'_>,
         event: &Event,
     ) -> Result<Option<Ulid>, StoreError> {
-        let owner = match &event.parent_session_id {
-            Some(parent) => parent.clone(),
-            None => self
-                .parent_of(transaction, &event.session_id)?
-                .unwrap_or_else(|| event.session_id.clone()),
-        };
+        match &event.parent_session_id {
+            Some(parent) => self.open_task(transaction, parent),
+            None => self.task_of_session(transaction, &event.session_id),
+        }
+    }
+
+    /// The task an event of `session_id` belongs to: its open task, or for a subagent, the open
+    /// task of the session that started it, as the store keeps it.
+    pub(crate) fn task_of_session(
+        &mut self,
+        transaction: &WriteTx<'_>,
+        session_id: &Identifier,
+    ) -> Result<Option<Ulid>, StoreError> {
+        let owner = self
+            .parent_of(transaction, session_id)?
+            .unwrap_or_else(|| session_id.clone());
         self.open_task(transaction, &owner)
     }
 

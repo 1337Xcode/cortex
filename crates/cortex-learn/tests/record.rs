@@ -1,182 +1,20 @@
 //! Sequences of events, in the orders Claude Code sends them, recorded into a real store; the rows
 //! expected are written out by hand.
 
-use std::error::Error;
+mod common;
+
 use std::path::{Path, PathBuf};
 
+use common::{
+    Store, TestResult, end, event, name, prompt, row, start, succeeded, target, task_of, tool,
+};
 use cortex_core::{
-    Agent, CompactTrigger, ContentHash, Event, EventKind, EventMeta, FileFlags, HookKind,
-    Identifier, Language, LineRange, RepoId, RepoPath, SessionStatus, ShellCommand, StartSource,
-    TaskOutcome, ToolKind, ToolResult, ToolTarget, Ulid,
+    CompactTrigger, ContentHash, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier,
+    Language, LineRange, RepoPath, SessionStatus, ShellCommand, StartSource, TaskOutcome, ToolKind,
+    ToolTarget, Ulid,
 };
 use cortex_learn::Recorder;
-use cortex_store::{EventRecord, FileIndex, FileRecord, Writer, WriterOptions};
-
-/// Result type for these tests: any failure fails the test.
-type TestResult<T = ()> = Result<T, Box<dyn Error>>;
-
-/// A name.
-fn name(text: &str) -> TestResult<Identifier> {
-    Ok(Identifier::new(text)?)
-}
-
-/// An event of `hook` from session `session` at `ts_ms`, nothing else known.
-fn event(hook: HookKind, session: &str, ts_ms: i64) -> TestResult<Event> {
-    Ok(Event {
-        event_id: Ulid::from_seed(u64::try_from(ts_ms)?, session.as_bytes()),
-        ts_ms,
-        agent: Agent::Claude,
-        agent_version: None,
-        session_id: name(session)?,
-        parent_session_id: None,
-        cwd: PathBuf::from("/repo"),
-        repo_root: PathBuf::from("/repo"),
-        hook,
-        source: None,
-        tool: None,
-        tool_target: None,
-        tool_result: None,
-        prompt_text: None,
-        transcript_path: None,
-        model: None,
-        subagent_type: None,
-        compact_trigger: None,
-        end_reason: None,
-    })
-}
-
-/// A session start of `source`.
-fn start(session: &str, ts_ms: i64, source: StartSource) -> TestResult<Event> {
-    Ok(Event {
-        source: Some(source),
-        ..event(HookKind::SessionStart, session, ts_ms)?
-    })
-}
-
-/// A prompt of `text`.
-fn prompt(session: &str, ts_ms: i64, text: &str) -> TestResult<Event> {
-    Ok(Event {
-        prompt_text: Some(text.to_owned()),
-        ..event(HookKind::Prompt, session, ts_ms)?
-    })
-}
-
-/// A session end for `reason`.
-fn end(session: &str, ts_ms: i64, reason: &str) -> TestResult<Event> {
-    Ok(Event {
-        end_reason: Some(name(reason)?),
-        ..event(HookKind::SessionEnd, session, ts_ms)?
-    })
-}
-
-/// A tool event of `hook` for `tool` aimed at `target`, with `result` once it ran.
-fn tool(
-    hook: HookKind,
-    (session, ts_ms): (&str, i64),
-    (tool, target, result): (ToolKind, ToolTarget, Option<ToolResult>),
-) -> TestResult<Event> {
-    Ok(Event {
-        tool: Some(tool),
-        tool_target: Some(target),
-        tool_result: result,
-        ..event(hook, session, ts_ms)?
-    })
-}
-
-/// A target at `path` covering `ranges`.
-fn target(path: &str, ranges: &[(u32, u32)]) -> TestResult<ToolTarget> {
-    Ok(ToolTarget {
-        path: Some(RepoPath::new(path)?),
-        ranges: ranges
-            .iter()
-            .map(|(start, end)| LineRange::new(*start, *end))
-            .collect::<Result<_, _>>()?,
-        pattern: None,
-        command: None,
-    })
-}
-
-/// A tool that succeeded, its exit code `exit_code` when one is reported.
-fn succeeded(exit_code: Option<i32>, output_bytes: Option<u64>) -> Option<ToolResult> {
-    Some(ToolResult {
-        exit_code,
-        is_success: true,
-        is_interrupted: false,
-        output_bytes,
-    })
-}
-
-/// A store in a temporary repository.
-struct Store {
-    /// The repository root.
-    root: tempfile::TempDir,
-    /// The writer.
-    writer: Writer,
-}
-
-impl Store {
-    /// An empty store.
-    fn new() -> TestResult<Self> {
-        let root = tempfile::tempdir()?;
-        let writer = Writer::open(&WriterOptions {
-            folder: &root.path().join(".cortex"),
-            repo_id: &RepoId::of(root.path()),
-            mmap_bytes: 0,
-            now_ms: 1,
-        })?;
-        Ok(Self { root, writer })
-    }
-
-    /// Records `events` with `recorder`, each in a transaction of its own.
-    fn record(&mut self, recorder: &mut Recorder, events: &[Event]) -> TestResult {
-        for event in events {
-            let mut transaction = self.writer.transaction()?;
-            recorder.record(&mut transaction, event)?;
-            transaction.commit()?;
-        }
-        Ok(())
-    }
-
-    /// Every event stored, in order, as (kind, task, session, path, range, meta) for comparing.
-    fn events(&self) -> TestResult<Vec<EventRecord>> {
-        Ok(self
-            .writer
-            .queries()
-            .events_after(0, 1_000)?
-            .into_iter()
-            .map(|row| row.record)
-            .collect())
-    }
-
-    /// The folder of the store's files.
-    fn folder(&self) -> PathBuf {
-        self.root.path().join(".cortex")
-    }
-}
-
-/// The row an event of `kind` from `session` at `ts_ms` is stored as, in `task`, with nothing
-/// else.
-fn row(kind: EventKind, session: &str, ts_ms: i64, task: Option<Ulid>) -> TestResult<EventRecord> {
-    Ok(EventRecord {
-        task_id: task,
-        session_id: Some(name(session)?),
-        ts_ms,
-        kind,
-        node_id: None,
-        path: None,
-        range: None,
-        meta: EventMeta::default(),
-    })
-}
-
-/// The id the recorder gives the task the prompt `event` starts: made from the prompt's time and
-/// its event id's text.
-fn task_of(event: &Event) -> TestResult<Ulid> {
-    Ok(Ulid::from_seed(
-        u64::try_from(event.ts_ms)?,
-        event.event_id.to_string().as_bytes(),
-    ))
-}
+use cortex_store::{EventRecord, FileIndex, FileRecord};
 
 /// A whole task, as one headless run sends it: the session starts, a prompt starts task 1, the
 /// read before it ran is not kept, the read, the edit and the passing command after they ran are,
@@ -672,10 +510,7 @@ fn rows_name_an_indexed_file_s_node() -> TestResult {
             language: Some(Language::Python),
             size_bytes: 10,
             line_count: Some(1),
-            content_hash: Some(ContentHash::of(
-                b"x = 1
-",
-            )),
+            content_hash: Some(ContentHash::of(b"x = 1\n")),
             mtime_ns: 1,
             flags: FileFlags::empty(),
             indexed_at_ms: 1,

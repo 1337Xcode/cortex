@@ -1,6 +1,7 @@
 //! The daemon's work loop: the one writer, the hook events and the watcher's changes its inbox
-//! holds, the huge mode crawl between them, and the idle stop. While the writer indexes, the index
-//! lets it in between its write transactions, and the events waiting are recorded there.
+//! holds, the edits the watcher saw while a hook may still claim them, the huge mode crawl between
+//! them, and the idle stop. While the writer indexes, the index lets it in between its write
+//! transactions, and the events waiting and the edits due are recorded there.
 
 use std::cell::RefCell;
 use std::num::NonZeroUsize;
@@ -15,7 +16,7 @@ use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, PAUSE_EVERY, Pause, index_paths,
     index_repository,
 };
-use cortex_learn::Recorder;
+use cortex_learn::{Recorder, WatcherEdits};
 use cortex_store::{StoreError, Writer};
 
 use crate::inbox::{Changed, Inbox, Work};
@@ -40,6 +41,8 @@ pub(crate) struct Host<'a> {
     crawl: Crawl,
     /// What turns hook events into rows.
     recorder: Recorder,
+    /// The edits the watcher saw, held until a hook can no longer claim them.
+    edits: WatcherEdits,
     /// Where hook events, the watcher's changes and a stop arrive.
     inbox: &'a Inbox,
 }
@@ -62,6 +65,7 @@ impl<'a> Host<'a> {
             writer,
             crawl: Crawl::default(),
             recorder,
+            edits: WatcherEdits::default(),
             inbox,
         }
     }
@@ -90,27 +94,27 @@ impl<'a> Host<'a> {
         self.crawl.waiting()
     }
 
-    /// Records the events and indexes after the changes the inbox brings, crawls while nothing
-    /// comes, and returns when asked to stop, or once nothing waits to be parsed and nothing came
-    /// for `daemon.idle_shutdown_minutes`. A batch of events that cannot be recorded is counted
-    /// and left; the daemon goes on.
+    /// Records the events and indexes after the changes the inbox brings, records the edits the
+    /// watcher saw once they are due, crawls while nothing comes, and returns when asked to stop,
+    /// or once nothing waits to be parsed or recorded and nothing came for
+    /// `daemon.idle_shutdown_minutes`. A batch that cannot be recorded is counted and left; the
+    /// daemon goes on.
     ///
     /// # Errors
     ///
     /// A failed index or parse, or a watcher that stopped.
     pub(crate) fn serve(mut self) -> anyhow::Result<()> {
         let inbox = self.inbox;
+        let excerpt = self.config.store_prompt_excerpt;
         let idle = Duration::from_secs(self.config.idle_shutdown_minutes.saturating_mul(60));
         let mut last_activity = Instant::now();
         let mut next_crawl = Instant::now();
         loop {
+            let parts = (&mut self.recorder, &mut self.edits);
+            record_due_edits(&mut self.writer, parts, inbox, excerpt);
             // An idle time too long to reach is never reached: the inbox is waited on for ever.
-            let deadline = if self.waiting() > 0 {
-                Some(next_crawl)
-            } else {
-                last_activity.checked_add(idle)
-            };
-            match inbox.wait(deadline) {
+            let idle_at = last_activity.checked_add(idle);
+            match inbox.wait(self.deadline(next_crawl, idle_at)) {
                 Work::Stop => return Ok(()),
                 Work::WatcherStopped => bail!("the watcher stopped"),
                 Work::Events(events) => {
@@ -122,17 +126,37 @@ impl<'a> Host<'a> {
                 Work::Changed(changed) => {
                     match changed {
                         Changed::Everything(touched) => drop(self.index(&touched)?),
-                        Changed::Paths(paths) => self.update(&paths)?,
+                        Changed::Paths(paths, seen_ms) => self.update(&paths, seen_ms)?,
                     }
                     last_activity = Instant::now();
                 }
-                Work::Timeout if self.waiting() > 0 => {
+                Work::Timeout if self.waiting() > 0 && Instant::now() >= next_crawl => {
                     next_crawl = Instant::now() + CRAWL_PERIOD;
                     self.crawl_batch()?;
                 }
-                Work::Timeout => return Ok(()),
+                Work::Timeout => {
+                    let is_idle = self.waiting() == 0 && self.edits.next_due_ms().is_none();
+                    if is_idle && idle_at.is_some_and(|at| Instant::now() >= at) {
+                        return Ok(());
+                    }
+                }
             }
         }
+    }
+
+    /// When the work loop looks again if nothing arrives: at the next crawl while files wait to be
+    /// parsed, else at `idle_at`, and sooner when a held edit falls due.
+    fn deadline(&self, next_crawl: Instant, idle_at: Option<Instant>) -> Option<Instant> {
+        let work = if self.waiting() > 0 {
+            Some(next_crawl)
+        } else {
+            idle_at
+        };
+        let edit_due = self.edits.next_due_ms().map(|due_ms| {
+            let wait_ms = u64::try_from(due_ms.saturating_sub(now_ms())).unwrap_or(0);
+            Instant::now() + Duration::from_millis(wait_ms)
+        });
+        work.into_iter().chain(edit_due).min()
     }
 
     /// Records `events` in one transaction. When any of them cannot be recorded, none is: the
@@ -147,13 +171,16 @@ impl<'a> Host<'a> {
         record_batch(&mut self.writer, &mut self.recorder, excerpt, events)
     }
 
-    /// Indexes the files at `paths`, which changed, on every core.
-    fn update(&mut self, paths: &[RepoPath]) -> anyhow::Result<()> {
+    /// Indexes the files at `paths`, which the watcher saw change at `seen_ms`, on every core, and
+    /// holds the edits it found until a hook can no longer claim them.
+    fn update(&mut self, paths: &[RepoPath], seen_ms: i64) -> anyhow::Result<()> {
         let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
-        self.indexing(threads, |root, grammars, writer, options| {
-            index_paths(root, grammars, writer, options, paths)
-        })
-        .context("indexing changed files")?;
+        let report = self
+            .indexing(threads, |root, grammars, writer, options| {
+                index_paths(root, grammars, writer, options, paths)
+            })
+            .context("indexing changed files")?;
+        self.edits.hold(report.edited, seen_ms);
         Ok(())
     }
 
@@ -178,13 +205,15 @@ impl<'a> Host<'a> {
     ) -> T {
         let options = self.options(threads);
         let (inbox, excerpt) = (self.inbox, self.config.store_prompt_excerpt);
-        let recorder = RefCell::new(&mut self.recorder);
+        let parts = RefCell::new((&mut self.recorder, &mut self.edits));
         let pause = |writer: &mut Writer| {
             // INVARIANT: single-writer. Events are recorded through the writer the index lends,
             // between its transactions, on the writer's own thread. The index never calls the
             // pause from within it, so the recorder is always free here.
-            if let Ok(mut recorder) = recorder.try_borrow_mut() {
-                record_waiting(writer, &mut recorder, inbox, excerpt);
+            if let Ok(mut parts) = parts.try_borrow_mut() {
+                let (recorder, edits) = &mut *parts;
+                record_waiting(writer, recorder, inbox, excerpt);
+                record_due_edits(writer, (recorder, edits), inbox, excerpt);
             }
         };
         let options = IndexOptions {
@@ -246,6 +275,32 @@ pub(crate) fn record_waiting(
 ) {
     let events = inbox.take_events();
     if !events.is_empty() && record_batch(writer, recorder, excerpt, &events).is_err() {
+        inbox.count_failed_batch();
+    }
+}
+
+/// Records the edits the watcher saw that are due by now, all or none, after recording the hook
+/// events waiting in `inbox`, so that a hook's report of the same edit claims it first. A batch
+/// that cannot be recorded is counted, and the recorder starts afresh, as after events.
+fn record_due_edits(
+    writer: &mut Writer,
+    (recorder, edits): (&mut Recorder, &mut WatcherEdits),
+    inbox: &Inbox,
+    excerpt: bool,
+) {
+    let due = edits.take_due(now_ms());
+    if due.is_empty() {
+        return;
+    }
+    record_waiting(writer, recorder, inbox, excerpt);
+    let recorded = writer.transaction().and_then(|mut transaction| {
+        for (path, seen_ms) in &due {
+            recorder.record_watcher_edit(&mut transaction, path, *seen_ms)?;
+        }
+        transaction.commit()
+    });
+    if recorded.is_err() {
+        *recorder = Recorder::new(excerpt);
         inbox.count_failed_batch();
     }
 }
