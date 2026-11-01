@@ -266,6 +266,7 @@ dependencies = [
  "cortex-store",
  "criterion",
  "interprocess",
+ "serde",
  "serde_json",
  "tempfile",
 ]
