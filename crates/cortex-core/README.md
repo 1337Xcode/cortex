@@ -6,10 +6,11 @@ modes and settings.
 
 ## What it must never do
 
-- Open or write files, open sockets, start processes or depend on a crate that does. Every other
-  crate depends on this one, including the hook client, which must start fast. The one call it
-  makes to the file system resolves a folder to its canonical form (`canonical_root`), so that
-  every crate names a repository the same way.
+- Open sockets, start processes, read a repository's files, or depend on a crate that does. Every
+  other crate depends on this one, including the hook client, which must start fast. Its calls to
+  the file system resolve a folder to its canonical form (`canonical_root`), so that every crate
+  names a repository the same way, and create the user's private folders and files and rotate the
+  logs in them, so that the hook and the daemon do both the same way.
 - Accept a path that leaves the repository or a stored name that spans lines: these types are
   where those rules hold.
 
@@ -30,6 +31,8 @@ modes and settings.
 | `SessionStatus`, `TaskOutcome`, `EventKind`, `EventSource`, `EventMeta`, `PromptExcerpt` | What the store keeps of agents' activity: a session's status, a task's outcome, an event row's kind and source, the facts an event keeps besides its path and lines (tool, exit code, success, interruption, output size, why a session started or ended, what started a compaction, a subagent's type), and the first 200 characters of a prompt kept only on request |
 | `Ulid` | A sortable unique id: UTC milliseconds, then 80 bits from the BLAKE3 hash of a seed the caller gives; written as 26 characters, and only that spelling is read back |
 | `unix_millis` | A clock time as UTC milliseconds since 1970, the unit the store and the protocol use; a clock set before 1970 reads as 0 |
+| `rotate_log` | Makes room for a new log: each older file moves one place (`.1` to `.2`, the oldest kept replaced) and the log moves to `.1` |
+| `create_private_folder`, `open_private_file`, `append_private_file` | Folders and files only the user can read: mode 0700 and 0600 on Unix, whatever the umask, a wider mode narrowed; on Windows the access list they inherit |
 | `one_line` | Text for a log or a report a person reads: its first characters up to a limit, each control character and each character that reorders or hides text (bidirectional controls, zero-width characters, the byte order mark) written as a space, so that no text that reached it can split the line, steer a terminal or read differently from what it holds |
 | `ipc` | The messages the hook, the CLI and a daemon exchange (`Request`, `Response`, the `Hello` handshake), framed as a 4-byte little-endian length and at most 1 MiB of JSON (`encode`, `decode`, `read_frame`, `write_frame`); `Protocol` (majors must match), `CortexVersion` (ordered as semantic versioning orders versions) and `is_older_than_this_build` (false for a version that does not read, so no build replaces what it cannot rank). The envelope, `Hello`, `Mismatch` and `Shutdown` never change shape |
 | `UserFolder`, `RunFiles`, `Endpoint` | `~/.cortex` and what it holds: `config.toml`, `logs/`, and per repository id the daemon's socket (`run/<id>.sock`), named pipe (`cortex-<id>`), lock and process-id files; the endpoint a daemon listens on here, its named pipe on Windows and its socket elsewhere |

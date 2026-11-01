@@ -5,10 +5,10 @@
 
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use cortex_core::{append_private_file, create_private_folder, one_line};
+use cortex_core::{append_private_file, create_private_folder, one_line, rotate_log};
 
 /// The log's file name in the user's log folder.
 const FILE_NAME: &str = "hook.log";
@@ -48,7 +48,7 @@ pub(crate) fn write(folder: &Path, now: SystemTime, line: &str) -> io::Result<bo
                 return Ok(false);
             }
             if metadata.len() >= ROTATE_AT_BYTES {
-                rotate(&path)?;
+                rotate_log(&path, KEPT_FILES)?;
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => create_private_folder(folder)?,
@@ -60,33 +60,19 @@ pub(crate) fn write(folder: &Path, now: SystemTime, line: &str) -> io::Result<bo
     Ok(true)
 }
 
-/// Moves each kept file one place older, the oldest dropped, and the current log to `.1`.
-fn rotate(path: &Path) -> io::Result<()> {
-    for older in (1..KEPT_FILES).rev() {
-        let from = numbered(path, older - 1);
-        match fs::rename(&from, numbered(path, older)) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-/// The log file `number` places older than `path`: `path` itself for 0.
-fn numbered(path: &Path, number: usize) -> PathBuf {
-    if number == 0 {
-        return path.to_path_buf();
-    }
-    let mut name = path.as_os_str().to_owned();
-    name.push(format!(".{number}"));
-    PathBuf::from(name)
-}
-
 #[cfg(test)]
 mod tests {
     use std::error::Error;
+    use std::path::PathBuf;
 
     use super::*;
+
+    /// The log file `number` places older than `path`.
+    fn numbered(path: &Path, number: usize) -> PathBuf {
+        let mut name = path.as_os_str().to_owned();
+        name.push(format!(".{number}"));
+        PathBuf::from(name)
+    }
 
     /// Result type for these tests: any failure fails the test.
     type TestResult = Result<(), Box<dyn Error>>;
