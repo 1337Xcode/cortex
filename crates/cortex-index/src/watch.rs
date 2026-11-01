@@ -5,7 +5,8 @@
 //! 2 seconds, as a branch switch or a large checkout makes, or a change to a file of rules the walk
 //! reads (`.gitignore`, `.cortexignore`, `.gitattributes`, `.git/info`; not one in a folder the
 //! walk leaves out), is reported as a change to everything, to be looked at whole rather than path
-//! by path. So is an error from the watcher, which may have lost events.
+//! by path. So is an error from the watcher, which may have lost events. Opening, reading and
+//! closing a file without writing it change nothing and are dropped first.
 //!
 //! Events are sorted on a thread of the watcher's own, which keeps the rules of each folder it
 //! has looked at; they are loaded again when a file of rules changes.
@@ -17,7 +18,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use cortex_core::RepoPath;
-use notify::{RecommendedWatcher, RecursiveMode};
+use notify::event::{AccessKind, AccessMode};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, NoCache, new_debouncer_opt};
 use thiserror::Error;
 
@@ -135,7 +137,10 @@ fn sort_events(
             report(Change::Everything);
             continue;
         };
-        let natives = events.iter().flat_map(|event| event.paths.iter());
+        let natives = events
+            .iter()
+            .filter(|event| is_change(event.kind))
+            .flat_map(|event| event.paths.iter());
         let paths: BTreeSet<RepoPath> = natives
             .filter_map(|native| filter.relative(native))
             .collect();
@@ -166,5 +171,85 @@ fn sort_events(
         } else {
             report(Change::Paths(seen));
         }
+    }
+}
+
+/// Whether an event of `kind` may have changed its path. Opening, reading and closing a file
+/// unwritten change nothing: Linux reports every open, so the index's own reads of the files and
+/// rules it indexes would each start another index, and the daemon would never be idle. A close
+/// after writing is kept, as it may be the only sign of a write (one through a memory map).
+fn is_change(kind: EventKind) -> bool {
+    match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use notify::Event;
+    use notify::event::{DataChange, ModifyKind};
+    use notify_debouncer_full::DebouncedEvent;
+
+    use super::*;
+
+    /// Batches of events, each sorted in turn: opening the repository's folder, a source file and
+    /// a file of rules, and closing the source file unwritten, report nothing (the open of the
+    /// rules is no change to everything); a close after writing reports its file, and so does a
+    /// write.
+    #[test]
+    fn only_writes_are_changes() -> Result<(), Box<dyn Error>> {
+        let repo = tempfile::tempdir()?;
+        let root = repo.path();
+        std::fs::write(root.join(".gitignore"), "build/\n")?;
+        std::fs::write(root.join("a.py"), "a = 1\n")?;
+        let options = DiscoverOptions {
+            max_file_bytes: 1_048_576,
+            extra_ignores: &[],
+            global_gitignore: None,
+        };
+        let event = |kind, path: &Path| {
+            DebouncedEvent::new(
+                Event::new(kind).add_path(path.to_path_buf()),
+                Instant::now(),
+            )
+        };
+        let open = EventKind::Access(AccessKind::Open(AccessMode::Any));
+        let batches = [
+            vec![
+                event(open, root),
+                event(open, &root.join("a.py")),
+                event(open, &root.join(".gitignore")),
+                event(
+                    EventKind::Access(AccessKind::Close(AccessMode::Read)),
+                    &root.join("a.py"),
+                ),
+            ],
+            vec![event(
+                EventKind::Access(AccessKind::Close(AccessMode::Write)),
+                &root.join("a.py"),
+            )],
+            vec![event(
+                EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+                &root.join("b.py"),
+            )],
+        ];
+        let (sender, receiver) = mpsc::sync_channel(batches.len());
+        for batch in batches {
+            sender.send(Ok(batch))?;
+        }
+        drop(sender);
+        let mut changes = Vec::new();
+        sort_events(&receiver, WalkRules::of(root, &options), |change| {
+            changes.push(change);
+        });
+        let one = |name: &str| -> Result<Change, Box<dyn Error>> {
+            Ok(Change::Paths(BTreeSet::from([RepoPath::new(name)?])))
+        };
+        assert_eq!(changes, [one("a.py")?, one("b.py")?]);
+        Ok(())
     }
 }

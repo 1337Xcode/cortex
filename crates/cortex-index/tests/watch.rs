@@ -107,6 +107,32 @@ fn paths_the_walk_leaves_out_are_not_reported() -> TestResult {
     Ok(())
 }
 
+/// Reading the repository's folder, a source file and a file of rules, as an agent or an index
+/// does, changes nothing and is not reported; a file written after the reads is, and whatever the
+/// reads made has arrived before it. On Linux every open of a watched file is an event of its own.
+#[test]
+fn reading_files_is_no_change() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(
+        root,
+        &[
+            (".gitignore", "build/\n"),
+            ("a.py", "a = 1\n"),
+            ("b.py", "b = 1\n"),
+        ],
+    )?;
+    let (_watcher, receiver) = watched(root)?;
+    std::fs::read_dir(root)?.for_each(drop);
+    std::fs::read(root.join("a.py"))?;
+    std::fs::read(root.join(".gitignore"))?;
+    write(root, "b.py", b"b = 2\n")?;
+    let changes = changes_until(&receiver, |changes| paths(changes).contains("b.py"))?;
+    assert!(!changes.contains(&Change::Everything), "{changes:?}");
+    assert_eq!(paths(&changes), ["b.py".to_owned()].into(), "{changes:?}");
+    Ok(())
+}
+
 /// A change to a file of rules is a change to everything: which files count may differ.
 #[test]
 fn a_rules_change_is_a_change_to_everything() -> TestResult {
