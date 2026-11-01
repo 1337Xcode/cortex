@@ -29,10 +29,17 @@ arm in `src/commands/mod.rs`.
 
 ```sh
 cargo test -p cortex-cli
+cargo bench -p cortex-cli --bench hooks
 ```
 
 The tests in `tests/` run the built binary. The daemon tests start it on temporary repositories
 with an empty home folder, so the user's own configuration never applies.
+
+The `hooks` benchmark runs the built `cortex hook` once per sample, 100 samples per event, from
+the process's start to its exit: SessionStart, UserPromptSubmit, PreToolUse on a read, PostToolUse
+on an edit and Stop, each on a recorded Claude Code payload against a daemon on a small temporary
+repository, and a hook given no input, which ends before it asks the daemon anything. It fails
+when a hook fails or when the daemon did not handle each event's requests.
 
 Configuration comes from `~/.cortex/config.toml`, then the repository's `.cortex/config.toml`; a
 file over 1 MiB is refused, and an unknown key prints a warning.

@@ -22,9 +22,14 @@ cortex-index = { path = "../cortex-index" }
 cortex-store = { path = "../cortex-store" }
 
 [dev-dependencies]
+criterion.workspace = true
 interprocess.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+
+[[bench]]
+name = "hooks"
+harness = false
 
 [lints]
 workspace = true

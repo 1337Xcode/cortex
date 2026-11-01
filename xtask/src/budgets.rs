@@ -1,7 +1,8 @@
 //! The budget checks of `cargo xtask verify --full`: runs the benchmarks, reads the samples
 //! criterion wrote, and fails when the 95th percentile of a benchmark's runs is over its budget.
 //! Each sample must hold one run, so that the percentile is of runs and not of their means. Each
-//! budget's line is printed with the measured value, within budget or not.
+//! budget's line is printed with the measured value, within budget or not, and says so when the
+//! budget is not checked on this platform.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -11,7 +12,19 @@ use serde::Deserialize;
 
 use crate::steps;
 
-/// One budget: a benchmark, what it measures, and the most its 95th percentile may take.
+/// Where a budget holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Platforms {
+    /// Wherever the build runs.
+    Every,
+    /// On the machines hook latency is specified on, macOS and Linux. On Windows starting a
+    /// process alone takes 6 to 7 ms at the median and over 10 ms at the 95th percentile, most of
+    /// a hook's time and more than its cold start's budget, so there the hooks are measured and
+    /// printed, not checked.
+    Reference,
+}
+
+/// One budget: a benchmark, what it measures, the most its 95th percentile may take, and where.
 struct Budget {
     /// The benchmark group.
     group: &'static str,
@@ -21,21 +34,71 @@ struct Budget {
     what: &'static str,
     /// The largest 95th percentile within budget.
     limit: Duration,
+    /// Where the budget is checked.
+    platforms: Platforms,
 }
 
+/// The benchmarks the budgets read: each package and its benchmark target.
+const BENCHES: [(&str, &str); 2] = [("cortex-index", "index"), ("cortex-cli", "hooks")];
+
 /// Every budget a benchmark checks. The limits are the product's latency budgets.
-const BUDGETS: [Budget; 2] = [
+const BUDGETS: [Budget; 8] = [
     Budget {
         group: "index",
         function: "initial_10k",
         what: "first index of 10,000 source files",
         limit: Duration::from_secs(60),
+        platforms: Platforms::Every,
     },
     Budget {
         group: "index",
         function: "one_file_changed_10k",
         what: "index after one file changed, 10,000 source files",
         limit: Duration::from_millis(30),
+        platforms: Platforms::Every,
+    },
+    Budget {
+        group: "hooks",
+        function: "session_start",
+        what: "SessionStart hook, start to exit",
+        limit: Duration::from_millis(120),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks",
+        function: "user_prompt_submit",
+        what: "UserPromptSubmit hook, start to exit",
+        limit: Duration::from_millis(150),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks",
+        function: "pre_tool_use_read",
+        what: "PreToolUse hook on a read, start to exit",
+        limit: Duration::from_millis(40),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks",
+        function: "post_tool_use_edit",
+        what: "PostToolUse hook on an edit, start to exit",
+        limit: Duration::from_millis(80),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks",
+        function: "stop",
+        what: "Stop hook, start to exit",
+        limit: Duration::from_millis(60),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        // Start to exit bounds the budget's start to first byte read from above.
+        group: "hooks",
+        function: "cold_start",
+        what: "hook cold start with no input, start to exit",
+        limit: Duration::from_millis(10),
+        platforms: Platforms::Reference,
     },
 ];
 
@@ -49,54 +112,66 @@ struct Samples {
     times: Vec<f64>,
 }
 
-/// Runs the benchmarks and checks every budget.
+/// Runs the benchmarks and checks every budget that holds on this platform, printing every
+/// budget's measurement.
 ///
 /// # Errors
 ///
 /// A benchmark that fails to run, samples that cannot be read, or a budget breached.
 pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
-    steps::run_cargo(
-        root,
-        "benchmarks",
-        &[
-            "bench",
-            "--locked",
-            "-p",
-            "cortex-index",
-            "--bench",
-            "index",
-        ],
-    )?;
+    for (package, bench) in BENCHES {
+        steps::run_cargo(
+            root,
+            "benchmarks",
+            &["bench", "--locked", "-p", package, "--bench", bench],
+        )?;
+    }
     let criterion = target_dir(root).join("criterion");
     let mut breached = Vec::new();
     for budget in &BUDGETS {
-        let path = criterion
-            .join(budget.group)
-            .join(budget.function)
-            .join("new")
-            .join("sample.json");
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        let samples: Samples =
-            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        let measured = p95(&samples).with_context(|| format!("reading {}", path.display()))?;
-        let verdict = if measured <= budget.limit {
-            "within"
+        let measured = measured_p95(&criterion, budget)?;
+        let limit_ms = budget.limit.as_millis();
+        let verdict = if !is_checked_here(budget.platforms) {
+            format!("the {limit_ms} ms budget holds on macOS and Linux and is not checked here")
+        } else if measured <= budget.limit {
+            format!("within the {limit_ms} ms budget")
         } else {
             breached.push(budget.what);
-            "OVER"
+            format!("OVER the {limit_ms} ms budget")
         };
         println!(
-            "xtask: budget: {}: p95 {:.1} ms, {verdict} the {} ms budget",
+            "xtask: budget: {}: p95 {:.1} ms, {verdict}",
             budget.what,
-            measured.as_secs_f64() * 1000.0,
-            budget.limit.as_millis()
+            measured.as_secs_f64() * 1000.0
         );
     }
     if !breached.is_empty() {
         bail!("over budget: {}", breached.join("; "));
     }
     Ok(())
+}
+
+/// The 95th percentile of the runs of `budget`'s benchmark, from the samples under `criterion`.
+///
+/// # Errors
+///
+/// The samples cannot be read or hold no single runs.
+fn measured_p95(criterion: &Path, budget: &Budget) -> anyhow::Result<Duration> {
+    let path = criterion
+        .join(budget.group)
+        .join(budget.function)
+        .join("new")
+        .join("sample.json");
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let samples: Samples =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    p95(&samples).with_context(|| format!("reading {}", path.display()))
+}
+
+/// Whether a budget that holds on `platforms` is checked on the platform xtask runs on.
+fn is_checked_here(platforms: Platforms) -> bool {
+    platforms == Platforms::Every || !cfg!(windows)
 }
 
 /// Where cargo builds: `CARGO_TARGET_DIR` when set, else `target` in the workspace.
@@ -149,5 +224,41 @@ mod tests {
         };
         assert!(p95(&none).is_err());
         Ok(())
+    }
+
+    /// A budget for every platform is checked everywhere; one for the reference machines is
+    /// checked everywhere but Windows.
+    #[test]
+    fn reference_budgets_are_not_checked_on_windows() {
+        assert!(is_checked_here(Platforms::Every));
+        assert_eq!(is_checked_here(Platforms::Reference), !cfg!(windows));
+    }
+
+    /// Every hook the benchmarks run has a budget, each read from the hooks group, and the index's
+    /// two budgets hold everywhere.
+    #[test]
+    fn every_hook_benchmark_has_its_budget() {
+        let hooks: Vec<(&str, u128)> = BUDGETS
+            .iter()
+            .filter(|budget| budget.group == "hooks")
+            .map(|budget| (budget.function, budget.limit.as_millis()))
+            .collect();
+        assert_eq!(
+            hooks,
+            [
+                ("session_start", 120),
+                ("user_prompt_submit", 150),
+                ("pre_tool_use_read", 40),
+                ("post_tool_use_edit", 80),
+                ("stop", 60),
+                ("cold_start", 10)
+            ]
+        );
+        let everywhere: Vec<&str> = BUDGETS
+            .iter()
+            .filter(|budget| budget.platforms == Platforms::Every)
+            .map(|budget| budget.function)
+            .collect();
+        assert_eq!(everywhere, ["initial_10k", "one_file_changed_10k"]);
     }
 }

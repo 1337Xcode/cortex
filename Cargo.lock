@@ -264,6 +264,7 @@ dependencies = [
  "cortex-hook",
  "cortex-index",
  "cortex-store",
+ "criterion",
  "interprocess",
  "serde_json",
  "tempfile",
