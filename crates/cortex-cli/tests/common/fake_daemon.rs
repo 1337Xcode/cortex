@@ -131,8 +131,16 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
                     .map_err(|error| text(&error))?;
                 if let Ok(next) = read_frame::<Request>(&mut stream) {
                     let is_stop = next.body == RequestBody::Shutdown;
+                    let request_id = next.request_id;
                     requests.push(next);
                     if is_stop {
+                        // As a daemon does, the stop is acknowledged; it holds whether or not the
+                        // client stays for the acknowledgement.
+                        let ack = Response {
+                            request_id,
+                            body: ResponseBody::Ack,
+                        };
+                        drop(write_frame(&mut stream, &ack));
                         return Ok(requests);
                     }
                 }

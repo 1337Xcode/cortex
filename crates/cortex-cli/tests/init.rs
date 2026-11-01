@@ -12,71 +12,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::fake_daemon::{FakeDaemon, Script, kinds};
-use common::{StopsDaemon, TestResult, isolate, printed_to_files, stand_in_claude, test_path};
+use common::init::{claude_in, git, init, init_without_yes, run};
+use common::{StopsDaemon, TestResult, stand_in_claude};
 use cortex_core::ipc::CORTEX_VERSION;
 use cortex_core::{ContentHash, canonical_root};
 use serde_json::Value;
-
-/// What one run of `cortex init` printed and how it ended.
-struct Run {
-    /// Whether it succeeded.
-    is_success: bool,
-    /// Its stdout.
-    stdout: String,
-    /// Its stderr.
-    stderr: String,
-}
-
-/// The stand-in for Claude Code [`init`] puts in `home`'s `bin` folder when the test put none.
-fn claude_in(home: &Path) -> PathBuf {
-    home.join("bin").join(if cfg!(windows) {
-        "claude.cmd"
-    } else {
-        "claude"
-    })
-}
-
-/// Runs `cortex init --yes --root <repo>` with `extra` arguments, as [`run`] runs it with git on
-/// the PATH, and with a stand-in for Claude Code 2.1.312, the newest version Cortex knows, ahead of
-/// any on the machine unless the test put one in `home`'s `bin` folder.
-fn init(repo: &Path, home: &Path, extra: &[&str]) -> TestResult<Run> {
-    let mut command = init_command(repo, home)?;
-    command.arg("--yes").args(extra);
-    run(&mut command, home, &["git"])
-}
-
-/// Runs `cortex init --root <repo>` as [`init`] does, but without `--yes`, its stdin a pipe that
-/// is no terminal.
-fn init_without_yes(repo: &Path, home: &Path) -> TestResult<Run> {
-    let mut command = init_command(repo, home)?;
-    run(&mut command, home, &["git"])
-}
-
-/// `cortex init --root <repo>`, with the stand-in for Claude Code [`init`] describes.
-fn init_command(repo: &Path, home: &Path) -> TestResult<Command> {
-    if !claude_in(home).exists() {
-        stand_in_claude(home, "2.1.312")?;
-    }
-    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.args(["init", "--root"]).arg(repo);
-    Ok(command)
-}
-
-/// Runs `command` with `home` as the home folder and a PATH holding `home`'s `bin` folder and the
-/// folders of `programs`, git looking for no repository above the system's temporary folder,
-/// where the tests' folders are, and reads what it printed. Its stdin is an empty pipe.
-fn run(command: &mut Command, home: &Path, programs: &[&str]) -> TestResult<Run> {
-    isolate(command, home);
-    command
-        .env("PATH", test_path(home, programs)?)
-        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
-    let printed = printed_to_files(command, home)?;
-    Ok(Run {
-        is_success: printed.is_success,
-        stdout: printed.stdout,
-        stderr: printed.stderr,
-    })
-}
 
 /// The backup folders `cortex init` made in `repo`.
 fn backup_folders(repo: &Path) -> TestResult<Vec<PathBuf>> {
@@ -319,18 +259,6 @@ fn init_again_changes_nothing() -> TestResult {
     );
     assert_eq!(std::fs::read(&settings)?, first);
     assert_eq!(backup_folders(repo.path())?.len(), 1);
-    Ok(())
-}
-
-/// Runs git with `args` in `folder`, with `home` as the home folder.
-fn git(folder: &Path, args: &[&str], home: &Path) -> TestResult {
-    let mut command = Command::new("git");
-    command.args(args).current_dir(folder);
-    isolate(&mut command, home);
-    let output = command.output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
-    }
     Ok(())
 }
 

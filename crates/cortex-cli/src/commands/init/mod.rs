@@ -44,6 +44,7 @@ use crate::output;
 
 use self::consent::{Answers, ConfigFile, Kept};
 use self::ignores::Ignored;
+pub(crate) use self::ignores::without_lines;
 use self::root::Root;
 
 /// The arguments of `cortex init`.
@@ -314,7 +315,9 @@ fn ignore_change(found: Found, lines: &[&str]) -> Option<Change> {
         ),
         after: ignores::with_lines(found.text.as_deref(), lines),
         file: found.file,
-        kind: Kind::Gitignore,
+        kind: Kind::Gitignore {
+            lines: lines.iter().map(|line| (*line).to_owned()).collect(),
+        },
         before: found.text,
         owner: Owner::Repository { folder: None },
     })

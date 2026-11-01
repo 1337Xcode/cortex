@@ -15,7 +15,7 @@ use cortex_hook::{Answer, ClientError, Stop, ask, start_daemon_now, stop_if_olde
 const REPLACE_WITHIN: Duration = Duration::from_secs(20);
 
 /// How often a command looks again while it waits.
-const LOOK_EVERY: Duration = Duration::from_millis(50);
+pub(crate) const LOOK_EVERY: Duration = Duration::from_millis(50);
 
 /// What a command got from the repository's daemon.
 pub(crate) struct Asked {
@@ -79,6 +79,27 @@ pub(crate) fn ask_started(
     }
 }
 
+/// Waits until the daemon of the repository `repo_id`, whose user folder is `user`, has let go of
+/// it, looking every [`LOOK_EVERY`] until `until`.
+///
+/// # Errors
+///
+/// [`ClientError::TimedOut`] when it still holds the repository at `until`, and the I/O error of a
+/// look that fails.
+pub(crate) fn wait_until_stopped(
+    user: &UserFolder,
+    repo_id: &RepoId,
+    until: Instant,
+) -> Result<(), ClientError> {
+    while is_running(user, repo_id).map_err(ClientError::Io)? {
+        if Instant::now() >= until {
+            return Err(ClientError::TimedOut);
+        }
+        std::thread::sleep(LOOK_EVERY);
+    }
+    Ok(())
+}
+
 /// Asks the older daemon of the repository at `root` to stop, on a connection whose handshake shows
 /// it still older, waits until it has let go of the repository, starts a daemon of this build and
 /// asks it `body`, all within [`REPLACE_WITHIN`]. Returns the answer, with the version stopped when
@@ -98,12 +119,7 @@ fn replace(
         Err(error) => return Err(error),
     };
     if replaced.is_some() {
-        while is_running(user, repo_id).map_err(ClientError::Io)? {
-            if Instant::now() >= until {
-                return Err(ClientError::TimedOut);
-            }
-            std::thread::sleep(LOOK_EVERY);
-        }
+        wait_until_stopped(user, repo_id, until)?;
     }
     if !is_running(user, repo_id).map_err(ClientError::Io)? {
         start_daemon_now(&program, root, &files, SystemTime::now()).map_err(ClientError::Io)?;

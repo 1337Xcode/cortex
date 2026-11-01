@@ -7,6 +7,7 @@ mod daemon;
 mod doctor;
 mod init;
 mod status;
+mod uninstall;
 mod version;
 
 use clap::Subcommand;
@@ -24,6 +25,8 @@ pub(crate) enum Command {
     Init(init::Args),
     /// Check that Claude Code will run Cortex's hooks and the daemon will answer them.
     Doctor(doctor::Args),
+    /// Undo what init did to a repository and stop its daemon.
+    Uninstall(uninstall::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -38,5 +41,6 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Status(args) => status::run(&args),
         Command::Init(args) => init::run(&args),
         Command::Doctor(args) => doctor::run(&args),
+        Command::Uninstall(args) => uninstall::run(&args),
     }
 }

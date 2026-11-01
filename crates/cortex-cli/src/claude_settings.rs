@@ -9,7 +9,8 @@
 //! `cortex` or which is this binary, taken out, and the current ones put where the first of them
 //! was; everything else, the user's hooks and keys and their order, stays as it was. Merging again
 //! gives what merging once gave. `cortex doctor` reads the same files through [`cortex_commands`]
-//! and [`flag`].
+//! and [`flag`], and `cortex uninstall` takes Cortex's hooks out through
+//! [`without_cortex_hooks`].
 
 use anyhow::bail;
 use cortex_hook::HookEntry;
@@ -58,6 +59,32 @@ pub(crate) fn merged(
     let mut text = serde_json::to_string_pretty(&Value::Object(settings))?;
     text.push('\n');
     Ok(text)
+}
+
+/// The settings `existing` without Cortex's hooks, `program` being this binary, as text in the form
+/// [`merged`] writes; `None` when it holds none. An event left with no group goes, and so does a
+/// `hooks` left empty; everything else stays, in its order.
+///
+/// # Errors
+///
+/// As [`merged`]: the text is not a JSON object.
+pub(crate) fn without_cortex_hooks(
+    existing: &str,
+    program: &str,
+) -> anyhow::Result<Option<String>> {
+    let mut settings = parsed(Some(existing))?;
+    let Some(Value::Object(hooks)) = settings.get_mut("hooks") else {
+        return Ok(None);
+    };
+    if take_cortex_hooks(hooks, &[], program).is_empty() {
+        return Ok(None);
+    }
+    if hooks.is_empty() {
+        settings.shift_remove("hooks");
+    }
+    let mut text = serde_json::to_string_pretty(&Value::Object(settings))?;
+    text.push('\n');
+    Ok(Some(text))
 }
 
 /// The settings object `existing` holds; an empty one for no file or a file of only white space.
@@ -548,6 +575,55 @@ mod tests {
         );
         assert_eq!(flag("{}", "disableAllHooks")?, None);
         assert!(flag("[]", "disableAllHooks").is_err());
+        Ok(())
+    }
+
+    /// Taking Cortex's hooks out of settings they were merged into gives back the user's: keys
+    /// and hooks in their order, the event that held only Cortex's group gone, the user's event
+    /// keeping the user's group. Settings that held only Cortex's hooks lose `hooks` itself;
+    /// settings that hold none give nothing to write, and a file that is not JSON is refused.
+    #[test]
+    fn cortex_s_hooks_come_out() -> anyhow::Result<()> {
+        let users = r#"{"model": "opus", "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "echo started"}]}]}, "permissions": {"allow": ["Read"]}}"#;
+        let written = merged(Some(users), PROGRAM, &[PRE_TOOL_USE, SESSION_START])?;
+        let expected = r#"{
+  "model": "opus",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo started"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read"
+    ]
+  }
+}
+"#;
+        assert_eq!(
+            without_cortex_hooks(&written, PROGRAM)?.as_deref(),
+            Some(expected)
+        );
+        let only_cortex = merged(None, PROGRAM, &[PRE_TOOL_USE])?;
+        assert_eq!(
+            without_cortex_hooks(&only_cortex, PROGRAM)?.as_deref(),
+            Some("{}\n")
+        );
+        let between = r#"{"model": "opus", "hooks": {}, "theme": "dark", "verbose": true}"#;
+        let written = merged(Some(between), PROGRAM, &[PRE_TOOL_USE])?;
+        assert_eq!(
+            without_cortex_hooks(&written, PROGRAM)?.as_deref(),
+            Some("{\n  \"model\": \"opus\",\n  \"theme\": \"dark\",\n  \"verbose\": true\n}\n")
+        );
+        assert_eq!(without_cortex_hooks(users, PROGRAM)?, None);
+        assert!(without_cortex_hooks("{\"hooks\": oops", PROGRAM).is_err());
         Ok(())
     }
 

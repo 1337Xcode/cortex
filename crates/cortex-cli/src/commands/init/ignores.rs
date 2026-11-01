@@ -2,7 +2,8 @@
 //! gets when git does not leave it out yet: `.cortex/` (or, when the team shares facts, all of
 //! `.cortex/` but `.cortex/shared/`, which is committed), and `.claude/settings.local.json` when
 //! init makes that file. Git says what it ignores (`git check-ignore`), whichever file makes it;
-//! lines are only ever added, at the end.
+//! lines are only ever added, at the end, after a comment naming Cortex, by which `cortex
+//! uninstall` finds them again.
 
 use std::path::Path;
 
@@ -18,6 +19,9 @@ const SHARED_PROBE: &str = ".cortex/shared/probe";
 
 /// Claude Code's local settings, where a project's Cortex hooks are.
 const LOCAL_SETTINGS: &str = ".claude/settings.local.json";
+
+/// The comment init writes before the lines it adds to a `.gitignore`.
+const HEADER: &str = "# Cortex";
 
 /// What git ignores of what Cortex writes in a repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,13 +110,44 @@ pub(super) fn with_lines(before: Option<&str>, lines: &[&str]) -> String {
     if !text.is_empty() && !text.ends_with('\n') {
         text.push_str(ending);
     }
-    text.push_str("# Cortex");
+    text.push_str(HEADER);
     text.push_str(ending);
     for line in lines {
         text.push_str(line);
         text.push_str(ending);
     }
     text
+}
+
+/// `line` without its line ending, `\n` or `\r\n`.
+fn bare(line: &str) -> &str {
+    line.trim_end_matches(['\r', '\n'])
+}
+
+/// The `.gitignore` `text` with the block init added taken out: the last [`HEADER`] line followed
+/// by exactly `lines`, in order, each in either line ending; `None` when it holds no such block,
+/// as when the user changed it. Every other line stays as it is, a block of the same lines a team
+/// committed before init included.
+pub(crate) fn without_lines(text: &str, lines: &[String]) -> Option<String> {
+    let all: Vec<&str> = text.split_inclusive('\n').collect();
+    let block = 1 + lines.len();
+    let start = (0..all.len()).rev().find(|&at| {
+        all.get(at..at + block).is_some_and(|found| {
+            found.first().map(|line| bare(line)) == Some(HEADER)
+                && found
+                    .iter()
+                    .skip(1)
+                    .map(|line| bare(line))
+                    .eq(lines.iter().map(String::as_str))
+        })
+    })?;
+    let mut kept = String::with_capacity(text.len());
+    for (at, line) in all.iter().enumerate() {
+        if !(start..start + block).contains(&at) {
+            kept.push_str(line);
+        }
+    }
+    Some(kept)
 }
 
 #[cfg(test)]
@@ -166,5 +201,42 @@ mod tests {
             with_lines(None, &[".cortex/*", "!.cortex/shared/"]),
             "# Cortex\n.cortex/*\n!.cortex/shared/\n"
         );
+    }
+
+    /// The block init added comes out exactly, the comment and its lines, in either line ending,
+    /// the last such block when there are more: a block from before init, as a team commits one,
+    /// stays, and so do the user's lines around it. A file whose block was changed, or that holds
+    /// none, gives nothing to write.
+    #[test]
+    fn the_block_init_added_comes_out() {
+        let lines = [".cortex/".to_owned(), LOCAL_SETTINGS.to_owned()];
+        let added = "target/\n# Cortex\n.cortex/\n.claude/settings.local.json\ndist/\n";
+        assert_eq!(
+            without_lines(added, &lines).as_deref(),
+            Some("target/\ndist/\n")
+        );
+        let windows = "target/\r\n# Cortex\r\n.cortex/\r\n.claude/settings.local.json\r\n";
+        assert_eq!(
+            without_lines(windows, &lines).as_deref(),
+            Some("target/\r\n")
+        );
+        let settings = [LOCAL_SETTINGS.to_owned()];
+        let team = "# Cortex\n.cortex/\n# Cortex\n.claude/settings.local.json\n";
+        assert_eq!(
+            without_lines(team, &settings).as_deref(),
+            Some("# Cortex\n.cortex/\n")
+        );
+        let folder = [".cortex/".to_owned()];
+        let twice = "# Cortex\n.cortex/\nnotes/\n# Cortex\n.cortex/\n";
+        assert_eq!(
+            without_lines(twice, &folder).as_deref(),
+            Some("# Cortex\n.cortex/\nnotes/\n")
+        );
+        assert_eq!(
+            without_lines("# Cortex\n.cortex/", &folder).as_deref(),
+            Some("")
+        );
+        assert_eq!(without_lines("# Cortex\n.cortex/\n", &lines), None);
+        assert_eq!(without_lines("target/\n", &lines), None);
     }
 }

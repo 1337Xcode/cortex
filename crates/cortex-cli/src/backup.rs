@@ -21,14 +21,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
 use cortex_core::{ContentHash, create_private_folder};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The manifest's file name in a backup folder.
 const MANIFEST: &str = "manifest.json";
 
 /// The file name, in the user's backup folder of a run, of the copy of the run's manifest for a
 /// repository's files.
-const REPOSITORY_MANIFEST: &str = "repository-manifest.json";
+pub(crate) const REPOSITORY_MANIFEST: &str = "repository-manifest.json";
 
 /// How many names a new file beside the one it replaces tries, each another number, before giving
 /// up: another write would have to be making as many at once.
@@ -58,42 +58,46 @@ struct Written {
 }
 
 /// What a backup folder's manifest says.
-#[derive(Debug, Serialize)]
-struct Manifest {
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct Manifest {
     /// The canonical root of the repository the run set up.
-    repository: String,
+    pub(crate) repository: String,
     /// Each file changed, in the order it was.
-    files: Vec<Changed>,
+    pub(crate) files: Vec<Changed>,
 }
 
 /// One file a run changed.
-#[derive(Debug, Serialize)]
-struct Changed {
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct Changed {
     /// The file, as it was written: links followed.
-    path: String,
+    pub(crate) path: String,
     /// What the file is, which says how Cortex's entries come out of it.
-    kind: Kind,
+    #[serde(flatten)]
+    pub(crate) kind: Kind,
     /// The copy of what it held before, in the backup folder; `None` when it did not exist.
-    backup: Option<BackupCopy>,
+    pub(crate) backup: Option<BackupCopy>,
     /// The BLAKE3 hash, in hexadecimal, of what the run wrote.
-    written_blake3: String,
+    pub(crate) written_blake3: String,
 }
 
 /// The copy of what a file held before a run changed it.
-#[derive(Debug, Serialize)]
-struct BackupCopy {
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct BackupCopy {
     /// Its name in the run's backup folder.
-    name: String,
+    pub(crate) name: String,
     /// The BLAKE3 hash, in hexadecimal, of what it holds.
-    blake3: String,
+    pub(crate) blake3: String,
 }
 
-/// What a file init changes is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+/// What a file init changes is, and for a `.gitignore` what init added to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum Kind {
-    /// A `.gitignore`, which gets lines after a `# Cortex` comment.
-    Gitignore,
+    /// A `.gitignore`, which gets `lines` after a `# Cortex` comment.
+    Gitignore {
+        /// The lines added after the comment, in order.
+        lines: Vec<String>,
+    },
     /// Claude Code settings, which get Cortex's hooks.
     ClaudeSettings,
     /// Cortex's own configuration, which gets the answers to init's questions.
@@ -243,7 +247,11 @@ impl Backup {
 ///
 /// The new file cannot be made, written or renamed, or `path` changed: the new file is removed and
 /// `path` left as it is.
-fn replace_unchanged(path: &Path, before: Option<&[u8]>, contents: &[u8]) -> anyhow::Result<()> {
+pub(crate) fn replace_unchanged(
+    path: &Path,
+    before: Option<&[u8]>,
+    contents: &[u8],
+) -> anyhow::Result<()> {
     let (temporary, file) = new_beside(path)?;
     let written = fill(file, &temporary, path, contents).and_then(|()| {
         if holds(path, before)? {
@@ -262,7 +270,7 @@ fn replace_unchanged(path: &Path, before: Option<&[u8]>, contents: &[u8]) -> any
 /// Whether the file at `path` holds `before` (`None`: there is nothing there), reading no more
 /// than it takes to know: one byte past `before`'s length at most, and never through a link or
 /// anything but a file, so that a file of any size or kind put there cannot stall the run.
-fn holds(path: &Path, before: Option<&[u8]>) -> io::Result<bool> {
+pub(crate) fn holds(path: &Path, before: Option<&[u8]>) -> io::Result<bool> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(before.is_none()),
@@ -483,7 +491,7 @@ mod tests {
             .with_users_copy(&users);
         assert!(
             backup
-                .replace(&path, Kind::Gitignore, None, b"new")
+                .replace(&path, Kind::Gitignore { lines: Vec::new() }, None, b"new")
                 .is_err()
         );
         assert!(path.is_dir());
