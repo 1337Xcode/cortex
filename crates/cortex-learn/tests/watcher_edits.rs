@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{Store, TestResult, end, event, name, prompt, start, target, task_of, tool};
+use common::{Store, TestResult, end, event, failed, name, prompt, start, target, task_of, tool};
 use cortex_core::{
     ContentHash, EventKind, EventMeta, EventSource, FileFlags, HookKind, Identifier, Language,
     RepoPath, StartSource, ToolKind, Ulid,
@@ -182,6 +182,39 @@ fn a_hook_s_edit_claims_the_watcher_s() -> TestResult {
             watched("e.py", 31_000, (Some("s1"), Some(t1)), None)?,
             watched("d.py", 32_500, (Some("s1"), Some(t1)), None)?,
         ]
+    );
+    Ok(())
+}
+
+/// An edit that failed changed nothing, so it claims no edit the watcher saw: `s1`'s Edit of
+/// `d.py` at 30,000 fails, and the watcher's edit of `d.py` at 31,000 (a command's, say), within
+/// 2 s of it, is recorded as `s1`'s, in T1.
+#[test]
+fn a_failed_edit_claims_nothing() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false);
+    let asked = prompt("s1", 11_000, "fix it")?;
+    let t1 = task_of(&asked)?;
+    let failed_edit = tool(
+        HookKind::PostTool,
+        ("s1", 30_000),
+        (ToolKind::Edit, target("d.py", &[])?, failed()),
+    )?;
+    store.record(
+        &mut recorder,
+        &[
+            start("s1", 10_000, StartSource::Startup)?,
+            asked,
+            failed_edit,
+        ],
+    )?;
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("d.py", 31_000))?,
+        session("s1")?
+    );
+    assert_eq!(
+        watcher_rows(&store)?,
+        [watched("d.py", 31_000, (Some("s1"), Some(t1)), None)?]
     );
     Ok(())
 }

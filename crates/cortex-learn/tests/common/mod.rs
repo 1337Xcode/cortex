@@ -111,6 +111,17 @@ pub fn succeeded(exit_code: Option<i32>, output_bytes: Option<u64>) -> Option<To
     })
 }
 
+/// A tool that failed, as Claude Code reports an edit that did not apply: no exit code, no output
+/// size.
+pub fn failed() -> Option<ToolResult> {
+    Some(ToolResult {
+        exit_code: None,
+        is_success: false,
+        is_interrupted: false,
+        output_bytes: None,
+    })
+}
+
 /// A store in a temporary repository.
 pub struct Store {
     /// The repository root.

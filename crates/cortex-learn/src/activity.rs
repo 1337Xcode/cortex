@@ -73,7 +73,12 @@ impl Activity {
             .tool_target
             .as_ref()
             .and_then(|target| target.path.as_ref());
-        if let Some(path) = edited.filter(|_| kind == EventKind::Edit) {
+        // An edit that failed changed nothing, so it claims no change the watcher sees in its file.
+        let is_made = event
+            .tool_result
+            .as_ref()
+            .is_none_or(|result| result.is_success);
+        if let Some(path) = edited.filter(|_| kind == EventKind::Edit && is_made) {
             if self.reported.len() >= MAX_REMEMBERED && !self.reported.contains_key(path) {
                 self.reported
                     .retain(|_, times| times.last().is_some_and(|ts_ms| *ts_ms >= since_ms));
