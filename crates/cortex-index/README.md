@@ -282,8 +282,10 @@ of time.
 ## Watching
 
 `watch` reports a repository's changes as they happen. File system events are gathered until a path
-has been quiet for 200 ms, then sorted by the walk's own rules: paths under `.git` or `.cortex`, and
-paths the ignore files and patterns leave out, are dropped. The paths left, created, changed,
+has been quiet for 200 ms, then sorted by the walk's own rules. Opening, reading and closing a file
+without writing it change nothing and are dropped (Linux reports every open, an index's own reads
+included); so are paths under `.git` or `.cortex` and paths the ignore files and patterns leave
+out. The paths left, created, changed,
 removed or renamed (both names), are reported together. More than 500 of them within 2 seconds, as a
 branch switch or a large checkout makes, a change to `.gitignore`, `.cortexignore`, `.gitattributes`
 or `.git/info` that the walk reads (not one in a folder the walk leaves out, such as an installed

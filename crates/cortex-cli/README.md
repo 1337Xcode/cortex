@@ -46,8 +46,11 @@ with an empty home folder, so the user's own configuration never applies.
 The `hooks` benchmark runs the built `cortex hook` once per sample, 100 samples per event, from
 the process's start to its exit: SessionStart, UserPromptSubmit, PreToolUse on a read, PostToolUse
 on an edit and Stop, each on a recorded Claude Code payload against a daemon on a small temporary
-repository, and a hook given no input, which ends before it asks the daemon anything. It fails
-when a hook fails or when the daemon did not handle each event's requests.
+repository, and a hook given no input, which ends before it asks the daemon anything. Then it runs
+the five events again from a repository whose daemon is down and cannot come up (the benchmark
+holds its run lock, as a daemon still starting does), so that each sample is a hook that finds no
+daemon, starts one and exits. It fails when a hook fails, when the daemon did not handle each
+event's requests, or when a hook with the daemon down started none.
 
 Configuration comes from `~/.cortex/config.toml`, then the repository's `.cortex/config.toml`; a
 file over 1 MiB is refused, and an unknown key prints a warning.

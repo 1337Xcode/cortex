@@ -15,7 +15,7 @@ to the session most likely to have made it, or to none.
 | Item | What it is |
 | --- | --- |
 | `Recorder::new`, `Recorder::record` | Records one event in a write transaction. A prompt starts a task numbered across the repository, ending first any task its session left open when the end of the previous answer never arrived; the end of the answer or of the session ends it as `unknown`. A subagent is a session of its own with its parent's id, and its events belong to the parent's open task. A tool call is recorded after it ran, as a read, a search, an edit (one row per changed stretch of lines, up to `cortex_core::MAX_RANGES`), a shell command or another tool, with the file's graph node when the file is indexed; the moment before a tool runs is not kept. An event from a session the store has not seen registers the session. After a transaction that was rolled back, `Recorder::forget_stored` drops what the recorder took the store to hold; what it saw of sessions' work stays |
-| `WatcherEdits`, `HOLD_MS`, `Recorder::record_watcher_edit`, `WatcherEdit`, `ATTRIBUTION_WINDOW_MS` | Edits the file watcher saw, each held 2 s from when it was first seen (`hold`, `next_due_ms`, `take_due`). Then a hook's edit of the same file at most 2 s before or after it claims it and nothing more is recorded; otherwise it is recorded as an edit with no lines whose source is the watcher, for the session at work at the time: of the sessions not ended before the edit, the one with the latest event from 30 s before it to 2 s after it (of two as late, the one whose id sorts first), a subagent's events counting for the session that started it; in that session's open task; or for no session. It is weighed only against events' times, so the order they arrived in does not change it |
+| `WatcherEdits`, `HOLD_MS`, `Recorder::record_watcher_edit`, `WatcherEdit`, `ATTRIBUTION_WINDOW_MS` | Edits the file watcher saw, each held 2 s from when it was first seen (`hold`, `next_due_ms`, `take_due`). Then a hook's edit of the same file at most 2 s before or after it claims it and nothing more is recorded, unless the hook reported that edit as failed; otherwise it is recorded as an edit with no lines whose source is the watcher, for the session at work at the time: of the sessions not ended before the edit, the one with the latest event from 30 s before it to 2 s after it (of two as late, the one whose id sorts first), a subagent's events counting for the session that started it; in that session's open task; or for no session. It is weighed only against events' times, so the order they arrived in does not change it |
 
 ## Tests
 
@@ -26,6 +26,6 @@ cargo test -p cortex-learn
 The tests record event sequences in the orders Claude Code sends them (a whole task, `/compact`,
 `/clear`, a subagent, a lost Stop, an unknown session) into a real store and compare every row
 with rows written by hand. The watcher's edits are tested the same way: how long each is held,
-when a hook's edit claims it, and which session gets it at the edges of the 30 s window, after a
-session ends, for a subagent and on a tie. One test searches the database's files for marker words placed in a
-prompt, a command and a search pattern.
+when a hook's edit claims it (a failed one does not), and which session gets it at the edges of the
+30 s window, after a session ends, for a subagent and on a tie. One test searches the database's
+files for marker words placed in a prompt, a command and a search pattern.
