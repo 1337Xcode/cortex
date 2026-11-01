@@ -43,24 +43,34 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     for line in daemon_lines(&root) {
         output::line(&line)?;
     }
+    for line in index_lines(&root, loaded.config.mode)? {
+        output::line(&line)?;
+    }
+    Ok(())
+}
+
+/// The lines saying how far the index of the repository at `root` is, with the mode `setting` the
+/// configuration gives, or that it has none.
+///
+/// # Errors
+///
+/// The store cannot be read.
+pub(crate) fn index_lines(root: &Path, setting: ModeSetting) -> anyhow::Result<Vec<String>> {
     let folder = root.join(".cortex");
     let reader = match Reader::open(&folder, 0) {
         Ok(reader) => reader,
         Err(StoreError::Missing { .. }) => {
-            return output::line(&format!(
+            return Ok(vec![format!(
                 "no index in {}; `cortex daemon` builds one",
                 root.display()
-            ));
+            )]);
         }
         Err(error) => {
             return Err(error)
                 .with_context(|| format!("reading the store in {}", folder.display()));
         }
     };
-    for line in status_lines(&folder, reader.queries(), loaded.config.mode)? {
-        output::line(&line)?;
-    }
-    Ok(())
+    status_lines(&folder, reader.queries(), setting)
 }
 
 /// The lines saying whether the daemon of the repository at `root` runs and, from its own answer,
@@ -239,6 +249,7 @@ mod tests {
             failed_batches: 0,
             failed_checkpoints: 0,
             probes_answered: 0,
+            is_indexed: false,
             latencies: Vec::new(),
             recent_errors: Vec::new(),
         }

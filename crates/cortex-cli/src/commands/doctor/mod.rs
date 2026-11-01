@@ -85,6 +85,20 @@ const UNSEEN: &str = "doctor cannot see whether Claude Code runs with --safe-mod
 /// written, or a check that failed.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let root = repository::root(args.root.as_deref())?;
+    let failed = checked(root)?;
+    if failed > 0 {
+        bail!("{failed} of the checks failed");
+    }
+    Ok(())
+}
+
+/// Runs every check on the repository whose canonical root is `root`, prints each finding and
+/// then what no check can see, and returns how many checks failed.
+///
+/// # Errors
+///
+/// This binary's path is not found or not UTF-8, or stdout cannot be written.
+pub(crate) fn checked(root: PathBuf) -> anyhow::Result<usize> {
     let context = Context {
         program: crate::program::this_program()?,
         files: settings::files(&root),
@@ -105,8 +119,5 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         }
     }
     output::line(&format!("note  {UNSEEN}"))?;
-    if failed > 0 {
-        bail!("{failed} of the checks failed");
-    }
-    Ok(())
+    Ok(failed)
 }

@@ -57,6 +57,8 @@ struct State {
     is_watcher_gone: bool,
     /// When the latest request of any kind arrived, if one did.
     last_request: Option<Instant>,
+    /// Whether the daemon's first index is done.
+    is_indexed: bool,
 }
 
 /// What the writer is to do next.
@@ -98,6 +100,8 @@ pub(crate) struct Counts {
     pub(crate) failed_batches: u64,
     /// Checkpoints of the store's log that failed, since the writer opened.
     pub(crate) failed_checkpoints: u64,
+    /// Whether the daemon's first index is done.
+    pub(crate) is_indexed: bool,
 }
 
 impl Inbox {
@@ -157,7 +161,13 @@ impl Inbox {
             events_dropped: state.events_dropped,
             failed_batches: state.failed_batches,
             failed_checkpoints: state.failed_checkpoints.count(),
+            is_indexed: state.is_indexed,
         }
+    }
+
+    /// Notes that the daemon's first index is done, for its status to say.
+    pub(crate) fn mark_indexed(&self) {
+        self.lock().is_indexed = true;
     }
 
     /// Puts in a change from the watcher that arrived at `seen_ms`, in UTC milliseconds, or drops it

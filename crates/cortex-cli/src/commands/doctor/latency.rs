@@ -321,6 +321,7 @@ mod tests {
             failed_batches: 0,
             failed_checkpoints: 0,
             probes_answered: probes,
+            is_indexed: true,
             latencies: Vec::new(),
             recent_errors: Vec::new(),
         }

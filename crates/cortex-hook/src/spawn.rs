@@ -46,6 +46,23 @@ pub fn start_daemon(
     if is_recent {
         return Ok(Started::Recently);
     }
+    start_daemon_now(program, root, files, now).map(|()| Started::Now)
+}
+
+/// Starts `cortex daemon --root <root>` as [`start_daemon`] does, whenever a start was made: for a
+/// command the user runs, which is no storm of hooks, and finds no daemon. The start is marked all
+/// the same, so that hooks keep their gap after it.
+///
+/// # Errors
+///
+/// The run folder or the start's marker could not be written, or the process could not be created.
+pub fn start_daemon_now(
+    program: &Path,
+    root: &Path,
+    files: &RunFiles,
+    now: SystemTime,
+) -> io::Result<()> {
+    let marker = files.start_path();
     if let Some(folder) = marker.parent() {
         create_private_folder(folder)?;
     }
@@ -63,7 +80,7 @@ pub fn start_daemon(
         .stderr(Stdio::null());
     // The child is not waited for: it outlives the hook by design, and dropping the handle neither
     // stops nor waits for it.
-    detach(&mut command).map(|_| Started::Now)
+    detach(&mut command).map(drop)
 }
 
 /// Spawns `command` in a process group of its own, so that a signal to the agent's group (an
@@ -128,6 +145,25 @@ mod tests {
         assert_eq!(soon?, Started::Recently);
         let later = start_daemon(&program, &root, &files, now + Duration::from_secs(10));
         assert!(later.is_err(), "{later:?}");
+        Ok(())
+    }
+
+    /// A command's start is made within the hooks' gap, and moves the marker, so that a hook keeps
+    /// its gap after it. The program here does not exist, so a start that is made fails.
+    #[test]
+    fn a_command_starts_within_the_gap() -> Result<(), Box<dyn Error>> {
+        let home = tempfile::tempdir()?;
+        let root = home.path().join("repo");
+        std::fs::create_dir(&root)?;
+        let files = UserFolder::in_home(home.path()).run_files(&RepoId::of(&root));
+        let program = home.path().join("no-such-program");
+        let now = SystemTime::now();
+        assert!(start_daemon(&program, &root, &files, now).is_err());
+        let soon = now + Duration::from_secs(5);
+        let command = start_daemon_now(&program, &root, &files, soon);
+        assert!(command.is_err(), "{command:?}");
+        let after = start_daemon(&program, &root, &files, now + Duration::from_secs(12));
+        assert_eq!(after?, Started::Recently);
         Ok(())
     }
 }

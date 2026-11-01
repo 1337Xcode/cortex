@@ -397,6 +397,8 @@ fn probes_leave_no_rows() -> TestResult {
         return Err(format!("{:?}", answer.body).into());
     };
     assert_eq!(report.probes_answered, 2);
+    // The daemon wrote its ready line, so its first index is done, and its status says so.
+    assert!(report.is_indexed);
     let stored = || -> TestResult<Vec<(String, EventKind)>> {
         let reader = Reader::open(&repo.path().join(".cortex"), 0)?;
         Ok(reader

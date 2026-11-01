@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use cortex_core::ipc::{RequestBody, Role, is_older_than_this_build};
 use cortex_core::{RepoId, UserFolder};
 use cortex_daemon::is_running;
-use cortex_hook::{Answer, ClientError, Stop, ask, start_daemon, stop_if_older};
+use cortex_hook::{Answer, ClientError, Stop, ask, start_daemon_now, stop_if_older};
 
 /// How long a command gives an older daemon to stop and the new one to answer: the old one drains
 /// its inbox and gives its connections a second; the new one answers as soon as it listens.
@@ -59,6 +59,26 @@ pub(crate) fn ask_current(
     }
 }
 
+/// Asks the daemon of the repository at `root`, whose user folder is `user`, `body` as
+/// [`ask_current`] does before `deadline`, after starting one of this build when none runs and
+/// waiting within [`REPLACE_WITHIN`] for it to answer.
+pub(crate) fn ask_started(
+    root: &Path,
+    user: &UserFolder,
+    body: &RequestBody,
+    deadline: Instant,
+) -> Asked {
+    let asked = ask_current(root, user, body, deadline);
+    if !matches!(asked.answer, Err(ClientError::NotRunning)) {
+        return asked;
+    }
+    // With nothing running, nothing is stopped: this starts a daemon and asks it.
+    Asked {
+        answer: replace(root, (user, &RepoId::of(root)), body).map(|(answer, _)| answer),
+        replaced: None,
+    }
+}
+
 /// Asks the older daemon of the repository at `root` to stop, on a connection whose handshake shows
 /// it still older, waits until it has let go of the repository, starts a daemon of this build and
 /// asks it `body`, all within [`REPLACE_WITHIN`]. Returns the answer, with the version stopped when
@@ -86,7 +106,7 @@ fn replace(
         }
     }
     if !is_running(user, repo_id).map_err(ClientError::Io)? {
-        start_daemon(&program, root, &files, SystemTime::now()).map_err(ClientError::Io)?;
+        start_daemon_now(&program, root, &files, SystemTime::now()).map_err(ClientError::Io)?;
     }
     loop {
         match ask(&files, Role::Cli, body.clone(), until) {

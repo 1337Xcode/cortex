@@ -1,5 +1,5 @@
 //! What the CLI's integration tests share: a daemon run on a temporary repository with an empty
-//! home folder, and waiting for a condition.
+//! home folder, a guard that stops a daemon a command started, and waiting for a condition.
 
 #![allow(
     dead_code,
@@ -10,11 +10,17 @@ pub mod fake_daemon;
 
 use std::error::Error;
 use std::ffi::OsString;
+use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+use cortex_core::ipc::{RequestBody, Role};
+use cortex_core::{RepoId, UserFolder, canonical_root};
+use cortex_daemon::is_running;
+use cortex_hook::{ClientError, ask};
 
 /// Result type for these tests: any failure fails the test.
 pub type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -150,6 +156,93 @@ pub fn stand_in_claude(home: &Path, version: &str) -> TestResult<PathBuf> {
     #[cfg(unix)]
     std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
     Ok(claude)
+}
+
+/// What a command printed, and whether it succeeded.
+pub struct Printed {
+    /// Whether it succeeded.
+    pub is_success: bool,
+    /// Its stdout.
+    pub stdout: String,
+    /// Its stderr.
+    pub stderr: String,
+}
+
+/// Runs `command`, its stdin an empty pipe, which is no terminal, and its output written to files in
+/// `folder` rather than pipes: on Windows a daemon the command starts holds the command's own
+/// handles, and a pipe would stay open until that daemon stops.
+///
+/// # Errors
+///
+/// The files cannot be made or read, or the command cannot run.
+pub fn printed_to_files(command: &mut Command, folder: &Path) -> TestResult<Printed> {
+    let stdout = folder.join("printed-stdout.txt");
+    let stderr = folder.join("printed-stderr.txt");
+    command
+        .stdin(Stdio::piped())
+        .stdout(File::create(&stdout)?)
+        .stderr(File::create(&stderr)?);
+    let mut child = command.spawn()?;
+    drop(child.stdin.take());
+    let status = child.wait()?;
+    Ok(Printed {
+        is_success: status.success(),
+        stdout: std::fs::read_to_string(&stdout)?,
+        stderr: std::fs::read_to_string(&stderr)?,
+    })
+}
+
+/// Stops, when dropped, the daemon a command started detached for the repository at `root`, the
+/// user's home being `home`, and waits for it to let go of the repository, so that its folders can
+/// be removed. Declared after the folders, it is dropped before them, a failed test included.
+pub struct StopsDaemon {
+    /// The repository.
+    root: PathBuf,
+    /// The home folder.
+    home: PathBuf,
+}
+
+impl StopsDaemon {
+    /// A guard for the daemon of the repository at `root` with `home` as the home folder.
+    pub fn of(root: &Path, home: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            home: home.to_path_buf(),
+        }
+    }
+
+    /// Stops the daemon, if one runs, and waits for it to let go of the repository.
+    ///
+    /// # Errors
+    ///
+    /// The repository's folder cannot be found, the daemon cannot be asked to stop, or it does not
+    /// stop in time.
+    pub fn stop(&self) -> TestResult {
+        let user = UserFolder::in_home(&self.home);
+        let repo_id = RepoId::of(&canonical_root(&self.root)?);
+        if !is_running(&user, &repo_id)? {
+            return Ok(());
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        // A daemon that stopped between the look and the request needs nothing more.
+        match ask(
+            &user.run_files(&repo_id),
+            Role::Cli,
+            RequestBody::Shutdown,
+            deadline,
+        ) {
+            Ok(_) | Err(ClientError::NotRunning) => {}
+            Err(error) => return Err(error.into()),
+        }
+        wait_for(|| Ok(!is_running(&user, &repo_id)?))
+    }
+}
+
+impl Drop for StopsDaemon {
+    /// Stops the daemon; a test that already failed has its own error to show.
+    fn drop(&mut self) {
+        drop(self.stop());
+    }
 }
 
 /// Waits until `condition` holds, for at most [`SEEN_WITHIN`].

@@ -9,9 +9,11 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
-use common::{TestResult, isolate, stand_in_claude, test_path};
+use common::fake_daemon::{FakeDaemon, Script, kinds};
+use common::{StopsDaemon, TestResult, isolate, printed_to_files, stand_in_claude, test_path};
+use cortex_core::ipc::CORTEX_VERSION;
 use cortex_core::{ContentHash, canonical_root};
 use serde_json::Value;
 
@@ -67,17 +69,12 @@ fn run(command: &mut Command, home: &Path, programs: &[&str]) -> TestResult<Run>
     isolate(command, home);
     command
         .env("PATH", test_path(home, programs)?)
-        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn()?;
-    drop(child.stdin.take());
-    let output = child.wait_with_output()?;
+        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
+    let printed = printed_to_files(command, home)?;
     Ok(Run {
-        is_success: output.status.success(),
-        stdout: String::from_utf8(output.stdout)?,
-        stderr: String::from_utf8(output.stderr)?,
+        is_success: printed.is_success,
+        stdout: printed.stdout,
+        stderr: printed.stderr,
     })
 }
 
@@ -132,6 +129,7 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
     std::fs::create_dir_all(repo.path().join(".claude"))?;
     let original = r#"{"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "notify.sh"}]}]}}"#;
     std::fs::write(&settings, original)?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let run = init(repo.path(), home.path(), &[])?;
     assert!(run.is_success, "{}", run.stderr);
     let written = std::fs::read_to_string(&settings)?;
@@ -188,7 +186,8 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         .try_into()
         .map_err(|_| "one backup")?;
     let resolved = std::fs::canonicalize(&settings)?;
-    let lines: Vec<&str> = run.stdout.lines().collect();
+    // Init's own lines; the daemon's, the index's and doctor's follow.
+    let lines: Vec<&str> = run.stdout.lines().take(8).collect();
     let [
         repository,
         no_git,
@@ -281,14 +280,18 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
 fn init_again_changes_nothing() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     assert!(init(repo.path(), home.path(), &[])?.is_success);
     let settings = repo.path().join(".claude").join("settings.local.json");
     let first = std::fs::read(&settings)?;
     let again = init(repo.path(), home.path(), &[])?;
     assert!(again.is_success, "{}", again.stderr);
-    let last = again.stdout.lines().last().unwrap_or_default();
     assert!(
-        last.starts_with("Claude Code: the hooks in ") && last.ends_with(" are current"),
+        again
+            .stdout
+            .lines()
+            .any(|line| line.starts_with("Claude Code: the hooks in ")
+                && line.ends_with(" are current")),
         "{}",
         again.stdout
     );
@@ -323,6 +326,7 @@ fn init_sets_up_git_s_repository_from_a_folder_inside_it() -> TestResult {
     stand_in_claude(home.path(), "2.1.312")?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command.args(["init", "--yes"]).current_dir(&inner);
+    let _daemon = StopsDaemon::of(&repo, home.path());
     let done = run(&mut command, home.path(), &["git"])?;
     assert!(done.is_success, "{}", done.stderr);
     let top = canonical_root(&repo)?;
@@ -349,6 +353,7 @@ fn init_never_follows_git_to_a_folder_outside() -> TestResult {
         &["config", "core.worktree", worktree.as_str()],
         home.path(),
     )?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let done = init(repo.path(), home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
     assert_eq!(
@@ -377,6 +382,7 @@ fn init_never_sets_up_a_home_folder_repository() -> TestResult {
     git(home.path(), &["init", "-q"], home.path())?;
     let project = home.path().join("project");
     std::fs::create_dir(&project)?;
+    let _daemon = StopsDaemon::of(&project, home.path());
     let done = init(&project, home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
     let lines: Vec<&str> = done.stdout.lines().take(2).collect();
@@ -416,6 +422,7 @@ fn init_without_git_or_claude_code_says_so() -> TestResult {
     let home = tempfile::tempdir()?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command.args(["init", "--yes", "--root"]).arg(repo.path());
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let done = run(&mut command, home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
     let lines: Vec<&str> = done.stdout.lines().skip(1).take(2).collect();
@@ -445,6 +452,7 @@ fn init_prints_control_characters_escaped() -> TestResult {
     let home = tempfile::tempdir()?;
     let repo = base.path().join("repo\u{1b}[31m");
     std::fs::create_dir(&repo)?;
+    let _daemon = StopsDaemon::of(&repo, home.path());
     let done = init(&repo, home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
     let shown =
@@ -462,6 +470,7 @@ fn init_refuses_an_older_claude_code() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     let claude = stand_in_claude(home.path(), "2.1.200")?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let refused = init(repo.path(), home.path(), &[])?;
     assert!(!refused.is_success);
     let expected = format!(
@@ -493,6 +502,189 @@ fn init_refuses_an_older_claude_code() -> TestResult {
     Ok(())
 }
 
+/// In a git repository holding two Python files, init ends with the repository's daemon running,
+/// its first index ready, and doctor's checks. The index, counted from the fixture: the two files
+/// and the `.gitignore` init wrote are stored, the two Python files parsed, and Claude Code's local
+/// settings left out, as the `.gitignore` says. Doctor's daemon check names the process init
+/// started; its latency checks may fail on a busy machine, which init reports without failing.
+#[test]
+fn init_starts_the_daemon_and_runs_doctor() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
+    git(repo.path(), &["init", "-q"], home.path())?;
+    std::fs::write(repo.path().join("app.py"), "def app():\n    pass\n")?;
+    std::fs::write(repo.path().join("lib.py"), "def lib():\n    pass\n")?;
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let lines: Vec<&str> = done.stdout.lines().collect();
+    let running = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("daemon: running (process "))
+        .ok_or_else(|| done.stdout.clone())?;
+    let (pid, version) = running
+        .strip_suffix(')')
+        .and_then(|rest| rest.split_once(", Cortex "))
+        .ok_or_else(|| done.stdout.clone())?;
+    assert_eq!(version, CORTEX_VERSION);
+    let index = lines
+        .iter()
+        .position(|line| *line == "index: ready")
+        .ok_or_else(|| done.stdout.clone())?;
+    assert_eq!(
+        lines.get(index..index + 3),
+        Some(&["index: ready", "mode: tiny", "files: 3 stored, 2 parsed"][..]),
+        "{}",
+        done.stdout
+    );
+    let checks: Vec<&str> = lines
+        .iter()
+        .skip(index + 3)
+        // Doctor's own lines: init's closing note, when a check failed, is not one of them.
+        .filter(|line| {
+            ["ok    ", "FAIL  ", "note  "]
+                .iter()
+                .any(|kind| line.starts_with(kind))
+        })
+        .filter(|line| !line.contains("latency: "))
+        .filter_map(|line| line.split_once(':').map(|(head, _)| head))
+        .collect();
+    assert_eq!(
+        checks,
+        [
+            "ok    hooks",
+            "ok    silenced",
+            "ok    binary",
+            "ok    agent",
+            "ok    daemon"
+        ],
+        "{}",
+        done.stdout
+    );
+    assert!(
+        lines.contains(
+            &format!("ok    daemon: running (process {pid}, Cortex {CORTEX_VERSION})").as_str()
+        ),
+        "{}",
+        done.stdout
+    );
+    let probed = lines
+        .iter()
+        .filter(|line| line.contains("latency: "))
+        .count();
+    assert_eq!(probed, 5, "{}", done.stdout);
+    Ok(())
+}
+
+/// Run again once its daemon has stopped, init waits for the new daemon's own first index, not for
+/// what the earlier one left in the store: a file added meanwhile is counted (from the fixture:
+/// `app.py` and the `.gitignore` first, then `lib.py` too).
+#[test]
+fn init_waits_for_the_new_daemon_s_index() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let daemon = StopsDaemon::of(repo.path(), home.path());
+    git(repo.path(), &["init", "-q"], home.path())?;
+    std::fs::write(repo.path().join("app.py"), "def app():\n    pass\n")?;
+    let first = init(repo.path(), home.path(), &[])?;
+    assert!(first.is_success, "{}", first.stderr);
+    assert!(
+        first.stdout.contains("\nfiles: 2 stored, 1 parsed\n"),
+        "{}",
+        first.stdout
+    );
+    daemon.stop()?;
+    std::fs::write(repo.path().join("lib.py"), "def lib():\n    pass\n")?;
+    let again = init(repo.path(), home.path(), &[])?;
+    assert!(again.is_success, "{}", again.stderr);
+    assert!(
+        again.stdout.contains("\nfiles: 3 stored, 2 parsed\n"),
+        "{}",
+        again.stdout
+    );
+    Ok(())
+}
+
+/// A daemon that stops before its first index is done, here on a store that is no database, fails
+/// init within seconds, naming the daemon, rather than waiting out the index's 5 minutes.
+#[test]
+fn init_fails_when_the_daemon_stops() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
+    std::fs::create_dir(repo.path().join(".cortex"))?;
+    std::fs::write(
+        repo.path().join(".cortex").join("cortex.db"),
+        "not a database",
+    )?;
+    let started = std::time::Instant::now();
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(!done.is_success, "{}", done.stdout);
+    assert!(done.stderr.contains("daemon"), "{}", done.stderr);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(120),
+        "{:?}",
+        started.elapsed()
+    );
+    Ok(())
+}
+
+/// A daemon that answers while it indexes and then stops, before its first index is done, fails
+/// init at once, naming the daemon's log: a fake daemon of this build answers two statuses, then
+/// reads the third connection's handshake and stops without answering, as one that crashes.
+#[test]
+fn init_fails_when_the_daemon_stops_while_it_indexes() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let fake = FakeDaemon::start(repo.path(), home.path(), Script::Indexing(2))?;
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(!done.is_success, "{}", done.stdout);
+    assert!(
+        done.stderr
+            .contains("the daemon stopped before its first index was done; its log says why: "),
+        "{}",
+        done.stderr
+    );
+    assert_eq!(
+        kinds(&fake.requests()?),
+        ["hello", "status", "hello", "status", "hello"]
+    );
+    Ok(())
+}
+
+/// Doctor's failures are reported and init still succeeds, its files written: with hooks turned off
+/// in the user's settings, the silenced check fails and init says init is done.
+#[test]
+fn init_reports_doctor_s_failures_without_failing() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
+    std::fs::create_dir(home.path().join(".claude"))?;
+    std::fs::write(
+        home.path().join(".claude").join("settings.json"),
+        r#"{"disableAllHooks": true}"#,
+    )?;
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    assert!(
+        done.stdout
+            .lines()
+            .any(|line| line.starts_with("FAIL  silenced: ")),
+        "{}",
+        done.stdout
+    );
+    let note = done
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("note: init is done, and "))
+        .ok_or_else(|| done.stdout.clone())?;
+    assert!(
+        note.contains(" of doctor's checks failed; each says what to do"),
+        "{note}"
+    );
+    Ok(())
+}
+
 /// The answer files `--yes` writes: the repository's holdout, at one task in ten.
 const REPOSITORY_ANSWER: &str =
     "# The answer to a question `cortex init` asked; change it here.\n[holdout]\nshare = 0.1\n";
@@ -508,6 +700,7 @@ fn init_with_yes_takes_the_defaults() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     git(repo.path(), &["init", "-q"], home.path())?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let done = init(repo.path(), home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
     assert!(!done.stderr.contains('?'), "{}", done.stderr);
@@ -544,6 +737,7 @@ fn init_asks_nothing_once_answered() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     git(repo.path(), &["init", "-q"], home.path())?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let first = init(repo.path(), home.path(), &[])?;
     assert!(first.is_success, "{}", first.stderr);
     let ignores = std::fs::read_to_string(repo.path().join(".gitignore"))?;
@@ -565,6 +759,7 @@ fn init_asks_nothing_once_answered() -> TestResult {
 fn init_without_a_terminal_writes_nothing() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let refused = init_without_yes(repo.path(), home.path())?;
     assert!(!refused.is_success);
     assert_eq!(
@@ -608,6 +803,7 @@ fn init_keeps_the_team_s_sharing() -> TestResult {
         repo.path().join(".gitignore"),
         ".cortex/*\n!.cortex/shared/\n",
     )?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let done = init(repo.path(), home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
     assert_eq!(
@@ -629,6 +825,7 @@ fn init_never_takes_a_repository_s_upkeep_for_an_answer() -> TestResult {
         repo.path().join(".cortex").join("config.toml"),
         "holdout.share = 0.1\n[upkeep.llm]\nenabled = true\n",
     )?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let refused = init_without_yes(repo.path(), home.path())?;
     assert!(!refused.is_success);
     assert!(
@@ -652,6 +849,7 @@ fn init_leaves_a_read_only_gitignore() -> TestResult {
     let mut permissions = std::fs::metadata(&gitignore)?.permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(&gitignore, permissions.clone())?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let done = init(repo.path(), home.path(), &[])?;
     #[allow(
         clippy::permissions_set_readonly_false,
@@ -678,6 +876,7 @@ fn init_refuses_a_linked_gitignore() -> TestResult {
     git(repo.path(), &["init", "-q"], home.path())?;
     std::fs::write(repo.path().join("ignores"), "target/\n")?;
     std::os::unix::fs::symlink("ignores", repo.path().join(".gitignore"))?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let done = init(repo.path(), home.path(), &[])?;
     assert!(!done.is_success);
     assert!(
@@ -707,6 +906,7 @@ fn init_refuses_a_file_that_leads_outside() -> TestResult {
     std::fs::write(&target, "")?;
     std::fs::create_dir(repo.path().join(".cortex"))?;
     std::os::unix::fs::symlink(&target, repo.path().join(".cortex").join("config.toml"))?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let done = init(repo.path(), home.path(), &[])?;
     assert!(!done.is_success);
     assert!(
@@ -724,6 +924,7 @@ fn init_refuses_a_file_that_leads_outside() -> TestResult {
 fn init_creates_the_settings_file() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let run = init(repo.path(), home.path(), &[])?;
     assert!(run.is_success, "{}", run.stderr);
     let settings = repo.path().join(".claude").join("settings.local.json");
@@ -753,6 +954,7 @@ fn init_refuses_a_file_it_cannot_read() -> TestResult {
     let settings = repo.path().join(".claude").join("settings.local.json");
     std::fs::create_dir_all(repo.path().join(".claude"))?;
     std::fs::write(&settings, "{\"token\": oops")?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let run = init(repo.path(), home.path(), &[])?;
     assert!(!run.is_success);
     assert!(
@@ -773,6 +975,7 @@ fn init_for_the_user_writes_the_home_settings() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     git(repo.path(), &["init", "-q"], home.path())?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let run = init(repo.path(), home.path(), &["--scope", "user"])?;
     assert!(run.is_success, "{}", run.stderr);
     let value: Value = serde_json::from_slice(&std::fs::read(
@@ -809,6 +1012,7 @@ fn init_leaves_a_read_only_file() -> TestResult {
     let mut permissions = std::fs::metadata(&settings)?.permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(&settings, permissions)?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let run = init(repo.path(), home.path(), &[])?;
     assert!(!run.is_success);
     assert!(run.stderr.contains("is read-only"), "{}", run.stderr);
@@ -832,6 +1036,7 @@ fn init_refuses_folders_that_lead_outside() -> TestResult {
         for target in [elsewhere.path(), docs.as_path()] {
             let link = repo.path().join(name);
             std::os::unix::fs::symlink(target, &link)?;
+            let _daemon = StopsDaemon::of(repo.path(), home.path());
             let run = init(repo.path(), home.path(), &[])?;
             assert!(!run.is_success, "{name}");
             assert!(run.stderr.contains("leads elsewhere"), "{}", run.stderr);
@@ -857,6 +1062,7 @@ fn init_refuses_a_junction_that_leads_outside() -> TestResult {
         .arg(elsewhere.path())
         .output()?;
     assert!(made.status.success(), "{made:?}");
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let run = init(repo.path(), home.path(), &[])?;
     assert!(!run.is_success);
     assert!(run.stderr.contains("leads elsewhere"), "{}", run.stderr);
@@ -874,6 +1080,7 @@ fn init_leaves_a_link_to_nothing() -> TestResult {
     std::fs::create_dir_all(repo.path().join(".claude"))?;
     let settings = repo.path().join(".claude").join("settings.local.json");
     std::os::unix::fs::symlink(repo.path().join("gone.json"), &settings)?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     let run = init(repo.path(), home.path(), &[])?;
     assert!(!run.is_success);
     assert!(

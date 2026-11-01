@@ -13,9 +13,14 @@
 //! `.cortex/backups/`, the user's in `~/.cortex/backups/`) and written atomically (see [`backup`]).
 //! Nothing of a repository's is written outside it (see [`place`]). Running init again changes
 //! nothing.
+//!
+//! Then it finds the repository's daemon or starts one, waits for its first index (see
+//! [`daemon`]), and runs `cortex doctor`'s checks, whose failures it reports without failing: what
+//! init writes is written by then.
 
 mod backup;
 mod consent;
+mod daemon;
 mod git;
 mod hooks;
 mod ignores;
@@ -33,7 +38,7 @@ use cortex_core::{
 };
 use cortex_hook::{Adapter, Versions};
 
-use crate::commands::doctor::{Finding, claude_code_version};
+use crate::commands::doctor::{Finding, checked, claude_code_version};
 use crate::output;
 
 use self::backup::Backup;
@@ -250,7 +255,17 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let mut terminal = stdin.is_terminal().then(|| stdin.lock());
     let answers = consent::answers(kept, args.yes, terminal.as_mut())?;
     let changes = files.changes(kept, answers)?;
-    apply(&root.folder, changes)
+    apply(&root.folder, changes)?;
+    daemon::started_and_indexed(&root.folder)?;
+    let failed = checked(root.folder)?;
+    if failed > 0 {
+        output::line(&format!(
+            "note: init is done, and {failed} of doctor's checks failed; each says what to do, \
+             and a latency check over its budget on a busy machine may pass when `cortex doctor` \
+             runs again"
+        ))?;
+    }
+    Ok(())
 }
 
 /// The repository init sets up from where `args` start it, said on stdout with why it is not

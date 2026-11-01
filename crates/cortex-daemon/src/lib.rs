@@ -171,6 +171,7 @@ fn index_and_serve(
         (writer, recorder, inbox),
     );
     let report = host.index(&[])?;
+    inbox.mark_indexed();
     tracing::info!(
         files_written = report.files,
         files_unchanged = report.unchanged,

@@ -21,5 +21,5 @@ pub use adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, Versions, 
 pub use client::{Answer, ClientError, ask};
 pub use root::locate;
 pub use run::run;
-pub use spawn::{Started, start_daemon};
+pub use spawn::{Started, start_daemon, start_daemon_now};
 pub use stop::{Stop, stop_if_older};

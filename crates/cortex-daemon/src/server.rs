@@ -284,6 +284,7 @@ impl Server {
             failed_batches: counts.failed_batches,
             failed_checkpoints: counts.failed_checkpoints,
             probes_answered: self.probes_answered.load(atomic::Ordering::Relaxed),
+            is_indexed: counts.is_indexed,
             latencies: latencies.report(),
             recent_errors: self.inbox.recent_errors(),
         }

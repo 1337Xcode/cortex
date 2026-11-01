@@ -146,6 +146,10 @@ pub struct StatusReport {
     /// none of them.
     #[serde(default)]
     pub probes_answered: u64,
+    /// Whether this daemon has finished its first index of the repository (in huge mode, the
+    /// inventory): what an earlier daemon left in the store says nothing of this one.
+    #[serde(default)]
+    pub is_indexed: bool,
     /// For each hook that sent a request since the daemon started, in hook order, how long the
     /// daemon took to handle its latest requests.
     #[serde(default)]

@@ -6,9 +6,12 @@ mod common;
 
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
-use common::{Daemon, TestResult, isolate, stand_in_claude, test_path};
-use cortex_core::ipc::CORTEX_VERSION;
+use common::{StopsDaemon, TestResult, isolate, printed_to_files, stand_in_claude, test_path};
+use cortex_core::ipc::{CORTEX_VERSION, RequestBody, ResponseBody, Role};
+use cortex_core::{RepoId, UserFolder, canonical_root};
+use cortex_hook::ask;
 
 /// What one run printed and how it ended.
 struct Run {
@@ -27,14 +30,11 @@ fn cortex(args: &[&str], repo: &Path, home: &Path) -> TestResult<Run> {
     process.args(args).arg("--root").arg(repo);
     isolate(&mut process, home);
     process.env("PATH", test_path(home, &[])?);
-    let output = process.output()?;
+    let printed = printed_to_files(&mut process, home)?;
     Ok(Run {
-        is_success: output.status.success(),
-        lines: String::from_utf8(output.stdout)?
-            .lines()
-            .map(str::to_owned)
-            .collect(),
-        stderr: String::from_utf8(output.stderr)?,
+        is_success: printed.is_success,
+        lines: printed.stdout.lines().map(str::to_owned).collect(),
+        stderr: printed.stderr,
     })
 }
 
@@ -64,10 +64,15 @@ fn repository() -> TestResult<(tempfile::TempDir, tempfile::TempDir)> {
 #[test]
 fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
     let (repo, home) = repository()?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
     assert!(cortex(&["init", "--yes"], repo.path(), home.path())?.is_success);
-    let daemon = Daemon::start(repo.path(), home.path())?;
-    let ready = daemon.first_line()?;
-    assert!(ready.starts_with("cortex: daemon ready"), "{ready}");
+    let files =
+        UserFolder::in_home(home.path()).run_files(&RepoId::of(&canonical_root(repo.path())?));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let ResponseBody::Status(report) = ask(&files, Role::Cli, RequestBody::Status, deadline)?.body
+    else {
+        return Err("the daemon init started did not answer with its status".into());
+    };
     let run = cortex(&["doctor"], repo.path(), home.path())?;
     let program = env!("CARGO_BIN_EXE_cortex");
     let names: Vec<&str> = run
@@ -149,7 +154,7 @@ fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
     assert_eq!(version, CORTEX_VERSION);
     let expected = format!(
         "ok    daemon: running (process {}, Cortex {CORTEX_VERSION})",
-        daemon.child.id()
+        report.pid
     );
     assert_eq!(starting(&run, "ok    daemon"), [expected]);
     Ok(())
@@ -236,7 +241,10 @@ fn doctor_fails_on_an_older_claude_code() -> TestResult {
 #[test]
 fn doctor_fails_on_silenced_and_stale_hooks() -> TestResult {
     let (repo, home) = repository()?;
+    let daemon = StopsDaemon::of(repo.path(), home.path());
     assert!(cortex(&["init", "--yes"], repo.path(), home.path())?.is_success);
+    // Without the daemon init started, the daemon check fails too.
+    daemon.stop()?;
     let user_settings = home.path().join(".claude").join("settings.json");
     std::fs::create_dir_all(home.path().join(".claude"))?;
     std::fs::write(&user_settings, r#"{"disableAllHooks": true}"#)?;

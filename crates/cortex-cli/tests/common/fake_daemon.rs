@@ -9,8 +9,8 @@ use std::thread;
 use std::time::Duration;
 
 use cortex_core::ipc::{
-    Mismatch, Protocol, Request, RequestBody, Response, ResponseBody, Welcome, read_frame,
-    write_frame,
+    CORTEX_VERSION, Mismatch, Protocol, Request, RequestBody, Response, ResponseBody, StatusReport,
+    Welcome, read_frame, write_frame,
 };
 use cortex_core::{Endpoint, RepoId, RunFiles, UserFolder, canonical_root};
 use interprocess::local_socket::traits::{Listener as _, Stream as _};
@@ -27,6 +27,10 @@ pub enum Script {
     /// Answers each handshake with a mismatch, as a daemon of `version` speaking another protocol,
     /// then reads the one request any version reads; stops after a stop.
     Mismatch(&'static str),
+    /// Welcomes each connection as a daemon of this build whose first index is not done, answers a
+    /// status saying so, and stops after that many connections, as a daemon that dies while it
+    /// indexes.
+    Indexing(usize),
     /// Welcomes each connection as a daemon speaking this protocol, of the next of `versions` (the
     /// last for every connection past them), and takes every request; stops after a stop. Several
     /// versions stand for a daemon replaced between two connections.
@@ -138,6 +142,12 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
                 .get(connection)
                 .or(versions.last())
                 .ok_or("no version to welcome with")?,
+            Script::Indexing(connections) => {
+                if connection >= *connections {
+                    return Ok(requests);
+                }
+                CORTEX_VERSION
+            }
         };
         let body = ResponseBody::Welcome(Welcome {
             protocol: Protocol::CURRENT,
@@ -147,9 +157,13 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
         write_frame(&mut stream, &Response { request_id, body }).map_err(|error| text(&error))?;
         while let Ok(request) = read_frame::<Request>(&mut stream) {
             let is_stop = request.body == RequestBody::Shutdown;
+            let body = match (&script, &request.body) {
+                (Script::Indexing(_), RequestBody::Status) => ResponseBody::Status(indexing()),
+                _ => ResponseBody::Ack,
+            };
             let answer = Response {
                 request_id: request.request_id,
-                body: ResponseBody::Ack,
+                body,
             };
             requests.push(request);
             write_frame(&mut stream, &answer).map_err(|error| text(&error))?;
@@ -159,6 +173,25 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
         }
     }
     Ok(requests)
+}
+
+/// The status of a daemon of this build, this process, whose first index is not done.
+fn indexing() -> StatusReport {
+    StatusReport {
+        cortex_version: CORTEX_VERSION.to_owned(),
+        protocol: Protocol::CURRENT,
+        pid: std::process::id(),
+        uptime_ms: 0,
+        events_waiting: 0,
+        changes_waiting: 0,
+        events_dropped: 0,
+        failed_batches: 0,
+        failed_checkpoints: 0,
+        probes_answered: 0,
+        is_indexed: false,
+        latencies: Vec::new(),
+        recent_errors: Vec::new(),
+    }
 }
 
 /// The kind of each request, for comparing: `hello`, `event`, `status` or `shutdown`.

@@ -8,10 +8,10 @@ unsure, and keep everything on the user's machine.
 
 ## Status
 
-Cortex is in early development. The `cortex` binary indexes a repository and keeps the index
-current as files change, but nothing reads the index yet: the hooks that bring it to agents come
-next. This page lists a feature only once it works and has tests, and a number only once it has
-been measured.
+Cortex is in early development. The `cortex` binary sets a repository up for Claude Code, indexes
+it and keeps the index current as files change. The hooks it installs hand Claude Code's events to
+Cortex, but nothing goes back to the agent yet: that comes next. This page lists a feature only once
+it works and has tests, and a number only once it has been measured.
 
 ## Install
 
@@ -25,17 +25,33 @@ cargo install --path crates/cortex-cli
 ## Use
 
 ```sh
-cortex daemon --root path/to/repository
-cortex status --root path/to/repository
-cortex version
+cd path/to/repository
+cortex init
+cortex status
+cortex doctor
 ```
 
-`cortex daemon` indexes the repository (the current folder when `--root` is left out) into its
-`.cortex` folder, then watches it and indexes each change, and stops after a while with nothing to
-do. One daemon serves a repository; it listens on a socket (a named pipe on Windows) only its user
-can open. `cortex status` asks the daemon whether it runs (its process, version and uptime, what
-waits to be recorded, how long it takes to handle each hook, and its latest errors), and tells
-whether the index is ready, the repository's scale mode and how many files are stored and parsed.
+`cortex init` sets Cortex up in the repository you run it in. It needs Claude Code 2.1.295 or
+later. It asks three questions once: whether to measure Cortex's effect by leaving one task in ten
+without its help (yes by default), whether to share facts with your team through a committed
+`.cortex/shared/` folder (no), and whether to allow optional upkeep by a language model (no);
+`--yes` takes those defaults. It registers Cortex's hooks with Claude Code in
+`.claude/settings.local.json` (or, with `--scope user`, in `~/.claude/settings.json`), adds what
+Cortex writes to `.gitignore`, backs up every file before it changes it, starts the repository's
+daemon, waits for its first index and ends with `cortex doctor`'s checks, whose failures it
+reports without failing. Running it again writes nothing new.
+
+`cortex status` asks the daemon whether it runs (its process, version and uptime, what waits to be
+recorded, how long it takes to handle each hook, and its latest errors), and tells whether the index
+is ready, the repository's scale mode and how many files are stored and parsed. `cortex doctor`
+checks that Claude Code will run Cortex's hooks for the repository and that the daemon answers them
+in time, and prints the fix for each failure.
+
+One daemon serves a repository, from its `.cortex` folder. It listens on a socket (a named pipe on
+Windows) only its user can open, and stops after a while with nothing to do; a hook starts it again
+when Claude Code next needs it. On Windows the daemon holds the output handles of whatever started
+it (`cortex init`, a `cortex status` that replaced a daemon of an older Cortex, or a hook), so a
+pipe reading that command's output stays open until the daemon stops; a terminal does not wait.
 
 ## What has been measured
 
