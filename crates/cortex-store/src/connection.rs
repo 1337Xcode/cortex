@@ -19,6 +19,19 @@ const BUSY_TIMEOUT_MS: i64 = 2000;
 /// is prepared twice.
 const STATEMENT_CACHE_CAPACITY: usize = 64;
 
+/// How many pages the write-ahead log holds before a commit of the writer checkpoints it itself:
+/// 64 MiB of 4 KiB pages. The checkpointer thread copies the log every second, so this checkpoint
+/// copies at most about a second of writes. It is there because only a checkpoint that has copied
+/// everything lets the next transaction start the log afresh, and a writer that commits without
+/// pause never leaves the thread that moment: during a first index of a 7,700-file repository the
+/// log grew to over 290 MB with no checkpoint of its own.
+pub(crate) const LOG_RESTART_PAGES: i64 = 16_384;
+
+/// How large the write-ahead log file stays once the log has started afresh, in bytes: SQLite
+/// reuses the file rather than shrinking it, and without a limit it would keep the 64 MiB it grew
+/// to. 4 MiB is what SQLite's own checkpoints let it reach.
+pub(crate) const LOG_KEPT_BYTES: i64 = 4_194_304;
+
 /// What a connection may do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Access {
@@ -72,9 +85,20 @@ pub(crate) fn configure(
     set(connection, "foreign_keys", "ON", 1)?;
     set(connection, "busy_timeout", BUSY_TIMEOUT_MS, BUSY_TIMEOUT_MS)?;
     if access == Access::ReadWrite {
-        // The writer's commits never checkpoint the log; its checkpointer does, on a thread of its
-        // own. A reader never commits, so it never checkpoints either way.
-        set(connection, "wal_autocheckpoint", 0, 0)?;
+        // The writer's commits leave the log to its checkpointer until it holds this many pages. A
+        // reader never commits, so it never checkpoints either way.
+        set(
+            connection,
+            "wal_autocheckpoint",
+            LOG_RESTART_PAGES,
+            LOG_RESTART_PAGES,
+        )?;
+        set(
+            connection,
+            "journal_size_limit",
+            LOG_KEPT_BYTES,
+            LOG_KEPT_BYTES,
+        )?;
     }
     let mmap_size = crate::values::integer(mmap_bytes, "mmap_size")?;
     set(connection, "mmap_size", mmap_size, mmap_size)?;
@@ -138,8 +162,8 @@ mod tests {
 
     /// Every setting reads back as required, on the writer's connection and on a reader's.
     /// SQLite reports `synchronous` NORMAL as 1, `foreign_keys` ON as 1 and `temp_store` MEMORY
-    /// as 2. The writer's commits never checkpoint (0); a reader keeps SQLite's 1,000 pages, which
-    /// it never reaches, since it never commits.
+    /// as 2. The writer's commits checkpoint only past 16,384 pages; a reader keeps SQLite's 1,000
+    /// pages, which it never reaches, since it never commits.
     #[test]
     fn settings_read_back() -> Result<(), Box<dyn std::error::Error>> {
         let folder = tempfile::tempdir()?;
@@ -159,7 +183,8 @@ mod tests {
                 assert_eq!(pragma(connection, name)?, value, "{name}");
             }
         }
-        assert_eq!(pragma(&writer, "wal_autocheckpoint")?, "0");
+        assert_eq!(pragma(&writer, "wal_autocheckpoint")?, "16384");
+        assert_eq!(pragma(&writer, "journal_size_limit")?, "4194304");
         assert_eq!(pragma(&reader, "wal_autocheckpoint")?, "1000");
         Ok(())
     }

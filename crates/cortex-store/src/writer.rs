@@ -35,8 +35,8 @@ pub struct WriterOptions<'a> {
 }
 
 /// The one writer of a repository's database. While it exists, no other writer can open the
-/// same database, in this process or any other. Its commits never checkpoint the write-ahead log:
-/// a thread of its own does, every second.
+/// same database, in this process or any other. A thread of its own checkpoints the write-ahead
+/// log every second; its commits do only once the log passes 64 MiB.
 #[derive(Debug)]
 pub struct Writer {
     // Fields drop in order: the checkpointer stops and closes its connection, then the writer's
@@ -398,6 +398,7 @@ mod tests {
     use cortex_core::{FileFlags, RepoId};
 
     use super::*;
+    use crate::connection::LOG_RESTART_PAGES;
     use crate::records::FileRecord;
 
     /// A file with no symbols or references at `path`.
@@ -417,6 +418,45 @@ mod tests {
             refs: Vec::new(),
             passes_on: Vec::new(),
         })
+    }
+
+    /// Commits made back to back, which never leave the checkpointer the moment it needs to copy
+    /// the whole log, still let the log start afresh once it passes [`LOG_RESTART_PAGES`]: 160
+    /// commits of half a mebibyte each, 80 MiB in all, leave a log file no larger than the restart
+    /// size and a commit's frames. A frame is a 4,096-byte page and its 24-byte header, after the
+    /// file's 32-byte header. Once the log starts afresh its file is cut back, so the last 16 MiB
+    /// leave it smaller than its largest.
+    #[test]
+    fn the_log_starts_afresh_under_back_to_back_commits() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let folder = root.path().join(".cortex");
+        let mut writer = Writer::open(&WriterOptions {
+            folder: &folder,
+            repo_id: &RepoId::of(root.path()),
+            mmap_bytes: 0,
+            now_ms: 1,
+        })?;
+        // A table of this test's own: what it holds does not matter, only how many pages it takes.
+        writer
+            .connection
+            .execute_batch("CREATE TABLE filler (bytes BLOB NOT NULL)")?;
+        let log = folder.join("cortex.db-wal");
+        let mut largest = 0;
+        for _ in 0..160 {
+            let transaction = writer.transaction()?;
+            transaction
+                .transaction
+                .execute("INSERT INTO filler VALUES (zeroblob(524288))", [])?;
+            transaction.commit()?;
+            largest = largest.max(std::fs::metadata(&log)?.len());
+        }
+        let commit_pages = 512;
+        let bound = u64::try_from(32 + (LOG_RESTART_PAGES + commit_pages) * 4_120)?;
+        assert!(largest <= bound, "a log of {largest} bytes");
+        let last = std::fs::metadata(&log)?.len();
+        assert!(last < largest, "a log of {largest} bytes, then {last}");
+        Ok(())
     }
 
     /// Once SQLite has rolled a transaction back on its own, as it may after a full disk, later

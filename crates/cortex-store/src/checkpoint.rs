@@ -1,7 +1,9 @@
 //! Moving what the writer committed from the write-ahead log into the database file, on a thread
 //! of its own. SQLite would otherwise do it inside the commit that takes the log past 1,000 pages,
 //! copying the log and syncing the disk while the writer waits, and on a slow disk that wait passes
-//! the second a hook event may wait for the writer.
+//! the second a hook event may wait for the writer. The writer still checkpoints in a commit once
+//! the log passes 64 MiB, so that the log starts afresh however busy it is; the thread leaves that
+//! checkpoint little to copy.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -121,8 +123,9 @@ mod tests {
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     /// A connection that cannot write cannot copy the log into the database: each checkpoint it
-    /// tries fails and is counted, and the thread goes on trying. The schema written through a
-    /// connection that never checkpoints, and stays open, keeps pages in the log to copy.
+    /// tries fails and is counted, and the thread goes on trying. The schema, written through a
+    /// writer's connection that stays open and leaves a log that small alone, keeps pages in the
+    /// log to copy.
     #[test]
     fn a_checkpoint_that_fails_is_counted() -> TestResult {
         let folder = tempfile::tempdir()?;
