@@ -48,7 +48,9 @@ pub(crate) fn write(folder: &Path, now: SystemTime, line: &str) -> io::Result<bo
                 return Ok(false);
             }
             if metadata.len() >= ROTATE_AT_BYTES {
-                rotate_log(&path, KEPT_FILES)?;
+                // A log a reader holds open cannot move aside on Windows: the line then goes on
+                // its end, and the next line tries again.
+                drop(rotate_log(&path, KEPT_FILES));
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => create_private_folder(folder)?,
@@ -124,6 +126,22 @@ mod tests {
             );
         }
         assert!(!numbered(&log, KEPT_FILES).exists());
+        Ok(())
+    }
+
+    /// A full log that cannot move aside (a folder holds the name it moves to first) still takes
+    /// the line, on its end, and no older file appears.
+    #[test]
+    fn a_log_that_cannot_rotate_still_takes_the_line() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let folder = scratch.path();
+        let log = folder.join(FILE_NAME);
+        fs::File::create(&log)?.set_len(ROTATE_AT_BYTES)?;
+        fs::create_dir(numbered(&log, KEPT_FILES))?;
+        fs::write(numbered(&log, KEPT_FILES).join("inside"), "x")?;
+        assert!(write(folder, SystemTime::now() + MIN_GAP * 2, "new")?);
+        assert_eq!(fs::metadata(&log)?.len(), ROTATE_AT_BYTES + 4);
+        assert!(!numbered(&log, 1).exists());
         Ok(())
     }
 }

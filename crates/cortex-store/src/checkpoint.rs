@@ -95,12 +95,13 @@ impl Drop for Checkpointer {
     }
 }
 
-/// Checkpoints through `connection` every [`CHECKPOINT_EVERY`] until told to stop, counting each
-/// checkpoint that fails; the next one tries again.
+/// Checkpoints through `connection` every [`CHECKPOINT_EVERY`] until told to stop, counting and
+/// logging each checkpoint that fails; the next one tries again.
 fn run(connection: &Connection, stopped: &Receiver<()>, failures: &CheckpointFailures) {
     while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(CHECKPOINT_EVERY) {
-        if checkpoint(connection).is_err() {
+        if let Err(error) = checkpoint(connection) {
             failures.add();
+            tracing::warn!(error = %error, "a checkpoint of the write-ahead log failed");
         }
     }
 }

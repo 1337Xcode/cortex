@@ -46,6 +46,11 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 toml = "1.1.8"
 tokio = "1.54.1"
+# Default features off: `attributes` adds the `#[instrument]` macro, which Cortex does not use.
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+# Only the registry the daemon's own log layer sits on: no formatting, colours or filters by
+# environment.
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
 tree-sitter = "0.27.1"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.2"

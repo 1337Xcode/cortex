@@ -229,8 +229,9 @@ impl Server {
                 (ResponseBody::Ack, Some(hook))
             }
         };
+        let took = began.elapsed();
         if let Some(hook) = hook {
-            self.latencies().note(hook, began.elapsed());
+            self.latencies().note(hook, took);
         }
         let answered = write_response(writer, request.request_id, body).await;
         if is_shutdown {
@@ -238,12 +239,24 @@ impl Server {
             self.inbox.stop();
         }
         answered.map_err(Broken::Unwritable)?;
+        // Logged once the hook has its answer: the line costs it nothing.
+        if let Some(hook) = hook {
+            let latency_us = u64::try_from(took.as_micros()).unwrap_or(u64::MAX);
+            tracing::info!(
+                request_id = request.request_id,
+                hook = hook.name(),
+                latency_us,
+                "hook handled"
+            );
+        }
         Ok(!is_shutdown)
     }
 
-    /// Keeps what broke a connection among the recent errors.
+    /// Keeps what broke a connection among the recent errors, and logs it.
     fn note(&self, broken: &Broken) {
-        self.inbox.note_error(&broken.message(), now_ms());
+        let message = broken.message();
+        tracing::warn!(error = %message, "a connection broke");
+        self.inbox.note_error(&message, now_ms());
     }
 
     /// The daemon's state.

@@ -9,6 +9,10 @@
 //! after `daemon.idle_shutdown_minutes` without a request or a file change, once nothing waits to
 //! be parsed. It says when the first index is done and the watcher runs.
 //!
+//! Once it holds the repository it keeps a log, `~/.cortex/logs/daemon-<id>.log`: when it started
+//! and stopped and why, the first index, each hook request it handled, and every error it met from
+//! then on, the one it stops on included, so that a daemon running detached leaves a record.
+//!
 //! Errors are `anyhow` errors with context, as a binary's are: this crate is the daemon process's
 //! top level, and its errors are reported, never matched.
 
@@ -19,6 +23,7 @@ mod inbox;
 mod instance;
 mod latency;
 mod listener;
+mod log;
 mod recent_errors;
 mod server;
 pub mod settings;
@@ -30,6 +35,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use cortex_core::ipc::CORTEX_VERSION;
 use cortex_core::{RepoId, UserFolder, canonical_root};
 use cortex_index::{Change, DiscoverOptions, IndexReport, watch};
 use cortex_learn::Recorder;
@@ -65,6 +71,33 @@ pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> any
     let user = UserFolder::of_current_user().context("finding the user's home folder")?;
     let repo_id = RepoId::of(root);
     let _instance = Instance::acquire(&user, &repo_id)?;
+    // Started once the repository is held, so that only the daemon serving it writes its log, and
+    // dropped before the hold is let go, so that every line is written before another daemon may
+    // start.
+    let _log = log::start(&user, &repo_id).context("starting the daemon's log")?;
+    tracing::info!(
+        version = CORTEX_VERSION,
+        pid = std::process::id(),
+        root = %root.display(),
+        "daemon started"
+    );
+    let served = listen_and_serve(root, (&user, &repo_id), note);
+    match &served {
+        Ok(()) => tracing::info!("daemon stopped"),
+        Err(error) => {
+            tracing::error!(error = %format!("{error:#}"), "daemon stopped on an error");
+        }
+    }
+    served
+}
+
+/// Starts the server's runtime and listens for hooks and commands, then indexes, watches and serves
+/// until asked to stop or idle, and gives the connections still open a moment to finish.
+fn listen_and_serve(
+    root: &Path,
+    (user, repo_id): (&UserFolder, &RepoId),
+    note: &mut dyn FnMut(&str) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(SERVER_THREADS)
         .thread_name("cortex-server")
@@ -74,10 +107,10 @@ pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> any
     let inbox = Arc::new(Inbox::default());
     let listener = {
         let _inside = runtime.enter();
-        listener::bind(&user.run_files(&repo_id)).context("listening for hooks")?
+        listener::bind(&user.run_files(repo_id)).context("listening for hooks")?
     };
     runtime.spawn(Arc::new(Server::new(Arc::clone(&inbox))).serve(listener));
-    let served = index_and_serve(root, (&repo_id, &inbox), note);
+    let served = index_and_serve(root, (repo_id, &inbox), note);
     runtime.shutdown_timeout(STOP_GRACE);
     served
 }
@@ -90,6 +123,7 @@ fn index_and_serve(
 ) -> anyhow::Result<()> {
     let loaded = settings::load(root)?;
     for warning in &loaded.warnings {
+        tracing::warn!(warning = %warning, "the configuration");
         note(&format!("warning: {warning}"))?;
     }
     let config = loaded.config;
@@ -113,6 +147,7 @@ fn index_and_serve(
     let global_gitignore = match global_ignore::find(root) {
         Ok(found) => found,
         Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "the global gitignore is not read");
             note(&format!(
                 "warning: the global gitignore is not read: {error:#}"
             ))?;
@@ -135,6 +170,13 @@ fn index_and_serve(
         (writer, recorder, inbox),
     );
     let report = host.index(&[])?;
+    tracing::info!(
+        files_written = report.files,
+        files_unchanged = report.unchanged,
+        mode = report.mode.name(),
+        files_waiting = host.waiting(),
+        "first index done"
+    );
     note(&ready_line(&report, host.waiting()))?;
     host.serve()?;
     drop(watcher);

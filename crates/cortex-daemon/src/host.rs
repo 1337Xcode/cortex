@@ -117,6 +117,7 @@ impl<'a> Host<'a> {
             let idle_at = last_activity.checked_add(idle);
             match inbox.wait(self.deadline(next_crawl, idle_at)) {
                 Work::Stop => {
+                    tracing::info!("stopping: asked to");
                     // Every edit still held is recorded now: a hook has had its chance to claim
                     // most of the hold, and a stop must not lose them.
                     let parts = (&mut self.recorder, &mut self.edits);
@@ -147,6 +148,8 @@ impl<'a> Host<'a> {
                     let idle_at = last_activity.max(requested).checked_add(idle);
                     let is_idle = self.waiting() == 0 && self.edits.next_due_ms().is_none();
                     if is_idle && idle_at.is_some_and(|at| Instant::now() >= at) {
+                        let idle_minutes = self.config.idle_shutdown_minutes;
+                        tracing::info!(idle_minutes, "stopping: idle");
                         return Ok(());
                     }
                 }
@@ -321,9 +324,10 @@ fn record_due_edits(
 }
 
 /// Counts in `inbox` a batch of `what` the writer could not record, the store's `error` kept as
-/// the reason. The store's errors name what it was doing and the file, row or setting involved,
-/// and carry no stored text but paths.
+/// the reason and logged. The store's errors name what it was doing and the file, row or setting
+/// involved, and carry no stored text but paths.
 fn count_failed(inbox: &Inbox, what: &str, error: &StoreError) {
+    tracing::warn!(what, error = %error, "a batch could not be recorded");
     inbox.count_failed_batch(&format!("recording {what} failed: {error}"), now_ms());
 }
 
