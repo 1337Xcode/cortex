@@ -18,10 +18,10 @@ const TOOL_RESULTS: &str = "Read|Grep|Glob|Edit|Write|MultiEdit|Bash|PowerShell"
 
 /// The versions of Claude Code Cortex knows: the oldest is 2.1.295, the first to read `onFailure`,
 /// which Cortex's hooks set so that a hook that fails never holds up the agent; the newest tested
-/// is 2.1.312, whose payloads the fixtures hold.
+/// is 2.1.316, whose payloads the fixtures hold beside those of 2.1.312.
 const VERSIONS: Versions = Versions {
     oldest: "2.1.295",
-    newest_tested: "2.1.312",
+    newest_tested: "2.1.316",
 };
 
 /// The hard timeout of the events whose budget names none: a margin over their 60 ms budget, and

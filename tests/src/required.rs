@@ -24,202 +24,203 @@ pub enum Expect {
 /// One fixture an agent version must have: its file name without `.json`, and what it must hold.
 pub type Required = (&'static str, &'static [Expect]);
 
+/// The fixtures every captured Claude Code version must have: every event and tool the adapter
+/// handles, each as the variant its name promises.
+const CLAUDE_CODE: &[Required] = &[
+    ("session-start-startup", &[Is("/source", "startup")]),
+    ("session-start-resume", &[Is("/source", "resume")]),
+    ("session-start-compact", &[Is("/source", "compact")]),
+    ("session-start-clear", &[Is("/source", "clear")]),
+    ("user-prompt-submit", &[Present("/prompt")]),
+    (
+        "pre-tool-use-read",
+        &[Is("/tool_name", "Read"), Present("/tool_input/file_path")],
+    ),
+    (
+        "pre-tool-use-grep",
+        &[Is("/tool_name", "Grep"), Present("/tool_input/pattern")],
+    ),
+    (
+        "pre-tool-use-glob",
+        &[Is("/tool_name", "Glob"), Present("/tool_input/pattern")],
+    ),
+    (
+        "pre-tool-use-edit",
+        &[
+            Is("/tool_name", "Edit"),
+            Present("/tool_input/old_string"),
+            Present("/tool_input/new_string"),
+        ],
+    ),
+    (
+        "pre-tool-use-write",
+        &[Is("/tool_name", "Write"), Present("/tool_input/content")],
+    ),
+    (
+        "pre-tool-use-bash",
+        &[Is("/tool_name", "Bash"), Present("/tool_input/command")],
+    ),
+    (
+        "pre-tool-use-agent",
+        &[
+            Is("/tool_name", "Agent"),
+            Present("/tool_input/subagent_type"),
+        ],
+    ),
+    (
+        "pre-tool-use-grep-subagent",
+        &[
+            Is("/tool_name", "Grep"),
+            Is("/agent_type", "Explore"),
+            Present("/agent_id"),
+        ],
+    ),
+    (
+        "post-tool-use-read",
+        &[
+            Is("/tool_name", "Read"),
+            Present("/tool_response/file/content"),
+        ],
+    ),
+    (
+        "post-tool-use-grep",
+        &[
+            Is("/tool_name", "Grep"),
+            Present("/tool_response/filenames"),
+        ],
+    ),
+    (
+        "post-tool-use-glob",
+        &[
+            Is("/tool_name", "Glob"),
+            Present("/tool_response/filenames"),
+        ],
+    ),
+    (
+        "post-tool-use-edit",
+        &[
+            Is("/tool_name", "Edit"),
+            Present("/tool_response/structuredPatch"),
+        ],
+    ),
+    (
+        "post-tool-use-write",
+        &[
+            Is("/tool_name", "Write"),
+            Present("/tool_response/filePath"),
+        ],
+    ),
+    (
+        "post-tool-use-bash",
+        &[Is("/tool_name", "Bash"), Present("/tool_response/stdout")],
+    ),
+    (
+        "post-tool-use-agent",
+        &[
+            Is("/tool_name", "Agent"),
+            Is("/tool_response/status", "completed"),
+        ],
+    ),
+    (
+        "post-tool-use-grep-subagent",
+        &[
+            Is("/tool_name", "Grep"),
+            Is("/agent_type", "Explore"),
+            Present("/agent_id"),
+        ],
+    ),
+    (
+        "post-tool-use-failure-bash",
+        &[
+            Is("/tool_name", "Bash"),
+            StartsWith("/error", "Exit code 3"),
+        ],
+    ),
+    (
+        "post-tool-use-bash-test-passing",
+        &[
+            Is("/tool_name", "Bash"),
+            Contains("/tool_input/command", "unittest"),
+            Contains("/tool_response/stdout", "\nOK"),
+        ],
+    ),
+    (
+        "post-tool-use-failure-bash-test",
+        &[
+            Is("/tool_name", "Bash"),
+            Contains("/tool_input/command", "unittest"),
+            StartsWith("/error", "Exit code 1"),
+            Contains("/error", "FAILED (failures=1)"),
+        ],
+    ),
+    (
+        "pre-tool-use-read-range",
+        &[
+            Is("/tool_name", "Read"),
+            Present("/tool_input/offset"),
+            Present("/tool_input/limit"),
+        ],
+    ),
+    (
+        "post-tool-use-read-range",
+        &[
+            Is("/tool_name", "Read"),
+            Present("/tool_input/offset"),
+            Present("/tool_input/limit"),
+            Present("/tool_response/file/startLine"),
+        ],
+    ),
+    (
+        "pre-tool-use-powershell",
+        &[
+            Is("/tool_name", "PowerShell"),
+            Present("/tool_input/command"),
+        ],
+    ),
+    (
+        "post-tool-use-powershell",
+        &[
+            Is("/tool_name", "PowerShell"),
+            Present("/tool_response/stdout"),
+        ],
+    ),
+    (
+        "post-tool-use-failure-powershell",
+        &[
+            Is("/tool_name", "PowerShell"),
+            StartsWith("/error", "Exit code 1"),
+        ],
+    ),
+    ("pre-compact-manual", &[Is("/trigger", "manual")]),
+    (
+        "post-compact-manual",
+        &[Is("/trigger", "manual"), Present("/compact_summary")],
+    ),
+    (
+        "subagent-start",
+        &[Is("/agent_type", "Explore"), Present("/agent_id")],
+    ),
+    (
+        "subagent-stop",
+        &[
+            Is("/agent_type", "Explore"),
+            Present("/agent_transcript_path"),
+        ],
+    ),
+    (
+        "subagent-stop-internal",
+        &[Is("/agent_type", ""), Present("/agent_transcript_path")],
+    ),
+    ("stop", &[Present("/stop_hook_active")]),
+    ("session-end", &[Is("/reason", "other")]),
+    ("session-end-clear", &[Is("/reason", "clear")]),
+];
+
 /// The fixtures each captured agent version must have: every event and tool the adapters handle,
 /// as `(agent, version, fixtures)`.
 pub const REQUIRED: &[(&str, &str, &[Required])] = &[
-    (
-        "claude",
-        "2.1.312",
-        &[
-            ("session-start-startup", &[Is("/source", "startup")]),
-            ("session-start-resume", &[Is("/source", "resume")]),
-            ("session-start-compact", &[Is("/source", "compact")]),
-            ("session-start-clear", &[Is("/source", "clear")]),
-            ("user-prompt-submit", &[Present("/prompt")]),
-            (
-                "pre-tool-use-read",
-                &[Is("/tool_name", "Read"), Present("/tool_input/file_path")],
-            ),
-            (
-                "pre-tool-use-grep",
-                &[Is("/tool_name", "Grep"), Present("/tool_input/pattern")],
-            ),
-            (
-                "pre-tool-use-glob",
-                &[Is("/tool_name", "Glob"), Present("/tool_input/pattern")],
-            ),
-            (
-                "pre-tool-use-edit",
-                &[
-                    Is("/tool_name", "Edit"),
-                    Present("/tool_input/old_string"),
-                    Present("/tool_input/new_string"),
-                ],
-            ),
-            (
-                "pre-tool-use-write",
-                &[Is("/tool_name", "Write"), Present("/tool_input/content")],
-            ),
-            (
-                "pre-tool-use-bash",
-                &[Is("/tool_name", "Bash"), Present("/tool_input/command")],
-            ),
-            (
-                "pre-tool-use-agent",
-                &[
-                    Is("/tool_name", "Agent"),
-                    Present("/tool_input/subagent_type"),
-                ],
-            ),
-            (
-                "pre-tool-use-grep-subagent",
-                &[
-                    Is("/tool_name", "Grep"),
-                    Is("/agent_type", "Explore"),
-                    Present("/agent_id"),
-                ],
-            ),
-            (
-                "post-tool-use-read",
-                &[
-                    Is("/tool_name", "Read"),
-                    Present("/tool_response/file/content"),
-                ],
-            ),
-            (
-                "post-tool-use-grep",
-                &[
-                    Is("/tool_name", "Grep"),
-                    Present("/tool_response/filenames"),
-                ],
-            ),
-            (
-                "post-tool-use-glob",
-                &[
-                    Is("/tool_name", "Glob"),
-                    Present("/tool_response/filenames"),
-                ],
-            ),
-            (
-                "post-tool-use-edit",
-                &[
-                    Is("/tool_name", "Edit"),
-                    Present("/tool_response/structuredPatch"),
-                ],
-            ),
-            (
-                "post-tool-use-write",
-                &[
-                    Is("/tool_name", "Write"),
-                    Present("/tool_response/filePath"),
-                ],
-            ),
-            (
-                "post-tool-use-bash",
-                &[Is("/tool_name", "Bash"), Present("/tool_response/stdout")],
-            ),
-            (
-                "post-tool-use-agent",
-                &[
-                    Is("/tool_name", "Agent"),
-                    Is("/tool_response/status", "completed"),
-                ],
-            ),
-            (
-                "post-tool-use-grep-subagent",
-                &[
-                    Is("/tool_name", "Grep"),
-                    Is("/agent_type", "Explore"),
-                    Present("/agent_id"),
-                ],
-            ),
-            (
-                "post-tool-use-failure-bash",
-                &[
-                    Is("/tool_name", "Bash"),
-                    StartsWith("/error", "Exit code 3"),
-                ],
-            ),
-            (
-                "post-tool-use-bash-test-passing",
-                &[
-                    Is("/tool_name", "Bash"),
-                    Contains("/tool_input/command", "unittest"),
-                    Contains("/tool_response/stdout", "\nOK"),
-                ],
-            ),
-            (
-                "post-tool-use-failure-bash-test",
-                &[
-                    Is("/tool_name", "Bash"),
-                    Contains("/tool_input/command", "unittest"),
-                    StartsWith("/error", "Exit code 1"),
-                    Contains("/error", "FAILED (failures=1)"),
-                ],
-            ),
-            (
-                "pre-tool-use-read-range",
-                &[
-                    Is("/tool_name", "Read"),
-                    Present("/tool_input/offset"),
-                    Present("/tool_input/limit"),
-                ],
-            ),
-            (
-                "post-tool-use-read-range",
-                &[
-                    Is("/tool_name", "Read"),
-                    Present("/tool_input/offset"),
-                    Present("/tool_input/limit"),
-                    Present("/tool_response/file/startLine"),
-                ],
-            ),
-            (
-                "pre-tool-use-powershell",
-                &[
-                    Is("/tool_name", "PowerShell"),
-                    Present("/tool_input/command"),
-                ],
-            ),
-            (
-                "post-tool-use-powershell",
-                &[
-                    Is("/tool_name", "PowerShell"),
-                    Present("/tool_response/stdout"),
-                ],
-            ),
-            (
-                "post-tool-use-failure-powershell",
-                &[
-                    Is("/tool_name", "PowerShell"),
-                    StartsWith("/error", "Exit code 1"),
-                ],
-            ),
-            ("pre-compact-manual", &[Is("/trigger", "manual")]),
-            (
-                "post-compact-manual",
-                &[Is("/trigger", "manual"), Present("/compact_summary")],
-            ),
-            (
-                "subagent-start",
-                &[Is("/agent_type", "Explore"), Present("/agent_id")],
-            ),
-            (
-                "subagent-stop",
-                &[
-                    Is("/agent_type", "Explore"),
-                    Present("/agent_transcript_path"),
-                ],
-            ),
-            (
-                "subagent-stop-internal",
-                &[Is("/agent_type", ""), Present("/agent_transcript_path")],
-            ),
-            ("stop", &[Present("/stop_hook_active")]),
-            ("session-end", &[Is("/reason", "other")]),
-            ("session-end-clear", &[Is("/reason", "clear")]),
-        ],
-    ),
+    ("claude", "2.1.312", CLAUDE_CODE),
+    ("claude", "2.1.316", CLAUDE_CODE),
     (
         "codex",
         "0.165.0",

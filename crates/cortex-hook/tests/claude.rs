@@ -1,5 +1,6 @@
 //! Every captured Claude Code payload normalized, against events written out by hand from the
-//! fixtures; the payloads that make no event or no usable one; and inputs that must never panic.
+//! fixtures; the newest version's payloads against the same events' shapes; the payloads that make
+//! no event or no usable one; and inputs that must never panic.
 
 #![allow(
     clippy::indexing_slicing,
@@ -29,9 +30,19 @@ const S6: &str = "00000000-0000-4000-8000-000000000006";
 /// The session of the range read, the passing test and the PowerShell fixtures.
 const S7: &str = "00000000-0000-4000-8000-000000000007";
 
-/// The folder of the fixtures.
+/// The Claude Code version whose payloads the table of events written by hand covers.
+const TABLED: &str = "2.1.312";
+
+/// The folder of the fixtures of Claude Code `version`.
+fn fixtures_of(version: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/claude")
+        .join(version)
+}
+
+/// The folder of the fixtures the table covers.
 fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/claude/2.1.312")
+    fixtures_of(TABLED)
 }
 
 /// A path the fixtures write in Windows form, in this platform's form: as captured on Windows;
@@ -47,9 +58,14 @@ fn native(windows: &str) -> String {
         .map_or_else(|| unix.clone(), str::to_owned)
 }
 
-/// The fixture `name`, its paths in this platform's form.
+/// The fixture `name` the table covers, its paths in this platform's form.
 fn payload(name: &str) -> TestResult<Vec<u8>> {
-    let text = std::fs::read(fixtures().join(name))?;
+    payload_of(TABLED, name)
+}
+
+/// The fixture `name` of Claude Code `version`, its paths in this platform's form.
+fn payload_of(version: &str, name: &str) -> TestResult<Vec<u8>> {
+    let text = std::fs::read(fixtures_of(version).join(name))?;
     if cfg!(windows) {
         return Ok(text);
     }
@@ -539,13 +555,59 @@ fn every_fixture_normalizes_as_written() -> TestResult {
     }
     let mut named: Vec<&str> = table.iter().map(|(name, _)| *name).collect();
     named.sort_unstable();
-    assert_eq!(named, fixture_names()?);
+    assert_eq!(named, fixture_names(&fixtures())?);
     Ok(())
 }
 
-/// The names of the captured payloads, sorted.
-fn fixture_names() -> TestResult<Vec<String>> {
-    let mut names: Vec<String> = std::fs::read_dir(fixtures())?
+/// The newest version's payloads, captured from the same steps as the table's, make the same
+/// events as the table's in all but their values: the same fields filled, the hook among them, and
+/// no event where the table's make none.
+#[test]
+fn the_newest_payloads_normalize_like_the_tabled_ones() -> TestResult {
+    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
+    let newest = claude.versions().newest_tested;
+    assert_ne!(newest, TABLED);
+    for name in fixture_names(&fixtures())? {
+        let tabled = payload(&name)?;
+        let current = payload_of(newest, &name)?;
+        let older = claude.normalize(&event_name(&tabled)?, &tabled, &locate, stamp())?;
+        let newer = claude.normalize(&event_name(&current)?, &current, &locate, stamp())?;
+        assert_eq!(shape(newer.as_ref())?, shape(older.as_ref())?, "{name}");
+    }
+    Ok(())
+}
+
+/// What `event` is made of, without its values: the path of each field it fills, sorted, a list
+/// named with `[]` after it when it holds anything.
+fn shape(event: Option<&Event>) -> TestResult<Vec<String>> {
+    let mut filled = Vec::new();
+    if let Some(event) = event {
+        fill(&serde_json::to_value(event)?, "", &mut filled);
+    }
+    filled.sort();
+    Ok(filled)
+}
+
+/// Adds to `filled` the path of each field `value`, at `prefix`, fills, and those inside them.
+fn fill(value: &serde_json::Value, prefix: &str, filled: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, inner) in fields.iter().filter(|(_, inner)| !inner.is_null()) {
+                let path = format!("{prefix}/{key}");
+                fill(inner, &path, filled);
+                filled.push(path);
+            }
+        }
+        serde_json::Value::Array(items) if !items.is_empty() => {
+            filled.push(format!("{prefix}[]"));
+        }
+        _ => {}
+    }
+}
+
+/// The names of the captured payloads in `folder`, sorted.
+fn fixture_names(folder: &Path) -> TestResult<Vec<String>> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)?
         .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
         .collect::<std::io::Result<_>>()?;
     names.retain(|name| name.ends_with(".json"));
@@ -660,12 +722,16 @@ fn long_prompts_are_cut_and_bad_names_left_out() -> TestResult {
     Ok(())
 }
 
-/// The newest version Cortex knows has its fixtures, and the oldest it works with is no newer.
+/// The newest version Cortex knows has its fixtures, one for each the table covers, and the
+/// oldest it works with is no newer.
 #[test]
 fn the_known_versions_hold() -> TestResult {
     let claude = adapter("claude").ok_or("no Claude Code adapter")?;
     let versions = claude.versions();
-    assert!(fixtures().ends_with(versions.newest_tested));
+    assert_eq!(
+        fixture_names(&fixtures_of(versions.newest_tested))?,
+        fixture_names(&fixtures())?
+    );
     let oldest = cortex_core::ipc::CortexVersion::parse(versions.oldest)?;
     let newest = cortex_core::ipc::CortexVersion::parse(versions.newest_tested)?;
     assert!(oldest <= newest);
@@ -1242,7 +1308,7 @@ proptest! {
         byte in any::<u8>(),
     ) {
         let fail = |error: Box<dyn Error>| TestCaseError::fail(error.to_string());
-        let names = fixture_names().map_err(fail)?;
+        let names = fixture_names(&fixtures()).map_err(fail)?;
         let original = payload(which.get(&names)).map_err(fail)?;
         let name = event_name(&original).map_err(fail)?;
         let mut bytes = original;
