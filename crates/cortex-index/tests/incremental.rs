@@ -324,7 +324,8 @@ fn changed_definitions_are_reported() -> TestResult {
 /// has a new time, so its contents may have changed too. `a.py` has a new time and the same
 /// contents: it is written again, its time now later than the SCIP index's (bytes that are no
 /// index, which only their time matters for here), but it is no edit. `notes.txt` was not among
-/// the paths. The first index, of the whole repository, reports none.
+/// the paths. The first index, which finds every file new, reports none; a later index of the
+/// whole repository reports what changed.
 #[test]
 fn edited_files_are_reported() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -355,5 +356,11 @@ fn edited_files_are_reported() -> TestResult {
     let report = index_changed(root, &[".env", "a.py", "b.py", "c.py", "d.py"])?;
     let edited: Vec<&str> = report.edited.iter().map(RepoPath::as_str).collect();
     assert_eq!(edited, [".env", "b.py", "c.py", "d.py"]);
+    // An index of the whole repository after the first reports its edits the same way: `c.py`
+    // changed again, nothing else did.
+    write_all(root, &[("c.py", "def c():\n    return 2\n")])?;
+    let whole = index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
+    let edited: Vec<&str> = whole.edited.iter().map(RepoPath::as_str).collect();
+    assert_eq!(edited, ["c.py"]);
     Ok(())
 }

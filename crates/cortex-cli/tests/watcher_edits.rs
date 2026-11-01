@@ -10,8 +10,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use common::{Daemon, TestResult, wait_for};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
 use cortex_core::{
-    Agent, Event, EventKind, EventSource, HookKind, Identifier, RepoId, RepoPath, RunFiles,
-    ToolKind, ToolTarget, Ulid, UserFolder, canonical_root,
+    Agent, ContentHash, Event, EventKind, EventSource, HookKind, Identifier, RepoId, RepoPath,
+    RunFiles, ToolKind, ToolTarget, Ulid, UserFolder, canonical_root,
 };
 use cortex_hook::ask;
 use cortex_store::Reader;
@@ -105,6 +105,16 @@ impl Repo {
         Ok(std::fs::write(self.dir.path().join(path), text)?)
     }
 
+    /// Whether the store holds the file at `path` with the contents `text`: the daemon has seen
+    /// and indexed that change.
+    fn holds(&self, path: &str, text: &str) -> TestResult<bool> {
+        let Ok(reader) = Reader::open(&self.dir.path().join(".cortex"), 0) else {
+            return Ok(false);
+        };
+        let row = reader.queries().file(&RepoPath::new(path)?)?;
+        Ok(row.is_some_and(|row| row.file.content_hash == Some(ContentHash::of(text.as_bytes()))))
+    }
+
     /// The edit rows stored, in order.
     fn edits(&self) -> TestResult<Vec<Edit>> {
         let Ok(reader) = Reader::open(&self.dir.path().join(".cortex"), 0) else {
@@ -196,6 +206,44 @@ fn an_edit_a_hook_reported_is_recorded_once() -> TestResult {
     repo.send(edited)?;
     repo.write("app.py", "def app():\n    return 3\n")?;
     repo.write("lib.py", "def lib():\n    return 3\n")?;
+    wait_for(|| {
+        Ok(repo
+            .edits()?
+            .iter()
+            .any(|(path, ..)| path.as_str() == "lib.py"))
+    })?;
+    let s1 = Some("s1".to_owned());
+    assert_eq!(
+        repo.edits()?,
+        [
+            ("app.py".to_owned(), s1.clone(), None, None),
+            ("lib.py".to_owned(), s1, None, Some(EventSource::Watcher)),
+        ]
+    );
+    Ok(())
+}
+
+/// A hook's report that comes after the watcher saw the edit still claims it, within the 2 s the
+/// edit is held: `app.py` is written, the daemon indexes the change, and only then does `s1`'s
+/// hook report its edit. One row is recorded, the hook's. `lib.py`, written next with no hook's
+/// word, falls due after `app.py`, so once its row is stored `app.py`'s edit has been decided.
+#[test]
+fn a_hook_s_late_report_claims_the_edit() -> TestResult {
+    let repo = Repo::start()?;
+    repo.send(repo.event(HookKind::SessionStart, "s1", now_ms()?)?)?;
+    let text = "def app():\n    return 4\n";
+    repo.write("app.py", text)?;
+    wait_for(|| repo.holds("app.py", text))?;
+    let edited = Event {
+        tool: Some(ToolKind::Edit),
+        tool_target: Some(ToolTarget {
+            path: Some(RepoPath::new("app.py")?),
+            ..ToolTarget::default()
+        }),
+        ..repo.event(HookKind::PostTool, "s1", now_ms()?)?
+    };
+    repo.send(edited)?;
+    repo.write("lib.py", "def lib():\n    return 4\n")?;
     wait_for(|| {
         Ok(repo
             .edits()?

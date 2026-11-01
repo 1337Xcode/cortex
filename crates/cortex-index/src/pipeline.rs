@@ -113,9 +113,10 @@ pub struct IndexReport {
     pub left_out: Vec<(RepoPath, LeftOut)>,
     /// The definitions of written files whose signature or body changed, in the order written.
     pub changed_symbols: Vec<SymbolChange>,
-    /// The files an index of chosen paths found new, gone, or with other contents than stored (a
-    /// file whose contents are not read counts whenever it is written), in path order: the edits
-    /// the watcher saw. An index of the whole repository lists none.
+    /// The files the index found new, gone, or with other contents than stored (a file whose
+    /// contents are not read counts whenever it is written), in path order: for an index of the
+    /// watcher's changes, the edits the watcher saw. A first index, which finds every file new,
+    /// lists none.
     pub edited: Vec<RepoPath>,
     /// What became of the repository's SCIP index.
     pub scip: ScipOutcome,
@@ -326,6 +327,9 @@ pub fn index_repository(
     );
     let written = write_files(writer, &candidates, &context, (&mut report, &mut pacer))?;
     pacer.let_in(writer);
+    if !is_whole {
+        report.edited = edited(&written, &missing);
+    }
     let (scip, scip_ties) = scip::read_index(root, writer.queries())?;
     report.scip = scip;
     let (around, is_cut) = if is_whole {
@@ -388,6 +392,20 @@ impl IndexReport {
             mode: ScaleMode::Tiny,
         }
     }
+}
+
+/// The files an index found edited: those `written` with new contents and those `gone`, in path
+/// order.
+pub(crate) fn edited<'a>(
+    written: &[Written],
+    gone: impl IntoIterator<Item = &'a RepoPath>,
+) -> Vec<RepoPath> {
+    let changed = written
+        .iter()
+        .filter(|file| file.has_new_contents)
+        .map(|file| file.path.clone());
+    let edited: BTreeSet<RepoPath> = changed.chain(gone.into_iter().cloned()).collect();
+    edited.into_iter().collect()
 }
 
 /// `items` as a count.

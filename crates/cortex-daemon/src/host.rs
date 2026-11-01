@@ -4,6 +4,7 @@
 //! transactions, and the events waiting and the edits due are recorded there.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
@@ -105,18 +106,23 @@ impl<'a> Host<'a> {
     /// A failed index or parse, or a watcher that stopped.
     pub(crate) fn serve(mut self) -> anyhow::Result<()> {
         let inbox = self.inbox;
-        let excerpt = self.config.store_prompt_excerpt;
         let idle = Duration::from_secs(self.config.idle_shutdown_minutes.saturating_mul(60));
         let mut last_activity = Instant::now();
         let mut next_crawl = Instant::now();
         loop {
             let parts = (&mut self.recorder, &mut self.edits);
-            record_due_edits(&mut self.writer, parts, inbox, excerpt);
+            record_due_edits(&mut self.writer, parts, inbox, now_ms());
             last_activity = last_activity.max(inbox.last_request().unwrap_or(last_activity));
             // An idle time too long to reach is never reached: the inbox is waited on for ever.
             let idle_at = last_activity.checked_add(idle);
             match inbox.wait(self.deadline(next_crawl, idle_at)) {
-                Work::Stop => return Ok(()),
+                Work::Stop => {
+                    // Every edit still held is recorded now: a hook has had its chance to claim
+                    // most of the hold, and a stop must not lose them.
+                    let parts = (&mut self.recorder, &mut self.edits);
+                    record_due_edits(&mut self.writer, parts, inbox, i64::MAX);
+                    return Ok(());
+                }
                 Work::WatcherStopped => bail!("the watcher stopped"),
                 Work::Events(events) => {
                     if self.record(&events).is_err() {
@@ -127,7 +133,7 @@ impl<'a> Host<'a> {
                 Work::Changed(changed) => {
                     match changed {
                         Changed::Everything(touched) => drop(self.index(&touched)?),
-                        Changed::Paths(paths, seen_ms) => self.update(&paths, seen_ms)?,
+                        Changed::Paths(changes) => self.update(&changes)?,
                     }
                     last_activity = Instant::now();
                 }
@@ -164,27 +170,35 @@ impl<'a> Host<'a> {
     }
 
     /// Records `events` in one transaction. When any of them cannot be recorded, none is: the
-    /// transaction is rolled back and the recorder, which may remember what was rolled back,
-    /// starts afresh.
+    /// transaction is rolled back and the recorder forgets what it took as stored.
     ///
     /// # Errors
     ///
     /// The store's error.
     pub(crate) fn record(&mut self, events: &[Event]) -> Result<(), StoreError> {
-        let excerpt = self.config.store_prompt_excerpt;
-        record_batch(&mut self.writer, &mut self.recorder, excerpt, events)
+        record_batch(&mut self.writer, &mut self.recorder, events)
     }
 
-    /// Indexes the files at `paths`, which the watcher saw change at `seen_ms`, on every core, and
-    /// holds the edits it found until a hook can no longer claim them.
-    fn update(&mut self, paths: &[RepoPath], seen_ms: i64) -> anyhow::Result<()> {
+    /// Indexes the files the watcher saw change, each with when a change first named it, on every
+    /// core, and holds the edits found until a hook can no longer claim them. An edit keeps the
+    /// time its file, or the nearest folder above it, was named; one the changes do not name,
+    /// found by an index of the whole repository the update fell back to, is taken as seen now.
+    fn update(&mut self, changes: &[(RepoPath, i64)]) -> anyhow::Result<()> {
         let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+        let paths: Vec<RepoPath> = changes.iter().map(|(path, _)| path.clone()).collect();
         let report = self
             .indexing(threads, |root, grammars, writer, options| {
-                index_paths(root, grammars, writer, options, paths)
+                index_paths(root, grammars, writer, options, &paths)
             })
             .context("indexing changed files")?;
-        self.edits.hold(report.edited, seen_ms);
+        let named: BTreeMap<RepoPath, i64> = changes.iter().cloned().collect();
+        let now = now_ms();
+        for path in report.edited {
+            let seen_ms = std::iter::successors(Some(path.clone()), RepoPath::parent)
+                .find_map(|place| named.get(&place).copied())
+                .unwrap_or(now);
+            self.edits.hold([path], seen_ms);
+        }
         Ok(())
     }
 
@@ -208,7 +222,7 @@ impl<'a> Host<'a> {
         index: impl FnOnce(&Path, &Arc<Grammars>, &mut Writer, &IndexOptions<'_>) -> T,
     ) -> T {
         let options = self.options(threads);
-        let (inbox, excerpt) = (self.inbox, self.config.store_prompt_excerpt);
+        let inbox = self.inbox;
         let parts = RefCell::new((&mut self.recorder, &mut self.edits));
         let pause = |writer: &mut Writer| {
             // INVARIANT: single-writer. Events are recorded through the writer the index lends,
@@ -216,8 +230,8 @@ impl<'a> Host<'a> {
             // pause from within it, so the recorder is always free here.
             if let Ok(mut parts) = parts.try_borrow_mut() {
                 let (recorder, edits) = &mut *parts;
-                record_waiting(writer, recorder, inbox, excerpt);
-                record_due_edits(writer, (recorder, edits), inbox, excerpt);
+                record_waiting(writer, recorder, inbox);
+                record_due_edits(writer, (recorder, edits), inbox, now_ms());
             }
         };
         let options = IndexOptions {
@@ -251,7 +265,6 @@ pub(crate) fn load_grammars(
     writer: &mut Writer,
     recorder: &mut Recorder,
     inbox: &Inbox,
-    excerpt: bool,
 ) -> anyhow::Result<Arc<Grammars>> {
     let (sender, receiver) = mpsc::sync_channel(1);
     std::thread::spawn(move || drop(sender.send(Grammars::load())));
@@ -259,44 +272,40 @@ pub(crate) fn load_grammars(
         match receiver.recv_timeout(PAUSE_EVERY) {
             Ok(Ok(grammars)) => return Ok(Arc::new(grammars)),
             Ok(Err(error)) => break Err(error).context("loading the language grammars"),
-            Err(RecvTimeoutError::Timeout) => record_waiting(writer, recorder, inbox, excerpt),
+            Err(RecvTimeoutError::Timeout) => record_waiting(writer, recorder, inbox),
             Err(RecvTimeoutError::Disconnected) => {
                 break Err(anyhow::anyhow!("loading the language grammars stopped"));
             }
         }
     };
-    record_waiting(writer, recorder, inbox, excerpt);
+    record_waiting(writer, recorder, inbox);
     loaded
 }
 
 /// Records the hook events waiting in `inbox` with `recorder`, all or none; a batch that cannot be
 /// recorded is counted.
-pub(crate) fn record_waiting(
-    writer: &mut Writer,
-    recorder: &mut Recorder,
-    inbox: &Inbox,
-    excerpt: bool,
-) {
+pub(crate) fn record_waiting(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox) {
     let events = inbox.take_events();
-    if !events.is_empty() && record_batch(writer, recorder, excerpt, &events).is_err() {
+    if !events.is_empty() && record_batch(writer, recorder, &events).is_err() {
         inbox.count_failed_batch();
     }
 }
 
-/// Records the edits the watcher saw that are due by now, all or none, after recording the hook
-/// events waiting in `inbox`, so that a hook's report of the same edit claims it first. A batch
-/// that cannot be recorded is counted, and the recorder starts afresh, as after events.
+/// Records the edits the watcher saw that are due by `now_ms`, all or none, after recording the
+/// hook events waiting in `inbox`, so that a hook's report of the same edit claims it first. A
+/// batch that cannot be recorded is counted and the recorder forgets what it took as stored, as
+/// after events.
 fn record_due_edits(
     writer: &mut Writer,
     (recorder, edits): (&mut Recorder, &mut WatcherEdits),
     inbox: &Inbox,
-    excerpt: bool,
+    now_ms: i64,
 ) {
-    let due = edits.take_due(now_ms());
+    let due = edits.take_due(now_ms);
     if due.is_empty() {
         return;
     }
-    record_waiting(writer, recorder, inbox, excerpt);
+    record_waiting(writer, recorder, inbox);
     let recorded = writer.transaction().and_then(|mut transaction| {
         for (path, seen_ms) in &due {
             recorder.record_watcher_edit(&mut transaction, path, *seen_ms)?;
@@ -304,14 +313,14 @@ fn record_due_edits(
         transaction.commit()
     });
     if recorded.is_err() {
-        *recorder = Recorder::new(excerpt);
+        recorder.forget_stored();
         inbox.count_failed_batch();
     }
 }
 
 /// Records `events` with `recorder` in one transaction of `writer`. When any of them cannot be
-/// recorded, none is: the transaction is rolled back and the recorder, which may remember what was
-/// rolled back, starts afresh, keeping prompt excerpts as `excerpt` says.
+/// recorded, none is: the transaction is rolled back and the recorder forgets what it took as
+/// stored, which may include what was rolled back.
 ///
 /// # Errors
 ///
@@ -319,7 +328,6 @@ fn record_due_edits(
 fn record_batch(
     writer: &mut Writer,
     recorder: &mut Recorder,
-    excerpt: bool,
     events: &[Event],
 ) -> Result<(), StoreError> {
     let recorded = writer.transaction().and_then(|mut transaction| {
@@ -329,7 +337,7 @@ fn record_batch(
         transaction.commit()
     });
     if recorded.is_err() {
-        *recorder = Recorder::new(excerpt);
+        recorder.forget_stored();
     }
     recorded
 }
@@ -347,7 +355,7 @@ pub(crate) fn now_ms() -> i64 {
 mod tests {
     use std::path::PathBuf;
 
-    use cortex_core::{Agent, EventKind, HookKind, Identifier, RepoId, Ulid};
+    use cortex_core::{Agent, EventKind, EventSource, HookKind, Identifier, RepoId, Ulid};
     use cortex_store::WriterOptions;
 
     use super::*;
@@ -445,8 +453,8 @@ mod tests {
 
     /// A batch the index's pause cannot record, its second prompt repeating the first prompt's
     /// event, is counted and left, and the index goes on: all 600 files are written and nothing of
-    /// the batch is stored. The pause started the host's own recorder afresh, so the next event
-    /// registers its session again and is recorded.
+    /// the batch is stored. The host's own recorder forgot what it took as stored, so the next
+    /// event registers its session again and is recorded.
     #[test]
     fn a_batch_the_pause_cannot_record_is_counted() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -473,8 +481,8 @@ mod tests {
     }
 
     /// A batch whose second prompt repeats the first prompt's event (so its task id is taken)
-    /// cannot be recorded: none of it is, not even the session it started. The host then starts
-    /// its recorder afresh, so the next batch registers the session again and is recorded whole.
+    /// cannot be recorded: none of it is, not even the session it started. The recorder then forgets
+    /// what it took as stored, so the next batch registers the session again and is recorded whole.
     #[test]
     fn a_batch_that_fails_leaves_nothing_behind() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -496,6 +504,74 @@ mod tests {
         host.record(&[event(HookKind::Prompt, 20, b"next")?])?;
         assert!(host.writer.queries().session(&session)?.is_some());
         assert_eq!(stored_kinds(&host)?, [EventKind::Prompt]);
+        Ok(())
+    }
+
+    /// A host over a repository at `root` holding `a.py` and `b.py`, indexed, both files then
+    /// changed on disk.
+    fn changed_repository<'a>(
+        root: &'a Path,
+        (config, inbox): (&'a Config, &'a Inbox),
+    ) -> Result<Host<'a>, Box<dyn std::error::Error>> {
+        std::fs::write(root.join("a.py"), "a = 1\n")?;
+        std::fs::write(root.join("b.py"), "b = 1\n")?;
+        let parts = (writer(root)?, Recorder::new(false), inbox);
+        let grammars = Arc::new(Grammars::load()?);
+        let mut host = Host::new(root, grammars, (config, discover(config)), parts);
+        host.index(&[])?;
+        std::fs::write(root.join("a.py"), "a = 2\n")?;
+        std::fs::write(root.join("b.py"), "b = 2\n")?;
+        Ok(host)
+    }
+
+    /// The watcher's edits the store holds under `root`: each file with when it was seen.
+    fn watched(root: &Path) -> Result<Vec<(String, i64)>, Box<dyn std::error::Error>> {
+        let reader = cortex_store::Reader::open(&root.join(".cortex"), 0)?;
+        Ok(reader
+            .queries()
+            .events_after(0, 100)?
+            .into_iter()
+            .filter(|row| row.record.meta.source == Some(EventSource::Watcher))
+            .map(|row| {
+                let path = row.record.path.map(|path| path.to_string());
+                (path.unwrap_or_default(), row.record.ts_ms)
+            })
+            .collect())
+    }
+
+    /// Each edit keeps the time a change first named its own file: `a.py` seen at 1,000 ms and
+    /// `b.py` at 9,000, updated together, are recorded at those times, `b.py`'s not taken back to
+    /// 1,000.
+    #[test]
+    fn each_edit_keeps_the_time_its_file_was_seen() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let mut host = changed_repository(root.path(), (&config, &inbox))?;
+        host.update(&[
+            (RepoPath::new("a.py")?, 1_000),
+            (RepoPath::new("b.py")?, 9_000),
+        ])?;
+        let parts = (&mut host.recorder, &mut host.edits);
+        record_due_edits(&mut host.writer, parts, &inbox, i64::MAX);
+        assert_eq!(
+            watched(root.path())?,
+            [("a.py".to_owned(), 1_000), ("b.py".to_owned(), 9_000)]
+        );
+        Ok(())
+    }
+
+    /// An edit still held when the daemon is asked to stop is recorded before it stops, though its
+    /// 2 s are not over.
+    #[test]
+    fn held_edits_are_recorded_at_a_stop() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let mut host = changed_repository(root.path(), (&config, &inbox))?;
+        let seen_ms = now_ms();
+        host.update(&[(RepoPath::new("a.py")?, seen_ms)])?;
+        inbox.stop();
+        host.serve()?;
+        assert_eq!(watched(root.path())?, [("a.py".to_owned(), seen_ms)]);
         Ok(())
     }
 }

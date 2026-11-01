@@ -186,13 +186,12 @@ fn a_hook_s_edit_claims_the_watcher_s() -> TestResult {
     Ok(())
 }
 
-/// A subagent is a session of its own: while its latest event is the most recent, an edit is the
-/// subagent's, in the task of the session that started it. `s1` prompts at 11,000 (task T1), its
-/// subagent `s1/a1` starts at 12,000 and reads at 13,000; the edit at 14,000 is `s1/a1`'s, in T1.
-/// Once the subagent stops at 15,000, the edit at 16,000 is `s1`'s, whose latest event is the
-/// prompt.
+/// A subagent's work counts for the session that started it, which waits on it: `s1` prompts at
+/// 11,000 (task T1) and its subagent `s1/a1` starts at 12,000 and reads at 30,000 and 44,000. The
+/// edit at 45,000 is `s1`'s, in T1, though `s1`'s own latest event is 34 s older; and once the
+/// subagent stops at 46,000, the edit at 47,000 is `s1`'s too.
 #[test]
-fn a_subagent_s_edit_is_in_its_parent_s_task() -> TestResult {
+fn a_subagent_s_work_counts_for_its_starter() -> TestResult {
     let mut store = Store::new()?;
     let mut recorder = Recorder::new(false);
     let asked = prompt("s1", 11_000, "fix it")?;
@@ -203,10 +202,12 @@ fn a_subagent_s_edit_is_in_its_parent_s_task() -> TestResult {
             ..event(hook, "s1/a1", ts_ms)?
         })
     };
-    let read = cortex_core::Event {
-        tool: Some(ToolKind::Read),
-        tool_target: Some(target("a.py", &[])?),
-        ..child(HookKind::PostTool, 13_000)?
+    let read = |ts_ms| -> TestResult<_> {
+        Ok(cortex_core::Event {
+            tool: Some(ToolKind::Read),
+            tool_target: Some(target("a.py", &[])?),
+            ..child(HookKind::PostTool, ts_ms)?
+        })
     };
     store.record(
         &mut recorder,
@@ -214,24 +215,113 @@ fn a_subagent_s_edit_is_in_its_parent_s_task() -> TestResult {
             start("s1", 10_000, StartSource::Startup)?,
             asked,
             child(HookKind::SubagentStart, 12_000)?,
-            read,
+            read(30_000)?,
+            read(44_000)?,
         ],
     )?;
     assert_eq!(
-        watcher_edit(&mut store, &mut recorder, ("b.py", 14_000))?,
-        session("s1/a1")?
+        watcher_edit(&mut store, &mut recorder, ("b.py", 45_000))?,
+        session("s1")?
     );
-    store.record(&mut recorder, &[child(HookKind::SubagentStop, 15_000)?])?;
+    store.record(&mut recorder, &[child(HookKind::SubagentStop, 46_000)?])?;
     assert_eq!(
-        watcher_edit(&mut store, &mut recorder, ("c.py", 16_000))?,
+        watcher_edit(&mut store, &mut recorder, ("c.py", 47_000))?,
         session("s1")?
     );
     assert_eq!(
         watcher_rows(&store)?,
         [
-            watched("b.py", 14_000, (Some("s1/a1"), Some(t1)), None)?,
-            watched("c.py", 16_000, (Some("s1"), Some(t1)), None)?,
+            watched("b.py", 45_000, (Some("s1"), Some(t1)), None)?,
+            watched("c.py", 47_000, (Some("s1"), Some(t1)), None)?,
         ]
+    );
+    Ok(())
+}
+
+/// Whose an edit is does not depend on the order events came in, only on their times and the
+/// edit's. `s1` ends at 20,000, and a Stop of `s1` stamped 20,000 arrives after the end: the edit at
+/// 21,000 is still nobody's, `s1` having ended before it. `s2` reads at 31,000 and ends at 32,000,
+/// and its end is recorded before the edit seen at 31,500 is weighed: the edit is `s2`'s, made
+/// before its end. `s3` starts at 39,600, more than 2 s after the edit seen at 37,500: the edit is
+/// nobody's, `s2` having ended before it.
+#[test]
+fn the_owner_does_not_depend_on_arrival_order() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false);
+    store.record(
+        &mut recorder,
+        &[
+            start("s1", 10_000, StartSource::Startup)?,
+            end("s1", 20_000, "exit")?,
+            event(HookKind::Stop, "s1", 20_000)?,
+        ],
+    )?;
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("a.py", 21_000))?,
+        WatcherEdit::Nobody
+    );
+    let read = tool(
+        HookKind::PostTool,
+        ("s2", 31_000),
+        (ToolKind::Read, target("b.py", &[])?, None),
+    )?;
+    store.record(
+        &mut recorder,
+        &[
+            start("s2", 30_000, StartSource::Startup)?,
+            read,
+            end("s2", 32_000, "exit")?,
+        ],
+    )?;
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("b.py", 31_500))?,
+        session("s2")?
+    );
+    store.record(&mut recorder, &[start("s3", 39_600, StartSource::Startup)?])?;
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("c.py", 37_500))?,
+        WatcherEdit::Nobody
+    );
+    Ok(())
+}
+
+/// What the recorder saw outlives a transaction that was rolled back: after
+/// [`Recorder::forget_stored`], `s1`'s hook-reported edit of `a.py` at 11,000 still claims the
+/// watcher's at 12,000, and the edit of `b.py` at 12,000 is still `s1`'s. So does every report
+/// of a file within 2 s, not only the latest: `c.py` edited by hooks at 13,000 and 23,000 claims
+/// the watcher's edit seen at 13,500.
+#[test]
+fn what_was_seen_outlives_a_rolled_back_batch() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false);
+    let edit = |ts_ms, file| {
+        tool(
+            HookKind::PostTool,
+            ("s1", ts_ms),
+            (ToolKind::Edit, target(file, &[(1, 1)])?, None),
+        )
+    };
+    store.record(
+        &mut recorder,
+        &[
+            start("s1", 10_000, StartSource::Startup)?,
+            edit(11_000, "a.py")?,
+            edit(13_000, "c.py")?,
+            edit(23_000, "c.py")?,
+        ],
+    )?;
+    recorder.forget_stored();
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("a.py", 12_000))?,
+        WatcherEdit::Reported
+    );
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("b.py", 12_000))?,
+        session("s1")?
+    );
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("c.py", 13_500))?,
+        WatcherEdit::Reported
     );
     Ok(())
 }

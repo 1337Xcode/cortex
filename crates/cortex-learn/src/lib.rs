@@ -5,6 +5,7 @@
 
 #![warn(clippy::pedantic)]
 
+mod activity;
 mod record;
 mod watcher_edits;
 

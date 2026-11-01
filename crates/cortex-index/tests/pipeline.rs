@@ -607,7 +607,12 @@ fn a_second_index_follows_the_changes() -> TestResult {
         problems: Vec::new(),
         left_out: Vec::new(),
         changed_symbols: Vec::new(),
-        edited: Vec::new(),
+        // In path order: notes.txt, gone; new.py, new; orders.py, with other contents.
+        edited: vec![
+            RepoPath::new("notes.txt")?,
+            RepoPath::new("src/shop/new.py")?,
+            RepoPath::new("src/shop/orders.py")?,
+        ],
         scip: ScipOutcome::Absent,
         // Source: orders.py (7 lines and 4 more), new.py (2) and README.md, kept with its 3.
         size: RepoSize {

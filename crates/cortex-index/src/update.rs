@@ -22,7 +22,7 @@ use crate::discover::DiscoveredFile;
 use crate::grammar::Grammars;
 use crate::pause::Pacer;
 use crate::pipeline::{
-    self, Context, IndexError, IndexOptions, IndexReport, Pass, Written, index_repository,
+    self, Context, IndexError, IndexOptions, IndexReport, Pass, index_repository,
 };
 use crate::scale;
 use crate::scip::{self, ScipOutcome};
@@ -115,7 +115,7 @@ pub fn index_paths(
         (&mut report, &mut pacer),
     )?;
     pacer.let_in(writer);
-    report.edited = edited(&written, &gone);
+    report.edited = pipeline::edited(&written, &gone);
     for file in &written {
         names.extend(file.names.clone());
     }
@@ -155,17 +155,6 @@ pub fn index_paths(
         incremental::mark_complete(writer)?;
     }
     Ok(report)
-}
-
-/// The files an index of chosen paths found edited: those `written` with new contents and those
-/// `gone`, in path order.
-fn edited(written: &[Written], gone: &BTreeSet<RepoPath>) -> Vec<RepoPath> {
-    let changed = written
-        .iter()
-        .filter(|file| file.has_new_contents)
-        .map(|file| file.path.clone());
-    let edited: BTreeSet<RepoPath> = changed.chain(gone.iter().cloned()).collect();
-    edited.into_iter().collect()
 }
 
 /// `paths` of the repository at `root`, stored by `writer`, with each folder among them, on disk

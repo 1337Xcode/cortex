@@ -3,9 +3,10 @@
 //! The watcher reports a change after 200 ms of quiet; the hook of an agent that made the edit
 //! reports it within moments of the tool ending. So each edit the watcher saw is held for
 //! [`HOLD_MS`], and a hook's edit of the same file at most that far from it, before or after, is
-//! the same edit, already recorded. An edit no hook claims is recorded for the live session whose
-//! latest event is the most recent and at most [`ATTRIBUTION_WINDOW_MS`] older than the edit, or
-//! for no session, as the watcher's.
+//! the same edit, already recorded. An edit no hook claims is recorded for the session that was
+//! at work at the time: of those not ended before the edit, the one with the latest event from
+//! [`ATTRIBUTION_WINDOW_MS`] before it to [`HOLD_MS`] after it, a subagent's events counting for
+//! the session that started it; or for no session, as the watcher's.
 
 use std::collections::BTreeMap;
 
@@ -79,23 +80,23 @@ pub enum WatcherEdit {
 
 impl Recorder {
     /// Records the edit of `path` the watcher saw at `seen_ms`, unless a hook reported it, for the
-    /// live session whose latest event is the most recent and at most [`ATTRIBUTION_WINDOW_MS`]
-    /// older than it, in that session's task, or for no session. The row is an edit with no line
-    /// range whose source is the watcher.
+    /// session at work then, as the module documentation says, in that session's task, or for no
+    /// session. The row is an edit with no line range whose source is the watcher.
     ///
     /// # Errors
     ///
-    /// Store errors, after which the recorder must be replaced, as after [`Recorder::record`].
+    /// Store errors, after which [`Recorder::forget_stored`] must be called, as after
+    /// [`Recorder::record`].
     pub fn record_watcher_edit(
         &mut self,
         transaction: &mut WriteTx<'_>,
         path: &RepoPath,
         seen_ms: i64,
     ) -> Result<WatcherEdit, StoreError> {
-        if self.has_reported_edit(path, seen_ms, HOLD_MS) {
+        if self.activity().is_reported(path, seen_ms) {
             return Ok(WatcherEdit::Reported);
         }
-        let session = self.latest_session(seen_ms.saturating_sub(ATTRIBUTION_WINDOW_MS));
+        let session = self.activity().owner_of(seen_ms);
         let task = match &session {
             Some(session_id) => self.task_of_session(transaction, session_id)?,
             None => None,

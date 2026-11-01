@@ -104,8 +104,8 @@ fn index_and_serve(
     // those that came while it opened are recorded at once.
     let excerpt = config.store_prompt_excerpt;
     let mut recorder = Recorder::new(excerpt);
-    host::record_waiting(&mut writer, &mut recorder, inbox, excerpt);
-    let grammars = host::load_grammars(&mut writer, &mut recorder, inbox, excerpt)?;
+    host::record_waiting(&mut writer, &mut recorder, inbox);
+    let grammars = host::load_grammars(&mut writer, &mut recorder, inbox)?;
     let global_gitignore = match global_ignore::find(root) {
         Ok(found) => found,
         Err(error) => {
@@ -123,7 +123,7 @@ fn index_and_serve(
     let feed = WatcherFeed(Arc::clone(inbox));
     let watcher = watch(root, &discover, move |change| feed.push(change))
         .context("watching the repository")?;
-    host::record_waiting(&mut writer, &mut recorder, inbox, excerpt);
+    host::record_waiting(&mut writer, &mut recorder, inbox);
     let mut host = Host::new(
         root,
         grammars,
