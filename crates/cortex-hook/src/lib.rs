@@ -15,7 +15,10 @@ mod root;
 mod run;
 mod spawn;
 mod stdin;
+mod stop;
 
 pub use adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, adapter};
 pub use client::{Answer, ClientError, ask};
 pub use run::run;
+pub use spawn::{Started, start_daemon};
+pub use stop::{Stop, stop_if_older};

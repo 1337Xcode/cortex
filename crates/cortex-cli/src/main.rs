@@ -6,6 +6,7 @@
 mod commands;
 mod output;
 mod repository;
+mod upgrade;
 
 use std::process::ExitCode;
 

@@ -94,6 +94,20 @@ impl CortexVersion {
     }
 }
 
+/// Whether a process of Cortex `version` is older than this build, which may then ask it to stop
+/// and take its place. Never when either version does not read: a build stops no process it
+/// cannot rank, so two installed versions never take turns replacing each other.
+#[must_use]
+pub fn is_older_than_this_build(version: &str) -> bool {
+    match (
+        CortexVersion::parse(version),
+        CortexVersion::parse(CORTEX_VERSION),
+    ) {
+        (Ok(theirs), Ok(ours)) => ours.is_newer_than(&theirs),
+        _ => false,
+    }
+}
+
 /// `part` as a number: digits only, with no leading zero unless it is zero itself.
 fn parse_number(part: &str) -> Option<u64> {
     let is_digits = !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
@@ -179,6 +193,18 @@ mod tests {
     #[test]
     fn this_build_s_version_reads() {
         assert!(CortexVersion::parse(CORTEX_VERSION).is_ok());
+    }
+
+    /// This build (2.0.0-dev) is newer than 1.9.9 and than 2.0.0-alpha, which sorts before `dev`;
+    /// not than itself, 2.0.0, 2.0.0-rc.1 or 9.0.0; and ranks nothing that is not a version.
+    #[test]
+    fn only_an_older_version_is_replaced() {
+        for older in ["1.9.9", "2.0.0-alpha", "0.1.0"] {
+            assert!(is_older_than_this_build(older), "{older}");
+        }
+        for other in [CORTEX_VERSION, "2.0.0", "2.0.0-rc.1", "9.0.0", "", "two"] {
+            assert!(!is_older_than_this_build(other), "{other}");
+        }
     }
 
     /// Texts that are not versions are refused.

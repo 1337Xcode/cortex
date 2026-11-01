@@ -66,6 +66,28 @@ impl Drop for Instance {
     }
 }
 
+/// Whether a daemon holds the repository with id `repo_id` for the user of `user`: the lock is
+/// taken. A missing lock file means no daemon ever ran. The test takes the lock for a moment when
+/// it is free, so a daemon starting at that very moment is refused.
+///
+/// # Errors
+///
+/// The lock file cannot be opened or tested.
+pub fn is_running(user: &UserFolder, repo_id: &RepoId) -> std::io::Result<bool> {
+    let path = user.run_files(repo_id).lock_path();
+    let file = match File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    match file.try_lock() {
+        // Closing the file at the end of this function releases the lock.
+        Ok(()) => Ok(false),
+        Err(TryLockError::WouldBlock) => Ok(true),
+        Err(TryLockError::Error(error)) => Err(error),
+    }
+}
+
 /// Writes `pid` into the file at `path`, replacing what it held.
 fn write_pid(path: &Path, pid: u32) -> anyhow::Result<()> {
     let mut file =

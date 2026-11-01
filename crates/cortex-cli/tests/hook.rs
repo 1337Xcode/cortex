@@ -16,19 +16,11 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use common::fake_daemon::{FakeDaemon, Script, kinds};
 use common::{Daemon, TestResult, isolate, wait_for};
-use cortex_core::ipc::{
-    Mismatch, Protocol, Request, RequestBody, Response, ResponseBody, read_frame, write_frame,
-};
-use cortex_core::{
-    Endpoint, EventKind, HookKind, Identifier, LineRange, RepoId, RunFiles, UserFolder,
-    canonical_root,
-};
+use cortex_core::ipc::{Request, RequestBody};
+use cortex_core::{EventKind, HookKind, Identifier, LineRange, UserFolder};
 use cortex_store::Reader;
-use interprocess::local_socket::traits::{Listener as _, Stream as _};
-use interprocess::local_socket::{
-    GenericFilePath, GenericNamespaced, Listener, ListenerOptions, Name, Stream, ToFsName, ToNsName,
-};
 
 /// One stored event row: its kind, its repository path and its lines.
 type Row = (EventKind, Option<String>, Option<LineRange>);
@@ -306,88 +298,6 @@ fn folders_without_cortex_are_left_alone() -> TestResult {
     Ok(())
 }
 
-/// What a fake daemon does once a hook connects.
-enum Script {
-    /// Reads the handshake and the request, then answers nothing until told.
-    Silent(mpsc::Receiver<()>),
-    /// Answers the handshake with a mismatch.
-    Mismatch,
-}
-
-/// A fake daemon serving one connection on a thread of its own.
-struct FakeDaemon {
-    /// Where it listens.
-    files: RunFiles,
-    /// The thread, which returns the requests it read.
-    thread: thread::JoinHandle<Result<Vec<Request>, String>>,
-}
-
-impl FakeDaemon {
-    /// A fake daemon at the endpoint of the repository at `root`, its run folder and process-id
-    /// file made as the real one makes them, serving one connection by `script`.
-    fn start(root: &Path, home: &Path, script: Script) -> TestResult<Self> {
-        let user = UserFolder::in_home(home);
-        std::fs::create_dir_all(user.run_folder())?;
-        let files = user.run_files(&RepoId::of(&canonical_root(root)?));
-        std::fs::write(files.pid_path(), format!("{}\n", std::process::id()))?;
-        let listener: Listener = ListenerOptions::new()
-            .name(endpoint_name(&files)?)
-            .create_sync()?;
-        let thread = thread::spawn(move || serve(&listener, script));
-        Ok(Self { files, thread })
-    }
-
-    /// The requests the fake daemon read. When no hook connected, a connection of the test's own
-    /// ends its wait, so a hook that never asks fails the test instead of hanging it.
-    fn requests(self) -> TestResult<Vec<Request>> {
-        if !self.thread.is_finished() {
-            // The fake daemon may be past accepting already, and then nothing answers: no matter.
-            let _ = endpoint_name(&self.files).and_then(Stream::connect);
-        }
-        Ok(self
-            .thread
-            .join()
-            .map_err(|_| "the fake daemon panicked")??)
-    }
-}
-
-/// The name of the endpoint of `files`, as the socket library takes it.
-fn endpoint_name(files: &RunFiles) -> std::io::Result<Name<'static>> {
-    Ok(match files.endpoint() {
-        Endpoint::Socket(path) => path.to_fs_name::<GenericFilePath>()?.into_owned(),
-        Endpoint::Pipe(pipe) => pipe.to_ns_name::<GenericNamespaced>()?.into_owned(),
-    })
-}
-
-/// Serves one connection at `listener` by `script`, and returns the requests read.
-fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
-    let mut stream = listener.accept().map_err(|error| error.to_string())?;
-    let hello: Request = read_frame(&mut stream).map_err(|error| error.to_string())?;
-    match script {
-        Script::Mismatch => {
-            let answer = Response {
-                request_id: hello.request_id,
-                body: ResponseBody::Mismatch(Mismatch {
-                    protocol: Protocol {
-                        major: 99,
-                        minor: 0,
-                    },
-                    cortex_version: "99.0.0".to_owned(),
-                }),
-            };
-            write_frame(&mut stream, &answer).map_err(|error| error.to_string())?;
-            Ok(vec![hello])
-        }
-        Script::Silent(release) => {
-            let request: Request = read_frame(&mut stream).map_err(|error| error.to_string())?;
-            // Released once the hook has exited; a hook that never gives up meets the timeout
-            // instead, and the test fails on its time rather than hanging.
-            let _ = release.recv_timeout(Duration::from_secs(30));
-            Ok(vec![hello, request])
-        }
-    }
-}
-
 /// A daemon that takes the event and never answers is given up at the event's deadline (500 ms
 /// for a tool's result, less the 15 ms the hook keeps), not before; the bound after it is loose,
 /// since starting a process on a busy machine is slow. One that speaks another protocol gets
@@ -419,7 +329,7 @@ fn a_silent_or_foreign_daemon_is_left_silently() -> TestResult {
     );
     assert!(sent_the_event, "{requests:?}");
 
-    let foreign = FakeDaemon::start(&repo, home.path(), Script::Mismatch)?;
+    let foreign = FakeDaemon::start(&repo, home.path(), Script::Mismatch("99.0.0"))?;
     let call = hook(
         &["--agent", "claude", "--event", "Stop"],
         stop_payload(&repo)?,
@@ -427,7 +337,51 @@ fn a_silent_or_foreign_daemon_is_left_silently() -> TestResult {
         home.path(),
     )?;
     assert!(call.is_silent_success(), "{:?}", call.output);
-    let requests = foreign.requests()?;
-    assert_eq!(requests.len(), 1);
+    // A daemon of a newer Cortex is left alone: the hook sends nothing after its handshake and
+    // event.
+    assert_eq!(kinds(&foreign.requests()?), ["hello", "event"]);
+    Ok(())
+}
+
+/// A hook that finds a daemon of an older Cortex, once the daemon has taken its event, asks it to
+/// stop, so that the next hook starts a daemon of this build; one of another, older protocol takes
+/// no event but is told to stop all the same. A daemon of a newer Cortex is left alone, so an older
+/// binary never stops a newer daemon. Every call is silent.
+#[test]
+fn an_older_daemon_is_told_to_stop_and_a_newer_one_is_not() -> TestResult {
+    let (home, repo) = marked_repository()?;
+    let edit = || payload("post-tool-use-edit.json", &repo);
+    let call = |input| {
+        hook(
+            &["--agent", "claude", "--event", "PostToolUse"],
+            input,
+            Duration::ZERO,
+            home.path(),
+        )
+    };
+    let older = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["1.0.0"]))?;
+    let done = call(edit()?)?;
+    assert!(done.is_silent_success(), "{:?}", done.output);
+    assert_eq!(
+        kinds(&older.requests()?),
+        ["hello", "event", "hello", "shutdown"]
+    );
+    let older_protocol = FakeDaemon::start(&repo, home.path(), Script::Mismatch("1.0.0"))?;
+    let done = call(edit()?)?;
+    assert!(done.is_silent_success(), "{:?}", done.output);
+    assert_eq!(
+        kinds(&older_protocol.requests()?),
+        ["hello", "event", "hello", "shutdown"]
+    );
+    let newer = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["99.0.0"]))?;
+    let done = call(edit()?)?;
+    assert!(done.is_silent_success(), "{:?}", done.output);
+    assert_eq!(kinds(&newer.requests()?), ["hello", "event"]);
+    // An older daemon that a newer one replaced between the hook's two connections: the hook reads
+    // the handshake of the second before it asks anything, and leaves the newer daemon running.
+    let replaced = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["1.0.0", "99.0.0"]))?;
+    let done = call(edit()?)?;
+    assert!(done.is_silent_success(), "{:?}", done.output);
+    assert_eq!(kinds(&replaced.requests()?), ["hello", "event", "hello"]);
     Ok(())
 }

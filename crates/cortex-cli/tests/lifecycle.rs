@@ -1,12 +1,18 @@
-//! A daemon's life with nothing to do: it stops on its own once it has been idle as long as its
-//! configuration says, and a request of any kind puts the stop off.
+//! A daemon's life: it stops on its own once it has been idle as long as its configuration says,
+//! a request of any kind puts the stop off, and a command of a newer build replaces it.
 
 mod common;
 
-use std::process::Command;
+use std::fs::File;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use common::{Daemon, POLL_EVERY, TestResult, isolate};
+use common::fake_daemon::{FakeDaemon, Script, kinds};
+use common::{Daemon, POLL_EVERY, TestResult, isolate, wait_for};
+use cortex_core::ipc::{CORTEX_VERSION, RequestBody, ResponseBody, Role};
+use cortex_core::{RepoId, UserFolder, canonical_root};
+use cortex_daemon::is_running;
+use cortex_hook::ask;
 
 /// How long a daemon set to stop after one idle minute is left alone before the request that puts
 /// its stop off.
@@ -71,5 +77,53 @@ fn a_request_puts_off_the_idle_stop() -> TestResult {
         asking.elapsed()
     );
     assert_eq!(exit.code(), Some(0));
+    Ok(())
+}
+
+/// `cortex status` that finds a daemon of an older Cortex asks it to stop, waits for it to let go
+/// of the repository, starts a daemon of this build in its place and reports that one. The new
+/// daemon runs detached, as one a hook starts, and is stopped at the end.
+#[test]
+fn a_command_replaces_an_older_daemon() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    std::fs::write(repo.path().join("app.py"), "def app():\n    pass\n")?;
+    let older = FakeDaemon::start(repo.path(), home.path(), Script::Welcome(&["1.0.0"]))?;
+    let mut status = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    status.args(["status", "--root"]).arg(repo.path());
+    isolate(&mut status, home.path());
+    // The command writes to a file, not a pipe: on Windows the daemon it starts takes the
+    // command's own handles with it, and a pipe would stay open until the daemon stops.
+    let printed = home.path().join("status.txt");
+    status.stdout(File::create(&printed)?).stderr(Stdio::null());
+    assert!(status.status()?.success());
+    let stdout = std::fs::read_to_string(&printed)?;
+    assert_eq!(
+        kinds(&older.requests()?),
+        ["hello", "status", "hello", "shutdown"]
+    );
+    let mut lines = stdout.lines();
+    assert_eq!(
+        lines.next(),
+        Some("daemon: replaced a daemon of Cortex 1.0.0"),
+        "{stdout}"
+    );
+    let running = lines.next().unwrap_or_default();
+    assert!(
+        running.starts_with("daemon: running (process ")
+            && running.contains(&format!("Cortex {CORTEX_VERSION},")),
+        "{stdout}"
+    );
+    let user = UserFolder::in_home(home.path());
+    let repo_id = RepoId::of(&canonical_root(repo.path())?);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let stop = ask(
+        &user.run_files(&repo_id),
+        Role::Cli,
+        RequestBody::Shutdown,
+        deadline,
+    )?;
+    assert_eq!(stop.body, ResponseBody::Ack);
+    wait_for(|| Ok(!is_running(&user, &repo_id)?))?;
     Ok(())
 }

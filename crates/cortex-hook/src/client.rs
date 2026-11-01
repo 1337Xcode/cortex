@@ -22,10 +22,10 @@ use interprocess::local_socket::{
 };
 
 /// The request id of the handshake, the first request on a connection.
-const HELLO_ID: u64 = 1;
+pub(crate) const HELLO_ID: u64 = 1;
 
 /// The request id of the request sent after the handshake.
-const REQUEST_ID: u64 = 2;
+pub(crate) const REQUEST_ID: u64 = 2;
 
 /// Why a request got no answer.
 #[derive(Debug, thiserror::Error)]
@@ -99,16 +99,35 @@ pub fn ask(
         .checked_duration_since(Instant::now())
         .filter(|remaining| !remaining.is_zero())
         .ok_or(ClientError::TimedOut)?;
-    let frames = frames_of(role, body)?;
+    // Encoded before connecting, so that a request too long to send never reaches the endpoint.
+    let mut frames = encoded(&hello(role))?;
+    frames.extend(encoded(&Request {
+        request_id: REQUEST_ID,
+        body,
+    })?);
     let endpoint = files.endpoint();
     let daemon_pid_path = files.pid_path();
+    on_thread(remaining, move || {
+        exchange(&endpoint, &daemon_pid_path, &frames, remaining)
+    })
+}
+
+/// Runs `work`, the whole of an exchange with the daemon, on a thread of its own and waits for it
+/// at most `remaining`: a named pipe takes no timeout, so a thread still blocked then is left to
+/// the process's exit.
+///
+/// # Errors
+///
+/// `work`'s own, [`ClientError::TimedOut`] when it is not done in time, and the I/O error of a
+/// thread that could not be started.
+pub(crate) fn on_thread<T: Send + 'static>(
+    remaining: Duration,
+    work: impl FnOnce() -> Result<T, ClientError> + Send + 'static,
+) -> Result<T, ClientError> {
     let (sender, receiver) = mpsc::channel();
     std::thread::Builder::new()
         .name("cortex-ipc".to_owned())
-        .spawn(move || {
-            let exchanged = exchange(&endpoint, &daemon_pid_path, &frames, remaining);
-            drop(sender.send(exchanged));
-        })
+        .spawn(move || drop(sender.send(work())))
         .map_err(ClientError::Io)?;
     // INVARIANT: fail-open (the caller waits for the daemon no longer than its deadline)
     receiver
@@ -116,28 +135,73 @@ pub fn ask(
         .unwrap_or(Err(ClientError::TimedOut))
 }
 
-/// The handshake as `role` and the request with `body`, framed one after the other. Encoded before
-/// connecting, so that a request too long to send never reaches the endpoint.
-fn frames_of(role: Role, body: RequestBody) -> Result<Vec<u8>, ClientError> {
-    let hello = Request {
+/// The handshake that introduces this process as `role`.
+pub(crate) fn hello(role: Role) -> Request {
+    Request {
         request_id: HELLO_ID,
         body: RequestBody::Hello(Hello {
             protocol: Protocol::CURRENT,
             cortex_version: CORTEX_VERSION.to_owned(),
             role,
         }),
-    };
-    let request = Request {
-        request_id: REQUEST_ID,
-        body,
-    };
-    let encoded = |request: &Request| match encode(request) {
+    }
+}
+
+/// `request` as a frame.
+///
+/// # Errors
+///
+/// [`ClientError::TooLarge`] for a request longer than a frame may be.
+pub(crate) fn encoded(request: &Request) -> Result<Vec<u8>, ClientError> {
+    match encode(request) {
         Err(FrameError::TooLarge { .. }) => Err(ClientError::TooLarge),
         other => other.map_err(ClientError::from),
-    };
-    let mut frames = encoded(&hello)?;
-    frames.extend(encoded(&request)?);
-    Ok(frames)
+    }
+}
+
+/// Connects to `endpoint` within `connect_within` and makes sure the daemon whose process
+/// `daemon_pid_path` names holds it.
+///
+/// # Errors
+///
+/// [`ClientError::NotRunning`], [`ClientError::TimedOut`], [`ClientError::NotTheDaemon`], and I/O
+/// errors.
+pub(crate) fn connect(
+    endpoint: &Endpoint,
+    daemon_pid_path: &Path,
+    connect_within: Duration,
+) -> Result<Stream, ClientError> {
+    let stream = ConnectOptions::new()
+        .name(name_of(endpoint).map_err(ClientError::Io)?)
+        .wait_mode(ConnectWaitMode::Timeout(connect_within))
+        .connect_sync()
+        .map_err(connect_error)?;
+    check_peer(&stream, daemon_pid_path)?;
+    Ok(stream)
+}
+
+/// Reads the daemon's side of the handshake: its welcome, or the mismatch of a daemon of another
+/// protocol.
+///
+/// # Errors
+///
+/// The answer is not the handshake's, and the frame's errors.
+pub(crate) fn read_handshake(
+    stream: &mut Stream,
+) -> Result<Result<Welcome, Mismatch>, ClientError> {
+    match read_frame::<Response>(stream)? {
+        Response {
+            request_id: HELLO_ID,
+            body: ResponseBody::Welcome(welcome),
+        } => Ok(Ok(welcome)),
+        Response {
+            request_id: HELLO_ID,
+            body: ResponseBody::Mismatch(mismatch),
+        } => Ok(Err(mismatch)),
+        _ => Err(ClientError::Protocol(
+            "the first answer is not the handshake's",
+        )),
+    }
 }
 
 /// Connects within `connect_within`, makes sure the daemon holds the endpoint, sends the frames in
@@ -148,31 +212,12 @@ fn exchange(
     frames: &[u8],
     connect_within: Duration,
 ) -> Result<Answer, ClientError> {
-    let mut stream = ConnectOptions::new()
-        .name(name_of(endpoint).map_err(ClientError::Io)?)
-        .wait_mode(ConnectWaitMode::Timeout(connect_within))
-        .connect_sync()
-        .map_err(connect_error)?;
-    check_peer(&stream, daemon_pid_path)?;
+    let mut stream = connect(endpoint, daemon_pid_path, connect_within)?;
     stream
         .write_all(frames)
         .and_then(|()| stream.flush())
         .map_err(ClientError::Io)?;
-    let welcome = match read_frame::<Response>(&mut stream)? {
-        Response {
-            request_id: HELLO_ID,
-            body: ResponseBody::Welcome(welcome),
-        } => welcome,
-        Response {
-            request_id: HELLO_ID,
-            body: ResponseBody::Mismatch(mismatch),
-        } => return Err(ClientError::Mismatch(mismatch)),
-        _ => {
-            return Err(ClientError::Protocol(
-                "the first answer is not the handshake's",
-            ));
-        }
-    };
+    let welcome = read_handshake(&mut stream)?.map_err(ClientError::Mismatch)?;
     let answer = read_frame::<Response>(&mut stream)?;
     if answer.request_id != REQUEST_ID {
         return Err(ClientError::Protocol("an answer names another request"));

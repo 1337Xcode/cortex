@@ -6,14 +6,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use cortex_core::ipc::{RequestBody, ResponseBody, Role};
-use cortex_core::{FileFlags, ModeSetting, RepoId, UserFolder};
+use cortex_core::ipc::{RequestBody, ResponseBody};
+use cortex_core::{FileFlags, ModeSetting, UserFolder};
 use cortex_daemon::settings;
-use cortex_hook::{Answer, ClientError, ask};
+use cortex_hook::{Answer, ClientError};
 use cortex_index::waits_to_be_parsed;
 use cortex_store::{MetaKey, Queries, Reader, StoreError, is_writer_running};
 
-use crate::{output, repository};
+use crate::{output, repository, upgrade};
 
 /// How long the daemon has to answer. It answers status from memory, so a daemon that takes longer
 /// is stuck, not busy.
@@ -68,14 +68,19 @@ fn daemon_lines(root: &Path) -> Vec<String> {
     let Some(user) = UserFolder::of_current_user() else {
         return vec!["daemon: unknown, no home folder to find it from".to_owned()];
     };
-    let files = user.run_files(&RepoId::of(root));
     let deadline = Instant::now() + ANSWER_WITHIN;
-    let line = match ask(&files, Role::Cli, RequestBody::Status, deadline) {
+    let asked = upgrade::ask_current(root, &user, &RequestBody::Status, deadline);
+    let mut lines: Vec<String> = asked
+        .replaced
+        .iter()
+        .map(|old| format!("daemon: replaced a daemon of Cortex {old}"))
+        .collect();
+    let line = match asked.answer {
         Ok(Answer {
             body: ResponseBody::Status(report),
             ..
         }) => {
-            return vec![
+            lines.extend([
                 format!(
                     "daemon: running (process {}, Cortex {}, up {} s)",
                     report.pid,
@@ -91,7 +96,8 @@ fn daemon_lines(root: &Path) -> Vec<String> {
                     report.failed_batches,
                     report.failed_checkpoints
                 ),
-            ];
+            ]);
+            return lines;
         }
         Ok(_) => "daemon: running, but it did not answer with its status".to_owned(),
         Err(ClientError::NotRunning) => "daemon: not running".to_owned(),
@@ -102,7 +108,8 @@ fn daemon_lines(root: &Path) -> Vec<String> {
         ),
         Err(other) => format!("daemon: unreachable ({other})"),
     };
-    vec![line]
+    lines.push(line);
+    lines
 }
 
 /// The status of the store in `folder` that `queries` reads, with the mode `setting`.

@@ -16,7 +16,7 @@ const RESTART_GAP: Duration = Duration::from_secs(10);
 
 /// Whether a start was made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Started {
+pub enum Started {
     /// A daemon process was created.
     Now,
     /// A hook started one less than [`RESTART_GAP`] ago; none was created.
@@ -31,7 +31,7 @@ pub(crate) enum Started {
 /// # Errors
 ///
 /// The run folder or the start's marker could not be written, or the process could not be created.
-pub(crate) fn start_daemon(
+pub fn start_daemon(
     program: &Path,
     root: &Path,
     files: &RunFiles,

@@ -16,7 +16,9 @@ pub use self::frame::{
 pub use self::message::{
     Hello, Mismatch, Request, RequestBody, Response, ResponseBody, Role, StatusReport, Welcome,
 };
-pub use self::version::{CORTEX_VERSION, CortexVersion, Protocol, VersionError};
+pub use self::version::{
+    CORTEX_VERSION, CortexVersion, Protocol, VersionError, is_older_than_this_build,
+};
 
 #[cfg(test)]
 mod tests;

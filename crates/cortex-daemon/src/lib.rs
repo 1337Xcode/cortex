@@ -21,6 +21,8 @@ mod listener;
 mod server;
 pub mod settings;
 
+pub use instance::is_running;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;

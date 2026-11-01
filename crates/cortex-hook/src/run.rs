@@ -9,14 +9,14 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use cortex_core::ipc::{RequestBody, ResponseBody, Role};
-use cortex_core::{RepoId, Ulid, UserFolder};
+use cortex_core::ipc::{RequestBody, ResponseBody, Role, is_older_than_this_build};
+use cortex_core::{RepoId, RunFiles, Ulid, UserFolder};
 
 use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter};
 use crate::client::{ClientError, ask};
 use crate::fail_open::{self, Outcome};
 use crate::stdin::{self, StdinError};
-use crate::{log, root, spawn};
+use crate::{log, root, spawn, stop};
 
 /// How long the hook waits for its payload to end, counted from its start.
 const STDIN_TIMEOUT: Duration = Duration::from_millis(50);
@@ -131,8 +131,11 @@ impl Hook {
         let body = RequestBody::Event {
             event: Box::new(event),
         };
-        match ask(&files, Role::Hook, body, deadline(self.started, entry)) {
-            Ok(answer) if answer.body == ResponseBody::Ack => Ok(()),
+        let deadline = deadline(self.started, entry);
+        match ask(&files, Role::Hook, body, deadline) {
+            Ok(answer) if answer.body == ResponseBody::Ack => {
+                stop_older(&files, &answer.welcome.cortex_version, deadline)
+            }
             Ok(_) => Err(Failure::NotTaken),
             // No daemon: start one and go on without it. The event that found none is not kept;
             // the next hook finds the daemon listening.
@@ -142,6 +145,11 @@ impl Hook {
                 spawn::start_daemon(&program, &root, &files, self.now)
                     .map(drop)
                     .map_err(Failure::StartDaemon)
+            }
+            // A daemon of another protocol took nothing; an older one is still told to stop.
+            Err(ClientError::Mismatch(theirs)) => {
+                stop_older(&files, &theirs.cortex_version, deadline)?;
+                Err(ClientError::Mismatch(theirs).into())
             }
             Err(error) => Err(error.into()),
         }
@@ -158,6 +166,18 @@ impl Hook {
         let folder = UserFolder::in_home(home).logs_folder();
         drop(log::write(&folder, SystemTime::now(), &line));
     }
+}
+
+/// Asks the daemon whose run files are `files`, which answered as Cortex `version`, to stop when
+/// that is older than this hook, before `deadline`: the next hook then finds none and starts one
+/// of this build. The stop goes on a connection of its own whose handshake is checked again, so a
+/// daemon that took the older one's place meanwhile is left running.
+fn stop_older(files: &RunFiles, version: &str, deadline: Instant) -> Result<(), Failure> {
+    if !is_older_than_this_build(version) {
+        return Ok(());
+    }
+    stop::stop_if_older(files, Role::Hook, deadline)?;
+    Ok(())
 }
 
 /// The adapter and the hook the arguments name.

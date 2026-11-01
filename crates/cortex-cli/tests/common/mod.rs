@@ -6,6 +6,8 @@
     reason = "each test file uses a different part of these helpers"
 )]
 
+pub mod fake_daemon;
+
 use std::error::Error;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
