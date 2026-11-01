@@ -19,8 +19,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use cortex_core::ipc::ResponseBody;
 use cortex_core::ipc::{RequestBody, Role};
-use cortex_core::{RepoId, UserFolder, canonical_root};
+use cortex_core::{RepoId, RunFiles, UserFolder, canonical_root};
 use cortex_daemon::is_running;
 use cortex_hook::{ClientError, ask};
 
@@ -245,6 +246,24 @@ impl Drop for StopsDaemon {
     fn drop(&mut self) {
         drop(self.stop());
     }
+}
+
+/// Stops a daemon a hook may still be starting for the repository whose run files are `files`:
+/// asks it to stop until it says it will, for ten seconds, more than a daemon takes to bind, then
+/// waits for it to let go of the repository. One that never starts, or already stopped, cannot be
+/// asked, and the ten seconds pass.
+pub fn stop_late_daemon(files: &RunFiles) {
+    let until = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < until {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let stops = ask(files, Role::Cli, RequestBody::Shutdown, deadline)
+            .is_ok_and(|answer| answer.body == ResponseBody::Ack);
+        if stops {
+            break;
+        }
+        std::thread::sleep(POLL_EVERY);
+    }
+    let _ = wait_for(|| Ok(!files.pid_path().exists()));
 }
 
 /// Waits until `condition` holds, for at most [`SEEN_WITHIN`].

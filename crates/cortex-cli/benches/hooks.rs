@@ -14,7 +14,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use common::{Daemon, isolate, payloads};
+use common::{Daemon, isolate, payloads, stop_late_daemon};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
 use cortex_core::{
     RepoId, RunFiles, UserFolder, canonical_root, create_private_folder, open_private_file,
@@ -152,12 +152,21 @@ impl Bench {
 /// run lock, as a daemon still starting does, so each daemon a hook starts finds the repository
 /// held and exits.
 struct Down {
-    /// The repository.
-    repo: tempfile::TempDir,
+    /// The held run lock, released when dropped.
+    held: Option<File>,
     /// Its run files, the start's marker among them.
     files: RunFiles,
-    /// The held run lock, released when dropped.
-    _held: File,
+    /// The repository.
+    repo: tempfile::TempDir,
+}
+
+impl Drop for Down {
+    /// Lets go of the run lock, then stops a daemon the last hook may have started and that took
+    /// the lock once it was free, before the repository goes.
+    fn drop(&mut self) {
+        drop(self.held.take());
+        stop_late_daemon(&self.files);
+    }
 }
 
 impl Down {
@@ -179,9 +188,9 @@ impl Down {
         #[allow(clippy::expect_used)]
         held.try_lock().expect("holding the run lock");
         Self {
-            repo,
+            held: Some(held),
             files,
-            _held: held,
+            repo,
         }
     }
 

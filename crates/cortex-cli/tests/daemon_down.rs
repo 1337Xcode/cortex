@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use common::{POLL_EVERY, READY_WITHIN, TestResult, isolate, payloads, wait_for};
+use common::{POLL_EVERY, READY_WITHIN, TestResult, isolate, payloads, stop_late_daemon, wait_for};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
 use cortex_core::{
     RepoId, RepoPath, RunFiles, UserFolder, canonical_root, create_private_folder,
@@ -59,20 +59,8 @@ impl Scene {
 
 impl Drop for Scene {
     fn drop(&mut self) {
-        // A daemon the hook started may still be starting when the test ends early: it is asked to
-        // stop until it says it will, for ten seconds, more than a daemon takes to bind; one that
-        // never started, or already stopped, cannot be asked.
-        let until = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < until {
-            let deadline = Instant::now() + Duration::from_secs(2);
-            let stops = ask(&self.files, Role::Cli, RequestBody::Shutdown, deadline)
-                .is_ok_and(|answer| answer.body == ResponseBody::Ack);
-            if stops {
-                break;
-            }
-            std::thread::sleep(POLL_EVERY);
-        }
-        let _ = wait_for(|| Ok(!self.files.pid_path().exists()));
+        // A daemon a hook started may still be starting when the test ends, early or not.
+        stop_late_daemon(&self.files);
         // On Windows the daemon holds handles it inherited from the hook until its process ends,
         // a moment after its process-id file goes: the folder is removed once they are released.
         if let Some(home) = self.home.take() {

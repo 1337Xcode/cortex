@@ -31,7 +31,9 @@ pub fn payload(version: &str, name: &str, root: &Path) -> TestResult<Vec<u8>> {
 pub fn move_paths(value: &mut Value, root: &Path) {
     match value {
         Value::String(text) => {
-            if let Some(rest) = text.strip_prefix(CAPTURED_ROOT) {
+            let rest = text.strip_prefix(CAPTURED_ROOT);
+            // The root itself, or a path under it: not a folder whose name only begins the same.
+            if let Some(rest) = rest.filter(|rest| rest.is_empty() || rest.starts_with('\\')) {
                 let moved = rest
                     .split('\\')
                     .filter(|name| !name.is_empty())
