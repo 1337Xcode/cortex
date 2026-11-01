@@ -25,7 +25,7 @@ huge mode the crawler that parses files in the background. `cortex daemon` runs 
 | `capture`, `Captured` | Runs a program with no input and stderr discarded, keeps at most a given number of bytes of its stdout (and whether there was more), and gives it a timeout from its start to end and close its stdout, stopping it past that; a process it started that holds the output open is not waited for. `NotFound` when it is not installed, `TimedOut` past the timeout |
 | `time_fed` | Runs a program with an input on its stdin and its output discarded, and returns how it ended and how long it took from just before its start to its end, as an agent sees a hook take. A thread of its own writes the input and waits for it, so a program that neither reads nor ends is given up on at the timeout (`TimedOut`) and left to end on its own; one that ends without reading all of its input is timed all the same |
 | `is_running` | Whether a daemon holds a repository: its lock on `~/.cortex/run/<id>.lock` is taken (tested by taking it for a moment when free) |
-| `settings::load` | The configuration in effect for a repository: the user's `~/.cortex/config.toml`, then the repository's `.cortex/config.toml`, each refused over 1 MiB |
+| `settings::load` | The configuration in effect for a repository: the user's `~/.cortex/config.toml`, then the repository's `.cortex/config.toml`, each refused over 1 MiB; only the user's may turn on LLM upkeep |
 
 ## Tests
 

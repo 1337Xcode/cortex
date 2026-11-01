@@ -2,12 +2,14 @@
 //! (git, and a stand-in for Claude Code or none): Claude Code's settings get Cortex's hooks beside
 //! the user's, backed up first with a manifest; a second run changes nothing; a file it cannot
 //! read is refused and left; the user's scope writes the home folder's settings; the repository is
-//! git's, never the home folder; a Claude Code too old is refused before anything is written.
+//! git's, never the home folder; a Claude Code too old is refused before anything is written; the
+//! questions are asked once, their answers kept in the configuration and the ignores, and nothing
+//! is written while one is unanswered.
 
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use common::{TestResult, isolate, stand_in_claude, test_path};
 use cortex_core::{ContentHash, canonical_root};
@@ -32,27 +34,46 @@ fn claude_in(home: &Path) -> PathBuf {
     })
 }
 
-/// Runs `cortex init --root <repo>` with `extra` arguments, as [`run`] runs it with git on the
-/// PATH, and with a stand-in for Claude Code 2.1.312, the newest version Cortex knows, ahead of
+/// Runs `cortex init --yes --root <repo>` with `extra` arguments, as [`run`] runs it with git on
+/// the PATH, and with a stand-in for Claude Code 2.1.312, the newest version Cortex knows, ahead of
 /// any on the machine unless the test put one in `home`'s `bin` folder.
 fn init(repo: &Path, home: &Path, extra: &[&str]) -> TestResult<Run> {
+    let mut command = init_command(repo, home)?;
+    command.arg("--yes").args(extra);
+    run(&mut command, home, &["git"])
+}
+
+/// Runs `cortex init --root <repo>` as [`init`] does, but without `--yes`, its stdin a pipe that
+/// is no terminal.
+fn init_without_yes(repo: &Path, home: &Path) -> TestResult<Run> {
+    let mut command = init_command(repo, home)?;
+    run(&mut command, home, &["git"])
+}
+
+/// `cortex init --root <repo>`, with the stand-in for Claude Code [`init`] describes.
+fn init_command(repo: &Path, home: &Path) -> TestResult<Command> {
     if !claude_in(home).exists() {
         stand_in_claude(home, "2.1.312")?;
     }
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.args(["init", "--root"]).arg(repo).args(extra);
-    run(&mut command, home, &["git"])
+    command.args(["init", "--root"]).arg(repo);
+    Ok(command)
 }
 
 /// Runs `command` with `home` as the home folder and a PATH holding `home`'s `bin` folder and the
 /// folders of `programs`, git looking for no repository above the system's temporary folder,
-/// where the tests' folders are, and reads what it printed.
+/// where the tests' folders are, and reads what it printed. Its stdin is an empty pipe.
 fn run(command: &mut Command, home: &Path, programs: &[&str]) -> TestResult<Run> {
     isolate(command, home);
     command
         .env("PATH", test_path(home, programs)?)
-        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
-    let output = command.output()?;
+        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    drop(child.stdin.take());
+    let output = child.wait_with_output()?;
     Ok(Run {
         is_success: output.status.success(),
         stdout: String::from_utf8(output.stdout)?,
@@ -168,7 +189,17 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         .map_err(|_| "one backup")?;
     let resolved = std::fs::canonicalize(&settings)?;
     let lines: Vec<&str> = run.stdout.lines().collect();
-    let [repository, no_git, claude, written_to] = lines.as_slice() else {
+    let [
+        repository,
+        no_git,
+        claude,
+        written_to,
+        repository_answer,
+        users_answer,
+        backed_up,
+        users_backed_up,
+    ] = lines.as_slice()
+    else {
         return Err(run.stdout.into());
     };
     assert_eq!(
@@ -196,9 +227,35 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
             claude_in(home.path()).display()
         )
     );
+    let shown = canonical_root(repo.path())?
+        .join(".claude")
+        .join("settings.local.json");
+    assert_eq!(
+        *written_to,
+        format!("Claude Code: hooks written to {}", shown.display())
+    );
+    let config = canonical_root(repo.path())?
+        .join(".cortex")
+        .join("config.toml");
+    assert_eq!(
+        *repository_answer,
+        format!("answer kept in {}", config.display())
+    );
+    let users_config = home.path().join(".cortex").join("config.toml");
+    assert_eq!(
+        *users_answer,
+        format!("answer kept in {}", users_config.display())
+    );
+    assert_eq!(
+        *backed_up,
+        format!("backup and manifest in {}", folder.display())
+    );
     assert!(
-        written_to.starts_with("Claude Code: hooks written to ") && written_to.ends_with(')'),
-        "{written_to}"
+        users_backed_up.starts_with(&format!(
+            "backup and manifest in {}",
+            home.path().join(".cortex").join("backups").display()
+        )),
+        "{users_backed_up}"
     );
     assert_eq!(
         std::fs::read_to_string(folder.join("1-settings.local.json"))?,
@@ -265,7 +322,7 @@ fn init_sets_up_git_s_repository_from_a_folder_inside_it() -> TestResult {
     std::fs::create_dir_all(&inner)?;
     stand_in_claude(home.path(), "2.1.312")?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.arg("init").current_dir(&inner);
+    command.args(["init", "--yes"]).current_dir(&inner);
     let done = run(&mut command, home.path(), &["git"])?;
     assert!(done.is_success, "{}", done.stderr);
     let top = canonical_root(&repo)?;
@@ -358,7 +415,7 @@ fn init_without_git_or_claude_code_says_so() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.args(["init", "--root"]).arg(repo.path());
+    command.args(["init", "--yes", "--root"]).arg(repo.path());
     let done = run(&mut command, home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
     let lines: Vec<&str> = done.stdout.lines().skip(1).take(2).collect();
@@ -436,6 +493,232 @@ fn init_refuses_an_older_claude_code() -> TestResult {
     Ok(())
 }
 
+/// The answer files `--yes` writes: the repository's holdout, at one task in ten.
+const REPOSITORY_ANSWER: &str =
+    "# The answer to a question `cortex init` asked; change it here.\n[holdout]\nshare = 0.1\n";
+
+/// The user's answer `--yes` writes: no upkeep by a language model.
+const USERS_ANSWER: &str = "# The answer to a question `cortex init` asked; change it here.\n[upkeep.llm]\nenabled = false\n";
+
+/// With `--yes`, the defaults: a holdout of one task in ten in the repository's configuration, no
+/// upkeep by a language model in the user's own, no sharing, so git leaves out all of `.cortex/`
+/// and the local settings init made.
+#[test]
+fn init_with_yes_takes_the_defaults() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    assert!(!done.stderr.contains('?'), "{}", done.stderr);
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(".cortex").join("config.toml"))?,
+        REPOSITORY_ANSWER
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.path().join(".cortex").join("config.toml"))?,
+        USERS_ANSWER
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(".gitignore"))?,
+        "# Cortex\n.cortex/\n.claude/settings.local.json\n"
+    );
+    // The ignores are written first, so that a run stopped partway never leaves the local settings
+    // for git to commit.
+    let [folder] = backup_folders(repo.path())?
+        .try_into()
+        .map_err(|_| "one backup")?;
+    let manifest: Value = serde_json::from_slice(&std::fs::read(folder.join("manifest.json"))?)?;
+    let first = manifest
+        .pointer("/files/0/path")
+        .and_then(Value::as_str)
+        .ok_or("a first file")?;
+    assert!(first.ends_with(".gitignore"), "{first}");
+    Ok(())
+}
+
+/// Once answered, nothing is asked again, even with no terminal and no `--yes`: the second run
+/// changes nothing and backs nothing up.
+#[test]
+fn init_asks_nothing_once_answered() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    let first = init(repo.path(), home.path(), &[])?;
+    assert!(first.is_success, "{}", first.stderr);
+    let ignores = std::fs::read_to_string(repo.path().join(".gitignore"))?;
+    let again = init_without_yes(repo.path(), home.path())?;
+    assert!(again.is_success, "{}", again.stderr);
+    assert!(!again.stderr.contains('?'), "{}", again.stderr);
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(".gitignore"))?,
+        ignores
+    );
+    assert_eq!(backup_folders(repo.path())?.len(), 1);
+    Ok(())
+}
+
+/// With a question to ask, no terminal and no `--yes`, init names the question and writes nothing
+/// anywhere. With the answers kept by hand (the holdout in the repository's configuration, the
+/// upkeep in the user's own) it asks nothing; outside git, sharing is not a question.
+#[test]
+fn init_without_a_terminal_writes_nothing() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let refused = init_without_yes(repo.path(), home.path())?;
+    assert!(!refused.is_success);
+    assert_eq!(
+        refused.stderr.trim_end(),
+        "cortex: error: init asks \"Measure Cortex's effect: leave one task in ten without its \
+         help, to compare with?\" in a terminal, and has none: run it in one, or pass --yes to \
+         take the defaults"
+    );
+    assert!(!repo.path().join(".claude").exists());
+    assert!(!repo.path().join(".cortex").exists());
+    assert!(!home.path().join(".cortex").exists());
+    std::fs::create_dir(repo.path().join(".cortex"))?;
+    std::fs::write(
+        repo.path().join(".cortex").join("config.toml"),
+        "holdout.share = 0\n",
+    )?;
+    std::fs::create_dir(home.path().join(".cortex"))?;
+    std::fs::write(
+        home.path().join(".cortex").join("config.toml"),
+        "upkeep.llm.enabled = false\n",
+    )?;
+    let answered = init_without_yes(repo.path(), home.path())?;
+    assert!(answered.is_success, "{}", answered.stderr);
+    assert!(
+        repo.path()
+            .join(".claude")
+            .join("settings.local.json")
+            .is_file()
+    );
+    Ok(())
+}
+
+/// A team that shares facts has committed ignores that leave `.cortex/shared/` in: init keeps that
+/// answer, asks nothing about it, and adds only its local settings.
+#[test]
+fn init_keeps_the_team_s_sharing() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    std::fs::write(
+        repo.path().join(".gitignore"),
+        ".cortex/*\n!.cortex/shared/\n",
+    )?;
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(".gitignore"))?,
+        ".cortex/*\n!.cortex/shared/\n# Cortex\n.claude/settings.local.json\n"
+    );
+    Ok(())
+}
+
+/// A repository's own configuration cannot answer the question on upkeep by a language model,
+/// which only the user's may: with the holdout kept there and upkeep turned on there, init still
+/// asks about upkeep, and with no terminal refuses naming it.
+#[test]
+fn init_never_takes_a_repository_s_upkeep_for_an_answer() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    std::fs::create_dir(repo.path().join(".cortex"))?;
+    std::fs::write(
+        repo.path().join(".cortex").join("config.toml"),
+        "holdout.share = 0.1\n[upkeep.llm]\nenabled = true\n",
+    )?;
+    let refused = init_without_yes(repo.path(), home.path())?;
+    assert!(!refused.is_success);
+    assert!(
+        refused
+            .stderr
+            .contains("init asks \"Allow optional upkeep by a language model"),
+        "{}",
+        refused.stderr
+    );
+    Ok(())
+}
+
+/// A `.gitignore` the user made read-only is refused before anything is asked or written.
+#[test]
+fn init_leaves_a_read_only_gitignore() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    let gitignore = repo.path().join(".gitignore");
+    std::fs::write(&gitignore, "target/\n")?;
+    let mut permissions = std::fs::metadata(&gitignore)?.permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&gitignore, permissions.clone())?;
+    let done = init(repo.path(), home.path(), &[])?;
+    #[allow(
+        clippy::permissions_set_readonly_false,
+        reason = "the test gives the file back its write permission so it can be removed"
+    )]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(&gitignore, permissions)?;
+    assert!(!done.is_success);
+    assert!(done.stderr.contains("is read-only"), "{}", done.stderr);
+    assert!(!repo.path().join(".claude").exists());
+    assert!(!repo.path().join(".cortex").exists());
+    assert_eq!(std::fs::read_to_string(&gitignore)?, "target/\n");
+    Ok(())
+}
+
+/// A `.gitignore` that is a link is refused before anything is asked: git reads no ignores through
+/// one, so lines written there would never count.
+// Making a link to a file takes privileges on Windows; the check under test is the same there.
+#[cfg(unix)]
+#[test]
+fn init_refuses_a_linked_gitignore() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    std::fs::write(repo.path().join("ignores"), "target/\n")?;
+    std::os::unix::fs::symlink("ignores", repo.path().join(".gitignore"))?;
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(!done.is_success);
+    assert!(
+        done.stderr
+            .contains("is a link, which git does not read through"),
+        "{}",
+        done.stderr
+    );
+    assert!(!repo.path().join(".claude").exists());
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("ignores"))?,
+        "target/\n"
+    );
+    Ok(())
+}
+
+/// A configuration file that is a link leading outside the repository is refused before anything
+/// is asked, and the file it leads to is left as it was.
+// Making a link to a file takes privileges on Windows; the check under test is the same there.
+#[cfg(unix)]
+#[test]
+fn init_refuses_a_file_that_leads_outside() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let elsewhere = tempfile::tempdir()?;
+    let target = elsewhere.path().join("config.toml");
+    std::fs::write(&target, "")?;
+    std::fs::create_dir(repo.path().join(".cortex"))?;
+    std::os::unix::fs::symlink(&target, repo.path().join(".cortex").join("config.toml"))?;
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(!done.is_success);
+    assert!(
+        done.stderr.contains("leads outside the repository"),
+        "{}",
+        done.stderr
+    );
+    assert!(!repo.path().join(".claude").exists());
+    assert_eq!(std::fs::read_to_string(&target)?, "");
+    Ok(())
+}
+
 /// With no settings file, one is made, and the manifest records that there was none.
 #[test]
 fn init_creates_the_settings_file() -> TestResult {
@@ -457,6 +740,7 @@ fn init_creates_the_settings_file() -> TestResult {
         .map_err(|_| "one backup")?;
     let manifest: Value = serde_json::from_slice(&std::fs::read(folder.join("manifest.json"))?)?;
     assert_eq!(manifest.pointer("/files/0/backup"), Some(&Value::Null));
+    assert_eq!(manifest.pointer("/files/1/backup"), Some(&Value::Null));
     Ok(())
 }
 
@@ -481,13 +765,14 @@ fn init_refuses_a_file_it_cannot_read() -> TestResult {
     Ok(())
 }
 
-/// The user's scope writes `~/.claude/settings.json`, backs it up in `~/.cortex/backups`, and
-/// makes nothing in the repository: neither `.claude` nor `.cortex`, which would make the folder a
-/// repository for every hook below it.
+/// The user's scope writes `~/.claude/settings.json` and backs it up in `~/.cortex/backups`; the
+/// repository is set up all the same: its answer in its `.cortex/config.toml` with a backup of its
+/// own, git leaving out `.cortex/`, and no `.claude` of its own.
 #[test]
 fn init_for_the_user_writes_the_home_settings() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
     let run = init(repo.path(), home.path(), &["--scope", "user"])?;
     assert!(run.is_success, "{}", run.stderr);
     let value: Value = serde_json::from_slice(&std::fs::read(
@@ -501,7 +786,15 @@ fn init_for_the_user_writes_the_home_settings() -> TestResult {
     let backups = home.path().join(".cortex").join("backups");
     assert_eq!(std::fs::read_dir(backups)?.count(), 1);
     assert!(!repo.path().join(".claude").exists());
-    assert!(!repo.path().join(".cortex").exists());
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(".cortex").join("config.toml"))?,
+        REPOSITORY_ANSWER
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(".gitignore"))?,
+        "# Cortex\n.cortex/\n"
+    );
+    assert_eq!(backup_folders(repo.path())?.len(), 1);
     Ok(())
 }
 
@@ -524,8 +817,9 @@ fn init_leaves_a_read_only_file() -> TestResult {
     Ok(())
 }
 
-/// A repository whose `.claude` or `.cortex` folder is a link to a folder outside it is refused,
-/// and the folder it leads to stays empty: nothing is written through it.
+/// A repository whose `.claude` or `.cortex` folder is a link is refused, whether it leads to a
+/// folder outside it or to one beside it inside (here `docs`, which git would commit), and the
+/// folder it leads to stays empty: nothing is written through it.
 #[cfg(unix)]
 #[test]
 fn init_refuses_folders_that_lead_outside() -> TestResult {
@@ -533,11 +827,17 @@ fn init_refuses_folders_that_lead_outside() -> TestResult {
         let repo = tempfile::tempdir()?;
         let home = tempfile::tempdir()?;
         let elsewhere = tempfile::tempdir()?;
-        std::os::unix::fs::symlink(elsewhere.path(), repo.path().join(name))?;
-        let run = init(repo.path(), home.path(), &[])?;
-        assert!(!run.is_success, "{name}");
-        assert!(run.stderr.contains("leads elsewhere"), "{}", run.stderr);
-        assert_eq!(std::fs::read_dir(elsewhere.path())?.count(), 0, "{name}");
+        let docs = repo.path().join("docs");
+        std::fs::create_dir(&docs)?;
+        for target in [elsewhere.path(), docs.as_path()] {
+            let link = repo.path().join(name);
+            std::os::unix::fs::symlink(target, &link)?;
+            let run = init(repo.path(), home.path(), &[])?;
+            assert!(!run.is_success, "{name}");
+            assert!(run.stderr.contains("leads elsewhere"), "{}", run.stderr);
+            assert_eq!(std::fs::read_dir(target)?.count(), 0, "{name}");
+            std::fs::remove_file(&link)?;
+        }
     }
     Ok(())
 }

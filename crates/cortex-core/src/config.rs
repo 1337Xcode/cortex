@@ -37,6 +37,14 @@ pub const MAX_MMAP_BYTES: u64 = 2_147_418_112;
 /// crawler to a fraction of one core; 100,000 files take under 20 minutes.
 pub const DEFAULT_CRAWL_FILES_PER_SECOND: u64 = 100;
 
+/// The default for `holdout.share`: one task in ten goes without injections, so that Cortex's
+/// effect can be compared with tasks it did not help.
+pub const DEFAULT_HOLDOUT_SHARE: f64 = 0.10;
+
+/// The keys only the user's own configuration may set: what reaches the network is the user's to
+/// turn on, and a repository's file is the repository's, whoever wrote it.
+const USERS_ONLY: &[&str] = &["upkeep.llm.enabled"];
+
 /// The scale mode setting: chosen from the repository's size, or pinned by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModeSetting {
@@ -47,7 +55,7 @@ pub enum ModeSetting {
 }
 
 /// The settings in effect.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     /// `mode`: `auto`, or `tiny`, `small`, `medium` or `huge` to pin one. Default `auto`.
     pub mode: ModeSetting,
@@ -73,6 +81,13 @@ pub struct Config {
     /// `privacy.store_prompt_excerpt`: keep the first 200 characters of each prompt with its task.
     /// Default `false`: a prompt is kept only as its hash.
     pub store_prompt_excerpt: bool,
+    /// `holdout.share`: the share of tasks, from 0 to 1, that get no injections so that Cortex's
+    /// effect can be measured against them; 0 turns the holdout off. Default
+    /// [`DEFAULT_HOLDOUT_SHARE`].
+    pub holdout_share: f64,
+    /// `upkeep.llm.enabled`: let optional upkeep by a language model propose facts, with an API key
+    /// the user provides. Default `false`.
+    pub is_llm_upkeep_enabled: bool,
 }
 
 impl Default for Config {
@@ -87,21 +102,26 @@ impl Default for Config {
             mmap_bytes: DEFAULT_MMAP_BYTES,
             crawl_files_per_second: DEFAULT_CRAWL_FILES_PER_SECOND,
             store_prompt_excerpt: false,
+            holdout_share: DEFAULT_HOLDOUT_SHARE,
+            is_llm_upkeep_enabled: false,
         }
     }
 }
 
-/// One configuration file's text and a name for it in messages, such as its path.
+/// One configuration file's text, a name for it in messages such as its path, and whose it is.
 #[derive(Debug, Clone, Copy)]
 pub struct ConfigLayer<'a> {
     /// Where the text came from, shown in warnings and errors.
     pub origin: &'a str,
     /// The file's TOML text.
     pub text: &'a str,
+    /// Whether it is the user's own file, `~/.cortex/config.toml`, which alone may set the keys
+    /// that turn on what reaches the network; a repository's may not.
+    pub is_users: bool,
 }
 
 /// The settings that result from the layers, with a warning for each key that was ignored.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LoadedConfig {
     /// The settings in effect.
     pub config: Config,
@@ -142,23 +162,52 @@ pub fn load(layers: &[ConfigLayer<'_>]) -> Result<LoadedConfig, ConfigError> {
     let mut config = Config::default();
     let mut warnings = Vec::new();
     for layer in layers {
-        let table: toml::Table =
-            layer
-                .text
-                .parse()
-                .map_err(|error: toml::de::Error| ConfigError::Syntax {
-                    origin: layer.origin.to_owned(),
-                    message: error.message().to_owned(),
-                })?;
+        let table = parsed(layer)?;
         let mut entries = Vec::new();
         flatten("", &table, &mut entries);
         for (key, value) in entries {
+            if !layer.is_users && USERS_ONLY.contains(&key.as_str()) {
+                warnings.push(format!(
+                    "{}: `{key}` is read only from the user's own configuration, \
+                     ~/.cortex/config.toml, so it is ignored here",
+                    layer.origin
+                ));
+                continue;
+            }
             if !config.apply(&key, value, layer.origin)? {
                 warnings.push(format!("{}: unknown key `{key}` is ignored", layer.origin));
             }
         }
     }
     Ok(LoadedConfig { config, warnings })
+}
+
+/// The keys the configuration file `layer` sets, known or not, written with dots, in the order of
+/// their names.
+///
+/// # Errors
+///
+/// The file is not valid TOML.
+pub fn keys_set(layer: &ConfigLayer<'_>) -> Result<Vec<String>, ConfigError> {
+    let table = parsed(layer)?;
+    let mut entries = Vec::new();
+    flatten("", &table, &mut entries);
+    Ok(entries.into_iter().map(|(key, _)| key).collect())
+}
+
+/// The TOML table the file `layer` holds.
+///
+/// # Errors
+///
+/// The file is not valid TOML.
+fn parsed(layer: &ConfigLayer<'_>) -> Result<toml::Table, ConfigError> {
+    layer
+        .text
+        .parse()
+        .map_err(|error: toml::de::Error| ConfigError::Syntax {
+            origin: layer.origin.to_owned(),
+            message: error.message().to_owned(),
+        })
 }
 
 /// Every value in `table` that is not itself a table, with its key written with dots.
@@ -220,6 +269,13 @@ impl Config {
                 self.store_prompt_excerpt =
                     value.as_bool().ok_or_else(|| refuse("true or false"))?;
             }
+            "holdout.share" => {
+                self.holdout_share = share(value).ok_or_else(|| refuse("a number from 0 to 1"))?;
+            }
+            "upkeep.llm.enabled" => {
+                self.is_llm_upkeep_enabled =
+                    value.as_bool().ok_or_else(|| refuse("true or false"))?;
+            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -247,6 +303,16 @@ fn whole_number(value: &toml::Value) -> Option<u64> {
         .and_then(|number| u64::try_from(number).ok())
 }
 
+/// The value as a share from 0 to 1, written as a number with or without a fraction.
+fn share(value: &toml::Value) -> Option<f64> {
+    let number = match value {
+        toml::Value::Float(number) => *number,
+        toml::Value::Integer(number) => f64::from(i32::try_from(*number).ok()?),
+        _ => return None,
+    };
+    (0.0..=1.0).contains(&number).then_some(number)
+}
+
 /// The value as a list of strings.
 fn string_list(value: &toml::Value) -> Option<Vec<String>> {
     value
@@ -262,7 +328,43 @@ mod tests {
 
     /// A layer named `origin` holding `text`.
     fn layer<'a>(origin: &'a str, text: &'a str) -> ConfigLayer<'a> {
-        ConfigLayer { origin, text }
+        ConfigLayer {
+            origin,
+            text,
+            is_users: true,
+        }
+    }
+
+    /// A repository's layer named `origin` holding `text`.
+    fn repository_layer<'a>(origin: &'a str, text: &'a str) -> ConfigLayer<'a> {
+        ConfigLayer {
+            is_users: false,
+            ..layer(origin, text)
+        }
+    }
+
+    /// A repository's file cannot turn on LLM upkeep: the key is ignored there with a warning, and
+    /// the user's own file's value, here on, stands; nothing else changes.
+    #[test]
+    fn only_the_user_turns_on_llm_upkeep() -> Result<(), ConfigError> {
+        let cloned = repository_layer(
+            "repo",
+            "[upkeep.llm]\nenabled = true\n[holdout]\nshare = 0\n",
+        );
+        let loaded = load(&[cloned])?;
+        assert!(!loaded.config.is_llm_upkeep_enabled);
+        assert_eq!(loaded.config.holdout_share, 0.0);
+        assert_eq!(
+            loaded.warnings,
+            [
+                "repo: `upkeep.llm.enabled` is read only from the user's own configuration, \
+                 ~/.cortex/config.toml, so it is ignored here"
+            ]
+        );
+        let user = layer("user", "upkeep.llm.enabled = true\n");
+        let off = repository_layer("repo", "upkeep.llm.enabled = false\n");
+        assert!(load(&[user, off])?.config.is_llm_upkeep_enabled);
+        Ok(())
     }
 
     /// With no files, every setting has its documented default.
@@ -280,6 +382,8 @@ mod tests {
                 mmap_bytes: 256 * 1024 * 1024,
                 crawl_files_per_second: 100,
                 store_prompt_excerpt: false,
+                holdout_share: 0.1,
+                is_llm_upkeep_enabled: false,
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -291,13 +395,14 @@ mod tests {
     fn later_layers_override_earlier_ones() -> Result<(), ConfigError> {
         let user = layer(
             "user",
-            "mode = \"small\"\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n",
+            "mode = \"small\"\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n\
+             [upkeep.llm]\nenabled = true\n",
         );
-        let repository = layer(
+        let repository = repository_layer(
             "repository",
             "[index]\nmax_file_bytes = 5000\nparse_timeout_ms = 250\ncrawl_files_per_second = 7\n\
              [daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n\
-             [privacy]\nstore_prompt_excerpt = true\n",
+             [privacy]\nstore_prompt_excerpt = true\n[holdout]\nshare = 0.25\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -311,6 +416,8 @@ mod tests {
                 mmap_bytes: 0,
                 crawl_files_per_second: 7,
                 store_prompt_excerpt: true,
+                holdout_share: 0.25,
+                is_llm_upkeep_enabled: true,
             }
         );
         Ok(())
@@ -331,6 +438,46 @@ mod tests {
                 "repo config: unknown key `index.extra.flavour` is ignored".to_owned(),
                 "repo config: unknown key `retrieval.max_tokenz` is ignored".to_owned(),
             ]
+        );
+        Ok(())
+    }
+
+    /// The keys a file sets are listed with dots, tables and dotted keys alike, whether Cortex
+    /// knows them or not; a file that is not TOML is refused.
+    #[test]
+    fn the_keys_a_file_sets_are_listed() -> Result<(), ConfigError> {
+        let text = "mode = \"small\"\nretrieval.max_tokenz = 3\n[holdout]\nshare = 0\n\
+                    [upkeep.llm]\nenabled = true\n";
+        assert_eq!(
+            keys_set(&layer("f", text))?,
+            [
+                "holdout.share",
+                "mode",
+                "retrieval.max_tokenz",
+                "upkeep.llm.enabled"
+            ]
+        );
+        assert!(matches!(
+            keys_set(&layer("f", "[holdout")),
+            Err(ConfigError::Syntax { .. })
+        ));
+        Ok(())
+    }
+
+    /// A share may be written as the whole numbers 0 and 1; 0 turns the holdout off.
+    #[test]
+    fn whole_shares_are_read() -> Result<(), ConfigError> {
+        assert_eq!(
+            load(&[layer("f", "holdout.share = 0")])?
+                .config
+                .holdout_share,
+            0.0
+        );
+        assert_eq!(
+            load(&[layer("f", "holdout.share = 1")])?
+                .config
+                .holdout_share,
+            1.0
         );
         Ok(())
     }
@@ -400,6 +547,32 @@ mod tests {
                 "store.mmap_bytes = 2147418113",
                 "store.mmap_bytes",
                 "a whole number from 0 to 2147418112",
+            ),
+            (
+                "holdout.share = 1.5",
+                "holdout.share",
+                "a number from 0 to 1",
+            ),
+            (
+                "holdout.share = -0.1",
+                "holdout.share",
+                "a number from 0 to 1",
+            ),
+            ("holdout.share = 2", "holdout.share", "a number from 0 to 1"),
+            (
+                "holdout.share = \"10%\"",
+                "holdout.share",
+                "a number from 0 to 1",
+            ),
+            (
+                "holdout.share = nan",
+                "holdout.share",
+                "a number from 0 to 1",
+            ),
+            (
+                "upkeep.llm.enabled = 1",
+                "upkeep.llm.enabled",
+                "true or false",
             ),
         ];
         for (text, key, expected) in cases {

@@ -11,43 +11,12 @@
 //! gives what merging once gave. `cortex doctor` reads the same files through [`cortex_commands`]
 //! and [`flag`].
 
-use std::fs;
-use std::io;
-use std::path::Path;
-
-use anyhow::{Context as _, anyhow, bail};
+use anyhow::bail;
 use cortex_hook::HookEntry;
 use serde_json::{Map, Value};
 
 /// The arguments every Cortex hook command begins with.
 const ARGS_PREFIX: [&str; 3] = ["hook", "--agent", "claude"];
-
-/// The largest settings file read: Claude Code's are a few kilobytes, and Cortex reads
-/// configuration of no more than this anywhere.
-const MAX_SETTINGS_BYTES: u64 = 1_048_576;
-
-/// What the settings file at `path` holds, or `None` when there is none.
-///
-/// # Errors
-///
-/// The file cannot be read, is larger than [`MAX_SETTINGS_BYTES`], or is not UTF-8 text.
-pub(crate) fn read(path: &Path) -> anyhow::Result<Option<String>> {
-    let size_bytes = match fs::metadata(path) {
-        Ok(metadata) => metadata.len(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
-    };
-    if size_bytes > MAX_SETTINGS_BYTES {
-        bail!(
-            "{} holds {size_bytes} bytes, more than the {MAX_SETTINGS_BYTES} Cortex reads",
-            path.display()
-        );
-    }
-    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    String::from_utf8(bytes)
-        .map(Some)
-        .map_err(|_| anyhow!("{} is not UTF-8 text", path.display()))
-}
 
 /// The settings in `existing` (a file's text, or `None` when there is no file) with Cortex's hook
 /// for each of `entries`, run by `program`, as text: pretty JSON with a final line break.

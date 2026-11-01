@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::claude_settings;
+use cortex_core::{MAX_SETTINGS_BYTES, read_text_file};
 
 /// Which settings a file holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +82,6 @@ fn managed_folder() -> PathBuf {
 
 /// The settings file of `scope` at `path`, read.
 fn read(scope: Scope, path: PathBuf) -> SettingsFile {
-    let text = claude_settings::read(&path).map_err(|error| format!("{error:#}"));
+    let text = read_text_file(&path, MAX_SETTINGS_BYTES).map_err(|error| error.to_string());
     SettingsFile { scope, path, text }
 }

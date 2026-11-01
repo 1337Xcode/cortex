@@ -20,11 +20,11 @@ struct Run {
     stderr: String,
 }
 
-/// Runs `cortex <command> --root <repo>` with `home` as the home folder and a PATH holding only
+/// Runs `cortex <args> --root <repo>` with `home` as the home folder and a PATH holding only
 /// `home`'s `bin` folder (and on Windows the system's own folder, where the command shell is).
-fn cortex(command: &str, repo: &Path, home: &Path) -> TestResult<Run> {
+fn cortex(args: &[&str], repo: &Path, home: &Path) -> TestResult<Run> {
     let mut process = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    process.args([command, "--root"]).arg(repo);
+    process.args(args).arg("--root").arg(repo);
     isolate(&mut process, home);
     process.env("PATH", test_path(home, &[])?);
     let output = process.output()?;
@@ -64,11 +64,11 @@ fn repository() -> TestResult<(tempfile::TempDir, tempfile::TempDir)> {
 #[test]
 fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
     let (repo, home) = repository()?;
-    assert!(cortex("init", repo.path(), home.path())?.is_success);
+    assert!(cortex(&["init", "--yes"], repo.path(), home.path())?.is_success);
     let daemon = Daemon::start(repo.path(), home.path())?;
     let ready = daemon.first_line()?;
     assert!(ready.starts_with("cortex: daemon ready"), "{ready}");
-    let run = cortex("doctor", repo.path(), home.path())?;
+    let run = cortex(&["doctor"], repo.path(), home.path())?;
     let program = env!("CARGO_BIN_EXE_cortex");
     let names: Vec<&str> = run
         .lines
@@ -161,7 +161,7 @@ fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
 #[test]
 fn doctor_fails_without_hooks_or_daemon() -> TestResult {
     let (repo, home) = repository()?;
-    let run = cortex("doctor", repo.path(), home.path())?;
+    let run = cortex(&["doctor"], repo.path(), home.path())?;
     assert!(!run.is_success);
     let root = std::fs::canonicalize(repo.path())?;
     let root = cortex_core::canonical_root(&root)?;
@@ -205,7 +205,7 @@ fn doctor_fails_without_hooks_or_daemon() -> TestResult {
 fn doctor_fails_on_an_older_claude_code() -> TestResult {
     let (repo, home) = repository()?;
     let claude = stand_in_claude(home.path(), "2.1.200")?;
-    let run = cortex("doctor", repo.path(), home.path())?;
+    let run = cortex(&["doctor"], repo.path(), home.path())?;
     assert!(!run.is_success);
     let agent: Vec<String> = run
         .lines
@@ -236,7 +236,7 @@ fn doctor_fails_on_an_older_claude_code() -> TestResult {
 #[test]
 fn doctor_fails_on_silenced_and_stale_hooks() -> TestResult {
     let (repo, home) = repository()?;
-    assert!(cortex("init", repo.path(), home.path())?.is_success);
+    assert!(cortex(&["init", "--yes"], repo.path(), home.path())?.is_success);
     let user_settings = home.path().join(".claude").join("settings.json");
     std::fs::create_dir_all(home.path().join(".claude"))?;
     std::fs::write(&user_settings, r#"{"disableAllHooks": true}"#)?;
@@ -245,7 +245,7 @@ fn doctor_fails_on_silenced_and_stale_hooks() -> TestResult {
     let program = serde_json::to_string(env!("CARGO_BIN_EXE_cortex"))?;
     let gone = serde_json::to_string(&repo.path().join("gone").join("cortex"))?;
     std::fs::write(&settings, text.replace(&program, &gone))?;
-    let run = cortex("doctor", repo.path(), home.path())?;
+    let run = cortex(&["doctor"], repo.path(), home.path())?;
     assert!(!run.is_success);
     let failed: Vec<String> = starting(&run, "FAIL")
         .into_iter()

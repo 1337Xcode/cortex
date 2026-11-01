@@ -31,6 +31,19 @@ pub(crate) fn note(text: &str) -> anyhow::Result<()> {
     writeln!(stderr, "cortex: {}", printable(text)).context("writing to stderr")
 }
 
+/// Asks the user `question` on stderr, after `cortex: `, its control characters escaped, leaving
+/// the cursor after it for the answer.
+///
+/// # Errors
+///
+/// Fails when stderr cannot be written.
+pub(crate) fn ask(question: &str) -> anyhow::Result<()> {
+    let mut stderr = io::stderr().lock();
+    write!(stderr, "cortex: {} ", printable(question))
+        .and_then(|()| stderr.flush())
+        .context("writing to stderr")
+}
+
 /// Writes a failed command's error, with its chain of causes, to stderr as one line, its control
 /// characters escaped.
 ///

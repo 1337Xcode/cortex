@@ -6,32 +6,23 @@
 //! `.cortex` is the user's own, and no repository Cortex serves is there.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use cortex_core::canonical_root;
 
-/// How long git has to say where the repository's top is.
-const GIT_WITHIN: Duration = Duration::from_secs(5);
+use super::git;
 
-/// The most of git's answer read: one path, however long.
-const MAX_ANSWER_BYTES: u64 = 65_536;
-
-/// The name git's program has on this platform.
-const GIT: &[&str] = if cfg!(windows) {
-    &["git.exe"]
-} else {
-    &["git"]
-};
-
-/// Where Cortex is set up, and why it is not git's repository top when it is not.
+/// Where Cortex is set up, why it is not git's repository top when it is not, and where no git
+/// that runs for it may be.
 #[derive(Debug)]
 pub(super) struct Root {
     /// The folder, in its canonical form.
     pub(super) folder: PathBuf,
     /// Why it is the folder init started from rather than the top of a git repository.
     pub(super) without_git: Option<String>,
+    /// The folder no git that runs for this repository may be inside (see
+    /// [`repositories_around`]).
+    pub(super) git_bound: PathBuf,
 }
 
 /// Where `cortex init`, started from the folder `start`, sets Cortex up for the user whose home
@@ -45,21 +36,46 @@ pub(super) fn find(start: &Path, home: &Path) -> anyhow::Result<Root> {
         canonical_root(start).with_context(|| format!("finding the folder {}", start.display()))?;
     let home = canonical_root(home)
         .with_context(|| format!("finding the home folder {}", home.display()))?;
-    let root = match git_top(&start, &home) {
-        Ok(top) if !start.starts_with(&top) => alone(
+    let git_bound = repositories_around(&start, &home).to_path_buf();
+    let (folder, without_git) = match git_top(&start, &git_bound) {
+        Ok(top) if !start.starts_with(&top) => (
             start,
-            "git names a repository top that does not hold this folder",
+            Some("git names a repository top that does not hold this folder"),
         ),
-        Ok(top) if home.starts_with(&top) => alone(
+        Ok(top) if home.starts_with(&top) => (
             start,
-            "git's repository here is the home folder or holds it, which Cortex never sets up",
+            Some(
+                "git's repository here is the home folder or holds it, which Cortex never sets up",
+            ),
         ),
-        Ok(top) => Root {
-            folder: top,
-            without_git: None,
-        },
-        Err(why) => alone(start, &why),
+        Ok(top) => (top, None),
+        Err(why) => {
+            return checked(
+                Root {
+                    folder: start,
+                    without_git: Some(why),
+                    git_bound,
+                },
+                &home,
+            );
+        }
     };
+    checked(
+        Root {
+            folder,
+            without_git: without_git.map(str::to_owned),
+            git_bound,
+        },
+        &home,
+    )
+}
+
+/// `root`, unless its folder is the home folder `home` or holds it.
+///
+/// # Errors
+///
+/// The folder is the home folder or holds it.
+fn checked(root: Root, home: &Path) -> anyhow::Result<Root> {
     if home.starts_with(&root.folder) {
         bail!(
             "Cortex never sets up the home folder or a folder holding it ({}); run `cortex init` \
@@ -70,29 +86,10 @@ pub(super) fn find(start: &Path, home: &Path) -> anyhow::Result<Root> {
     Ok(root)
 }
 
-/// The folder `start` set up alone, for the reason `why`.
-fn alone(start: PathBuf, why: &str) -> Root {
-    Root {
-        folder: start,
-        without_git: Some(why.to_owned()),
-    }
-}
-
 /// The top of the git repository that holds `start`, in its canonical form, or why there is none
-/// to use. Git is the program the `PATH` names outside every repository around `start` (see
-/// [`repositories_around`]), run in `start` with no repository named by the environment, so that
-/// it finds the one that holds `start`.
-fn git_top(start: &Path, home: &Path) -> Result<PathBuf, String> {
-    let git = crate::program::on_path(GIT, repositories_around(start, home))
-        .ok_or_else(|| "git is not on the PATH".to_owned())?;
-    let mut command = Command::new(git);
-    command
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(start)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE");
-    let captured = cortex_daemon::capture(&mut command, GIT_WITHIN, MAX_ANSWER_BYTES)
-        .map_err(|error| format!("git did not say where the repository is ({error})"))?;
+/// to use. Git runs as [`git::run`] runs it, outside `bound`.
+fn git_top(start: &Path, bound: &Path) -> Result<PathBuf, String> {
+    let captured = git::run(&["rev-parse", "--show-toplevel"], start, bound)?;
     if !captured.status.success() {
         return Err(format!(
             "git named no repository here (it ended with {})",
