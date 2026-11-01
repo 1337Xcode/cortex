@@ -30,7 +30,9 @@ use crate::commands::init::without_lines;
 /// kind; or the run's copy is gone or does not hold what init copied. The file is left as it is.
 pub(super) fn undo(run: &Run, change: &Changed, program: &str) -> anyhow::Result<Option<String>> {
     let path = PathBuf::from(&change.path);
-    checked_inside(&path, &run.bound)?;
+    if let Some(bound) = &run.bound {
+        checked_inside(&path, bound)?;
+    }
     let Some(current) = read_plain(&path)? else {
         return Ok(None);
     };
@@ -106,7 +108,9 @@ fn read_plain(path: &Path) -> anyhow::Result<Option<String>> {
 fn restored(run: &Run, change: &Changed, path: &Path, current: &str) -> anyhow::Result<String> {
     let Some(copy) = &change.backup else {
         remove_unchanged(path, current)?;
-        remove_claude_left_empty(path, &run.bound)?;
+        if let Some(bound) = &run.bound {
+            remove_claude_left_empty(path, bound)?;
+        }
         return Ok(format!("removed {}, which init made", path.display()));
     };
     let before = copied(run, copy)?;
@@ -210,12 +214,5 @@ fn remove_claude_left_empty(path: &Path, bound: &Path) -> anyhow::Result<()> {
     if path.parent() != Some(folder.as_path()) {
         return Ok(());
     }
-    let is_empty = fs::read_dir(&folder)
-        .with_context(|| format!("reading {}", folder.display()))?
-        .next()
-        .is_none();
-    if is_empty {
-        fs::remove_dir(&folder).with_context(|| format!("removing {}", folder.display()))?;
-    }
-    Ok(())
+    super::remove_if_empty(&folder)
 }

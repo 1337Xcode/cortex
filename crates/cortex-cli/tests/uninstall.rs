@@ -4,7 +4,9 @@
 //! repository's files are left alone; a manifest that came with the repository is never read; a
 //! backup copy that does not hold what init copied, or is a link, is not restored; a daemon of a
 //! newer Cortex is stopped too, and one that never answers fails uninstall; running it again
-//! changes nothing.
+//! changes nothing. `--purge` deletes what Cortex keeps of the repository but the folder the team
+//! shares, never through a link, never the home folder's, and never while a change is left;
+//! `--scope user` also undoes the user's own files.
 
 mod common;
 
@@ -18,11 +20,20 @@ use cortex_core::ipc::CORTEX_VERSION;
 use cortex_core::{ContentHash, RepoId, UserFolder, canonical_root};
 use cortex_daemon::is_running;
 
-/// Runs `cortex uninstall --root <repo>` with `home` as the home folder.
-fn uninstall(repo: &Path, home: &Path) -> TestResult<Printed> {
+/// Runs `cortex uninstall --root <repo>` with `extra` arguments and `home` as the home folder.
+fn uninstall(repo: &Path, home: &Path, extra: &[&str]) -> TestResult<Printed> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.args(["uninstall", "--root"]).arg(repo);
+    command.args(["uninstall", "--root"]).arg(repo).args(extra);
     run(&mut command, home, &[])
+}
+
+/// The names of the entries of `folder`, sorted.
+fn names(folder: &Path) -> TestResult<Vec<String>> {
+    let mut names = std::fs::read_dir(folder)?
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+        .collect::<Result<Vec<_>, _>>()?;
+    names.sort();
+    Ok(names)
 }
 
 /// The one run folder init made in `repo`'s `.cortex/backups/`.
@@ -40,7 +51,8 @@ fn only_run(repo: &Path) -> TestResult<PathBuf> {
 /// The line uninstall ends with while the repository at `root` keeps its `.cortex` folder.
 fn stays(root: &Path) -> String {
     format!(
-        "note: {} stays, with the index and init's backups\n",
+        "note: {} stays, with the index and init's backups; `cortex uninstall --purge` deletes \
+         it\n",
         root.join(".cortex").display()
     )
 }
@@ -73,7 +85,7 @@ fn uninstall_gives_back_every_byte_init_changed() -> TestResult {
     assert!(done.is_success, "{}", done.stderr);
     assert_ne!(std::fs::read_to_string(&settings)?, original);
     assert!(is_daemon_running(repo.path(), home.path())?);
-    let undone = uninstall(repo.path(), home.path())?;
+    let undone = uninstall(repo.path(), home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     let root = canonical_root(repo.path())?;
     let expected = format!(
@@ -91,7 +103,7 @@ fn uninstall_gives_back_every_byte_init_changed() -> TestResult {
     assert!(!repo.path().join(".cortex").join("config.toml").exists());
     assert!(home.path().join(".cortex").join("config.toml").exists());
     assert!(!is_daemon_running(repo.path(), home.path())?);
-    let again = uninstall(repo.path(), home.path())?;
+    let again = uninstall(repo.path(), home.path(), &[])?;
     assert!(again.is_success, "{}", again.stderr);
     assert_eq!(
         again.stdout,
@@ -128,7 +140,7 @@ fn uninstall_keeps_what_the_user_changed_since() -> TestResult {
     let config = repo.path().join(".cortex").join("config.toml");
     let answers = std::fs::read_to_string(&config)?;
     std::fs::write(&config, format!("{answers}# mine\n"))?;
-    let undone = uninstall(repo.path(), home.path())?;
+    let undone = uninstall(repo.path(), home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     let root = canonical_root(repo.path())?;
     let expected = format!(
@@ -187,7 +199,7 @@ fn uninstall_never_reads_a_manifest_in_the_repository() -> TestResult {
         }],
     });
     std::fs::write(forged.join("manifest.json"), serde_json::to_vec(&manifest)?)?;
-    let undone = uninstall(repo.path(), home.path())?;
+    let undone = uninstall(repo.path(), home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     assert!(!settings.exists(), "{}", undone.stdout);
     assert!(!root.join(".claude").exists(), "{}", undone.stdout);
@@ -223,7 +235,7 @@ fn uninstall_refuses_a_copy_that_changed() -> TestResult {
     // Init changed the `.gitignore` first, so the settings are its second copy.
     let copy = only_run(repo.path())?.join("2-settings.local.json");
     std::fs::write(&copy, "{}")?;
-    let undone = uninstall(repo.path(), home.path())?;
+    let undone = uninstall(repo.path(), home.path(), &[])?;
     assert!(!undone.is_success, "{}", undone.stdout);
     assert!(
         undone.stderr.contains("does not hold what init copied")
@@ -253,7 +265,7 @@ fn uninstall_stops_a_daemon_of_a_newer_cortex() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     let newer = FakeDaemon::start(repo.path(), home.path(), Script::Mismatch("99.0.0"))?;
-    let undone = uninstall(repo.path(), home.path())?;
+    let undone = uninstall(repo.path(), home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     let root = canonical_root(repo.path())?;
     let expected = format!(
@@ -290,7 +302,7 @@ fn uninstall_leaves_another_repository_alone() -> TestResult {
         .iter()
         .map(std::fs::read)
         .collect::<Result<Vec<_>, _>>()?;
-    let undone = uninstall(first.path(), home.path())?;
+    let undone = uninstall(first.path(), home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     let first_settings = first.path().join(".claude").join("settings.local.json");
     assert!(!first_settings.exists());
@@ -320,7 +332,7 @@ fn uninstall_undoes_runs_newest_first() -> TestResult {
     let second = init(repo.path(), home.path(), &[])?;
     assert!(second.is_success, "{}", second.stderr);
     assert_ne!(std::fs::read_to_string(&settings)?, compact);
-    let undone = uninstall(repo.path(), home.path())?;
+    let undone = uninstall(repo.path(), home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     assert_eq!(std::fs::read_to_string(&settings)?, compact);
     Ok(())
@@ -342,13 +354,13 @@ fn uninstall_keeps_a_team_s_block_of_cortex_lines() -> TestResult {
     let both = "# Cortex\n.cortex/\n# Cortex\n.claude/settings.local.json\n";
     assert_eq!(std::fs::read_to_string(&gitignore)?, both);
     std::fs::write(&gitignore, format!("{both}dist/\n"))?;
-    let undone = uninstall(repo.path(), home.path())?;
+    let undone = uninstall(repo.path(), home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     assert_eq!(
         std::fs::read_to_string(&gitignore)?,
         "# Cortex\n.cortex/\ndist/\n"
     );
-    let again = uninstall(repo.path(), home.path())?;
+    let again = uninstall(repo.path(), home.path(), &[])?;
     assert!(again.is_success, "{}", again.stderr);
     assert_eq!(
         std::fs::read_to_string(&gitignore)?,
@@ -372,10 +384,10 @@ fn uninstall_leaves_a_file_as_it_was_before_init() -> TestResult {
     let done = init(repo.path(), home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
     assert_ne!(std::fs::read_to_string(&settings)?, teammates);
-    let undone = uninstall(repo.path(), home.path())?;
+    let undone = uninstall(repo.path(), home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     assert_eq!(std::fs::read_to_string(&settings)?, teammates);
-    let again = uninstall(repo.path(), home.path())?;
+    let again = uninstall(repo.path(), home.path(), &[])?;
     assert!(again.is_success, "{}", again.stderr);
     assert_eq!(std::fs::read_to_string(&settings)?, teammates);
     Ok(())
@@ -401,7 +413,7 @@ fn uninstall_refuses_a_copy_that_is_a_link() -> TestResult {
     let copy = only_run(repo.path())?.join("2-settings.local.json");
     std::fs::remove_file(&copy)?;
     std::os::unix::fs::symlink("/dev/zero", &copy)?;
-    let undone = uninstall(repo.path(), home.path())?;
+    let undone = uninstall(repo.path(), home.path(), &[])?;
     assert!(!undone.is_success, "{}", undone.stdout);
     assert!(
         undone
@@ -415,7 +427,8 @@ fn uninstall_refuses_a_copy_that_is_a_link() -> TestResult {
 }
 
 /// A daemon that holds the repository but never answers, as a stuck one, fails uninstall once the
-/// 20 s it is given have passed: here the test holds the repository's lock and nothing listens.
+/// 20 s it is given have passed, and keeps `--purge` from deleting anything: here the test holds
+/// the repository's lock and nothing listens.
 #[test]
 fn uninstall_fails_when_the_daemon_never_answers() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -425,15 +438,219 @@ fn uninstall_fails_when_the_daemon_never_answers() -> TestResult {
     std::fs::create_dir_all(user.run_folder())?;
     let lock = std::fs::File::create(files.lock_path())?;
     lock.lock()?;
-    let undone = uninstall(repo.path(), home.path())?;
+    let kept = repo.path().join(".cortex").join("keep.txt");
+    std::fs::create_dir_all(repo.path().join(".cortex"))?;
+    std::fs::write(&kept, "mine")?;
+    let undone = uninstall(repo.path(), home.path(), &["--purge"])?;
     assert!(!undone.is_success, "{}", undone.stdout);
     assert!(
         undone
             .stderr
-            .contains("the daemon holds the repository but did not answer within 20 s"),
+            .contains("the daemon holds the repository but did not answer within 20 s")
+            && undone.stderr.contains(&format!(
+                "nothing purged from {}: a daemon holds the repository",
+                canonical_root(repo.path())?.join(".cortex").display()
+            )),
         "{}",
         undone.stderr
     );
+    assert_eq!(std::fs::read_to_string(&kept)?, "mine");
     drop(lock);
+    Ok(())
+}
+
+/// `--purge` deletes what Cortex keeps of the repository but the folder the team shares: its
+/// `.cortex/` but `.cortex/shared/`, init's manifest for it in the user's folder (the run folder
+/// stays for the user's own manifest, which holds the user's configuration), and the daemon's log
+/// with the files it rotated to. Another repository's log stays, and so do the run files.
+#[test]
+fn purge_deletes_what_cortex_keeps_but_the_shared_folder() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let root = canonical_root(repo.path())?;
+    let shared = root.join(".cortex").join("shared");
+    std::fs::create_dir_all(&shared)?;
+    std::fs::write(shared.join("facts.json"), "[]")?;
+    let logs = home.path().join(".cortex").join("logs");
+    let repo_id = RepoId::of(&root);
+    let log = logs.join(format!("daemon-{repo_id}.log"));
+    assert!(log.exists());
+    let rotated = logs.join(format!("daemon-{repo_id}.log.1"));
+    std::fs::write(&rotated, "older\n")?;
+    let other = logs.join("daemon-0000000000000000.log");
+    std::fs::write(&other, "another repository's\n")?;
+    let lock = UserFolder::in_home(home.path())
+        .run_files(&repo_id)
+        .lock_path();
+    assert!(lock.exists());
+    let backups = home.path().join(".cortex").join("backups");
+    let [run] = <[String; 1]>::try_from(names(&backups)?).map_err(|names| format!("{names:?}"))?;
+    let undone = uninstall(repo.path(), home.path(), &["--purge"])?;
+    assert!(undone.is_success, "{}", undone.stderr);
+    let purged = format!(
+        "daemon: stopped (Cortex {CORTEX_VERSION})\npurged {} but {}, which the team shares \
+         through git\npurged 1 of init's manifests for this repository from {}\npurged the \
+         daemon's log of this repository from {}\n",
+        root.join(".cortex").display(),
+        shared.display(),
+        backups.display(),
+        logs.display()
+    );
+    assert!(undone.stdout.ends_with(&purged), "{}", undone.stdout);
+    assert_eq!(names(&root.join(".cortex"))?, ["shared"]);
+    assert_eq!(std::fs::read_to_string(shared.join("facts.json"))?, "[]");
+    assert!(!log.exists() && !rotated.exists());
+    assert_eq!(std::fs::read_to_string(&other)?, "another repository's\n");
+    assert!(lock.exists());
+    assert_eq!(names(&backups.join(&run))?, ["manifest.json"]);
+    assert!(home.path().join(".cortex").join("config.toml").exists());
+    Ok(())
+}
+
+/// A change uninstall could not undo keeps `--purge` from deleting anything: the backups a retry
+/// needs stay, and so does the rest of `.cortex/`.
+#[test]
+fn purge_deletes_nothing_while_a_change_is_left() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    let settings = repo.path().join(".claude").join("settings.local.json");
+    std::fs::create_dir_all(repo.path().join(".claude"))?;
+    std::fs::write(&settings, "{\"model\": \"opus\"}")?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    // Init made the `.gitignore` first, so the settings are its second copy.
+    let run = only_run(repo.path())?;
+    std::fs::write(run.join("2-settings.local.json"), "{}")?;
+    let undone = uninstall(repo.path(), home.path(), &["--purge"])?;
+    assert!(!undone.is_success, "{}", undone.stdout);
+    assert!(
+        undone.stderr.contains(&format!(
+            "nothing purged from {}: it keeps the backups that undoing what is left needs",
+            canonical_root(repo.path())?.join(".cortex").display()
+        )),
+        "{}",
+        undone.stderr
+    );
+    assert!(run.join("2-settings.local.json").exists());
+    Ok(())
+}
+
+/// `--purge` from the home folder is refused, its `.cortex` being the user's own, for every
+/// repository, and so is `--purge` from a folder holding the home folder: each `.cortex` keeps
+/// what it holds.
+#[test]
+fn purge_never_deletes_the_home_folder_s_cortex() -> TestResult {
+    let outer = tempfile::tempdir()?;
+    let home = outer.path().join("home");
+    let own = home.join(".cortex");
+    std::fs::create_dir_all(&own)?;
+    std::fs::write(own.join("config.toml"), "mode = \"auto\"\n")?;
+    let above = outer.path().join(".cortex");
+    std::fs::create_dir_all(&above)?;
+    std::fs::write(above.join("keep.txt"), "mine")?;
+    for root in [home.as_path(), outer.path()] {
+        let undone = uninstall(root, &home, &["--purge"])?;
+        assert!(!undone.is_success, "{}", undone.stdout);
+        assert!(
+            undone.stderr.contains(&format!(
+                "{} is the home folder or holds it, whose `.cortex` is the user's own, for every \
+                 repository; purge never deletes it",
+                canonical_root(root)?.display()
+            )),
+            "{}",
+            undone.stderr
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(own.join("config.toml"))?,
+        "mode = \"auto\"\n"
+    );
+    assert_eq!(std::fs::read_to_string(above.join("keep.txt"))?, "mine");
+    Ok(())
+}
+
+/// A `.cortex` that is a link to a folder elsewhere is refused: purge deletes nothing through it,
+/// and the folder it leads to keeps what it holds. A link inside a `.cortex` of the repository's
+/// own goes as a link, the folder it leads to untouched. Links need no privilege on Unix alone.
+#[cfg(unix)]
+#[test]
+fn purge_refuses_a_linked_cortex_folder() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let elsewhere = tempfile::tempdir()?;
+    std::fs::write(elsewhere.path().join("keep.txt"), "mine")?;
+    std::os::unix::fs::symlink(elsewhere.path(), repo.path().join(".cortex"))?;
+    let undone = uninstall(repo.path(), home.path(), &["--purge"])?;
+    assert!(!undone.is_success, "{}", undone.stdout);
+    assert!(
+        undone.stderr.contains("purge deletes nothing through it"),
+        "{}",
+        undone.stderr
+    );
+    assert_eq!(
+        std::fs::read_to_string(elsewhere.path().join("keep.txt"))?,
+        "mine"
+    );
+    let own = tempfile::tempdir()?;
+    std::fs::create_dir(own.path().join(".cortex"))?;
+    std::os::unix::fs::symlink(elsewhere.path(), own.path().join(".cortex").join("inside"))?;
+    let purged = uninstall(own.path(), home.path(), &["--purge"])?;
+    assert!(purged.is_success, "{}", purged.stderr);
+    assert!(!own.path().join(".cortex").exists());
+    assert_eq!(
+        std::fs::read_to_string(elsewhere.path().join("keep.txt"))?,
+        "mine"
+    );
+    Ok(())
+}
+
+/// After `init --scope user`, uninstalling the repository's files leaves the user's settings, which
+/// hold Cortex's hooks for every repository, and says so last on stdout; `--scope user` then gives
+/// the settings their bytes back and removes the configuration init made in the home folder.
+#[test]
+fn uninstall_for_the_user_undoes_the_user_s_files() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
+    std::fs::create_dir_all(home.path().join(".claude"))?;
+    std::fs::write(
+        home.path().join(".claude").join("settings.json"),
+        "{\"theme\": \"dark\"}",
+    )?;
+    let done = init(repo.path(), home.path(), &["--scope", "user"])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let settings = canonical_root(&home.path().join(".claude"))?.join("settings.json");
+    let config = home.path().join(".cortex").join("config.toml");
+    assert!(settings.exists() && config.exists());
+    let project = uninstall(repo.path(), home.path(), &[])?;
+    assert!(project.is_success, "{}", project.stderr);
+    assert!(settings.exists() && config.exists());
+    let note = format!(
+        "note: {} holds Cortex's hooks, which run in every repository; `cortex uninstall --scope \
+         user` takes them out\n",
+        home.path().join(".claude").join("settings.json").display()
+    );
+    assert!(project.stdout.ends_with(&note), "{}", project.stdout);
+    let user = uninstall(repo.path(), home.path(), &["--scope", "user"])?;
+    assert!(user.is_success, "{}", user.stderr);
+    let root = canonical_root(repo.path())?;
+    let expected = format!(
+        "repository: {}\nremoved {}, which init made\nrestored {} from its backup\n\
+         daemon: not running\n{}",
+        root.display(),
+        config.display(),
+        settings.display(),
+        stays(&root)
+    );
+    assert_eq!(user.stdout, expected);
+    assert_eq!(std::fs::read_to_string(&settings)?, "{\"theme\": \"dark\"}");
+    assert!(!config.exists());
     Ok(())
 }

@@ -2,25 +2,31 @@
 //! file init changed gets back what it held before, from init's backup, when it still holds what
 //! init wrote, and is removed when init made it; a file changed since keeps the change, and only
 //! what init added comes out of it (see [`restore`]). Init's manifests are read from the user's
-//! folder alone (see [`runs`]): a manifest inside a repository may have come with the clone. The
-//! files go first, so that Claude Code, which its documentation says reloads settings files when
-//! they change, stops running the hooks; then the repository's daemon, whatever its version, is
-//! asked to stop. Nothing is said until all of that is done, so that an output closed early never
-//! stops it partway. Running it again changes nothing.
+//! folder alone (see [`runs`]): a manifest inside a repository may have come with the clone.
+//! `--scope user` also undoes init's changes to the user's own files, which serve every
+//! repository. The files go first, so that Claude Code, which its documentation says reloads
+//! settings files when they change, stops running the hooks; then the repository's daemon,
+//! whatever its version, is asked to stop; then `--purge` deletes what Cortex keeps of the
+//! repository (see [`purge`]), only once every change is undone and the daemon has stopped, so
+//! that no backup a retry needs is lost. Nothing is said until all of that is done, so that an
+//! output closed early never stops it partway. Running it again changes nothing.
 
+mod purge;
 mod restore;
 mod runs;
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use cortex_core::ipc::Role;
-use cortex_core::{RepoId, UserFolder};
+use cortex_core::{MAX_SETTINGS_BYTES, RepoId, UserFolder, read_text_file};
 use cortex_daemon::is_running;
 use cortex_hook::{ClientError, stop_any};
 
-use crate::{output, repository, upgrade};
+use super::init::Scope;
+use crate::{claude_settings, output, repository, upgrade};
 
 /// How long uninstall gives the daemon to stop, from the first request: it drains its inbox and
 /// gives its connections a second, as when a newer build replaces it.
@@ -32,6 +38,14 @@ pub(crate) struct Args {
     /// The repository's root folder; the current folder when left out.
     #[arg(long)]
     root: Option<PathBuf>,
+    /// Whose files to undo: the repository's, or also the user's own, which serve every
+    /// repository.
+    #[arg(long, value_enum, default_value_t = Scope::Project)]
+    scope: Scope,
+    /// Also delete the repository's `.cortex/` but `.cortex/shared/`, and its manifests and daemon
+    /// log in the user's folder.
+    #[arg(long)]
+    purge: bool,
 }
 
 /// What uninstall says once it is done: lines for stdout, and for stderr the changes it could not
@@ -46,14 +60,15 @@ struct Report {
     notes: Vec<String>,
 }
 
-/// Undoes init's changes to the repository `args` name and stops its daemon, then says what it
-/// did.
+/// Undoes init's changes to the repository `args` name, and to the user's files at the user's
+/// scope, stops the repository's daemon and, asked to, purges what Cortex keeps of it; then says
+/// what it did.
 ///
 /// # Errors
 ///
 /// No home folder, a folder that cannot be found, a change that could not be undone (each named on
-/// stderr, the others undone all the same), a daemon that does not stop, or an output that cannot
-/// be written.
+/// stderr, the others undone all the same), a daemon that does not stop, a purge that fails, or
+/// an output that cannot be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let root = repository::root(args.root.as_deref())?;
     let user = UserFolder::of_current_user().context("finding the home folder")?;
@@ -62,27 +77,37 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         said: vec![format!("repository: {}", root.display())],
         ..Report::default()
     };
-    let runs = runs::of_repository(&user, &root, &mut report.notes)?;
-    if runs.is_empty() {
+    let repository_runs = runs::of_repository(&user, &root, &mut report.notes)?;
+    let user_runs = match args.scope {
+        Scope::Project => Vec::new(),
+        Scope::User => runs::of_user(&user, &mut report.notes)?,
+    };
+    if repository_runs.is_empty() && user_runs.is_empty() {
         report.said.push(format!(
             "nothing to restore: no manifest of init's in {} names this repository",
             user.path().join("backups").display()
         ));
     }
-    undo_all(&runs, &program, &mut report);
+    undo_all(&repository_runs, &program, &mut report);
+    undo_all(&user_runs, &program, &mut report);
     let stopped = stopped(&root, &user);
     if let Ok(line) = &stopped {
         report.said.push(line.clone());
     }
-    if root.join(".cortex").is_dir() {
-        report.said.push(format!(
-            "note: {} stays, with the index and init's backups",
-            root.join(".cortex").display()
-        ));
+    let purged = purge_or_keep(
+        (args.purge, stopped.is_ok()),
+        (&root, &user),
+        &repository_runs,
+        &mut report,
+    );
+    if args.scope == Scope::Project {
+        report.said.extend(users_hooks(&program));
     }
-    // A daemon that did not stop matters more than an output that could not be written.
+    // A daemon that did not stop, or a purge that failed, matters more than an output that could
+    // not be written.
     let written = said(&report);
     stopped?;
+    purged?;
     written?;
     if !report.failures.is_empty() {
         bail!(
@@ -107,6 +132,77 @@ fn undo_all(runs: &[runs::Run], program: &str, report: &mut Report) {
     }
 }
 
+/// Purges what Cortex keeps of the repository at `root`, whose user folder is `user` and whose
+/// init `runs` were undone, when `is_asked`, the daemon `is_stopped`, none holds the repository
+/// again (a hook a running agent still has may start one) and nothing in `report` failed;
+/// otherwise says why nothing was purged, or, not asked, that `.cortex/` stays. What it did goes
+/// into `report`, as far as it got.
+///
+/// # Errors
+///
+/// Whether a daemon runs cannot be found, or the purge failed.
+fn purge_or_keep(
+    (is_asked, is_stopped): (bool, bool),
+    (root, user): (&Path, &UserFolder),
+    runs: &[runs::Run],
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let folder = root.join(".cortex");
+    if !is_asked {
+        if folder.is_dir() {
+            report.said.push(format!(
+                "note: {} stays, with the index and init's backups; `cortex uninstall --purge` \
+                 deletes it",
+                folder.display()
+            ));
+        }
+        return Ok(());
+    }
+    let why_not = if !report.failures.is_empty() {
+        Some("it keeps the backups that undoing what is left needs")
+    } else if !is_stopped
+        || is_running(user, &RepoId::of(root)).context("finding whether the daemon runs")?
+    {
+        Some("a daemon holds the repository")
+    } else {
+        None
+    };
+    match why_not {
+        Some(why) => {
+            report
+                .notes
+                .push(format!("nothing purged from {}: {why}", folder.display()));
+            Ok(())
+        }
+        None => purge::purged(root, user, runs, &mut report.said),
+    }
+}
+
+/// The note to give when the user's own Claude Code settings hold Cortex's hooks, which run in
+/// every repository and which only `--scope user` takes out; `None` when they hold none.
+fn users_hooks(program: &str) -> Option<String> {
+    let settings = std::env::home_dir()?.join(".claude").join("settings.json");
+    let found = read_text_file(&settings, MAX_SETTINGS_BYTES)
+        .map_err(anyhow::Error::from)
+        .and_then(|text| {
+            text.map_or(Ok(Vec::new()), |text| {
+                claude_settings::cortex_commands(&text, program)
+            })
+        });
+    match found {
+        Ok(commands) if commands.is_empty() => None,
+        Ok(_) => Some(format!(
+            "note: {} holds Cortex's hooks, which run in every repository; `cortex uninstall \
+             --scope user` takes them out",
+            settings.display()
+        )),
+        Err(error) => Some(format!(
+            "note: could not tell whether {} holds Cortex's hooks: {error:#}",
+            settings.display()
+        )),
+    }
+}
+
 /// Writes what `report` holds: its lines to stdout, then its notes and failures to stderr.
 ///
 /// # Errors
@@ -118,6 +214,22 @@ fn said(report: &Report) -> anyhow::Result<()> {
     }
     for line in report.notes.iter().chain(&report.failures) {
         output::note(line)?;
+    }
+    Ok(())
+}
+
+/// Removes the folder `folder` when nothing is left in it.
+///
+/// # Errors
+///
+/// The folder cannot be read or removed.
+fn remove_if_empty(folder: &Path) -> anyhow::Result<()> {
+    let is_empty = fs::read_dir(folder)
+        .with_context(|| format!("reading {}", folder.display()))?
+        .next()
+        .is_none();
+    if is_empty {
+        fs::remove_dir(folder).with_context(|| format!("removing {}", folder.display()))?;
     }
     Ok(())
 }

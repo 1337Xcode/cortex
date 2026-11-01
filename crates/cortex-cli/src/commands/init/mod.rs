@@ -63,7 +63,7 @@ pub(crate) struct Args {
 
 /// Where Claude Code reads the hooks Cortex writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Scope {
+pub(crate) enum Scope {
     /// This repository only: `.claude/settings.local.json`.
     Project,
     /// Every project of the user: `~/.claude/settings.json`.

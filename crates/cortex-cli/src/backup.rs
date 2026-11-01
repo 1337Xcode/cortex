@@ -24,7 +24,7 @@ use cortex_core::{ContentHash, create_private_folder};
 use serde::{Deserialize, Serialize};
 
 /// The manifest's file name in a backup folder.
-const MANIFEST: &str = "manifest.json";
+pub(crate) const MANIFEST: &str = "manifest.json";
 
 /// The file name, in the user's backup folder of a run, of the copy of the run's manifest for a
 /// repository's files.

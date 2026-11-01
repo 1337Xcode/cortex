@@ -1,7 +1,8 @@
 //! The runs of `cortex init` that uninstall undoes, newest first, read from the user's backup
 //! folder alone: for a repository, the user's copies of the manifests of the runs that changed its
-//! files, whose backup copies are in the repository's own `.cortex/backups/`. A manifest inside a
-//! repository is never read: it may have come with the clone.
+//! files, whose backup copies are in the repository's own `.cortex/backups/`; for the user, the
+//! manifests of the runs that changed the user's own files, beside their copies. A manifest inside
+//! a repository is never read: it may have come with the clone.
 
 use std::fs;
 use std::io;
@@ -10,16 +11,19 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use cortex_core::{MAX_SETTINGS_BYTES, UserFolder, read_text_file};
 
-use crate::backup::{Manifest, REPOSITORY_MANIFEST};
+use crate::backup::{MANIFEST, Manifest, REPOSITORY_MANIFEST};
 
 /// One run of init: what it changed, and where its backup copies are.
 pub(super) struct Run {
     /// When it ran, in UTC milliseconds, and its process id: its folder's name.
     started: (i64, u32),
+    /// The file its manifest was read from.
+    pub(super) manifest_path: PathBuf,
     /// The folder its backup copies are in.
     pub(super) copies: PathBuf,
-    /// The folder every file it changed is in.
-    pub(super) bound: PathBuf,
+    /// The repository every file it changed is in; `None` for a run on the user's own files, which
+    /// may be wherever a link led init.
+    pub(super) bound: Option<PathBuf>,
     /// What it changed.
     pub(super) manifest: Manifest,
 }
@@ -51,8 +55,36 @@ pub(super) fn of_repository(
         }
         runs.push(Run {
             started,
+            manifest_path: path,
             copies: root.join(".cortex").join("backups").join(&name),
-            bound: root.to_path_buf(),
+            bound: Some(root.to_path_buf()),
+            manifest,
+        });
+    }
+    runs.sort_by_key(|run| std::cmp::Reverse(run.started));
+    Ok(runs)
+}
+
+/// The runs that changed the user's own files, whatever repository each set up, newest first,
+/// from the backups of the user folder `user`. A manifest this build cannot read is passed over,
+/// with a note saying so added to `notes`.
+///
+/// # Errors
+///
+/// The backup folder or a manifest cannot be read.
+pub(super) fn of_user(user: &UserFolder, notes: &mut Vec<String>) -> anyhow::Result<Vec<Run>> {
+    let backups = user.path().join("backups");
+    let mut runs = Vec::new();
+    for (started, name) in run_folders(&backups)? {
+        let path = backups.join(&name).join(MANIFEST);
+        let Some(manifest) = read(&path, notes)? else {
+            continue;
+        };
+        runs.push(Run {
+            started,
+            manifest_path: path,
+            copies: backups.join(&name),
+            bound: None,
             manifest,
         });
     }
