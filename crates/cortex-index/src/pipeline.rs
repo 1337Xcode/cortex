@@ -22,8 +22,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -46,6 +46,7 @@ use crate::grammar::Grammars;
 use crate::imports::Project;
 use crate::incremental::{self, Neighbours};
 use crate::name_changes::NameChanges;
+use crate::pause::{self, Pacer, Pause};
 use crate::resolve;
 use crate::safe_read;
 use crate::scale::{self, RepoSize};
@@ -84,6 +85,8 @@ pub struct IndexOptions<'a> {
     pub now_ms: i64,
     /// The scale mode, chosen from the repository's size or pinned (`mode`).
     pub mode: ModeSetting,
+    /// What the caller does between the index's write transactions, if anything.
+    pub pause: Option<Pause<'a>>,
 }
 
 /// What an index wrote, and what it could not do.
@@ -265,6 +268,7 @@ pub fn index_repository(
         incremental::around_removal(writer.queries(), &missing.iter().cloned().collect())?
     };
     remove_files(writer, &missing)?;
+    pause::between(options.pause, writer);
     let found: BTreeMap<&RepoPath, FileFlags> = discovery
         .files
         .iter()
@@ -307,24 +311,13 @@ pub fn index_repository(
         })
         .cloned()
         .collect();
-    let mut report = IndexReport {
-        files: 0,
-        parsed: 0,
-        unchanged: count(discovery.files.len() - candidates.len()),
-        removed: count(missing.len()),
-        read_again: 0,
-        walk_problems: discovery.problems.clone(),
-        problems: Vec::new(),
-        left_out: Vec::new(),
-        changed_symbols: Vec::new(),
-        scip: ScipOutcome::Absent,
-        size: RepoSize {
-            source_files: 0,
-            lines: 0,
-        },
-        mode: ScaleMode::Tiny,
-    };
-    let written = write_files(writer, &candidates, &context, &mut report)?;
+    let mut report = IndexReport::starting(
+        count(discovery.files.len() - candidates.len()),
+        count(missing.len()),
+        discovery.problems.clone(),
+        ScipOutcome::Absent,
+    );
+    let written = write_files(writer, &candidates, &context, &mut report, options.pause)?;
     let (scip, scip_ties) = scip::read_index(root, writer.queries())?;
     report.scip = scip;
     let (around, is_cut) = if is_whole {
@@ -346,15 +339,45 @@ pub fn index_repository(
             is_whole,
             scip_ties: &scip_ties,
         },
-        &mut report,
+        (&mut report, options.pause),
     )?;
     folders::write_folders(writer)?;
+    pause::between(options.pause, writer);
     (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
     // Files around the change left out by the cap keep stale ties: the next index reads them all.
     if !is_cut {
         incremental::mark_complete(writer)?;
     }
     Ok(report)
+}
+
+impl IndexReport {
+    /// The report of an index that has written nothing yet: `unchanged` files kept as they were,
+    /// `removed` files gone, the walk's `walk_problems`, and what became of the SCIP index so far.
+    pub(crate) fn starting(
+        unchanged: u64,
+        removed: u64,
+        walk_problems: Vec<Problem>,
+        scip: ScipOutcome,
+    ) -> Self {
+        Self {
+            files: 0,
+            parsed: 0,
+            unchanged,
+            removed,
+            read_again: 0,
+            walk_problems,
+            problems: Vec::new(),
+            left_out: Vec::new(),
+            changed_symbols: Vec::new(),
+            scip,
+            size: RepoSize {
+                source_files: 0,
+                lines: 0,
+            },
+            mode: ScaleMode::Tiny,
+        }
+    }
 }
 
 /// `items` as a count.
@@ -515,8 +538,9 @@ pub(crate) fn link(
     writer: &mut Writer,
     (written, read_again): (Vec<Written>, Vec<(RepoPath, FileImports)>),
     pass: Pass<'_>,
-    report: &mut IndexReport,
+    (report, pause): (&mut IndexReport, Option<Pause<'_>>),
 ) -> Result<(), IndexError> {
+    let mut pacer = Pacer::new(pause);
     let mut affected: BTreeSet<SymbolId> = BTreeSet::new();
     let mut files = Vec::new();
     for file in written {
@@ -539,7 +563,7 @@ pub(crate) fn link(
             is_whole,
             scip_ties,
         } => (
-            resolve::resolve_names(writer, &bindings, scip_ties)?,
+            resolve::resolve_names(writer, &bindings, scip_ties, &mut pacer)?,
             is_whole,
         ),
         Pass::Around(names) => {
@@ -547,11 +571,12 @@ pub(crate) fn link(
             // What the SCIP index says of a file written now is out of date, as a full index finds:
             // its ties into the file give way, and their files are read again for their imports.
             (
-                resolve::resolve_names_around(writer, &bindings, names, &affected)?,
+                resolve::resolve_names_around(writer, &bindings, (names, &affected), &mut pacer)?,
                 false,
             )
         }
     };
+    pause::between(pause, writer);
     affected.extend(named.changed_sources);
     let only = (!is_whole).then_some(&affected);
     let ties: Vec<(SymbolId, Target)> = named
@@ -559,8 +584,10 @@ pub(crate) fn link(
         .into_iter()
         .map(|(_, source, target)| (source, target))
         .collect();
-    symbol_edges::write_symbol_edges(writer, &ties, only)?;
-    file_edges::write_import_edges(writer, &counts, &test_targets, is_whole)?;
+    symbol_edges::write_symbol_edges(writer, &ties, only, &mut pacer)?;
+    pause::between(pause, writer);
+    file_edges::write_import_edges(writer, &counts, (&test_targets, is_whole), &mut pacer)?;
+    pause::between(pause, writer);
     Ok(())
 }
 
@@ -642,42 +669,60 @@ fn is_unseen(path: &RepoPath, unseen: &BTreeSet<&RepoPath>) -> bool {
 }
 
 /// Prepares the files in batches and writes each batch in one transaction while the next one is
-/// prepared. Returns each written file, in path order.
+/// prepared, letting the caller in after each batch and while it waits for one. Returns each
+/// written file, in path order.
 pub(crate) fn write_files(
     writer: &mut Writer,
     files: &[DiscoveredFile],
     context: &Context<'_>,
     report: &mut IndexReport,
+    pause: Option<Pause<'_>>,
 ) -> Result<Vec<Written>, IndexError> {
+    let mut pacer = Pacer::new(pause);
     thread::scope(|scope| {
+        // Each batch reports on a channel of its own, so that a worker that panics closes it.
+        let prepare = |batch| {
+            let (sender, receiver) = mpsc::sync_channel(1);
+            scope.spawn(move || drop(sender.send(prepare_batch(batch, context))));
+            receiver
+        };
         let mut written = Vec::new();
         let mut batches = files.chunks(FILES_PER_BATCH);
-        let mut next = batches
-            .next()
-            .map(|batch| scope.spawn(move || prepare_batch(batch, context)));
+        let mut next = batches.next().map(prepare);
         while let Some(preparing) = next.take() {
-            let outcomes = preparing.join().map_err(|_| IndexError::WorkerPanicked)??;
-            next = batches
-                .next()
-                .map(|batch| scope.spawn(move || prepare_batch(batch, context)));
-            written.extend(write_batch(writer, outcomes, context.known, report)?);
+            let outcomes =
+                pause::wait_for(&preparing, pause, writer).ok_or(IndexError::WorkerPanicked)??;
+            next = batches.next().map(prepare);
+            written.extend(write_batch(
+                writer,
+                outcomes,
+                context.known,
+                (report, &mut pacer),
+            )?);
+            pacer.offer(writer);
         }
         Ok(written)
     })
 }
 
-/// Writes one batch's files in one transaction, in order, and counts them in `report`, with the
-/// definitions whose signature or body changed. A file whose contents are as stored gets only its
-/// new time. Returns each written file.
+/// Writes one batch's files, in order, and counts them in `report`, with the definitions whose
+/// signature or body changed. A file whose contents are as stored gets only its new time. The
+/// files go in one transaction, committed early and the caller let in whenever `pacer` says it has
+/// run its time; each file is written whole in one transaction. Returns each written file.
 fn write_batch(
     writer: &mut Writer,
     outcomes: Vec<Outcome>,
     known: Option<&BTreeMap<RepoPath, FileRow>>,
-    report: &mut IndexReport,
+    (report, pacer): (&mut IndexReport, &mut Pacer<'_>),
 ) -> Result<Vec<Written>, StoreError> {
     let mut written = Vec::new();
     let mut transaction = writer.transaction()?;
     for outcome in outcomes {
+        if pacer.is_due() {
+            transaction.commit()?;
+            pacer.offer(writer);
+            transaction = writer.transaction()?;
+        }
         let prepared = match outcome {
             Outcome::Ready(prepared) => prepared,
             Outcome::Unparsed(file, problem) => {
@@ -1388,7 +1433,12 @@ mod tests {
             skipped("slow.txt", FileProblem::TimedOut)?,
             Outcome::Touched(RepoPath::new("a.txt")?, 99),
         ];
-        let written = write_batch(&mut writer, outcomes, None, &mut report)?;
+        let written = write_batch(
+            &mut writer,
+            outcomes,
+            None,
+            (&mut report, &mut Pacer::new(None)),
+        )?;
         let imports: Vec<(RepoPath, FileImports)> = written
             .into_iter()
             .map(|file| (file.path, file.imported))

@@ -30,6 +30,7 @@ use cortex_store::{
 
 use crate::bindings::{Bindings, Lookup, Reach};
 use crate::name_changes::{NameChanges, may_find_otherwise};
+use crate::pause::Pacer;
 
 /// How many references are written per transaction.
 const RESOLUTIONS_PER_TRANSACTION: usize = 4096;
@@ -449,6 +450,7 @@ pub(crate) fn resolve_names(
     writer: &mut Writer,
     bindings: &BTreeMap<RepoPath, Bindings>,
     scip: &BTreeMap<RefId, SymbolId>,
+    pacer: &mut Pacer<'_>,
 ) -> Result<NamePass, StoreError> {
     let queries = writer.queries();
     let scope = Scope {
@@ -458,7 +460,7 @@ pub(crate) fn resolve_names(
         stored: queries.every_passes_on()?,
         stale_scip: BTreeSet::new(),
     };
-    resolve(writer, &scope, bindings, Some(scip))
+    resolve(writer, (&scope, bindings), Some(scip), pacer)
 }
 
 /// Ties again the references a change can concern, as [`resolve_names`] would tie them: every
@@ -476,8 +478,8 @@ pub(crate) fn resolve_names(
 pub(crate) fn resolve_names_around(
     writer: &mut Writer,
     bindings: &BTreeMap<RepoPath, Bindings>,
-    names: &NameChanges,
-    stale_scip: &BTreeSet<SymbolId>,
+    (names, stale_scip): (&NameChanges, &BTreeSet<SymbolId>),
+    pacer: &mut Pacer<'_>,
 ) -> Result<NamePass, StoreError> {
     let queries = writer.queries();
     let mut files: BTreeMap<RepoPath, FileId> = BTreeMap::new();
@@ -522,7 +524,7 @@ pub(crate) fn resolve_names_around(
         stored,
         stale_scip: stale_scip.clone(),
     };
-    let mut pass = resolve(writer, &scope, bindings, None)?;
+    let mut pass = resolve(writer, (&scope, bindings), None, pacer)?;
     // Only the files read in this pass had every reference tied: another file's ties are read back
     // whole once its changed targets are written, so that each of its definitions has them all.
     pass.ties.retain(|(file, _, _)| bound.contains(file));
@@ -676,9 +678,9 @@ fn reachable_surfaces(
 /// stands.
 fn resolve(
     writer: &mut Writer,
-    scope: &Scope,
-    bindings: &BTreeMap<RepoPath, Bindings>,
+    (scope, bindings): (&Scope, &BTreeMap<RepoPath, Bindings>),
     scip: Option<&BTreeMap<RefId, SymbolId>>,
+    pacer: &mut Pacer<'_>,
 ) -> Result<NamePass, StoreError> {
     let written = Written::new(&scope.files, bindings, &scope.stored);
     let definitions = Definitions::of(&scope.symbols);
@@ -690,6 +692,8 @@ fn resolve(
     let mut changed_sources = BTreeSet::new();
     let mut changed_files = BTreeSet::new();
     for reference in &scope.refs {
+        // The ties are worked out in memory, the store untouched: the caller may come in.
+        pacer.offer(writer);
         let next = positions.entry(reference.file).or_insert(0);
         let position = *next;
         *next += 1;
@@ -723,6 +727,7 @@ fn resolve(
         let mut transaction = writer.transaction()?;
         transaction.set_resolutions(batch)?;
         transaction.commit()?;
+        pacer.offer(writer);
     }
     Ok(NamePass {
         ties,

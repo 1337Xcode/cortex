@@ -274,6 +274,7 @@ fn options() -> IndexOptions<'static> {
         threads: NonZeroUsize::MIN,
         now_ms: NOW_MS,
         mode: ModeSetting::Auto,
+        pause: None,
     }
 }
 

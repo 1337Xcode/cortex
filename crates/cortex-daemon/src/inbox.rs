@@ -105,6 +105,12 @@ impl Inbox {
         self.arrived.notify_one();
     }
 
+    /// Takes every event waiting, without waiting for one: what the writer records between the
+    /// transactions of an index.
+    pub(crate) fn take_events(&self) -> Vec<Event> {
+        self.lock().events.drain(..).collect()
+    }
+
     /// Counts a batch of events the writer could not record.
     pub(crate) fn count_failed_batch(&self) {
         self.lock().failed_batches += 1;

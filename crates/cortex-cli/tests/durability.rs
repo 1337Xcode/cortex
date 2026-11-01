@@ -1,0 +1,259 @@
+//! Hook events reach the store within a second of arriving, while the daemon loads its grammars and
+//! runs its first index too, and what reached the store survives a hard kill: a kill loses at most
+//! the last second of events.
+
+mod common;
+
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use common::{Daemon, READY_WITHIN, TestResult};
+use cortex_core::ipc::{RequestBody, ResponseBody, Role};
+use cortex_core::{
+    Agent, Event, HookKind, Identifier, RepoId, RepoPath, RunFiles, ToolKind, ToolResult,
+    ToolTarget, Ulid, UserFolder, canonical_root,
+};
+use cortex_hook::ask;
+use cortex_store::Reader;
+
+/// How late an event may reach the store.
+const WITHIN: Duration = Duration::from_secs(1);
+
+/// How often the test sends an event, then looks at the store.
+const EVERY: Duration = Duration::from_millis(100);
+
+/// The session every event here comes from.
+const SESSION: &str = "s1";
+
+/// A package of `modules` Python modules, each importing the one before it and defining
+/// `definitions` functions that each call the one before: work for the parser and the resolver in
+/// every file, so that a first index takes seconds on any machine without thousands more files to
+/// write.
+fn package(root: &Path, modules: usize, definitions: usize) -> TestResult {
+    let folder = root.join("pkg");
+    std::fs::create_dir_all(&folder)?;
+    std::fs::write(folder.join("__init__.py"), "")?;
+    for number in 0..modules {
+        let mut source = match number.checked_sub(1) {
+            Some(previous) => format!("from pkg.m{previous} import f{previous}_0\n\n"),
+            None => String::new(),
+        };
+        source.push_str(&format!("def f{number}_0(value):\n    return value\n\n"));
+        for part in 1..definitions {
+            let previous = part - 1;
+            source.push_str(&format!(
+                "def f{number}_{part}(value):\n    return f{number}_{previous}(value) + {part}\n\n"
+            ));
+        }
+        std::fs::write(folder.join(format!("m{number}.py")), source)?;
+    }
+    Ok(())
+}
+
+/// A read of `pkg/m0.py` from the session, after it ran, at `ts_ms`, in the repository at `root`.
+fn read_event(root: &Path, ts_ms: i64) -> TestResult<Event> {
+    Ok(Event {
+        event_id: Ulid::from_seed(u64::try_from(ts_ms)?, b"durability"),
+        ts_ms,
+        agent: Agent::Claude,
+        agent_version: None,
+        session_id: Identifier::new(SESSION)?,
+        parent_session_id: None,
+        cwd: root.to_path_buf(),
+        repo_root: root.to_path_buf(),
+        hook: HookKind::PostTool,
+        source: None,
+        tool: Some(ToolKind::Read),
+        tool_target: Some(ToolTarget {
+            path: Some(RepoPath::new("pkg/m0.py")?),
+            ..ToolTarget::default()
+        }),
+        tool_result: Some(ToolResult {
+            exit_code: None,
+            is_success: true,
+            is_interrupted: false,
+            output_bytes: None,
+        }),
+        prompt_text: None,
+        transcript_path: None,
+        model: None,
+        subagent_type: None,
+        compact_trigger: None,
+        end_reason: None,
+    })
+}
+
+/// The times of the session's events the store holds, none while it cannot be read yet.
+fn stored(root: &Path) -> TestResult<BTreeSet<i64>> {
+    let Ok(reader) = Reader::open(&root.join(".cortex"), 0) else {
+        return Ok(BTreeSet::new());
+    };
+    Ok(reader
+        .queries()
+        .events_of_session(&Identifier::new(SESSION)?)?
+        .into_iter()
+        .map(|row| row.record.ts_ms)
+        .collect())
+}
+
+/// The events sent and when, and how late the latest look at the store found any.
+struct Sender {
+    /// The repository.
+    root: PathBuf,
+    /// Its daemon's run files.
+    files: RunFiles,
+    /// Each event the daemon took, with when it took it.
+    sent: Vec<(Instant, i64)>,
+    /// The next event's time.
+    next_ts_ms: i64,
+    /// When the daemon now running was started, for what a failure says.
+    daemon_started: Instant,
+}
+
+impl Sender {
+    /// A sender to the daemon of the repository at `root`, whose user's home is `home`.
+    fn new(root: &Path, home: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            files: UserFolder::in_home(home).run_files(&RepoId::of(root)),
+            sent: Vec::new(),
+            next_ts_ms: 1_000,
+            daemon_started: Instant::now(),
+        }
+    }
+
+    /// Sends one event; it counts as sent once the daemon takes it.
+    fn send(&mut self) -> TestResult {
+        let event = read_event(&self.root, self.next_ts_ms)?;
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let body = RequestBody::Event {
+            event: Box::new(event),
+        };
+        if ask(&self.files, Role::Hook, body, deadline)
+            .is_ok_and(|answer| answer.body == ResponseBody::Ack)
+        {
+            self.sent.push((Instant::now(), self.next_ts_ms));
+            self.next_ts_ms += 1;
+        }
+        Ok(())
+    }
+
+    /// The events sent at or before `cutoff` that the store does not hold: each one's time, how
+    /// long ago the daemon took it, and how long after its start, in milliseconds.
+    fn missing_by(&self, cutoff: Instant) -> TestResult<Vec<(i64, u128, i128)>> {
+        let have = stored(&self.root)?;
+        let since_start = |taken: Instant| match taken.checked_duration_since(self.daemon_started) {
+            Some(after) => i128::try_from(after.as_millis()).unwrap_or(i128::MAX),
+            None => -i128::try_from(self.daemon_started.duration_since(taken).as_millis())
+                .unwrap_or(i128::MAX),
+        };
+        Ok(self
+            .sent
+            .iter()
+            .filter(|(taken, ts_ms)| *taken <= cutoff && !have.contains(ts_ms))
+            .map(|(taken, ts_ms)| (*ts_ms, taken.elapsed().as_millis(), since_start(*taken)))
+            .collect())
+    }
+
+    /// Sends an event every [`EVERY`] while `goes_on` holds, at most for `span`, and after each one
+    /// checks that every event sent more than [`WITHIN`] before is in the store.
+    fn send_while(&mut self, goes_on: impl Fn() -> TestResult<bool>, span: Duration) -> TestResult {
+        let until = Instant::now() + span;
+        while Instant::now() < until && goes_on()? {
+            self.send()?;
+            if let Some(cutoff) = Instant::now().checked_sub(WITHIN) {
+                let missing = self.missing_by(cutoff)?;
+                assert!(
+                    missing.is_empty(),
+                    "events a second old not stored: {missing:?}"
+                );
+            }
+            std::thread::sleep(EVERY);
+        }
+        Ok(())
+    }
+}
+
+/// How many files the store holds, none while it cannot be read yet.
+fn files_stored(root: &Path) -> TestResult<u64> {
+    let Ok(reader) = Reader::open(&root.join(".cortex"), 0) else {
+        return Ok(0);
+    };
+    Ok(reader.queries().counts()?.files)
+}
+
+/// From the moment the daemon listens, through its grammar loading and into the first index of
+/// 2,000 modules of 24 functions each, every event it took more than a second earlier is in the
+/// store; after a hard kill two seconds into the index, every event it took more than a second
+/// before the kill is still there. A daemon started again on the half-written store finishes the
+/// index, its passes over every file included, and events reach the store within a second through
+/// all of it.
+#[test]
+fn events_are_stored_within_a_second_while_the_daemon_starts() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let repo = tempfile::tempdir()?;
+    package(repo.path(), 2_000, 24)?;
+    let root = canonical_root(repo.path())?;
+    let mut daemon = Daemon::start(&root, home.path())?;
+    let mut sender = Sender::new(&root, home.path());
+    // While the daemon loads its grammars, until the index has written its first files.
+    sender.send_while(|| Ok(files_stored(&root)? == 0), READY_WITHIN)?;
+    assert!(files_stored(&root)? > 0, "the index never wrote a file");
+    // Then into the index itself.
+    sender.send_while(|| Ok(true), Duration::from_secs(2))?;
+    let ready = daemon.line_by_now();
+    assert_eq!(
+        ready, None,
+        "the index ended too soon to be killed in the middle"
+    );
+    daemon.child.kill()?;
+    daemon.child.wait()?;
+    let killed = Instant::now();
+    let cutoff = killed
+        .checked_sub(WITHIN)
+        .ok_or("no time before the kill")?;
+    let missing = sender.missing_by(cutoff)?;
+    assert!(missing.is_empty(), "events lost to the kill: {missing:?}");
+    assert!(sender.sent.len() >= 20, "{} events", sender.sent.len());
+    // An event taken in the last second before the kill may be lost with it; the daemon started
+    // next owes nothing for it.
+    sender.sent.retain(|(taken, _)| *taken <= cutoff);
+
+    let daemon = Daemon::start(&root, home.path())?;
+    sender.daemon_started = Instant::now();
+    sender.send_while(|| Ok(daemon.line_by_now().is_none()), READY_WITHIN)?;
+    let cutoff = Instant::now()
+        .checked_sub(WITHIN)
+        .ok_or("no time before now")?;
+    let missing = sender.missing_by(cutoff)?;
+    assert!(
+        missing.is_empty(),
+        "events a second old not stored: {missing:?}"
+    );
+    Ok(())
+}
+
+/// Once the daemon is ready, events reach the store at once, and a hard kill keeps every event
+/// taken more than a second before it.
+#[test]
+fn events_survive_a_kill_in_steady_state() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let repo = tempfile::tempdir()?;
+    package(repo.path(), 3, 4)?;
+    let root = canonical_root(repo.path())?;
+    let mut daemon = Daemon::start(&root, home.path())?;
+    let line = daemon.first_line()?;
+    assert!(line.starts_with("cortex: daemon ready"), "{line}");
+    let mut sender = Sender::new(&root, home.path());
+    sender.send_while(|| Ok(true), Duration::from_millis(1_500))?;
+    daemon.child.kill()?;
+    daemon.child.wait()?;
+    let cutoff = Instant::now()
+        .checked_sub(WITHIN)
+        .ok_or("no time before the kill")?;
+    let missing = sender.missing_by(cutoff)?;
+    assert!(missing.is_empty(), "events lost to the kill: {missing:?}");
+    assert!(sender.sent.len() >= 10, "{} events", sender.sent.len());
+    Ok(())
+}

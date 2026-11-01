@@ -38,6 +38,7 @@ fn options() -> IndexOptions<'static> {
         threads: std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN),
         now_ms: now_ms(),
         mode: ModeSetting::Auto,
+        pause: None,
     }
 }
 

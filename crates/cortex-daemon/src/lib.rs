@@ -1,9 +1,10 @@
 //! The daemon: the long-lived process that keeps a repository's index, and its only writer.
 //!
 //! It takes the repository's run lock, listens for hooks and commands at once (so that requests
-//! made while it starts wait for it rather than fail), then takes the store's writer and indexes
-//! what changed since the last index. Then it watches the repository and indexes again after each
-//! change. In huge mode it parses the files it took inventory of, those that changed first, at
+//! made while it starts wait for it rather than fail), then takes the store's writer, records the
+//! hook events that arrive while the grammars load, and indexes what changed since the last index,
+//! recording events between the index's write transactions. Then it watches the repository and
+//! indexes again after each change. In huge mode it parses the files it took inventory of, those that changed first, at
 //! `index.crawl_files_per_second` on one thread. It stops when asked, or after
 //! `daemon.idle_shutdown_minutes` without a file change, once nothing waits to be parsed. It says
 //! when the first index is done and the watcher runs.
@@ -26,7 +27,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use cortex_core::{RepoId, UserFolder, canonical_root};
-use cortex_index::{Change, DiscoverOptions, Grammars, IndexReport, watch};
+use cortex_index::{Change, DiscoverOptions, IndexReport, watch};
+use cortex_learn::Recorder;
 use cortex_store::{Writer, WriterOptions};
 
 use self::host::Host;
@@ -87,17 +89,20 @@ fn index_and_serve(
         note(&format!("warning: {warning}"))?;
     }
     let config = loaded.config;
-    let grammars = Arc::new(Grammars::load().context("loading the language grammars")?);
     let folder = root.join(".cortex");
     // INVARIANT: single-writer (the store's writer is opened here only, and its lock refuses a
     // second one)
-    let writer = Writer::open(&WriterOptions {
+    let mut writer = Writer::open(&WriterOptions {
         folder: &folder,
         repo_id,
         mmap_bytes: config.mmap_bytes,
         now_ms: host::now_ms(),
     })
     .with_context(|| format!("opening the store in {}", folder.display()))?;
+    // The store opens first, so that hook events arriving while the grammars load are recorded.
+    let excerpt = config.store_prompt_excerpt;
+    let mut recorder = Recorder::new(excerpt);
+    let grammars = host::load_grammars(&mut writer, &mut recorder, inbox, excerpt)?;
     let global_gitignore = match global_ignore::find(root) {
         Ok(found) => found,
         Err(error) => {
@@ -115,10 +120,15 @@ fn index_and_serve(
     let feed = WatcherFeed(Arc::clone(inbox));
     let watcher = watch(root, &discover, move |change| feed.push(change))
         .context("watching the repository")?;
-    let mut host = Host::new(root, grammars, (&config, discover), writer);
+    let mut host = Host::new(
+        root,
+        grammars,
+        (&config, discover),
+        (writer, recorder, inbox),
+    );
     let report = host.index(&[])?;
     note(&ready_line(&report, host.waiting()))?;
-    host.serve(inbox)?;
+    host.serve()?;
     drop(watcher);
     Ok(())
 }

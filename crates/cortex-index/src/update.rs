@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use cortex_core::{FileFlags, RepoPath, ScaleMode};
+use cortex_core::{FileFlags, RepoPath};
 use cortex_store::{FileRow, StoreError, Writer};
 
 use crate::discover::DiscoveredFile;
@@ -23,11 +23,11 @@ use crate::grammar::Grammars;
 use crate::pipeline::{
     self, Context, IndexError, IndexOptions, IndexReport, Pass, index_repository,
 };
-use crate::scale::{self, RepoSize};
+use crate::scale;
 use crate::scip::{self, ScipOutcome};
 use crate::seen::{self, PathRules, PathState, WalkRules};
 use crate::watch::MAX_PATHS_IN_WINDOW;
-use crate::{folders, incremental};
+use crate::{folders, incremental, pause};
 
 /// What the chosen paths hold, against the store.
 #[derive(Default)]
@@ -72,6 +72,7 @@ pub fn index_paths(
     let gone: BTreeSet<RepoPath> = found.gone.iter().map(|row| row.file.path.clone()).collect();
     let (around_gone, mut names) = incremental::around_removal(writer.queries(), &gone)?;
     pipeline::remove_files(writer, &gone.iter().cloned().collect::<Vec<_>>())?;
+    pause::between(options.pause, writer);
     let walked: BTreeMap<&RepoPath, FileFlags> = found
         .candidates
         .iter()
@@ -99,24 +100,19 @@ pub fn index_paths(
         now_ms: options.now_ms,
         scip_written_ns: scip::written_ns(root),
     };
-    let mut report = IndexReport {
-        files: 0,
-        parsed: 0,
-        unchanged: 0,
-        removed: pipeline::count(gone.len()),
-        read_again: 0,
-        walk_problems: Vec::new(),
-        problems: Vec::new(),
-        left_out: Vec::new(),
-        changed_symbols: Vec::new(),
-        scip: ScipOutcome::NotRead,
-        size: RepoSize {
-            source_files: 0,
-            lines: 0,
-        },
-        mode: ScaleMode::Tiny,
-    };
-    let written = pipeline::write_files(writer, &found.candidates, &context, &mut report)?;
+    let mut report = IndexReport::starting(
+        0,
+        pipeline::count(gone.len()),
+        Vec::new(),
+        ScipOutcome::NotRead,
+    );
+    let written = pipeline::write_files(
+        writer,
+        &found.candidates,
+        &context,
+        &mut report,
+        options.pause,
+    )?;
     for file in &written {
         names.extend(file.names.clone());
     }
@@ -144,10 +140,11 @@ pub fn index_paths(
         writer,
         (written, read_again),
         Pass::Around(&names),
-        &mut report,
+        (&mut report, options.pause),
     )?;
     if has_new_files {
         folders::write_folders(writer)?;
+        pause::between(options.pause, writer);
     }
     (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
     // Files around the change left out by the cap keep stale ties: the next index reads them all.

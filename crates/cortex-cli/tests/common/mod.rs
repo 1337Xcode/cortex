@@ -58,6 +58,11 @@ impl Daemon {
     pub fn first_line(&self) -> TestResult<String> {
         Ok(self.lines.recv_timeout(READY_WITHIN)?)
     }
+
+    /// The next line the daemon has written by now, if any, not waited for.
+    pub fn line_by_now(&self) -> Option<String> {
+        self.lines.try_recv().ok()
+    }
 }
 
 impl Drop for Daemon {

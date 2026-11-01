@@ -13,6 +13,7 @@ use cortex_core::EdgeType;
 use cortex_store::{EdgeRecord, NodeId, StoreError, SymbolId, Target, Writer};
 
 use crate::node_lookup::NodeLookup;
+use crate::pause::Pacer;
 
 /// How many definitions have their edges written in one transaction: a commit costs little next to
 /// this many definitions' edges, and the transaction stays short.
@@ -29,6 +30,7 @@ pub(crate) fn write_symbol_edges(
     writer: &mut Writer,
     ties: &[(SymbolId, Target)],
     only: Option<&BTreeSet<SymbolId>>,
+    pacer: &mut Pacer<'_>,
 ) -> Result<(), StoreError> {
     let queries = writer.queries();
     let mut nodes = if only.is_none() {
@@ -91,6 +93,7 @@ pub(crate) fn write_symbol_edges(
             transaction.replace_edges(*src, EdgeType::Structural, records)?;
         }
         transaction.commit()?;
+        pacer.offer(writer);
     }
     Ok(())
 }

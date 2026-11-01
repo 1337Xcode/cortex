@@ -78,6 +78,7 @@ pub fn index_with_mode(
         threads: NonZeroUsize::new(threads).ok_or("no threads")?,
         now_ms: NOW_MS,
         mode,
+        pause: None,
     };
     Ok(index_repository(root, &grammars()?, &mut writer, &options)?)
 }
@@ -102,6 +103,7 @@ pub fn index_changed(root: &Path, paths: &[&str]) -> TestResult<IndexReport> {
         threads: NonZeroUsize::MIN,
         now_ms: NOW_MS,
         mode: ModeSetting::Auto,
+        pause: None,
     };
     let changed: Vec<RepoPath> = paths
         .iter()

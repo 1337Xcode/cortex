@@ -1,15 +1,19 @@
 //! The daemon's work loop: the one writer, the hook events and the watcher's changes its inbox
-//! holds, the huge mode crawl between them, and the idle stop.
+//! holds, the huge mode crawl between them, and the idle stop. While the writer indexes, the index
+//! lets it in between its write transactions, and the events waiting are recorded there.
 
+use std::cell::RefCell;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
 use cortex_core::{Config, Event, RepoPath};
 use cortex_index::{
-    Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
+    Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, PAUSE_EVERY, Pause, index_paths,
+    index_repository,
 };
 use cortex_learn::Recorder;
 use cortex_store::{StoreError, Writer};
@@ -36,16 +40,19 @@ pub(crate) struct Host<'a> {
     crawl: Crawl,
     /// What turns hook events into rows.
     recorder: Recorder,
+    /// Where hook events, the watcher's changes and a stop arrive.
+    inbox: &'a Inbox,
 }
 
 impl<'a> Host<'a> {
     /// A host over `writer` for the repository at `root`, with the settings in effect and the
-    /// walk's options, nothing waiting yet.
+    /// walk's options, recording events with `recorder` and taking its work from `inbox`, no file
+    /// waiting yet.
     pub(crate) fn new(
         root: &'a Path,
         grammars: Arc<Grammars>,
         (config, discover): (&'a Config, DiscoverOptions<'a>),
-        writer: Writer,
+        (writer, recorder, inbox): (Writer, Recorder, &'a Inbox),
     ) -> Self {
         Self {
             root,
@@ -54,7 +61,8 @@ impl<'a> Host<'a> {
             discover,
             writer,
             crawl: Crawl::default(),
-            recorder: Recorder::new(config.store_prompt_excerpt),
+            recorder,
+            inbox,
         }
     }
 
@@ -66,8 +74,10 @@ impl<'a> Host<'a> {
     /// A failed index, or a store error while listing.
     pub(crate) fn index(&mut self, touched: &[RepoPath]) -> anyhow::Result<IndexReport> {
         let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
-        let options = self.options(threads);
-        let report = index_repository(self.root, &self.grammars, &mut self.writer, &options)
+        let report = self
+            .indexing(threads, |root, grammars, writer, options| {
+                index_repository(root, grammars, writer, options)
+            })
             .context("indexing the repository")?;
         self.crawl = Crawl::of_store(self.writer.queries())
             .context("listing the files waiting to be parsed")?;
@@ -88,7 +98,8 @@ impl<'a> Host<'a> {
     /// # Errors
     ///
     /// A failed index or parse, or a watcher that stopped.
-    pub(crate) fn serve(mut self, inbox: &Inbox) -> anyhow::Result<()> {
+    pub(crate) fn serve(mut self) -> anyhow::Result<()> {
+        let inbox = self.inbox;
         let idle = Duration::from_secs(self.config.idle_shutdown_minutes.saturating_mul(60));
         let mut last_activity = Instant::now();
         let mut next_crawl = Instant::now();
@@ -132,19 +143,17 @@ impl<'a> Host<'a> {
     ///
     /// The store's error.
     pub(crate) fn record(&mut self, events: &[Event]) -> Result<(), StoreError> {
-        let recorded = record_batch(&mut self.writer, &mut self.recorder, events);
-        if recorded.is_err() {
-            self.recorder = Recorder::new(self.config.store_prompt_excerpt);
-        }
-        recorded
+        let excerpt = self.config.store_prompt_excerpt;
+        record_batch(&mut self.writer, &mut self.recorder, excerpt, events)
     }
 
     /// Indexes the files at `paths`, which changed, on every core.
     fn update(&mut self, paths: &[RepoPath]) -> anyhow::Result<()> {
         let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
-        let options = self.options(threads);
-        index_paths(self.root, &self.grammars, &mut self.writer, &options, paths)
-            .context("indexing changed files")?;
+        self.indexing(threads, |root, grammars, writer, options| {
+            index_paths(root, grammars, writer, options, paths)
+        })
+        .context("indexing changed files")?;
         Ok(())
     }
 
@@ -152,19 +161,38 @@ impl<'a> Host<'a> {
     fn crawl_batch(&mut self) -> anyhow::Result<()> {
         let count = usize::try_from(self.config.crawl_files_per_second).unwrap_or(usize::MAX);
         let batch = self.crawl.next(count);
-        let options = self.options(NonZeroUsize::MIN);
-        index_paths(
-            self.root,
-            &self.grammars,
-            &mut self.writer,
-            &options,
-            &batch,
-        )
+        self.indexing(NonZeroUsize::MIN, |root, grammars, writer, options| {
+            index_paths(root, grammars, writer, options, &batch)
+        })
         .context("parsing waiting files")?;
         Ok(())
     }
 
-    /// The options of an index or a parse on `threads` threads, timed now.
+    /// Runs `index` with the options of an index on `threads` threads, timed now, and a pause that
+    /// records the hook events waiting whenever the index lets the writer in. A batch the pause
+    /// cannot record is counted, as one the work loop cannot.
+    fn indexing<T>(
+        &mut self,
+        threads: NonZeroUsize,
+        index: impl FnOnce(&Path, &Arc<Grammars>, &mut Writer, &IndexOptions<'_>) -> T,
+    ) -> T {
+        let options = self.options(threads);
+        let (inbox, excerpt) = (self.inbox, self.config.store_prompt_excerpt);
+        let recorder = RefCell::new(&mut self.recorder);
+        let pause = |writer: &mut Writer| {
+            // The index never calls the pause from within it: the recorder is always free here.
+            if let Ok(mut recorder) = recorder.try_borrow_mut() {
+                record_waiting(writer, &mut recorder, inbox, excerpt);
+            }
+        };
+        let options = IndexOptions {
+            pause: Some(Pause::new(&pause)),
+            ..options
+        };
+        index(self.root, &self.grammars, &mut self.writer, &options)
+    }
+
+    /// The options of an index or a parse on `threads` threads, timed now, with no pause.
     fn options(&self, threads: NonZeroUsize) -> IndexOptions<'a> {
         IndexOptions {
             discover: self.discover,
@@ -172,21 +200,66 @@ impl<'a> Host<'a> {
             threads,
             now_ms: now_ms(),
             mode: self.config.mode,
+            pause: None,
         }
     }
 }
 
-/// Records `events` with `recorder` in one transaction of `writer`, all or none.
+/// Loads every grammar on a thread of its own, recording the hook events that wait meanwhile every
+/// [`PAUSE_EVERY`]: a debug build takes seconds to load them, and the events must not wait as long.
+///
+/// # Errors
+///
+/// A grammar that cannot be loaded, or a loader that stopped without a word.
+pub(crate) fn load_grammars(
+    writer: &mut Writer,
+    recorder: &mut Recorder,
+    inbox: &Inbox,
+    excerpt: bool,
+) -> anyhow::Result<Arc<Grammars>> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || drop(sender.send(Grammars::load())));
+    loop {
+        match receiver.recv_timeout(PAUSE_EVERY) {
+            Ok(loaded) => return Ok(Arc::new(loaded.context("loading the language grammars")?)),
+            Err(RecvTimeoutError::Timeout) => record_waiting(writer, recorder, inbox, excerpt),
+            Err(RecvTimeoutError::Disconnected) => bail!("loading the language grammars stopped"),
+        }
+    }
+}
+
+/// Records the hook events waiting in `inbox` with `recorder`, all or none; a batch that cannot be
+/// recorded is counted.
+fn record_waiting(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox, excerpt: bool) {
+    let events = inbox.take_events();
+    if !events.is_empty() && record_batch(writer, recorder, excerpt, &events).is_err() {
+        inbox.count_failed_batch();
+    }
+}
+
+/// Records `events` with `recorder` in one transaction of `writer`. When any of them cannot be
+/// recorded, none is: the transaction is rolled back and the recorder, which may remember what was
+/// rolled back, starts afresh, keeping prompt excerpts as `excerpt` says.
+///
+/// # Errors
+///
+/// The store's error.
 fn record_batch(
     writer: &mut Writer,
     recorder: &mut Recorder,
+    excerpt: bool,
     events: &[Event],
 ) -> Result<(), StoreError> {
-    let mut transaction = writer.transaction()?;
-    for event in events {
-        recorder.record(&mut transaction, event)?;
+    let recorded = writer.transaction().and_then(|mut transaction| {
+        for event in events {
+            recorder.record(&mut transaction, event)?;
+        }
+        transaction.commit()
+    });
+    if recorded.is_err() {
+        *recorder = Recorder::new(excerpt);
     }
-    transaction.commit()
+    recorded
 }
 
 /// The time now in UTC milliseconds; a clock set before 1970 reads as 0.
@@ -202,7 +275,7 @@ pub(crate) fn now_ms() -> i64 {
 mod tests {
     use std::path::PathBuf;
 
-    use cortex_core::{Agent, HookKind, Identifier, RepoId, Ulid};
+    use cortex_core::{Agent, EventKind, HookKind, Identifier, RepoId, Ulid};
     use cortex_store::WriterOptions;
 
     use super::*;
@@ -235,26 +308,74 @@ mod tests {
         })
     }
 
+    /// A writer for a store in `root`.
+    fn writer(root: &Path) -> Result<Writer, Box<dyn std::error::Error>> {
+        Ok(Writer::open(&WriterOptions {
+            folder: &root.join(".cortex"),
+            repo_id: &RepoId::of(root),
+            mmap_bytes: 0,
+            now_ms: 1,
+        })?)
+    }
+
+    /// The walk's options under `config`.
+    fn discover(config: &Config) -> DiscoverOptions<'_> {
+        DiscoverOptions {
+            max_file_bytes: config.max_file_bytes,
+            extra_ignores: &[],
+            global_gitignore: None,
+        }
+    }
+
+    /// The kinds of the events stored, in order.
+    fn stored_kinds(host: &Host<'_>) -> Result<Vec<EventKind>, Box<dyn std::error::Error>> {
+        Ok(host
+            .writer
+            .queries()
+            .events_after(0, 10)?
+            .into_iter()
+            .map(|row| row.record.kind)
+            .collect())
+    }
+
+    /// Hook events that wait while the writer indexes 600 files, three batches of them, are
+    /// recorded by the index's pauses, not after it: when the index ends nothing waits, and the
+    /// store holds them.
+    #[test]
+    fn events_are_recorded_while_indexing() -> TestResult {
+        let root = tempfile::tempdir()?;
+        for number in 0..600 {
+            let source = format!("def f{number}():\n    pass\n");
+            std::fs::write(root.path().join(format!("m{number}.py")), source)?;
+        }
+        let config = Config::default();
+        let grammars = Arc::new(Grammars::load()?);
+        let inbox = Inbox::default();
+        let parts = (writer(root.path())?, Recorder::new(false), &inbox);
+        let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
+        inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
+        inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?);
+        let report = host.index(&[])?;
+        assert_eq!(report.files, 600);
+        assert_eq!(inbox.counts().events_waiting, 0);
+        assert_eq!(
+            stored_kinds(&host)?,
+            [EventKind::SessionStart, EventKind::Prompt]
+        );
+        Ok(())
+    }
+
     /// A batch whose second prompt repeats the first prompt's event (so its task id is taken)
     /// cannot be recorded: none of it is, not even the session it started. The host then starts
     /// its recorder afresh, so the next batch registers the session again and is recorded whole.
     #[test]
     fn a_batch_that_fails_leaves_nothing_behind() -> TestResult {
         let root = tempfile::tempdir()?;
-        let writer = Writer::open(&WriterOptions {
-            folder: &root.path().join(".cortex"),
-            repo_id: &RepoId::of(root.path()),
-            mmap_bytes: 0,
-            now_ms: 1,
-        })?;
         let config = Config::default();
-        let discover = DiscoverOptions {
-            max_file_bytes: config.max_file_bytes,
-            extra_ignores: &[],
-            global_gitignore: None,
-        };
         let grammars = Arc::new(Grammars::load()?);
-        let mut host = Host::new(root.path(), grammars, (&config, discover), writer);
+        let inbox = Inbox::default();
+        let parts = (writer(root.path())?, Recorder::new(false), &inbox);
+        let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         let prompt = event(HookKind::Prompt, 10, b"same")?;
         let failed = host.record(&[
             event(HookKind::SessionStart, 5, b"start")?,
@@ -267,14 +388,7 @@ mod tests {
         assert_eq!(host.writer.queries().events_after(0, 10)?, []);
         host.record(&[event(HookKind::Prompt, 20, b"next")?])?;
         assert!(host.writer.queries().session(&session)?.is_some());
-        let kinds: Vec<_> = host
-            .writer
-            .queries()
-            .events_after(0, 10)?
-            .into_iter()
-            .map(|row| row.record.kind)
-            .collect();
-        assert_eq!(kinds, [cortex_core::EventKind::Prompt]);
+        assert_eq!(stored_kinds(&host)?, [EventKind::Prompt]);
         Ok(())
     }
 }

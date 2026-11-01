@@ -46,6 +46,7 @@ fn parse(root: &Path, paths: &[RepoPath]) -> TestResult<IndexReport> {
         threads: NonZeroUsize::MIN,
         now_ms: NOW_MS,
         mode: HUGE,
+        pause: None,
     };
     Ok(index_paths(
         root,
