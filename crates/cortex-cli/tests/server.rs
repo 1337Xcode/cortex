@@ -265,7 +265,8 @@ fn events_sent_to_the_daemon_are_recorded() -> TestResult {
     let stdout = String::from_utf8(command.output()?.stdout)?;
     assert!(
         stdout.contains(
-            "\nqueue: 0 events and 0 changes waiting; 0 events dropped, 0 batches not recorded\n"
+            "\nqueue: 0 events and 0 changes waiting; 0 events dropped, 0 batches not recorded, \
+             0 checkpoints failed\n"
         ),
         "{stdout}"
     );

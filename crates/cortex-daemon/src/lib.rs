@@ -99,6 +99,7 @@ fn index_and_serve(
         now_ms: host::now_ms(),
     })
     .with_context(|| format!("opening the store in {}", folder.display()))?;
+    inbox.watch_checkpoints(writer.checkpoint_failures());
     // The store opens first, so that hook events arriving while the grammars load are recorded;
     // those that came while it opened are recorded at once.
     let excerpt = config.store_prompt_excerpt;

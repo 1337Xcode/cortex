@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use cortex_core::{Event, HookKind, RepoPath, ToolKind};
 use cortex_index::Change;
+use cortex_store::CheckpointFailures;
 
 /// How many hook events may wait for the writer. When the inbox is full, a read or a search gives
 /// way first: an arriving one is dropped, or the oldest waiting one makes room for an edit, a
@@ -38,6 +39,8 @@ struct State {
     events_dropped: u64,
     /// Batches of events the writer could not record, since the daemon started.
     failed_batches: u64,
+    /// The writer's count of the checkpoints that failed.
+    failed_checkpoints: CheckpointFailures,
     /// The watcher's changes, oldest first.
     changes: Vec<Change>,
     /// Whether a change was dropped since the last drain.
@@ -84,6 +87,8 @@ pub(crate) struct Counts {
     pub(crate) events_dropped: u64,
     /// Batches of events the writer could not record, since the daemon started.
     pub(crate) failed_batches: u64,
+    /// Checkpoints of the store's log that failed, since the writer opened.
+    pub(crate) failed_checkpoints: u64,
 }
 
 impl Inbox {
@@ -116,6 +121,11 @@ impl Inbox {
         self.lock().failed_batches += 1;
     }
 
+    /// Reports the checkpoints `failures` counts from now on: the writer's, once it is open.
+    pub(crate) fn watch_checkpoints(&self, failures: CheckpointFailures) {
+        self.lock().failed_checkpoints = failures;
+    }
+
     /// What waits, and what was lost.
     pub(crate) fn counts(&self) -> Counts {
         let state = self.lock();
@@ -124,6 +134,7 @@ impl Inbox {
             changes_waiting: state.changes.len(),
             events_dropped: state.events_dropped,
             failed_batches: state.failed_batches,
+            failed_checkpoints: state.failed_checkpoints.count(),
         }
     }
 

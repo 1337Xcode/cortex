@@ -139,4 +139,7 @@ pub struct StatusReport {
     /// Batches of events the writer could not record, since the daemon started.
     #[serde(default)]
     pub failed_batches: u64,
+    /// Checkpoints of the store's write-ahead log that failed, since the daemon started.
+    #[serde(default)]
+    pub failed_checkpoints: u64,
 }

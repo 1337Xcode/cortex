@@ -136,6 +136,7 @@ impl Server {
             changes_waiting: u64::try_from(counts.changes_waiting).unwrap_or(u64::MAX),
             events_dropped: counts.events_dropped,
             failed_batches: counts.failed_batches,
+            failed_checkpoints: counts.failed_checkpoints,
         }
     }
 }

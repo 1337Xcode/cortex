@@ -84,11 +84,12 @@ fn daemon_lines(root: &Path) -> Vec<String> {
                 ),
                 format!(
                     "queue: {} events and {} changes waiting; {} events dropped, {} batches \
-                     not recorded",
+                     not recorded, {} checkpoints failed",
                     report.events_waiting,
                     report.changes_waiting,
                     report.events_dropped,
-                    report.failed_batches
+                    report.failed_batches,
+                    report.failed_checkpoints
                 ),
             ];
         }
