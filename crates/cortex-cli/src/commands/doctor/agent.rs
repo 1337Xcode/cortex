@@ -30,22 +30,28 @@ const PROGRAMS: &[&str] = if cfg!(windows) {
     &["claude"]
 };
 
-/// Claude Code is a version Cortex's hooks work with.
-pub(super) fn version(context: &Context) -> Vec<Finding> {
-    let Some(adapter) = cortex_hook::adapter("claude") else {
-        return Vec::new();
-    };
-    let Some(program) = crate::program::on_path(PROGRAMS, &context.root) else {
-        return vec![Finding::Note(
-            "Claude Code is not on the PATH; doctor cannot ask its version".to_owned(),
-        )];
+/// Claude Code is a version Cortex's hooks work with: the check in doctor's table.
+pub(super) fn check(context: &Context) -> Vec<Finding> {
+    cortex_hook::adapter("claude")
+        .map(|adapter| version(&context.root, adapter.versions()))
+        .into_iter()
+        .collect()
+}
+
+/// What the version of Claude Code, the program the `PATH` names outside the repository at `root`,
+/// says against the `versions` Cortex knows: one older than the oldest fails, and one newer than
+/// the newest tested, none found and none said are notes. `cortex init` refuses on the failure.
+pub(crate) fn version(root: &Path, versions: Versions) -> Finding {
+    let Some(program) = crate::program::on_path(PROGRAMS, root) else {
+        return Finding::Note(
+            "Claude Code is not on the PATH, so its version cannot be asked".to_owned(),
+        );
     };
     let shown = one_line(&program.display().to_string(), MAX_PATH_CHARS);
-    let finding = match asked(&program) {
-        Ok(answer) => classified(&answer, &shown, adapter.versions()),
+    match asked(&program) {
+        Ok(answer) => classified(&answer, &shown, versions),
         Err(why) => Finding::Note(format!("{shown} did not say its version: {why}")),
-    };
-    vec![finding]
+    }
 }
 
 /// What `program --version` printed, run in the program's own folder so that nothing in the
@@ -78,7 +84,7 @@ fn classified(answer: &str, program: &str, versions: Versions) -> Finding {
     );
     let (Ok(found), Ok(oldest), Ok(newest)) = read else {
         return Finding::Note(format!(
-            "{program} gave its version as \"{}\", which doctor cannot read",
+            "{program} gave its version as \"{}\", which Cortex cannot read",
             one_line(answer.trim(), 80)
         ));
     };
@@ -153,7 +159,7 @@ mod tests {
         assert_eq!(
             classified("unknown\nversion", AT, VERSIONS),
             Finding::Note(
-                "/usr/local/bin/claude gave its version as \"unknown version\", which doctor \
+                "/usr/local/bin/claude gave its version as \"unknown version\", which Cortex \
                  cannot read"
                     .to_owned()
             )

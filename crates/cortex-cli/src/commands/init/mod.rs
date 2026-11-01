@@ -1,13 +1,16 @@
 //! `cortex init`: registers Cortex's hooks with Claude Code, in the repository's
 //! `.claude/settings.local.json` (`--scope project`, the default, a file Claude Code does not
-//! commit) or in the user's `~/.claude/settings.json` (`--scope user`). The file is backed up
-//! before it changes, with a manifest, in the repository's `.cortex/backups/` or, for the user's
-//! file, in `~/.cortex/backups/`, and written atomically; one that already holds Cortex's current
-//! hooks is left as it is. Nothing of a repository's is written outside it: its `.claude` and
-//! `.cortex` folders must be its own, not links elsewhere, and a settings file that is a link must
-//! lead inside it.
+//! commit) or in the user's `~/.claude/settings.json` (`--scope user`). The repository is the top
+//! of the git repository holding the folder init starts from (see [`root`]). Nothing is written
+//! when Claude Code is older than the oldest version Cortex's hooks work with. The file is backed
+//! up before it changes, with a manifest, in the repository's `.cortex/backups/` or, for the
+//! user's file, in `~/.cortex/backups/`, and written atomically; one that already holds Cortex's
+//! current hooks is left as it is. Nothing of a repository's is written outside it: its `.claude`
+//! and `.cortex` folders must be its own, not links elsewhere, and a settings file that is a link
+//! must lead inside it.
 
 mod backup;
+mod root;
 
 use std::fs;
 use std::io;
@@ -17,7 +20,8 @@ use std::time::SystemTime;
 use anyhow::{Context as _, bail};
 use cortex_core::{UserFolder, canonical_root, create_private_folder, unix_millis};
 
-use crate::{claude_settings, output, repository};
+use crate::commands::doctor::{Finding, claude_code_version};
+use crate::{claude_settings, output};
 
 use self::backup::Backup;
 
@@ -57,10 +61,11 @@ struct Target {
 /// nothing, is read-only, too large, not UTF-8 or not the JSON Claude Code reads, or a backup or
 /// a write that fails.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let target = target(args)?;
+    let adapter = cortex_hook::adapter("claude").context("finding the Claude Code adapter")?;
+    let root = checked_root(args, adapter.versions())?;
+    let target = target(args.scope, root)?;
     let existing = read_settings(&target.settings)?;
     let program = crate::program::this_program()?;
-    let adapter = cortex_hook::adapter("claude").context("finding the Claude Code adapter")?;
     let merged = claude_settings::merged(existing.as_deref(), &program, adapter.hooks())
         .with_context(|| {
             format!(
@@ -93,18 +98,53 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     ))
 }
 
-/// The settings file the scope of `args` names, links followed, and the repository it belongs to
-/// for a project's.
+/// The folder init sets up from where `args` start it: for a project's scope, the repository
+/// [`root::find`] gives, said on stdout with why it is not git's top when it is not; for the
+/// user's, the start folder, which only bounds where Claude Code may be found. Claude Code, asked
+/// its version, must be one the `versions` Cortex knows allow.
 ///
 /// # Errors
 ///
-/// No home folder for the user's scope, a root that is not a folder, a `.claude` folder that is
-/// not the repository's own, or a settings file that is a link to nothing or, for a project, leads
-/// outside the repository.
-fn target(args: &Args) -> anyhow::Result<Target> {
-    match args.scope {
+/// The folder or the home folder cannot be found, the folder would be the home folder or hold it,
+/// Claude Code is older than the oldest of `versions`, or stdout cannot be written.
+fn checked_root(args: &Args, versions: cortex_hook::Versions) -> anyhow::Result<PathBuf> {
+    let start = match &args.root {
+        Some(root) => root.clone(),
+        None => std::env::current_dir().context("reading the current folder")?,
+    };
+    let folder = match args.scope {
         Scope::Project => {
-            let root = repository::root(args.root.as_deref())?;
+            let home = std::env::home_dir().context("finding the home folder")?;
+            let found = root::find(&start, &home)?;
+            output::line(&format!("repository: {}", found.folder.display()))?;
+            if let Some(why) = &found.without_git {
+                output::line(&format!(
+                    "note: {why}; Cortex sets up this folder alone, without git history"
+                ))?;
+            }
+            found.folder
+        }
+        Scope::User => canonical_root(&start)
+            .with_context(|| format!("finding the folder {}", start.display()))?,
+    };
+    match claude_code_version(&folder, versions) {
+        Finding::Fail { what, fix } => bail!("{what}; {fix}, then run `cortex init` again"),
+        Finding::Pass(what) => output::line(&what)?,
+        Finding::Note(what) => output::line(&format!("note: {what}"))?,
+    }
+    Ok(folder)
+}
+
+/// The settings file `scope` names for the repository at `root`, links followed, and the
+/// repository it belongs to for a project's.
+///
+/// # Errors
+///
+/// No home folder for the user's scope, a `.claude` folder that is not the repository's own, or a
+/// settings file that is a link to nothing or, for a project, leads outside the repository.
+fn target(scope: Scope, root: PathBuf) -> anyhow::Result<Target> {
+    match scope {
+        Scope::Project => {
             let claude = own_folder(&root, ".claude")?;
             let settings = followed(&claude.join("settings.local.json"))?;
             if !settings.starts_with(&root) {

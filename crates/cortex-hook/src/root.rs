@@ -16,7 +16,7 @@ const MARKER: &str = ".cortex";
 /// repository's canonical root, and that root as the agent spells it. `None` when `cwd` is not a
 /// folder or no repository holds it. `home` is the user's home folder: neither it nor anything
 /// above it is a root for a folder inside it.
-pub(crate) fn locate(cwd: &Path, home: Option<&Path>) -> Option<Located> {
+pub fn locate(cwd: &Path, home: Option<&Path>) -> Option<Located> {
     let canonical = canonical_root(cwd).ok()?;
     let home = home.and_then(|home| canonical_root(home).ok());
     let root = canonical

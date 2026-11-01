@@ -110,3 +110,28 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
     );
     Ok(())
 }
+
+/// From a folder inside a repository Cortex set up, with no `--root`, status reports that
+/// repository, found as a hook finds it: here its index of one Python file, from `src/deep`.
+#[test]
+fn status_finds_the_repository_from_a_folder_inside_it() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    std::fs::create_dir_all(root.join("src").join("deep"))?;
+    std::fs::write(root.join("src").join("a.py"), "def a():\n    pass\n")?;
+    let mut writer = writer(root)?;
+    index(root, &mut writer)?;
+    drop(writer);
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .arg("status")
+        .current_dir(root.join("src").join("deep"))
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .output()?;
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        "daemon: not running\nindex: ready\nmode: tiny\nfiles: 1 stored, 1 parsed\n"
+    );
+    Ok(())
+}

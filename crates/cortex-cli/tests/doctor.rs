@@ -4,11 +4,10 @@
 
 mod common;
 
-use std::ffi::OsString;
 use std::path::Path;
 use std::process::Command;
 
-use common::{Daemon, TestResult, isolate};
+use common::{Daemon, TestResult, isolate, stand_in_claude, test_path};
 use cortex_core::ipc::CORTEX_VERSION;
 
 /// What one run printed and how it ended.
@@ -27,12 +26,7 @@ fn cortex(command: &str, repo: &Path, home: &Path) -> TestResult<Run> {
     let mut process = Command::new(env!("CARGO_BIN_EXE_cortex"));
     process.args([command, "--root"]).arg(repo);
     isolate(&mut process, home);
-    let mut path = OsString::from(home.join("bin"));
-    if let Some(system) = std::env::var_os("SystemRoot") {
-        path.push(";");
-        path.push(Path::new(&system).join("System32"));
-    }
-    process.env("PATH", path);
+    process.env("PATH", test_path(home, &[])?);
     let output = process.output()?;
     Ok(Run {
         is_success: output.status.success(),
@@ -129,7 +123,7 @@ fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
     );
     assert_eq!(
         starting(&run, "note  agent"),
-        ["note  agent: Claude Code is not on the PATH; doctor cannot ask its version"]
+        ["note  agent: Claude Code is not on the PATH, so its version cannot be asked"]
     );
     assert_eq!(
         run.lines.last().map(String::as_str),
@@ -210,20 +204,7 @@ fn doctor_fails_without_hooks_or_daemon() -> TestResult {
 #[test]
 fn doctor_fails_on_an_older_claude_code() -> TestResult {
     let (repo, home) = repository()?;
-    let bin = home.path().join("bin");
-    std::fs::create_dir_all(&bin)?;
-    let claude = bin.join(if cfg!(windows) {
-        "claude.cmd"
-    } else {
-        "claude"
-    });
-    if cfg!(windows) {
-        std::fs::write(&claude, "@echo 2.1.200 (Claude Code)\r\n")?;
-    } else {
-        std::fs::write(&claude, "#!/bin/sh\necho '2.1.200 (Claude Code)'\n")?;
-        #[cfg(unix)]
-        std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
-    }
+    let claude = stand_in_claude(home.path(), "2.1.200")?;
     let run = cortex("doctor", repo.path(), home.path())?;
     assert!(!run.is_success);
     let agent: Vec<String> = run

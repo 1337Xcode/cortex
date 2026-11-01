@@ -8,14 +8,16 @@ use std::io::{self, Write};
 
 use anyhow::Context;
 
-/// Writes one line of normal output to stdout.
+/// Writes one line of normal output to stdout, its control characters escaped: a path or a name
+/// from a repository, or another program's answer, cannot move the cursor, change colours or add
+/// a line of its own.
 ///
 /// # Errors
 ///
 /// Fails when stdout cannot be written.
 pub(crate) fn line(text: &str) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
-    writeln!(stdout, "{text}").context("writing to stdout")
+    writeln!(stdout, "{}", printable(text)).context("writing to stdout")
 }
 
 /// Writes one line about the process itself, such as a long-running command's progress or a

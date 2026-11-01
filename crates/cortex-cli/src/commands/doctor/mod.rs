@@ -22,6 +22,8 @@ use crate::{output, repository};
 
 use self::settings::SettingsFile;
 
+pub(crate) use self::agent::version as claude_code_version;
+
 /// The arguments of `cortex doctor`.
 #[derive(Debug, clap::Args)]
 pub(crate) struct Args {
@@ -43,7 +45,7 @@ pub(super) struct Context {
 
 /// What a check found.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Finding {
+pub(crate) enum Finding {
     /// All is well.
     Pass(String),
     /// Something is wrong, and what to do about it.
@@ -65,7 +67,7 @@ const CHECKS: &[Check] = &[
     ("hooks", hooks::registered),
     ("silenced", hooks::silenced),
     ("binary", hooks::binary),
-    ("agent", agent::version),
+    ("agent", agent::check),
     ("daemon", daemon::answers),
     ("latency", latency::probes),
 ];

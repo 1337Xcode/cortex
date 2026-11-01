@@ -1,15 +1,16 @@
-//! `cortex init` on temporary repositories with an empty home folder: Claude Code's settings get
-//! Cortex's hooks beside the user's, backed up first with a manifest; a second run changes
-//! nothing; a file it cannot read is refused and left; the user's scope writes the home folder's
-//! settings.
+//! `cortex init` on temporary repositories with an empty home folder and a PATH of the test's own
+//! (git, and a stand-in for Claude Code or none): Claude Code's settings get Cortex's hooks beside
+//! the user's, backed up first with a manifest; a second run changes nothing; a file it cannot
+//! read is refused and left; the user's scope writes the home folder's settings; the repository is
+//! git's, never the home folder; a Claude Code too old is refused before anything is written.
 
 mod common;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::{TestResult, isolate};
-use cortex_core::ContentHash;
+use common::{TestResult, isolate, stand_in_claude, test_path};
+use cortex_core::{ContentHash, canonical_root};
 use serde_json::Value;
 
 /// What one run of `cortex init` printed and how it ended.
@@ -22,11 +23,35 @@ struct Run {
     stderr: String,
 }
 
-/// Runs `cortex init --root <repo>` with `extra` arguments and `home` as the home folder.
+/// The stand-in for Claude Code [`init`] puts in `home`'s `bin` folder when the test put none.
+fn claude_in(home: &Path) -> PathBuf {
+    home.join("bin").join(if cfg!(windows) {
+        "claude.cmd"
+    } else {
+        "claude"
+    })
+}
+
+/// Runs `cortex init --root <repo>` with `extra` arguments, as [`run`] runs it with git on the
+/// PATH, and with a stand-in for Claude Code 2.1.312, the newest version Cortex knows, ahead of
+/// any on the machine unless the test put one in `home`'s `bin` folder.
 fn init(repo: &Path, home: &Path, extra: &[&str]) -> TestResult<Run> {
+    if !claude_in(home).exists() {
+        stand_in_claude(home, "2.1.312")?;
+    }
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command.args(["init", "--root"]).arg(repo).args(extra);
-    isolate(&mut command, home);
+    run(&mut command, home, &["git"])
+}
+
+/// Runs `command` with `home` as the home folder and a PATH holding `home`'s `bin` folder and the
+/// folders of `programs`, git looking for no repository above the system's temporary folder,
+/// where the tests' folders are, and reads what it printed.
+fn run(command: &mut Command, home: &Path, programs: &[&str]) -> TestResult<Run> {
+    isolate(command, home);
+    command
+        .env("PATH", test_path(home, programs)?)
+        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
     let output = command.output()?;
     Ok(Run {
         is_success: output.status.success(),
@@ -142,10 +167,38 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         .try_into()
         .map_err(|_| "one backup")?;
     let resolved = std::fs::canonicalize(&settings)?;
-    let shown = run.stdout.trim_end();
+    let lines: Vec<&str> = run.stdout.lines().collect();
+    let [repository, no_git, claude, written_to] = lines.as_slice() else {
+        return Err(run.stdout.into());
+    };
+    assert_eq!(
+        *repository,
+        format!("repository: {}", canonical_root(repo.path())?.display())
+    );
+    // Git ends with 128 outside a repository, which Rust shows as an exit code on Windows and an
+    // exit status elsewhere.
+    let ended = if cfg!(windows) {
+        "exit code: 128"
+    } else {
+        "exit status: 128"
+    };
+    assert_eq!(
+        *no_git,
+        format!(
+            "note: git named no repository here (it ended with {ended}); Cortex sets up this \
+             folder alone, without git history"
+        )
+    );
+    assert_eq!(
+        *claude,
+        format!(
+            "Claude Code 2.1.312 at {}, a version Cortex works with",
+            claude_in(home.path()).display()
+        )
+    );
     assert!(
-        shown.starts_with("Claude Code: hooks written to ") && shown.ends_with(')'),
-        "{shown}"
+        written_to.starts_with("Claude Code: hooks written to ") && written_to.ends_with(')'),
+        "{written_to}"
     );
     assert_eq!(
         std::fs::read_to_string(folder.join("1-settings.local.json"))?,
@@ -176,14 +229,210 @@ fn init_again_changes_nothing() -> TestResult {
     let first = std::fs::read(&settings)?;
     let again = init(repo.path(), home.path(), &[])?;
     assert!(again.is_success, "{}", again.stderr);
+    let last = again.stdout.lines().last().unwrap_or_default();
     assert!(
-        again.stdout.starts_with("Claude Code: the hooks in ")
-            && again.stdout.trim_end().ends_with(" are current"),
+        last.starts_with("Claude Code: the hooks in ") && last.ends_with(" are current"),
         "{}",
         again.stdout
     );
     assert_eq!(std::fs::read(&settings)?, first);
     assert_eq!(backup_folders(repo.path())?.len(), 1);
+    Ok(())
+}
+
+/// Runs git with `args` in `folder`, with `home` as the home folder.
+fn git(folder: &Path, args: &[&str], home: &Path) -> TestResult {
+    let mut command = Command::new("git");
+    command.args(args).current_dir(folder);
+    isolate(&mut command, home);
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    Ok(())
+}
+
+/// From a folder inside a git repository below the home folder, with no `--root`, init sets up the
+/// repository's top: it says so first, and the hooks go to the top's `.claude/settings.local.json`,
+/// none to the folder.
+#[test]
+fn init_sets_up_git_s_repository_from_a_folder_inside_it() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let repo = home.path().join("repo");
+    std::fs::create_dir(&repo)?;
+    git(&repo, &["init", "-q"], home.path())?;
+    let inner = repo.join("src").join("inner");
+    std::fs::create_dir_all(&inner)?;
+    stand_in_claude(home.path(), "2.1.312")?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command.arg("init").current_dir(&inner);
+    let done = run(&mut command, home.path(), &["git"])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let top = canonical_root(&repo)?;
+    assert_eq!(
+        done.stdout.lines().next(),
+        Some(format!("repository: {}", top.display()).as_str())
+    );
+    assert!(top.join(".claude").join("settings.local.json").is_file());
+    assert!(!inner.join(".claude").exists());
+    Ok(())
+}
+
+/// A repository whose `core.worktree` names a folder that does not hold it gets nothing written
+/// there: init sets up the folder it starts from alone, and says why.
+#[test]
+fn init_never_follows_git_to_a_folder_outside() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let elsewhere = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    let worktree = elsewhere.path().display().to_string();
+    git(
+        repo.path(),
+        &["config", "core.worktree", worktree.as_str()],
+        home.path(),
+    )?;
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    assert_eq!(
+        done.stdout.lines().nth(1),
+        Some(
+            "note: git names a repository top that does not hold this folder; Cortex sets up \
+             this folder alone, without git history"
+        )
+    );
+    assert!(
+        repo.path()
+            .join(".claude")
+            .join("settings.local.json")
+            .is_file()
+    );
+    assert!(!elsewhere.path().join(".claude").exists());
+    Ok(())
+}
+
+/// A folder inside a home folder that is itself a git repository, as when dotfiles are kept in
+/// git, is set up alone: git's repository is the home folder, whose `.cortex` is the user's own.
+/// The home folder itself is refused, and nothing is written there.
+#[test]
+fn init_never_sets_up_a_home_folder_repository() -> TestResult {
+    let home = tempfile::tempdir()?;
+    git(home.path(), &["init", "-q"], home.path())?;
+    let project = home.path().join("project");
+    std::fs::create_dir(&project)?;
+    let done = init(&project, home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let lines: Vec<&str> = done.stdout.lines().take(2).collect();
+    assert_eq!(
+        lines,
+        [
+            format!("repository: {}", canonical_root(&project)?.display()).as_str(),
+            "note: git's repository here is the home folder or holds it, which Cortex never sets \
+             up; Cortex sets up this folder alone, without git history"
+        ]
+    );
+    assert!(
+        project
+            .join(".claude")
+            .join("settings.local.json")
+            .is_file()
+    );
+    let refused = init(home.path(), home.path(), &[])?;
+    assert!(!refused.is_success);
+    assert_eq!(
+        refused.stderr.trim_end(),
+        format!(
+            "cortex: error: Cortex never sets up the home folder or a folder holding it ({}); run \
+             `cortex init` in a repository",
+            canonical_root(home.path())?.display()
+        )
+    );
+    assert!(!home.path().join(".claude").exists());
+    Ok(())
+}
+
+/// With neither git nor Claude Code on the PATH, init says both, sets up the folder alone and
+/// writes the hooks.
+#[test]
+fn init_without_git_or_claude_code_says_so() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command.args(["init", "--root"]).arg(repo.path());
+    let done = run(&mut command, home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let lines: Vec<&str> = done.stdout.lines().skip(1).take(2).collect();
+    assert_eq!(
+        lines,
+        [
+            "note: git is not on the PATH; Cortex sets up this folder alone, without git history",
+            "note: Claude Code is not on the PATH, so its version cannot be asked"
+        ]
+    );
+    assert!(
+        repo.path()
+            .join(".claude")
+            .join("settings.local.json")
+            .is_file()
+    );
+    Ok(())
+}
+
+/// A folder whose name holds a control character is printed with the character escaped, so a
+/// repository's name cannot drive the terminal.
+// Only Unix allows control characters in a file name; Windows refuses them.
+#[cfg(unix)]
+#[test]
+fn init_prints_control_characters_escaped() -> TestResult {
+    let base = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let repo = base.path().join("repo\u{1b}[31m");
+    std::fs::create_dir(&repo)?;
+    let done = init(&repo, home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let shown =
+        format!("repository: {}", canonical_root(&repo)?.display()).replace('\u{1b}', "\\u{1b}");
+    assert_eq!(done.stdout.lines().next(), Some(shown.as_str()));
+    assert!(!done.stdout.contains('\u{1b}'), "{}", done.stdout);
+    Ok(())
+}
+
+/// A Claude Code older than the oldest version Cortex's hooks work with is refused before anything
+/// is written, the error naming it, where it is and the update; one of a version Cortex works with
+/// is named and the hooks are written.
+#[test]
+fn init_refuses_an_older_claude_code() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let claude = stand_in_claude(home.path(), "2.1.200")?;
+    let refused = init(repo.path(), home.path(), &[])?;
+    assert!(!refused.is_success);
+    let expected = format!(
+        "cortex: error: Claude Code 2.1.200 at {} is older than 2.1.295, the oldest Cortex's hooks \
+         work with; update Claude Code to 2.1.295 or later, then run `cortex init` again",
+        claude.display()
+    );
+    assert_eq!(refused.stderr.trim_end(), expected);
+    assert!(!repo.path().join(".claude").exists());
+    assert!(!repo.path().join(".cortex").exists());
+    stand_in_claude(home.path(), "2.1.300")?;
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let named = format!(
+        "Claude Code 2.1.300 at {}, a version Cortex works with",
+        claude.display()
+    );
+    assert!(
+        done.stdout.lines().any(|line| line == named),
+        "{}",
+        done.stdout
+    );
+    assert!(
+        repo.path()
+            .join(".claude")
+            .join("settings.local.json")
+            .is_file()
+    );
     Ok(())
 }
 

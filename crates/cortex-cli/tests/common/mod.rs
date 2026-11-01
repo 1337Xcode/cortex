@@ -9,8 +9,9 @@
 pub mod fake_daemon;
 
 use std::error::Error;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -103,6 +104,52 @@ pub fn isolate(command: &mut Command, home: &Path) {
     ] {
         command.env_remove(name);
     }
+}
+
+/// A PATH for a test's command: `home`'s `bin` folder, where a test puts the programs it stands in
+/// for, then the folders of this machine's PATH that hold one of `programs` (such as `git`), and
+/// on Windows the system's own folder, whose command shell runs a `.cmd` stand-in.
+///
+/// # Errors
+///
+/// A folder whose name holds the PATH's separator.
+pub fn test_path(home: &Path, programs: &[&str]) -> TestResult<OsString> {
+    let mut folders = vec![home.join("bin")];
+    let names: Vec<String> = programs
+        .iter()
+        .map(|program| format!("{program}{}", std::env::consts::EXE_SUFFIX))
+        .collect();
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for folder in std::env::split_paths(&path) {
+        let holds = names.iter().any(|name| folder.join(name).is_file());
+        if holds && !folders.contains(&folder) {
+            folders.push(folder);
+        }
+    }
+    if let Some(system) = std::env::var_os("SystemRoot") {
+        folders.push(Path::new(&system).join("System32"));
+    }
+    Ok(std::env::join_paths(folders)?)
+}
+
+/// Writes a stand-in for Claude Code in `home`'s `bin` folder that answers `--version` as Claude
+/// Code `version` does, and returns its path.
+pub fn stand_in_claude(home: &Path, version: &str) -> TestResult<PathBuf> {
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin)?;
+    if cfg!(windows) {
+        let claude = bin.join("claude.cmd");
+        std::fs::write(&claude, format!("@echo {version} (Claude Code)\r\n"))?;
+        return Ok(claude);
+    }
+    let claude = bin.join("claude");
+    std::fs::write(
+        &claude,
+        format!("#!/bin/sh\necho '{version} (Claude Code)'\n"),
+    )?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+    Ok(claude)
 }
 
 /// Waits until `condition` holds, for at most [`SEEN_WITHIN`].
