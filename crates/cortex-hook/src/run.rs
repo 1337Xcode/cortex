@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role, is_older_than_this_build};
 use cortex_core::{RepoId, RunFiles, Ulid, UserFolder, unix_millis};
 
-use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter};
+use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter, shortest_hard_timeout};
 use crate::client::{Answer, ClientError, ask};
 use crate::fail_open::{self, Outcome};
 use crate::stdin::{self, StdinError};
@@ -25,6 +25,10 @@ const STDIN_TIMEOUT: Duration = Duration::from_millis(50);
 /// What the hook keeps of an event's hard timeout for itself: the daemon's answer is due this long
 /// before the hard timeout, so the hook exits before the agent gives up on it.
 const EXIT_MARGIN: Duration = Duration::from_millis(15);
+
+/// The end of an event's hard timeout kept for noting why the work did not finish: the work is
+/// given up this long before the hard timeout, and the note at the hard timeout itself.
+const NOTE_TIME: Duration = Duration::from_millis(10);
 
 /// Why a hook call recorded nothing. Each message names what failed, never the payload's text.
 #[derive(Debug, thiserror::Error)]
@@ -70,11 +74,12 @@ pub fn run(args: &[OsString], input: impl Read + Send + 'static, home: Option<&P
         now: SystemTime::now(),
         home: home.map(Path::to_path_buf),
         names: None,
+        hard_timeout: shortest_hard_timeout(),
     };
     let finished = fail_open::guard(AssertUnwindSafe(|| hook.clone().call(args, input)));
     if !finished {
         // Noting the panic runs guarded too: nothing may escape to the agent.
-        fail_open::guard(AssertUnwindSafe(|| hook.note("the hook panicked")));
+        fail_open::guard(AssertUnwindSafe(|| hook.note_in_time("the hook panicked")));
     }
 }
 
@@ -89,6 +94,9 @@ struct Hook {
     home: Option<PathBuf>,
     /// The agent's and the event's names, once the arguments name ones Cortex knows.
     names: Option<(&'static str, &'static str)>,
+    /// How long the call may take: the event's hard timeout once the arguments name a hook, the
+    /// shortest of any hook's until then.
+    hard_timeout: Duration,
 }
 
 impl Hook {
@@ -97,20 +105,23 @@ impl Hook {
     fn call(mut self, args: &[OsString], input: impl Read + Send + 'static) {
         let (adapter, entry) = match hook_of(args) {
             Ok(found) => found,
-            Err(failure) => return self.note(&describe(&failure)),
+            Err(failure) => return self.note_in_time(&describe(&failure)),
         };
         self.names = Some((adapter.agent().name(), entry.event_name));
+        self.hard_timeout = entry.hard_timeout;
         let worker = self.clone();
-        // The whole of the work, file system calls included, ends by the event's hard timeout.
-        let outcome = fail_open::within(self.started + entry.hard_timeout, move || {
+        // The whole of the work, file system calls included, ends by the event's hard timeout,
+        // less the moment kept to note why when it does not finish.
+        let work_until = self.started + entry.hard_timeout.saturating_sub(NOTE_TIME);
+        let outcome = fail_open::within(work_until, move || {
             if let Err(failure) = worker.handle(adapter, entry, input) {
                 worker.note(&describe(&failure));
             }
         });
         match outcome {
             Outcome::Finished => {}
-            Outcome::Panicked => self.note("the hook panicked"),
-            Outcome::OutOfTime => self.note("the hook ran out of time"),
+            Outcome::Panicked => self.note_in_time("the hook panicked"),
+            Outcome::OutOfTime => self.note_in_time("the hook ran out of time"),
         }
     }
 
@@ -164,8 +175,20 @@ impl Hook {
         }
     }
 
+    /// Writes `what` to the hook log as [`Hook::note`] does, from the hook's own thread, which must
+    /// return by the hard timeout: the note is written on a thread of its own and given up then,
+    /// left to the process's exit like stalled work, since a file system that stalled the work
+    /// may stall the log too.
+    fn note_in_time(&self, what: &str) {
+        let (hook, what) = (self.clone(), what.to_owned());
+        // INVARIANT: fail-open. The log never holds the agent past the hook's hard timeout.
+        let _ = fail_open::within(self.started + self.hard_timeout, move || hook.note(&what));
+    }
+
     /// Writes `what` to the hook log with the call's time, agent and event. A log that cannot be
-    /// written is left unwritten: nothing else can be told.
+    /// written is left unwritten: nothing else can be told. It may wait on the file system as long
+    /// as that takes: the work calls it within its own deadline, and the hook's own thread through
+    /// [`Hook::note_in_time`].
     fn note(&self, what: &str) {
         let Some(home) = self.home.as_deref() else {
             return;

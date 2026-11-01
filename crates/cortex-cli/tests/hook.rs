@@ -422,3 +422,90 @@ fn a_probe_stops_and_starts_no_daemon() -> TestResult {
     );
     Ok(())
 }
+
+/// A file system that stalls is given up at the hard timeout. Only a Unix one can be made to
+/// stall on purpose: a pipe nobody reads makes an open for writing wait for ever.
+#[cfg(unix)]
+mod stalled {
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    use cortex_core::UserFolder;
+
+    use super::common::{POLL_EVERY, TestResult, isolate};
+    use super::marked_repository;
+
+    /// How long a hook may run before the test takes it for stuck: far past any hard timeout.
+    const STUCK_AFTER: Duration = Duration::from_secs(10);
+
+    /// Makes `path` a pipe nobody reads, last changed long ago, so that nothing takes it for
+    /// recent and opening it to write waits for ever.
+    fn stalling_pipe(path: &Path) -> TestResult {
+        let made = Command::new("mkfifo").arg(path).status()?;
+        let aged = Command::new("touch")
+            .args(["-m", "-t", "200001010000"])
+            .arg(path)
+            .status()?;
+        if !(made.success() && aged.success()) {
+            return Err(format!("no pipe made at {}", path.display()).into());
+        }
+        Ok(())
+    }
+
+    /// Runs `cortex hook` with `args` and `payload` on stdin, `home` the home folder and its output
+    /// to files: whether it ended with exit code 0 and nothing printed. A hook still running after
+    /// [`STUCK_AFTER`] is stopped, and that is an error.
+    fn bounded_hook(args: &[&str], payload: &[u8], home: &Path) -> TestResult<bool> {
+        let (out, err) = (home.join("hook.out"), home.join("hook.err"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+        command
+            .arg("hook")
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(File::create(&out)?)
+            .stderr(File::create(&err)?);
+        isolate(&mut command, home);
+        let started = Instant::now();
+        let mut child = command.spawn()?;
+        // The hook may have given up its input already: that is its right.
+        let _ = child
+            .stdin
+            .take()
+            .ok_or("stdin is not piped")?
+            .write_all(payload);
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if started.elapsed() > STUCK_AFTER {
+                child.kill()?;
+                child.wait()?;
+                return Err("the hook was still running after 10 s".into());
+            }
+            std::thread::sleep(POLL_EVERY);
+        };
+        Ok(status.code() == Some(0)
+            && std::fs::read(&out)?.is_empty()
+            && std::fs::read(&err)?.is_empty())
+    }
+
+    /// With the hook log a pipe nobody reads, a payload that is no JSON makes the hook's work
+    /// stall noting why, and then its note that it ran out of time stall too: the hook returns all
+    /// the same, silent. So does a call whose arguments name no hook, which can only note that.
+    #[test]
+    fn a_stalled_log_is_given_up_at_the_hard_timeout() -> TestResult {
+        let (home, repo) = marked_repository()?;
+        let logs = UserFolder::in_home(home.path()).logs_folder();
+        std::fs::create_dir_all(&logs)?;
+        stalling_pipe(&logs.join("hook.log"))?;
+        let not_json = format!("{{\"cwd\": {:?}", repo.display().to_string());
+        let stop = ["--agent", "claude", "--event", "Stop"];
+        assert!(bounded_hook(&stop, not_json.as_bytes(), home.path())?);
+        let unknown = ["--agent", "claude", "--event", "NoSuchEvent"];
+        assert!(bounded_hook(&unknown, b"{}", home.path())?);
+        Ok(())
+    }
+}

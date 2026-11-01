@@ -21,6 +21,17 @@ pub fn adapter(name: &str) -> Option<&'static dyn Adapter> {
         .find(|adapter| adapter.agent().name() == name)
 }
 
+/// The shortest hard timeout of any hook of any agent: how long a call may take whose arguments
+/// name no hook, so that its own hard timeout is not known. None at all, with no hooks.
+pub(crate) fn shortest_hard_timeout() -> Duration {
+    ADAPTERS
+        .iter()
+        .flat_map(|adapter| adapter.hooks())
+        .map(|entry| entry.hard_timeout)
+        .min()
+        .unwrap_or(Duration::ZERO)
+}
+
 /// What an agent's adapter knows.
 pub trait Adapter: Sync {
     /// The agent.
