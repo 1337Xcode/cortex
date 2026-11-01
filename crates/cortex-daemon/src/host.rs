@@ -108,14 +108,18 @@ impl<'a> Host<'a> {
     /// A failed index or parse, or a watcher that stopped.
     pub(crate) fn serve(mut self) -> anyhow::Result<()> {
         let served = self.work();
-        let inbox = self.inbox;
-        inbox.stop();
-        record_waiting(&mut self.writer, &mut self.recorder, inbox);
+        self.close();
+        served
+    }
+
+    /// Closes the inbox to events and records what it took, and the edits the watcher saw that
+    /// are still held: what the daemon does last, however it stops.
+    pub(crate) fn close(&mut self) {
+        close(&mut self.writer, &mut self.recorder, self.inbox);
         // Every edit still held is recorded too: a hook has had its chance to claim most of the
         // hold, and a stop must not lose them.
         let parts = (&mut self.recorder, &mut self.edits);
-        record_due_edits(&mut self.writer, parts, inbox, i64::MAX);
-        served
+        record_due_edits(&mut self.writer, parts, self.inbox, i64::MAX);
     }
 
     /// The work of [`Host::serve`] until it is asked to stop, is idle long enough or fails.
@@ -294,6 +298,14 @@ pub(crate) fn load_grammars(
     };
     record_waiting(writer, recorder, inbox);
     loaded
+}
+
+/// Closes `inbox` to events and records with `recorder` the events it took: what the daemon does
+/// last once its writer is open, however it stops, so that no event a hook was answered for is
+/// lost.
+pub(crate) fn close(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox) {
+    inbox.close();
+    record_waiting(writer, recorder, inbox);
 }
 
 /// Records the hook events waiting in `inbox` with `recorder`, all or none; a batch that cannot be
@@ -617,17 +629,19 @@ mod tests {
     }
 
     /// Hook events waiting when the daemon is asked to stop are recorded before it stops, though
-    /// the stop came first; one that arrives once it is stopping is refused, not taken and lost.
+    /// the stop came first, and so is one that arrives after the stop was asked for but before the
+    /// writer saw it; one that arrives once the writer has stopped is refused, not taken and
+    /// lost.
     #[test]
     fn waiting_events_are_recorded_at_a_stop() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
         let host = indexed_host(root.path(), (&config, &inbox))?;
         assert!(inbox.push_event(event(HookKind::SessionStart, 5, b"start")?));
-        assert!(inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?));
         inbox.stop();
-        assert!(!inbox.push_event(event(HookKind::Stop, 15, b"stop")?));
+        assert!(inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?));
         host.serve()?;
+        assert!(!inbox.push_event(event(HookKind::Stop, 15, b"stop")?));
         assert_eq!(
             stored_kinds(root.path())?,
             [EventKind::SessionStart, EventKind::Prompt]

@@ -53,6 +53,8 @@ struct State {
     is_overflowed: bool,
     /// Whether the daemon was asked to stop.
     is_stopping: bool,
+    /// Whether the writer has stopped working and takes no more events.
+    is_closed: bool,
     /// Whether the watcher stopped feeding the inbox.
     is_watcher_gone: bool,
     /// When the latest request of any kind arrived, if one did.
@@ -107,11 +109,12 @@ pub(crate) struct Counts {
 impl Inbox {
     /// Puts in a hook event, making room as [`MAX_EVENTS`] says when the inbox is full, and says
     /// whether it was taken: an event dropped to make room is taken (and counted), but none is
-    /// once the writer is stopping, since the writer records what waits when it stops and nothing
-    /// that comes later.
+    /// once the inbox is closed, since the writer records what waits when it closes it and nothing
+    /// that comes later. A stop asked for does not close it: the writer may still record events
+    /// before it next looks.
     pub(crate) fn push_event(&self, event: Event) -> bool {
         let mut state = self.lock();
-        if state.is_stopping {
+        if state.is_closed {
             return false;
         }
         if state.events.len() >= MAX_EVENTS {
@@ -201,11 +204,16 @@ impl Inbox {
         self.lock().last_request
     }
 
-    /// Asks the writer to stop; from now on no event is taken. The writer calls it too, whatever
-    /// ended its work, before it records the last events waiting.
+    /// Asks the writer to stop.
     pub(crate) fn stop(&self) {
         self.lock().is_stopping = true;
         self.arrived.notify_one();
+    }
+
+    /// Closes the inbox to events: what the writer does once it has stopped working, whatever
+    /// stopped it, before it records the last events waiting.
+    pub(crate) fn close(&self) {
+        self.lock().is_closed = true;
     }
 
     /// Says the watcher stopped feeding the inbox.

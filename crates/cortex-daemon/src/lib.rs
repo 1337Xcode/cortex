@@ -112,6 +112,9 @@ fn listen_and_serve(
     };
     runtime.spawn(Arc::new(Server::new(Arc::clone(&inbox))).serve(listener));
     let served = index_and_serve(root, (repo_id, &inbox), note);
+    // However the work ended, before the writer opened included, the server takes no more events
+    // in the moment it has left: nothing would record them.
+    inbox.close();
     runtime.shutdown_timeout(STOP_GRACE);
     served
 }
@@ -144,14 +147,21 @@ fn index_and_serve(
     let excerpt = config.store_prompt_excerpt;
     let mut recorder = Recorder::new(excerpt);
     host::record_waiting(&mut writer, &mut recorder, inbox);
-    let grammars = host::load_grammars(&mut writer, &mut recorder, inbox)?;
+    // From here on, a daemon that cannot go on still records the events it took before it stops.
+    let grammars = or_close(
+        host::load_grammars(&mut writer, &mut recorder, inbox),
+        || host::close(&mut writer, &mut recorder, inbox),
+    )?;
     let global_gitignore = match global_ignore::find(root) {
         Ok(found) => found,
         Err(error) => {
             tracing::warn!(error = %format!("{error:#}"), "the global gitignore is not read");
-            note(&format!(
-                "warning: the global gitignore is not read: {error:#}"
-            ))?;
+            or_close(
+                note(&format!(
+                    "warning: the global gitignore is not read: {error:#}"
+                )),
+                || host::close(&mut writer, &mut recorder, inbox),
+            )?;
             None
         }
     };
@@ -161,8 +171,10 @@ fn index_and_serve(
         global_gitignore: global_gitignore.as_deref(),
     };
     let feed = WatcherFeed(Arc::clone(inbox));
-    let watcher = watch(root, &discover, move |change| feed.push(change))
-        .context("watching the repository")?;
+    let watcher = or_close(
+        watch(root, &discover, move |change| feed.push(change)).context("watching the repository"),
+        || host::close(&mut writer, &mut recorder, inbox),
+    )?;
     host::record_waiting(&mut writer, &mut recorder, inbox);
     let mut host = Host::new(
         root,
@@ -170,7 +182,7 @@ fn index_and_serve(
         (&config, discover),
         (writer, recorder, inbox),
     );
-    let report = host.index(&[])?;
+    let report = or_close(host.index(&[]), || host.close())?;
     inbox.mark_indexed();
     tracing::info!(
         files_written = report.files,
@@ -179,10 +191,19 @@ fn index_and_serve(
         files_waiting = host.waiting(),
         "first index done"
     );
-    note(&ready_line(&report, host.waiting()))?;
+    or_close(note(&ready_line(&report, host.waiting())), || host.close())?;
     host.serve()?;
     drop(watcher);
     Ok(())
+}
+
+/// `result`, with `close` run first when it is an error: how the daemon, stopping on an error,
+/// still records the events it took.
+fn or_close<T>(result: anyhow::Result<T>, close: impl FnOnce()) -> anyhow::Result<T> {
+    if result.is_err() {
+        close();
+    }
+    result
 }
 
 /// The watcher's way into the inbox. When the watcher lets go of it, the inbox learns that the

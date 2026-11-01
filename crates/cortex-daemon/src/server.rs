@@ -487,13 +487,13 @@ mod tests {
         })
     }
 
-    /// An event that arrives once the daemon is stopping is answered with an error, not taken: the
-    /// writer records nothing after it stops, so an acknowledgement would be a lie. Nothing is put
-    /// in the inbox.
+    /// An event that arrives once the writer has stopped and closed the inbox is answered with an
+    /// error, not taken: the writer records nothing after, so an acknowledgement would be a lie.
+    /// Nothing is put in the inbox.
     #[test]
-    fn a_stopping_daemon_takes_no_events() -> TestResult {
+    fn a_closed_inbox_takes_no_events() -> TestResult {
         let inbox = Arc::new(Inbox::default());
-        inbox.stop();
+        inbox.close();
         let server = Server::new(Arc::clone(&inbox));
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let event = Received {
