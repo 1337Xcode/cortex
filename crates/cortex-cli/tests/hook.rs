@@ -406,6 +406,11 @@ mod stalled {
     /// How long a hook may run before the test takes it for stuck: far past any hard timeout.
     const STUCK_AFTER: Duration = Duration::from_secs(10);
 
+    /// The most a call here may take: its hard timeout is 300 ms, and the rest is for starting a
+    /// process on a busy machine. A hook that waited for the agent's own timeout (one second or
+    /// more) to end it would take longer.
+    const RETURNS_WITHIN: Duration = Duration::from_secs(2);
+
     /// Makes `path` a pipe nobody reads, last changed long ago, so that nothing takes it for
     /// recent and opening it to write waits for ever.
     fn stalling_pipe(path: &Path) -> TestResult {
@@ -421,8 +426,8 @@ mod stalled {
     }
 
     /// Runs `cortex hook` with `args` and `payload` on stdin, `home` the home folder and its output
-    /// to files: whether it ended with exit code 0 and nothing printed. A hook still running after
-    /// [`STUCK_AFTER`] is stopped, and that is an error.
+    /// to files: whether it ended with exit code 0 and nothing printed within [`RETURNS_WITHIN`]. A
+    /// hook still running after [`STUCK_AFTER`] is stopped, and that is an error.
     fn bounded_hook(args: &[&str], payload: &[u8], home: &Path) -> TestResult<bool> {
         let (out, err) = (home.join("hook.out"), home.join("hook.err"));
         let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
@@ -452,7 +457,8 @@ mod stalled {
             }
             std::thread::sleep(POLL_EVERY);
         };
-        Ok(status.code() == Some(0)
+        Ok(started.elapsed() < RETURNS_WITHIN
+            && status.code() == Some(0)
             && std::fs::read(&out)?.is_empty()
             && std::fs::read(&err)?.is_empty())
     }

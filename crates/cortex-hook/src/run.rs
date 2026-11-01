@@ -26,9 +26,13 @@ const STDIN_TIMEOUT: Duration = Duration::from_millis(50);
 /// before the hard timeout, so the hook exits before the agent gives up on it.
 const EXIT_MARGIN: Duration = Duration::from_millis(15);
 
-/// The end of an event's hard timeout kept for noting why the work did not finish: the work is
-/// given up this long before the hard timeout, and the note at the hard timeout itself.
-const NOTE_TIME: Duration = Duration::from_millis(10);
+/// How long before an event's hard timeout the work is given up: after the daemon's answer was
+/// due ([`EXIT_MARGIN`] before it), the work has the rest to note why it failed.
+const WORK_MARGIN: Duration = Duration::from_millis(10);
+
+/// How long before an event's hard timeout a note the hook's own thread writes is given up, once
+/// the work was: the process keeps that long to exit.
+const NOTE_MARGIN: Duration = Duration::from_millis(5);
 
 /// Why a hook call recorded nothing. Each message names what failed, never the payload's text.
 #[derive(Debug, thiserror::Error)]
@@ -112,7 +116,7 @@ impl Hook {
         let worker = self.clone();
         // The whole of the work, file system calls included, ends by the event's hard timeout,
         // less the moment kept to note why when it does not finish.
-        let work_until = self.started + entry.hard_timeout.saturating_sub(NOTE_TIME);
+        let work_until = self.started + entry.hard_timeout.saturating_sub(WORK_MARGIN);
         let outcome = fail_open::within(work_until, move || {
             if let Err(failure) = worker.handle(adapter, entry, input) {
                 worker.note(&describe(&failure));
@@ -176,13 +180,14 @@ impl Hook {
     }
 
     /// Writes `what` to the hook log as [`Hook::note`] does, from the hook's own thread, which must
-    /// return by the hard timeout: the note is written on a thread of its own and given up then,
-    /// left to the process's exit like stalled work, since a file system that stalled the work
-    /// may stall the log too.
+    /// return by the hard timeout: the note is written on a thread of its own and given up
+    /// [`NOTE_MARGIN`] before it, left to the process's exit like stalled work, since a file
+    /// system that stalled the work may stall the log too.
     fn note_in_time(&self, what: &str) {
         let (hook, what) = (self.clone(), what.to_owned());
+        let note_until = self.started + self.hard_timeout.saturating_sub(NOTE_MARGIN);
         // INVARIANT: fail-open. The log never holds the agent past the hook's hard timeout.
-        let _ = fail_open::within(self.started + self.hard_timeout, move || hook.note(&what));
+        let _ = fail_open::within(note_until, move || hook.note(&what));
     }
 
     /// Writes `what` to the hook log with the call's time, agent and event. A log that cannot be
