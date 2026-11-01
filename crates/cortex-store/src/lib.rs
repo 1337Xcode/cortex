@@ -11,6 +11,7 @@
 #![warn(clippy::pedantic)]
 
 mod activity;
+mod checkpoint;
 mod connection;
 mod error;
 mod folders;
@@ -33,6 +34,7 @@ mod values;
 mod writer;
 
 pub use activity::{EventRecord, EventRow, SessionRecord, SessionRow, TaskRecord, TaskRow};
+pub use checkpoint::CheckpointFailures;
 pub use error::StoreError;
 pub use ids::{FileId, NodeId, RefId, SymbolId};
 pub use lock::is_writer_running;

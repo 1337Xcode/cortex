@@ -71,6 +71,11 @@ pub(crate) fn configure(
     set(connection, "synchronous", "NORMAL", 1)?;
     set(connection, "foreign_keys", "ON", 1)?;
     set(connection, "busy_timeout", BUSY_TIMEOUT_MS, BUSY_TIMEOUT_MS)?;
+    if access == Access::ReadWrite {
+        // The writer's commits never checkpoint the log; its checkpointer does, on a thread of its
+        // own. A reader never commits, so it never checkpoints either way.
+        set(connection, "wal_autocheckpoint", 0, 0)?;
+    }
     let mmap_size = crate::values::integer(mmap_bytes, "mmap_size")?;
     set(connection, "mmap_size", mmap_size, mmap_size)?;
     set(connection, "temp_store", "MEMORY", 2)
@@ -133,7 +138,8 @@ mod tests {
 
     /// Every setting reads back as required, on the writer's connection and on a reader's.
     /// SQLite reports `synchronous` NORMAL as 1, `foreign_keys` ON as 1 and `temp_store` MEMORY
-    /// as 2.
+    /// as 2. The writer's commits never checkpoint (0); a reader keeps SQLite's 1,000 pages, which
+    /// it never reaches, since it never commits.
     #[test]
     fn settings_read_back() -> Result<(), Box<dyn std::error::Error>> {
         let folder = tempfile::tempdir()?;
@@ -153,6 +159,8 @@ mod tests {
                 assert_eq!(pragma(connection, name)?, value, "{name}");
             }
         }
+        assert_eq!(pragma(&writer, "wal_autocheckpoint")?, "0");
+        assert_eq!(pragma(&reader, "wal_autocheckpoint")?, "1000");
         Ok(())
     }
 

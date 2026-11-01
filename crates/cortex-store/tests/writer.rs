@@ -3,6 +3,8 @@
 
 mod common;
 
+use std::time::{Duration, Instant};
+
 use common::{Scratch, TestResult, index, name, path, reference, symbol};
 use cortex_core::{
     EdgeType, FileFlags, Language, RefKind, RepoId, Resolution, ScaleMode, SymbolKind,
@@ -1364,5 +1366,36 @@ fn the_largest_configured_memory_map_is_taken() -> TestResult {
     };
     drop(open(cortex_core::MAX_MMAP_BYTES)?);
     assert!(open(cortex_core::MAX_MMAP_BYTES + 1).is_err());
+    Ok(())
+}
+
+/// The writer's commits leave the write-ahead log alone, and its checkpointer moves what they
+/// committed into the database file within seconds while the writer stays open: eight files of
+/// 2,000 definitions each grow the file from its empty schema past 4 MB, with no checkpoint
+/// failing.
+#[test]
+fn committed_pages_reach_the_database_file_while_the_writer_is_open() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let database = scratch.folder.join("cortex.db");
+    let before = std::fs::metadata(&database)?.len();
+    for number in 0..8 {
+        let symbols = (0..2_000)
+            .map(|part| {
+                let qual_name = format!("module_{number}.a_function_with_a_long_name_{part}");
+                symbol(SymbolKind::Function, &qual_name, None, ("sig", "body"))
+            })
+            .collect::<TestResult<Vec<_>>>()?;
+        let mut transaction = writer.transaction()?;
+        transaction.replace_file(&index(&format!("m{number}.py"), symbols, Vec::new())?)?;
+        transaction.commit()?;
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while std::fs::metadata(&database)?.len() < 4_000_000 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let after = std::fs::metadata(&database)?.len();
+    assert!(after >= 4_000_000, "{before} bytes, then {after}");
+    assert_eq!(writer.checkpoint_failures().count(), 0);
     Ok(())
 }

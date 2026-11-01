@@ -6,6 +6,7 @@ use cortex_core::{EdgeType, Identifier, RepoId, RepoPath, ScaleMode, TaskOutcome
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::activity::{self, EventRecord, SessionRecord, TaskRecord};
+use crate::checkpoint::{CheckpointFailures, Checkpointer};
 use crate::connection::{self, Access};
 use crate::error::{StoreError, io, sqlite};
 use crate::folders;
@@ -34,11 +35,15 @@ pub struct WriterOptions<'a> {
 }
 
 /// The one writer of a repository's database. While it exists, no other writer can open the
-/// same database, in this process or any other.
+/// same database, in this process or any other. Its commits never checkpoint the write-ahead log:
+/// a thread of its own does, every second.
 #[derive(Debug)]
 pub struct Writer {
-    // Fields drop in order: the connection closes before the lock is released, so a new writer
-    // never opens the database while this one is still closing it.
+    // Fields drop in order: the checkpointer stops and closes its connection, then the writer's
+    // connection closes, the last one, so SQLite checkpoints and removes the log; the lock is
+    // released after both, so a new writer never opens the database while this one is closing it.
+    /// The thread that checkpoints the log.
+    checkpointer: Checkpointer,
     /// The read-write connection.
     connection: Connection,
     /// The lock that makes this the only writer.
@@ -74,7 +79,9 @@ impl Writer {
             &layout::backups(options.folder),
         )?;
         record_identity(&mut connection, options)?;
+        let checkpointer = Checkpointer::start(&database, options.mmap_bytes)?;
         Ok(Self {
+            checkpointer,
             connection,
             _lock: lock,
         })
@@ -97,6 +104,13 @@ impl Writer {
     #[must_use]
     pub fn queries(&self) -> Queries<'_> {
         Queries::new(&self.connection)
+    }
+
+    /// The count of the checkpoints that failed since the writer opened, for the daemon's status:
+    /// a log that is not checkpointed only grows, and nothing committed is lost.
+    #[must_use]
+    pub fn checkpoint_failures(&self) -> CheckpointFailures {
+        self.checkpointer.failures()
     }
 }
 

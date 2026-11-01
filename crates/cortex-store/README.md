@@ -39,6 +39,13 @@ Every connection uses write-ahead logging, `synchronous=NORMAL`, foreign keys, a
 timeout, up to `store.mmap_bytes` of memory mapping (256 MiB by default) and in-memory temporary
 tables. Each setting is read back after it is set.
 
+The writer's commits never copy the log into the database file (`wal_autocheckpoint=0`): a
+thread the writer starts with it does, every second, with a passive checkpoint on a connection
+of its own, which waits for no reader and keeps the writer from waiting for it. The log holds
+about a second of writes. A checkpoint that fails is tried again a second later and counted
+(`Writer::checkpoint_failures`); nothing committed is lost, the log only grows. The thread stops
+before the writer's connection closes, and that last close copies the rest and removes the log.
+
 On Unix, the store's folders and files are readable by their owner only (modes 0700 and 0600),
 including ones it finds with a wider mode. On Windows they inherit the access list of the folder
 they are created in.
