@@ -20,6 +20,7 @@ use cortex_store::{FileRow, StoreError, Writer};
 
 use crate::discover::DiscoveredFile;
 use crate::grammar::Grammars;
+use crate::pause::Pacer;
 use crate::pipeline::{
     self, Context, IndexError, IndexOptions, IndexReport, Pass, index_repository,
 };
@@ -27,7 +28,7 @@ use crate::scale;
 use crate::scip::{self, ScipOutcome};
 use crate::seen::{self, PathRules, PathState, WalkRules};
 use crate::watch::MAX_PATHS_IN_WINDOW;
-use crate::{folders, incremental, pause};
+use crate::{folders, incremental};
 
 /// What the chosen paths hold, against the store.
 #[derive(Default)]
@@ -67,12 +68,13 @@ pub fn index_paths(
     if concerns_everything(&mut rules, &paths) {
         return index_repository(root, grammars, writer, options);
     }
+    let mut pacer = Pacer::new(options.pause);
     incremental::mark_started(writer)?;
     let found = find(writer, &mut rules, &paths)?;
     let gone: BTreeSet<RepoPath> = found.gone.iter().map(|row| row.file.path.clone()).collect();
     let (around_gone, mut names) = incremental::around_removal(writer.queries(), &gone)?;
     pipeline::remove_files(writer, &gone.iter().cloned().collect::<Vec<_>>())?;
-    pause::between(options.pause, writer);
+    pacer.let_in(writer);
     let walked: BTreeMap<&RepoPath, FileFlags> = found
         .candidates
         .iter()
@@ -110,9 +112,9 @@ pub fn index_paths(
         writer,
         &found.candidates,
         &context,
-        &mut report,
-        options.pause,
+        (&mut report, &mut pacer),
     )?;
+    pacer.let_in(writer);
     for file in &written {
         names.extend(file.names.clone());
     }
@@ -134,17 +136,17 @@ pub fn index_paths(
     };
     let (around, is_cut) =
         pipeline::files_around(writer, &file_of, &written, (around_gone, &names))?;
-    let read_again = pipeline::read_again(&around, &context)?;
+    let read_again = pipeline::read_again(&around, &context, (writer, &mut pacer))?;
     report.read_again = pipeline::count(read_again.len());
     pipeline::link(
         writer,
         (written, read_again),
         Pass::Around(&names),
-        (&mut report, options.pause),
+        (&mut report, &mut pacer),
     )?;
     if has_new_files {
         folders::write_folders(writer)?;
-        pause::between(options.pause, writer);
+        pacer.let_in(writer);
     }
     (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
     // Files around the change left out by the cap keep stale ties: the next index reads them all.

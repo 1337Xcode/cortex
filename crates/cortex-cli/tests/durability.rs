@@ -183,9 +183,9 @@ fn files_stored(root: &Path) -> TestResult<u64> {
     Ok(reader.queries().counts()?.files)
 }
 
-/// From the moment the daemon listens, through its grammar loading and into the first index of
-/// 2,000 modules of 24 functions each, every event it took more than a second earlier is in the
-/// store; after a hard kill two seconds into the index, every event it took more than a second
+/// From the moment the daemon listens, through its grammar loading and the first index of 2,000
+/// modules of 24 functions each until half the files are stored, every event it took more than a
+/// second earlier is in the store; after a hard kill then, every event it took more than a second
 /// before the kill is still there. A daemon started again on the half-written store finishes the
 /// index, its passes over every file included, and events reach the store within a second through
 /// all of it.
@@ -194,18 +194,21 @@ fn events_are_stored_within_a_second_while_the_daemon_starts() -> TestResult {
     let home = tempfile::tempdir()?;
     let repo = tempfile::tempdir()?;
     package(repo.path(), 2_000, 24)?;
+    // The package's modules and its `__init__.py`.
+    let (all, half) = (2_001, 1_000);
     let root = canonical_root(repo.path())?;
     let mut daemon = Daemon::start(&root, home.path())?;
     let mut sender = Sender::new(&root, home.path());
-    // While the daemon loads its grammars, until the index has written its first files.
-    sender.send_while(|| Ok(files_stored(&root)? == 0), READY_WITHIN)?;
-    assert!(files_stored(&root)? > 0, "the index never wrote a file");
-    // Then into the index itself.
-    sender.send_while(|| Ok(true), Duration::from_secs(2))?;
-    let ready = daemon.line_by_now();
+    sender.send_while(|| Ok(files_stored(&root)? < half), READY_WITHIN)?;
+    let stored_at_kill = files_stored(&root)?;
+    assert!(
+        (half..all).contains(&stored_at_kill),
+        "{stored_at_kill} files stored at the kill"
+    );
     assert_eq!(
-        ready, None,
-        "the index ended too soon to be killed in the middle"
+        daemon.line_by_now(),
+        None,
+        "the index ended before the kill"
     );
     daemon.child.kill()?;
     daemon.child.wait()?;
@@ -219,10 +222,13 @@ fn events_are_stored_within_a_second_while_the_daemon_starts() -> TestResult {
     // An event taken in the last second before the kill may be lost with it; the daemon started
     // next owes nothing for it.
     sender.sent.retain(|(taken, _)| *taken <= cutoff);
+    let sent_before = sender.sent.len();
 
     let daemon = Daemon::start(&root, home.path())?;
     sender.daemon_started = Instant::now();
     sender.send_while(|| Ok(daemon.line_by_now().is_none()), READY_WITHIN)?;
+    let sent_after = sender.sent.len() - sent_before;
+    assert!(sent_after >= 10, "{sent_after} events after the restart");
     let cutoff = Instant::now()
         .checked_sub(WITHIN)
         .ok_or("no time before now")?;

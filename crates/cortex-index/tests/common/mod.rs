@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use cortex_core::{ModeSetting, RepoId, RepoPath};
 use cortex_index::{
-    DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
+    DiscoverOptions, Grammars, IndexOptions, IndexReport, Pause, index_paths, index_repository,
 };
 use cortex_store::{Reader, SymbolId, Writer, WriterOptions};
 
@@ -59,8 +59,19 @@ pub fn index(
 /// of `limits`, its scale mode set by `mode`.
 pub fn index_with_mode(
     root: &Path,
+    limits: (usize, Duration, u64),
+    mode: ModeSetting,
+) -> TestResult<IndexReport> {
+    index_with_pause(root, limits, mode, None)
+}
+
+/// Indexes the repository at `root` as [`index_with_mode`] does, letting `pause` in whenever the
+/// index offers.
+pub fn index_with_pause(
+    root: &Path,
     (threads, parse_timeout, max_file_bytes): (usize, Duration, u64),
     mode: ModeSetting,
+    pause: Option<Pause<'_>>,
 ) -> TestResult<IndexReport> {
     let mut writer = Writer::open(&WriterOptions {
         folder: &root.join(".cortex"),
@@ -78,7 +89,7 @@ pub fn index_with_mode(
         threads: NonZeroUsize::new(threads).ok_or("no threads")?,
         now_ms: NOW_MS,
         mode,
-        pause: None,
+        pause,
     };
     Ok(index_repository(root, &grammars()?, &mut writer, &options)?)
 }

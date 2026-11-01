@@ -180,13 +180,15 @@ impl<'a> Host<'a> {
         let (inbox, excerpt) = (self.inbox, self.config.store_prompt_excerpt);
         let recorder = RefCell::new(&mut self.recorder);
         let pause = |writer: &mut Writer| {
-            // The index never calls the pause from within it: the recorder is always free here.
+            // INVARIANT: single-writer. Events are recorded through the writer the index lends,
+            // between its transactions, on the writer's own thread. The index never calls the
+            // pause from within it, so the recorder is always free here.
             if let Ok(mut recorder) = recorder.try_borrow_mut() {
                 record_waiting(writer, &mut recorder, inbox, excerpt);
             }
         };
         let options = IndexOptions {
-            pause: Some(Pause::new(&pause)),
+            pause: Some(Pause::new(&pause, PAUSE_EVERY)),
             ..options
         };
         index(self.root, &self.grammars, &mut self.writer, &options)
@@ -207,6 +209,7 @@ impl<'a> Host<'a> {
 
 /// Loads every grammar on a thread of its own, recording the hook events that wait meanwhile every
 /// [`PAUSE_EVERY`]: a debug build takes seconds to load them, and the events must not wait as long.
+/// When the grammars cannot be had, the events waiting are recorded before the error is returned.
 ///
 /// # Errors
 ///
@@ -219,18 +222,28 @@ pub(crate) fn load_grammars(
 ) -> anyhow::Result<Arc<Grammars>> {
     let (sender, receiver) = mpsc::sync_channel(1);
     std::thread::spawn(move || drop(sender.send(Grammars::load())));
-    loop {
+    let loaded = loop {
         match receiver.recv_timeout(PAUSE_EVERY) {
-            Ok(loaded) => return Ok(Arc::new(loaded.context("loading the language grammars")?)),
+            Ok(Ok(grammars)) => return Ok(Arc::new(grammars)),
+            Ok(Err(error)) => break Err(error).context("loading the language grammars"),
             Err(RecvTimeoutError::Timeout) => record_waiting(writer, recorder, inbox, excerpt),
-            Err(RecvTimeoutError::Disconnected) => bail!("loading the language grammars stopped"),
+            Err(RecvTimeoutError::Disconnected) => {
+                break Err(anyhow::anyhow!("loading the language grammars stopped"));
+            }
         }
-    }
+    };
+    record_waiting(writer, recorder, inbox, excerpt);
+    loaded
 }
 
 /// Records the hook events waiting in `inbox` with `recorder`, all or none; a batch that cannot be
 /// recorded is counted.
-fn record_waiting(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox, excerpt: bool) {
+pub(crate) fn record_waiting(
+    writer: &mut Writer,
+    recorder: &mut Recorder,
+    inbox: &Inbox,
+    excerpt: bool,
+) {
     let events = inbox.take_events();
     if !events.is_empty() && record_batch(writer, recorder, excerpt, &events).is_err() {
         inbox.count_failed_batch();
@@ -338,16 +351,22 @@ mod tests {
             .collect())
     }
 
-    /// Hook events that wait while the writer indexes 600 files, three batches of them, are
-    /// recorded by the index's pauses, not after it: when the index ends nothing waits, and the
-    /// store holds them.
+    /// Writes 600 Python modules of one function each under `root`: three batches of files.
+    fn write_modules(root: &Path) -> TestResult {
+        for number in 0..600 {
+            let source = format!("def f{number}():\n    pass\n");
+            std::fs::write(root.join(format!("m{number}.py")), source)?;
+        }
+        Ok(())
+    }
+
+    /// Hook events that wait when the writer starts an index of 600 files are recorded during it,
+    /// when the index lets the writer in after its walk, however quick the index: when it ends
+    /// nothing waits, and the store holds them.
     #[test]
     fn events_are_recorded_while_indexing() -> TestResult {
         let root = tempfile::tempdir()?;
-        for number in 0..600 {
-            let source = format!("def f{number}():\n    pass\n");
-            std::fs::write(root.path().join(format!("m{number}.py")), source)?;
-        }
+        write_modules(root.path())?;
         let config = Config::default();
         let grammars = Arc::new(Grammars::load()?);
         let inbox = Inbox::default();
@@ -362,6 +381,35 @@ mod tests {
             stored_kinds(&host)?,
             [EventKind::SessionStart, EventKind::Prompt]
         );
+        Ok(())
+    }
+
+    /// A batch the index's pause cannot record, its second prompt repeating the first prompt's
+    /// event, is counted and left, and the index goes on: all 600 files are written and nothing of
+    /// the batch is stored. The pause started the host's own recorder afresh, so the next event
+    /// registers its session again and is recorded.
+    #[test]
+    fn a_batch_the_pause_cannot_record_is_counted() -> TestResult {
+        let root = tempfile::tempdir()?;
+        write_modules(root.path())?;
+        let config = Config::default();
+        let grammars = Arc::new(Grammars::load()?);
+        let inbox = Inbox::default();
+        let parts = (writer(root.path())?, Recorder::new(false), &inbox);
+        let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
+        let prompt = event(HookKind::Prompt, 10, b"same")?;
+        inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
+        inbox.push_event(prompt.clone());
+        inbox.push_event(prompt);
+        let report = host.index(&[])?;
+        assert_eq!(report.files, 600);
+        let counts = inbox.counts();
+        assert_eq!((counts.events_waiting, counts.failed_batches), (0, 1));
+        assert_eq!(host.writer.queries().events_after(0, 10)?, []);
+        host.record(&[event(HookKind::Prompt, 20, b"next")?])?;
+        let session = Identifier::new("s1")?;
+        assert!(host.writer.queries().session(&session)?.is_some());
+        assert_eq!(stored_kinds(&host)?, [EventKind::Prompt]);
         Ok(())
     }
 

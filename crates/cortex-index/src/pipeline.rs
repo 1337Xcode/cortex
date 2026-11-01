@@ -257,7 +257,9 @@ pub fn index_repository(
     writer: &mut Writer,
     options: &IndexOptions<'_>,
 ) -> Result<IndexReport, IndexError> {
+    let mut pacer = Pacer::new(options.pause);
     let discovery = discover(root, &options.discover)?;
+    pacer.let_in(writer);
     let known = incremental::known_files(writer.queries())?;
     incremental::mark_started(writer)?;
     let is_whole = known.is_empty();
@@ -268,7 +270,7 @@ pub fn index_repository(
         incremental::around_removal(writer.queries(), &missing.iter().cloned().collect())?
     };
     remove_files(writer, &missing)?;
-    pause::between(options.pause, writer);
+    pacer.let_in(writer);
     let found: BTreeMap<&RepoPath, FileFlags> = discovery
         .files
         .iter()
@@ -282,6 +284,7 @@ pub fn index_repository(
         (&walked, &flags_of),
         options.discover.max_file_bytes,
     )?;
+    pacer.let_in(writer);
     let is_inventory = scale::takes_inventory(writer, options.mode, &discovery.files)?;
     let parsed_before = if is_inventory {
         Some(incremental::parsed_files(writer.queries(), &known)?)
@@ -317,7 +320,8 @@ pub fn index_repository(
         discovery.problems.clone(),
         ScipOutcome::Absent,
     );
-    let written = write_files(writer, &candidates, &context, &mut report, options.pause)?;
+    let written = write_files(writer, &candidates, &context, (&mut report, &mut pacer))?;
+    pacer.let_in(writer);
     let (scip, scip_ties) = scip::read_index(root, writer.queries())?;
     report.scip = scip;
     let (around, is_cut) = if is_whole {
@@ -330,7 +334,8 @@ pub fn index_repository(
             (around_gone, names, &scip_ties),
         )?
     };
-    let read_again = read_again(&around, &context)?;
+    pacer.let_in(writer);
+    let read_again = read_again(&around, &context, (writer, &mut pacer))?;
     report.read_again = count(read_again.len());
     link(
         writer,
@@ -339,10 +344,10 @@ pub fn index_repository(
             is_whole,
             scip_ties: &scip_ties,
         },
-        (&mut report, options.pause),
+        (&mut report, &mut pacer),
     )?;
     folders::write_folders(writer)?;
-    pause::between(options.pause, writer);
+    pacer.let_in(writer);
     (report.mode, report.size) = scale::settle_mode(writer, options.mode)?;
     // Files around the change left out by the cap keep stale ties: the next index reads them all.
     if !is_cut {
@@ -490,6 +495,7 @@ pub(crate) fn files_around(
 pub(crate) fn read_again(
     files: &[DiscoveredFile],
     context: &Context<'_>,
+    (writer, pacer): (&mut Writer, &mut Pacer<'_>),
 ) -> Result<Vec<(RepoPath, FileImports)>, IndexError> {
     // Every file is read whole: compared with the store, an unchanged file would come back as
     // touched, and in huge mode one never parsed as inventory, both without its imports.
@@ -510,6 +516,7 @@ pub(crate) fn read_again(
                 imports.push((prepared.index.file.path, prepared.imported));
             }
         }
+        pacer.offer(writer);
     }
     Ok(imports)
 }
@@ -538,9 +545,8 @@ pub(crate) fn link(
     writer: &mut Writer,
     (written, read_again): (Vec<Written>, Vec<(RepoPath, FileImports)>),
     pass: Pass<'_>,
-    (report, pause): (&mut IndexReport, Option<Pause<'_>>),
+    (report, pacer): (&mut IndexReport, &mut Pacer<'_>),
 ) -> Result<(), IndexError> {
-    let mut pacer = Pacer::new(pause);
     let mut affected: BTreeSet<SymbolId> = BTreeSet::new();
     let mut files = Vec::new();
     for file in written {
@@ -563,7 +569,7 @@ pub(crate) fn link(
             is_whole,
             scip_ties,
         } => (
-            resolve::resolve_names(writer, &bindings, scip_ties, &mut pacer)?,
+            resolve::resolve_names(writer, &bindings, scip_ties, pacer)?,
             is_whole,
         ),
         Pass::Around(names) => {
@@ -571,12 +577,12 @@ pub(crate) fn link(
             // What the SCIP index says of a file written now is out of date, as a full index finds:
             // its ties into the file give way, and their files are read again for their imports.
             (
-                resolve::resolve_names_around(writer, &bindings, (names, &affected), &mut pacer)?,
+                resolve::resolve_names_around(writer, &bindings, (names, &affected), pacer)?,
                 false,
             )
         }
     };
-    pause::between(pause, writer);
+    pacer.let_in(writer);
     affected.extend(named.changed_sources);
     let only = (!is_whole).then_some(&affected);
     let ties: Vec<(SymbolId, Target)> = named
@@ -584,10 +590,10 @@ pub(crate) fn link(
         .into_iter()
         .map(|(_, source, target)| (source, target))
         .collect();
-    symbol_edges::write_symbol_edges(writer, &ties, only, &mut pacer)?;
-    pause::between(pause, writer);
-    file_edges::write_import_edges(writer, &counts, (&test_targets, is_whole), &mut pacer)?;
-    pause::between(pause, writer);
+    symbol_edges::write_symbol_edges(writer, &ties, only, pacer)?;
+    pacer.let_in(writer);
+    file_edges::write_import_edges(writer, &counts, (&test_targets, is_whole), pacer)?;
+    pacer.let_in(writer);
     Ok(())
 }
 
@@ -675,10 +681,8 @@ pub(crate) fn write_files(
     writer: &mut Writer,
     files: &[DiscoveredFile],
     context: &Context<'_>,
-    report: &mut IndexReport,
-    pause: Option<Pause<'_>>,
+    (report, pacer): (&mut IndexReport, &mut Pacer<'_>),
 ) -> Result<Vec<Written>, IndexError> {
-    let mut pacer = Pacer::new(pause);
     thread::scope(|scope| {
         // Each batch reports on a channel of its own, so that a worker that panics closes it.
         let prepare = |batch| {
@@ -691,13 +695,13 @@ pub(crate) fn write_files(
         let mut next = batches.next().map(prepare);
         while let Some(preparing) = next.take() {
             let outcomes =
-                pause::wait_for(&preparing, pause, writer).ok_or(IndexError::WorkerPanicked)??;
+                pause::wait_for(&preparing, pacer, writer).ok_or(IndexError::WorkerPanicked)??;
             next = batches.next().map(prepare);
             written.extend(write_batch(
                 writer,
                 outcomes,
                 context.known,
-                (report, &mut pacer),
+                (report, pacer),
             )?);
             pacer.offer(writer);
         }
@@ -719,6 +723,8 @@ fn write_batch(
     let mut transaction = writer.transaction()?;
     for outcome in outcomes {
         if pacer.is_due() {
+            // INVARIANT: deterministic. The files are written in the same order however the
+            // transactions are cut, so the rows and their ids are the same whatever the pauses.
             transaction.commit()?;
             pacer.offer(writer);
             transaction = writer.transaction()?;

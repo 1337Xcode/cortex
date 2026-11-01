@@ -1,23 +1,25 @@
 //! A full index of small repositories: what is written for each kind of file, the folders that
 //! hold them, how a second index follows the changes, which stored files a later index removes or
-//! keeps, that the number of threads changes nothing stored, and what becomes of a file that takes
-//! too long to parse.
+//! keeps, that neither the number of threads nor the caller's pauses change anything stored, and
+//! what becomes of a file that takes too long to parse.
 
 mod common;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
-use common::{NOW_MS, TestResult, index, lock_out, write};
+use common::{NOW_MS, TestResult, index, index_with_pause, lock_out, write};
 use cortex_core::{
-    ContentHash, EdgeType, FileFlags, Language, RepoPath, Resolution, ScaleMode, SymbolKind,
+    ContentHash, EdgeType, FileFlags, Language, ModeSetting, RepoPath, Resolution, ScaleMode,
+    SymbolKind,
 };
 use cortex_index::{
-    FileProblem, IndexReport, LeftOut, Problem, ProblemKind, RepoSize, ScipOutcome,
+    FileProblem, IndexReport, LeftOut, Pause, Problem, ProblemKind, RepoSize, ScipOutcome,
 };
-use cortex_store::{FileRow, NodeId, Reader, RefRow, SymbolRow};
+use cortex_store::{FileRow, NodeId, Reader, RefRow, SymbolRow, Writer};
 
 /// A time limit no test file comes near, even in a debug build.
 const GENEROUS: Duration = Duration::from_secs(60);
@@ -690,6 +692,23 @@ fn files_in_a_folder_the_walk_cannot_list_are_kept() -> TestResult {
     Ok(())
 }
 
+/// Writes the fixture under `root`, then a slow file early in the path order and 300 small modules
+/// each calling the next: 309 files, more than one batch.
+fn write_many(root: &Path) -> TestResult {
+    write_fixture(root)?;
+    let slow: String = (0..2000)
+        .map(|number| format!("def slow{number}():\n    return {number}\n"))
+        .collect();
+    write_dated(root, "a_slow.py", slow.as_bytes())?;
+    for number in 0..300 {
+        let next = number + 1;
+        let source = format!("def part{number}():\n    return part{next}()\n");
+        let path = format!("parts/part{number:03}.py");
+        write_dated(root, &path, source.as_bytes())?;
+    }
+    Ok(())
+}
+
 /// The number of threads changes nothing stored, row for row and node for node, folder nodes
 /// included: each batch is written in path order however its threads finish. A slow file early in
 /// the order lets the other threads run ahead of the one parsing it, and 309 files fill more than
@@ -699,17 +718,7 @@ fn threads_change_nothing_stored() -> TestResult {
     let mut dumps = Vec::new();
     for threads in [1, 4] {
         let repo = tempfile::tempdir()?;
-        write_fixture(repo.path())?;
-        let slow: String = (0..2000)
-            .map(|number| format!("def slow{number}():\n    return {number}\n"))
-            .collect();
-        write_dated(repo.path(), "a_slow.py", slow.as_bytes())?;
-        for number in 0..300 {
-            let next = number + 1;
-            let source = format!("def part{number}():\n    return part{next}()\n");
-            let path = format!("parts/part{number:03}.py");
-            write_dated(repo.path(), &path, source.as_bytes())?;
-        }
+        write_many(repo.path())?;
         let report = index(repo.path(), threads, GENEROUS, DEFAULT_LIMIT)?;
         // The fixture's 8 files, of which orders.py, README.md and, under this limit, big.py are
         // parsed; a_slow.py; 300 parts.
@@ -721,6 +730,32 @@ fn threads_change_nothing_stored() -> TestResult {
         dumps.push((dump(repo.path())?, folders(repo.path())?));
     }
     // Folders: the root (a_slow.py's too), parts, and the fixture's gen, src/shop and vendor.
+    let sizes = dumps
+        .first()
+        .map(|(rows, folders)| (rows.len(), folders.len()));
+    assert_eq!(sizes, Some((309, 5)));
+    assert_eq!(dumps.first(), dumps.get(1));
+    Ok(())
+}
+
+/// Pauses change nothing stored, row for row and node for node, folder nodes included. A pause due
+/// at every chance lets the caller in before each of the 309 files is written, so each goes into a
+/// transaction of its own, and again between the passes; the index without one writes each batch
+/// in one transaction.
+#[test]
+fn pauses_change_nothing_stored() -> TestResult {
+    let calls = Cell::new(0_u64);
+    let count = |_: &mut Writer| calls.set(calls.get() + 1);
+    let mut dumps = Vec::new();
+    for pause in [None, Some(Pause::new(&count, Duration::ZERO))] {
+        let repo = tempfile::tempdir()?;
+        write_many(repo.path())?;
+        let limits = (4, GENEROUS, DEFAULT_LIMIT);
+        let report = index_with_pause(repo.path(), limits, ModeSetting::Auto, pause)?;
+        assert_eq!((report.files, report.parsed), (309, 304));
+        dumps.push((dump(repo.path())?, folders(repo.path())?));
+    }
+    assert!(calls.get() > 309, "{} calls", calls.get());
     let sizes = dumps
         .first()
         .map(|(rows, folders)| (rows.len(), folders.len()));

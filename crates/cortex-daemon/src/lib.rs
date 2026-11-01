@@ -4,10 +4,10 @@
 //! made while it starts wait for it rather than fail), then takes the store's writer, records the
 //! hook events that arrive while the grammars load, and indexes what changed since the last index,
 //! recording events between the index's write transactions. Then it watches the repository and
-//! indexes again after each change. In huge mode it parses the files it took inventory of, those that changed first, at
-//! `index.crawl_files_per_second` on one thread. It stops when asked, or after
-//! `daemon.idle_shutdown_minutes` without a file change, once nothing waits to be parsed. It says
-//! when the first index is done and the watcher runs.
+//! indexes again after each change. In huge mode it parses the files it took inventory of, those
+//! that changed first, at `index.crawl_files_per_second` on one thread. It stops when asked, or
+//! after `daemon.idle_shutdown_minutes` without a file change, once nothing waits to be parsed. It
+//! says when the first index is done and the watcher runs.
 //!
 //! Errors are `anyhow` errors with context, as a binary's are: this crate is the daemon process's
 //! top level, and its errors are reported, never matched.
@@ -44,8 +44,8 @@ const SERVER_THREADS: usize = 2;
 const STOP_GRACE: Duration = Duration::from_secs(1);
 
 /// Runs the daemon for the repository whose root folder is `root`, in any spelling, until it is
-/// asked to stop or has been idle long enough. Each line a person running it in the foreground should see
-/// (configuration warnings, the ready line) goes to `note`.
+/// asked to stop or has been idle long enough. Each line a person running it in the foreground
+/// should see (configuration warnings, the ready line) goes to `note`.
 ///
 /// # Errors
 ///
@@ -99,9 +99,11 @@ fn index_and_serve(
         now_ms: host::now_ms(),
     })
     .with_context(|| format!("opening the store in {}", folder.display()))?;
-    // The store opens first, so that hook events arriving while the grammars load are recorded.
+    // The store opens first, so that hook events arriving while the grammars load are recorded;
+    // those that came while it opened are recorded at once.
     let excerpt = config.store_prompt_excerpt;
     let mut recorder = Recorder::new(excerpt);
+    host::record_waiting(&mut writer, &mut recorder, inbox, excerpt);
     let grammars = host::load_grammars(&mut writer, &mut recorder, inbox, excerpt)?;
     let global_gitignore = match global_ignore::find(root) {
         Ok(found) => found,
@@ -120,6 +122,7 @@ fn index_and_serve(
     let feed = WatcherFeed(Arc::clone(inbox));
     let watcher = watch(root, &discover, move |change| feed.push(change))
         .context("watching the repository")?;
+    host::record_waiting(&mut writer, &mut recorder, inbox, excerpt);
     let mut host = Host::new(
         root,
         grammars,
