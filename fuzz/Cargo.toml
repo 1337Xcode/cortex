@@ -1,0 +1,33 @@
+[package]
+name = "cortex-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+cortex-core = { path = "../crates/cortex-core" }
+cortex-hook = { path = "../crates/cortex-hook" }
+libfuzzer-sys = "0.4.13"
+
+[[bin]]
+name = "hook_stdin"
+path = "fuzz_targets/hook_stdin.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frame_decode"
+path = "fuzz_targets/frame_decode.rs"
+test = false
+doc = false
+bench = false
+
+# A workspace of its own: the targets build on nightly with the fuzzer's instrumentation, apart
+# from the repository's workspace.
+[workspace]
+members = ["."]
