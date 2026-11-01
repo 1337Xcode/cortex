@@ -8,6 +8,7 @@
 
 pub mod fake_daemon;
 pub mod init;
+pub mod payloads;
 
 use std::error::Error;
 use std::ffi::OsString;

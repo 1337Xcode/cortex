@@ -1,5 +1,6 @@
-//! A hook that finds no daemon starts one in the background and returns at once, printing nothing;
-//! the daemon answers within seconds and indexes the repository, a file written meanwhile included.
+//! A hook that finds no daemon starts one in the background and returns at once, printing nothing:
+//! every hook Cortex registers with Claude Code does, and the daemon one of them starts answers
+//! within seconds and indexes the repository, a file written meanwhile included.
 
 mod common;
 
@@ -9,11 +10,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use common::{POLL_EVERY, READY_WITHIN, TestResult, isolate, wait_for};
+use common::{POLL_EVERY, READY_WITHIN, TestResult, isolate, payloads, wait_for};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
-use cortex_core::{RepoId, RepoPath, RunFiles, UserFolder, canonical_root};
-use cortex_hook::ask;
+use cortex_core::{
+    RepoId, RepoPath, RunFiles, UserFolder, canonical_root, create_private_folder,
+    open_private_file,
+};
+use cortex_hook::{adapter, ask};
 use cortex_store::Reader;
+
+/// The Claude Code version whose payloads the hooks are sent: the newest Cortex is tested with.
+const NEWEST: &str = "2.1.316";
 
 /// A home folder with a repository in it, and the daemon a hook may start there: stopped, and the
 /// folder removed, when the test ends however it ends, so that no process outlives the test.
@@ -75,15 +82,15 @@ impl Drop for Scene {
     }
 }
 
-/// Runs `cortex hook --agent claude --event SessionStart` with `payload` on stdin and `home` as the
-/// home folder: whether it ended silently with exit code 0, and how long it took. Its output goes
-/// to files: on Windows the daemon it starts inherits the hook's handles, so a pipe would stay open
+/// Runs `cortex hook --agent claude --event <event>` with `payload` on stdin and `home` as the home
+/// folder: whether it ended silently with exit code 0, and how long it took. Its output goes to
+/// files: on Windows the daemon it starts inherits the hook's handles, so a pipe would stay open
 /// until the daemon exits.
-fn session_start(payload: &[u8], home: &Path) -> TestResult<(bool, Duration)> {
+fn hook(event: &str, payload: &[u8], home: &Path) -> TestResult<(bool, Duration)> {
     let (out, err) = (home.join("hook.out"), home.join("hook.err"));
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command
-        .args(["hook", "--agent", "claude", "--event", "SessionStart"])
+        .args(["hook", "--agent", "claude", "--event", event])
         .stdin(Stdio::piped())
         .stdout(File::create(&out)?)
         .stderr(File::create(&err)?);
@@ -103,6 +110,80 @@ fn session_start(payload: &[u8], home: &Path) -> TestResult<(bool, Duration)> {
     Ok((is_silent, took))
 }
 
+/// The captured payload each hook Cortex registers with Claude Code is sent: a session's start, a
+/// prompt, the moment before a read, an edit's result, a failed command's, a compaction's start,
+/// a subagent's start and end, the stop and the session's end.
+fn fixture_of(event: &str) -> Option<&'static str> {
+    Some(match event {
+        "SessionStart" => "session-start-startup.json",
+        "UserPromptSubmit" => "user-prompt-submit.json",
+        "PreToolUse" => "pre-tool-use-read.json",
+        "PostToolUse" => "post-tool-use-edit.json",
+        "PostToolUseFailure" => "post-tool-use-failure-bash.json",
+        "PreCompact" => "pre-compact-manual.json",
+        "SubagentStart" => "subagent-start.json",
+        "SubagentStop" => "subagent-stop.json",
+        "Stop" => "stop.json",
+        "SessionEnd" => "session-end.json",
+        _ => return None,
+    })
+}
+
+/// Takes the repository's run lock, as a daemon still starting holds it, so that each daemon a hook
+/// starts finds the repository held and exits. Released when the file is dropped.
+fn hold(files: &RunFiles, home: &Path) -> TestResult<File> {
+    create_private_folder(&UserFolder::in_home(home).run_folder())?;
+    let lock = open_private_file(&files.lock_path())?;
+    lock.try_lock()?;
+    Ok(lock)
+}
+
+/// The first start of a freshly built binary can take seconds (a virus scanner reads it), which a
+/// timed call must not pay.
+fn warm_up() -> TestResult {
+    Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .arg("version")
+        .stdout(Stdio::null())
+        .status()?;
+    Ok(())
+}
+
+/// Every hook Cortex registers with Claude Code, its captured payload sent from a repository whose
+/// daemon is down and cannot come up (the test holds the repository, as a daemon still starting
+/// does), tries the daemon, starts one and returns: exit code 0, nothing printed, nothing logged
+/// (a hook held past its hard timeout would log that it ran out of time), and a start marked. The
+/// bound on how long a call took is loose, since starting a process on a busy machine is slow: the
+/// budgets are the benchmarks' to check.
+#[test]
+fn every_hook_is_silent_with_the_daemon_down() -> TestResult {
+    let scene = Scene::new()?;
+    let (home, repo) = (scene.home()?, scene.repo()?);
+    let held = hold(&scene.files, home)?;
+    warm_up()?;
+    let hooks = adapter("claude")
+        .ok_or("no adapter for Claude Code")?
+        .hooks();
+    for entry in hooks {
+        let event = entry.event_name;
+        let fixture = fixture_of(event).ok_or(event)?;
+        let payload = payloads::payload(NEWEST, fixture, &repo)?;
+        if let Err(error) = std::fs::remove_file(scene.files.start_path())
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(error.into());
+        }
+        let (is_silent, took) = hook(event, &payload, home)?;
+        assert!(is_silent, "{event}");
+        assert!(took < Duration::from_secs(10), "{event}: {took:?}");
+        assert!(scene.files.start_path().exists(), "{event} made no start");
+    }
+    assert_eq!(hooks.len(), 10);
+    let log = UserFolder::in_home(home).logs_folder().join("hook.log");
+    assert!(!log.exists(), "{:?}", std::fs::read_to_string(&log));
+    drop(held);
+    Ok(())
+}
+
 /// With no daemon running, a session's start through the hook returns silently and within its
 /// hard timeout (1.5 s), so without a line in the hook log; a daemon then answers, and a file
 /// written after the hook returned is indexed.
@@ -116,14 +197,8 @@ fn a_hook_starts_the_daemon_and_does_not_wait() -> TestResult {
         "source": "startup",
         "cwd": repo,
     }))?;
-    // The first start of a freshly built binary can take seconds (a virus scanner reads it), which
-    // the timed call below must not pay.
-    Command::new(env!("CARGO_BIN_EXE_cortex"))
-        .arg("version")
-        .stdout(Stdio::null())
-        .status()?;
-
-    let (is_silent, took) = session_start(&payload, home)?;
+    warm_up()?;
+    let (is_silent, took) = hook("SessionStart", &payload, home)?;
     assert!(is_silent);
     // A hook held past its hard timeout would log that it ran out of time; this one logged
     // nothing. How long the call took includes starting a process, which a busy machine slows: the

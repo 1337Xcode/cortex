@@ -42,7 +42,7 @@ struct Budget {
 const BENCHES: [(&str, &str); 2] = [("cortex-index", "index"), ("cortex-cli", "hooks")];
 
 /// Every budget a benchmark checks. The limits are the product's latency budgets.
-const BUDGETS: [Budget; 8] = [
+const BUDGETS: [Budget; 13] = [
     Budget {
         group: "index",
         function: "initial_10k",
@@ -98,6 +98,42 @@ const BUDGETS: [Budget; 8] = [
         function: "cold_start",
         what: "hook cold start with no input, start to exit",
         limit: Duration::from_millis(10),
+        platforms: Platforms::Reference,
+    },
+    // With the daemon down a hook tries it, starts one and exits: each event keeps its budget.
+    Budget {
+        group: "hooks_daemon_down",
+        function: "session_start",
+        what: "SessionStart hook with the daemon down, start to exit",
+        limit: Duration::from_millis(120),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks_daemon_down",
+        function: "user_prompt_submit",
+        what: "UserPromptSubmit hook with the daemon down, start to exit",
+        limit: Duration::from_millis(150),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks_daemon_down",
+        function: "pre_tool_use_read",
+        what: "PreToolUse hook on a read with the daemon down, start to exit",
+        limit: Duration::from_millis(40),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks_daemon_down",
+        function: "post_tool_use_edit",
+        what: "PostToolUse hook on an edit with the daemon down, start to exit",
+        limit: Duration::from_millis(80),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks_daemon_down",
+        function: "stop",
+        what: "Stop hook with the daemon down, start to exit",
+        limit: Duration::from_millis(60),
         platforms: Platforms::Reference,
     },
 ];
@@ -234,8 +270,8 @@ mod tests {
         assert_eq!(is_checked_here(Platforms::Reference), !cfg!(windows));
     }
 
-    /// Every hook the benchmarks run has a budget, each read from the hooks group, and the index's
-    /// two budgets hold everywhere.
+    /// Every hook the benchmarks run has a budget, read from the hooks group with the daemon running
+    /// and from its own group with the daemon down, and the index's two budgets hold everywhere.
     #[test]
     fn every_hook_benchmark_has_its_budget() {
         let hooks: Vec<(&str, u128)> = BUDGETS
@@ -252,6 +288,21 @@ mod tests {
                 ("post_tool_use_edit", 80),
                 ("stop", 60),
                 ("cold_start", 10)
+            ]
+        );
+        let daemon_down: Vec<(&str, u128)> = BUDGETS
+            .iter()
+            .filter(|budget| budget.group == "hooks_daemon_down")
+            .map(|budget| (budget.function, budget.limit.as_millis()))
+            .collect();
+        assert_eq!(
+            daemon_down,
+            [
+                ("session_start", 120),
+                ("user_prompt_submit", 150),
+                ("pre_tool_use_read", 40),
+                ("post_tool_use_edit", 80),
+                ("stop", 60)
             ]
         );
         let everywhere: Vec<&str> = BUDGETS

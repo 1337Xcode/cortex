@@ -17,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use common::fake_daemon::{FakeDaemon, Script, kinds};
-use common::{Daemon, TestResult, isolate, wait_for};
+use common::{Daemon, TestResult, isolate, payloads, wait_for};
 use cortex_core::ipc::{Request, RequestBody};
 use cortex_core::{EventKind, HookKind, Identifier, LineRange, UserFolder};
 use cortex_store::Reader;
@@ -28,47 +28,12 @@ type Row = (EventKind, Option<String>, Option<LineRange>);
 /// The main session of the captured payloads.
 const S1: &str = "00000000-0000-4000-8000-000000000001";
 
-/// The folder of the captured payloads.
-fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/claude/2.1.312")
-}
+/// The Claude Code version whose captured payloads these tests send.
+const CAPTURED: &str = "2.1.312";
 
-/// `windows`, a path the fixtures write under `C:\repo`, moved under `root`.
-fn under(root: &Path, windows: &str) -> Option<String> {
-    let inside = windows.strip_prefix(r"C:\repo")?;
-    let moved = inside
-        .split('\\')
-        .filter(|name| !name.is_empty())
-        .fold(root.to_path_buf(), |path, name| path.join(name));
-    Some(moved.to_string_lossy().into_owned())
-}
-
-/// The captured payload `name` with its working folder and tool paths moved under `root`.
+/// The captured payload `name` with its paths moved under `root`.
 fn payload(name: &str, root: &Path) -> TestResult<Vec<u8>> {
-    let mut value: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(fixtures().join(name))?)?;
-    let rewrite = |field: Option<&mut serde_json::Value>| {
-        if let Some(serde_json::Value::String(path)) = field
-            && let Some(moved) = under(root, path)
-        {
-            *path = moved;
-        }
-    };
-    rewrite(value.get_mut("cwd"));
-    if let Some(input) = value.get_mut("tool_input") {
-        rewrite(input.get_mut("file_path"));
-        rewrite(input.get_mut("path"));
-    }
-    Ok(serde_json::to_vec(&value)?)
-}
-
-/// The payload's event name.
-fn event_name(payload: &[u8]) -> TestResult<String> {
-    let value: serde_json::Value = serde_json::from_slice(payload)?;
-    Ok(value["hook_event_name"]
-        .as_str()
-        .ok_or("no event name")?
-        .to_owned())
+    payloads::payload(CAPTURED, name, root)
 }
 
 /// How a hook call went: its output and how long it took.
@@ -124,7 +89,7 @@ fn hook(args: &[&str], input: Vec<u8>, delay: Duration, home: &Path) -> TestResu
 /// Sends the captured payload `name` from a repository at `root` through `cortex hook`.
 fn send(name: &str, root: &Path, home: &Path) -> TestResult<Call> {
     let payload = payload(name, root)?;
-    let event = event_name(&payload)?;
+    let event = payloads::event_name(&payload)?;
     hook(
         &["--agent", "claude", "--event", &event],
         payload,
@@ -203,7 +168,7 @@ fn a_session_through_the_binary_is_recorded() -> TestResult {
             (EventKind::SessionEnd, None, None),
         ]
     );
-    let mut others: Vec<PathBuf> = std::fs::read_dir(fixtures())?
+    let mut others: Vec<PathBuf> = std::fs::read_dir(payloads::fixtures(CAPTURED))?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<_>>()?;
     others.retain(|path| {

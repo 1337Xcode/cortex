@@ -1,31 +1,32 @@
 //! Hook latency benchmarks: the real `cortex hook` binary, end to end from the process's start to
 //! its exit, for each event the budgets name, on recorded Claude Code payloads, against a daemon
-//! running on a small repository; and the cold start, a hook given no input, which ends before it
-//! asks the daemon anything. `cargo xtask verify --full` reads their samples and checks the
-//! budgets. Every sample is one hook process, so the percentiles are of single runs.
+//! running on a small repository; the cold start, a hook given no input, which ends before it asks
+//! the daemon anything; and each event again from a repository whose daemon is down, so that the
+//! hook tries it, starts one and exits. `cargo xtask verify --full` reads their samples and checks
+//! the budgets. Every sample is one hook process, so the percentiles are of single runs.
 
 #[path = "../tests/common/mod.rs"]
 mod common;
 
+use std::fs::File;
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use common::{Daemon, isolate};
+use common::{Daemon, isolate, payloads};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
-use cortex_core::{RepoId, UserFolder, canonical_root};
-use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
-use serde_json::Value;
+use cortex_core::{
+    RepoId, RunFiles, UserFolder, canonical_root, create_private_folder, open_private_file,
+};
+use criterion::measurement::WallTime;
+use criterion::{BenchmarkGroup, Criterion, SamplingMode, criterion_group, criterion_main};
 
 /// Hook processes per benchmark: enough for a 95th percentile that is not the slowest run.
 const SAMPLES: usize = 100;
 
-/// The recorded payloads' folder.
-const FIXTURES: &str = "../../tests/fixtures/claude/2.1.312";
-
-/// The repository root the recorded payloads name, replaced by the benchmark's own.
-const RECORDED_ROOT: &str = r"C:\repo";
+/// The Claude Code version whose recorded payloads the hooks read.
+const RECORDED: &str = "2.1.312";
 
 /// The file the recorded read and edit name, with its recorded contents before the edit.
 const OPS_PY: &str = "\"\"\"Arithmetic helpers.\"\"\"\n\n\ndef add(a, b):\n    return a + b\n\n\n\
@@ -52,6 +53,54 @@ const EVENTS: [(&str, &str, &str); 5] = [
     ("stop", "Stop", "stop.json"),
 ];
 
+/// A repository holding the recorded payloads' file, in a temporary folder.
+fn repository() -> tempfile::TempDir {
+    // A benchmark without its repository has nothing to measure.
+    #[allow(clippy::expect_used)]
+    let repo = tempfile::tempdir().expect("a repository folder");
+    let calc = repo.path().join("calc");
+    #[allow(clippy::expect_used)]
+    std::fs::create_dir_all(&calc).expect("the calc folder");
+    #[allow(clippy::expect_used)]
+    std::fs::write(calc.join("ops.py"), OPS_PY).expect("calc/ops.py");
+    repo
+}
+
+/// The recorded payload `fixture`, its paths under the recorded root moved to `repo`.
+fn payload(fixture: &str, repo: &Path) -> Vec<u8> {
+    // A benchmark without its payload has nothing to measure.
+    #[allow(clippy::expect_used)]
+    let root = canonical_root(repo).expect("the repository's canonical root");
+    #[allow(clippy::expect_used)]
+    payloads::payload(RECORDED, fixture, &root).expect("a recorded payload")
+}
+
+/// Runs `cortex hook --agent claude --event <event>` on `payload`, from `repo`, with `home` as the
+/// home folder, and returns how long the process took from its start to its exit.
+fn run_hook(repo: &Path, home: &Path, event: &str, payload: &[u8]) -> Duration {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command
+        .args(["hook", "--agent", "claude", "--event", event])
+        .current_dir(repo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    isolate(&mut command, home);
+    let start = Instant::now();
+    // A hook that cannot be started or fed has nothing to measure.
+    #[allow(clippy::expect_used)]
+    let mut child = command.spawn().expect("starting the hook");
+    if let Some(mut stdin) = child.stdin.take() {
+        #[allow(clippy::expect_used)]
+        stdin.write_all(payload).expect("writing the payload");
+    }
+    #[allow(clippy::expect_used)]
+    let status = child.wait().expect("waiting for the hook");
+    let took = start.elapsed();
+    assert!(status.success(), "the hook for {event} failed: {status}");
+    took
+}
+
 /// A repository with a running daemon, and the user's home folder both use.
 struct Bench {
     /// The repository.
@@ -66,67 +115,16 @@ impl Bench {
     /// A repository holding the recorded payloads' file, a home folder, and a daemon on them that
     /// has finished its first index.
     fn start() -> Self {
-        // A benchmark without its repository or daemon has nothing to measure.
+        let repo = repository();
+        // A benchmark without its home folder or daemon has nothing to measure.
         #[allow(clippy::expect_used)]
-        let (repo, home) = (
-            tempfile::tempdir().expect("a repository folder"),
-            tempfile::tempdir().expect("a home folder"),
-        );
-        let calc = repo.path().join("calc");
-        #[allow(clippy::expect_used)]
-        std::fs::create_dir_all(&calc).expect("the calc folder");
-        #[allow(clippy::expect_used)]
-        std::fs::write(calc.join("ops.py"), OPS_PY).expect("calc/ops.py");
+        let home = tempfile::tempdir().expect("a home folder");
         #[allow(clippy::expect_used)]
         let daemon = Daemon::start(repo.path(), home.path()).expect("starting the daemon");
         #[allow(clippy::expect_used)]
         let ready = daemon.first_line().expect("the daemon's ready line");
         assert!(ready.starts_with("cortex: daemon ready"), "{ready}");
         Self { repo, home, daemon }
-    }
-
-    /// The recorded payload `fixture`, its paths under the recorded root moved to this repository.
-    fn payload(&self, fixture: &str) -> Vec<u8> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(FIXTURES)
-            .join(fixture);
-        // A benchmark without its payload has nothing to measure.
-        #[allow(clippy::expect_used)]
-        let mut payload: Value = serde_json::from_str(
-            &std::fs::read_to_string(&path).expect("reading a recorded payload"),
-        )
-        .expect("parsing a recorded payload");
-        #[allow(clippy::expect_used)]
-        let root = canonical_root(self.repo.path()).expect("the repository's canonical root");
-        move_paths(&mut payload, &root);
-        #[allow(clippy::expect_used)]
-        serde_json::to_vec(&payload).expect("writing a payload")
-    }
-
-    /// Runs `cortex hook --agent claude --event <event>` on `payload`, from the repository, and
-    /// returns how long the process took from its start to its exit.
-    fn run(&self, event: &str, payload: &[u8]) -> Duration {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-        command
-            .args(["hook", "--agent", "claude", "--event", event])
-            .current_dir(self.repo.path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        isolate(&mut command, self.home.path());
-        let start = Instant::now();
-        // A hook that cannot be started or fed has nothing to measure.
-        #[allow(clippy::expect_used)]
-        let mut child = command.spawn().expect("starting the hook");
-        if let Some(mut stdin) = child.stdin.take() {
-            #[allow(clippy::expect_used)]
-            stdin.write_all(payload).expect("writing the payload");
-        }
-        #[allow(clippy::expect_used)]
-        let status = child.wait().expect("waiting for the hook");
-        let took = start.elapsed();
-        assert!(status.success(), "the hook for {event} failed: {status}");
-        took
     }
 
     /// How many requests of each hook the daemon has handled, from its status.
@@ -150,44 +148,96 @@ impl Bench {
     }
 }
 
-/// Moves every path in `value` under [`RECORDED_ROOT`] to the same place under `root`.
-fn move_paths(value: &mut Value, root: &Path) {
-    match value {
-        Value::String(text) => {
-            if let Some(rest) = text.strip_prefix(RECORDED_ROOT) {
-                let mut path = PathBuf::from(root);
-                path.extend(rest.split('\\').filter(|part| !part.is_empty()));
-                *text = path.to_string_lossy().into_owned();
-            }
+/// A repository marked for Cortex whose daemon is down and cannot come up: the benchmark holds its
+/// run lock, as a daemon still starting does, so each daemon a hook starts finds the repository
+/// held and exits.
+struct Down {
+    /// The repository.
+    repo: tempfile::TempDir,
+    /// Its run files, the start's marker among them.
+    files: RunFiles,
+    /// The held run lock, released when dropped.
+    _held: File,
+}
+
+impl Down {
+    /// A repository holding the recorded payloads' file and a `.cortex` folder, its run lock held
+    /// in the user's folder under `home`.
+    fn hold(home: &Path) -> Self {
+        let repo = repository();
+        let user = UserFolder::in_home(home);
+        // A benchmark without its repository held has nothing to measure.
+        #[allow(clippy::expect_used)]
+        std::fs::create_dir(repo.path().join(".cortex")).expect("the .cortex folder");
+        #[allow(clippy::expect_used)]
+        let root = canonical_root(repo.path()).expect("the repository's canonical root");
+        let files = user.run_files(&RepoId::of(&root));
+        #[allow(clippy::expect_used)]
+        create_private_folder(&user.run_folder()).expect("the run folder");
+        #[allow(clippy::expect_used)]
+        let held = open_private_file(&files.lock_path()).expect("the run lock");
+        #[allow(clippy::expect_used)]
+        held.try_lock().expect("holding the run lock");
+        Self {
+            repo,
+            files,
+            _held: held,
         }
-        Value::Array(items) => items.iter_mut().for_each(|item| move_paths(item, root)),
-        Value::Object(fields) => fields
-            .values_mut()
-            .for_each(|field| move_paths(field, root)),
-        _ => {}
+    }
+
+    /// Runs the hook for `event` on `payload` with `home` as the home folder, as [`run_hook`]
+    /// does, with no start of a daemon in the last ten seconds, so that the hook makes one; and
+    /// checks that it did.
+    fn run(&self, home: &Path, event: &str, payload: &[u8]) -> Duration {
+        if let Err(error) = std::fs::remove_file(self.files.start_path()) {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::NotFound,
+                "removing the start's marker: {error}"
+            );
+        }
+        let took = run_hook(self.repo.path(), home, event, payload);
+        assert!(
+            self.files.start_path().exists(),
+            "the hook for {event} made no start"
+        );
+        took
     }
 }
 
-/// Each event's hook against the running daemon, and the cold start.
-fn hooks(criterion: &mut Criterion) {
-    let bench = Bench::start();
-    let mut group = criterion.benchmark_group("hooks");
-    // One run per sample: a tenth of a millisecond of measuring time per sample is less than any
-    // process takes to start, so criterion runs each sample once (and warns that the samples take
-    // longer than the time it was given).
+/// Configures `group` for one hook process per sample: a tenth of a millisecond of measuring time
+/// per sample is less than any process takes to start, so criterion runs each sample once (and
+/// warns that the samples take longer than the time it was given).
+fn single_runs(group: &mut BenchmarkGroup<'_, WallTime>) {
     group
         .sampling_mode(SamplingMode::Flat)
         .sample_size(SAMPLES)
         .measurement_time(Duration::from_micros(100) * u32::try_from(SAMPLES).unwrap_or(100))
         .warm_up_time(Duration::from_secs(1));
+}
+
+/// Each event's hook against the running daemon and with the daemon down, and the cold start.
+fn hooks(criterion: &mut Criterion) {
+    let bench = Bench::start();
+    let (repo, home) = (bench.repo.path(), bench.home.path());
+    let mut group = criterion.benchmark_group("hooks");
+    single_runs(&mut group);
     for (function, event, fixture) in EVENTS {
-        let payload = bench.payload(fixture);
+        let payload = payload(fixture, repo);
         group.bench_function(function, |bencher| {
-            bencher.iter_custom(|runs| (0..runs).map(|_| bench.run(event, &payload)).sum());
+            bencher.iter_custom(|runs| {
+                (0..runs)
+                    .map(|_| run_hook(repo, home, event, &payload))
+                    .sum()
+            });
         });
     }
     group.bench_function("cold_start", |bencher| {
-        bencher.iter_custom(|runs| (0..runs).map(|_| bench.run("SessionStart", b"")).sum());
+        bencher.iter_custom(|runs| {
+            (0..runs)
+                .map(|_| run_hook(repo, home, "SessionStart", b""))
+                .sum()
+        });
     });
     group.finish();
     // The hooks reached the daemon: each event's requests, the warm-up's included, are in its
@@ -203,6 +253,17 @@ fn hooks(criterion: &mut Criterion) {
             "the daemon handled {requests} {hook} requests: {handled:?}"
         );
     }
+    let down = Down::hold(home);
+    let mut group = criterion.benchmark_group("hooks_daemon_down");
+    single_runs(&mut group);
+    for (function, event, fixture) in EVENTS {
+        let payload = payload(fixture, down.repo.path());
+        group.bench_function(function, |bencher| {
+            bencher.iter_custom(|runs| (0..runs).map(|_| down.run(home, event, &payload)).sum());
+        });
+    }
+    group.finish();
+    drop(down);
     drop(bench.daemon);
 }
 
