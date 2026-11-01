@@ -6,8 +6,8 @@
 //! recording events between the index's write transactions. Then it watches the repository and
 //! indexes again after each change. In huge mode it parses the files it took inventory of, those
 //! that changed first, at `index.crawl_files_per_second` on one thread. It stops when asked, or
-//! after `daemon.idle_shutdown_minutes` without a file change, once nothing waits to be parsed. It
-//! says when the first index is done and the watcher runs.
+//! after `daemon.idle_shutdown_minutes` without a request or a file change, once nothing waits to
+//! be parsed. It says when the first index is done and the watcher runs.
 //!
 //! Errors are `anyhow` errors with context, as a binary's are: this crate is the daemon process's
 //! top level, and its errors are reported, never matched.

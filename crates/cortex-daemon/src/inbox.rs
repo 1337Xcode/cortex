@@ -49,6 +49,8 @@ struct State {
     is_stopping: bool,
     /// Whether the watcher stopped feeding the inbox.
     is_watcher_gone: bool,
+    /// When the latest request of any kind arrived, if one did.
+    last_request: Option<Instant>,
 }
 
 /// What the writer is to do next.
@@ -150,6 +152,17 @@ impl Inbox {
         }
         drop(state);
         self.arrived.notify_one();
+    }
+
+    /// Notes that a request arrived now: a command's status, a hook's event or anything else is
+    /// use, and puts off the idle stop. The writer is not woken: it looks when its wait ends.
+    pub(crate) fn note_request(&self) {
+        self.lock().last_request = Some(Instant::now());
+    }
+
+    /// When the latest request arrived, if one did.
+    pub(crate) fn last_request(&self) -> Option<Instant> {
+        self.lock().last_request
     }
 
     /// Asks the writer to stop.

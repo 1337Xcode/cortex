@@ -58,6 +58,12 @@ pub(crate) fn verify(full: bool) -> anyhow::Result<()> {
     run_cargo(&root, "tests", &["test", "--workspace", "--locked"])?;
     run_cargo(&root, "cargo deny", &["deny", "check"])?;
     if full {
+        // The tests marked ignored are the slow ones, minutes each; every other run skips them.
+        run_cargo(
+            &root,
+            "slow tests",
+            &["test", "--workspace", "--locked", "--", "--ignored"],
+        )?;
         budgets::check(&root)?;
     }
     Ok(())

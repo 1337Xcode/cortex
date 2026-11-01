@@ -72,6 +72,7 @@ impl Server {
     async fn connection(&self, stream: Stream) -> Result<(), FrameError> {
         let (mut reader, mut writer) = tokio::io::split(stream);
         let hello = read_request(&mut reader).await?;
+        self.inbox.note_request();
         let RequestBody::Hello(greeting) = hello.body else {
             return Ok(());
         };
@@ -100,6 +101,7 @@ impl Server {
             let Ok(request) = read_request(&mut reader).await else {
                 return Ok(());
             };
+            self.inbox.note_request();
             let is_shutdown = matches!(request.body, RequestBody::Shutdown);
             let (body, is_last) = match request.body {
                 RequestBody::Status => (ResponseBody::Status(self.report()), false),

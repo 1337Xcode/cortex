@@ -96,7 +96,7 @@ impl<'a> Host<'a> {
 
     /// Records the events and indexes after the changes the inbox brings, records the edits the
     /// watcher saw once they are due, crawls while nothing comes, and returns when asked to stop,
-    /// or once nothing waits to be parsed or recorded and nothing came for
+    /// or once nothing waits to be parsed or recorded and neither a request nor a change came for
     /// `daemon.idle_shutdown_minutes`. A batch that cannot be recorded is counted and left; the
     /// daemon goes on.
     ///
@@ -112,6 +112,7 @@ impl<'a> Host<'a> {
         loop {
             let parts = (&mut self.recorder, &mut self.edits);
             record_due_edits(&mut self.writer, parts, inbox, excerpt);
+            last_activity = last_activity.max(inbox.last_request().unwrap_or(last_activity));
             // An idle time too long to reach is never reached: the inbox is waited on for ever.
             let idle_at = last_activity.checked_add(idle);
             match inbox.wait(self.deadline(next_crawl, idle_at)) {
@@ -135,6 +136,9 @@ impl<'a> Host<'a> {
                     self.crawl_batch()?;
                 }
                 Work::Timeout => {
+                    // A request that came during the wait does not wake the writer: it counts now.
+                    let requested = inbox.last_request().unwrap_or(last_activity);
+                    let idle_at = last_activity.max(requested).checked_add(idle);
                     let is_idle = self.waiting() == 0 && self.edits.next_due_ms().is_none();
                     if is_idle && idle_at.is_some_and(|at| Instant::now() >= at) {
                         return Ok(());
