@@ -4,7 +4,7 @@
 mod common;
 
 use std::fs::File;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use common::fake_daemon::{FakeDaemon, Script, kinds};
@@ -95,9 +95,17 @@ fn a_command_replaces_an_older_daemon() -> TestResult {
     // The command writes to a file, not a pipe: on Windows the daemon it starts takes the
     // command's own handles with it, and a pipe would stay open until the daemon stops.
     let printed = home.path().join("status.txt");
-    status.stdout(File::create(&printed)?).stderr(Stdio::null());
-    assert!(status.status()?.success());
+    let complained = home.path().join("status-errors.txt");
+    status
+        .stdout(File::create(&printed)?)
+        .stderr(File::create(&complained)?);
+    let ended = status.status()?;
     let stdout = std::fs::read_to_string(&printed)?;
+    assert!(
+        ended.success(),
+        "{ended}: {stdout}{}",
+        std::fs::read_to_string(&complained)?
+    );
     assert_eq!(
         kinds(&older.requests()?),
         ["hello", "status", "hello", "shutdown"]

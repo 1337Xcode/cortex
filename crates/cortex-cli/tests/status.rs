@@ -21,6 +21,8 @@ struct Status {
     code: Option<i32>,
     /// Everything written to stdout.
     stdout: String,
+    /// Everything written to stderr.
+    stderr: String,
 }
 
 /// Runs `cortex status --root <root>` with `home` as the user's home folder.
@@ -34,6 +36,7 @@ fn status(root: &Path, home: &Path) -> TestResult<Status> {
     Ok(Status {
         code: output.status.code(),
         stdout: String::from_utf8(output.stdout)?,
+        stderr: String::from_utf8(output.stderr)?,
     })
 }
 
@@ -107,6 +110,40 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
         stopped.stdout,
         "daemon: not running\nindex: ready\nmode: tiny; pinned to small in the configuration\n\
          files: 3 stored, 2 parsed\n"
+    );
+    Ok(())
+}
+
+/// A store whose writer is still setting it up is not ready, rather than unreadable: a daemon
+/// answers before it has made its store, so a status asked then meets one. Here the database file
+/// is empty, an SQLite database without tables, as the writer's is between its creation and its
+/// first migration, and the test holds the writer's lock as the writer does. With no writer, the
+/// same store is an error that names its schema.
+#[test]
+fn a_store_being_set_up_is_not_ready() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    let folder = root.join(".cortex");
+    std::fs::create_dir(&folder)?;
+    std::fs::write(folder.join("cortex.db"), "")?;
+    let lock = std::fs::File::create(folder.join("writer.lock"))?;
+    lock.lock()?;
+    let setting_up = status(root, home.path())?;
+    assert_eq!(setting_up.code, Some(0), "{}", setting_up.stderr);
+    assert_eq!(
+        setting_up.stdout,
+        "daemon: not running\nindex: not ready, the store is being set up\n"
+    );
+    drop(lock);
+    let unwritten = status(root, home.path())?;
+    assert_eq!(unwritten.code, Some(1), "{}", unwritten.stdout);
+    assert!(
+        unwritten
+            .stderr
+            .contains("the database schema is version 0, not "),
+        "{}",
+        unwritten.stderr
     );
     Ok(())
 }

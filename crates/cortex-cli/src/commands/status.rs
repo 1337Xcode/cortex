@@ -50,7 +50,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
 }
 
 /// The lines saying how far the index of the repository at `root` is, with the mode `setting` the
-/// configuration gives, or that it has none.
+/// configuration gives, or that it has none, or that its writer is still setting up its store.
 ///
 /// # Errors
 ///
@@ -64,6 +64,14 @@ pub(crate) fn index_lines(root: &Path, setting: ModeSetting) -> anyhow::Result<V
                 "no index in {}; `cortex daemon` builds one",
                 root.display()
             )]);
+        }
+        // A daemon answers as soon as it listens, before its writer has created the store or
+        // brought an older one up to this build's schema, so a status asked then finds the store
+        // part made. The writer takes its lock before it touches the database file.
+        Err(StoreError::SchemaNotCurrent { .. }) if is_writer_running(&folder)? => {
+            return Ok(vec![
+                "index: not ready, the store is being set up".to_owned(),
+            ]);
         }
         Err(error) => {
             return Err(error)
