@@ -10,15 +10,15 @@
 //! written until every question is answered. Then the `.gitignore` is written first, so that a run
 //! stopped partway never leaves Cortex's files for git to commit, and each file is backed up first,
 //! with a manifest, in a folder of the run's own (the repository's files in its
-//! `.cortex/backups/`, the user's in `~/.cortex/backups/`) and written atomically (see [`backup`]).
-//! Nothing of a repository's is written outside it (see [`place`]). Running init again changes
-//! nothing.
+//! `.cortex/backups/`, the manifest also in the user's `~/.cortex/backups/`, outside the
+//! repository; the user's files in `~/.cortex/backups/`) and written atomically (see
+//! [`crate::backup`]). Nothing of a repository's is written outside it (see [`place`]). Running
+//! init again changes nothing.
 //!
 //! Then it finds the repository's daemon or starts one, waits for its first index (see
 //! [`daemon`]), and runs `cortex doctor`'s checks, whose failures it reports without failing: what
 //! init writes is written by then.
 
-mod backup;
 mod consent;
 mod daemon;
 mod git;
@@ -38,10 +38,10 @@ use cortex_core::{
 };
 use cortex_hook::{Adapter, Versions};
 
+use crate::backup::{Backup, Kind};
 use crate::commands::doctor::{Finding, checked, claude_code_version};
 use crate::output;
 
-use self::backup::Backup;
 use self::consent::{Answers, ConfigFile, Kept};
 use self::ignores::Ignored;
 use self::root::Root;
@@ -116,11 +116,13 @@ impl Found {
         }
     }
 
-    /// The change that writes `after` to the file, which is `owner`'s, saying `said` and the path.
+    /// The change that writes `after` to the file, a configuration of Cortex's that is `owner`'s,
+    /// saying `said` and the path.
     fn changed(self, after: String, owner: Owner, said: &str) -> Change {
         Change {
             said: format!("{said} {}", self.origin),
             file: self.file,
+            kind: Kind::CortexConfig,
             before: self.text,
             after,
             owner,
@@ -229,6 +231,8 @@ impl Files {
 struct Change {
     /// The file, links followed.
     file: PathBuf,
+    /// What the file is.
+    kind: Kind,
     /// What it held when it was read, or `None` when there was none.
     before: Option<String>,
     /// What it gets.
@@ -310,15 +314,17 @@ fn ignore_change(found: Found, lines: &[&str]) -> Option<Change> {
         ),
         after: ignores::with_lines(found.text.as_deref(), lines),
         file: found.file,
+        kind: Kind::Gitignore,
         before: found.text,
         owner: Owner::Repository { folder: None },
     })
 }
 
 /// Writes each of `changes` for the repository whose canonical root is `root`, each backed up
-/// first: the repository's files in a folder of this run's own in its `.cortex/backups/`, the
-/// user's in `~/.cortex/backups/`, each folder made when a first file for it changes. Then says
-/// what it wrote and where the backups are, so that a closed stdout never stops it partway.
+/// first: the repository's files in a folder of this run's own in its `.cortex/backups/`, with
+/// the manifest also in the user's `~/.cortex/backups/`, and the user's files there, each folder
+/// made when a first file for it changes. Then says what it wrote and where the backups are, so
+/// that a closed stdout never stops it partway.
 ///
 /// # Errors
 ///
@@ -335,14 +341,16 @@ fn apply(root: &Path, changes: Vec<Change>) -> anyhow::Result<()> {
                 if let Some(folder) = folder {
                     place::own_folder(root, folder)?;
                 }
-                made(&mut repository, now_ms, || {
-                    place::own_folder(&place::own_folder(root, ".cortex")?, "backups")
+                made(&mut repository, || {
+                    let backups =
+                        place::own_folder(&place::own_folder(root, ".cortex")?, "backups")?;
+                    Ok(Backup::new(&backups, now_ms, root)?.with_users_copy(&user_backups()?))
                 })?
             }
             Owner::User => {
                 // The user's backups are made first, so that `~/.cortex` is the user's alone
                 // before the user's configuration goes into it.
-                let backup = made(&mut user, now_ms, user_backups)?;
+                let backup = made(&mut user, || Backup::new(&user_backups()?, now_ms, root))?;
                 if let Some(parent) = change.file.parent() {
                     fs::create_dir_all(parent)
                         .with_context(|| format!("creating {}", parent.display()))?;
@@ -351,7 +359,7 @@ fn apply(root: &Path, changes: Vec<Change>) -> anyhow::Result<()> {
             }
         };
         let before = change.before.as_deref().map(str::as_bytes);
-        backup.replace(&change.file, before, change.after.as_bytes())?;
+        backup.replace(&change.file, change.kind, before, change.after.as_bytes())?;
         said.push(change.said);
     }
     for line in said {
@@ -366,20 +374,18 @@ fn apply(root: &Path, changes: Vec<Change>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The backup in `slot`, made for a run at `now_ms` in the folder `folder` gives when there is
-/// none yet.
+/// The backup in `slot`, the one `make` gives when there is none yet.
 ///
 /// # Errors
 ///
-/// The folder cannot be made.
+/// `make`'s: a folder cannot be made, or a path is not UTF-8.
 fn made(
     slot: &mut Option<Backup>,
-    now_ms: i64,
-    folder: impl FnOnce() -> anyhow::Result<PathBuf>,
+    make: impl FnOnce() -> anyhow::Result<Backup>,
 ) -> anyhow::Result<&mut Backup> {
     match slot {
         Some(backup) => Ok(backup),
-        None => Ok(slot.insert(Backup::new(&folder()?, now_ms))),
+        None => Ok(slot.insert(make()?)),
     }
 }
 

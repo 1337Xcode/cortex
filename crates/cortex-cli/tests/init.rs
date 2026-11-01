@@ -119,8 +119,9 @@ fn cortex_hook(group: &Value) -> Option<(String, Vec<String>, u64, Option<String
 /// where it was; the others follow in the adapter's order. Each runs this binary with `hook
 /// --agent claude --event <event>`, with the event's timeout in seconds (2 for SessionStart,
 /// 1 for the rest) and its matcher (`Read` before a tool runs, the recorded tools after it). The
-/// file as it was is in the backup folder, and the manifest names it with the hash of what was
-/// written.
+/// file as it was is in the backup folder, and the manifest names the repository and the file, its
+/// kind, its copy with the copy's hash, and the hash of what was written. The user's backup folder
+/// holds the same manifest, byte for byte, in a run folder of the same name.
 #[test]
 fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -260,12 +261,33 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         std::fs::read_to_string(folder.join("1-settings.local.json"))?,
         original
     );
-    let manifest: Value = serde_json::from_slice(&std::fs::read(folder.join("manifest.json"))?)?;
+    let manifest_bytes = std::fs::read(folder.join("manifest.json"))?;
+    let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
+    assert_eq!(
+        manifest.get("repository").and_then(Value::as_str),
+        canonical_root(repo.path())?.to_str()
+    );
     let entry = manifest.pointer("/files/0").ok_or("an entry")?;
     assert_eq!(
-        entry.get("backup").and_then(Value::as_str),
+        entry.get("kind").and_then(Value::as_str),
+        Some("claude_settings")
+    );
+    assert_eq!(
+        entry.pointer("/backup/name").and_then(Value::as_str),
         Some("1-settings.local.json")
     );
+    assert_eq!(
+        entry.pointer("/backup/blake3").and_then(Value::as_str),
+        Some(ContentHash::of(original.as_bytes()).to_string().as_str())
+    );
+    let run = folder.file_name().ok_or("a run folder")?;
+    let users_copy = home
+        .path()
+        .join(".cortex")
+        .join("backups")
+        .join(run)
+        .join("repository-manifest.json");
+    assert_eq!(std::fs::read(users_copy)?, manifest_bytes);
     let named = entry.get("path").and_then(Value::as_str).ok_or("a path")?;
     assert_eq!(std::fs::canonicalize(named)?, resolved);
     assert_eq!(
@@ -727,6 +749,26 @@ fn init_with_yes_takes_the_defaults() -> TestResult {
         .and_then(Value::as_str)
         .ok_or("a first file")?;
     assert!(first.ends_with(".gitignore"), "{first}");
+    let kinds: Vec<&str> = manifest
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or("files")?
+        .iter()
+        .filter_map(|file| file.get("kind").and_then(Value::as_str))
+        .collect();
+    assert_eq!(kinds, ["gitignore", "claude_settings", "cortex_config"]);
+    let run = folder.file_name().ok_or("a run folder")?;
+    let users_manifest = home
+        .path()
+        .join(".cortex")
+        .join("backups")
+        .join(run)
+        .join("manifest.json");
+    let users: Value = serde_json::from_slice(&std::fs::read(users_manifest)?)?;
+    assert_eq!(
+        users.pointer("/files/0/kind").and_then(Value::as_str),
+        Some("cortex_config")
+    );
     Ok(())
 }
 

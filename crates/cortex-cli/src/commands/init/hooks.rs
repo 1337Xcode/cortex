@@ -10,6 +10,7 @@ use cortex_core::{MAX_SETTINGS_BYTES, read_text_file};
 use cortex_hook::Adapter;
 
 use super::{Change, Owner, Scope, place};
+use crate::backup::Kind;
 use crate::claude_settings;
 
 /// The settings file the hooks go to, what it holds, and what it holds with Cortex's current
@@ -81,6 +82,7 @@ impl Settings {
         Change {
             said: format!("Claude Code: hooks written to {}", self.file.display()),
             file: self.file,
+            kind: Kind::ClaudeSettings,
             before: self.before,
             after: self.after,
             owner: self.owner,
