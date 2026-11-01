@@ -105,22 +105,29 @@ pub(crate) struct Counts {
 }
 
 impl Inbox {
-    /// Puts in a hook event, making room as [`MAX_EVENTS`] says when the inbox is full.
-    pub(crate) fn push_event(&self, event: Event) {
+    /// Puts in a hook event, making room as [`MAX_EVENTS`] says when the inbox is full, and says
+    /// whether it was taken: an event dropped to make room is taken (and counted), but none is
+    /// once the writer is stopping, since the writer records what waits when it stops and nothing
+    /// that comes later.
+    pub(crate) fn push_event(&self, event: Event) -> bool {
         let mut state = self.lock();
+        if state.is_stopping {
+            return false;
+        }
         if state.events.len() >= MAX_EVENTS {
             state.events_dropped += 1;
             if is_droppable(&event) {
-                return;
+                return true;
             }
             match state.events.iter().position(is_droppable) {
                 Some(oldest) => drop(state.events.remove(oldest)),
-                None => return,
+                None => return true,
             }
         }
         state.events.push_back(event);
         drop(state);
         self.arrived.notify_one();
+        true
     }
 
     /// Takes every event waiting, without waiting for one: what the writer records between the
@@ -194,7 +201,8 @@ impl Inbox {
         self.lock().last_request
     }
 
-    /// Asks the writer to stop.
+    /// Asks the writer to stop; from now on no event is taken. The writer calls it too, whatever
+    /// ended its work, before it records the last events waiting.
     pub(crate) fn stop(&self) {
         self.lock().is_stopping = true;
         self.arrived.notify_one();

@@ -99,12 +99,27 @@ impl<'a> Host<'a> {
     /// watcher saw once they are due, crawls while nothing comes, and returns when asked to stop,
     /// or once nothing waits to be parsed or recorded and neither a request nor a change came for
     /// `daemon.idle_shutdown_minutes`. A batch that cannot be recorded is counted, with its error,
-    /// and left; the daemon goes on.
+    /// and left; the daemon goes on. However it ends, the inbox then takes no more events, and the
+    /// events it took and the edits still held are recorded: an event a hook was answered for is
+    /// not lost to a stop.
     ///
     /// # Errors
     ///
     /// A failed index or parse, or a watcher that stopped.
     pub(crate) fn serve(mut self) -> anyhow::Result<()> {
+        let served = self.work();
+        let inbox = self.inbox;
+        inbox.stop();
+        record_waiting(&mut self.writer, &mut self.recorder, inbox);
+        // Every edit still held is recorded too: a hook has had its chance to claim most of the
+        // hold, and a stop must not lose them.
+        let parts = (&mut self.recorder, &mut self.edits);
+        record_due_edits(&mut self.writer, parts, inbox, i64::MAX);
+        served
+    }
+
+    /// The work of [`Host::serve`] until it is asked to stop, is idle long enough or fails.
+    fn work(&mut self) -> anyhow::Result<()> {
         let inbox = self.inbox;
         let idle = Duration::from_secs(self.config.idle_shutdown_minutes.saturating_mul(60));
         let mut last_activity = Instant::now();
@@ -118,10 +133,6 @@ impl<'a> Host<'a> {
             match inbox.wait(self.deadline(next_crawl, idle_at)) {
                 Work::Stop => {
                     tracing::info!("stopping: asked to");
-                    // Every edit still held is recorded now: a hook has had its chance to claim
-                    // most of the hold, and a stop must not lose them.
-                    let parts = (&mut self.recorder, &mut self.edits);
-                    record_due_edits(&mut self.writer, parts, inbox, i64::MAX);
                     return Ok(());
                 }
                 Work::WatcherStopped => bail!("the watcher stopped"),
@@ -417,17 +428,6 @@ mod tests {
         }
     }
 
-    /// The kinds of the events stored, in order.
-    fn stored_kinds(host: &Host<'_>) -> Result<Vec<EventKind>, Box<dyn std::error::Error>> {
-        Ok(host
-            .writer
-            .queries()
-            .events_after(0, 10)?
-            .into_iter()
-            .map(|row| row.record.kind)
-            .collect())
-    }
-
     /// Writes 600 Python modules of one function each under `root`: three batches of files.
     fn write_modules(root: &Path) -> TestResult {
         for number in 0..600 {
@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(report.files, 600);
         assert_eq!(inbox.counts().events_waiting, 0);
         assert_eq!(
-            stored_kinds(&host)?,
+            stored_kinds(root.path())?,
             [EventKind::SessionStart, EventKind::Prompt]
         );
         Ok(())
@@ -508,7 +508,7 @@ mod tests {
         host.record(&[event(HookKind::Prompt, 20, b"next")?])?;
         let session = Identifier::new("s1")?;
         assert!(host.writer.queries().session(&session)?.is_some());
-        assert_eq!(stored_kinds(&host)?, [EventKind::Prompt]);
+        assert_eq!(stored_kinds(root.path())?, [EventKind::Prompt]);
         Ok(())
     }
 
@@ -535,7 +535,7 @@ mod tests {
         assert_eq!(host.writer.queries().events_after(0, 10)?, []);
         host.record(&[event(HookKind::Prompt, 20, b"next")?])?;
         assert!(host.writer.queries().session(&session)?.is_some());
-        assert_eq!(stored_kinds(&host)?, [EventKind::Prompt]);
+        assert_eq!(stored_kinds(root.path())?, [EventKind::Prompt]);
         Ok(())
     }
 
@@ -589,6 +589,66 @@ mod tests {
             watched(root.path())?,
             [("a.py".to_owned(), 1_000), ("b.py".to_owned(), 9_000)]
         );
+        Ok(())
+    }
+
+    /// The kinds of the events stored under `root`, in order.
+    fn stored_kinds(root: &Path) -> Result<Vec<EventKind>, Box<dyn std::error::Error>> {
+        let reader = cortex_store::Reader::open(&root.join(".cortex"), 0)?;
+        Ok(reader
+            .queries()
+            .events_after(0, 10)?
+            .into_iter()
+            .map(|row| row.record.kind)
+            .collect())
+    }
+
+    /// A host on a repository of one file, indexed, with `config` and `inbox`.
+    fn indexed_host<'a>(
+        root: &'a Path,
+        (config, inbox): (&'a Config, &'a Inbox),
+    ) -> Result<Host<'a>, Box<dyn std::error::Error>> {
+        std::fs::write(root.join("a.py"), "a = 1\n")?;
+        let parts = (writer(root)?, Recorder::new(false), inbox);
+        let grammars = Arc::new(Grammars::load()?);
+        let mut host = Host::new(root, grammars, (config, discover(config)), parts);
+        host.index(&[])?;
+        Ok(host)
+    }
+
+    /// Hook events waiting when the daemon is asked to stop are recorded before it stops, though
+    /// the stop came first; one that arrives once it is stopping is refused, not taken and lost.
+    #[test]
+    fn waiting_events_are_recorded_at_a_stop() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let host = indexed_host(root.path(), (&config, &inbox))?;
+        assert!(inbox.push_event(event(HookKind::SessionStart, 5, b"start")?));
+        assert!(inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?));
+        inbox.stop();
+        assert!(!inbox.push_event(event(HookKind::Stop, 15, b"stop")?));
+        host.serve()?;
+        assert_eq!(
+            stored_kinds(root.path())?,
+            [EventKind::SessionStart, EventKind::Prompt]
+        );
+        Ok(())
+    }
+
+    /// A daemon that stops because it was idle takes no event after: one that arrived as it
+    /// stopped would be answered and never recorded.
+    #[test]
+    fn an_idle_stop_takes_no_more_events() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let config = Config {
+            idle_shutdown_minutes: 0,
+            ..Config::default()
+        };
+        let inbox = Inbox::default();
+        let host = indexed_host(root.path(), (&config, &inbox))?;
+        host.serve()?;
+        assert!(!inbox.push_event(event(HookKind::Stop, 15, b"stop")?));
+        assert_eq!(stored_kinds(root.path())?, []);
         Ok(())
     }
 

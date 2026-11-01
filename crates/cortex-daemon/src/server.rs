@@ -229,12 +229,20 @@ impl Server {
                 // once it ran. A probe, `cortex doctor`'s, is answered like the agent's and
                 // recorded never: no session, task or event of it reaches the store. It is
                 // counted, so that doctor sees its probes arrive.
-                if event.is_probe {
+                let is_taken = if event.is_probe {
                     self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
-                } else if hook != HookKind::PreTool {
-                    self.inbox.push_event(*event);
-                }
-                (ResponseBody::Ack, Some(hook))
+                    true
+                } else {
+                    hook == HookKind::PreTool || self.inbox.push_event(*event)
+                };
+                // A daemon that is stopping records nothing more, and says so rather than take an
+                // event it would lose.
+                let body = if is_taken {
+                    ResponseBody::Ack
+                } else {
+                    error("the daemon is stopping and records no more events")
+                };
+                (body, Some(hook))
             }
         };
         let took = began.elapsed();
@@ -450,6 +458,71 @@ mod tests {
             "{answered:?}"
         );
         assert_eq!(inbox.wait(Some(Instant::now())), Work::Stop);
+        Ok(())
+    }
+
+    /// A stop event of session `s1`.
+    fn stop_event() -> Result<cortex_core::Event, Box<dyn std::error::Error>> {
+        Ok(cortex_core::Event {
+            event_id: cortex_core::Ulid::from_seed(15, b"stop"),
+            ts_ms: 15,
+            agent: cortex_core::Agent::Claude,
+            agent_version: None,
+            session_id: cortex_core::Identifier::new("s1")?,
+            parent_session_id: None,
+            cwd: std::path::PathBuf::from("/repo"),
+            repo_root: std::path::PathBuf::from("/repo"),
+            hook: HookKind::Stop,
+            source: None,
+            tool: None,
+            tool_target: None,
+            tool_result: None,
+            prompt_text: None,
+            transcript_path: None,
+            model: None,
+            subagent_type: None,
+            compact_trigger: None,
+            end_reason: None,
+            is_probe: false,
+        })
+    }
+
+    /// An event that arrives once the daemon is stopping is answered with an error, not taken: the
+    /// writer records nothing after it stops, so an acknowledgement would be a lie. Nothing is put
+    /// in the inbox.
+    #[test]
+    fn a_stopping_daemon_takes_no_events() -> TestResult {
+        let inbox = Arc::new(Inbox::default());
+        inbox.stop();
+        let server = Server::new(Arc::clone(&inbox));
+        let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+        let event = Received {
+            request: Request {
+                request_id: 7,
+                body: RequestBody::Event {
+                    event: Box::new(stop_event()?),
+                },
+            },
+            began: Instant::now(),
+        };
+        let written = runtime.block_on(async {
+            let (mut client, mut daemon) = tokio::io::duplex(4096);
+            let answered = server.answer(event, &mut daemon).await;
+            drop(daemon);
+            let mut bytes = Vec::new();
+            client.read_to_end(&mut bytes).await?;
+            answered.map_err(|broken| broken.message())?;
+            Ok::<_, Box<dyn std::error::Error>>(bytes)
+        })?;
+        let response: Response = decode(written.get(LENGTH_PREFIX_BYTES..).unwrap_or_default())?;
+        assert_eq!(
+            response,
+            Response {
+                request_id: 7,
+                body: error("the daemon is stopping and records no more events"),
+            }
+        );
+        assert_eq!(inbox.counts().events_waiting, 0);
         Ok(())
     }
 
