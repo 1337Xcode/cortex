@@ -9,10 +9,10 @@ use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, bail};
-use cortex_core::{Config, Event, RepoPath};
+use cortex_core::{Config, Event, RepoPath, unix_millis};
 use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, PAUSE_EVERY, Pause, index_paths,
     index_repository,
@@ -344,11 +344,7 @@ fn record_batch(
 
 /// The time now in UTC milliseconds; a clock set before 1970 reads as 0.
 pub(crate) fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-        })
+    unix_millis(SystemTime::now())
 }
 
 #[cfg(test)]

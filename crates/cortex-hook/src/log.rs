@@ -8,7 +8,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use cortex_core::{append_private_file, create_private_folder};
+use cortex_core::{append_private_file, create_private_folder, one_line};
 
 /// The log's file name in the user's log folder.
 const FILE_NAME: &str = "hook.log";
@@ -53,17 +53,7 @@ pub(crate) fn write(folder: &Path, now: SystemTime, line: &str) -> io::Result<bo
         Err(error) if error.kind() == io::ErrorKind::NotFound => create_private_folder(folder)?,
         Err(error) => return Err(error),
     }
-    let mut text: String = line
-        .chars()
-        .take(MAX_LINE_CHARS)
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect();
+    let mut text = one_line(line, MAX_LINE_CHARS);
     text.push('\n');
     append_private_file(&path)?.write_all(text.as_bytes())?;
     Ok(true)

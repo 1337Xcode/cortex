@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cortex_core::ipc::{RequestBody, ResponseBody, Role, is_older_than_this_build};
-use cortex_core::{RepoId, RunFiles, Ulid, UserFolder};
+use cortex_core::{RepoId, RunFiles, Ulid, UserFolder, unix_millis};
 
 use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter};
 use crate::client::{ClientError, ask};
@@ -229,13 +229,6 @@ fn stamp(now: SystemTime) -> Stamp {
     }
 }
 
-/// `time` in UTC milliseconds; a clock set before 1970 reads as 0.
-fn unix_millis(time: SystemTime) -> i64 {
-    time.duration_since(UNIX_EPOCH).map_or(0, |since| {
-        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-    })
-}
-
 /// What went wrong, with the operating system's reason for a failed read or connection. A
 /// payload's parse error is not followed: its message may quote the payload.
 fn describe(failure: &Failure) -> String {
@@ -316,6 +309,5 @@ mod tests {
         assert_eq!(stamp(now).ts_ms, 1_700_000_000_123);
         assert_eq!(stamp(a_little_later).ts_ms, 1_700_000_000_123);
         assert_ne!(stamp(now).event_id, stamp(a_little_later).event_id);
-        assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_secs(1)), 0);
     }
 }
