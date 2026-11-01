@@ -142,6 +142,10 @@ pub struct StatusReport {
     /// Checkpoints of the store's write-ahead log that failed, since the daemon started.
     #[serde(default)]
     pub failed_checkpoints: u64,
+    /// Probes, as `cortex doctor` sends, that the daemon answered since it started. It records
+    /// none of them.
+    #[serde(default)]
+    pub probes_answered: u64,
     /// For each hook that sent a request since the daemon started, in hook order, how long the
     /// daemon took to handle its latest requests.
     #[serde(default)]

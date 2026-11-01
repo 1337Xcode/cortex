@@ -1,9 +1,10 @@
-//! `cortex doctor` on temporary repositories with an empty home folder: green once `cortex init`
-//! wrote the hooks and a daemon runs; each check failing once, with its fix, and the command
-//! failing then.
+//! `cortex doctor` on temporary repositories with an empty home folder and a PATH of the test's
+//! own, holding a stand-in for Claude Code or nothing: green once `cortex init` wrote the hooks
+//! and a daemon runs; each check failing once, with its fix, and the command failing then.
 
 mod common;
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Command;
 
@@ -20,11 +21,18 @@ struct Run {
     stderr: String,
 }
 
-/// Runs `cortex <command> --root <repo>` with `home` as the home folder.
+/// Runs `cortex <command> --root <repo>` with `home` as the home folder and a PATH holding only
+/// `home`'s `bin` folder (and on Windows the system's own folder, where the command shell is).
 fn cortex(command: &str, repo: &Path, home: &Path) -> TestResult<Run> {
     let mut process = Command::new(env!("CARGO_BIN_EXE_cortex"));
     process.args([command, "--root"]).arg(repo);
     isolate(&mut process, home);
+    let mut path = OsString::from(home.join("bin"));
+    if let Some(system) = std::env::var_os("SystemRoot") {
+        path.push(";");
+        path.push(Path::new(&system).join("System32"));
+    }
+    process.env("PATH", path);
     let output = process.output()?;
     Ok(Run {
         is_success: output.status.success(),
@@ -54,8 +62,11 @@ fn repository() -> TestResult<(tempfile::TempDir, tempfile::TempDir)> {
 }
 
 /// After `cortex init` and with the daemon up, every check passes: the hooks are current in the
-/// repository's local settings, nothing turns hooks off, they run this binary, and the daemon of
-/// this build answers. What doctor cannot see is said last.
+/// repository's local settings, nothing turns hooks off, they run this binary, the daemon of this
+/// build answers, and twenty probes of each of five events reach it, each event's 95th percentile
+/// printed against its budget (over it on a loaded machine is a failure, and the command's result
+/// follows). With no Claude Code on the PATH, its version is a note. What doctor cannot see is
+/// said last.
 #[test]
 fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
     let (repo, home) = repository()?;
@@ -64,11 +75,11 @@ fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
     let ready = daemon.first_line()?;
     assert!(ready.starts_with("cortex: daemon ready"), "{ready}");
     let run = cortex("doctor", repo.path(), home.path())?;
-    assert!(run.is_success, "{:?}\n{}", run.lines, run.stderr);
     let program = env!("CARGO_BIN_EXE_cortex");
     let names: Vec<&str> = run
         .lines
         .iter()
+        .filter(|line| !line.starts_with(' ') && !line.contains("latency: "))
         .filter_map(|line| line.split_once(':').map(|(head, _)| head))
         .collect();
     assert_eq!(
@@ -77,8 +88,48 @@ fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
             "ok    hooks",
             "ok    silenced",
             "ok    binary",
+            "note  agent",
             "ok    daemon"
         ]
+    );
+    let latency: Vec<(&str, &str)> = run
+        .lines
+        .iter()
+        .filter_map(|line| line.split_once("latency: "))
+        .filter_map(|(head, rest)| {
+            rest.split_once(": p95 ")
+                .map(|(what, _)| (head.trim_end(), what))
+        })
+        .collect();
+    let probed: Vec<&str> = latency.iter().map(|(_, what)| *what).collect();
+    assert_eq!(
+        probed,
+        [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PreToolUse on a read",
+            "PostToolUse on an edit",
+            "Stop"
+        ],
+        "{:?}",
+        run.lines
+    );
+    assert!(
+        run.lines
+            .iter()
+            .all(|line| !line.contains("without reaching the daemon")),
+        "{:?}",
+        run.lines
+    );
+    let is_any_over = latency.iter().any(|(head, _)| *head == "FAIL");
+    assert_eq!(
+        run.is_success, !is_any_over,
+        "{:?}\n{}",
+        run.lines, run.stderr
+    );
+    assert_eq!(
+        starting(&run, "note  agent"),
+        ["note  agent: Claude Code is not on the PATH; doctor cannot ask its version"]
     );
     assert_eq!(
         run.lines.last().map(String::as_str),
@@ -111,7 +162,8 @@ fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
 }
 
 /// With no hooks and no daemon, the hooks and the daemon checks fail, each with its fix, the
-/// binary check has nothing to look at, and the command fails naming how many checks did.
+/// binary check has nothing to look at, the latency check measures nothing (a probe would find no
+/// daemon and start none), and the command fails naming how many checks did.
 #[test]
 fn doctor_fails_without_hooks_or_daemon() -> TestResult {
     let (repo, home) = repository()?;
@@ -140,10 +192,59 @@ fn doctor_fails_without_hooks_or_daemon() -> TestResult {
         starting(&run, "note  binary"),
         ["note  binary: no Cortex hook names a binary to check"]
     );
+    assert_eq!(
+        starting(&run, "note  latency"),
+        ["note  latency: not measured: no daemon answers, and probes start none"]
+    );
     assert!(
         run.stderr.contains("2 of the checks failed"),
         "{}",
         run.stderr
+    );
+    Ok(())
+}
+
+/// A Claude Code older than the oldest version Cortex's hooks work with fails the agent check,
+/// naming where it is, with an update as the fix: a stand-in on the PATH answers `--version` as
+/// 2.1.200 does.
+#[test]
+fn doctor_fails_on_an_older_claude_code() -> TestResult {
+    let (repo, home) = repository()?;
+    let bin = home.path().join("bin");
+    std::fs::create_dir_all(&bin)?;
+    let claude = bin.join(if cfg!(windows) {
+        "claude.cmd"
+    } else {
+        "claude"
+    });
+    if cfg!(windows) {
+        std::fs::write(&claude, "@echo 2.1.200 (Claude Code)\r\n")?;
+    } else {
+        std::fs::write(&claude, "#!/bin/sh\necho '2.1.200 (Claude Code)'\n")?;
+        #[cfg(unix)]
+        std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+    }
+    let run = cortex("doctor", repo.path(), home.path())?;
+    assert!(!run.is_success);
+    let agent: Vec<String> = run
+        .lines
+        .iter()
+        .skip_while(|line| !line.starts_with("FAIL  agent"))
+        .take(2)
+        .cloned()
+        .collect();
+    assert_eq!(
+        agent,
+        [
+            format!(
+                "FAIL  agent: Claude Code 2.1.200 at {} is older than 2.1.295, the oldest \
+                 Cortex's hooks work with",
+                claude.display()
+            ),
+            "      fix: update Claude Code to 2.1.295 or later".to_owned()
+        ],
+        "{:?}",
+        run.lines
     );
     Ok(())
 }

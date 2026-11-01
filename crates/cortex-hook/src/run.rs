@@ -1,7 +1,8 @@
 //! `cortex hook --agent <agent> --event <event>`: what an agent runs at each of its hooks. The hook
 //! reads the payload, turns it into an event, hands the event to its repository's daemon before the
-//! event's deadline (starting a daemon in the background when none runs), and ends. Whatever
-//! happens it prints nothing and exits 0; what went wrong goes to the hook log.
+//! event's deadline (starting a daemon in the background when none runs, unless the event is
+//! `cortex doctor`'s probe, which starts and stops none), and ends. Whatever happens it prints
+//! nothing and exits 0; what went wrong goes to the hook log.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -13,7 +14,7 @@ use cortex_core::ipc::{RequestBody, ResponseBody, Role, is_older_than_this_build
 use cortex_core::{RepoId, RunFiles, Ulid, UserFolder, unix_millis};
 
 use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter};
-use crate::client::{ClientError, ask};
+use crate::client::{Answer, ClientError, ask};
 use crate::fail_open::{self, Outcome};
 use crate::stdin::{self, StdinError};
 use crate::{log, root, spawn, stop};
@@ -55,6 +56,9 @@ enum Failure {
     /// No daemon was running, and none could be started.
     #[error("starting the daemon")]
     StartDaemon(#[source] std::io::Error),
+    /// A probe, `cortex doctor`'s, found no daemon, and a probe starts none.
+    #[error("a probe found no daemon, and probes start none")]
+    ProbeWithoutDaemon,
 }
 
 /// Runs the hook with `args`, the arguments that follow `hook` on the command line, the payload on
@@ -128,11 +132,16 @@ impl Hook {
         let user = UserFolder::in_home(home.ok_or(Failure::NoHome)?);
         let files = user.run_files(&RepoId::of(&event.repo_root));
         let root = event.repo_root.clone();
+        let is_probe = event.is_probe;
         let body = RequestBody::Event {
             event: Box::new(event),
         };
         let deadline = deadline(self.started, entry);
-        match ask(&files, Role::Hook, body, deadline) {
+        let answer = ask(&files, Role::Hook, body, deadline);
+        if is_probe {
+            return probed(answer);
+        }
+        match answer {
             Ok(answer) if answer.body == ResponseBody::Ack => {
                 stop_older(&files, &answer.welcome.cortex_version, deadline)
             }
@@ -178,6 +187,18 @@ fn stop_older(files: &RunFiles, version: &str, deadline: Instant) -> Result<(), 
     }
     stop::stop_if_older(files, Role::Hook, deadline)?;
     Ok(())
+}
+
+/// What became of a probe, `cortex doctor`'s, by the daemon's `answer`. A probe measures the
+/// daemon that runs and changes nothing: it never asks an older one to stop, nor starts one when
+/// none runs.
+fn probed(answer: Result<Answer, ClientError>) -> Result<(), Failure> {
+    match answer {
+        Ok(answer) if answer.body == ResponseBody::Ack => Ok(()),
+        Ok(_) => Err(Failure::NotTaken),
+        Err(ClientError::NotRunning) => Err(Failure::ProbeWithoutDaemon),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// The adapter and the hook the arguments name.

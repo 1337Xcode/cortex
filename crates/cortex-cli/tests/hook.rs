@@ -385,3 +385,40 @@ fn an_older_daemon_is_told_to_stop_and_a_newer_one_is_not() -> TestResult {
     assert_eq!(kinds(&replaced.requests()?), ["hello", "event", "hello"]);
     Ok(())
 }
+
+/// A probe, `cortex doctor`'s, measures the daemon that runs and changes none: a daemon of an
+/// older Cortex takes the probe and is not told to stop, and with no daemon running the probe
+/// starts none, which the hook log says. Both calls are silent.
+#[test]
+fn a_probe_stops_and_starts_no_daemon() -> TestResult {
+    let (home, repo) = marked_repository()?;
+    let probe = || -> TestResult<Vec<u8>> {
+        let mut edit: serde_json::Value =
+            serde_json::from_slice(&payload("post-tool-use-edit.json", &repo)?)?;
+        edit["cortex_probe"] = serde_json::Value::Bool(true);
+        Ok(serde_json::to_vec(&edit)?)
+    };
+    let call = |input| {
+        hook(
+            &["--agent", "claude", "--event", "PostToolUse"],
+            input,
+            Duration::ZERO,
+            home.path(),
+        )
+    };
+    let older = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["1.0.0"]))?;
+    let done = call(probe()?)?;
+    assert!(done.is_silent_success(), "{:?}", done.output);
+    assert_eq!(kinds(&older.requests()?), ["hello", "event"]);
+    let done = call(probe()?)?;
+    assert!(done.is_silent_success(), "{:?}", done.output);
+    let log_path = UserFolder::in_home(home.path())
+        .logs_folder()
+        .join("hook.log");
+    let log = std::fs::read_to_string(&log_path)?;
+    assert!(
+        log.contains("claude PostToolUse: a probe found no daemon, and probes start none"),
+        "{log}"
+    );
+    Ok(())
+}

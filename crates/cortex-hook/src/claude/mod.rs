@@ -10,11 +10,19 @@ use std::time::Duration;
 
 use cortex_core::{Agent, Event, HookKind};
 
-use crate::adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp};
+use crate::adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, Versions};
 
 /// The tools whose results Cortex records: reads, searches, edits and shells. Other tools run
 /// without spawning a hook.
 const TOOL_RESULTS: &str = "Read|Grep|Glob|Edit|Write|MultiEdit|Bash|PowerShell";
+
+/// The versions of Claude Code Cortex knows: the oldest is 2.1.295, the first to read `onFailure`,
+/// which Cortex's hooks set so that a hook that fails never holds up the agent; the newest tested
+/// is 2.1.312, whose payloads the fixtures hold.
+const VERSIONS: Versions = Versions {
+    oldest: "2.1.295",
+    newest_tested: "2.1.312",
+};
 
 /// The hard timeout of the events whose budget names none: a margin over their 60 ms budget, and
 /// below the one second Claude Code's timeout setting rounds up to.
@@ -96,6 +104,10 @@ impl Adapter for Claude {
 
     fn hooks(&self) -> &'static [HookEntry] {
         HOOKS
+    }
+
+    fn versions(&self) -> Versions {
+        VERSIONS
     }
 
     fn normalize(

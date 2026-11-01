@@ -340,9 +340,10 @@ fn events_sent_to_the_daemon_are_recorded() -> TestResult {
     Ok(())
 }
 
-/// Probes are answered and leave no row: a probe session start and prompt from session `probe`
-/// get their acknowledgements, and once a real session start is stored after them, the store
-/// holds that session's row alone, and no session `probe`.
+/// Probes are answered, counted and leave no row: a probe session start and prompt from session
+/// `probe` get their acknowledgements and the daemon's status counts two probes, and once a real
+/// session start is stored after them, the store holds that session's row alone, and no session
+/// `probe`.
 #[test]
 fn probes_leave_no_rows() -> TestResult {
     let (repo, home) = repository()?;
@@ -390,6 +391,12 @@ fn probes_leave_no_rows() -> TestResult {
             ResponseBody::Ack
         );
     }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let answer = ask(&files, Role::Cli, RequestBody::Status, deadline)?;
+    let ResponseBody::Status(report) = answer.body else {
+        return Err(format!("{:?}", answer.body).into());
+    };
+    assert_eq!(report.probes_answered, 2);
     let stored = || -> TestResult<Vec<(String, EventKind)>> {
         let reader = Reader::open(&repo.path().join(".cortex"), 0)?;
         Ok(reader

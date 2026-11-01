@@ -29,6 +29,9 @@ pub trait Adapter: Sync {
     /// The hooks Cortex registers with the agent, one per event name.
     fn hooks(&self) -> &'static [HookEntry];
 
+    /// The versions of the agent Cortex knows.
+    fn versions(&self) -> Versions;
+
     /// The event a hook call of `event_name` with `payload` becomes, or `None` when Cortex does not
     /// record that event or the payload's working folder is in no repository Cortex serves.
     /// `locate` finds the repository from the payload's working folder; `stamp` names the event.
@@ -57,6 +60,15 @@ pub struct HookEntry {
     /// How long the whole hook may take: the deadline for the daemon's answer is this less a
     /// margin, and the agent's own timeout is set at or above it.
     pub hard_timeout: Duration,
+}
+
+/// The versions of an agent Cortex knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Versions {
+    /// The oldest version Cortex's hooks work with: one before it runs them wrongly.
+    pub oldest: &'static str,
+    /// The newest version whose payloads Cortex's tests hold: one after it may send others.
+    pub newest_tested: &'static str,
 }
 
 /// Where a hook call's working folder is.

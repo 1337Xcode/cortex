@@ -2,6 +2,7 @@
 //! and Cortex's own, which decides which of two installed versions keeps the daemon.
 
 use std::cmp::Ordering;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -152,6 +153,23 @@ impl PartialOrd for CortexVersion {
     }
 }
 
+impl fmt::Display for CortexVersion {
+    /// The version as semantic versioning writes it, less its build metadata: `2.1.312`,
+    /// `2.0.0-rc.1`. Digits, letters, dots and dashes only, whatever text it was read from.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let [major, minor, patch] = self.numbers;
+        write!(formatter, "{major}.{minor}.{patch}")?;
+        for (index, identifier) in self.pre.iter().enumerate() {
+            formatter.write_str(if index == 0 { "-" } else { "." })?;
+            match identifier {
+                PreRelease::Number(number) => write!(formatter, "{number}")?,
+                PreRelease::Text(text) => formatter.write_str(text)?,
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +211,21 @@ mod tests {
     #[test]
     fn this_build_s_version_reads() {
         assert!(CortexVersion::parse(CORTEX_VERSION).is_ok());
+    }
+
+    /// A version is written as it was read, less its build metadata and whatever that held.
+    #[test]
+    fn versions_are_written_as_read() -> Result<(), VersionError> {
+        for (read, written) in [
+            ("2.1.312", "2.1.312"),
+            ("2.0.0-rc.1", "2.0.0-rc.1"),
+            ("1.0.0-alpha.beta.11", "1.0.0-alpha.beta.11"),
+            ("2.1.312+build.5", "2.1.312"),
+            ("2.1.312+\u{1b}]0;title\u{7}", "2.1.312"),
+        ] {
+            assert_eq!(CortexVersion::parse(read)?.to_string(), written);
+        }
+        Ok(())
     }
 
     /// This build (2.0.0-dev) is newer than 1.9.9 and than 2.0.0-alpha, which sorts before `dev`;

@@ -238,6 +238,7 @@ mod tests {
             events_dropped: 0,
             failed_batches: 0,
             failed_checkpoints: 0,
+            probes_answered: 0,
             latencies: Vec::new(),
             recent_errors: Vec::new(),
         }

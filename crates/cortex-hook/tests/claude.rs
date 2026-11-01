@@ -660,6 +660,18 @@ fn long_prompts_are_cut_and_bad_names_left_out() -> TestResult {
     Ok(())
 }
 
+/// The newest version Cortex knows has its fixtures, and the oldest it works with is no newer.
+#[test]
+fn the_known_versions_hold() -> TestResult {
+    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
+    let versions = claude.versions();
+    assert!(fixtures().ends_with(versions.newest_tested));
+    let oldest = cortex_core::ipc::CortexVersion::parse(versions.oldest)?;
+    let newest = cortex_core::ipc::CortexVersion::parse(versions.newest_tested)?;
+    assert!(oldest <= newest);
+    Ok(())
+}
+
 /// A payload marked `cortex_probe: true`, as `cortex doctor` sends, makes the same event with the
 /// probe flag set; a marker of another type reads as absent, and no marker as the agent's own.
 #[test]

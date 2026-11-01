@@ -4,11 +4,14 @@
 //!
 //! The checks are a table, [`CHECKS`]: adding one means one function and one line. Each reads the
 //! settings files Claude Code reads that Cortex may read (the repository's local and shared
-//! settings, the user's, and the managed ones) or asks the daemon; none runs a command a settings
-//! file names, since a repository can name any program there.
+//! settings, the user's, and the managed ones), asks the daemon, asks Claude Code its version, or
+//! runs this binary's hook on probes; none runs a command a settings file names, since a
+//! repository can name any program there.
 
+mod agent;
 mod daemon;
 mod hooks;
+mod latency;
 mod settings;
 
 use std::path::PathBuf;
@@ -62,7 +65,9 @@ const CHECKS: &[Check] = &[
     ("hooks", hooks::registered),
     ("silenced", hooks::silenced),
     ("binary", hooks::binary),
+    ("agent", agent::version),
     ("daemon", daemon::answers),
+    ("latency", latency::probes),
 ];
 
 /// What no check can see, said after them all.

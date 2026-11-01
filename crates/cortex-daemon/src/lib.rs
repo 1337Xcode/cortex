@@ -28,6 +28,7 @@ mod recent_errors;
 mod server;
 pub mod settings;
 
+pub use child::{Captured, capture, time_fed};
 pub use instance::is_running;
 
 use std::path::Path;

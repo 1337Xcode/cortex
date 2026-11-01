@@ -8,6 +8,7 @@
 //! daemon's status.
 
 use std::io;
+use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -42,6 +43,8 @@ pub(crate) struct Server {
     inbox: Arc<Inbox>,
     /// How long each hook's latest requests took to handle.
     latencies: Mutex<Latencies>,
+    /// Probes, `cortex doctor`'s, answered since the daemon started.
+    probes_answered: AtomicU64,
 }
 
 /// A request as read, with when the first byte of its frame arrived.
@@ -100,6 +103,7 @@ impl Server {
             started: Instant::now(),
             inbox,
             latencies: Mutex::new(Latencies::default()),
+            probes_answered: AtomicU64::new(0),
         }
     }
 
@@ -223,8 +227,11 @@ impl Server {
                 let hook = event.hook;
                 // The moment before a tool runs is answered, not recorded: the tool's result is,
                 // once it ran. A probe, `cortex doctor`'s, is answered like the agent's and
-                // recorded never: no session, task or event of it reaches the store.
-                if hook != HookKind::PreTool && !event.is_probe {
+                // recorded never: no session, task or event of it reaches the store. It is
+                // counted, so that doctor sees its probes arrive.
+                if event.is_probe {
+                    self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
+                } else if hook != HookKind::PreTool {
                     self.inbox.push_event(*event);
                 }
                 (ResponseBody::Ack, Some(hook))
@@ -276,6 +283,7 @@ impl Server {
             events_dropped: counts.events_dropped,
             failed_batches: counts.failed_batches,
             failed_checkpoints: counts.failed_checkpoints,
+            probes_answered: self.probes_answered.load(atomic::Ordering::Relaxed),
             latencies: latencies.report(),
             recent_errors: self.inbox.recent_errors(),
         }
