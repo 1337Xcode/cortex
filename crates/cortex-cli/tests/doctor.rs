@@ -250,9 +250,17 @@ fn doctor_fails_on_silenced_and_stale_hooks() -> TestResult {
     std::fs::write(&user_settings, r#"{"disableAllHooks": true}"#)?;
     let settings = repo.path().join(".claude").join("settings.local.json");
     let text = std::fs::read_to_string(&settings)?;
-    let program = serde_json::to_string(env!("CARGO_BIN_EXE_cortex"))?;
+    // The binary as init wrote it, the path the operating system gives the running program, which
+    // a target folder named with `/` spells otherwise than cargo's path to the test's binary.
+    let written: serde_json::Value = serde_json::from_str(&text)?;
+    let program = written
+        .pointer("/hooks/SessionStart/0/hooks/0/command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("init wrote no SessionStart hook")?;
     let gone = serde_json::to_string(&repo.path().join("gone").join("cortex"))?;
-    std::fs::write(&settings, text.replace(&program, &gone))?;
+    let stale = text.replace(&serde_json::to_string(program)?, &gone);
+    assert_ne!(stale, text, "no hook named the binary init wrote");
+    std::fs::write(&settings, stale)?;
     let run = cortex(&["doctor"], repo.path(), home.path())?;
     assert!(!run.is_success);
     let failed: Vec<String> = starting(&run, "FAIL")
