@@ -20,8 +20,9 @@ use cortex_store::Reader;
 /// How late an event may reach the store.
 const WITHIN: Duration = Duration::from_secs(1);
 
-/// How often the test sends an event, then looks at the store.
-const EVERY: Duration = Duration::from_millis(100);
+/// How often the test sends an event, then looks at the store: often enough that a start a fast
+/// machine gets through in a second or two still sees twenty events, as the test asks.
+const EVERY: Duration = Duration::from_millis(25);
 
 /// The session every event here comes from.
 const SESSION: &str = "s1";
