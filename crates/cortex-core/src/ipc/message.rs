@@ -142,4 +142,40 @@ pub struct StatusReport {
     /// Checkpoints of the store's write-ahead log that failed, since the daemon started.
     #[serde(default)]
     pub failed_checkpoints: u64,
+    /// For each hook that sent a request since the daemon started, in hook order, how long the
+    /// daemon took to handle its latest requests.
+    #[serde(default)]
+    pub latencies: Vec<HookLatency>,
+    /// The daemon's latest errors, oldest first.
+    #[serde(default)]
+    pub recent_errors: Vec<RecentError>,
+}
+
+/// How long a daemon took to handle one hook's latest requests, each from the first byte of the
+/// request to its answer being ready to write, as percentiles in microseconds. The hook's own
+/// process, its connection and the handshake are not in these times.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookLatency {
+    /// The hook's name, as `HookKind::name` gives it: a name rather than a kind, so that a report
+    /// from a newer daemon, naming a hook this build does not know, still reads.
+    pub hook: String,
+    /// How many requests the percentiles cover: the hook's latest, as many as the daemon keeps.
+    pub requests: u64,
+    /// The median.
+    pub p50_us: u64,
+    /// The 95th percentile.
+    pub p95_us: u64,
+    /// The 99th percentile.
+    pub p99_us: u64,
+}
+
+/// An error a daemon met, in words without file contents, prompt text or tool output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentError {
+    /// When it last happened, in UTC milliseconds.
+    pub at_ms: i64,
+    /// How many times it happened while the daemon kept it.
+    pub count: u64,
+    /// What failed and why.
+    pub message: String,
 }

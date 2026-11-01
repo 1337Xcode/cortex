@@ -17,7 +17,9 @@ mod global_ignore;
 mod host;
 mod inbox;
 mod instance;
+mod latency;
 mod listener;
+mod recent_errors;
 mod server;
 pub mod settings;
 

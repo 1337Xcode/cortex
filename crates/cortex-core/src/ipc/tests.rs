@@ -172,6 +172,45 @@ fn a_handshake_from_any_version_reads() -> TestResult {
     Ok(())
 }
 
+/// A status answer reads across versions: one from an older daemon, without latencies or recent
+/// errors, reads with both empty; one from a newer daemon, with fields this version does not know
+/// and a hook it does not know, reads with that hook's name as it came.
+#[test]
+fn a_status_from_any_version_reads() -> TestResult {
+    let older = concat!(
+        r#"{"cortex_version":"1.0.0","protocol":{"major":1,"minor":0},"pid":7,"#,
+        r#""uptime_ms":5}"#
+    );
+    let report: StatusReport = serde_json::from_str(older)?;
+    assert_eq!((report.latencies, report.recent_errors), (vec![], vec![]));
+    let newer = concat!(
+        r#"{"cortex_version":"9.0.0","protocol":{"major":1,"minor":4},"pid":7,"#,
+        r#""uptime_ms":5,"queues":{},"latencies":[{"hook":"permission_request","#,
+        r#""requests":2,"p50_us":10,"p95_us":20,"p99_us":20,"p999_us":20}],"#,
+        r#""recent_errors":[{"at_ms":3,"count":1,"message":"m","kind":"store"}]}"#
+    );
+    let report: StatusReport = serde_json::from_str(newer)?;
+    assert_eq!(
+        report.latencies,
+        [HookLatency {
+            hook: "permission_request".to_owned(),
+            requests: 2,
+            p50_us: 10,
+            p95_us: 20,
+            p99_us: 20,
+        }]
+    );
+    assert_eq!(
+        report.recent_errors,
+        [RecentError {
+            at_ms: 3,
+            count: 1,
+            message: "m".to_owned(),
+        }]
+    );
+    Ok(())
+}
+
 /// A prefix may announce exactly 1 MiB, and no more.
 #[test]
 fn the_cap_is_one_mebibyte() {

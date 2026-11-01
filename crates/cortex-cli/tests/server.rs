@@ -1,6 +1,7 @@
 //! The daemon's endpoint on temporary repositories with an empty home folder: `cortex status` asks
 //! it, a Shutdown stops it, a client of another protocol gets a mismatch and may still stop it, a
-//! broken client changes nothing, and the endpoint is the user's alone.
+//! broken client changes nothing but the daemon's recent errors, each hook's handling time is
+//! reported, and the endpoint is the user's alone.
 
 mod common;
 
@@ -49,13 +50,17 @@ fn ready_daemon(repo: &Path, home: &Path) -> TestResult<Daemon> {
     Ok(daemon)
 }
 
-/// The first line `cortex status` prints for `repo`.
-fn status_line(repo: &Path, home: &Path) -> TestResult<String> {
+/// Everything `cortex status` prints for `repo`.
+fn status_output(repo: &Path, home: &Path) -> TestResult<String> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command.args(["status", "--root"]).arg(repo);
     isolate(&mut command, home);
-    let output = command.output()?;
-    let stdout = String::from_utf8(output.stdout)?;
+    Ok(String::from_utf8(command.output()?.stdout)?)
+}
+
+/// The first line `cortex status` prints for `repo`.
+fn status_line(repo: &Path, home: &Path) -> TestResult<String> {
+    let stdout = status_output(repo, home)?;
     Ok(stdout.lines().next().unwrap_or_default().to_owned())
 }
 
@@ -156,8 +161,10 @@ fn another_protocol_gets_a_mismatch_and_may_stop_the_daemon() -> TestResult {
     Ok(())
 }
 
-/// A client that sends a frame that is not a request, or a request before saying hello, is cut
-/// off; the daemon answers the next client as before.
+/// A client that sends a frame that is not a request, a request before saying hello, or a second
+/// hello is cut off, the last after being told why; the daemon answers the next client as before.
+/// Each is one of the daemon's recent errors, in the daemon's words: the bytes the client sent are
+/// not repeated.
 #[test]
 fn a_broken_client_changes_nothing() -> TestResult {
     let (repo, home) = repository()?;
@@ -170,18 +177,63 @@ fn a_broken_client_changes_nothing() -> TestResult {
         request_id: 1,
         body: RequestBody::Status,
     })?)?;
+    let mut repeated = connect(&files)?;
+    let hello = |request_id| Request {
+        request_id,
+        body: RequestBody::Hello(Hello {
+            protocol: Protocol::CURRENT,
+            cortex_version: CORTEX_VERSION.to_owned(),
+            role: Role::Cli,
+        }),
+    };
+    let mut twice = encode(&hello(1))?;
+    twice.extend(encode(&hello(2))?);
+    repeated.write_all(&twice)?;
+    // The daemon keeps each error before the client can see the connection end or read why, so
+    // all three are kept by now.
+    assert!(read_frame::<Response>(&mut garbage).is_err());
     assert!(read_frame::<Response>(&mut skipped).is_err());
-    let line = status_line(repo.path(), home.path())?;
+    let welcome: Response = read_frame(&mut repeated)?;
+    assert!(
+        matches!(welcome.body, ResponseBody::Welcome(_)),
+        "{welcome:?}"
+    );
+    let refusal: Response = read_frame(&mut repeated)?;
+    assert_eq!(
+        refusal.body,
+        ResponseBody::Error {
+            message: "a connection says hello once".to_owned()
+        }
+    );
+    let stdout = status_output(repo.path(), home.path())?;
+    let line = stdout.lines().next().unwrap_or_default();
     assert!(
         line.starts_with(&format!("daemon: running (process {}", daemon.child.id())),
         "{line}"
     );
+    let mut errors: Vec<&str> = stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("error: "))
+        .filter_map(|error| error.rsplit_once(" (").map(|(message, _)| message))
+        .collect();
+    errors.sort_unstable();
+    assert_eq!(
+        errors,
+        [
+            "a client asked before its handshake",
+            "a client sent its handshake twice",
+            "a request could not be read: a frame body is not the message expected"
+        ],
+        "{stdout}"
+    );
+    assert!(!stdout.contains("{{"), "{stdout}");
     Ok(())
 }
 
 /// Events sent to the daemon are recorded: a session start, a prompt that starts task 1 and a read
 /// after it ran become the session, the task and three rows; the moment before the read is
-/// answered and not kept. Status then reports nothing waiting and nothing lost.
+/// answered and not kept. Status then reports nothing waiting and nothing lost, each hook's one
+/// request in hook order (one time is every percentile), no error, and nothing of the prompt.
 #[test]
 fn events_sent_to_the_daemon_are_recorded() -> TestResult {
     let (repo, home) = repository()?;
@@ -259,10 +311,7 @@ fn events_sent_to_the_daemon_are_recorded() -> TestResult {
             (EventKind::Read, 40)
         ]
     );
-    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.args(["status", "--root"]).arg(repo.path());
-    isolate(&mut command, home.path());
-    let stdout = String::from_utf8(command.output()?.stdout)?;
+    let stdout = status_output(repo.path(), home.path())?;
     assert!(
         stdout.contains(
             "\nqueue: 0 events and 0 changes waiting; 0 events dropped, 0 batches not recorded, \
@@ -270,6 +319,23 @@ fn events_sent_to_the_daemon_are_recorded() -> TestResult {
         ),
         "{stdout}"
     );
+    let latencies: Vec<(&str, &str)> = stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("daemon latency: "))
+        .filter_map(|line| line.split_once(" p50 "))
+        .collect();
+    let hooks: Vec<&str> = latencies.iter().map(|(hook, _)| *hook).collect();
+    assert_eq!(hooks, ["session_start", "prompt", "pre_tool", "post_tool"]);
+    for (hook, times) in latencies {
+        let (time, _) = times.split_once(", ").unwrap_or_default();
+        assert_eq!(
+            times,
+            format!("{time}, p95 {time}, p99 {time} (last 1 request)"),
+            "{hook}"
+        );
+    }
+    assert!(stdout.contains("\nerrors: none\n"), "{stdout}");
+    assert!(!stdout.contains("look at app"), "{stdout}");
     Ok(())
 }
 

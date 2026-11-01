@@ -1,14 +1,18 @@
 //! What waits for the writer: hook events, the watcher's changes, word that the watcher stopped,
-//! and a request to stop, with the counts the daemon's status reports. One lock and one condition
-//! variable, so the writer sleeps until something arrives or a deadline passes.
+//! and a request to stop, with the counts and the latest errors the daemon's status reports. One
+//! lock and one condition variable, so the writer sleeps until something arrives or a deadline
+//! passes.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
+use cortex_core::ipc::RecentError;
 use cortex_core::{Event, HookKind, RepoPath, ToolKind};
 use cortex_index::Change;
 use cortex_store::CheckpointFailures;
+
+use crate::recent_errors::RecentErrors;
 
 /// How many hook events may wait for the writer. When the inbox is full, a read or a search gives
 /// way first: an arriving one is dropped, or the oldest waiting one makes room for an edit, a
@@ -41,6 +45,8 @@ struct State {
     failed_batches: u64,
     /// The writer's count of the checkpoints that failed.
     failed_checkpoints: CheckpointFailures,
+    /// The latest errors the writer and the connections met.
+    errors: RecentErrors,
     /// The watcher's changes, oldest first, each with when it arrived, in UTC milliseconds.
     changes: Vec<(Change, i64)>,
     /// Whether a change was dropped since the last drain.
@@ -119,9 +125,22 @@ impl Inbox {
         self.lock().events.drain(..).collect()
     }
 
-    /// Counts a batch of events the writer could not record.
-    pub(crate) fn count_failed_batch(&self) {
-        self.lock().failed_batches += 1;
+    /// Counts a batch the writer could not record, and keeps why, `message`, as an error met at
+    /// `at_ms` in UTC milliseconds.
+    pub(crate) fn count_failed_batch(&self, message: &str, at_ms: i64) {
+        let mut state = self.lock();
+        state.failed_batches += 1;
+        state.errors.note(message, at_ms);
+    }
+
+    /// Keeps `message` as an error met at `at_ms` in UTC milliseconds.
+    pub(crate) fn note_error(&self, message: &str, at_ms: i64) {
+        self.lock().errors.note(message, at_ms);
+    }
+
+    /// The latest errors, oldest first.
+    pub(crate) fn recent_errors(&self) -> Vec<RecentError> {
+        self.lock().errors.list()
     }
 
     /// Reports the checkpoints `failures` counts from now on: the writer's, once it is open.

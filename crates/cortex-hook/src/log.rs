@@ -27,9 +27,10 @@ const MIN_GAP: Duration = Duration::from_secs(1);
 const MAX_LINE_CHARS: usize = 1_000;
 
 /// Appends `line` to the log in `folder` at `now`, unless the log was written less than
-/// [`MIN_GAP`] before. Returns whether the line was written. The line keeps its first
-/// [`MAX_LINE_CHARS`] characters, each control character, a line break included, written as a
-/// space: one failure is one line, whatever text reached it.
+/// [`MIN_GAP`] before. Returns whether the line was written. The line is cut to its first
+/// [`MAX_LINE_CHARS`] characters by [`one_line`], each control character (a line break included)
+/// and each character that reorders or hides text written as a space: one failure is one line,
+/// whatever text reached it.
 ///
 /// # Errors
 ///

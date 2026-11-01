@@ -98,8 +98,8 @@ impl<'a> Host<'a> {
     /// Records the events and indexes after the changes the inbox brings, records the edits the
     /// watcher saw once they are due, crawls while nothing comes, and returns when asked to stop,
     /// or once nothing waits to be parsed or recorded and neither a request nor a change came for
-    /// `daemon.idle_shutdown_minutes`. A batch that cannot be recorded is counted and left; the
-    /// daemon goes on.
+    /// `daemon.idle_shutdown_minutes`. A batch that cannot be recorded is counted, with its error,
+    /// and left; the daemon goes on.
     ///
     /// # Errors
     ///
@@ -125,8 +125,8 @@ impl<'a> Host<'a> {
                 }
                 Work::WatcherStopped => bail!("the watcher stopped"),
                 Work::Events(events) => {
-                    if self.record(&events).is_err() {
-                        inbox.count_failed_batch();
+                    if let Err(error) = self.record(&events) {
+                        count_failed(inbox, "hook events", &error);
                     }
                     last_activity = Instant::now();
                 }
@@ -283,18 +283,20 @@ pub(crate) fn load_grammars(
 }
 
 /// Records the hook events waiting in `inbox` with `recorder`, all or none; a batch that cannot be
-/// recorded is counted.
+/// recorded is counted, with its error.
 pub(crate) fn record_waiting(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox) {
     let events = inbox.take_events();
-    if !events.is_empty() && record_batch(writer, recorder, &events).is_err() {
-        inbox.count_failed_batch();
+    if !events.is_empty()
+        && let Err(error) = record_batch(writer, recorder, &events)
+    {
+        count_failed(inbox, "hook events", &error);
     }
 }
 
 /// Records the edits the watcher saw that are due by `now_ms`, all or none, after recording the
 /// hook events waiting in `inbox`, so that a hook's report of the same edit claims it first. A
-/// batch that cannot be recorded is counted and the recorder forgets what it took as stored, as
-/// after events.
+/// batch that cannot be recorded is counted, with its error, and the recorder forgets what it took
+/// as stored, as after events.
 fn record_due_edits(
     writer: &mut Writer,
     (recorder, edits): (&mut Recorder, &mut WatcherEdits),
@@ -312,10 +314,17 @@ fn record_due_edits(
         }
         transaction.commit()
     });
-    if recorded.is_err() {
+    if let Err(error) = recorded {
         recorder.forget_stored();
-        inbox.count_failed_batch();
+        count_failed(inbox, "the edits the watcher saw", &error);
     }
+}
+
+/// Counts in `inbox` a batch of `what` the writer could not record, the store's `error` kept as
+/// the reason. The store's errors name what it was doing and the file, row or setting involved,
+/// and carry no stored text but paths.
+fn count_failed(inbox: &Inbox, what: &str, error: &StoreError) {
+    inbox.count_failed_batch(&format!("recording {what} failed: {error}"), now_ms());
 }
 
 /// Records `events` with `recorder` in one transaction of `writer`. When any of them cannot be
@@ -449,7 +458,8 @@ mod tests {
 
     /// A batch the index's pause cannot record, its second prompt repeating the first prompt's
     /// event, is counted and left, and the index goes on: all 600 files are written and nothing of
-    /// the batch is stored. The host's own recorder forgot what it took as stored, so the next
+    /// the batch is stored. Why is kept as a recent error: SQLite's refusal of the second task, and
+    /// nothing of the prompt. The host's own recorder forgot what it took as stored, so the next
     /// event registers its session again and is recorded.
     #[test]
     fn a_batch_the_pause_cannot_record_is_counted() -> TestResult {
@@ -460,15 +470,36 @@ mod tests {
         let inbox = Inbox::default();
         let parts = (writer(root.path())?, Recorder::new(false), &inbox);
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
-        let prompt = event(HookKind::Prompt, 10, b"same")?;
+        let prompt = Event {
+            prompt_text: Some("a private prompt".to_owned()),
+            ..event(HookKind::Prompt, 10, b"same")?
+        };
         inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
         inbox.push_event(prompt.clone());
         inbox.push_event(prompt);
+        let before_ms = now_ms();
         let report = host.index(&[])?;
+        let after_ms = now_ms();
         assert_eq!(report.files, 600);
         let counts = inbox.counts();
         assert_eq!((counts.events_waiting, counts.failed_batches), (0, 1));
         assert_eq!(host.writer.queries().events_after(0, 10)?, []);
+        let errors = inbox.recent_errors();
+        let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+        assert!(
+            matches!(messages.as_slice(), [message]
+                if message.starts_with("recording hook events failed: ")
+                    && message.contains("UNIQUE constraint failed")
+                    && !message.contains("private")),
+            "{messages:?}"
+        );
+        let times: Vec<i64> = errors.iter().map(|error| error.at_ms).collect();
+        assert!(
+            times
+                .iter()
+                .all(|at_ms| (before_ms..=after_ms).contains(at_ms)),
+            "{times:?} not within {before_ms}..={after_ms}"
+        );
         host.record(&[event(HookKind::Prompt, 20, b"next")?])?;
         let session = Identifier::new("s1")?;
         assert!(host.writer.queries().session(&session)?.is_some());
