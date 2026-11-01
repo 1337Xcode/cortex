@@ -4,6 +4,7 @@
 //! [`run`]. Removing a command means deleting all three.
 
 mod daemon;
+mod doctor;
 mod init;
 mod status;
 mod version;
@@ -21,6 +22,8 @@ pub(crate) enum Command {
     Status(status::Args),
     /// Register Cortex's hooks with Claude Code.
     Init(init::Args),
+    /// Check that Claude Code will run Cortex's hooks and the daemon will answer them.
+    Doctor(doctor::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -34,5 +37,6 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Daemon(args) => daemon::run(&args),
         Command::Status(args) => status::run(&args),
         Command::Init(args) => init::run(&args),
+        Command::Doctor(args) => doctor::run(&args),
     }
 }

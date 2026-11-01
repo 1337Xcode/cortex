@@ -8,23 +8,18 @@
 //! lead inside it.
 
 mod backup;
-mod claude;
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use anyhow::{Context as _, anyhow, bail};
+use anyhow::{Context as _, bail};
 use cortex_core::{UserFolder, canonical_root, create_private_folder, unix_millis};
 
-use crate::{output, repository};
+use crate::{claude_settings, output, repository};
 
 use self::backup::Backup;
-
-/// The largest settings file read: Claude Code's are a few kilobytes, and Cortex reads
-/// configuration of no more than this anywhere.
-const MAX_SETTINGS_BYTES: u64 = 1_048_576;
 
 /// The arguments of `cortex init`.
 #[derive(Debug, clap::Args)]
@@ -64,10 +59,10 @@ struct Target {
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let target = target(args)?;
     let existing = read_settings(&target.settings)?;
-    let program = this_program()?;
+    let program = crate::program::this_program()?;
     let adapter = cortex_hook::adapter("claude").context("finding the Claude Code adapter")?;
-    let merged =
-        claude::merged(existing.as_deref(), &program, adapter.hooks()).with_context(|| {
+    let merged = claude_settings::merged(existing.as_deref(), &program, adapter.hooks())
+        .with_context(|| {
             format!(
                 "reading the Claude Code settings {}",
                 target.settings.display()
@@ -196,39 +191,11 @@ fn followed(path: &Path) -> anyhow::Result<PathBuf> {
 ///
 /// # Errors
 ///
-/// The file cannot be read, is read-only (the user keeps it as it is), is larger than
-/// [`MAX_SETTINGS_BYTES`], or is not UTF-8 text.
+/// The file is read-only (the user keeps it as it is), or cannot be read as
+/// [`claude_settings::read`] reads it.
 fn read_settings(path: &Path) -> anyhow::Result<Option<String>> {
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
-    };
-    if metadata.permissions().readonly() {
+    if fs::metadata(path).is_ok_and(|metadata| metadata.permissions().readonly()) {
         bail!("{} is read-only; Cortex leaves it as it is", path.display());
     }
-    if metadata.len() > MAX_SETTINGS_BYTES {
-        bail!(
-            "{} holds {} bytes, more than the {MAX_SETTINGS_BYTES} Cortex reads",
-            path.display(),
-            metadata.len()
-        );
-    }
-    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    String::from_utf8(bytes)
-        .map(Some)
-        .map_err(|_| anyhow!("{} is not UTF-8 text", path.display()))
-}
-
-/// The path of this binary, which the hooks run, as text.
-///
-/// # Errors
-///
-/// The path cannot be found, or is not UTF-8, which a JSON settings file cannot hold.
-fn this_program() -> anyhow::Result<String> {
-    std::env::current_exe()
-        .context("finding this binary")?
-        .into_os_string()
-        .into_string()
-        .map_err(|_| anyhow!("the path of this binary is not UTF-8 text"))
+    claude_settings::read(path)
 }

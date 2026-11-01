@@ -8,14 +8,46 @@
 //! are, by arguments that begin `hook --agent claude` given to a command whose file name is
 //! `cortex` or which is this binary, taken out, and the current ones put where the first of them
 //! was; everything else, the user's hooks and keys and their order, stays as it was. Merging again
-//! gives what merging once gave.
+//! gives what merging once gave. `cortex doctor` reads the same files through [`cortex_commands`]
+//! and [`flag`].
 
-use anyhow::bail;
+use std::fs;
+use std::io;
+use std::path::Path;
+
+use anyhow::{Context as _, anyhow, bail};
 use cortex_hook::HookEntry;
 use serde_json::{Map, Value};
 
 /// The arguments every Cortex hook command begins with.
 const ARGS_PREFIX: [&str; 3] = ["hook", "--agent", "claude"];
+
+/// The largest settings file read: Claude Code's are a few kilobytes, and Cortex reads
+/// configuration of no more than this anywhere.
+const MAX_SETTINGS_BYTES: u64 = 1_048_576;
+
+/// What the settings file at `path` holds, or `None` when there is none.
+///
+/// # Errors
+///
+/// The file cannot be read, is larger than [`MAX_SETTINGS_BYTES`], or is not UTF-8 text.
+pub(crate) fn read(path: &Path) -> anyhow::Result<Option<String>> {
+    let size_bytes = match fs::metadata(path) {
+        Ok(metadata) => metadata.len(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+    };
+    if size_bytes > MAX_SETTINGS_BYTES {
+        bail!(
+            "{} holds {size_bytes} bytes, more than the {MAX_SETTINGS_BYTES} Cortex reads",
+            path.display()
+        );
+    }
+    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| anyhow!("{} is not UTF-8 text", path.display()))
+}
 
 /// The settings in `existing` (a file's text, or `None` when there is no file) with Cortex's hook
 /// for each of `entries`, run by `program`, as text: pretty JSON with a final line break.
@@ -160,6 +192,41 @@ fn is_cortex(handler: &Value, program: &str) -> bool {
                 .all(|(arg, expected)| arg.as_str() == Some(expected))
     });
     (stem.eq_ignore_ascii_case("cortex") || command == program) && begins_as_cortex
+}
+
+/// The command each Cortex hook in the settings `existing` runs, `program` being this binary, in
+/// the file's order: none when the file holds no Cortex hook.
+///
+/// # Errors
+///
+/// As [`merged`]: the text is not a JSON object.
+pub(crate) fn cortex_commands(existing: &str, program: &str) -> anyhow::Result<Vec<String>> {
+    let settings = parsed(Some(existing))?;
+    let Some(Value::Object(hooks)) = settings.get("hooks") else {
+        return Ok(Vec::new());
+    };
+    let handlers = hooks
+        .values()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|group| group.get("hooks").and_then(Value::as_array))
+        .flatten();
+    Ok(handlers
+        .filter(|handler| is_cortex(handler, program))
+        .filter_map(|handler| handler.get("command").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// What the top-level switch `key` of the settings `existing` says, when it is set to true or
+/// false; `None` when it is not set, or set to something else, which Claude Code would not take
+/// as a switch either.
+///
+/// # Errors
+///
+/// As [`merged`]: the text is not a JSON object.
+pub(crate) fn flag(existing: &str, key: &str) -> anyhow::Result<Option<bool>> {
+    Ok(parsed(Some(existing))?.get(key).and_then(Value::as_bool))
 }
 
 /// The matcher group holding Cortex's hook for `entry`, run by `program`.
@@ -489,6 +556,29 @@ mod tests {
         assert_eq!(merged(Some(&once), renamed, &[SESSION_START])?, once);
         let with_mark = format!("\u{feff}{once}");
         assert_eq!(merged(Some(&with_mark), renamed, &[SESSION_START])?, once);
+        Ok(())
+    }
+
+    /// The commands of Cortex's hooks are read back in the file's order, the user's left out; a file
+    /// with no `hooks` has none. A switch reads as set only when it is true or false.
+    #[test]
+    fn doctor_reads_commands_and_switches() -> anyhow::Result<()> {
+        let written = merged(
+            Some(
+                r#"{"disableAllHooks": true, "hooks": {"Stop": [{"hooks": [{"command": "x.sh"}]}]}}"#,
+            ),
+            PROGRAM,
+            &[PRE_TOOL_USE, SESSION_START],
+        )?;
+        assert_eq!(cortex_commands(&written, PROGRAM)?, [PROGRAM, PROGRAM]);
+        assert_eq!(cortex_commands("{}", PROGRAM)?, Vec::<String>::new());
+        assert_eq!(flag(&written, "disableAllHooks")?, Some(true));
+        assert_eq!(
+            flag(r#"{"disableAllHooks": "yes"}"#, "disableAllHooks")?,
+            None
+        );
+        assert_eq!(flag("{}", "disableAllHooks")?, None);
+        assert!(flag("[]", "disableAllHooks").is_err());
         Ok(())
     }
 
