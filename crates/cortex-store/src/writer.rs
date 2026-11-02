@@ -9,6 +9,7 @@ use crate::activity::{self, EventRecord, SessionRecord, TaskRecord};
 use crate::checkpoint::{CheckpointFailures, Checkpointer};
 use crate::cochange::{self, FileCommitsRow, GitStateKey, PairRow};
 use crate::connection::{self, Access};
+use crate::episode::{self, EpisodeRecord};
 use crate::error::{StoreError, io, sqlite};
 use crate::folders;
 use crate::ids::NodeId;
@@ -387,6 +388,18 @@ impl WriteTx<'_> {
         edges: &[(NodeId, EdgeRecord)],
     ) -> Result<(), StoreError> {
         self.atomically(|connection| links::set_edges(connection, edge_type, edges))
+    }
+
+    /// Writes one task's record, replacing the one the task had.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`], [`StoreError::TooLarge`] for a record whose parts
+    /// hold more than [`crate::MAX_EPISODE_BYTES`] as JSON, [`StoreError::NotText`] for a
+    /// part that cannot be written as JSON, and SQLite errors, including a task that does
+    /// not exist.
+    pub fn replace_episode(&mut self, episode: &EpisodeRecord) -> Result<(), StoreError> {
+        self.atomically(|connection| episode::replace(connection, episode))
     }
 
     /// Writes each node's interest, replacing what it had.

@@ -367,6 +367,16 @@ pub(crate) const INTEREST_REPLACE: &str = "INSERT INTO interest (node_id, score,
      VALUES (?1, ?2, ?3, ?4) ON CONFLICT (node_id) DO UPDATE SET score = excluded.score, \
      last_seq = excluded.last_seq, tier = excluded.tier";
 
+/// Writes a task's record, replacing the one it had.
+pub(crate) const EPISODE_REPLACE: &str = "INSERT INTO episodes \
+     (task_id, localize, change, verify, pitfalls, outcome, created_at) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (task_id) DO UPDATE SET \
+     localize = excluded.localize, change = excluded.change, verify = excluded.verify, \
+     pitfalls = excluded.pitfalls, outcome = excluded.outcome, created_at = excluded.created_at";
+/// A task's record.
+pub(crate) const EPISODE_OF_TASK: &str = "SELECT localize, change, verify, pitfalls, outcome, \
+     created_at FROM episodes WHERE task_id = ?1";
+
 /// Row counts for status.
 pub(crate) const COUNTS: &str = "SELECT (SELECT count(*) FROM files), \
      (SELECT count(*) FROM symbols), (SELECT count(*) FROM refs), \

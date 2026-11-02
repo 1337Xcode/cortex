@@ -14,6 +14,7 @@ mod activity;
 mod checkpoint;
 mod cochange;
 mod connection;
+mod episode;
 mod error;
 mod folders;
 mod ids;
@@ -39,6 +40,10 @@ mod writer;
 pub use activity::{EventRecord, EventRow, SessionRecord, SessionRow, TaskRecord, TaskRow};
 pub use checkpoint::CheckpointFailures;
 pub use cochange::{CountedFile, FileCommitsRow, GitStateKey, PairRow};
+pub use episode::{
+    ChangedFile, ChangedSymbol, EpisodeRecord, MAX_EPISODE_BYTES, Pitfalls, RanCheck, ReadAgain,
+    ReadFile,
+};
 pub use error::StoreError;
 pub use ids::{FileId, NodeId, RefId, SymbolId};
 pub use interest::InterestRow;
