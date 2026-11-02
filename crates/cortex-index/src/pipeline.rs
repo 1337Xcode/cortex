@@ -27,7 +27,9 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use cortex_core::{ContentHash, FileFlags, Language, ModeSetting, RepoPath, ScaleMode};
+use cortex_core::{
+    ContentHash, FileContent, FileFlags, Language, ModeSetting, RepoPath, ScaleMode,
+};
 use cortex_store::{
     ChangeKind, FileChange, FileIndex, FileRecord, FileRow, Pacer, Pause, RefId, StoreError,
     SymbolChange, SymbolId, Target, Writer, wait_for,
@@ -88,6 +90,15 @@ pub struct IndexOptions<'a> {
     pub pause: Option<Pause<'a>>,
 }
 
+/// A file an index found edited: new, gone, or with other contents than stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditedFile {
+    /// The file.
+    pub path: RepoPath,
+    /// What it held before, as the store kept it: no file when it is new.
+    pub before: FileContent,
+}
+
 /// What an index wrote, and what it could not do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexReport {
@@ -113,10 +124,10 @@ pub struct IndexReport {
     /// The definitions of written files whose signature or body changed, in the order written.
     pub changed_symbols: Vec<SymbolChange>,
     /// The files the index found new, gone, or with other contents than stored (a file whose
-    /// contents are not read counts whenever it is written), in path order: for an index of the
-    /// watcher's changes, the edits the watcher saw. A first index, which finds every file new,
-    /// lists none.
-    pub edited: Vec<RepoPath>,
+    /// contents are not read counts whenever it is written), in path order, each with what it held
+    /// before: for an index of the watcher's changes, the edits the watcher saw. A first index,
+    /// which finds every file new, lists none.
+    pub edited: Vec<EditedFile>,
     /// What became of the repository's SCIP index.
     pub scip: ScipOutcome,
     /// The repository's size, as the scale modes count it.
@@ -327,7 +338,8 @@ pub fn index_repository(
     let written = write_files(writer, &candidates, &context, (&mut report, &mut pacer))?;
     pacer.let_in(writer);
     if !is_whole {
-        report.edited = edited(&written, &missing);
+        let gone = missing.iter().filter_map(|path| known.get(path));
+        report.edited = edited(&written, gone, &known);
     }
     let (scip, scip_ties) = scip::read_index(root, writer.queries())?;
     report.scip = scip;
@@ -393,18 +405,30 @@ impl IndexReport {
     }
 }
 
-/// The files an index found edited: those `written` with new contents and those `gone`, in path
-/// order.
+/// The files an index found edited, in path order, each with what it held before: those `written`
+/// with new contents, with what `known`, the rows stored before the index wrote, held for them (no
+/// file for a new one), and those `gone`, from their stored rows.
 pub(crate) fn edited<'a>(
     written: &[Written],
-    gone: impl IntoIterator<Item = &'a RepoPath>,
-) -> Vec<RepoPath> {
+    gone: impl IntoIterator<Item = &'a FileRow>,
+    known: &BTreeMap<RepoPath, FileRow>,
+) -> Vec<EditedFile> {
+    let stored = |row: &FileRow| FileContent::of_stored(row.file.content_hash);
     let changed = written
         .iter()
         .filter(|file| file.has_new_contents)
-        .map(|file| file.path.clone());
-    let edited: BTreeSet<RepoPath> = changed.chain(gone.into_iter().cloned()).collect();
-    edited.into_iter().collect()
+        .map(|file| {
+            let before = known.get(&file.path).map_or(FileContent::Absent, stored);
+            (file.path.clone(), before)
+        });
+    let removed = gone
+        .into_iter()
+        .map(|row| (row.file.path.clone(), stored(row)));
+    let edited: BTreeMap<RepoPath, FileContent> = changed.chain(removed).collect();
+    edited
+        .into_iter()
+        .map(|(path, before)| EditedFile { path, before })
+        .collect()
 }
 
 /// `items` as a count.

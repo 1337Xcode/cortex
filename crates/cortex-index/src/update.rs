@@ -115,7 +115,7 @@ pub fn index_paths(
         (&mut report, &mut pacer),
     )?;
     pacer.let_in(writer);
-    report.edited = pipeline::edited(&written, &gone);
+    report.edited = pipeline::edited(&written, &found.gone, &found.known);
     for file in &written {
         names.extend(file.names.clone());
     }

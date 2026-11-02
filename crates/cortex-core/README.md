@@ -25,6 +25,7 @@ modes and settings.
 | `canonical_root` | A folder in its canonical form: absolute, links and `..` resolved, names spelled as stored, no Windows verbatim prefix; every spelling of one folder gives one result |
 | `RepoId` | The 16-character id of a repository on this machine, from the BLAKE3 hash of its canonical root |
 | `ContentHash`, `ShortHash` | BLAKE3 hashes of 32 bytes (file contents) and 16 bytes (symbols, anchors) |
+| `FileContent` | What a file held at one moment, as the index saw it: no file, contents of a known hash, or contents the index does not read (a secret file, one past the size limit) |
 | `Language`, `Tier` | The 21 languages and formats with their stored names; Tier A gets symbols, Tier B keys or headings |
 | `Identifier` | A stored name: one line, at most 256 bytes, no control characters |
 | `SymbolKind`, `RefKind`, `Resolution`, `NodeKind`, `EdgeType`, `FileFlags` | The kinds of record the index keeps, with the names, numbers and bits stored for them; a `Resolution` also gives the confidence of a reference resolved that way |

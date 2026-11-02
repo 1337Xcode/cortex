@@ -8,7 +8,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::{TestResult, expected, index, index_changed, ties, touch, write_all};
-use cortex_core::{Identifier, RepoPath};
+use cortex_core::{ContentHash, FileContent, Identifier, RepoPath};
+use cortex_index::EditedFile;
 use cortex_store::{ChangeKind, MetaKey, Reader};
 
 /// A time limit no test file comes near, even in a debug build.
@@ -319,13 +320,14 @@ fn changed_definitions_are_reported() -> TestResult {
     Ok(())
 }
 
-/// An index of chosen paths reports the files it found edited, in path order: `b.py` has other
-/// contents, `c.py` is new and `d.py` is gone; `.env`, which may hold secrets and is never read,
-/// has a new time, so its contents may have changed too. `a.py` has a new time and the same
-/// contents: it is written again, its time now later than the SCIP index's (bytes that are no
-/// index, which only their time matters for here), but it is no edit. `notes.txt` was not among
-/// the paths. The first index, which finds every file new, reports none; a later index of the
-/// whole repository reports what changed.
+/// An index of chosen paths reports the files it found edited, in path order, each with what it
+/// held before: `b.py` has other contents (before, the hash of its first text), `c.py` is new (no
+/// file) and `d.py` is gone (the hash of its text); `.env`, which may hold secrets and is never
+/// read, has a new time, so its contents may have changed too (not read before either). `a.py`
+/// has a new time and the same contents: it is written again, its time now later than the SCIP
+/// index's (bytes that are no index, which only their time matters for here), but it is no edit.
+/// `notes.txt` was not among the paths. The first index, which finds every file new, reports none;
+/// a later index of the whole repository reports what changed, with what it held before.
 #[test]
 fn edited_files_are_reported() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -342,7 +344,7 @@ fn edited_files_are_reported() -> TestResult {
         ],
     )?;
     let first = index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
-    assert_eq!(first.edited, Vec::<RepoPath>::new());
+    assert_eq!(first.edited, Vec::<EditedFile>::new());
     touch(root, "a.py")?;
     touch(root, ".env")?;
     write_all(
@@ -354,13 +356,29 @@ fn edited_files_are_reported() -> TestResult {
     )?;
     std::fs::remove_file(root.join("d.py"))?;
     let report = index_changed(root, &[".env", "a.py", "b.py", "c.py", "d.py"])?;
-    let edited: Vec<&str> = report.edited.iter().map(RepoPath::as_str).collect();
-    assert_eq!(edited, [".env", "b.py", "c.py", "d.py"]);
+    let edit = |path: &str, before: FileContent| -> TestResult<EditedFile> {
+        Ok(EditedFile {
+            path: RepoPath::new(path)?,
+            before,
+        })
+    };
+    let hashed = |text: &str| FileContent::Hashed(ContentHash::of(text.as_bytes()));
+    assert_eq!(
+        report.edited,
+        [
+            edit(".env", FileContent::Unread)?,
+            edit("b.py", hashed("def b():\n    pass\n"))?,
+            edit("c.py", FileContent::Absent)?,
+            edit("d.py", hashed("def d():\n    pass\n"))?,
+        ]
+    );
     // An index of the whole repository after the first reports its edits the same way: `c.py`
     // changed again, nothing else did.
     write_all(root, &[("c.py", "def c():\n    return 2\n")])?;
     let whole = index(root, 2, GENEROUS, DEFAULT_LIMIT)?;
-    let edited: Vec<&str> = whole.edited.iter().map(RepoPath::as_str).collect();
-    assert_eq!(edited, ["c.py"]);
+    assert_eq!(
+        whole.edited,
+        [edit("c.py", hashed("def c():\n    pass\n"))?]
+    );
     Ok(())
 }

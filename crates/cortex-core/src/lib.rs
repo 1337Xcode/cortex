@@ -16,6 +16,7 @@ mod activity;
 mod child;
 mod config;
 mod event;
+mod file_content;
 mod hash;
 mod identifier;
 pub mod ipc;
@@ -51,6 +52,7 @@ pub use event::{
     MAX_HITS_BYTES, MAX_RANGES, ShellCommand, ShellCommandError, StartSource, ToolKind, ToolResult,
     ToolTarget,
 };
+pub use file_content::FileContent;
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
 pub use kinds::{EdgeType, FileFlags, NodeKind, RefKind, Resolution, SymbolKind};

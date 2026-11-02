@@ -13,11 +13,11 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use common::{NOW_MS, TestResult, index, index_with_pause, lock_out, write};
 use cortex_core::{
-    ContentHash, EdgeType, FileFlags, Language, ModeSetting, RepoPath, Resolution, ScaleMode,
-    SymbolKind,
+    ContentHash, EdgeType, FileContent, FileFlags, Language, ModeSetting, RepoPath, Resolution,
+    ScaleMode, SymbolKind,
 };
 use cortex_index::{
-    FileProblem, IndexReport, LeftOut, Problem, ProblemKind, RepoSize, ScipOutcome,
+    EditedFile, FileProblem, IndexReport, LeftOut, Problem, ProblemKind, RepoSize, ScipOutcome,
 };
 use cortex_store::{FileRow, NodeId, Pause, Reader, RefRow, SymbolRow, Writer};
 
@@ -607,11 +607,21 @@ fn a_second_index_follows_the_changes() -> TestResult {
         problems: Vec::new(),
         left_out: Vec::new(),
         changed_symbols: Vec::new(),
-        // In path order: notes.txt, gone; new.py, new; orders.py, with other contents.
+        // In path order: notes.txt, gone, its first text before; new.py, new, no file before;
+        // orders.py, with other contents, its first text before.
         edited: vec![
-            RepoPath::new("notes.txt")?,
-            RepoPath::new("src/shop/new.py")?,
-            RepoPath::new("src/shop/orders.py")?,
+            EditedFile {
+                path: RepoPath::new("notes.txt")?,
+                before: FileContent::Hashed(ContentHash::of(b"one\ntwo")),
+            },
+            EditedFile {
+                path: RepoPath::new("src/shop/new.py")?,
+                before: FileContent::Absent,
+            },
+            EditedFile {
+                path: RepoPath::new("src/shop/orders.py")?,
+                before: FileContent::Hashed(ContentHash::of(ORDERS_PY.as_bytes())),
+            },
         ],
         scip: ScipOutcome::Absent,
         // Source: orders.py (7 lines and 4 more), new.py (2) and README.md, kept with its 3.

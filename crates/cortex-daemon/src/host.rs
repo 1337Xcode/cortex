@@ -214,7 +214,8 @@ impl<'a> Host<'a> {
             .context("indexing changed files")?;
         let named: BTreeMap<RepoPath, i64> = changes.iter().cloned().collect();
         let now = now_ms();
-        for path in report.edited {
+        for edit in report.edited {
+            let path = edit.path;
             let seen_ms = std::iter::successors(Some(path.clone()), RepoPath::parent)
                 .find_map(|place| named.get(&place).copied())
                 .unwrap_or(now);
