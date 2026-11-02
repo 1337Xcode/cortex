@@ -3,18 +3,21 @@
 //! task's [`TaskState`], what it did, which it hands out when the task ends. It holds each edit
 //! only the file watcher saw ([`HeldEdit`]) until it can tell whether a hook reported it and whose
 //! it is. [`Commands`] tells what a shell command line ran: the checks of the runners it knows and
-//! git restores. [`judge`] tells what became of a task that has ended, from its state.
+//! git restores. [`judge`] tells what became of a task that has ended, from its state, and
+//! [`interest_of`] what its work adds to the interest of each node it touched.
 
 #![warn(clippy::pedantic)]
 
 mod activity;
 mod commands;
+mod interest;
 mod outcome;
 mod record;
 mod task_state;
 mod watcher_edits;
 
 pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore};
+pub use interest::{EarnedInterest, add_interest, interest_of};
 pub use outcome::{FileNow, Judgement, judge, reverted_after};
 pub use record::Recorder;
 pub use task_state::{

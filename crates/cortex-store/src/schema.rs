@@ -157,6 +157,11 @@ pub(crate) const SYMBOLS_IN_FILE: &str = concat!(
     symbol_columns!(),
     "WHERE file_id = ?1 ORDER BY start_byte, symbol_id"
 );
+/// The node and lines of each symbol in a file, in the order they appear.
+pub(crate) const SYMBOL_SPANS_IN_FILE: &str = "SELECT n.node_id, s.start_line, s.end_line \
+     FROM symbols AS s JOIN nodes AS n ON n.kind = 'symbol' AND n.ref_id = s.symbol_id \
+     WHERE s.file_id = ?1 ORDER BY s.start_byte, s.symbol_id";
+
 /// The symbols with a name, oldest first.
 pub(crate) const SYMBOLS_NAMED: &str =
     concat!(symbol_columns!(), "WHERE name = ?1 ORDER BY symbol_id");

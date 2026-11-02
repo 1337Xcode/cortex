@@ -10,11 +10,14 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use cortex_core::{
-    Agent, ContentHash, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier, LineRange,
-    RepoId, RepoPath, StartSource, ToolKind, ToolResult, ToolTarget, Ulid,
+    Agent, ContentHash, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier, Language,
+    LineRange, RepoId, RepoPath, ShortHash, StartSource, SymbolKind, ToolKind, ToolResult,
+    ToolTarget, Ulid,
 };
 use cortex_learn::{Recorder, TaskState};
-use cortex_store::{EventRecord, FileIndex, FileRecord, NodeId, Writer, WriterOptions};
+use cortex_store::{
+    EventRecord, FileIndex, FileRecord, NodeId, SymbolRecord, Writer, WriterOptions,
+};
 
 /// Result type for these tests: any failure fails the test.
 pub type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -22,6 +25,11 @@ pub type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 /// A name.
 pub fn name(text: &str) -> TestResult<Identifier> {
     Ok(Identifier::new(text)?)
+}
+
+/// A name, under a name that does not shadow a local `name`.
+fn name_of(text: &str) -> TestResult<Identifier> {
+    name(text)
 }
 
 /// An event of `hook` from session `session` at `ts_ms`, nothing else known.
@@ -176,6 +184,81 @@ impl Store {
             .map(|(path, text)| (*path, Some(ContentHash::of(text.as_bytes()))))
             .collect();
         self.store_files(&read)
+    }
+
+    /// Stores the file at `path` with one function symbol per entry of `symbols`, each named and
+    /// spanning the lines given, and returns the file's node and then each symbol's node in that
+    /// order. The folder holding the file is given a node too, as the index gives it one.
+    pub fn index_symbols(
+        &mut self,
+        path: &str,
+        symbols: &[(&str, u32, u32)],
+    ) -> TestResult<Vec<NodeId>> {
+        let path = RepoPath::new(path)?;
+        let records: Vec<SymbolRecord> = symbols
+            .iter()
+            .map(|(name, start_line, end_line)| {
+                Ok(SymbolRecord {
+                    parent: None,
+                    kind: SymbolKind::Function,
+                    name: name_of(name)?,
+                    qual_name: name_of(name)?,
+                    start_byte: u64::from(*start_line),
+                    end_byte: u64::from(*end_line),
+                    start_line: *start_line,
+                    end_line: *end_line,
+                    sig_hash: ShortHash::of(name.as_bytes()),
+                    body_hash: ShortHash::of(name.as_bytes()),
+                })
+            })
+            .collect::<TestResult<Vec<SymbolRecord>>>()?;
+        let mut transaction = self.writer.transaction()?;
+        transaction.replace_file(&FileIndex {
+            file: FileRecord {
+                path: path.clone(),
+                language: Some(Language::Python),
+                size_bytes: 100,
+                line_count: Some(100),
+                content_hash: Some(ContentHash::of(path.as_str().as_bytes())),
+                mtime_ns: 1,
+                flags: FileFlags::PARSED,
+                indexed_at_ms: 1,
+            },
+            symbols: records,
+            refs: Vec::new(),
+            passes_on: Vec::new(),
+        })?;
+        let mut nodes = vec![
+            transaction
+                .queries()
+                .file_node_at(&path)?
+                .ok_or("no node for a stored file")?,
+        ];
+        if let Some(folder) = path.parent().filter(|folder| !folder.is_root()) {
+            transaction.folder_node(&folder)?;
+        }
+        let file = transaction
+            .queries()
+            .file(&path)?
+            .ok_or("no row for a stored file")?
+            .id;
+        nodes.extend(
+            transaction
+                .queries()
+                .symbol_spans_in_file(file)?
+                .into_iter()
+                .map(|span| span.node),
+        );
+        transaction.commit()?;
+        Ok(nodes)
+    }
+
+    /// The node of the folder at `path`, added as the index adds it.
+    pub fn folder_node(&mut self, path: &str) -> TestResult<NodeId> {
+        let mut transaction = self.writer.transaction()?;
+        let node = transaction.folder_node(&RepoPath::new(path)?)?;
+        transaction.commit()?;
+        Ok(node)
     }
 
     /// Stores each file of `files` with its contents' hash, if read, and returns their nodes in

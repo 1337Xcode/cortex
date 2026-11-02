@@ -13,7 +13,9 @@ use crate::meta::MetaKey;
 use crate::passes_on;
 use crate::raw::{RawEdge, RawFile, RawRef, RawRefName, RawSymbol, RawSymbolName};
 use crate::records::PassedOn;
-use crate::rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow};
+use crate::rows::{
+    EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow, SymbolSpan,
+};
 use crate::schema;
 use crate::values;
 
@@ -413,6 +415,47 @@ impl<'c> Queries<'c> {
             })
             .map(|node| node.map(NodeId))
             .map_err(sqlite("reading a file's node"))
+    }
+
+    /// The node of the folder at `path`, when the folder has one. A folder's node is added when
+    /// something first needs it, so a folder the graph has no use for yet has none.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn folder_node_at(self, path: &RepoPath) -> Result<Option<NodeId>, StoreError> {
+        self.connection
+            .prepare_cached(schema::FOLDER_NODE)
+            .and_then(|mut statement| {
+                statement
+                    .query_row([path.as_str()], |row| row.get(0))
+                    .optional()
+            })
+            .map(|node| node.map(NodeId))
+            .map_err(sqlite("reading a folder's node"))
+    }
+
+    /// The node and lines of each symbol defined in `file`, in the order they appear.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn symbol_spans_in_file(self, file: FileId) -> Result<Vec<SymbolSpan>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare_cached(schema::SYMBOL_SPANS_IN_FILE)
+            .map_err(sqlite("reading a file's symbol spans"))?;
+        let rows = statement
+            .query_map([file.0], |row| {
+                Ok(SymbolSpan {
+                    node: NodeId(row.get(0)?),
+                    start_line: row.get(1)?,
+                    end_line: row.get(2)?,
+                })
+            })
+            .and_then(Iterator::collect)
+            .map_err(sqlite("reading a file's symbol spans"))?;
+        Ok(rows)
     }
 
     /// The row and path of the file `node` stands for, when it stands for a file.

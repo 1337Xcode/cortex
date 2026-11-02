@@ -51,5 +51,5 @@ pub use records::{
     ChangeKind, EdgeRecord, FileChange, FileIndex, FileRecord, FileRemoval, PassedOn, RefRecord,
     Resolved, SymbolChange, SymbolRecord, Target,
 };
-pub use rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow};
+pub use rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow, SymbolSpan};
 pub use writer::{WriteTx, Writer, WriterOptions};
