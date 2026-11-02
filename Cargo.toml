@@ -97,3 +97,12 @@ unimplemented = "warn"
 dbg_macro = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
+
+# Debug builds keep line tables only, and their dependencies no debug information: backtraces keep
+# their files and lines, while the binaries and test executables come to under half their size,
+# and the build takes less time and disk.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
