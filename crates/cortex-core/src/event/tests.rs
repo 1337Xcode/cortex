@@ -13,7 +13,8 @@ const FULL_JSON: &str = concat!(
     r#""agent_version":"2.1.312","session_id":"session-1","parent_session_id":"parent-1","#,
     r#""cwd":"/repo/src","repo_root":"/repo","hook":"post_tool","source":"startup","#,
     r#""tool":"edit","tool_target":{"path":"calc/ops.py","ranges":[{"start_line":10,"#,
-    r#""end_line":13}],"pattern":"def divide","command":"pytest -q"},"tool_result":{"#,
+    r#""end_line":13}],"pattern":"def divide","command":"pytest -q","hits":["calc/ops.py","#,
+    r#""tests/test_ops.py"]},"tool_result":{"#,
     r#""exit_code":3,"is_success":false,"is_interrupted":false,"output_bytes":42},"#,
     r#""prompt_text":"fix divide","transcript_path":"/home/dev/t.jsonl","model":"sonnet","#,
     r#""subagent_type":"Explore","compact_trigger":"manual","end_reason":"other"}"#
@@ -38,6 +39,10 @@ fn full_event() -> Result<Event, Box<dyn std::error::Error>> {
             ranges: vec![LineRange::new(10, 13)?],
             pattern: Some("def divide".to_owned()),
             command: Some(ShellCommand::cut("pytest -q")),
+            hits: vec![
+                RepoPath::new("calc/ops.py")?,
+                RepoPath::new("tests/test_ops.py")?,
+            ],
         }),
         tool_result: Some(ToolResult {
             exit_code: Some(3),

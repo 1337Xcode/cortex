@@ -24,6 +24,15 @@ pub const MAX_COMMAND_CHARS: usize = 1_000;
 /// event small.
 pub const MAX_RANGES: usize = 16;
 
+/// Most files a search's hits name on an event: more than a task opens next from one search, few
+/// enough that an event stays small.
+pub const MAX_HITS: usize = 50;
+
+/// Most bytes the paths of a search's hits hold together: room for [`MAX_HITS`] paths of over 80
+/// bytes, and a bound that keeps an event a few kilobytes however long the files' names are, in a
+/// frame and in the daemon's queue of events.
+pub const MAX_HITS_BYTES: usize = 4 * 1024;
+
 /// One hook call, normalized.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
@@ -99,6 +108,11 @@ pub struct ToolTarget {
     /// The command, for a shell tool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<ShellCommand>,
+    /// The files a search found inside the repository, in the order the tool listed them, each once:
+    /// at most [`MAX_HITS`] of them and [`MAX_HITS_BYTES`] of paths. They travel to the daemon with
+    /// the event and are never stored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hits: Vec<RepoPath>,
 }
 
 /// What a tool call returned: how it ended and how much it printed, never what.
@@ -292,6 +306,7 @@ impl fmt::Debug for ToolTarget {
             .field("ranges", &self.ranges)
             .field("pattern", &self.pattern.as_deref().map(Withheld::of))
             .field("command", &self.command)
+            .field("hits", &self.hits)
             .finish()
     }
 }

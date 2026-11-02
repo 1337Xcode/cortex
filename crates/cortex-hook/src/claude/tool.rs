@@ -1,16 +1,21 @@
 //! What a Claude Code tool call aimed at and how it ended: the file or folder in the repository,
-//! the lines read or changed, the search pattern or the command, the exit code and the size of
-//! what it printed.
+//! the lines read or changed, the search pattern and the files it found, or the command, the exit
+//! code and the size of what it printed.
 
 use std::path::Path;
 
 use cortex_core::{
-    HookKind, LineRange, MAX_COMMAND_CHARS, MAX_RANGES, RepoPath, ShellCommand, ToolKind,
-    ToolResult, ToolTarget,
+    HookKind, LineRange, MAX_COMMAND_CHARS, MAX_HITS, MAX_HITS_BYTES, MAX_RANGES, RepoPath,
+    ShellCommand, ToolKind, ToolResult, ToolTarget,
 };
 
-use super::payload::{Hunk, LineMark, Payload, ReadFile, ToolInput, ToolResponse};
+use super::payload::{Hunk, LineMark, Payload, ReadFile, ToolInput, ToolResponse, content_paths};
 use crate::adapter::Located;
+
+/// Most files of a search's response examined for its hits: room to pass over duplicates and files
+/// outside the repository on the way to [`MAX_HITS`], and a bound on what a long list costs the
+/// hook.
+const MAX_LISTED: usize = 4 * MAX_HITS;
 
 /// What a tool call aimed at.
 pub(super) enum Aim {
@@ -48,7 +53,7 @@ pub(super) fn kind(name: &str) -> ToolKind {
 
 /// What a call of `tool` at `hook` aimed at. Before a read runs its lines are the ones asked for;
 /// after, the ones it returned. A search without a path searched the working folder.
-pub(super) fn aim(tool: ToolKind, hook: HookKind, payload: &Payload, located: &Located) -> Aim {
+pub(super) fn aim(tool: ToolKind, hook: HookKind, payload: &Payload<'_>, located: &Located) -> Aim {
     let Some(input) = payload.tool_input.as_ref() else {
         return Aim::Nothing;
     };
@@ -89,6 +94,11 @@ pub(super) fn aim(tool: ToolKind, hook: HookKind, payload: &Payload, located: &L
                     .pattern
                     .as_deref()
                     .map(|pattern| pattern.chars().take(MAX_COMMAND_CHARS).collect()),
+                // Before a search runs it has found nothing.
+                hits: match (hook, response) {
+                    (HookKind::PostTool, Some(response)) => hits(response, cwd, located),
+                    _ => Vec::new(),
+                },
                 ..ToolTarget::default()
             },
         },
@@ -126,6 +136,36 @@ fn place(path: Option<&str>, cwd: Option<&str>, located: &Located) -> Place {
     RepoPath::from_native(&located.agent_root, &full)
         .or_else(|_| RepoPath::from_native(&located.root, &full))
         .map_or(Place::Outside, Place::Inside)
+}
+
+/// The files a search's `response` lists, each resolved as a tool's path is, from the working
+/// folder `cwd`: of the first [`MAX_LISTED`] it names (the file list, then the files Grep's output
+/// names), those inside the repository and not its top folder, each once, in the order listed,
+/// until [`MAX_HITS`] of them or [`MAX_HITS_BYTES`] of paths.
+fn hits(response: &ToolResponse<'_>, cwd: Option<&str>, located: &Located) -> Vec<RepoPath> {
+    let named = response.content.map(content_paths).unwrap_or_default();
+    let listed = response
+        .filenames
+        .iter()
+        .flatten()
+        .chain(&named)
+        .take(MAX_LISTED);
+    let mut hits: Vec<RepoPath> = Vec::new();
+    let mut size_bytes = 0;
+    for path in listed {
+        let Place::Inside(path) = place(Some(path), cwd, located) else {
+            continue;
+        };
+        if path == RepoPath::root() || hits.contains(&path) {
+            continue;
+        }
+        size_bytes += path.as_str().len();
+        if hits.len() == MAX_HITS || size_bytes > MAX_HITS_BYTES {
+            break;
+        }
+        hits.push(path);
+    }
+    hits
 }
 
 /// The lines a read returned: none when it returned the whole file or nothing.
@@ -212,7 +252,7 @@ fn range(start: i64, count: i64) -> Option<LineRange> {
 }
 
 /// How a call of `tool`, reported as `event_name`, ended.
-pub(super) fn result(tool: ToolKind, event_name: &str, payload: &Payload) -> ToolResult {
+pub(super) fn result(tool: ToolKind, event_name: &str, payload: &Payload<'_>) -> ToolResult {
     if event_name == "PostToolUseFailure" {
         let message = payload.error.as_deref();
         return ToolResult {

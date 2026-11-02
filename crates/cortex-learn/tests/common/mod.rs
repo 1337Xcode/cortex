@@ -98,6 +98,7 @@ pub fn target(path: &str, ranges: &[(u32, u32)]) -> TestResult<ToolTarget> {
             .collect::<Result<_, _>>()?,
         pattern: None,
         command: None,
+        hits: Vec::new(),
     })
 }
 

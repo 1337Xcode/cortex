@@ -47,8 +47,9 @@ pub use config::{
     MAX_MMAP_BYTES, ModeSetting, keys_set as config_keys_set, load as load_config,
 };
 pub use event::{
-    Agent, CompactTrigger, Event, HookKind, LineRange, LineRangeError, MAX_COMMAND_CHARS,
-    MAX_RANGES, ShellCommand, ShellCommandError, StartSource, ToolKind, ToolResult, ToolTarget,
+    Agent, CompactTrigger, Event, HookKind, LineRange, LineRangeError, MAX_COMMAND_CHARS, MAX_HITS,
+    MAX_HITS_BYTES, MAX_RANGES, ShellCommand, ShellCommandError, StartSource, ToolKind, ToolResult,
+    ToolTarget,
 };
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};

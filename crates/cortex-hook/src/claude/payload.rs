@@ -1,18 +1,21 @@
 //! Claude Code's hook payload, as much of it as Cortex reads. Every field is optional and read
 //! leniently: a field of another type than expected reads as absent, so one odd field never costs
 //! the event. The fields Cortex does not read are skipped unread: file contents, edits' old and new
-//! text, the assistant's messages. A shell's output is measured, never kept.
+//! text, the assistant's messages. A shell's output is measured, never kept. A response's `content`
+//! is held as the payload's own bytes, unread, and only a search's is then read for the paths it
+//! names, never for the text it matched.
 
 use std::fmt;
 
+use cortex_core::MAX_HITS;
 use serde::Deserialize;
-use serde::de::{DeserializeOwned, Deserializer, Visitor};
+use serde::de::{Deserializer, Visitor};
 use serde_json::value::RawValue;
 
-/// The fields of a payload Cortex reads, from every event.
+/// The fields of a payload Cortex reads, from every event, borrowing from the payload's bytes.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub(super) struct Payload {
+pub(super) struct Payload<'a> {
     /// The session.
     #[serde(deserialize_with = "lenient")]
     pub(super) session_id: Option<String>,
@@ -38,8 +41,8 @@ pub(super) struct Payload {
     #[serde(deserialize_with = "lenient")]
     pub(super) tool_input: Option<ToolInput>,
     /// What the tool gave back.
-    #[serde(deserialize_with = "lenient")]
-    pub(super) tool_response: Option<ToolResponse>,
+    #[serde(borrow, deserialize_with = "lenient")]
+    pub(super) tool_response: Option<ToolResponse<'a>>,
     /// A failed tool's message; a shell's begins `Exit code N`.
     #[serde(deserialize_with = "lenient")]
     pub(super) error: Option<String>,
@@ -96,7 +99,7 @@ pub(super) struct ToolInput {
 /// What a tool gave back.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub(super) struct ToolResponse {
+pub(super) struct ToolResponse<'a> {
     /// For a read, which lines of the file came back.
     #[serde(deserialize_with = "lenient")]
     pub(super) file: Option<ReadFile>,
@@ -112,6 +115,13 @@ pub(super) struct ToolResponse {
     /// Whether the user interrupted the shell.
     #[serde(deserialize_with = "lenient")]
     pub(super) interrupted: Option<bool>,
+    /// The files a search found: what Glob lists, and Grep in its files mode.
+    #[serde(deserialize_with = "lenient")]
+    pub(super) filenames: Option<Vec<String>>,
+    /// Grep's output in its content and count modes, or a written file's text: the payload's bytes,
+    /// unread.
+    #[serde(borrow, deserialize_with = "lenient")]
+    pub(super) content: Option<&'a RawValue>,
 }
 
 /// The lines a read returned.
@@ -189,8 +199,8 @@ impl Visitor<'_> for MarkVisitor {
 }
 
 /// Reads a field as `T`, or as absent when it is `null` or of another type. The field's JSON is
-/// borrowed from the payload unparsed, then parsed as `T`: a mismatch is dropped with the field
-/// alone.
+/// borrowed from the payload unparsed, then parsed as `T`, which may borrow from it in turn: a
+/// mismatch is dropped with the field alone.
 ///
 /// # Errors
 ///
@@ -198,7 +208,7 @@ impl Visitor<'_> for MarkVisitor {
 fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
-    T: DeserializeOwned,
+    T: Deserialize<'de>,
 {
     let raw = <&RawValue>::deserialize(deserializer)?;
     Ok(serde_json::from_str(raw.get()).ok())
@@ -229,5 +239,152 @@ impl Visitor<'_> for LengthVisitor {
     /// The string's length in bytes.
     fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<TextLength, E> {
         Ok(TextLength(u64::try_from(text.len()).unwrap_or(u64::MAX)))
+    }
+}
+
+/// The paths Grep's output `content` names, at most [`MAX_HITS`], each once, in order; none when
+/// it is not text. The text it matched is dropped as it is read.
+pub(super) fn content_paths(content: &RawValue) -> Vec<String> {
+    serde_json::from_str::<ContentPaths>(content.get()).map_or_else(|_| Vec::new(), |paths| paths.0)
+}
+
+/// The paths of Grep's output, as [`content_paths`] gives them.
+struct ContentPaths(Vec<String>);
+
+impl<'de> Deserialize<'de> for ContentPaths {
+    /// The paths of a string's lines; anything else is not an output.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_str(PathsVisitor)
+    }
+}
+
+/// Reads the paths of an output's lines as the string is read.
+struct PathsVisitor;
+
+impl Visitor<'_> for PathsVisitor {
+    type Value = ContentPaths;
+
+    /// What the visitor reads.
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a string")
+    }
+
+    /// The paths the lines start with.
+    fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<ContentPaths, E> {
+        let mut paths: Vec<String> = Vec::new();
+        for path in text.lines().filter_map(line_path) {
+            if paths.len() == MAX_HITS {
+                break;
+            }
+            if !paths.iter().any(|seen| seen == path) {
+                paths.push(path.to_owned());
+            }
+        }
+        Ok(ContentPaths(paths))
+    }
+}
+
+/// The path a line of Grep's output starts with: the text before its first colon (a Windows
+/// drive's aside, as in `C:\repo\a.py`), when a line number follows that colon and then a colon
+/// (a match line, `calc/ops.py:12:def divide`) or the line's end (a count line, `calc/ops.py:3`).
+/// Every other line names none: a context line, whose path ends at a `-11-` before any colon
+/// (`calc/ops.py-11-# divides`), whatever colons its text holds after; a line without its number
+/// (`ops.py:  at 10:30:00`, with `-n` off); and a line that starts with its number, the output of
+/// a search of one file, which prints no file name. A file whose name holds `-11-` is missed rather
+/// than a wrong file named. Two lines cannot be told from a match or count line and name the text
+/// before their first colon: one of a file whose name holds `:3:`, possible on Unix only, and one
+/// of a search of one file with `-n` off whose text reads like a count (`port:80`).
+fn line_path(line: &str) -> Option<&str> {
+    if number_then(line, &[':', '-']) {
+        return None;
+    }
+    let drive = if has_drive(line) { 2 } else { 0 };
+    let colon = drive + line.get(drive..)?.find(':')?;
+    let path = line.get(..colon).filter(|path| !path.is_empty())?;
+    let after = line.get(colon + 1..)?;
+    let is_numbered = number_then(after, &[':']) || after.bytes().all(|byte| byte.is_ascii_digit());
+    let is_context = path
+        .match_indices('-')
+        .any(|(at, _)| number_then(path.get(at + 1..).unwrap_or_default(), &['-']));
+    (is_numbered && !after.is_empty() && !is_context).then_some(path)
+}
+
+/// Whether `text` starts with a number followed by one of `marks`.
+fn number_then(text: &str, marks: &[char]) -> bool {
+    let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0
+        && text
+            .get(digits..)
+            .is_some_and(|rest| rest.starts_with(marks))
+}
+
+/// Whether `line` starts with a Windows drive, a letter, a colon and a slash either way.
+fn has_drive(line: &str) -> bool {
+    matches!(line.as_bytes(), [letter, b':', b'\\' | b'/', ..] if letter.is_ascii_alphabetic())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Grep's output is read for 50 files at most, each once, so a long output costs no more:
+    /// 60 match lines give the first 50 files, and a file's second line adds nothing; output that
+    /// is not text names none.
+    #[test]
+    fn output_is_read_for_fifty_files_at_most() -> Result<(), serde_json::Error> {
+        let raw = |value: serde_json::Value| serde_json::value::to_raw_value(&value);
+        let lines: Vec<String> = (0..60).map(|number| format!("f{number}.py:1:x")).collect();
+        let first_fifty: Vec<String> = (0..50).map(|number| format!("f{number}.py")).collect();
+        assert_eq!(content_paths(&raw(lines.join("\n").into())?), first_fifty);
+        assert_eq!(content_paths(&raw("a.py:1:x\na.py:2:y".into())?), ["a.py"]);
+        assert_eq!(
+            content_paths(&raw(serde_json::json!(42))?),
+            Vec::<String>::new()
+        );
+        Ok(())
+    }
+
+    /// Each kind of line Grep prints names its file or none: a match or count line its file, even
+    /// when its text holds more numbers and colons, or the file's name dashes; a context line, a
+    /// separator, a line without its number, whatever its text holds, and the lines of a one-file
+    /// search none; a name holding `-2-` none rather than a part of it.
+    #[test]
+    fn each_line_names_its_file_or_none() {
+        let cases = [
+            ("calc/ops.py:12:def divide(a, b):", Some("calc/ops.py")),
+            ("calc/ops.py:3", Some("calc/ops.py")),
+            ("tests/time.py:7:at 10:30:00", Some("tests/time.py")),
+            (
+                "C:\\repo\\calc\\ops.py:12:x",
+                Some("C:\\repo\\calc\\ops.py"),
+            ),
+            ("C:/repo/main.py:3", Some("C:/repo/main.py")),
+            ("v2-notes.md:3:x", Some("v2-notes.md")),
+            (
+                "src/my-component/index.ts:8:x-1-2",
+                Some("src/my-component/index.ts"),
+            ),
+            ("notes.md-5-meeting at 10:30", None),
+            ("context.py-11-# divides", None),
+            ("--", None),
+            ("no_numbers.py:def x():", None),
+            ("ops.py:  at 10:30:00", None),
+            ("cfg.py:  x = a?1:2", None),
+            ("main.py:", None),
+            ("main.py:3x", None),
+            ("12:def divide(a, b):", None),
+            ("7:at 10:30:00", None),
+            ("12:34:56", None),
+            ("11-at 10:30", None),
+            ("11-# divides", None),
+            ("3", None),
+            ("release-2-notes.md:3:x", None),
+            (":12:x", None),
+            ("C:", None),
+            ("", None),
+        ];
+        for (line, path) in cases {
+            assert_eq!(line_path(line), path, "{line}");
+        }
     }
 }

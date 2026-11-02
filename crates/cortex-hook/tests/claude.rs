@@ -82,6 +82,16 @@ fn payload_of(version: &str, name: &str) -> TestResult<Vec<u8>> {
         rewrite(input.get_mut("file_path"));
         rewrite(input.get_mut("path"));
     }
+    // A search names the files it found relative to the working folder, with backslashes on
+    // Windows; the captured matches' text holds none, so Grep's output is rewritten whole.
+    if let Some(response) = value.get_mut("tool_response") {
+        if let Some(serde_json::Value::Array(files)) = response.get_mut("filenames") {
+            for file in files {
+                rewrite(Some(file));
+            }
+        }
+        rewrite(response.get_mut("content"));
+    }
     Ok(serde_json::to_vec(&value)?)
 }
 
@@ -194,6 +204,16 @@ fn search(pattern: &str, path: Option<RepoPath>) -> Option<ToolTarget> {
         pattern: Some(pattern.to_owned()),
         ..ToolTarget::default()
     })
+}
+
+/// `search` with the files it found, in the order listed.
+fn found(search: Option<ToolTarget>, hits: &[&str]) -> TestResult<Option<ToolTarget>> {
+    let mut target = search.ok_or("a search")?;
+    target.hits = hits
+        .iter()
+        .map(|hit| RepoPath::new(hit))
+        .collect::<Result<_, _>>()?;
+    Ok(Some(target))
 }
 
 /// A shell command.
@@ -327,7 +347,20 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
             Some(tool(
                 PostTool,
                 S1,
-                (ToolKind::Glob, search("**/*.py", here()), ok(None, None)),
+                (
+                    ToolKind::Glob,
+                    found(
+                        search("**/*.py", here()),
+                        &[
+                            "calc/ops.py",
+                            "calc/__init__.py",
+                            "tests/__init__.py",
+                            "main.py",
+                            "tests/test_ops.py",
+                        ],
+                    )?,
+                    ok(None, None),
+                ),
             )?),
         ),
         (
@@ -335,7 +368,14 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
             Some(explore(tool(
                 PostTool,
                 S1,
-                (ToolKind::Grep, everywhere.clone(), ok(None, None)),
+                (
+                    ToolKind::Grep,
+                    found(
+                        everywhere.clone(),
+                        &["main.py", "tests/test_ops.py", "calc/ops.py"],
+                    )?,
+                    ok(None, None),
+                ),
             )?)?),
         ),
         (
@@ -343,7 +383,11 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
             Some(tool(
                 PostTool,
                 S1,
-                (ToolKind::Grep, search("def divide", here()), ok(None, None)),
+                (
+                    ToolKind::Grep,
+                    found(search("def divide", here()), &["calc/ops.py"])?,
+                    ok(None, None),
+                ),
             )?),
         ),
         (
@@ -1247,7 +1291,7 @@ fn json_value() -> impl Strategy<Value = serde_json::Value> {
 }
 
 /// What every event of `hook` keeps to its own fields: a tool's only on tool events, a prompt only
-/// on a prompt, every cut within its cap.
+/// on a prompt, a search's hits only once it ran, every cut within its cap.
 fn assert_shape(hook: HookKind, event: &Event) {
     let is_tool_event = matches!(hook, HookKind::PreTool | HookKind::PostTool);
     assert_eq!(event.hook, hook);
@@ -1273,6 +1317,15 @@ fn assert_shape(hook: HookKind, event: &Event) {
                 .ranges
                 .iter()
                 .all(|range| range.start_line() >= 1 && range.start_line() <= range.end_line())
+        );
+        let hits = &target.hits;
+        assert!(hook == HookKind::PostTool || hits.is_empty());
+        assert!(hits.len() <= 50);
+        assert!(hits.iter().map(|path| path.as_str().len()).sum::<usize>() <= 4_096);
+        assert!(!hits.contains(&RepoPath::root()));
+        assert_eq!(
+            hits.iter().collect::<std::collections::BTreeSet<_>>().len(),
+            hits.len()
         );
     }
 }
@@ -1317,4 +1370,188 @@ proptest! {
         let claude = adapter("claude").ok_or_else(|| TestCaseError::fail("no adapter"))?;
         let _ = claude.normalize(&name, &bytes, &locate, stamp());
     }
+}
+
+proptest! {
+    // Each case builds and reads two payloads of up to 480 names and lines: fewer cases than the
+    // default keep the suite quick.
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    /// A search's response of any length, its files short and long, inside the repository and out,
+    /// named twice or not, and its output lines of any shape, keeps the hits within their caps,
+    /// each once, before and after the search ran.
+    #[test]
+    fn any_search_response_keeps_hits_within_their_caps(
+        files in prop::collection::vec(listed_name(), 0..240),
+        lines in prop::collection::vec(output_line(), 0..240),
+    ) {
+        let fail = |error: Box<dyn Error>| TestCaseError::fail(error.to_string());
+        let claude = adapter("claude").ok_or_else(|| TestCaseError::fail("no adapter"))?;
+        let hooks = [("PreToolUse", HookKind::PreTool), ("PostToolUse", HookKind::PostTool)];
+        for (event_name, hook) in hooks {
+            let fixture = payload("post-tool-use-grep.json").map_err(fail)?;
+            let mut value: serde_json::Value = serde_json::from_slice(&fixture)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
+            value["tool_response"]["filenames"] = files.clone().into();
+            value["tool_response"]["content"] = lines.join("\n").into();
+            let bytes = serde_json::to_vec(&value)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
+            if let Ok(Some(event)) = claude.normalize(event_name, &bytes, &locate, stamp()) {
+                assert_shape(hook, &event);
+            }
+        }
+    }
+}
+
+/// A name a search may list: short or long, nested or not, outside the repository or its top.
+fn listed_name() -> impl Strategy<Value = String> {
+    prop_oneof![
+        "[a-c]{1,2}(/[a-c]{1,2}){0,2}\\.py",
+        "\\.\\./[a-c]{1,3}",
+        Just(".".to_owned()),
+        "[a-c]{300,600}",
+    ]
+}
+
+/// A line Grep may print: a match, a count, context, a separator, or text of any shape.
+fn output_line() -> impl Strategy<Value = String> {
+    prop_oneof![
+        "[a-c]{1,3}(/[a-c]{1,3})?\\.py:[0-9]{1,3}:[a-z 0-9:-]{0,12}",
+        "[a-c]{1,3}\\.py:[0-9]{1,3}",
+        "[a-c]{1,3}\\.py-[0-9]{1,3}-[a-z 0-9:-]{0,12}",
+        Just("--".to_owned()),
+        "[a-c0-9:\\- ./]{0,16}",
+        "[a-c]{300,600}\\.py:1:x",
+    ]
+}
+
+/// The newest capture's searches name the files they found, read off the fixtures by hand: Glob's
+/// six files in the order listed; Grep's match line names `calc/ops.py`; the subagent's Grep names
+/// `tests/test_ops.py` (two lines, once), `NOTES.md` and `calc/ops.py`.
+#[test]
+fn searches_name_the_files_they_found() -> TestResult {
+    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
+    let cases: [(&str, &[&str]); 3] = [
+        (
+            "post-tool-use-glob.json",
+            &[
+                "calc/__init__.py",
+                "tests/__init__.py",
+                "main.py",
+                "tests/test_ops.py",
+                "calc/ops.py",
+                "tests/test_fail.py",
+            ],
+        ),
+        ("post-tool-use-grep.json", &["calc/ops.py"]),
+        (
+            "post-tool-use-grep-subagent.json",
+            &["tests/test_ops.py", "NOTES.md", "calc/ops.py"],
+        ),
+    ];
+    for (name, expected) in cases {
+        let payload = payload_of("2.1.316", name)?;
+        let event = claude
+            .normalize("PostToolUse", &payload, &locate, stamp())?
+            .ok_or("no event")?;
+        let hits = event.tool_target.ok_or("no target")?.hits;
+        let expected = expected
+            .iter()
+            .map(|path| RepoPath::new(path))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(hits, expected, "{name}");
+    }
+    Ok(())
+}
+
+/// Grep's output names a file by a match line (`path:line:text`) or a count line (`path:count`),
+/// whatever colons the text holds; not by a context line, even one whose text holds a time, a
+/// separator, a line without its number, however its text reads, or a line of a one-file search,
+/// which starts with its number. Each file is named once, in order, after the files listed,
+/// however it is spelled; one outside the repository is left out, and so is its top folder; past
+/// 50 files or 4,096 bytes of paths, from the output or the list, the rest are, and so is what
+/// comes after the first 200 files named; output that is not text names none, and the event
+/// stands. Before the search runs it has found nothing.
+#[test]
+fn grep_output_names_the_files_it_matched() -> TestResult {
+    let hits_at = |event_name: &str, files: serde_json::Value, content: serde_json::Value| {
+        let event = edited("post-tool-use-grep.json", event_name, &locate, |value| {
+            value["tool_response"]["filenames"] = files;
+            value["tool_response"]["content"] = content;
+        })?;
+        let hits: Vec<String> = event
+            .tool_target
+            .ok_or("no target")?
+            .hits
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        TestResult::Ok(hits)
+    };
+    let hits = |files, content| hits_at("PostToolUse", files, content);
+    let lines = [
+        "calc/ops.py:12:def divide(a, b):",
+        "context.py-11-# divides",
+        "notes.md-5-meeting at 10:30",
+        "--",
+        "main.py:3",
+        "no_numbers.py:def x():",
+        "ops.py:  at 10:30:00",
+        "calc/ops.py:40:    return a / b",
+        "../outside.py:1:x",
+        "tests/time.py:7:at 10:30:00",
+        "9:start = 10:30:00",
+    ];
+    assert_eq!(
+        hits(serde_json::json!(["NOTES.md"]), lines.join("\n").into())?,
+        ["NOTES.md", "calc/ops.py", "main.py", "tests/time.py"]
+    );
+    assert_eq!(
+        hits_at(
+            "PreToolUse",
+            serde_json::json!(["NOTES.md"]),
+            lines.join("\n").into()
+        )?,
+        Vec::<String>::new()
+    );
+    let many: Vec<String> = (0..60).map(|number| format!("f{number}.py:1:x")).collect();
+    let first_fifty: Vec<String> = (0..50).map(|number| format!("f{number}.py")).collect();
+    assert_eq!(
+        hits(serde_json::json!([]), many.join("\n").into())?,
+        first_fifty
+    );
+    let not_text = [
+        serde_json::json!(42),
+        serde_json::Value::Null,
+        serde_json::json!([]),
+        serde_json::json!({"a": "b.py:1:x"}),
+    ];
+    for content in not_text {
+        assert_eq!(hits(serde_json::json!(["main.py"]), content)?, ["main.py"]);
+    }
+    let listed: Vec<String> = (0..60).map(|number| format!("f{number}.py")).collect();
+    assert_eq!(hits(listed.into(), "".into())?, first_fifty);
+    // Twenty names of 1,024 bytes each (1,019 letters, two digits, `.py`): four hold exactly
+    // 4,096 bytes, the cap; a fifth would make 5,120.
+    let long: Vec<String> = (0..20)
+        .map(|number| format!("{}{number:02}.py", "a".repeat(1_019)))
+        .collect();
+    let first_four = long.get(..4).ok_or("fewer than 4 names")?.to_vec();
+    assert_eq!(hits(long.into(), "".into())?, first_four);
+    assert_eq!(
+        hits(
+            serde_json::json!(["main.py", "./main.py", "."]),
+            "main.py:1:x".into()
+        )?,
+        ["main.py"]
+    );
+    // The 200th file named counts; a 201st is not looked at.
+    for (outside, expected) in [(199, vec!["main.py"]), (200, Vec::new())] {
+        let mut named: Vec<String> = (0..outside)
+            .map(|number| format!("../o{number}.py"))
+            .collect();
+        named.push("main.py".to_owned());
+        assert_eq!(hits(named.into(), "".into())?, expected, "{outside}");
+    }
+    Ok(())
 }

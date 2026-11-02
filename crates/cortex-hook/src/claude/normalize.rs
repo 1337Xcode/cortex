@@ -26,7 +26,7 @@ pub(super) fn event(
     locate: &dyn Fn(&Path) -> Option<Located>,
     stamp: Stamp,
 ) -> Result<Option<Event>, NormalizeError> {
-    let payload: Payload = serde_json::from_slice(strip_bom(payload))?;
+    let payload: Payload<'_> = serde_json::from_slice(strip_bom(payload))?;
     let Some(located) = payload
         .cwd
         .as_deref()
@@ -109,7 +109,7 @@ impl<'a> Session<'a> {
     ///
     /// [`NormalizeError::NoSession`] when the payload names no session, or its id and the
     /// subagent's together are no name.
-    fn of(payload: &'a Payload) -> Result<Self, NormalizeError> {
+    fn of(payload: &'a Payload<'_>) -> Result<Self, NormalizeError> {
         let session = payload
             .session_id
             .as_deref()
