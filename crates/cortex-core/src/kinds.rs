@@ -85,6 +85,42 @@ named_kind! {
     }
 }
 
+/// How bright a node is: which of the three levels of the map's fog it falls in, by its interest.
+/// Stored as a small number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InterestTier {
+    /// The fog: nothing says the node matters to the work at hand.
+    Dark,
+    /// Interest above the threshold: worked on lately.
+    Interesting,
+    /// Among the few files of highest interest in the repository.
+    Landmark,
+}
+
+impl InterestTier {
+    /// Every tier, in stored-number order, dimmest first.
+    pub const ALL: &'static [Self] = &[Self::Dark, Self::Interesting, Self::Landmark];
+
+    /// The stored number.
+    #[must_use]
+    pub fn number(self) -> u8 {
+        match self {
+            Self::Dark => 0,
+            Self::Interesting => 1,
+            Self::Landmark => 2,
+        }
+    }
+
+    /// The tier with this stored number.
+    #[must_use]
+    pub fn from_number(number: u8) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|tier| tier.number() == number)
+    }
+}
+
 /// The type of a graph edge, stored as a small number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EdgeType {

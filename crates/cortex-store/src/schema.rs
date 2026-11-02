@@ -341,6 +341,18 @@ pub(crate) const SOURCES_INTO: &str =
 /// Every node an edge of a type starts from, in order.
 pub(crate) const EDGE_SOURCES: &str = "SELECT DISTINCT src FROM edges WHERE type = ?1 ORDER BY src";
 
+/// The interest of the nodes whose ids a JSON array lists, by node.
+pub(crate) const INTEREST_OF: &str = "SELECT node_id, score, last_seq, tier FROM interest \
+     WHERE node_id IN (SELECT value FROM json_each(?1)) ORDER BY node_id";
+/// Every file node whose stored score is at least the first parameter, by node.
+pub(crate) const FILE_INTEREST_FROM: &str = "SELECT i.node_id, i.score, i.last_seq, i.tier \
+     FROM interest AS i JOIN nodes AS n ON n.node_id = i.node_id \
+     WHERE n.kind = 'file' AND i.score >= ?1 ORDER BY i.node_id";
+/// Writes a node's interest, replacing what it had.
+pub(crate) const INTEREST_REPLACE: &str = "INSERT INTO interest (node_id, score, last_seq, tier) \
+     VALUES (?1, ?2, ?3, ?4) ON CONFLICT (node_id) DO UPDATE SET score = excluded.score, \
+     last_seq = excluded.last_seq, tier = excluded.tier";
+
 /// Row counts for status.
 pub(crate) const COUNTS: &str = "SELECT (SELECT count(*) FROM files), \
      (SELECT count(*) FROM symbols), (SELECT count(*) FROM refs), \

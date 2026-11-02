@@ -12,6 +12,7 @@ use crate::connection::{self, Access};
 use crate::error::{StoreError, io, sqlite};
 use crate::folders;
 use crate::ids::NodeId;
+use crate::interest::{self, InterestRow};
 use crate::layout;
 use crate::links;
 use crate::lock::WriterLock;
@@ -369,6 +370,17 @@ impl WriteTx<'_> {
         pairs: &[PairRow],
     ) -> Result<(), StoreError> {
         self.atomically(|connection| cochange::add(connection, files, pairs))
+    }
+
+    /// Writes each node's interest, replacing what it had.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`], [`StoreError::TooLarge`] for a task number past what
+    /// SQLite stores, and SQLite errors, including a node that does not exist. Either all are
+    /// written or none.
+    pub fn replace_interest(&mut self, rows: &[InterestRow]) -> Result<(), StoreError> {
+        self.atomically(|connection| interest::replace(connection, rows))
     }
 
     /// Sets the co-change miner's state under `key` to `value`.

@@ -55,7 +55,7 @@ pub use event::{
 pub use file_content::FileContent;
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
-pub use kinds::{EdgeType, FileFlags, NodeKind, RefKind, Resolution, SymbolKind};
+pub use kinds::{EdgeType, FileFlags, InterestTier, NodeKind, RefKind, Resolution, SymbolKind};
 pub use language::{Language, Tier};
 pub use log_rotation::rotate_log;
 pub use one_line::one_line;
