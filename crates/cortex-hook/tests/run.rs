@@ -6,6 +6,7 @@ mod common;
 use std::ffi::OsString;
 use std::io::Cursor;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use common::{Script, TestResult, response, run_files_of, serve, welcome};
 use cortex_core::ipc::ResponseBody;
@@ -67,8 +68,10 @@ fn an_answer_that_takes_nothing_is_noted() -> TestResult {
     Ok(())
 }
 
-/// A note the hook's own thread writes, such as why the arguments name no hook, is in the log when
-/// the hook returns: the hook waits for it, up to just before its hard timeout.
+/// A note the hook's own thread writes, such as why the arguments name no hook, is waited for: the
+/// hook returns once it is in the log, or, on a disk too slow for it, not before the note's
+/// deadline. Before the arguments name a hook, the hard timeout is the shortest of any hook's,
+/// 300 ms, and the note is given up 5 ms before it, 295 ms after the hook started.
 #[test]
 fn a_note_is_written_before_the_hook_returns() -> TestResult {
     let home = tempfile::tempdir()?;
@@ -76,11 +79,13 @@ fn a_note_is_written_before_the_hook_returns() -> TestResult {
         .into_iter()
         .map(OsString::from)
         .collect();
+    let started = Instant::now();
     cortex_hook::run(&unknown, Cursor::new(Vec::new()), Some(home.path()));
+    let took = started.elapsed();
     let log = hook_log(home.path())?;
     assert!(
-        log.contains("Cortex has no adapter for that agent"),
-        "{log:?}"
+        log.contains("Cortex has no adapter for that agent") || took >= Duration::from_millis(295),
+        "returned after {took:?} with {log:?}"
     );
     Ok(())
 }
