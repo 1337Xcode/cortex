@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 cortex-core = { path = "../cortex-core" }
+cortex-store = { path = "../cortex-store" }
 gix.workspace = true
 thiserror.workspace = true
 

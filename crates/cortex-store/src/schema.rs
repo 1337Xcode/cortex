@@ -278,6 +278,39 @@ pub(crate) const FILE_NODES: &str = "SELECT f.file_id, f.path, n.node_id FROM fi
 /// How many files have a language and none of the flags given, and how many lines they hold.
 pub(crate) const SOURCE_SIZE: &str = "SELECT count(*), coalesce(sum(loc), 0) FROM files \
      WHERE lang IS NOT NULL AND flags & ?1 = 0";
+/// The id, path and node of every file that counts for co-change: neither generated nor vendored
+/// (the flags given), by path.
+pub(crate) const COCHANGE_FILES: &str = "SELECT f.file_id, f.path, n.node_id FROM files AS f \
+     JOIN nodes AS n ON n.kind = 'file' AND n.ref_id = f.file_id WHERE f.flags & ?1 = 0 \
+     ORDER BY f.path";
+/// Deletes every file's commit counts.
+pub(crate) const FILE_COMMITS_DELETE_ALL: &str = "DELETE FROM file_commits";
+/// Deletes every pair's co-change counts.
+pub(crate) const COCHANGE_STATS_DELETE_ALL: &str = "DELETE FROM cochange_stats";
+/// Adds a file's commit counts to those stored, or stores them.
+pub(crate) const FILE_COMMITS_ADD: &str = "INSERT INTO file_commits (file_id, count, weighted) \
+     VALUES (?1, ?2, ?3) ON CONFLICT (file_id) DO UPDATE SET count = count + excluded.count, \
+     weighted = weighted + excluded.weighted";
+/// Adds a pair's co-change counts to those stored, or stores them; the newest shared commit is
+/// the newer of the two.
+pub(crate) const COCHANGE_STATS_ADD: &str = "INSERT INTO cochange_stats \
+     (file_a, file_b, count, weighted, last_commit_seq) VALUES (?1, ?2, ?3, ?4, ?5) \
+     ON CONFLICT (file_a, file_b) DO UPDATE SET count = count + excluded.count, \
+     weighted = weighted + excluded.weighted, \
+     last_commit_seq = max(last_commit_seq, excluded.last_commit_seq)";
+/// The commit counts of the files whose ids are in a JSON array, by file id.
+pub(crate) const FILE_COMMITS_OF: &str = "SELECT file_id, count, weighted FROM file_commits \
+     WHERE file_id IN (SELECT value FROM json_each(?1)) ORDER BY file_id";
+/// The co-change counts of every pair holding a file whose id is in a JSON array, by pair.
+pub(crate) const COCHANGE_STATS_OF: &str = "SELECT file_a, file_b, count, weighted, \
+     last_commit_seq FROM cochange_stats WHERE file_a IN (SELECT value FROM json_each(?1)) \
+     OR file_b IN (SELECT value FROM json_each(?1)) ORDER BY file_a, file_b";
+/// A value of the co-change miner's state.
+pub(crate) const GIT_STATE_GET: &str = "SELECT value FROM git_state WHERE key = ?1";
+/// Sets a value of the co-change miner's state.
+pub(crate) const GIT_STATE_SET: &str = "INSERT INTO git_state (key, value) VALUES (?1, ?2) \
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value";
+
 /// Every symbol's id and node, by symbol id.
 pub(crate) const SYMBOL_NODES: &str =
     "SELECT ref_id, node_id FROM nodes WHERE kind = 'symbol' ORDER BY ref_id";
@@ -292,6 +325,8 @@ pub(crate) const SEARCH_TOKENS: &str = "SELECT tokens FROM search_index WHERE ro
 
 /// Deletes a node's outgoing edges of one type.
 pub(crate) const EDGES_DELETE_FROM: &str = "DELETE FROM edges WHERE src = ?1 AND type = ?2";
+/// Deletes every edge of one type.
+pub(crate) const EDGES_DELETE_OF_TYPE: &str = "DELETE FROM edges WHERE type = ?1";
 /// Adds an edge.
 pub(crate) const EDGE_INSERT: &str = "INSERT INTO edges (src, dst, type, w, n, last_seq, directed) \
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";

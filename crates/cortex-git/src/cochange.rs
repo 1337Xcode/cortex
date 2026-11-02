@@ -62,6 +62,8 @@ pub struct CoChangeEdge<F> {
     /// The weighted co-changes over `from`'s weighted commits: at least [`MIN_CONFIDENCE`], at
     /// most 1.
     pub confidence: f64,
+    /// How many commits changed both.
+    pub co_changes: u32,
 }
 
 /// What a run of commits says about which files change together.
@@ -202,10 +204,14 @@ impl<F: Copy + Ord + Hash> Counter<F> {
 }
 
 /// The edges `pairs` support, each direction on its own: at least [`MIN_COCHANGES`] co-changes,
-/// a confidence of at least [`MIN_CONFIDENCE`], and at most [`MAX_PARTNERS`] from one file.
-fn edges<F: Copy + Ord + Hash>(
+/// a confidence of at least [`MIN_CONFIDENCE`], and at most [`MAX_PARTNERS`] from one file, by
+/// the file they start at, then by partner. `files` gives each file's commits and weighted
+/// commits; a file it does not give starts no edge. An edge from a file is right only when
+/// `pairs` holds every pair of that file.
+#[must_use]
+pub fn edges<F: Copy + Ord + Hash, S: BuildHasher>(
     pairs: &[PairCommits<F>],
-    files: &HashMap<F, (u32, f64)>,
+    files: &HashMap<F, (u32, f64), S>,
 ) -> Vec<CoChangeEdge<F>> {
     let mut from_each: BTreeMap<F, Vec<(f64, u32, F)>> = BTreeMap::new();
     for pair in pairs.iter().filter(|pair| pair.count >= MIN_COCHANGES) {
@@ -233,10 +239,11 @@ fn edges<F: Copy + Ord + Hash>(
         edges.extend(
             partners
                 .into_iter()
-                .map(|(confidence, _, to)| CoChangeEdge {
+                .map(|(confidence, co_changes, to)| CoChangeEdge {
                     from,
                     to,
                     confidence,
+                    co_changes,
                 }),
         );
     }

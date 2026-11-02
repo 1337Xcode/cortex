@@ -7,6 +7,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::activity::{self, EventRecord, SessionRecord, TaskRecord};
 use crate::checkpoint::{CheckpointFailures, Checkpointer};
+use crate::cochange::{self, FileCommitsRow, GitStateKey, PairRow};
 use crate::connection::{self, Access};
 use crate::error::{StoreError, io, sqlite};
 use crate::folders;
@@ -342,6 +343,54 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn append_event(&mut self, event: &EventRecord) -> Result<u64, StoreError> {
         self.atomically(|connection| activity::append_event(connection, event))
+    }
+
+    /// Replaces every file's commit counts and every pair's co-change counts with `files` and
+    /// `pairs`, as a full mining of the history gives them.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`], [`StoreError::TooLarge`] for a sequence number past what
+    /// SQLite stores, and SQLite errors, including a file that does not exist. Either all are
+    /// written or none.
+    pub fn replace_cochange(
+        &mut self,
+        files: &[FileCommitsRow],
+        pairs: &[PairRow],
+    ) -> Result<(), StoreError> {
+        self.atomically(|connection| cochange::replace(connection, files, pairs))
+    }
+
+    /// Adds `files` and `pairs` to the stored counts, as mining the commits HEAD gained gives
+    /// them: counts and weights summed, the newest shared commit kept.
+    ///
+    /// # Errors
+    ///
+    /// As [`WriteTx::replace_cochange`].
+    pub fn add_cochange(
+        &mut self,
+        files: &[FileCommitsRow],
+        pairs: &[PairRow],
+    ) -> Result<(), StoreError> {
+        self.atomically(|connection| cochange::add(connection, files, pairs))
+    }
+
+    /// Sets the co-change miner's state under `key` to `value`.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn set_git_state(&mut self, key: GitStateKey, value: &str) -> Result<(), StoreError> {
+        self.atomically(|connection| cochange::set_state(connection, key, value))
+    }
+
+    /// Deletes every edge of `edge_type`, before a full set is written again.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn remove_edges_of_type(&mut self, edge_type: EdgeType) -> Result<(), StoreError> {
+        self.atomically(|connection| links::remove_edges_of_type(connection, edge_type))
     }
 
     /// Read queries that also see this transaction's changes.

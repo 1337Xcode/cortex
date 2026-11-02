@@ -12,6 +12,7 @@
 
 mod activity;
 mod checkpoint;
+mod cochange;
 mod connection;
 mod error;
 mod folders;
@@ -35,6 +36,7 @@ mod writer;
 
 pub use activity::{EventRecord, EventRow, SessionRecord, SessionRow, TaskRecord, TaskRow};
 pub use checkpoint::CheckpointFailures;
+pub use cochange::{CountedFile, FileCommitsRow, GitStateKey, PairRow};
 pub use error::StoreError;
 pub use ids::{FileId, NodeId, RefId, SymbolId};
 pub use lock::is_writer_running;

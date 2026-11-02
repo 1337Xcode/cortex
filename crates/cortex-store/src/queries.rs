@@ -626,6 +626,6 @@ impl<'c> Queries<'c> {
 
 /// `values`, each already written as JSON, as a JSON array: the form `json_each` reads a list of
 /// bound values from.
-fn json_array(values: impl Iterator<Item = String>) -> String {
+pub(crate) fn json_array(values: impl Iterator<Item = String>) -> String {
     format!("[{}]", values.collect::<Vec<_>>().join(","))
 }

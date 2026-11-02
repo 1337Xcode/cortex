@@ -92,11 +92,13 @@ fn counts_weights_and_confidence() -> TestResult {
                 from: 1,
                 to: 2,
                 confidence: 1.5 / 1.75,
+                co_changes: 2,
             },
             CoChangeEdge {
                 from: 2,
                 to: 1,
                 confidence: 1.0,
+                co_changes: 2,
             },
         ],
     };

@@ -4,7 +4,8 @@ A repository's git history as Cortex reads it to learn which files change togeth
 the first-parent line from HEAD, newest first, and gives each commit's id, its commit time and the
 files it changed against its first parent, with the path a renamed file had before. Two sources
 give the same reading: `gix` in-process, and the `git` program, the fallback when `gix` cannot
-read a repository.
+read a repository. A mining turns a read into counts of which files change together and writes
+them to the store, the whole window at first and then only the commits HEAD gains.
 
 ## What it must never do
 
@@ -41,6 +42,7 @@ read a repository.
 | `GixHistory::open` | The source that reads in-process with `gix`. A merge counts against its first parent. A file moved with at least half its contents kept is a rename, git's default threshold; near it the two can differ. In a partial clone, and for files over 1 MiB, only a file moved unchanged is a rename. A shallow clone's cut commits, whose parents are missing, are left out. A path no file can have (not UTF-8, absolute, with a backslash or an empty, `.` or `..` name) is left out |
 | `CliHistory::open` | The source that runs the `git` program found on the `PATH` outside the repository, without the caller's `GIT_` variables, for at most 10 s an answer and 300 s and 256 MiB a listing, with every option that shapes its listing on its command line (submodule changes included whatever the repository says). Its listing is read field by field, so a path cannot pass for a commit. It reads what the `gix` source reads, except that git's own rename search decides renames, so an edited file over 1 MiB moved is a rename, and a tree written by hand with a name no file can have makes git refuse the whole listing |
 | `cochange::compute` | Which files change together, from the commits a read gave and the files that count by their current path (the caller leaves out generated and vendored files): each file's commit count, each pair's co-change count and the newest commit they share, both counts also weighted by recency (`0.5^(age / half-life)`, age in commits from the newest), and the edges. An edge runs from a file to a partner with at least 2 co-changes and a confidence, the weighted co-changes over the file's weighted commits, of at least 0.1; a file keeps at most 32, ranked by confidence times `ln(1 + co-changes)`, ties by partner. A commit's files are followed to their current paths through newer commits' renames; a mass commit ages older commits but adds nothing. Generic over the file id; deterministic |
+| `mine::mine`, `mine::write`, `Mark`, `Mining` | One mining. `mine` starts from where the last one ended, as the store keeps it (`Mark::read`): it reads nothing when HEAD has not moved, only the commits HEAD gained when the commit mined last is still on its first-parent line, and the whole window when nothing was mined yet, when the last full mining is a week old (so that recency weights catch up with the history) or when the history was rewritten. `write`, in a transaction of the store's writer, replaces every count and co-change edge after a full mining; after commits gained, it adds their counts to the stored ones and rewrites the edges of the files they changed from the sums. Files removed since the read are left out |
 | `GitError` | Why a read failed: no repository at the folder's top, one that cannot be opened, HEAD, the walk or one commit's changes, each with its causes |
 
 ## Tests
@@ -66,4 +68,8 @@ can have, and on Unix a path that is not UTF-8. The listing's parser has unit te
 weights and confidence, renames followed (also two in one commit), files that do not count, a
 mass commit's age, the edge thresholds, the partner cap and its ranking; and a property test
 over random histories (deterministic output, pair counts within their files', edges within the
-thresholds, at most 32 a file, everything in order).
+thresholds, at most 32 a file, everything in order). `mine.rs` mines into a store: the first
+mining, commits gained (and HEAD unmoved, which writes nothing), a rewritten history, a file's
+edges left alone when commits gained did not change it, a full mining again a week later, and a
+file removed between the read and the write. Where a test expects counts and edges, they are
+worked out in its comment.

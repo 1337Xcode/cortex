@@ -38,6 +38,17 @@ pub(crate) fn set_resolutions(
     Ok(())
 }
 
+/// Deletes every edge of `edge_type`.
+pub(crate) fn remove_edges_of_type(
+    connection: &Connection,
+    edge_type: EdgeType,
+) -> Result<(), StoreError> {
+    connection
+        .execute(schema::EDGES_DELETE_OF_TYPE, [edge_type.number()])
+        .map(drop)
+        .map_err(sqlite("deleting edges"))
+}
+
 /// Replaces the edges of `edge_type` that start at `src` with `edges`.
 pub(crate) fn replace_edges(
     connection: &Connection,
