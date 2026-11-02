@@ -37,8 +37,8 @@ mod unix_time;
 mod user_folder;
 
 pub use activity::{
-    EventKind, EventMeta, EventSource, PROMPT_EXCERPT_CHARS, PromptExcerpt, SessionStatus,
-    TaskOutcome,
+    CommandKind, EventKind, EventMeta, EventSource, PROMPT_EXCERPT_CHARS, PromptExcerpt,
+    SessionStatus, TaskOutcome,
 };
 pub use child::{Captured, capture, time_fed};
 pub use config::{

@@ -411,6 +411,7 @@ mod tests {
     use std::path::PathBuf;
 
     use cortex_core::{Agent, EventKind, EventSource, HookKind, Identifier, RepoId, Ulid};
+    use cortex_learn::Commands;
     use cortex_store::WriterOptions;
 
     use super::*;
@@ -482,7 +483,11 @@ mod tests {
         let config = Config::default();
         let grammars = Arc::new(Grammars::load()?);
         let inbox = Inbox::default();
-        let parts = (writer(root.path())?, Recorder::new(false), &inbox);
+        let parts = (
+            writer(root.path())?,
+            Recorder::new(false, Commands::default()),
+            &inbox,
+        );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
         inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?);
@@ -508,7 +513,11 @@ mod tests {
         let config = Config::default();
         let grammars = Arc::new(Grammars::load()?);
         let inbox = Inbox::default();
-        let parts = (writer(root.path())?, Recorder::new(false), &inbox);
+        let parts = (
+            writer(root.path())?,
+            Recorder::new(false, Commands::default()),
+            &inbox,
+        );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         let prompt = Event {
             prompt_text: Some("a private prompt".to_owned()),
@@ -556,7 +565,11 @@ mod tests {
         let config = Config::default();
         let grammars = Arc::new(Grammars::load()?);
         let inbox = Inbox::default();
-        let parts = (writer(root.path())?, Recorder::new(false), &inbox);
+        let parts = (
+            writer(root.path())?,
+            Recorder::new(false, Commands::default()),
+            &inbox,
+        );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         let prompt = event(HookKind::Prompt, 10, b"same")?;
         let failed = host.record(&[
@@ -582,7 +595,11 @@ mod tests {
     ) -> Result<Host<'a>, Box<dyn std::error::Error>> {
         std::fs::write(root.join("a.py"), "a = 1\n")?;
         std::fs::write(root.join("b.py"), "b = 1\n")?;
-        let parts = (writer(root)?, Recorder::new(false), inbox);
+        let parts = (
+            writer(root)?,
+            Recorder::new(false, Commands::default()),
+            inbox,
+        );
         let grammars = Arc::new(Grammars::load()?);
         let mut host = Host::new(root, grammars, (config, discover(config)), parts);
         host.index(&[])?;
@@ -644,7 +661,11 @@ mod tests {
         (config, inbox): (&'a Config, &'a Inbox),
     ) -> Result<Host<'a>, Box<dyn std::error::Error>> {
         std::fs::write(root.join("a.py"), "a = 1\n")?;
-        let parts = (writer(root)?, Recorder::new(false), inbox);
+        let parts = (
+            writer(root)?,
+            Recorder::new(false, Commands::default()),
+            inbox,
+        );
         let grammars = Arc::new(Grammars::load()?);
         let mut host = Host::new(root, grammars, (config, discover(config)), parts);
         host.index(&[])?;

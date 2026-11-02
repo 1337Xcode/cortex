@@ -3,20 +3,22 @@
 //! A prompt starts a task, first ending any task its session left open when a Stop never came;
 //! the end of the answer and the end of the session end it. A subagent is a session of its own
 //! whose parent is the session that started it, and its events belong to the parent's open task.
-//! A tool call is recorded once it has run; the moment before it is answered and not kept. An
-//! event from a session the store does not hold registers that session first. Every task that
-//! ends is marked `unknown`: telling success from failure needs the outcome rules, which are not
-//! part of the record.
+//! A tool call is recorded once it has run; the moment before it is answered and not kept. A shell
+//! command keeps the runner and the kind of the check its exit status vouches for, never the
+//! command. An event from a session the store does not hold registers that session first. Every
+//! task that ends is marked `unknown`: telling success from failure needs the outcome rules, which
+//! are not part of the record.
 
 use std::collections::BTreeMap;
 
 use cortex_core::{
-    ContentHash, Event, EventKind, EventMeta, HookKind, Identifier, LineRange, MAX_RANGES,
-    PromptExcerpt, TaskOutcome, ToolKind, Ulid,
+    CommandKind, ContentHash, Event, EventKind, EventMeta, HookKind, Identifier, LineRange,
+    MAX_RANGES, PromptExcerpt, TaskOutcome, ToolKind, Ulid,
 };
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
 
 use crate::activity::Activity;
+use crate::commands::{Check, Commands, Ran};
 
 /// Most sessions the recorder remembers. Past that it forgets them all and reads each one again
 /// from the store when its next event comes, so memory stays bounded however long it runs.
@@ -36,14 +38,18 @@ pub struct Recorder {
     open_tasks: BTreeMap<Identifier, Option<Ulid>>,
     /// What the events showed of sessions' work, for edits only the watcher saw.
     activity: Activity,
+    /// What tells the checks a shell command ran.
+    commands: Commands,
 }
 
 impl Recorder {
-    /// A recorder that keeps prompt excerpts when `keeps_prompt_excerpt` says so.
+    /// A recorder that keeps prompt excerpts when `keeps_prompt_excerpt` says so, and tells the
+    /// checks shell commands ran with `commands`.
     #[must_use]
-    pub fn new(keeps_prompt_excerpt: bool) -> Self {
+    pub fn new(keeps_prompt_excerpt: bool, commands: Commands) -> Self {
         Self {
             keeps_prompt_excerpt,
+            commands,
             ..Self::default()
         }
     }
@@ -89,6 +95,7 @@ impl Recorder {
             Some(path) => transaction.queries().file_node_at(path)?,
             None => None,
         };
+        let meta = meta_of(event, &self.commands);
         for range in ranges_of(event) {
             transaction.append_event(&EventRecord {
                 task_id: task,
@@ -101,7 +108,7 @@ impl Recorder {
                     .as_ref()
                     .and_then(|target| target.path.clone()),
                 range,
-                meta: meta_of(event),
+                meta: meta.clone(),
             })?;
         }
         self.activity.note(event, kind);
@@ -312,11 +319,26 @@ fn ranges_of(event: &Event) -> Vec<Option<LineRange>> {
     ranges.iter().copied().map(Some).collect()
 }
 
-/// The facts a row keeps besides its kind, path and lines.
-fn meta_of(event: &Event) -> EventMeta {
+/// The facts a row keeps besides its kind, path and lines; for a shell command, the check its exit
+/// status vouches for, as `commands` tells it.
+fn meta_of(event: &Event, commands: &Commands) -> EventMeta {
     // INVARIANT: no-content-stored (a tool's command, search pattern and output never reach the
-    // row: only how it ended and how much it printed)
+    // row: only how it ended, how much it printed, and the runner and kind of the check it ran)
     let result = event.tool_result;
+    let check = event
+        .tool_target
+        .as_ref()
+        .and_then(|target| target.command.as_ref())
+        .and_then(|command| {
+            commands
+                .recognise(command, &event.repo_root, &event.cwd)
+                .into_iter()
+                .filter_map(|ran| match ran {
+                    Ran::Check(check) => Some(check),
+                    Ran::Restore(_) => None,
+                })
+                .min_by_key(|check| rank(check.kind))
+        });
     EventMeta {
         source: None,
         tool: event.tool,
@@ -328,5 +350,20 @@ fn meta_of(event: &Event) -> EventMeta {
         compact_trigger: event.compact_trigger,
         end_reason: event.end_reason.clone(),
         subagent_type: event.subagent_type.clone(),
+        // Every runner's name is an identifier (a test of the runners says so), so none is lost.
+        runner: check.and_then(|Check { runner, .. }| Identifier::new(runner).ok()),
+        check: check.map(|check| check.kind),
+    }
+}
+
+/// Which check stands for a line that ran several, the lowest first: tests, then a build, a type
+/// check, a lint, so that the one kept tells the most about the edits before it (a lint counts for
+/// no outcome). Of two of a kind, the first in the line stands.
+fn rank(kind: CommandKind) -> u8 {
+    match kind {
+        CommandKind::Test => 0,
+        CommandKind::Build => 1,
+        CommandKind::TypeCheck => 2,
+        CommandKind::Lint => 3,
     }
 }

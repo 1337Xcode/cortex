@@ -38,7 +38,7 @@ use anyhow::Context;
 use cortex_core::ipc::CORTEX_VERSION;
 use cortex_core::{RepoId, UserFolder, canonical_root};
 use cortex_index::{Change, DiscoverOptions, IndexReport, watch};
-use cortex_learn::Recorder;
+use cortex_learn::{Commands, Recorder};
 use cortex_store::{Writer, WriterOptions};
 
 use self::host::Host;
@@ -131,6 +131,8 @@ fn index_and_serve(
         note(&format!("warning: {warning}"))?;
     }
     let config = loaded.config;
+    // The configuration refuses a pattern that does not compile, so this fails only as it would.
+    let commands = Commands::new(&config.test_extra_patterns)?;
     let folder = root.join(".cortex");
     // INVARIANT: single-writer (the store's writer is opened here only, and its lock refuses a
     // second one)
@@ -145,7 +147,7 @@ fn index_and_serve(
     // The store opens first, so that hook events arriving while the grammars load are recorded;
     // those that came while it opened are recorded at once.
     let excerpt = config.store_prompt_excerpt;
-    let mut recorder = Recorder::new(excerpt);
+    let mut recorder = Recorder::new(excerpt, commands);
     host::record_waiting(&mut writer, &mut recorder, inbox);
     // From here on, a daemon that cannot go on still records the events it took before it stops.
     let grammars = or_close(

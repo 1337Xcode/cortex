@@ -411,3 +411,23 @@ fn operands<'a>(args: &[&'a str], with_value: &[&str]) -> Vec<&'a str> {
     }
     found
 }
+
+#[cfg(test)]
+mod tests {
+    use cortex_core::Identifier;
+
+    use super::*;
+
+    /// Every runner's name, and the name of a command the user's patterns name, is one an event's
+    /// facts may keep.
+    #[test]
+    fn every_runner_s_name_is_an_identifier() {
+        let names = RUNNERS
+            .iter()
+            .map(|runner| runner.name)
+            .chain([super::super::CONFIGURED]);
+        for name in names {
+            assert!(Identifier::new(name).is_ok(), "{name}");
+        }
+    }
+}

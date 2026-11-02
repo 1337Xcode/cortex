@@ -6,8 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use cortex_core::{RepoPath, ShellCommand};
-use cortex_learn::{CONFIGURED, Check, CommandKind, Commands, Ran, Restore};
+use cortex_core::{CommandKind, RepoPath, ShellCommand};
+use cortex_learn::{CONFIGURED, Check, Commands, Ran, Restore};
 
 /// Result type for these tests: any failure fails the test.
 type TestResult = Result<(), Box<dyn std::error::Error>>;

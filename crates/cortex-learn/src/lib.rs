@@ -11,6 +11,6 @@ mod commands;
 mod record;
 mod watcher_edits;
 
-pub use commands::{CONFIGURED, Check, CommandKind, Commands, PatternError, Ran, Restore};
+pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore};
 pub use record::Recorder;
 pub use watcher_edits::{ATTRIBUTION_WINDOW_MS, HOLD_MS, WatcherEdit, WatcherEdits};

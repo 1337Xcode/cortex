@@ -80,6 +80,20 @@ named_kind! {
     }
 }
 
+named_kind! {
+    /// What a check a shell command ran checks.
+    CommandKind {
+        /// It runs tests.
+        Test => "test",
+        /// It builds.
+        Build => "build",
+        /// It checks types without building.
+        TypeCheck => "type_check",
+        /// It lints.
+        Lint => "lint",
+    }
+}
+
 /// The facts an event row keeps besides its kind, path and lines, stored as JSON. Every field is
 /// optional and left out when absent.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +128,13 @@ pub struct EventMeta {
     /// The subagent's type, as the agent names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent_type: Option<Identifier>,
+    /// The runner of the check a shell command ran, by the name Cortex gives it (`cargo`, `pytest`),
+    /// when the command's exit status vouches for one. Never the command itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<Identifier>,
+    /// What that check checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<CommandKind>,
 }
 
 /// The start of a prompt, kept only when the user asks: at most [`PROMPT_EXCERPT_CHARS`]

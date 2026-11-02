@@ -8,7 +8,7 @@ use cortex_core::{
     ContentHash, EventKind, EventMeta, EventSource, FileFlags, HookKind, Identifier, Language,
     RepoPath, StartSource, ToolKind, Ulid,
 };
-use cortex_learn::{Recorder, WatcherEdit, WatcherEdits};
+use cortex_learn::{Commands, Recorder, WatcherEdit, WatcherEdits};
 use cortex_store::{EventRecord, FileIndex, FileRecord, NodeId};
 
 /// A repository path.
@@ -97,7 +97,7 @@ fn edits_are_held_two_seconds_from_when_they_were_first_seen() -> TestResult {
 #[test]
 fn an_edit_goes_to_the_session_most_recently_active() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false);
+    let mut recorder = Recorder::new(false, Commands::default());
     let asked = prompt("s1", 11_000, "fix it")?;
     let t1 = task_of(&asked)?;
     store.record(
@@ -150,7 +150,7 @@ fn an_edit_goes_to_the_session_most_recently_active() -> TestResult {
 #[test]
 fn a_hook_s_edit_claims_the_watcher_s() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false);
+    let mut recorder = Recorder::new(false, Commands::default());
     let asked = prompt("s1", 11_000, "fix it")?;
     let t1 = task_of(&asked)?;
     let edit = tool(
@@ -192,7 +192,7 @@ fn a_hook_s_edit_claims_the_watcher_s() -> TestResult {
 #[test]
 fn a_failed_edit_claims_nothing() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false);
+    let mut recorder = Recorder::new(false, Commands::default());
     let asked = prompt("s1", 11_000, "fix it")?;
     let t1 = task_of(&asked)?;
     let failed_edit = tool(
@@ -226,7 +226,7 @@ fn a_failed_edit_claims_nothing() -> TestResult {
 #[test]
 fn a_subagent_s_work_counts_for_its_starter() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false);
+    let mut recorder = Recorder::new(false, Commands::default());
     let asked = prompt("s1", 11_000, "fix it")?;
     let t1 = task_of(&asked)?;
     let child = |hook, ts_ms| -> TestResult<_> {
@@ -280,7 +280,7 @@ fn a_subagent_s_work_counts_for_its_starter() -> TestResult {
 #[test]
 fn the_owner_does_not_depend_on_arrival_order() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false);
+    let mut recorder = Recorder::new(false, Commands::default());
     store.record(
         &mut recorder,
         &[
@@ -326,7 +326,7 @@ fn the_owner_does_not_depend_on_arrival_order() -> TestResult {
 #[test]
 fn what_was_seen_outlives_a_rolled_back_batch() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false);
+    let mut recorder = Recorder::new(false, Commands::default());
     let edit = |ts_ms, file| {
         tool(
             HookKind::PostTool,
@@ -364,7 +364,7 @@ fn what_was_seen_outlives_a_rolled_back_batch() -> TestResult {
 #[test]
 fn ties_go_to_the_first_session_by_id() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false);
+    let mut recorder = Recorder::new(false, Commands::default());
     let mut transaction = store.writer.transaction()?;
     transaction.replace_file(&FileIndex {
         file: FileRecord {

@@ -17,7 +17,7 @@ mod shell;
 
 use std::path::Path;
 
-use cortex_core::{RepoPath, ShellCommand};
+use cortex_core::{CommandKind, RepoPath, ShellCommand};
 use regex::Regex;
 use thiserror::Error;
 
@@ -26,19 +26,6 @@ use self::shell::{AndOr, Command, Join, List, Pipeline, Word};
 
 /// The runner's name for a command one of the user's `tests.extra_patterns` names.
 pub const CONFIGURED: &str = "configured";
-
-/// What a check is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CommandKind {
-    /// Runs tests.
-    Test,
-    /// Builds.
-    Build,
-    /// Checks types without building.
-    TypeCheck,
-    /// Lints.
-    Lint,
-}
 
 /// A check a command ran: the runner, by its name, and what it checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +65,8 @@ pub struct PatternError {
 }
 
 /// The commands Cortex tells apart: the runners it knows and the user's patterns, compiled once.
-#[derive(Debug)]
+/// The default knows the runners alone.
+#[derive(Debug, Default)]
 pub struct Commands {
     /// The user's patterns.
     patterns: Vec<Regex>,
