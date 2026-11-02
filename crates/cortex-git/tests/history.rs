@@ -248,6 +248,91 @@ fn a_read_stops_at_the_commit_it_is_given() -> TestResult {
     Ok(())
 }
 
+/// A stop commit older than the window's oldest time is still reached: it comes first among the
+/// older commits, and what was read before still leads up to HEAD. Commits on days 0, 10 and 20,
+/// the stop at day 10, the cut-off at day 15: day 20 is read and the stop reached.
+#[test]
+fn a_stop_commit_older_than_the_window_is_reached() -> TestResult {
+    let repo = Repo::new()?;
+    commit_day(&repo, 0)?;
+    let day_10 = commit_day(&repo, 10)?;
+    let day_20 = commit_day(&repo, 20)?;
+    let window = Window {
+        oldest_s: DAY_0_S + 15 * DAY_S,
+        stop_at: Some(day_10),
+        ..every_commit()
+    };
+    for (name, mined) in read_both(&repo.root(), &window)? {
+        let ids: Vec<&str> = mined
+            .commits
+            .iter()
+            .map(|commit| commit.id.as_str())
+            .collect();
+        assert_eq!(ids, [day_20.as_str()], "{name}");
+        assert!(mined.is_stop_reached, "{name}");
+    }
+    Ok(())
+}
+
+/// A HEAD that names no commit is an error, not an empty history: one naming a tree, and one
+/// naming an object the repository does not hold.
+#[test]
+fn a_broken_head_is_an_error() -> TestResult {
+    let repo = Repo::new()?;
+    commit_day(&repo, 1)?;
+    let tree = repo.git(&["rev-parse", "HEAD^{tree}"])?;
+    let head = repo.root().join(".git").join("HEAD");
+    for broken in [tree.as_str(), "0123456789abcdef0123456789abcdef01234567"] {
+        std::fs::write(&head, format!("{broken}\n"))?;
+        for (name, history) in sources(&repo.root())? {
+            assert!(
+                matches!(history.read(&every_commit()), Err(GitError::Head(_))),
+                "{name}: {broken}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A submodule's change counts as a changed file whatever the repository says of submodules: with
+/// `diff.ignoreSubmodules` set to `all`, the commit that adds the submodule `sub` and the one that
+/// moves it to another commit each list `sub`.
+#[test]
+fn a_submodule_change_counts_whatever_the_settings() -> TestResult {
+    let repo = Repo::new()?;
+    let first = commit_day(&repo, 1)?;
+    let second = commit_day(&repo, 2)?;
+    repo.git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("160000,{first},sub"),
+    ])?;
+    repo.git_on(3, &["commit", "-q", "-m", "submodule"])?;
+    let added = repo.git(&["rev-parse", "HEAD"])?;
+    repo.git(&[
+        "update-index",
+        "--cacheinfo",
+        &format!("160000,{second},sub"),
+    ])?;
+    repo.git_on(4, &["commit", "-q", "-m", "moved"])?;
+    let moved = repo.git(&["rev-parse", "HEAD"])?;
+    repo.git(&["config", "diff.ignoreSubmodules", "all"])?;
+
+    for (name, mined) in read_both(&repo.root(), &every_commit())? {
+        let newest: Vec<_> = mined.commits.iter().take(2).cloned().collect();
+        assert_eq!(
+            newest,
+            vec![
+                commit(&moved, 4, Some(vec![changed("sub")?])),
+                commit(&added, 3, Some(vec![changed("sub")?])),
+            ],
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
 /// A shallow clone's cut commit names a parent the clone does not hold: it is left out, rather
 /// than counted as adding every file, and the read says the history is shallow.
 #[test]

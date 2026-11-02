@@ -69,13 +69,26 @@ impl GixHistory {
     ///
     /// # Errors
     ///
-    /// HEAD cannot be read or peeled.
+    /// HEAD cannot be read or peeled, or names something other than a commit.
     fn head_id(&self) -> Result<Option<gix::ObjectId>, GitError> {
         let head = self.repo.head().map_err(|error| head_error(&error))?;
-        let id = head
+        let Some(id) = head
             .try_into_peeled_id()
-            .map_err(|error| head_error(&error))?;
-        Ok(id.map(gix::Id::detach))
+            .map_err(|error| head_error(&error))?
+            .map(gix::Id::detach)
+        else {
+            return Ok(None);
+        };
+        // Peeling stops at a tree or a blob as well as at a commit.
+        let kind = self
+            .repo
+            .find_header(id)
+            .map_err(|error| head_error(&error))?
+            .kind();
+        if kind != gix::object::Kind::Commit {
+            return Err(GitError::Head(format!("HEAD names a {kind}, not a commit")));
+        }
+        Ok(Some(id))
     }
 
     /// The files `commit` changed against its first parent (against nothing when it has none), in

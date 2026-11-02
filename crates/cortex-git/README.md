@@ -24,8 +24,11 @@ read a repository.
   The `gix` source compares a file over 1 MiB only by its identity; git's own comparison takes
   time in proportion to the files' sizes.
 - Write to the repository, or touch the network. In a partial clone neither source compares
-  contents, which would need what the clone left out; the `git` program is also told not to fetch
-  it (`GIT_NO_LAZY_FETCH`, which git reads from version 2.45).
+  contents, which would need what the clone left out, and the `git` program is told not to fetch
+  it (`GIT_NO_LAZY_FETCH` and, in a partial clone, `--no-lazy-fetch`; git older than 2.45 knows
+  neither and refuses the option, so that source reads no partial clone there).
+- Take a broken repository for an empty one: a HEAD that names a tree or a missing object is an
+  error; only a HEAD whose branch has no commit yet reads as no history.
 - Keep or report a file's contents. Errors name what failed and the commit, nothing more.
 
 ## Entry points
@@ -36,7 +39,7 @@ read a repository.
 | `Window` | What to read: at most `max_commits` commits, none made before `oldest_s` (the walk ends at the first such commit), a commit that changed more than `max_files` files read without its files, and an optional commit to stop at without reading it |
 | `Mined`, `MinedCommit`, `PathChange` | What a read gives: each commit's id, time and changed files as repository paths in path order (`None` for a mass commit), whether the stop commit was reached, whether the history is a shallow clone's, and whether the repository is a partial clone |
 | `GixHistory::open` | The source that reads in-process with `gix`. A merge counts against its first parent. A file moved with at least half its contents kept is a rename, git's default threshold; near it the two can differ. In a partial clone, and for files over 1 MiB, only a file moved unchanged is a rename. A shallow clone's cut commits, whose parents are missing, are left out. A path no file can have (not UTF-8, absolute, with a backslash or an empty, `.` or `..` name) is left out |
-| `CliHistory::open` | The source that runs the `git` program found on the `PATH` outside the repository, for at most 10 s an answer and 300 s and 256 MiB a listing, with every option that shapes its listing on its command line. It reads what the `gix` source reads, except that git's own rename search decides renames, so an edited file over 1 MiB moved is a rename, and a tree written by hand with a name no file can have makes git refuse the whole listing |
+| `CliHistory::open` | The source that runs the `git` program found on the `PATH` outside the repository, without the caller's `GIT_` variables, for at most 10 s an answer and 300 s and 256 MiB a listing, with every option that shapes its listing on its command line (submodule changes included whatever the repository says). Its listing is read field by field, so a path cannot pass for a commit. It reads what the `gix` source reads, except that git's own rename search decides renames, so an edited file over 1 MiB moved is a rename, and a tree written by hand with a name no file can have makes git refuse the whole listing |
 | `cochange::compute` | Which files change together, from the commits a read gave and the files that count by their current path (the caller leaves out generated and vendored files): each file's commit count, each pair's co-change count and the newest commit they share, both counts also weighted by recency (`0.5^(age / half-life)`, age in commits from the newest), and the edges. An edge runs from a file to a partner with at least 2 co-changes and a confidence, the weighted co-changes over the file's weighted commits, of at least 0.1; a file keeps at most 32, ranked by confidence times `ln(1 + co-changes)`, ties by partner. A commit's files are followed to their current paths through newer commits' renames; a mass commit ages older commits but adds nothing. Generic over the file id; deterministic |
 | `GitError` | Why a read failed: no repository at the folder's top, one that cannot be opened, HEAD, the walk or one commit's changes, each with its causes |
 
@@ -52,8 +55,9 @@ ids taken from git itself. `history.rs` covers the walk: a linear history (with 
 own log settings set to change what git shows), a merge, the window's count and time limits, a
 walk ending at the first older commit when commit times are out of order, mass commits cut by
 files changed before and new, the stop commit (also right after the window's last commit), a
-shallow clone, an empty repository, a detached HEAD, a damaged index, and folders that are not a
-repository's top. `renames.rs` covers renames: kept and rewritten files, as many renames as the
+shallow clone, a stop commit older than the window, an empty repository, a detached HEAD, a HEAD
+naming a tree or a missing object, a damaged index, a submodule moved with the repository set to
+ignore submodules, and folders that are not a repository's top. `renames.rs` covers renames: kept and rewritten files, as many renames as the
 cut allows, a mass commit whose deleted contents are gone from the repository (read without
 comparing them), large files, a partial clone whose origin is gone, attributes that git ignores
 for renames too, a text conversion that must not run, a tree written by hand with names no file

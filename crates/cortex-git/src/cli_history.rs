@@ -1,53 +1,31 @@
-//! The history read by running the `git` program: the fallback when `gix` cannot read a
-//! repository, and in the tests the reference `gix`'s reading is checked against. Git is the
-//! program the `PATH` names outside the repository; it runs in the repository's top, reading no
-//! configuration but the repository's own, looking for no repository above it and fetching
-//! nothing a partial clone left out, with every option that shapes its answer on its command line,
-//! for a bounded time and answer.
+//! The history read by running the `git` program ([`GitProgram`]): the fallback when `gix` cannot
+//! read a repository, and in the tests the reference `gix`'s reading is checked against. Every
+//! option that shapes git's listing is on its command line, so the repository's own settings change
+//! nothing it lists, and the commits are read in the order and with the checks of the `gix` source.
 //!
-//! Git's own rename search decides renames here, so a file over 1 MiB moved with an edit is a
-//! rename, which `gix` takes as a deletion and an addition; elsewhere the two read the same.
+//! Git's own rename search decides renames here, so an edited file over 1 MiB moved is a rename,
+//! which `gix` takes as a deletion and an addition; elsewhere the two read the same.
 
 use std::io::Read as _;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
+use std::path::Path;
 
-use cortex_core::{Captured, GIT, canonical_root, capture, find_program};
+use cortex_core::canonical_root;
 
 use crate::git_log::{self, FORMAT};
+use crate::git_program::GitProgram;
 use crate::history::{GitError, HistorySource, Mined, MinedCommit, PathChange, Window};
 
-/// How long git has to answer a question about HEAD, the configuration or a file in the git
-/// folder.
-const ASK_WITHIN: Duration = Duration::from_secs(10);
-
-/// How long git has to list the history a window covers: 20,000 commits of a large repository
-/// take it tens of seconds.
-const LOG_WITHIN: Duration = Duration::from_secs(300);
-
-/// The most of a short answer read: an id, a path, a few settings.
-const MAX_ANSWER_BYTES: u64 = 64 * 1024;
-
-/// The most of the history's listing read; a listing cut short is not read at all.
-const MAX_LOG_BYTES: u64 = 256 * 1024 * 1024;
-
-/// The most of the shallow clone's list of cut commits read: 25,000 ids.
+/// The most of a shallow clone's list of cut commits read: 25,000 ids. A longer list fails the
+/// read rather than leaving cut commits uncut.
 const MAX_SHALLOW_BYTES: u64 = 1024 * 1024;
 
 /// The name of the git folder at the top of a work tree.
 const DOT_GIT: &str = ".git";
 
-/// The exit code of `git config --get` and `git rev-parse --verify --quiet` for a value or a
-/// revision that is not there.
-const ABSENT: i32 = 1;
-
 /// A repository's history read by running git.
 pub struct CliHistory {
-    /// The git program.
-    git: PathBuf,
-    /// The repository's top, in its canonical form.
-    root: PathBuf,
+    /// Git for the repository.
+    git: GitProgram,
 }
 
 impl CliHistory {
@@ -63,139 +41,100 @@ impl CliHistory {
             return Err(GitError::NoRepository(root.to_path_buf()));
         }
         let root = canonical_root(root).map_err(|error| GitError::Open(error.to_string()))?;
-        let git = find_program(GIT, &root)
+        let git = GitProgram::find(&root)
             .ok_or_else(|| GitError::Open("git is not on the PATH".to_owned()))?;
-        let history = Self { git, root };
-        let top = history
+        let top = git
             .ask(&["rev-parse", "--show-toplevel"])
             .map_err(GitError::Open)?
             .ok_or_else(|| GitError::Open("git names no work tree".to_owned()))?;
-        let is_root =
-            canonical_root(Path::new(top.trim_end())).is_ok_and(|top| top == history.root);
+        let is_root = canonical_root(Path::new(top.trim_end())).is_ok_and(|top| top == root);
         if !is_root {
             return Err(GitError::Open(format!(
                 "its work tree is not {}",
-                history.root.display()
+                root.display()
             )));
         }
-        Ok(history)
+        Ok(Self { git })
     }
 
-    /// Git, run in the repository's top with `args`, as the module says.
-    fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(&self.git);
-        command
-            .arg("--no-pager")
-            .args(args)
-            .current_dir(&self.root)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", NULL_DEVICE)
-            // A partial clone would otherwise fetch what it left out from its remote.
-            .env("GIT_NO_LAZY_FETCH", "1");
-        for name in [
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_CONFIG_COUNT",
-            "GIT_CONFIG_PARAMETERS",
-            "GIT_OBJECT_DIRECTORY",
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        ] {
-            command.env_remove(name);
-        }
-        if let Some(parent) = self.root.parent() {
-            command.env("GIT_CEILING_DIRECTORIES", parent);
-        }
-        command
-    }
-
-    /// Git's short answer to `args` as text; `None` when git says the thing asked for is not
-    /// there.
-    ///
-    /// # Errors
-    ///
-    /// Git does not answer in time, fails, or answers more than a short answer or other than text.
-    fn ask(&self, args: &[&str]) -> Result<Option<String>, String> {
-        let answer = run(&mut self.command(args), ASK_WITHIN, MAX_ANSWER_BYTES)?;
-        if answer.status.code() == Some(ABSENT) && answer.stdout.is_empty() {
-            return Ok(None);
-        }
-        if !answer.status.success() {
-            return Err(format!("git ended with {}", answer.status));
-        }
-        String::from_utf8(answer.stdout)
-            .map(Some)
-            .map_err(|_| "git's answer is not UTF-8 text".to_owned())
-    }
-}
-
-impl CliHistory {
     /// Whether the repository is a partial clone, as git tells one: `extensions.partialClone`
-    /// set, or `promisor` set on a remote. A `promisor` value that is not a false one counts as
-    /// set, as the `gix` source counts it.
+    /// set, or `promisor` true on a remote, read as git reads a boolean. A `promisor` git cannot
+    /// read as a boolean counts as set, as the `gix` source counts it: comparing contents in a
+    /// partial clone fails the read, comparing none only finds fewer renames.
     ///
     /// # Errors
     ///
     /// Git does not answer.
     fn is_partial(&self) -> Result<bool, GitError> {
-        let ask = |args: &[&str]| self.ask(args).map_err(GitError::Open);
-        if ask(&["config", "--get", "extensions.partialClone"])?.is_some() {
+        let partial_clone = self
+            .git
+            .ask(&["config", "--get", "extensions.partialClone"])
+            .map_err(GitError::Open)?;
+        if partial_clone.is_some() {
             return Ok(true);
         }
-        let promisors = ask(&["config", "--get-regexp", r"^remote\..*\.promisor$"])?;
-        Ok(promisors.is_some_and(|lines| {
-            lines.lines().any(|line| {
-                let value = line.split_once(' ').map_or("", |(_, value)| value);
-                !["false", "no", "off", "0"]
-                    .iter()
-                    .any(|word| value.eq_ignore_ascii_case(word))
-            })
-        }))
+        let promisors = self.git.ask(&[
+            "config",
+            "--type=bool",
+            "--get-regexp",
+            r"^remote\..*\.promisor$",
+        ]);
+        Ok(match promisors {
+            Ok(Some(lines)) => lines.lines().any(|line| line.ends_with(" true")),
+            Ok(None) => false,
+            Err(_) => true,
+        })
     }
 
     /// The commits a shallow clone cut, whose parents it does not hold; none in a full clone.
     ///
     /// # Errors
     ///
-    /// Git does not say where the list is, or it cannot be read.
+    /// Git does not say where the list is, or it cannot be read or is longer than
+    /// [`MAX_SHALLOW_BYTES`].
     fn shallow_cut(&self) -> Result<Vec<String>, GitError> {
-        let walk =
+        let failed =
             |message: String| GitError::Walk(format!("reading the shallow commits: {message}"));
         let path = self
+            .git
             .ask(&["rev-parse", "--git-path", "shallow"])
-            .map_err(walk)?
-            .ok_or_else(|| walk("git names no file".to_owned()))?;
-        let file = self.root.join(path.trim_end());
-        let text = match std::fs::File::open(&file) {
-            Ok(opened) => {
-                let mut text = String::new();
-                opened
-                    .take(MAX_SHALLOW_BYTES)
-                    .read_to_string(&mut text)
-                    .map_err(|error| walk(error.to_string()))?;
-                text
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(walk(error.to_string())),
+            .map_err(failed)?
+            .ok_or_else(|| failed("git names no file".to_owned()))?;
+        let file = self.git.root().join(path.trim_end());
+        let opened = match std::fs::File::open(&file) {
+            Ok(opened) => opened,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(failed(error.to_string())),
         };
+        let mut text = String::new();
+        opened
+            .take(MAX_SHALLOW_BYTES + 1)
+            .read_to_string(&mut text)
+            .map_err(|error| failed(error.to_string()))?;
+        if text.len() as u64 > MAX_SHALLOW_BYTES {
+            return Err(failed(format!(
+                "the list is over {MAX_SHALLOW_BYTES} bytes"
+            )));
+        }
         Ok(text
             .lines()
-            .map(|id| id.trim().to_owned())
+            .map(str::trim)
             .filter(|id| !id.is_empty())
+            .map(str::to_owned)
             .collect())
     }
 
     /// Git's listing of the commits `window` covers, from HEAD along the first-parent line: as
     /// many as the window takes and one more, so that the stop commit shows when it comes right
-    /// after them (a shallow clone's cut commit, which is left out, is the last on the line). Git
-    /// ends the listing at the first commit older than the window's oldest time, as the `gix`
-    /// source ends its walk.
+    /// after them (a shallow clone's cut commit, which is left out, is the last on the line). The
+    /// window's oldest time is checked as the commits are read, as the `gix` source checks it,
+    /// so that a stop commit older than the window is seen.
     ///
     /// # Errors
     ///
-    /// Git does not end in time, fails, or lists more than [`MAX_LOG_BYTES`].
-    fn log(&self, window: &Window, is_partial: bool) -> Result<Vec<u8>, GitError> {
+    /// Git does not end in time, fails, or lists more than it may.
+    fn listing(&self, window: &Window, is_partial: bool) -> Result<Vec<u8>, GitError> {
         let max_count = format!("--max-count={}", window.max_commits.saturating_add(1));
-        let max_age = format!("--max-age={}", window.oldest_s);
         // Git compares contents for renames as `gix` does: at most `max_files` squared pairs, and
         // in a partial clone none, which would need contents it does not hold.
         let renames = if is_partial {
@@ -204,9 +143,13 @@ impl CliHistory {
             "--find-renames=50%"
         };
         let limit = format!("-l{}", window.max_files.max(1));
+        // Git older than 2.45 refuses `--no-lazy-fetch`, and so reads no partial clone.
+        let options: &[&str] = if is_partial {
+            &["--no-lazy-fetch", "-c", "log.showRoot=true"]
+        } else {
+            &["-c", "log.showRoot=true"]
+        };
         let args = [
-            "-c",
-            "log.showRoot=true",
             "log",
             "--first-parent",
             "--diff-merges=first-parent",
@@ -214,6 +157,7 @@ impl CliHistory {
             &limit,
             "--name-status",
             "-z",
+            "--ignore-submodules=none",
             "--no-color",
             "--no-decorate",
             "--no-show-signature",
@@ -222,30 +166,38 @@ impl CliHistory {
             "--no-textconv",
             FORMAT,
             &max_count,
-            &max_age,
             "HEAD",
             "--",
         ];
-        let listing =
-            run(&mut self.command(&args), LOG_WITHIN, MAX_LOG_BYTES).map_err(GitError::Walk)?;
-        if !listing.status.success() {
-            return Err(GitError::Walk(format!("git ended with {}", listing.status)));
-        }
-        if listing.is_cut {
-            return Err(GitError::Walk(format!(
-                "git listed more than {MAX_LOG_BYTES} bytes of history"
-            )));
-        }
-        Ok(listing.stdout)
+        self.git.list(options, &args).map_err(GitError::Walk)
     }
 }
 
 impl HistorySource for CliHistory {
     fn head(&self) -> Result<Option<String>, GitError> {
-        let id = self
-            .ask(&["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
-            .map_err(GitError::Head)?;
-        Ok(id.map(|id| id.trim_end().to_owned()))
+        let ask = |args: &[&str]| self.git.ask(args).map_err(GitError::Head);
+        if let Some(id) = ask(&["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])? {
+            return Ok(Some(id.trim_end().to_owned()));
+        }
+        // No commit: HEAD's branch has none yet, which is no error, or HEAD names something that
+        // is not a commit or is missing, which is.
+        let branch = ask(&["symbolic-ref", "--quiet", "HEAD"])?;
+        let is_unborn = match branch {
+            Some(branch) => ask(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                branch.trim_end(),
+            ])?
+            .is_none(),
+            None => false,
+        };
+        if is_unborn {
+            Ok(None)
+        } else {
+            Err(GitError::Head("HEAD names no commit".to_owned()))
+        }
     }
 
     fn read(&self, window: &Window) -> Result<Mined, GitError> {
@@ -258,7 +210,7 @@ impl HistorySource for CliHistory {
         }
         let cut = self.shallow_cut()?;
         mined.is_shallow = !cut.is_empty();
-        let listing = self.log(window, mined.is_partial)?;
+        let listing = self.listing(window, mined.is_partial)?;
         let listed = git_log::parse(&listing).map_err(|error| GitError::Walk(error.to_string()))?;
         for commit in listed {
             if window.stop_at.as_deref() == Some(commit.id.as_str()) {
@@ -266,6 +218,9 @@ impl HistorySource for CliHistory {
                 break;
             }
             if mined.commits.len() >= window.max_commits {
+                break;
+            }
+            if commit.time_s < window.oldest_s {
                 break;
             }
             if cut.contains(&commit.id) {
@@ -288,12 +243,4 @@ impl HistorySource for CliHistory {
         }
         Ok(mined)
     }
-}
-
-/// The file git reads as an empty configuration.
-const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
-
-/// What `command` printed, run for at most `within` and `max_bytes` of output; why not, as text.
-fn run(command: &mut Command, within: Duration, max_bytes: u64) -> Result<Captured, String> {
-    capture(command, within, max_bytes).map_err(|error| format!("git did not answer ({error})"))
 }

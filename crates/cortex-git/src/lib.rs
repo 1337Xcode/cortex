@@ -9,6 +9,7 @@
 mod cli_history;
 pub mod cochange;
 mod git_log;
+mod git_program;
 mod gix_history;
 mod history;
 mod renames;

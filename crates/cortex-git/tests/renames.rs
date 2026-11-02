@@ -194,11 +194,33 @@ fn a_partial_clone_matches_identical_contents_only() -> TestResult {
         ),
         commit(&first, 1, Some(vec![changed("a.txt")?, changed("b.txt")?])),
     ];
-    for (name, mined) in read_both(&clone.root(), &every_commit())? {
-        assert_eq!(mined.commits, expected, "{name}");
-        assert!(mined.is_partial, "{name}");
+    let mined = GixHistory::open(&clone.root())?.read(&every_commit())?;
+    assert_eq!(mined.commits, expected);
+    assert!(mined.is_partial);
+    // Git older than 2.45 cannot be told not to fetch, so the git source refuses the clone.
+    let listed = CliHistory::open(&clone.root())?.read(&every_commit());
+    if git_version()? >= (2, 45) {
+        let mined = listed?;
+        assert_eq!(mined.commits, expected);
+        assert!(mined.is_partial);
+    } else {
+        assert!(matches!(listed, Err(GitError::Walk(_))), "{listed:?}");
     }
     Ok(())
+}
+
+/// The major and minor version of the git on the `PATH`, from `git version`.
+fn git_version() -> TestResult<(u32, u32)> {
+    let output = std::process::Command::new("git").arg("version").output()?;
+    let text = String::from_utf8(output.stdout)?;
+    let number = text
+        .split_whitespace()
+        .nth(2)
+        .ok_or("git version printed no number")?;
+    let mut parts = number.split('.').map(str::parse::<u32>);
+    let major = parts.next().ok_or("no major version")??;
+    let minor = parts.next().ok_or("no minor version")??;
+    Ok((major, minor))
 }
 
 /// Attributes take no part in renames, as in git: files marked as not to be diffed, by the
