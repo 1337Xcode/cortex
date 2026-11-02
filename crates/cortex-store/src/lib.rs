@@ -24,6 +24,7 @@ mod meta;
 mod migrate;
 mod nodes;
 mod passes_on;
+mod pause;
 mod queries;
 mod raw;
 mod reader;
@@ -41,6 +42,7 @@ pub use error::StoreError;
 pub use ids::{FileId, NodeId, RefId, SymbolId};
 pub use lock::is_writer_running;
 pub use meta::MetaKey;
+pub use pause::{PAUSE_EVERY, Pacer, Pause, wait_for};
 pub use queries::Queries;
 pub use reader::Reader;
 pub use records::{

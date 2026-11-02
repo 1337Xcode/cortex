@@ -30,7 +30,7 @@ use cortex_store::{
 
 use crate::bindings::{Bindings, Lookup, Reach};
 use crate::name_changes::{NameChanges, may_find_otherwise};
-use crate::pause::Pacer;
+use cortex_store::Pacer;
 
 /// How many references are written per transaction.
 const RESOLUTIONS_PER_TRANSACTION: usize = 4096;

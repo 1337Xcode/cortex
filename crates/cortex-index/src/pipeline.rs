@@ -29,8 +29,8 @@ use std::time::Duration;
 
 use cortex_core::{ContentHash, FileFlags, Language, ModeSetting, RepoPath, ScaleMode};
 use cortex_store::{
-    ChangeKind, FileChange, FileIndex, FileRecord, FileRow, RefId, StoreError, SymbolChange,
-    SymbolId, Target, Writer,
+    ChangeKind, FileChange, FileIndex, FileRecord, FileRow, Pacer, Pause, RefId, StoreError,
+    SymbolChange, SymbolId, Target, Writer, wait_for,
 };
 use thiserror::Error;
 
@@ -46,7 +46,6 @@ use crate::grammar::Grammars;
 use crate::imports::Project;
 use crate::incremental::{self, Neighbours};
 use crate::name_changes::NameChanges;
-use crate::pause::{self, Pacer, Pause};
 use crate::resolve;
 use crate::safe_read;
 use crate::scale::{self, RepoSize};
@@ -721,7 +720,7 @@ pub(crate) fn write_files(
         let mut next = batches.next().map(prepare);
         while let Some(preparing) = next.take() {
             let outcomes =
-                pause::wait_for(&preparing, pacer, writer).ok_or(IndexError::WorkerPanicked)??;
+                wait_for(&preparing, pacer, writer).ok_or(IndexError::WorkerPanicked)??;
             next = batches.next().map(prepare);
             written.extend(write_batch(
                 writer,

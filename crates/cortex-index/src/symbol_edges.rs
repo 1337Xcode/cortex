@@ -13,7 +13,7 @@ use cortex_core::EdgeType;
 use cortex_store::{EdgeRecord, NodeId, StoreError, SymbolId, Target, Writer};
 
 use crate::node_lookup::NodeLookup;
-use crate::pause::Pacer;
+use cortex_store::Pacer;
 
 /// How many definitions have their edges written in one transaction: a commit costs little next to
 /// this many definitions' edges, and the transaction stays short.

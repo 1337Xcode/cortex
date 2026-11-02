@@ -14,11 +14,10 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::{Context, bail};
 use cortex_core::{Config, Event, RepoPath, unix_millis};
 use cortex_index::{
-    Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, PAUSE_EVERY, Pause, index_paths,
-    index_repository,
+    Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
 };
 use cortex_learn::{Recorder, WatcherEdits};
-use cortex_store::{StoreError, Writer};
+use cortex_store::{PAUSE_EVERY, Pause, StoreError, Writer};
 
 use crate::inbox::{Changed, Inbox, Work};
 

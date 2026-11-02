@@ -40,7 +40,6 @@ mod node_lookup;
 mod path_rules;
 mod pattern_rules;
 mod patterns;
-mod pause;
 mod pipeline;
 mod references;
 mod resolve;
@@ -66,7 +65,6 @@ pub use discover::{
 };
 pub use extract::{ExtractError, Extraction, Extractor, LeftOut};
 pub use grammar::{GrammarError, Grammars};
-pub use pause::{PAUSE_EVERY, Pause};
 pub use pipeline::{
     FileProblem, IndexError, IndexOptions, IndexReport, index_repository, waits_to_be_parsed,
 };

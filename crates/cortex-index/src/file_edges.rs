@@ -11,7 +11,7 @@ use cortex_core::{EdgeType, RepoPath, Resolution};
 use cortex_store::{EdgeRecord, NodeId, StoreError, Writer};
 
 use crate::node_lookup::NodeLookup;
-use crate::pause::Pacer;
+use cortex_store::Pacer;
 
 /// How many importers have their edges written in one transaction: a commit costs little next to
 /// this many files' edges, and the transaction stays short.

@@ -15,9 +15,9 @@ use std::time::Duration;
 
 use cortex_core::{ModeSetting, RepoId, RepoPath};
 use cortex_index::{
-    DiscoverOptions, Grammars, IndexOptions, IndexReport, Pause, index_paths, index_repository,
+    DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
 };
-use cortex_store::{Reader, SymbolId, Writer, WriterOptions};
+use cortex_store::{Pause, Reader, SymbolId, Writer, WriterOptions};
 
 /// Result type for these tests: any failure fails the test.
 pub type TestResult<T = ()> = Result<T, Box<dyn Error>>;

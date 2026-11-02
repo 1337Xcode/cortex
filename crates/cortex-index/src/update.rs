@@ -20,7 +20,6 @@ use cortex_store::{FileRow, StoreError, Writer};
 
 use crate::discover::DiscoveredFile;
 use crate::grammar::Grammars;
-use crate::pause::Pacer;
 use crate::pipeline::{
     self, Context, IndexError, IndexOptions, IndexReport, Pass, index_repository,
 };
@@ -29,6 +28,7 @@ use crate::scip::{self, ScipOutcome};
 use crate::seen::{self, PathRules, PathState, WalkRules};
 use crate::watch::MAX_PATHS_IN_WINDOW;
 use crate::{folders, incremental};
+use cortex_store::Pacer;
 
 /// What the chosen paths hold, against the store.
 #[derive(Default)]

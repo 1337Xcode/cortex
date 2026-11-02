@@ -17,9 +17,9 @@ use cortex_core::{
     SymbolKind,
 };
 use cortex_index::{
-    FileProblem, IndexReport, LeftOut, Pause, Problem, ProblemKind, RepoSize, ScipOutcome,
+    FileProblem, IndexReport, LeftOut, Problem, ProblemKind, RepoSize, ScipOutcome,
 };
-use cortex_store::{FileRow, NodeId, Reader, RefRow, SymbolRow, Writer};
+use cortex_store::{FileRow, NodeId, Pause, Reader, RefRow, SymbolRow, Writer};
 
 /// A time limit no test file comes near, even in a debug build.
 const GENEROUS: Duration = Duration::from_secs(60);

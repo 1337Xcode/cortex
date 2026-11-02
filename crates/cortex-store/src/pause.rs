@@ -1,37 +1,34 @@
-//! What the caller of an index does between two of the index's write transactions. The daemon
-//! commits the hook events waiting for it there, so that an index taking minutes never holds them
-//! back past the second a hard kill may lose.
+//! What the caller of a long write does between two of its write transactions: an index of the
+//! repository, a mining of its history. The daemon commits the hook events waiting for it there, so
+//! that a write taking minutes never holds them back past the second a hard kill may lose.
 
 use std::fmt;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
-use cortex_store::Writer;
+use crate::Writer;
 
 /// How often the daemon's pause comes: a quarter of the second of hook events a hard kill may
 /// lose. Fixed by that bound, as the batch size is by the work in a batch, rather than tuned.
 pub const PAUSE_EVERY: Duration = Duration::from_millis(250);
 
-/// The shortest wait between two looks for a batch that is not ready: a pause that comes every
+/// The shortest wait between two looks for a message that is not ready: a pause that comes every
 /// zero seconds, as a test asks for, must not turn the wait into a spin.
 const SHORTEST_WAIT: Duration = Duration::from_millis(1);
 
-/// A callback an index calls with its writer and no transaction open: between each two of its
-/// stretches (the walk, the removals, the inventory, the writes, the reading again, the
-/// resolution, each edge pass, the folders), and inside the long ones at the first safe point once
-/// `every` has passed since the last call: while it waits for a batch of files to be read and
-/// parsed, inside a batch's writes, while the resolver works ties out and between its writes, and
-/// between the edge writes. It never calls the index back.
+/// A callback a long write calls with its writer and no transaction open: between each two of its
+/// stretches, and inside the long ones at the first safe point once `every` has passed since the
+/// last call. It never calls the write back.
 #[derive(Clone, Copy)]
 pub struct Pause<'a> {
     /// What the caller does.
     callback: &'a dyn Fn(&mut Writer),
-    /// How long the index may go without calling it.
+    /// How long the write may go without calling it.
     every: Duration,
 }
 
 impl<'a> Pause<'a> {
-    /// A pause that calls `callback` between the index's stretches and, inside them, once `every`
+    /// A pause that calls `callback` between a write's stretches and, inside them, once `every`
     /// has passed; the daemon gives [`PAUSE_EVERY`].
     #[must_use]
     pub fn new(callback: &'a dyn Fn(&mut Writer), every: Duration) -> Self {
@@ -49,9 +46,10 @@ impl fmt::Debug for Pause<'_> {
     }
 }
 
-/// The time since an index last let its caller in, for an index that offers to at safe points:
-/// no transaction open, nothing of the store borrowed. One pacer serves a whole index.
-pub(crate) struct Pacer<'a> {
+/// The time since a long write last let its caller in, for a write that offers to at safe points:
+/// no transaction open, nothing of the store borrowed. One pacer serves a whole write.
+#[derive(Debug)]
+pub struct Pacer<'a> {
     /// The caller's pause, if it gave one.
     pause: Option<Pause<'a>>,
     /// When the caller was last let in.
@@ -60,7 +58,8 @@ pub(crate) struct Pacer<'a> {
 
 impl<'a> Pacer<'a> {
     /// A pacer for `pause`, counting from now.
-    pub(crate) fn new(pause: Option<Pause<'a>>) -> Self {
+    #[must_use]
+    pub fn new(pause: Option<Pause<'a>>) -> Self {
         Self {
             pause,
             since: Instant::now(),
@@ -69,21 +68,22 @@ impl<'a> Pacer<'a> {
 
     /// Whether the caller's period has passed since it was last let in: a transaction open that
     /// long is due to be committed. Never, without a pause.
-    pub(crate) fn is_due(&self) -> bool {
+    #[must_use]
+    pub fn is_due(&self) -> bool {
         self.pause
             .is_some_and(|pause| self.since.elapsed() >= pause.every)
     }
 
     /// Lets the caller in when it is due: what a long stretch of work does at each safe point.
-    pub(crate) fn offer(&mut self, writer: &mut Writer) {
+    pub fn offer(&mut self, writer: &mut Writer) {
         if self.is_due() {
             self.let_in(writer);
         }
     }
 
-    /// Lets the caller in now: what the index does between two of its stretches, however short
-    /// they were, so that an index that ends quickly lets its caller in too.
-    pub(crate) fn let_in(&mut self, writer: &mut Writer) {
+    /// Lets the caller in now: what a write does between two of its stretches, however short they
+    /// were, so that a write that ends quickly lets its caller in too.
+    pub fn let_in(&mut self, writer: &mut Writer) {
         if let Some(pause) = self.pause {
             (pause.callback)(writer);
             self.since = Instant::now();
@@ -100,7 +100,7 @@ impl<'a> Pacer<'a> {
 
 /// Waits for the one message `receiver` will get, offering the caller a turn every period
 /// meanwhile. `None` when its sender went without a word.
-pub(crate) fn wait_for<T>(
+pub fn wait_for<T>(
     receiver: &Receiver<T>,
     pacer: &mut Pacer<'_>,
     writer: &mut Writer,
@@ -122,7 +122,8 @@ mod tests {
     use std::thread;
 
     use cortex_core::RepoId;
-    use cortex_store::WriterOptions;
+
+    use crate::WriterOptions;
 
     use super::*;
 
