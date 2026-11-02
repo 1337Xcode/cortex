@@ -1,8 +1,9 @@
 //! Clusters of tasks that changed much the same files, which a later task's prompt is matched
 //! against to find what tasks like it changed.
 //!
-//! A cluster holds the words of its files' paths, the files themselves, how many tasks it covers
-//! and when it was last written: node ids, counts, a time and words of paths, nothing of the work.
+//! A cluster holds the words its files and symbols are found by, the files themselves, how many
+//! tasks it covers and when it was last written: node ids, counts, a time and words of names and
+//! paths, nothing of the work.
 //! The clustering reads every record it is given and writes the clusters whole, so the rows are
 //! replaced together rather than changed one at a time; whoever writes them keeps their lists
 //! bounded.
@@ -19,8 +20,8 @@ use crate::schema;
 /// A cluster of tasks that changed much the same files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchetypeRecord {
-    /// The words of the paths of the files such tasks change, in order, which the words of a
-    /// prompt are matched against.
+    /// The words the files and symbols such tasks change are found by, the best first, which the
+    /// words of a prompt are matched against.
     pub seed_terms: Vec<Identifier>,
     /// The files such tasks change, the ones most of them changed first.
     pub files: Vec<NodeId>,

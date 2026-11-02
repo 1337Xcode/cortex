@@ -6,11 +6,13 @@
 //! git restores. [`judge`] tells what became of a task that has ended, from its state, and
 //! [`interest_of`] what its work adds to the interest of each node it touched, and
 //! [`links_of`] what it does to the links between them. [`episode_of`] is one record of what
-//! the task did, for the archetypes that cluster tasks later.
+//! the task did, and [`archetypes_of`] clusters those records into the shapes of task a
+//! repository has.
 
 #![warn(clippy::pedantic)]
 
 mod activity;
+mod archetype;
 mod commands;
 mod decay;
 mod episode;
@@ -22,6 +24,7 @@ mod record;
 mod task_state;
 mod watcher_edits;
 
+pub use archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
 pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore};
 pub use episode::episode_of;
 pub use interest::{EarnedInterest, add_interest, interest_of};

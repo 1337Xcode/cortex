@@ -253,6 +253,54 @@ impl Store {
         Ok(nodes)
     }
 
+    /// Records a whole task of `session` that changed each file of `paths`, stores its record as a
+    /// success, and returns the task's id, as [`Store::task_ended_as`] does.
+    pub fn task_that_changed(
+        &mut self,
+        recorder: &mut Recorder,
+        at: (&str, i64),
+        paths: &[&str],
+    ) -> TestResult<Ulid> {
+        self.task_ended_as(recorder, at, paths, cortex_core::TaskOutcome::Success)
+    }
+
+    /// Records a whole task of `session` that changed each file of `paths`, stores its record
+    /// with `outcome`, and returns the task's id. The session is started again with each task, as
+    /// a session that resumes is, and the task ends with its answer.
+    pub fn task_ended_as(
+        &mut self,
+        recorder: &mut Recorder,
+        (session, at_ms): (&str, i64),
+        paths: &[&str],
+        outcome: cortex_core::TaskOutcome,
+    ) -> TestResult<Ulid> {
+        let mut events = vec![
+            start(session, at_ms, StartSource::Startup)?,
+            prompt(session, at_ms + 1, "change it")?,
+        ];
+        for (at, path) in paths.iter().enumerate() {
+            let at_ms = at_ms + 2 + i64::try_from(at)?;
+            events.push(tool(
+                HookKind::PostTool,
+                (session, at_ms),
+                (
+                    ToolKind::Edit,
+                    target(path, &[(1, 1)])?,
+                    succeeded(None, None),
+                ),
+            )?);
+        }
+        events.push(event(HookKind::Stop, session, at_ms + 400)?);
+        let mut ended = self.record(recorder, &events)?.into_iter();
+        let state = ended.next().ok_or("no task ended")?;
+        let record =
+            cortex_learn::episode_of(self.writer.queries(), &state, (outcome, at_ms + 500))?;
+        let mut transaction = self.writer.transaction()?;
+        transaction.replace_episode(&record)?;
+        transaction.commit()?;
+        Ok(state.task_id())
+    }
+
     /// Writes a structural edge from `from` to `to`, as the index writes one for a file whose
     /// imports name another file, or for a symbol that names another.
     pub fn names(&mut self, from: NodeId, to: NodeId) -> TestResult {

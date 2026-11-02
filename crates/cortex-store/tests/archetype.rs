@@ -64,10 +64,10 @@ fn clusters_are_written_whole_and_replaced_together() -> TestResult {
     Ok(())
 }
 
-/// The records the clustering reads come oldest first and no more than it asked for: three tasks
-/// are recorded, and reading two gives the two oldest, which are the two whose ids sort first.
+/// The clustering reads the newest records, oldest first, and no more than it asked for: three
+/// tasks are recorded, and reading two gives the two newest, which are the two whose ids sort last.
 #[test]
-fn the_records_the_clustering_reads_come_oldest_first() -> TestResult {
+fn the_clustering_reads_the_newest_records_oldest_first() -> TestResult {
     let scratch = Scratch::new()?;
     let (mut writer, _) = stored(&scratch)?;
     let mut transaction = writer.transaction()?;
@@ -110,7 +110,7 @@ fn the_records_the_clustering_reads_come_oldest_first() -> TestResult {
         .into_iter()
         .map(|record| record.task_id)
         .collect();
-    assert_eq!(read, ids[..2]);
+    assert_eq!(read, ids[1..], "the newest two, oldest first");
     assert_eq!(writer.queries().episodes(10)?.len(), 3);
     Ok(())
 }

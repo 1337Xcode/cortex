@@ -329,6 +329,9 @@ pub(crate) const SEARCH_INSERT: &str =
     "INSERT INTO search_index (rowid, node_id, tokens) VALUES (?1, ?1, ?2)";
 /// A node's search tokens.
 pub(crate) const SEARCH_TOKENS: &str = "SELECT tokens FROM search_index WHERE rowid = ?1";
+/// The search tokens of the nodes in a JSON array of ids that have a search row, by node.
+pub(crate) const SEARCH_TOKENS_OF: &str = "SELECT rowid, tokens FROM search_index \
+     WHERE rowid IN (SELECT value FROM json_each(?1)) ORDER BY rowid";
 
 /// Deletes a node's outgoing edges of one type.
 pub(crate) const EDGES_DELETE_FROM: &str = "DELETE FROM edges WHERE src = ?1 AND type = ?2";
@@ -385,9 +388,10 @@ pub(crate) const ARCHETYPE_INSERT: &str = "INSERT INTO archetypes \
 /// Every cluster of tasks, oldest first.
 pub(crate) const ARCHETYPES: &str = "SELECT seed_terms, files, episode_count, updated_at \
      FROM archetypes ORDER BY archetype_id";
-/// The records of the oldest tasks, at most as many as the first parameter.
+/// The records of the newest tasks, at most as many as the first parameter, oldest first.
 pub(crate) const EPISODES: &str = "SELECT task_id, localize, change, verify, pitfalls, \
-     outcome, created_at FROM episodes ORDER BY task_id LIMIT ?1";
+     outcome, created_at FROM (SELECT task_id, localize, change, verify, pitfalls, outcome, \
+     created_at FROM episodes ORDER BY task_id DESC LIMIT ?1) ORDER BY task_id";
 
 /// Row counts for status.
 pub(crate) const COUNTS: &str = "SELECT (SELECT count(*) FROM files), \

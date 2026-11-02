@@ -561,6 +561,24 @@ impl<'c> Queries<'c> {
             .map_err(sqlite("reading search tokens"))
     }
 
+    /// The search tokens of each of `nodes` that has a search row, by node, as
+    /// [`Queries::search_tokens`] gives them.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn search_tokens_of(self, nodes: &[NodeId]) -> Result<Vec<(NodeId, String)>, StoreError> {
+        let listed = json_array(nodes.iter().map(|node| node.get().to_string()));
+        self.connection
+            .prepare_cached(schema::SEARCH_TOKENS_OF)
+            .and_then(|mut statement| {
+                statement
+                    .query_map([listed], |row| Ok((NodeId(row.get(0)?), row.get(1)?)))?
+                    .collect()
+            })
+            .map_err(sqlite("reading search tokens"))
+    }
+
     /// The edges that start at `node`, by type, then target.
     ///
     /// # Errors

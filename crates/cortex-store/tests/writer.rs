@@ -751,6 +751,14 @@ fn search_rows_follow_their_nodes() -> TestResult {
     );
     assert_eq!(tokens(folder)?.as_deref(), Some("src shop"));
     assert_eq!(tokens(root)?, None);
+    // Read together, the same rows come back by node, and a node with no row is left out.
+    assert_eq!(
+        queries.search_tokens_of(&[method_node, root, file.file_node])?,
+        [
+            (file.file_node, "src shop order lines py".to_owned()),
+            (method_node, "add item order line add item".to_owned()),
+        ]
+    );
     transaction.commit()?;
     drop(writer);
 

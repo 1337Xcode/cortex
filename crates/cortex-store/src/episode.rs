@@ -210,8 +210,9 @@ pub(crate) fn replace(connection: &Connection, episode: &EpisodeRecord) -> Resul
 }
 
 impl Queries<'_> {
-    /// The records of the oldest `limit` tasks, by task. The clustering reads them in this
-    /// order, so the oldest task of a cluster is the one the others are compared against.
+    /// The records of the newest `limit` tasks, oldest first. The clustering reads them in this
+    /// order, so the oldest task of a cluster is the one the others are compared against, and it
+    /// reads the newest so that its clusters follow the work being done now.
     ///
     /// # Errors
     ///
