@@ -24,6 +24,7 @@
 | --- | --- |
 | `crates/cortex-cli` | The `cortex` binary: commands and the entry points agents call |
 | `crates/cortex-core` | Shared types: repository paths, ids, hashes, languages, stored names, record kinds and settings |
+| `crates/cortex-git` | Reading a repository's git history: the commits on the first-parent line from HEAD and the files each one changed |
 | `crates/cortex-index` | The indexer: discovering a repository's files, flagging secrets, binaries, generated and vendored code, and reading what each file defines, uses and imports |
 | `crates/cortex-store` | The SQLite database in `.cortex/`: migrations, the single writer and readers |
 | `xtask` | The repository checks behind `cargo xtask verify` |

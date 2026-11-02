@@ -1,0 +1,337 @@
+//! How a read with `gix` recognises renamed files, and what it never does while comparing them:
+//! read contents it does not need, follow attributes, run a program the repository names. Each
+//! test makes a repository with git and compares the read with changes written by hand; where git's
+//! own view decides, git is asked.
+
+mod common;
+
+use common::{Repo, TestResult, changed, commit, every_commit, lines, renamed};
+use cortex_git::{GixHistory, HistorySource, Window};
+
+/// A file moved with nine of its ten lines kept is a rename, named with the path it had. A file
+/// moved with every line rewritten shares nothing with what it was: a deletion and an addition.
+#[test]
+fn a_rename_names_the_path_it_had() -> TestResult {
+    let repo = Repo::new()?;
+    repo.write("old/name.rs", &lines("kept", 10))?;
+    repo.write("other.rs", &lines("first", 10))?;
+    let first = repo.commit(1)?;
+    repo.move_file("old/name.rs", "new/name.rs", Some("changed 10"))?;
+    let moved = repo.commit(2)?;
+    repo.remove("other.rs")?;
+    repo.write("gone.rs", &lines("second", 10))?;
+    let rewritten = repo.commit(3)?;
+
+    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
+    let expected = vec![
+        commit(
+            &rewritten,
+            3,
+            Some(vec![changed("gone.rs")?, changed("other.rs")?]),
+        ),
+        commit(
+            &moved,
+            2,
+            Some(vec![renamed("old/name.rs", "new/name.rs")?]),
+        ),
+        commit(
+            &first,
+            1,
+            Some(vec![changed("old/name.rs")?, changed("other.rs")?]),
+        ),
+    ];
+    assert_eq!(mined.commits, expected);
+    Ok(())
+}
+
+/// Renames are found in a commit as large as the cut allows: 3 files each moved with an edit,
+/// under a cut of 3, are 3 renames, so the commit is read whole.
+#[test]
+fn renames_up_to_the_cut_are_found() -> TestResult {
+    let repo = Repo::new()?;
+    for index in 1..=3 {
+        repo.write(
+            &format!("old{index}.txt"),
+            &lines(&format!("file {index}"), 10),
+        )?;
+    }
+    repo.commit(1)?;
+    for index in 1..=3 {
+        repo.move_file(
+            &format!("old{index}.txt"),
+            &format!("new{index}.txt"),
+            Some("changed"),
+        )?;
+    }
+    let moved = repo.commit(2)?;
+
+    let window = Window {
+        max_files: 3,
+        ..every_commit()
+    };
+    let mined = GixHistory::open(&repo.root())?.read(&window)?;
+    let expected = commit(
+        &moved,
+        2,
+        Some(vec![
+            renamed("old1.txt", "new1.txt")?,
+            renamed("old2.txt", "new2.txt")?,
+            renamed("old3.txt", "new3.txt")?,
+        ]),
+    );
+    assert_eq!(mined.commits.first(), Some(&expected));
+    Ok(())
+}
+
+/// A commit with more deletions, or more additions, than the cut is cut without a single file
+/// compared for renames. Here 4 files are each moved with an edit, past a cut of 3, and the
+/// contents of the 4 files deleted are then removed from the repository: comparing any of them
+/// would fail the read.
+#[test]
+fn a_mass_commit_compares_no_contents() -> TestResult {
+    let repo = Repo::new()?;
+    for index in 1..=4 {
+        repo.write(
+            &format!("old{index}.txt"),
+            &lines(&format!("file {index}"), 10),
+        )?;
+    }
+    let day_1 = repo.commit(1)?;
+    let mut deleted = Vec::new();
+    for index in 1..=4 {
+        deleted.push(repo.git(&["rev-parse", &format!("HEAD:old{index}.txt")])?);
+        repo.move_file(
+            &format!("old{index}.txt"),
+            &format!("new{index}.txt"),
+            Some("changed"),
+        )?;
+    }
+    let day_2 = repo.commit(2)?;
+    for id in &deleted {
+        repo.remove_object(id)?;
+    }
+
+    let window = Window {
+        max_files: 3,
+        ..every_commit()
+    };
+    let mined = GixHistory::open(&repo.root())?.read(&window)?;
+    assert_eq!(
+        mined.commits,
+        vec![commit(&day_2, 2, None), commit(&day_1, 1, None)]
+    );
+    Ok(())
+}
+
+/// A file over 1 MiB is a rename only when its contents did not change, even where the
+/// repository's own configuration would compare files up to 512 MiB: one moved with its last line
+/// changed is a deletion and an addition, one moved unchanged a rename.
+#[test]
+fn a_large_file_is_renamed_only_when_unchanged() -> TestResult {
+    let repo = Repo::new()?;
+    // 100,000 lines of 14 to 18 bytes each: about 1.6 MB a file.
+    repo.write("big1.txt", &lines("big one", 100_000))?;
+    repo.write("big2.txt", &lines("big two", 100_000))?;
+    repo.commit(1)?;
+    repo.move_file("big1.txt", "moved1.txt", Some("changed"))?;
+    repo.move_file("big2.txt", "moved2.txt", None)?;
+    let moved = repo.commit(2)?;
+    repo.git(&["config", "core.bigFileThreshold", "512m"])?;
+
+    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
+    let expected = commit(
+        &moved,
+        2,
+        Some(vec![
+            changed("big1.txt")?,
+            changed("moved1.txt")?,
+            renamed("big2.txt", "moved2.txt")?,
+        ]),
+    );
+    assert_eq!(mined.commits.first(), Some(&expected));
+    Ok(())
+}
+
+/// A partial clone holds only the contents it has needed, here those of the newest commit: a file
+/// moved with an edit is a deletion and an addition, since comparing it would need the contents
+/// it had, and a file moved unchanged is a rename. The read says the clone is partial.
+#[test]
+fn a_partial_clone_matches_identical_contents_only() -> TestResult {
+    let origin = Repo::new()?;
+    origin.git(&["config", "uploadpack.allowFilter", "true"])?;
+    origin.write("a.txt", &lines("alpha", 10))?;
+    origin.write("b.txt", &lines("beta", 10))?;
+    let first = origin.commit(1)?;
+    origin.move_file("a.txt", "c.txt", Some("changed"))?;
+    origin.move_file("b.txt", "d.txt", None)?;
+    let moved = origin.commit(2)?;
+    let clone = Repo::clone_of(&origin, &["--filter=blob:none"])?;
+
+    let mined = GixHistory::open(&clone.root())?.read(&every_commit())?;
+    let expected = vec![
+        commit(
+            &moved,
+            2,
+            Some(vec![
+                changed("a.txt")?,
+                changed("c.txt")?,
+                renamed("b.txt", "d.txt")?,
+            ]),
+        ),
+        commit(&first, 1, Some(vec![changed("a.txt")?, changed("b.txt")?])),
+    ];
+    assert_eq!(mined.commits, expected);
+    assert!(mined.is_partial);
+    Ok(())
+}
+
+/// Attributes take no part in renames, as in git: files marked as not to be diffed, by the
+/// repository's `.gitattributes` and by an attributes file its configuration names outside it, are
+/// still compared, and git shows the same rename.
+#[test]
+fn attributes_take_no_part_in_renames() -> TestResult {
+    let repo = Repo::new()?;
+    repo.write(".gitattributes", "*.txt -diff\n")?;
+    repo.write("a.txt", &lines("kept", 10))?;
+    repo.commit(1)?;
+    let outside = repo.home().join("attributes");
+    std::fs::write(&outside, "*.txt -diff\n")?;
+    let outside = outside
+        .to_str()
+        .ok_or("a temporary folder that is not UTF-8")?;
+    repo.git(&["config", "core.attributesFile", outside])?;
+    repo.move_file("a.txt", "b.txt", Some("changed"))?;
+    let moved = repo.commit(2)?;
+
+    let shown = repo.git(&["log", "-1", "-M", "--name-status", "--format="])?;
+    assert!(
+        shown.starts_with('R') && shown.ends_with("a.txt\tb.txt"),
+        "{shown}"
+    );
+    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
+    let expected = commit(&moved, 2, Some(vec![renamed("a.txt", "b.txt")?]));
+    assert_eq!(mined.commits.first(), Some(&expected));
+    Ok(())
+}
+
+/// Finding a rename by content runs no program the repository names. The repository below sets
+/// up a text conversion for its `.txt` files; git runs it when it shows the diff of the rename,
+/// which proves the set-up works, and reading the same history runs nothing.
+#[test]
+fn reading_runs_no_program_the_repository_names() -> TestResult {
+    let repo = Repo::new()?;
+    repo.write(".gitattributes", "*.txt diff=probe\n")?;
+    repo.write("a.txt", &lines("kept", 10))?;
+    repo.commit(1)?;
+    repo.move_file("a.txt", "b.txt", Some("changed"))?;
+    let moved = repo.commit(2)?;
+
+    let marker = repo.home().join("ran");
+    let probe = repo.home().join("probe.sh");
+    let marker_path = marker
+        .to_str()
+        .ok_or("a temporary folder that is not UTF-8")?;
+    std::fs::write(
+        &probe,
+        format!(
+            "#!/bin/sh\necho ran > '{}'\ncat \"$1\"\n",
+            marker_path.replace('\\', "/")
+        ),
+    )?;
+    make_executable(&probe)?;
+    let probe_path = probe
+        .to_str()
+        .ok_or("a temporary folder that is not UTF-8")?;
+    let config = repo.root().join(".git").join("config");
+    let mut text = std::fs::read_to_string(&config)?;
+    text.push_str(&format!(
+        "[diff \"probe\"]\n\ttextconv = '{}'\n",
+        probe_path.replace('\\', "/")
+    ));
+    std::fs::write(&config, text)?;
+    repo.git(&["diff", "HEAD~1", "HEAD"])?;
+    assert!(marker.exists(), "git did not run the text conversion");
+    std::fs::remove_file(&marker)?;
+
+    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
+    let expected = commit(&moved, 2, Some(vec![renamed("a.txt", "b.txt")?]));
+    assert_eq!(mined.commits.first(), Some(&expected));
+    assert!(
+        !marker.exists(),
+        "reading the history ran the text conversion"
+    );
+    Ok(())
+}
+
+/// A path no file can have is left out of a commit's changes and the commit's other files stay.
+/// The tree below, written by hand as git never writes one, names a file with no name, a file
+/// `..` and a file whose name holds a backslash beside `ok.txt`.
+#[test]
+fn a_path_no_file_can_have_is_left_out() -> TestResult {
+    let repo = Repo::new()?;
+    let blob = repo.git_fed(1, &["hash-object", "-w", "--stdin"], b"text\n")?;
+    let raw_id = (0..blob.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(blob.get(at..at + 2).unwrap_or_default(), 16))
+        .collect::<Result<Vec<u8>, _>>()?;
+    let mut tree = Vec::new();
+    for name in [&b""[..], b"..", b"a\\b", b"ok.txt"] {
+        tree.extend_from_slice(b"100644 ");
+        tree.extend_from_slice(name);
+        tree.push(0);
+        tree.extend_from_slice(&raw_id);
+    }
+    let tree_id = repo.git_fed(
+        1,
+        &["hash-object", "-t", "tree", "--literally", "-w", "--stdin"],
+        &tree,
+    )?;
+    let crafted = repo.git_on(1, &["commit-tree", &tree_id, "-m", "crafted"])?;
+    repo.git(&["update-ref", "refs/heads/main", &crafted])?;
+
+    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
+    assert_eq!(
+        mined.commits,
+        vec![commit(&crafted, 1, Some(vec![changed("ok.txt")?]))]
+    );
+    Ok(())
+}
+
+/// A path that is not UTF-8 is left out of a commit's changes and the commit's other files stay;
+/// a rename from such a path is a change of the new path alone. Unix only: Windows file names are
+/// UTF-16, and git on Windows cannot make a name that is not UTF-8.
+#[cfg(unix)]
+#[test]
+fn a_path_that_is_not_utf8_is_left_out() -> TestResult {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let repo = Repo::new()?;
+    let bad = repo.root().join(OsStr::from_bytes(b"bad\xff.txt"));
+    repo.write("ok.txt", &lines("ok", 3))?;
+    std::fs::write(&bad, lines("bad", 3))?;
+    let first = repo.commit(1)?;
+    std::fs::rename(&bad, repo.root().join("good.txt"))?;
+    let second = repo.commit(2)?;
+
+    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
+    let expected = vec![
+        commit(&second, 2, Some(vec![changed("good.txt")?])),
+        commit(&first, 1, Some(vec![changed("ok.txt")?])),
+    ];
+    assert_eq!(mined.commits, expected);
+    Ok(())
+}
+
+/// Makes the file at `path` executable by its owner, as git needs of a program it runs.
+fn make_executable(path: &std::path::Path) -> TestResult {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    // On Windows a file's name, not a permission, makes it a program; git's shell runs a script.
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
