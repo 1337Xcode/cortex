@@ -232,7 +232,7 @@ fn payload(probe: &Probe, root: &str) -> Value {
 fn run(program: &str, event: &str, payload: &str) -> Result<Duration, String> {
     let mut command = Command::new(program);
     command.args(["hook", "--agent", "claude", "--event", event]);
-    let (status, took) = cortex_daemon::time_fed(&mut command, payload.as_bytes(), PROBE_WITHIN)
+    let (status, took) = cortex_core::time_fed(&mut command, payload.as_bytes(), PROBE_WITHIN)
         .map_err(|error| error.to_string())?;
     if status.success() {
         Ok(took)

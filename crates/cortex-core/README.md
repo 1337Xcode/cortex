@@ -6,11 +6,14 @@ modes and settings.
 
 ## What it must never do
 
-- Open sockets, start processes, read a repository's files, or depend on a crate that does. Every
-  other crate depends on this one, including the hook client, which must start fast. Its calls to
-  the file system resolve a folder to its canonical form (`canonical_root`), so that every crate
-  names a repository the same way, and create the user's private folders and files and rotate the
-  logs in them, so that the hook and the daemon do both the same way.
+- Open sockets, read a repository's files, or depend on a crate that does. Every other crate
+  depends on this one, including the hook client, which must start fast. Its calls to the file
+  system resolve a folder to its canonical form (`canonical_root`), so that every crate names a
+  repository the same way, and create the user's private folders and files and rotate the logs in
+  them, so that the hook and the daemon do both the same way.
+- Start a program unless a caller asks it to, through `capture` or `time_fed`; the hook client
+  never does. They sit here because the CLI, the daemon and the git history all run other
+  programs, and this is the one crate all of them may use.
 - Accept a path that leaves the repository or a stored name that spans lines: these types are
   where those rules hold.
 
@@ -38,6 +41,9 @@ modes and settings.
 | `UserFolder`, `RunFiles`, `Endpoint` | `~/.cortex` and what it holds: `config.toml`, `logs/`, and per repository id the daemon's socket (`run/<id>.sock`), named pipe (`cortex-<id>`), lock and process-id files; the endpoint a daemon listens on here, its named pipe on Windows and its socket elsewhere |
 | `Config`, `load_config`, `config_keys_set` | The settings in effect: defaults, then `~/.cortex/config.toml`, then `.cortex/config.toml`, each a `ConfigLayer` that says whether it is the user's own; unknown keys warn, unusable values are errors naming the file and key, and `upkeep.llm.enabled`, which turns on what reaches the network, is taken only from the user's own file (a repository's warns and is ignored). `config_keys_set` lists the keys a file sets. Keys: `mode`, `index.max_file_bytes`, `index.extra_ignores`, `index.parse_timeout_ms`, `index.crawl_files_per_second`, `daemon.idle_shutdown_minutes`, `store.mmap_bytes`, `privacy.store_prompt_excerpt`, `holdout.share` (a number from 0 to 1, whole numbers 0 and 1 included), `upkeep.llm.enabled`, `learning.eta`, `learning.link_decay` and `learning.interest_decay` (each above 0 and at most 1), `git.max_commits`, `git.max_age_days`, `git.max_files_per_commit`, `git.half_life_commits`, `tests.extra_patterns` (regular expressions, each checked when the file is read) |
 | `read_text_file`, `TextFileError`, `MAX_SETTINGS_BYTES` | Reads a small text file whole, such as a configuration or settings file, up to a size its reader names (1 MiB for those): read once, a byte past the limit, so that the file cannot grow between a check and the read; `None` when there is no file, and refused when it is larger or not UTF-8 |
+| `find_program` | The first program of the names given in the folders the `PATH` lists, as a shell finds it, never one inside the repository or in a relative folder of the `PATH`, which could be the repository |
+| `capture`, `Captured` | Runs a program with no input and stderr discarded, keeps at most a given number of bytes of its stdout (and whether there was more), and gives it a timeout from its start to end and close its stdout, stopping it past that; a process it started that holds the output open is not waited for. `NotFound` when it is not installed, `TimedOut` past the timeout |
+| `time_fed` | Runs a program with an input on its stdin and its output discarded, and returns how it ended and how long it took from just before its start to its end, as an agent sees a hook take. A thread of its own writes the input and waits for it, so a program that neither reads nor ends is given up on at the timeout (`TimedOut`) and left to end on its own; one that ends without reading all of its input is timed all the same |
 
 ## Tests
 

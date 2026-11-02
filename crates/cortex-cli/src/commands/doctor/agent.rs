@@ -42,7 +42,7 @@ pub(super) fn check(context: &Context) -> Vec<Finding> {
 /// says against the `versions` Cortex knows: one older than the oldest fails, and one newer than
 /// the newest tested, none found and none said are notes. `cortex init` refuses on the failure.
 pub(crate) fn version(root: &Path, versions: Versions) -> Finding {
-    let Some(program) = crate::program::on_path(PROGRAMS, root) else {
+    let Some(program) = cortex_core::find_program(PROGRAMS, root) else {
         return Finding::Note(
             "Claude Code is not on the PATH, so its version cannot be asked".to_owned(),
         );
@@ -62,7 +62,7 @@ fn asked(program: &Path) -> Result<String, String> {
     if let Some(folder) = program.parent() {
         command.current_dir(folder);
     }
-    let captured = cortex_daemon::capture(&mut command, ASK_WITHIN, MAX_ANSWER_BYTES)
+    let captured = cortex_core::capture(&mut command, ASK_WITHIN, MAX_ANSWER_BYTES)
         .map_err(|error| error.to_string())?;
     if captured.status.success() {
         Ok(String::from_utf8_lossy(&captured.stdout).into_owned())

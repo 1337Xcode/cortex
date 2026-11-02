@@ -6,12 +6,14 @@
 //! index stores, each record kind such as [`SymbolKind`] has a fixed stored name or number, and
 //! [`Config`] holds every setting with its default, and [`identifier_tokens`] splits names and
 //! paths into the words a search matches. Its only I/O is what every process needs alike:
-//! canonicalizing a repository's folder, creating folders and files only their user can read, and
-//! reading a small text file whole.
+//! canonicalizing a repository's folder, creating folders and files only their user can read,
+//! reading a small text file whole, and finding and running another program, bounded in time and
+//! output.
 
 #![warn(clippy::pedantic)]
 
 mod activity;
+mod child;
 mod config;
 mod event;
 mod hash;
@@ -24,6 +26,7 @@ mod named;
 mod one_line;
 mod path;
 mod private;
+mod program;
 mod repo_id;
 mod root;
 mod scale_mode;
@@ -37,6 +40,7 @@ pub use activity::{
     EventKind, EventMeta, EventSource, PROMPT_EXCERPT_CHARS, PromptExcerpt, SessionStatus,
     TaskOutcome,
 };
+pub use child::{Captured, capture, time_fed};
 pub use config::{
     Config, ConfigError, ConfigLayer, DEFAULT_HOLDOUT_SHARE, DEFAULT_IDLE_SHUTDOWN_MINUTES,
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, LoadedConfig,
@@ -54,6 +58,7 @@ pub use log_rotation::rotate_log;
 pub use one_line::one_line;
 pub use path::{PathError, RepoPath};
 pub use private::{append_private_file, create_private_folder, open_private_file};
+pub use program::find_program;
 pub use repo_id::RepoId;
 pub use root::canonical_root;
 pub use scale_mode::ScaleMode;

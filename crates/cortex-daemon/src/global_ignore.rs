@@ -17,8 +17,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-
-use crate::child;
+use cortex_core::capture;
 
 /// How long git may take to answer before the global gitignore is left unread.
 const GIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -72,7 +71,7 @@ fn excludes_file(root: &Path, scope: &str) -> anyhow::Result<Setting> {
         .current_dir(root)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE");
-    let answer = match child::capture(&mut git, GIT_TIMEOUT, MAX_ANSWER_BYTES) {
+    let answer = match capture(&mut git, GIT_TIMEOUT, MAX_ANSWER_BYTES) {
         Ok(answer) => answer,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Setting::Unset),
         Err(error) => return Err(error).context("running git to find the global gitignore"),

@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-use cortex_daemon::Captured;
+use cortex_core::Captured;
 
 /// How long git has to answer.
 const GIT_WITHIN: Duration = Duration::from_secs(5);
@@ -26,13 +26,13 @@ const GIT: &[&str] = if cfg!(windows) {
 /// git is not on the `PATH`, or it did not end in time.
 pub(super) fn run(args: &[&str], folder: &Path, bound: &Path) -> Result<Captured, String> {
     let git =
-        crate::program::on_path(GIT, bound).ok_or_else(|| "git is not on the PATH".to_owned())?;
+        cortex_core::find_program(GIT, bound).ok_or_else(|| "git is not on the PATH".to_owned())?;
     let mut command = Command::new(git);
     command
         .args(args)
         .current_dir(folder)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE");
-    cortex_daemon::capture(&mut command, GIT_WITHIN, MAX_ANSWER_BYTES)
+    cortex_core::capture(&mut command, GIT_WITHIN, MAX_ANSWER_BYTES)
         .map_err(|error| format!("git did not answer ({error})"))
 }

@@ -64,7 +64,7 @@ fn current_user_sid() -> io::Result<String> {
     let windows =
         std::env::var_os("SystemRoot").ok_or_else(|| io::Error::other("SystemRoot is not set"))?;
     let whoami = PathBuf::from(windows).join("System32").join("whoami.exe");
-    let answer = crate::child::capture(
+    let answer = cortex_core::capture(
         Command::new(whoami).args(["/user", "/fo", "csv", "/nh"]),
         Duration::from_secs(5),
         4096,

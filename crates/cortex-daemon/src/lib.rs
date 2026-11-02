@@ -16,7 +16,6 @@
 //! Errors are `anyhow` errors with context, as a binary's are: this crate is the daemon process's
 //! top level, and its errors are reported, never matched.
 
-mod child;
 mod global_ignore;
 mod host;
 mod inbox;
@@ -28,7 +27,6 @@ mod recent_errors;
 mod server;
 pub mod settings;
 
-pub use child::{Captured, capture, time_fed};
 pub use instance::is_running;
 
 use std::path::Path;

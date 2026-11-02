@@ -1,6 +1,6 @@
-//! Running another program Cortex needs an answer from (git and `whoami` for the daemon, Claude
-//! Code's version and the hook's probes for `cortex doctor`), bounded in time and in the output
-//! read.
+//! Running another program Cortex needs an answer from (git for a repository's history and the
+//! global gitignore, `whoami` for the daemon, Claude Code's version and the hook's probes for
+//! `cortex doctor`), bounded in time and in the output read.
 
 use std::io::{self, Read, Write as _};
 use std::process::{Child, Command, ExitStatus, Stdio};
