@@ -3,7 +3,8 @@
 //! or `~/.config/git/ignore`.
 //!
 //! Git itself is asked, since its configuration can be spread over files that include one another;
-//! asked this way it reads its configuration and runs nothing else. It is asked for those two
+//! asked this way it reads its configuration and runs nothing else. The git asked is the one the
+//! `PATH` names outside the repository, which could hold a program of that name. It is asked for those two
 //! scopes only, never the repository's own: a repository's `.git/config` could otherwise name the
 //! file the daemon opens, a network path on Windows or a pipe that never ends. A repository keeps
 //! its own patterns in `.git/info/exclude`, which the walk reads. Git runs in the repository, so
@@ -17,7 +18,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use cortex_core::capture;
+use cortex_core::{GIT, capture, find_program};
 
 /// How long git may take to answer before the global gitignore is left unread.
 const GIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -64,7 +65,10 @@ pub(crate) fn find(root: &Path) -> anyhow::Result<Option<PathBuf>> {
 /// `--system`), says `core.excludesFile` is. Without git installed, no configuration can name a
 /// file: the setting counts as unset, and the default is where git would look.
 fn excludes_file(root: &Path, scope: &str) -> anyhow::Result<Setting> {
-    let mut git = Command::new("git");
+    let Some(program) = find_program(GIT, root) else {
+        return Ok(Setting::Unset);
+    };
+    let mut git = Command::new(program);
     // INVARIANT: local-only (git is asked to read its configuration and nothing else: no
     // command that reaches a remote)
     git.args(["config", scope, "--get", "--type=path", "core.excludesFile"])

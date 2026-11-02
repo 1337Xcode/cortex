@@ -49,7 +49,12 @@ pub struct Daemon {
 impl Daemon {
     /// Starts `cortex daemon` on `root`, with `home` as the user's home folder.
     pub fn start(root: &Path, home: &Path) -> TestResult<Self> {
-        let mut child = daemon_command(root, home)
+        Self::spawn(daemon_command(root, home))
+    }
+
+    /// Starts the daemon `command` runs, such as [`daemon_command`] with something changed.
+    pub fn spawn(mut command: Command) -> TestResult<Self> {
+        let mut child = command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

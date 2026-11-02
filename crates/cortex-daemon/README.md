@@ -10,7 +10,8 @@ huge mode the crawler that parses files in the background. `cortex daemon` runs 
 - Use the network. It asks git for the user's global gitignore with `git config` alone, which reads
   configuration files and nothing else.
 - Read the repository's own git configuration for that: a repository could then name the file the
-  daemon opens.
+  daemon opens. Nor run a `git` the repository holds: the git it asks is the one the `PATH` names
+  outside the repository, in an absolute folder.
 - Write code, prompt text or tool output to its log. A line holds the daemon's own words, ids,
   counts, times and paths, at most 1,000 characters on one line.
 

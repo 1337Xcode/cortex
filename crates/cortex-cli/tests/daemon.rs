@@ -178,6 +178,39 @@ fn a_repository_cannot_name_the_global_gitignore() -> TestResult {
     Ok(())
 }
 
+/// A git the repository holds is never run to find the global gitignore, even where the `PATH`
+/// leads to it: a relative entry and the repository's own `bin` folder come before the folder of
+/// the real git, and the repository's `git` would leave a mark. Unix only: a relative `PATH` entry
+/// leads to a program in the folder a process runs in only on Unix.
+#[cfg(unix)]
+#[test]
+fn a_git_the_repository_holds_is_never_run() -> TestResult {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    std::fs::write(repo.path().join("app.py"), "def kept():\n    pass\n")?;
+    let bin = repo.path().join("bin");
+    std::fs::create_dir(&bin)?;
+    let marker = home.path().join("ran");
+    let script = format!("#!/bin/sh\necho ran > '{}'\nexit 1\n", marker.display());
+    std::fs::write(bin.join("git"), script)?;
+    std::fs::set_permissions(bin.join("git"), std::fs::Permissions::from_mode(0o755))?;
+    let real_git = Command::new("sh").args(["-c", "command -v git"]).output()?;
+    let real_git = String::from_utf8(real_git.stdout)?;
+    let real_folder = Path::new(real_git.trim())
+        .parent()
+        .ok_or("git has no folder")?;
+    let path = std::env::join_paths([Path::new("bin"), &bin, real_folder])?;
+    let mut command = daemon_command(repo.path(), home.path());
+    command.env("PATH", path);
+    let daemon = Daemon::spawn(command)?;
+    let ready = daemon.first_line()?;
+    assert!(ready.starts_with("cortex: daemon ready"), "{ready}");
+    assert!(!marker.exists(), "the repository's git ran");
+    Ok(())
+}
+
 /// With the mode pinned to huge in the repository's configuration, the first index takes
 /// inventory of both files and parses neither; the crawler parses them after the ready line.
 #[test]
