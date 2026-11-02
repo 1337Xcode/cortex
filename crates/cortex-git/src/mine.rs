@@ -5,15 +5,15 @@
 //! their counts are added to those stored, at weights counted from the new HEAD; when HEAD has not
 //! moved, nothing is.
 //!
-//! [`mine`] reads the history; [`write`] stores what it found inside a transaction of the daemon's
-//! single writer.
+//! [`mine`] reads the history; [`write`] stores what it found with the daemon's single writer, in
+//! transactions it lets the writer's other work in between.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use cortex_core::{Config, EdgeType, RepoPath};
 use cortex_store::{
-    CountedFile, EdgeRecord, FileCommitsRow, FileId, GitStateKey, NodeId, PairRow, Queries,
-    StoreError, WriteTx,
+    CountedFile, EdgeRecord, FileCommitsRow, FileId, GitStateKey, NodeId, Pacer, PairRow, Pause,
+    Queries, StoreError, WriteTx, Writer,
 };
 
 use crate::cochange::{self, CoChange, CoChangeEdge, PairCommits};
@@ -101,10 +101,10 @@ pub fn mine(
     now_ms: i64,
 ) -> Result<Mining, GitError> {
     let head = source.head()?.unwrap_or_default();
-    let fresh = mark.filter(|mark| now_ms.saturating_sub(mark.full_at_ms) < FULL_EVERY_MS);
-    if fresh.is_some_and(|mark| mark.last_commit == head) {
+    if !is_due(mark, &head, now_ms) {
         return Ok(Mining::Unchanged);
     }
+    let fresh = fresh(mark, now_ms);
     let window = window(config, now_ms, fresh.map(|mark| mark.last_commit.clone()));
     let mined = source.read(&window)?;
     let current: HashMap<RepoPath, FileId> = files
@@ -134,6 +134,19 @@ pub fn mine(
     })
 }
 
+/// Whether a mining at `now_ms` would read anything, the last one having ended at `mark` and HEAD
+/// being at `head` (empty when its branch has no commit): when nothing was mined yet, when the last
+/// full mining is a week old, or when HEAD is not the commit mined last.
+#[must_use]
+pub fn is_due(mark: Option<&Mark>, head: &str, now_ms: i64) -> bool {
+    fresh(mark, now_ms).is_none_or(|mark| mark.last_commit != head)
+}
+
+/// `mark` while its full mining is under a week old at `now_ms`.
+fn fresh(mark: Option<&Mark>, now_ms: i64) -> Option<&Mark> {
+    mark.filter(|mark| now_ms.saturating_sub(mark.full_at_ms) < FULL_EVERY_MS)
+}
+
 /// The window `config` sets at `now_ms`, stopping at `stop_at` when given.
 fn window(config: &Config, now_ms: i64, stop_at: Option<String>) -> Window {
     let max_age_s = i64::try_from(config.git_max_age_days)
@@ -147,29 +160,30 @@ fn window(config: &Config, now_ms: i64, stop_at: Option<String>) -> Window {
     }
 }
 
-/// Stores `mining` in `transaction` at `now_ms`: a full mining replaces the counts and every
-/// co-change edge, commits gained add to the counts and rewrite the edges of the files they
-/// changed. Files removed since the mining read them are left out.
+/// Stores `mining` with `writer` at `now_ms` (UTC milliseconds), in transactions cut whenever
+/// `pause` is due, letting the caller in between them as an index does. The mark goes in the first
+/// transaction and comes back in the last, so that a write cut short (the daemon killed between
+/// two, or an error) leaves none, and the next mining is a full one. A full mining replaces the
+/// counts and every co-change edge; commits gained add to the counts and rewrite the edges of the
+/// files they changed from the sums. Files removed since the mining read them are left out.
 ///
 /// # Errors
 ///
-/// Store errors.
+/// Store errors. One after the first transaction leaves the store with no mark.
 pub fn write(
-    transaction: &mut WriteTx<'_>,
+    writer: &mut Writer,
     mining: &Mining,
     now_ms: i64,
+    pause: Option<Pause<'_>>,
 ) -> Result<(), StoreError> {
     let (harvest, is_full) = match mining {
         Mining::Unchanged => return Ok(()),
         Mining::Full(harvest) => (harvest, true),
         Mining::Added(harvest) => (harvest, false),
     };
-    let nodes: HashMap<FileId, NodeId> = transaction
-        .queries()
-        .cochange_files()?
-        .into_iter()
-        .map(|file| (file.file, file.node))
-        .collect();
+    let mut pacer = Pacer::new(pause);
+    let nodes = begin(writer, is_full)?;
+    pacer.let_in(writer);
     let files: Vec<FileCommitsRow> = harvest
         .cochange
         .files
@@ -194,20 +208,81 @@ pub fn write(
             last_commit_seq: pair.last_commit_seq,
         })
         .collect();
-    if is_full {
-        transaction.replace_cochange(&files, &pairs)?;
-        transaction.remove_edges_of_type(EdgeType::CoChange)?;
-        write_edges(transaction, &harvest.cochange.edges, &nodes, None)?;
-        transaction.set_git_state(GitStateKey::FullAt, &now_ms.to_string())?;
+    in_turns(writer, &mut pacer, &files, |transaction, file| {
+        transaction.add_cochange(std::slice::from_ref(file), &[])
+    })?;
+    in_turns(writer, &mut pacer, &pairs, |transaction, pair| {
+        transaction.add_cochange(&[], std::slice::from_ref(pair))
+    })?;
+    let sources = if is_full {
+        edges_from(&harvest.cochange.edges, &nodes, None)
     } else {
-        transaction.add_cochange(&files, &pairs)?;
         let changed: Vec<FileId> = files.iter().map(|file| file.file).collect();
-        let edges = edges_of(transaction.queries(), &changed)?;
-        let changed: HashSet<FileId> = changed.into_iter().collect();
-        write_edges(transaction, &edges, &nodes, Some(&changed))?;
+        let edges = edges_of(writer.queries(), &changed)?;
+        edges_from(&edges, &nodes, Some(&changed.into_iter().collect()))
+    };
+    in_turns(
+        writer,
+        &mut pacer,
+        &sources,
+        |transaction, (src, records)| transaction.replace_edges(*src, EdgeType::CoChange, records),
+    )?;
+    finish(writer, harvest, is_full, now_ms)
+}
+
+/// Opens a write: removes the mark, and for a full mining every count and co-change edge, in one
+/// transaction, and returns the node of each file that counts, read in it.
+fn begin(writer: &mut Writer, is_full: bool) -> Result<HashMap<FileId, NodeId>, StoreError> {
+    let mut transaction = writer.transaction()?;
+    transaction.remove_git_state(GitStateKey::LastCommit)?;
+    if is_full {
+        transaction.clear_cochange()?;
+        transaction.remove_edges_of_type(EdgeType::CoChange)?;
     }
+    let nodes = transaction
+        .queries()
+        .cochange_files()?
+        .into_iter()
+        .map(|file| (file.file, file.node))
+        .collect();
+    transaction.commit()?;
+    Ok(nodes)
+}
+
+/// Closes a write: the mark, and for a full mining its time, in one transaction.
+fn finish(
+    writer: &mut Writer,
+    harvest: &Harvest,
+    is_full: bool,
+    now_ms: i64,
+) -> Result<(), StoreError> {
+    let mut transaction = writer.transaction()?;
+    if is_full {
+        transaction.set_git_state(GitStateKey::FullAt, &now_ms.to_string())?;
+    }
+    transaction.set_git_state(GitStateKey::LastSeq, &harvest.last_seq.to_string())?;
     transaction.set_git_state(GitStateKey::LastCommit, &harvest.head)?;
-    transaction.set_git_state(GitStateKey::LastSeq, &harvest.last_seq.to_string())
+    transaction.commit()
+}
+
+/// Writes each of `items` with `write_one`, in transactions `pacer` cuts whenever the caller's turn
+/// is due. The items are written in the same order however the cuts fall.
+fn in_turns<T>(
+    writer: &mut Writer,
+    pacer: &mut Pacer<'_>,
+    items: &[T],
+    mut write_one: impl FnMut(&mut WriteTx<'_>, &T) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    let mut transaction = writer.transaction()?;
+    for item in items {
+        if pacer.is_due() {
+            transaction.commit()?;
+            pacer.offer(writer);
+            transaction = writer.transaction()?;
+        }
+        write_one(&mut transaction, item)?;
+    }
+    transaction.commit()
 }
 
 /// The edges from each of `changed`, from the counts the store holds now: every pair of each
@@ -242,15 +317,15 @@ fn edges_of(
     Ok(cochange::edges(&pairs, &weights))
 }
 
-/// Writes `edges` as co-change edges between the files' nodes, replacing those of each file they
-/// start at; with `only`, of those files alone, which also lose the edges they no longer have.
-fn write_edges(
-    transaction: &mut WriteTx<'_>,
+/// `edges` as co-change edges between the files' nodes, grouped by the node they start at, in
+/// order of file; with `only`, from those files alone, each listed even with no edge left, so
+/// that it loses the edges it no longer has.
+fn edges_from(
     edges: &[CoChangeEdge<FileId>],
     nodes: &HashMap<FileId, NodeId>,
     only: Option<&HashSet<FileId>>,
-) -> Result<(), StoreError> {
-    let mut from_each: HashMap<FileId, Vec<EdgeRecord>> = HashMap::new();
+) -> Vec<(NodeId, Vec<EdgeRecord>)> {
+    let mut from_each: BTreeMap<FileId, Vec<EdgeRecord>> = BTreeMap::new();
     if let Some(only) = only {
         for file in only {
             from_each.insert(*file, Vec::new());
@@ -271,12 +346,8 @@ fn write_edges(
             });
         }
     }
-    let mut sources: Vec<(FileId, Vec<EdgeRecord>)> = from_each.into_iter().collect();
-    sources.sort_by_key(|(file, _)| *file);
-    for (file, records) in sources {
-        if let Some(&src) = nodes.get(&file) {
-            transaction.replace_edges(src, EdgeType::CoChange, &records)?;
-        }
-    }
-    Ok(())
+    from_each
+        .into_iter()
+        .filter_map(|(file, records)| nodes.get(&file).map(|&src| (src, records)))
+        .collect()
 }

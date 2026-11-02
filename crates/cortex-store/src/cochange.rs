@@ -71,12 +71,8 @@ pub struct CountedFile {
     pub node: NodeId,
 }
 
-/// Replaces every file's and pair's counts with `files` and `pairs`.
-pub(crate) fn replace(
-    connection: &Connection,
-    files: &[FileCommitsRow],
-    pairs: &[PairRow],
-) -> Result<(), StoreError> {
+/// Deletes every file's and pair's counts.
+pub(crate) fn clear(connection: &Connection) -> Result<(), StoreError> {
     for (sql, what) in [
         (schema::FILE_COMMITS_DELETE_ALL, "deleting commit counts"),
         (
@@ -86,7 +82,7 @@ pub(crate) fn replace(
     ] {
         connection.execute(sql, []).map_err(sqlite(what))?;
     }
-    add(connection, files, pairs)
+    Ok(())
 }
 
 /// Adds `files` and `pairs` to the stored counts, storing those not stored yet.
@@ -134,6 +130,14 @@ pub(crate) fn set_state(
         .execute(schema::GIT_STATE_SET, (key.name(), value))
         .map(drop)
         .map_err(sqlite("writing the git state"))
+}
+
+/// Deletes the miner's state under `key`.
+pub(crate) fn remove_state(connection: &Connection, key: GitStateKey) -> Result<(), StoreError> {
+    connection
+        .execute(schema::GIT_STATE_DELETE, [key.name()])
+        .map(drop)
+        .map_err(sqlite("deleting the git state"))
 }
 
 impl Queries<'_> {

@@ -48,22 +48,27 @@ fn commits(file: FileId, count: u32, weighted: f64) -> FileCommitsRow {
     }
 }
 
-/// Counts written whole read back as written; written whole again they replace the first; added
+/// Counts added to none read back as added; cleared and added again, only the second remain; added
 /// to, they sum, the newer shared commit kept: `a` 2 + 1 commits weighing 1.5 + 0.5, the pair
 /// 2 + 1 co-changes weighing 1.5 + 0.5, its newest shared commit 7 then 9.
 #[test]
-fn counts_are_replaced_and_added_to() -> TestResult {
+fn counts_are_cleared_and_added_to() -> TestResult {
     let scratch = Scratch::new()?;
     let [a, b, c] = indexed(&scratch, &["a.py", "b.py", "c.py"])?[..] else {
         return Err("three files".into());
     };
     let mut writer = scratch.writer(1000)?;
     let mut transaction = writer.transaction()?;
-    transaction.replace_cochange(
+    transaction.add_cochange(
         &[commits(a, 1, 1.0), commits(c, 1, 1.0)],
         &[pair(a, c, 1, 1.0, 3)],
     )?;
-    transaction.replace_cochange(
+    assert_eq!(
+        transaction.queries().cochange_pairs_of(&[c])?,
+        [pair(a, c, 1, 1.0, 3)]
+    );
+    transaction.clear_cochange()?;
+    transaction.add_cochange(
         &[commits(a, 2, 1.5), commits(b, 2, 1.5)],
         &[pair(a, b, 2, 1.5, 7)],
     )?;
@@ -97,7 +102,7 @@ fn counts_go_with_their_file() -> TestResult {
     };
     let mut writer = scratch.writer(1000)?;
     let mut transaction = writer.transaction()?;
-    transaction.replace_cochange(
+    transaction.add_cochange(
         &[commits(a, 2, 2.0), commits(b, 2, 2.0)],
         &[pair(a, b, 2, 2.0, 2)],
     )?;
@@ -109,7 +114,8 @@ fn counts_go_with_their_file() -> TestResult {
     Ok(())
 }
 
-/// The miner's state reads back what was set last, and nothing before it is set.
+/// The miner's state reads back what was set last, nothing before it is set, and nothing once it
+/// is removed, the other values staying.
 #[test]
 fn the_git_state_keeps_the_last_value() -> TestResult {
     let scratch = Scratch::new()?;
@@ -134,6 +140,15 @@ fn the_git_state_keeps_the_last_value() -> TestResult {
         Some("12")
     );
     assert_eq!(queries.git_state(GitStateKey::FullAt)?, None);
+    let mut transaction = writer.transaction()?;
+    transaction.remove_git_state(GitStateKey::LastCommit)?;
+    let queries = transaction.queries();
+    assert_eq!(queries.git_state(GitStateKey::LastCommit)?, None);
+    assert_eq!(
+        queries.git_state(GitStateKey::LastSeq)?.as_deref(),
+        Some("12")
+    );
+    transaction.commit()?;
     Ok(())
 }
 

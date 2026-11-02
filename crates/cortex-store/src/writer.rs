@@ -345,28 +345,24 @@ impl WriteTx<'_> {
         self.atomically(|connection| activity::append_event(connection, event))
     }
 
-    /// Replaces every file's commit counts and every pair's co-change counts with `files` and
-    /// `pairs`, as a full mining of the history gives them.
+    /// Deletes every file's commit counts and every pair's co-change counts, before a full mining
+    /// of the history adds its own.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn clear_cochange(&mut self) -> Result<(), StoreError> {
+        self.atomically(cochange::clear)
+    }
+
+    /// Adds `files` and `pairs` to the stored counts, storing those not stored yet: counts and
+    /// weights summed, the newest shared commit kept.
     ///
     /// # Errors
     ///
     /// [`StoreError::TransactionLost`], [`StoreError::TooLarge`] for a sequence number past what
     /// SQLite stores, and SQLite errors, including a file that does not exist. Either all are
     /// written or none.
-    pub fn replace_cochange(
-        &mut self,
-        files: &[FileCommitsRow],
-        pairs: &[PairRow],
-    ) -> Result<(), StoreError> {
-        self.atomically(|connection| cochange::replace(connection, files, pairs))
-    }
-
-    /// Adds `files` and `pairs` to the stored counts, as mining the commits HEAD gained gives
-    /// them: counts and weights summed, the newest shared commit kept.
-    ///
-    /// # Errors
-    ///
-    /// As [`WriteTx::replace_cochange`].
     pub fn add_cochange(
         &mut self,
         files: &[FileCommitsRow],
@@ -382,6 +378,15 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn set_git_state(&mut self, key: GitStateKey, value: &str) -> Result<(), StoreError> {
         self.atomically(|connection| cochange::set_state(connection, key, value))
+    }
+
+    /// Deletes the co-change miner's state under `key`.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn remove_git_state(&mut self, key: GitStateKey) -> Result<(), StoreError> {
+        self.atomically(|connection| cochange::remove_state(connection, key))
     }
 
     /// Deletes every edge of `edge_type`, before a full set is written again.

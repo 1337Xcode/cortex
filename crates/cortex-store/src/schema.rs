@@ -310,6 +310,8 @@ pub(crate) const GIT_STATE_GET: &str = "SELECT value FROM git_state WHERE key = 
 /// Sets a value of the co-change miner's state.
 pub(crate) const GIT_STATE_SET: &str = "INSERT INTO git_state (key, value) VALUES (?1, ?2) \
      ON CONFLICT (key) DO UPDATE SET value = excluded.value";
+/// Deletes a value of the co-change miner's state.
+pub(crate) const GIT_STATE_DELETE: &str = "DELETE FROM git_state WHERE key = ?1";
 
 /// Every symbol's id and node, by symbol id.
 pub(crate) const SYMBOL_NODES: &str =

@@ -1,19 +1,21 @@
 //! Mining into a real store: a repository made with git, its files indexed as the indexer would
 //! store them, then minings as the daemon runs them: the first, commits added, HEAD unmoved, a
-//! rewritten history, a week passed, a file removed before the write. With a half-life of 1
-//! commit, commits weigh 1, 0.5, 0.25 and so on from the newest; each test works its numbers out
-//! in its comment.
+//! rewritten history, a week passed, a file removed before the write, a write cut into turns. With
+//! a half-life of 1 commit, commits weigh 1, 0.5, 0.25 and so on from the newest; each test works
+//! its numbers out in its comment.
 
 mod common;
 
+use std::cell::{Cell, RefCell};
 use std::path::Path;
+use std::time::Duration;
 
 use common::{DAY_0_S, DAY_S, Repo, TestResult, lines};
 use cortex_core::{Config, EdgeType, FileFlags, RepoId, RepoPath};
 use cortex_git::GixHistory;
 use cortex_git::mine::{FULL_EVERY_MS, Mark, Mining, mine, write};
 use cortex_store::{
-    FileCommitsRow, FileId, FileIndex, FileRecord, GitStateKey, NodeId, PairRow, Writer,
+    FileCommitsRow, FileId, FileIndex, FileRecord, GitStateKey, NodeId, PairRow, Pause, Writer,
     WriterOptions,
 };
 
@@ -66,16 +68,20 @@ fn index(writer: &mut Writer, paths: &[&str]) -> TestResult<Vec<(FileId, NodeId)
     Ok(ids)
 }
 
-/// Mines the repository at `root` into `writer` at `now_ms`, half-life 1, as the daemon does, and
-/// returns what was mined.
-fn mine_into(root: &Path, writer: &mut Writer, now_ms: i64) -> TestResult<Mining> {
+/// Mines the repository at `root` into `writer` at `now_ms`, half-life 1, as the daemon does, with
+/// `pause` between the write's transactions, and returns what was mined.
+fn mine_with(
+    root: &Path,
+    writer: &mut Writer,
+    now_ms: i64,
+    pause: Option<Pause<'_>>,
+) -> TestResult<Mining> {
     let config = Config {
         git_half_life_commits: 1,
         ..Config::default()
     };
-    let mut transaction = writer.transaction()?;
-    let mark = Mark::read(transaction.queries())?;
-    let files = transaction.queries().cochange_files()?;
+    let mark = Mark::read(writer.queries())?;
+    let files = writer.queries().cochange_files()?;
     let mining = mine(
         &GixHistory::open(root)?,
         mark.as_ref(),
@@ -83,9 +89,14 @@ fn mine_into(root: &Path, writer: &mut Writer, now_ms: i64) -> TestResult<Mining
         &config,
         now_ms,
     )?;
-    write(&mut transaction, &mining, now_ms)?;
-    transaction.commit()?;
+    write(writer, &mining, now_ms, pause)?;
     Ok(mining)
+}
+
+/// Mines the repository at `root` into `writer` at `now_ms`, as [`mine_with`] does without a
+/// pause.
+fn mine_into(root: &Path, writer: &mut Writer, now_ms: i64) -> TestResult<Mining> {
+    mine_with(root, writer, now_ms, None)
 }
 
 /// What the store holds of co-change: each file's counts, each pair's, and each co-change edge
@@ -386,8 +397,7 @@ fn a_file_removed_before_the_write_is_left_out() -> TestResult {
     let [(a, _), _] = files[..] else {
         return Err("two files".into());
     };
-    let mut transaction = writer.transaction()?;
-    let counted = transaction.queries().cochange_files()?;
+    let counted = writer.queries().cochange_files()?;
     let mining = mine(
         &GixHistory::open(&repo.root())?,
         None,
@@ -395,9 +405,10 @@ fn a_file_removed_before_the_write_is_left_out() -> TestResult {
         &Config::default(),
         at(10),
     )?;
+    let mut transaction = writer.transaction()?;
     transaction.remove_file(&RepoPath::new("b.txt")?)?;
-    write(&mut transaction, &mining, at(10))?;
     transaction.commit()?;
+    write(&mut writer, &mining, at(10), None)?;
 
     let (counts, pairs, edges) = stored(&writer, &files[..1])?;
     assert_eq!(
@@ -409,5 +420,95 @@ fn a_file_removed_before_the_write_is_left_out() -> TestResult {
     );
     assert!(pairs.is_empty());
     assert!(edges.is_empty());
+    Ok(())
+}
+
+/// A write cut into turns, its pause due before every row (a period of zero), stores what the first
+/// mining of the first test stores in one turn: `a` 3 commits weighing 1.75, `b` 2 weighing 0.75,
+/// the pair 2 weighing 0.75 at sequence 2, edges 3/7 and 1. The caller is let in more than once.
+#[test]
+fn a_write_in_turns_stores_what_one_turn_does() -> TestResult {
+    let repo = Repo::new()?;
+    change(&repo, 1, &["a.txt", "b.txt"])?;
+    change(&repo, 2, &["a.txt", "b.txt"])?;
+    change(&repo, 3, &["a.txt"])?;
+    let mut writer = store(&repo.root(), at(10))?;
+    let files = index(&mut writer, &["a.txt", "b.txt"])?;
+    let [(a, a_node), (b, b_node)] = files[..] else {
+        return Err("two files".into());
+    };
+    let turns = Cell::new(0);
+    let count = |_: &mut Writer| turns.set(turns.get() + 1);
+    mine_with(
+        &repo.root(),
+        &mut writer,
+        at(10),
+        Some(Pause::new(&count, Duration::ZERO)),
+    )?;
+    assert!(turns.get() > 1, "{} turns", turns.get());
+    let (counts, pairs, edges) = stored(&writer, &files)?;
+    assert_eq!(
+        counts,
+        [
+            FileCommitsRow {
+                file: a,
+                count: 3,
+                weighted: 1.75,
+            },
+            FileCommitsRow {
+                file: b,
+                count: 2,
+                weighted: 0.75,
+            },
+        ]
+    );
+    assert_eq!(
+        pairs,
+        [PairRow {
+            file_a: a,
+            file_b: b,
+            count: 2,
+            weighted: 0.75,
+            last_commit_seq: 2,
+        }]
+    );
+    assert_eq!(
+        edges,
+        [(a_node, b_node, 0.75 / 1.75, 2), (b_node, a_node, 1.0, 2)]
+    );
+    Ok(())
+}
+
+/// While the commits HEAD gained are written, every turn the caller gets finds no mark, so that a
+/// write cut short leaves the next mining to read the whole window again rather than add the same
+/// commits twice; once written, the mark is the new HEAD.
+#[test]
+fn a_write_under_way_holds_no_mark() -> TestResult {
+    let repo = Repo::new()?;
+    change(&repo, 1, &["a.txt", "b.txt"])?;
+    change(&repo, 2, &["a.txt", "b.txt"])?;
+    let mut writer = store(&repo.root(), at(10))?;
+    index(&mut writer, &["a.txt", "b.txt"])?;
+    mine_into(&repo.root(), &mut writer, at(10))?;
+    let head = change(&repo, 3, &["a.txt", "b.txt"])?;
+    let seen = RefCell::new(Vec::new());
+    let look = |writer: &mut Writer| {
+        seen.borrow_mut()
+            .push(writer.queries().git_state(GitStateKey::LastCommit).ok());
+    };
+    let mining = mine_with(
+        &repo.root(),
+        &mut writer,
+        at(11),
+        Some(Pause::new(&look, Duration::ZERO)),
+    )?;
+    assert!(matches!(mining, Mining::Added(_)), "{mining:?}");
+    let seen = seen.into_inner();
+    assert!(!seen.is_empty());
+    assert!(seen.iter().all(|mark| *mark == Some(None)), "{seen:?}");
+    assert_eq!(
+        writer.queries().git_state(GitStateKey::LastCommit)?,
+        Some(head)
+    );
     Ok(())
 }
