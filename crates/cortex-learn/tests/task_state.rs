@@ -8,10 +8,10 @@ use common::{
     Store, TestResult, event, failed, name, prompt, start, succeeded, target, task_of, tool,
 };
 use cortex_core::{
-    CommandKind, Event, HookKind, LineRange, RepoPath, ShellCommand, StartSource, ToolKind,
-    ToolResult, ToolTarget,
+    CommandKind, ContentHash, Event, FileContent, HookKind, LineRange, RepoPath, ShellCommand,
+    StartSource, ToolKind, ToolResult, ToolTarget,
 };
-use cortex_learn::{Commands, FileNode, Recorder, Restore, RunCheck, Step, TaskState};
+use cortex_learn::{Commands, FileNode, HeldEdit, Recorder, Restore, RunCheck, Step, TaskState};
 use cortex_store::NodeId;
 
 /// A read by `session` at `ts_ms` of `path`, the lines `ranges`, or the whole file for none.
@@ -168,7 +168,12 @@ fn a_task_s_state_holds_what_it_did_in_order() -> TestResult {
         ],
     )?;
     let mut transaction = store.writer.transaction()?;
-    recorder.record_watcher_edit(&mut transaction, &RepoPath::new("notes.txt")?, 1_700)?;
+    let watched = HeldEdit {
+        path: RepoPath::new("notes.txt")?,
+        seen_ms: 1_700,
+        before: FileContent::Absent,
+    };
+    recorder.record_watcher_edit(&mut transaction, &watched)?;
     transaction.commit()?;
     let state = one(store.record(&mut recorder, &[event(HookKind::Stop, "s1", 1_800)?])?)?;
     assert_eq!(state.task_id(), task_of(&opening)?);
@@ -550,6 +555,96 @@ fn a_rolled_back_batch_leaves_the_states_to_the_store() -> TestResult {
             at_ms: 1_100,
             hits: Vec::new(),
         }]
+    );
+    Ok(())
+}
+
+/// Records the edits held by `recorder` due by `now_ms`, in a transaction of their own.
+fn record_due(store: &mut Store, recorder: &mut Recorder, now_ms: i64) -> TestResult {
+    let mut transaction = store.writer.transaction()?;
+    for edit in recorder.take_due_watcher_edits(now_ms) {
+        recorder.record_watcher_edit(&mut transaction, &edit)?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+/// A task keeps what each file it edited held before it first changed it, whichever came first,
+/// the hook's edit or the index's report of the change, worked out by hand:
+/// - `a.py` (`a = 1`): the hook's edit at 1,100 comes first, while the store still holds `a = 1`;
+///   the index's report, held from 1,300, says the same;
+/// - `b.py` (`b = 1`): the index reports the change first, held from 1,400, the store now holding
+///   `b = 2`; the hook's edit at 1,500 takes `b = 1` from the held report, not the store;
+/// - `c.py` (`c = 1`), changed by no hook (a command, say): the watcher's edit, held from 1,600 and
+///   given to `s1` once due, brings `c = 1`;
+/// - `d.py`: an edit that failed changed nothing and keeps nothing;
+/// - `e.py`, written new at 1,900: no file before;
+/// - `a.py` again at 4,000, its report recorded meanwhile, the store holding `a = 2`: the task
+///   keeps `a = 1`, what it held before the task first changed it.
+#[test]
+fn a_task_keeps_what_each_file_held_before_it_changed_it() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, Commands::default());
+    store.index_text(&[
+        ("a.py", "a = 1\n"),
+        ("b.py", "b = 1\n"),
+        ("c.py", "c = 1\n"),
+    ])?;
+    let hashed = |text: &str| FileContent::Hashed(ContentHash::of(text.as_bytes()));
+    store.record(
+        &mut recorder,
+        &[
+            start("s1", 500, StartSource::Startup)?,
+            prompt("s1", 1_000, "fix it")?,
+            edit(("s1", 1_100), "a.py", &[(1, 1)], succeeded(None, None))?,
+        ],
+    )?;
+    store.index_text(&[("a.py", "a = 2\n"), ("b.py", "b = 2\n")])?;
+    recorder.hold_watcher_edits([(RepoPath::new("a.py")?, hashed("a = 1\n"))], 1_300);
+    recorder.hold_watcher_edits([(RepoPath::new("b.py")?, hashed("b = 1\n"))], 1_400);
+    store.record(
+        &mut recorder,
+        &[edit(
+            ("s1", 1_500),
+            "b.py",
+            &[(1, 1)],
+            succeeded(None, None),
+        )?],
+    )?;
+    store.index_text(&[("c.py", "c = 2\n")])?;
+    recorder.hold_watcher_edits([(RepoPath::new("c.py")?, hashed("c = 1\n"))], 1_600);
+    store.record(
+        &mut recorder,
+        &[
+            edit(("s1", 1_800), "d.py", &[(1, 1)], failed())?,
+            tool(
+                HookKind::PostTool,
+                ("s1", 1_900),
+                (ToolKind::Write, target("e.py", &[])?, succeeded(None, None)),
+            )?,
+        ],
+    )?;
+    record_due(&mut store, &mut recorder, 3_800)?;
+    let ended = store.record(
+        &mut recorder,
+        &[
+            edit(("s1", 4_000), "a.py", &[(1, 1)], succeeded(None, None))?,
+            event(HookKind::Stop, "s1", 5_000)?,
+        ],
+    )?;
+    let before: Vec<(String, FileContent)> = one(ended)?
+        .before()
+        .iter()
+        .map(|(path, content)| (path.to_string(), *content))
+        .collect();
+    assert_eq!(
+        before,
+        [
+            ("a.py".to_owned(), hashed("a = 1\n")),
+            ("b.py".to_owned(), hashed("b = 1\n")),
+            ("c.py".to_owned(), hashed("c = 1\n")),
+            ("e.py".to_owned(), FileContent::Absent),
+        ]
     );
     Ok(())
 }

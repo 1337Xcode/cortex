@@ -13,14 +13,15 @@
 use std::collections::BTreeMap;
 
 use cortex_core::{
-    CommandKind, ContentHash, Event, EventKind, EventMeta, HookKind, Identifier, LineRange,
-    MAX_RANGES, PromptExcerpt, RepoPath, TaskOutcome, ToolKind, Ulid,
+    CommandKind, ContentHash, Event, EventKind, EventMeta, FileContent, HookKind, Identifier,
+    LineRange, MAX_RANGES, PromptExcerpt, TaskOutcome, ToolKind, Ulid,
 };
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
 
 use crate::activity::Activity;
 use crate::commands::{Check, Commands, Ran, Restore};
-use crate::task_state::{TaskState, TaskStates};
+use crate::task_state::{TaskState, TaskStates, Unkept};
+use crate::watcher_edits::WatcherEdits;
 
 /// Most sessions the recorder remembers. Past that it forgets them all and reads each one again
 /// from the store when its next event comes, so memory stays bounded however long it runs.
@@ -28,8 +29,9 @@ const MAX_REMEMBERED_SESSIONS: usize = 1_000;
 
 /// Turns each event into rows, remembering per session what the store would otherwise be asked
 /// on every event: that the session is stored with its parent, and its open task. It also
-/// remembers what an edit the watcher saw is weighed against: sessions' recent work and the files
-/// hooks reported edited lately.
+/// remembers what an edit the watcher saw is weighed against, sessions' recent work and the files
+/// hooks reported edited lately, and holds the edits the watcher saw until a hook can no longer
+/// claim them.
 #[derive(Debug, Default)]
 pub struct Recorder {
     /// Whether a task keeps the first characters of its prompt (`privacy.store_prompt_excerpt`).
@@ -44,6 +46,8 @@ pub struct Recorder {
     commands: Commands,
     /// What each open task did.
     states: TaskStates,
+    /// The edits the watcher saw, held until a hook can no longer claim them.
+    watcher_edits: WatcherEdits,
 }
 
 impl Recorder {
@@ -119,19 +123,19 @@ impl Recorder {
     }
 
     /// Stores `row` and notes it in its task's state with what was seen of its event that the row
-    /// does not keep: the files a search found, the restores a shell line ran. A state that is not
-    /// held is rebuilt from the task's rows first, so that the row is noted once.
+    /// does not keep. A state that is not held is rebuilt from the task's rows first, so that the
+    /// row is noted once.
     pub(crate) fn append(
         &mut self,
         transaction: &mut WriteTx<'_>,
         row: &EventRecord,
-        (hits, restores): (Vec<RepoPath>, Vec<Restore>),
+        unkept: Unkept,
     ) -> Result<(), StoreError> {
         if let Some(task_id) = row.task_id {
             self.states.ensure(transaction.queries(), task_id)?;
         }
         transaction.append_event(row)?;
-        self.states.note(row, hits, restores);
+        self.states.note(row, unkept);
         Ok(())
     }
 
@@ -150,9 +154,13 @@ impl Recorder {
         };
         let ran = ran_by(event, &self.commands);
         let meta = meta_of(event, &ran);
-        // What the rows do not keep goes with the first: a search or a shell command has one.
-        let mut hits = target.map(|target| target.hits.clone()).unwrap_or_default();
-        let mut restores = restores_of(ran);
+        // What the rows do not keep goes with the first: a search or a shell command has one, and
+        // an edit's file held one content before it.
+        let mut unkept = Unkept {
+            hits: target.map(|target| target.hits.clone()).unwrap_or_default(),
+            restores: restores_of(ran),
+            before: self.before_of(transaction, (event, kind))?,
+        };
         for range in ranges_of(event) {
             let row = EventRecord {
                 task_id: task,
@@ -164,15 +172,50 @@ impl Recorder {
                 range,
                 meta: meta.clone(),
             };
-            let unkept = (std::mem::take(&mut hits), std::mem::take(&mut restores));
-            self.append(transaction, &row, unkept)?;
+            self.append(transaction, &row, std::mem::take(&mut unkept))?;
         }
         Ok(())
+    }
+
+    /// What the file of `event`, recorded as `kind`, held before it, when the event is a hook's
+    /// edit: what the change the watcher saw of it nearby, still held, held before; else what the
+    /// store holds for it, the index not having seen the change yet. Of the two, whichever came
+    /// first tells. `None` for another event. A task keeps it with the edit's step, which an edit
+    /// that failed does not make.
+    fn before_of(
+        &self,
+        transaction: &WriteTx<'_>,
+        (event, kind): (&Event, EventKind),
+    ) -> Result<Option<FileContent>, StoreError> {
+        let path = event
+            .tool_target
+            .as_ref()
+            .and_then(|target| target.path.as_ref());
+        let Some(path) = path.filter(|_| kind == EventKind::Edit) else {
+            return Ok(None);
+        };
+        if let Some(before) = self.watcher_edits.before_near(path, event.ts_ms) {
+            return Ok(Some(before));
+        }
+        let stored = transaction.queries().file(path)?;
+        Ok(Some(stored.map_or(FileContent::Absent, |row| {
+            FileContent::of_stored(row.file.content_hash)
+        })))
     }
 
     /// What the events showed of sessions' work.
     pub(crate) fn activity(&self) -> &Activity {
         &self.activity
+    }
+
+    /// The edits the watcher saw, held.
+    pub(crate) fn watcher_edits(&self) -> &WatcherEdits {
+        &self.watcher_edits
+    }
+
+    /// The edits the watcher saw, held, to change.
+    pub(crate) fn watcher_edits_mut(&mut self) -> &mut WatcherEdits {
+        &mut self.watcher_edits
     }
 
     /// Stores the event's session from what the event says, unless it is already stored.

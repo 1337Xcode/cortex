@@ -18,7 +18,7 @@ use cortex_git::mine;
 use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
 };
-use cortex_learn::{Recorder, WatcherEdits};
+use cortex_learn::Recorder;
 use cortex_store::{PAUSE_EVERY, Pause, StoreError, Writer};
 
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
@@ -43,8 +43,6 @@ pub(crate) struct Host<'a> {
     crawl: Crawl,
     /// What turns hook events into rows.
     recorder: Recorder,
-    /// The edits the watcher saw, held until a hook can no longer claim them.
-    edits: WatcherEdits,
     /// Where hook events, the watcher's changes and a stop arrive.
     inbox: &'a Inbox,
 }
@@ -67,7 +65,6 @@ impl<'a> Host<'a> {
             writer,
             crawl: Crawl::default(),
             recorder,
-            edits: WatcherEdits::default(),
             inbox,
         }
     }
@@ -119,8 +116,7 @@ impl<'a> Host<'a> {
         close(&mut self.writer, &mut self.recorder, self.inbox);
         // Every edit still held is recorded too: a hook has had its chance to claim most of the
         // hold, and a stop must not lose them.
-        let parts = (&mut self.recorder, &mut self.edits);
-        record_due_edits(&mut self.writer, parts, self.inbox, i64::MAX);
+        record_due_edits(&mut self.writer, &mut self.recorder, self.inbox, i64::MAX);
     }
 
     /// The work of [`Host::serve`] until it is asked to stop, is idle long enough or fails.
@@ -130,8 +126,7 @@ impl<'a> Host<'a> {
         let mut last_activity = Instant::now();
         let mut next_crawl = Instant::now();
         loop {
-            let parts = (&mut self.recorder, &mut self.edits);
-            record_due_edits(&mut self.writer, parts, inbox, now_ms());
+            record_due_edits(&mut self.writer, &mut self.recorder, inbox, now_ms());
             last_activity = last_activity.max(inbox.last_request().unwrap_or(last_activity));
             // An idle time too long to reach is never reached: the inbox is waited on for ever.
             let idle_at = last_activity.checked_add(idle);
@@ -164,7 +159,8 @@ impl<'a> Host<'a> {
                     // A request that came during the wait does not wake the writer: it counts now.
                     let requested = inbox.last_request().unwrap_or(last_activity);
                     let idle_at = last_activity.max(requested).checked_add(idle);
-                    let is_idle = self.waiting() == 0 && self.edits.next_due_ms().is_none();
+                    let is_idle =
+                        self.waiting() == 0 && self.recorder.next_watcher_edit_due_ms().is_none();
                     if is_idle && idle_at.is_some_and(|at| Instant::now() >= at) {
                         let idle_minutes = self.config.idle_shutdown_minutes;
                         tracing::info!(idle_minutes, "stopping: idle");
@@ -183,7 +179,7 @@ impl<'a> Host<'a> {
         } else {
             idle_at
         };
-        let edit_due = self.edits.next_due_ms().map(|due_ms| {
+        let edit_due = self.recorder.next_watcher_edit_due_ms().map(|due_ms| {
             let wait_ms = u64::try_from(due_ms.saturating_sub(now_ms())).unwrap_or(0);
             Instant::now() + Duration::from_millis(wait_ms)
         });
@@ -201,9 +197,10 @@ impl<'a> Host<'a> {
     }
 
     /// Indexes the files the watcher saw change, each with when a change first named it, on every
-    /// core, and holds the edits found until a hook can no longer claim them. An edit keeps the
-    /// time its file, or the nearest folder above it, was named; one the changes do not name,
-    /// found by an index of the whole repository the update fell back to, is taken as seen now.
+    /// core, and has the recorder hold the edits found, with what each file held before, until a
+    /// hook can no longer claim them. An edit keeps the time its file, or the nearest folder above
+    /// it, was named; one the changes do not name, found by an index of the whole repository the
+    /// update fell back to, is taken as seen now.
     fn update(&mut self, changes: &[(RepoPath, i64)]) -> anyhow::Result<()> {
         let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
         let paths: Vec<RepoPath> = changes.iter().map(|(path, _)| path.clone()).collect();
@@ -219,7 +216,8 @@ impl<'a> Host<'a> {
             let seen_ms = std::iter::successors(Some(path.clone()), RepoPath::parent)
                 .find_map(|place| named.get(&place).copied())
                 .unwrap_or(now);
-            self.edits.hold([path], seen_ms);
+            self.recorder
+                .hold_watcher_edits([(path, edit.before)], seen_ms);
         }
         Ok(())
     }
@@ -269,15 +267,14 @@ impl<'a> Host<'a> {
     /// cannot record is counted, as one the work loop cannot.
     fn with_pause<T>(&mut self, work: impl FnOnce(&mut Writer, Pause<'_>) -> T) -> T {
         let inbox = self.inbox;
-        let parts = RefCell::new((&mut self.recorder, &mut self.edits));
+        let recorder = RefCell::new(&mut self.recorder);
         let pause = |writer: &mut Writer| {
             // INVARIANT: single-writer. Events are recorded through the writer the work lends,
             // between its transactions, on the writer's own thread. The work never calls the
             // pause from within it, so the recorder is always free here.
-            if let Ok(mut parts) = parts.try_borrow_mut() {
-                let (recorder, edits) = &mut *parts;
-                record_waiting(writer, recorder, inbox);
-                record_due_edits(writer, (recorder, edits), inbox, now_ms());
+            if let Ok(mut recorder) = recorder.try_borrow_mut() {
+                record_waiting(writer, &mut recorder, inbox);
+                record_due_edits(writer, &mut recorder, inbox, now_ms());
             }
         };
         work(&mut self.writer, Pause::new(&pause, PAUSE_EVERY))
@@ -344,23 +341,21 @@ pub(crate) fn record_waiting(writer: &mut Writer, recorder: &mut Recorder, inbox
 }
 
 /// Records the edits the watcher saw that are due by `now_ms`, all or none, after recording the
-/// hook events waiting in `inbox`, so that a hook's report of the same edit claims it first. A
-/// batch that cannot be recorded is counted, with its error, and the recorder forgets what it took
-/// as stored, as after events.
-fn record_due_edits(
-    writer: &mut Writer,
-    (recorder, edits): (&mut Recorder, &mut WatcherEdits),
-    inbox: &Inbox,
-    now_ms: i64,
-) {
-    let due = edits.take_due(now_ms);
-    if due.is_empty() {
+/// hook events waiting in `inbox`, while the edits are still held: a hook's report of the same edit
+/// claims it first, and takes from it what the file held before. A batch that cannot be recorded
+/// is counted, with its error, and the recorder forgets what it took as stored, as after events.
+fn record_due_edits(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox, now_ms: i64) {
+    if recorder
+        .next_watcher_edit_due_ms()
+        .is_none_or(|due_ms| due_ms > now_ms)
+    {
         return;
     }
     record_waiting(writer, recorder, inbox);
+    let due = recorder.take_due_watcher_edits(now_ms);
     let recorded = writer.transaction().and_then(|mut transaction| {
-        for (path, seen_ms) in &due {
-            recorder.record_watcher_edit(&mut transaction, path, *seen_ms)?;
+        for edit in &due {
+            recorder.record_watcher_edit(&mut transaction, edit)?;
         }
         transaction.commit()
     });
@@ -636,8 +631,7 @@ mod tests {
             (RepoPath::new("a.py")?, 1_000),
             (RepoPath::new("b.py")?, 9_000),
         ])?;
-        let parts = (&mut host.recorder, &mut host.edits);
-        record_due_edits(&mut host.writer, parts, &inbox, i64::MAX);
+        record_due_edits(&mut host.writer, &mut host.recorder, &inbox, i64::MAX);
         assert_eq!(
             watched(root.path())?,
             [("a.py".to_owned(), 1_000), ("b.py".to_owned(), 9_000)]

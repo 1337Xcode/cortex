@@ -10,8 +10,8 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use cortex_core::{
-    Agent, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier, LineRange, RepoId,
-    RepoPath, StartSource, ToolKind, ToolResult, ToolTarget, Ulid,
+    Agent, ContentHash, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier, LineRange,
+    RepoId, RepoPath, StartSource, ToolKind, ToolResult, ToolTarget, Ulid,
 };
 use cortex_learn::{Recorder, TaskState};
 use cortex_store::{EventRecord, FileIndex, FileRecord, NodeId, Writer, WriterOptions};
@@ -160,12 +160,30 @@ impl Store {
         Ok(ended)
     }
 
-    /// Stores the files at `paths` as the indexer would, with no language, and returns their
-    /// nodes in that order.
+    /// Stores the files at `paths` as the indexer would, with no language and contents not read,
+    /// and returns their nodes in that order.
     pub fn index(&mut self, paths: &[&str]) -> TestResult<Vec<NodeId>> {
+        let unread: Vec<(&str, Option<ContentHash>)> =
+            paths.iter().map(|path| (*path, None)).collect();
+        self.store_files(&unread)
+    }
+
+    /// Stores each file of `files` as the indexer would after reading its text, and returns their
+    /// nodes in that order.
+    pub fn index_text(&mut self, files: &[(&str, &str)]) -> TestResult<Vec<NodeId>> {
+        let read: Vec<(&str, Option<ContentHash>)> = files
+            .iter()
+            .map(|(path, text)| (*path, Some(ContentHash::of(text.as_bytes()))))
+            .collect();
+        self.store_files(&read)
+    }
+
+    /// Stores each file of `files` with its contents' hash, if read, and returns their nodes in
+    /// that order.
+    fn store_files(&mut self, files: &[(&str, Option<ContentHash>)]) -> TestResult<Vec<NodeId>> {
         let mut transaction = self.writer.transaction()?;
         let mut nodes = Vec::new();
-        for path in paths {
+        for (path, content_hash) in files {
             let path = RepoPath::new(path)?;
             transaction.replace_file(&FileIndex {
                 file: FileRecord {
@@ -173,7 +191,7 @@ impl Store {
                     language: None,
                     size_bytes: 10,
                     line_count: None,
-                    content_hash: None,
+                    content_hash: *content_hash,
                     mtime_ns: 1,
                     flags: FileFlags::empty(),
                     indexed_at_ms: 1,

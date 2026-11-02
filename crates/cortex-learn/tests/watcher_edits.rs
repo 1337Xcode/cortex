@@ -5,10 +5,10 @@ mod common;
 
 use common::{Store, TestResult, end, event, failed, name, prompt, start, target, task_of, tool};
 use cortex_core::{
-    ContentHash, EventKind, EventMeta, EventSource, FileFlags, HookKind, Identifier, Language,
-    RepoPath, StartSource, ToolKind, Ulid,
+    ContentHash, EventKind, EventMeta, EventSource, FileContent, FileFlags, HookKind, Identifier,
+    Language, RepoPath, StartSource, ToolKind, Ulid,
 };
-use cortex_learn::{Commands, Recorder, WatcherEdit, WatcherEdits};
+use cortex_learn::{Commands, HeldEdit, Recorder, WatcherEdit};
 use cortex_store::{EventRecord, FileIndex, FileRecord, NodeId};
 
 /// A repository path.
@@ -16,14 +16,25 @@ fn path(text: &str) -> TestResult<RepoPath> {
     Ok(RepoPath::new(text)?)
 }
 
-/// Records the edit of `file` the watcher saw at `seen_ms`, in a transaction of its own.
+/// The edit of `file` the watcher saw at `seen_ms`, held with `before`.
+fn held(file: &str, seen_ms: i64, before: FileContent) -> TestResult<HeldEdit> {
+    Ok(HeldEdit {
+        path: path(file)?,
+        seen_ms,
+        before,
+    })
+}
+
+/// Records the edit of `file` the watcher saw at `seen_ms`, its contents before not read, in a
+/// transaction of its own.
 fn watcher_edit(
     store: &mut Store,
     recorder: &mut Recorder,
     (file, seen_ms): (&str, i64),
 ) -> TestResult<WatcherEdit> {
     let mut transaction = store.writer.transaction()?;
-    let edit = recorder.record_watcher_edit(&mut transaction, &path(file)?, seen_ms)?;
+    let edit = recorder
+        .record_watcher_edit(&mut transaction, &held(file, seen_ms, FileContent::Unread)?)?;
     transaction.commit()?;
     Ok(edit)
 }
@@ -64,24 +75,30 @@ fn session(text: &str) -> TestResult<WatcherEdit> {
     Ok(WatcherEdit::Session(name(text)?))
 }
 
-/// Each edit is held 2 s from when the watcher first saw it. `a.py` seen at 1,000 ms and again at
-/// 1,500 keeps 1,000, so it is due at 3,000 with `b.py`, not at 2,999; the two come out together,
-/// in path order. `c.py`, seen at 1,200, is due at 3,200. Nothing is held after.
+/// Each edit is held 2 s from when the watcher first saw it, with what its file held before then.
+/// `a.py` seen at 1,000 ms (new) and again at 1,500 (its contents then not read) keeps 1,000 and
+/// new, so it is due at 3,000 with `b.py`, not at 2,999; the two come out together, in path order.
+/// `c.py`, seen at 1,200, is due at 3,200. Nothing is held after.
 #[test]
 fn edits_are_held_two_seconds_from_when_they_were_first_seen() -> TestResult {
-    let mut edits = WatcherEdits::default();
-    edits.hold([path("b.py")?, path("a.py")?], 1_000);
-    edits.hold([path("a.py")?], 1_500);
-    edits.hold([path("c.py")?], 1_200);
-    assert_eq!(edits.next_due_ms(), Some(3_000));
-    assert_eq!(edits.take_due(2_999), []);
+    let mut recorder = Recorder::default();
+    let hashed = FileContent::Hashed(ContentHash::of(b"b = 1\n"));
+    let new = FileContent::Absent;
+    recorder.hold_watcher_edits([(path("b.py")?, hashed), (path("a.py")?, new)], 1_000);
+    recorder.hold_watcher_edits([(path("a.py")?, FileContent::Unread)], 1_500);
+    recorder.hold_watcher_edits([(path("c.py")?, FileContent::Unread)], 1_200);
+    assert_eq!(recorder.next_watcher_edit_due_ms(), Some(3_000));
+    assert_eq!(recorder.take_due_watcher_edits(2_999), []);
     assert_eq!(
-        edits.take_due(3_000),
-        [(path("a.py")?, 1_000), (path("b.py")?, 1_000)]
+        recorder.take_due_watcher_edits(3_000),
+        [held("a.py", 1_000, new)?, held("b.py", 1_000, hashed)?]
     );
-    assert_eq!(edits.next_due_ms(), Some(3_200));
-    assert_eq!(edits.take_due(9_000), [(path("c.py")?, 1_200)]);
-    assert_eq!(edits.next_due_ms(), None);
+    assert_eq!(recorder.next_watcher_edit_due_ms(), Some(3_200));
+    assert_eq!(
+        recorder.take_due_watcher_edits(9_000),
+        [held("c.py", 1_200, FileContent::Unread)?]
+    );
+    assert_eq!(recorder.next_watcher_edit_due_ms(), None);
     Ok(())
 }
 

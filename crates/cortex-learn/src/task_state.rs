@@ -2,18 +2,20 @@
 //!
 //! A task's state follows its event rows: each read, edit, search and shell command the store
 //! keeps for the task is a step, in the order recorded. A read, edit or search whose tool reported
-//! a failure is left out. Two facts the rows do not keep are added to their steps while the daemon
-//! runs: the files a search found, and the git restores of a shell line that exited 0. A state not
-//! in memory, because the daemon started again or dropped it for room, is rebuilt from the task's
-//! rows when the task is next touched, without those two. When the task ends its state is handed
-//! out, each of its files given the graph node the store has for the file's path by then.
+//! a failure is left out. Three facts the rows do not keep are added while the daemon runs: the
+//! files a search found, the git restores of a shell line that exited 0, and what each file the
+//! task edited held before the task first changed it. A state not in memory, because the daemon
+//! started again or dropped it for room, is rebuilt from the task's rows when the task is next
+//! touched, without those three. When the task ends its state is handed out, each of its files
+//! given the graph node the store has for the file's path by then.
 //!
 //! What the states hold is bounded however long the daemon runs: so many states, so many rows a
-//! state is built from, and so many bytes of found files a state keeps.
+//! state is built from (and a file's earlier content only with a row), and so many bytes of found
+//! files a state keeps.
 
 use std::collections::BTreeMap;
 
-use cortex_core::{CommandKind, EventKind, Identifier, LineRange, RepoPath, Ulid};
+use cortex_core::{CommandKind, EventKind, FileContent, Identifier, LineRange, RepoPath, Ulid};
 use cortex_store::{EventRecord, NodeId, Queries, StoreError};
 
 use crate::commands::Restore;
@@ -104,6 +106,17 @@ impl Step {
     }
 }
 
+/// What the daemon saw of an event that its rows do not keep.
+#[derive(Debug, Default)]
+pub(crate) struct Unkept {
+    /// The files a search found.
+    pub(crate) hits: Vec<RepoPath>,
+    /// The git restores a shell line ran.
+    pub(crate) restores: Vec<Restore>,
+    /// What an edited file held before the edit, when known.
+    pub(crate) before: Option<FileContent>,
+}
+
 /// What one task did, as far as its rows show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskState {
@@ -111,6 +124,8 @@ pub struct TaskState {
     task_id: Ulid,
     /// What it did, in order.
     steps: Vec<Step>,
+    /// What each file it edited held before it first changed it, as far as that was seen.
+    before: BTreeMap<RepoPath, FileContent>,
     /// How many of its rows the state was built from.
     rows: usize,
     /// How many bytes the paths of its searches' files hold.
@@ -125,6 +140,7 @@ impl TaskState {
         Self {
             task_id,
             steps: Vec::new(),
+            before: BTreeMap::new(),
             rows: 0,
             hit_bytes: 0,
             is_partial: false,
@@ -143,6 +159,15 @@ impl TaskState {
         &self.steps
     }
 
+    /// What each file the task edited held before the task first changed it, as far as that was
+    /// seen while the daemon ran: from the index's report of the change, or from what the store
+    /// held when the edit was recorded before the index saw it. A file created by the task held
+    /// nothing; one the index does not read, contents not known.
+    #[must_use]
+    pub fn before(&self) -> &BTreeMap<RepoPath, FileContent> {
+        &self.before
+    }
+
     /// Whether the state shows only part of what the task did: the task had more than
     /// [`MAX_TASK_ROWS`] rows, of which the state shows the first, or its stored rows could not
     /// all be read back when the state was rebuilt, and it shows none of them.
@@ -152,18 +177,24 @@ impl TaskState {
     }
 
     /// Notes `row`, the task's next, with what was seen of its event that the row does not keep.
-    fn note(&mut self, row: &EventRecord, hits: Vec<RepoPath>, restores: Vec<Restore>) {
+    fn note(&mut self, row: &EventRecord, unkept: Unkept) {
         // INVARIANT: budgeted (a state holds the steps of at most MAX_TASK_ROWS rows)
         if self.rows == MAX_TASK_ROWS {
             self.is_partial = true;
             return;
         }
         self.rows += 1;
-        let Some(mut step) = step_of(row, hits, restores) else {
+        let Some(mut step) = step_of(row, unkept.hits, unkept.restores) else {
             return;
         };
-        if let Step::Search { hits, .. } = &mut step {
-            self.hit_bytes = keep_within(hits, self.hit_bytes);
+        match &mut step {
+            Step::Search { hits, .. } => self.hit_bytes = keep_within(hits, self.hit_bytes),
+            Step::Edit { file, .. } => {
+                if let Some(before) = unkept.before {
+                    self.before.entry(file.path.clone()).or_insert(before);
+                }
+            }
+            Step::Read { .. } | Step::Run { .. } => {}
         }
         self.steps.push(step);
     }
@@ -213,8 +244,8 @@ impl TaskStates {
     }
 
     /// Notes `row`, just stored, in the state of its task, if held, with what was seen of its
-    /// event that the row does not keep: the files a search found, the restores a shell line ran.
-    pub(crate) fn note(&mut self, row: &EventRecord, hits: Vec<RepoPath>, restores: Vec<Restore>) {
+    /// event that the row does not keep.
+    pub(crate) fn note(&mut self, row: &EventRecord, unkept: Unkept) {
         let Some(task_id) = row.task_id else {
             return;
         };
@@ -223,7 +254,7 @@ impl TaskStates {
         };
         self.ticks += 1;
         *touched = self.ticks;
-        state.note(row, hits, restores);
+        state.note(row, unkept);
     }
 
     /// The state of the task `task_id`, which has ended: the one held, else one rebuilt from its
@@ -281,7 +312,7 @@ fn rebuild(queries: Queries<'_>, task_id: Ulid) -> Result<TaskState, StoreError>
     match queries.events_of_task(task_id, MAX_TASK_ROWS + 1) {
         Ok(rows) => {
             for row in rows {
-                state.note(&row.record, Vec::new(), Vec::new());
+                state.note(&row.record, Unkept::default());
             }
         }
         Err(StoreError::Corrupt { .. }) => state.is_partial = true,
