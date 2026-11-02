@@ -169,17 +169,31 @@ fn rules_in_an_ignored_folder_change_nothing() -> TestResult {
 }
 
 /// More than 500 paths changed within 2 seconds, as a checkout makes, is a change to
-/// everything.
+/// everything. The 600 files written here count as at once when writing them took under half that
+/// window; a machine that took longer may have them arrive over more than the window, and then
+/// each path reported, or a change to everything, is right.
 #[test]
 fn many_paths_at_once_are_a_change_to_everything() -> TestResult {
     let repo = tempfile::tempdir()?;
     let root = repo.path();
     std::fs::create_dir_all(root.join("many"))?;
     let (_watcher, receiver) = watched(root)?;
-    for number in 0..600 {
-        write(root, &format!("many/f{number:03}.txt"), b"x\n")?;
+    let names: Vec<String> = (0..600)
+        .map(|number| format!("many/f{number:03}.txt"))
+        .collect();
+    let started = Instant::now();
+    for name in &names {
+        write(root, name, b"x\n")?;
     }
-    changes_until(&receiver, |changes| changes.contains(&Change::Everything))?;
+    if started.elapsed() < Duration::from_secs(1) {
+        changes_until(&receiver, |changes| changes.contains(&Change::Everything))?;
+    } else {
+        changes_until(&receiver, |changes| {
+            let reported = paths(changes);
+            changes.contains(&Change::Everything)
+                || names.iter().all(|name| reported.contains(name))
+        })?;
+    }
     Ok(())
 }
 
