@@ -18,4 +18,6 @@ mod renames;
 
 pub use cli_history::CliHistory;
 pub use gix_history::GixHistory;
-pub use history::{GitError, HistorySource, Mined, MinedCommit, PathChange, Window};
+pub use history::{
+    GitError, HistorySource, Mined, MinedCommit, PathChange, Window, has_repository,
+};

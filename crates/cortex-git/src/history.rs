@@ -2,10 +2,21 @@
 //! line from HEAD, within a window, each commit with the files it changed against its first
 //! parent. A source reads it from git; [`HistorySource`] is what every source gives.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use cortex_core::RepoPath;
 use thiserror::Error;
+
+/// The name of the git folder at the top of a work tree, or of the file naming it elsewhere in a
+/// linked work tree.
+const DOT_GIT: &str = ".git";
+
+/// Whether the folder `root` holds a repository at its top: it has `.git`. A source opened on a
+/// folder without one is [`GitError::NoRepository`].
+#[must_use]
+pub fn has_repository(root: &Path) -> bool {
+    root.join(DOT_GIT).exists()
+}
 
 /// What part of the history to read.
 #[derive(Debug, Clone, PartialEq, Eq)]

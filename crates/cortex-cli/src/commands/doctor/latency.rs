@@ -324,6 +324,7 @@ mod tests {
             is_indexed: true,
             latencies: Vec::new(),
             recent_errors: Vec::new(),
+            git: None,
         }
     }
 

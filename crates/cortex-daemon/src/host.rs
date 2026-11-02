@@ -1,7 +1,8 @@
-//! The daemon's work loop: the one writer, the hook events and the watcher's changes its inbox
-//! holds, the edits the watcher saw while a hook may still claim them, the huge mode crawl between
-//! them, and the idle stop. While the writer indexes, the index lets it in between its write
-//! transactions, and the events waiting and the edits due are recorded there.
+//! The daemon's work loop: the one writer, the hook events, the watcher's changes and the
+//! miner's findings its inbox holds, the edits the watcher saw while a hook may still claim them,
+//! the huge mode crawl between them, and the idle stop. While the writer indexes or stores a
+//! mining, the work lets it in between its write transactions, and the events waiting and the
+//! edits due are recorded there.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -13,13 +14,14 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, bail};
 use cortex_core::{Config, Event, RepoPath, unix_millis};
+use cortex_git::mine;
 use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
 };
 use cortex_learn::{Recorder, WatcherEdits};
 use cortex_store::{PAUSE_EVERY, Pause, StoreError, Writer};
 
-use crate::inbox::{Changed, Inbox, Work};
+use crate::inbox::{Changed, Inbox, MiningJob, Work};
 
 /// How often the crawler takes a batch of `index.crawl_files_per_second` files.
 const CRAWL_PERIOD: Duration = Duration::from_secs(1);
@@ -152,6 +154,8 @@ impl<'a> Host<'a> {
                     }
                     last_activity = Instant::now();
                 }
+                // Mining is the daemon's own work, not a user's: it does not put off the idle stop.
+                Work::Mining(job) => self.store_mining(*job),
                 Work::Timeout if self.waiting() > 0 && Instant::now() >= next_crawl => {
                     next_crawl = Instant::now() + CRAWL_PERIOD;
                     self.crawl_batch()?;
@@ -230,20 +234,44 @@ impl<'a> Host<'a> {
         Ok(())
     }
 
-    /// Runs `index` with the options of an index on `threads` threads, timed now, and a pause that
-    /// records the hook events waiting whenever the index lets the writer in. A batch the pause
-    /// cannot record is counted, as one the work loop cannot.
+    /// Runs `index` with the options of an index on `threads` threads, timed now, and the pause
+    /// of [`Host::with_pause`].
     fn indexing<T>(
         &mut self,
         threads: NonZeroUsize,
         index: impl FnOnce(&Path, &Arc<Grammars>, &mut Writer, &IndexOptions<'_>) -> T,
     ) -> T {
         let options = self.options(threads);
+        let (root, grammars) = (self.root, Arc::clone(&self.grammars));
+        self.with_pause(|writer, pause| {
+            let options = IndexOptions {
+                pause: Some(pause),
+                ..options
+            };
+            index(root, &grammars, writer, &options)
+        })
+    }
+
+    /// Stores what the miner found in turns, with the pause of [`Host::with_pause`], and tells the
+    /// miner how that went. A mining that cannot be stored leaves no mark, so the next is whole.
+    fn store_mining(&mut self, job: MiningJob) {
+        let stored = self
+            .with_pause(|writer, pause| mine::write(writer, &job.mining, now_ms(), Some(pause)));
+        if let Err(error) = &stored {
+            tracing::warn!(error = %error, "a mining could not be stored");
+        }
+        job.answer(stored.map_err(|error| error.to_string()));
+    }
+
+    /// Runs `work` with the writer and a pause that records the hook events waiting, and the edits
+    /// due, whenever the work lets the writer in between its transactions. A batch the pause
+    /// cannot record is counted, as one the work loop cannot.
+    fn with_pause<T>(&mut self, work: impl FnOnce(&mut Writer, Pause<'_>) -> T) -> T {
         let inbox = self.inbox;
         let parts = RefCell::new((&mut self.recorder, &mut self.edits));
         let pause = |writer: &mut Writer| {
-            // INVARIANT: single-writer. Events are recorded through the writer the index lends,
-            // between its transactions, on the writer's own thread. The index never calls the
+            // INVARIANT: single-writer. Events are recorded through the writer the work lends,
+            // between its transactions, on the writer's own thread. The work never calls the
             // pause from within it, so the recorder is always free here.
             if let Ok(mut parts) = parts.try_borrow_mut() {
                 let (recorder, edits) = &mut *parts;
@@ -251,11 +279,7 @@ impl<'a> Host<'a> {
                 record_due_edits(writer, (recorder, edits), inbox, now_ms());
             }
         };
-        let options = IndexOptions {
-            pause: Some(Pause::new(&pause, PAUSE_EVERY)),
-            ..options
-        };
-        index(self.root, &self.grammars, &mut self.writer, &options)
+        work(&mut self.writer, Pause::new(&pause, PAUSE_EVERY))
     }
 
     /// The options of an index or a parse on `threads` threads, timed now, with no pause.

@@ -23,6 +23,7 @@ mod instance;
 mod latency;
 mod listener;
 mod log;
+mod miner;
 mod recent_errors;
 mod server;
 pub mod settings;
@@ -43,6 +44,7 @@ use cortex_store::{Writer, WriterOptions};
 use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
+use self::miner::Miner;
 use self::server::Server;
 
 /// Threads that serve connections. Requests are short; two keep one slow client from delaying
@@ -190,7 +192,11 @@ fn index_and_serve(
         "first index done"
     );
     or_close(note(&ready_line(&report, host.waiting())), || host.close())?;
+    // The history is mined once the files that count are stored; told to stop when dropped. A
+    // miner that cannot start leaves the daemon without co-change, as its status says.
+    let miner = Miner::start(root, &config, inbox);
     host.serve()?;
+    drop(miner);
     drop(watcher);
     Ok(())
 }

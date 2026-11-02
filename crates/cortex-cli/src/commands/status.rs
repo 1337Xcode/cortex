@@ -1,15 +1,18 @@
 //! `cortex status`: whether the repository's daemon runs and, from the daemon itself, its queue,
-//! how long it takes to handle each hook and its latest errors; then whether the index is ready,
-//! the scale mode, and how many files are stored, parsed and waiting to be parsed. The store is
-//! only read.
+//! what its co-change miner is doing, how long it takes to handle each hook and its latest errors;
+//! then whether the index is ready, the scale mode, how many files are stored, parsed and waiting
+//! to be parsed, and how far the history is mined. The store is only read.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
-use cortex_core::ipc::{HookLatency, RecentError, RequestBody, ResponseBody, StatusReport};
+use cortex_core::ipc::{
+    GitReport, GitState, HookLatency, RecentError, RequestBody, ResponseBody, StatusReport,
+};
 use cortex_core::{FileFlags, ModeSetting, UserFolder, unix_millis};
 use cortex_daemon::settings;
+use cortex_git::mine::Mark;
 use cortex_hook::{Answer, ClientError};
 use cortex_index::waits_to_be_parsed;
 use cortex_store::{MetaKey, Queries, Reader, StoreError, is_writer_running};
@@ -115,8 +118,8 @@ fn daemon_lines(root: &Path) -> Vec<String> {
     lines
 }
 
-/// What a running daemon reported, as lines: itself, its queue, each hook's handling time, and
-/// its latest errors, each with how long before `now_ms` it last happened.
+/// What a running daemon reported, as lines: itself, its queue, its miner, each hook's handling
+/// time, and its latest errors, each with how long before `now_ms` it last happened.
 fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
     let mut lines = vec![
         format!(
@@ -134,6 +137,7 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
             report.failed_batches,
             report.failed_checkpoints
         ),
+        git_line(report.git.as_ref()),
     ];
     if report.latencies.is_empty() {
         lines.push("daemon latency: no hook request handled yet".to_owned());
@@ -149,6 +153,25 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
             .map(|error| error_line(error, now_ms)),
     );
     lines
+}
+
+/// What the daemon's co-change miner is doing, as a line, or that the daemon did not say.
+fn git_line(report: Option<&GitReport>) -> String {
+    let Some(report) = report else {
+        return "git: not reported by this daemon".to_owned();
+    };
+    let state = match report.state {
+        GitState::Waiting => "not ready, waiting for the first index",
+        GitState::NoRepository => "no repository at the root, so no history is mined",
+        GitState::Mining => "not ready, mining the history",
+        GitState::Ready => "ready",
+        GitState::Failed => "not ready, mining failed and is tried again later",
+        GitState::Other => "in a state this build does not know",
+    };
+    match &report.detail {
+        Some(detail) => format!("git: {state}: {detail}"),
+        None => format!("git: {state}"),
+    }
 }
 
 /// How long the daemon took to handle one hook's requests, not counting the hook's own process
@@ -231,16 +254,35 @@ fn status_lines(
     if waiting > 0 {
         files.push_str(&format!(", {waiting} waiting to be parsed"));
     }
+    let mark = Mark::read(queries)?;
     Ok(vec![
         format!("index: {index}"),
         format!("mode: {mode}"),
         format!("files: {files}"),
+        cochange_line(mark.as_ref(), unix_millis(SystemTime::now())),
     ])
+}
+
+/// How far the history is mined, from the `mark` the last mining left, with how long before
+/// `now_ms` the last full mining was.
+fn cochange_line(mark: Option<&Mark>, now_ms: i64) -> String {
+    let Some(mark) = mark else {
+        return "co-change: nothing mined yet".to_owned();
+    };
+    if mark.last_commit.is_empty() {
+        return "co-change: nothing to mine, the branch has no commit yet".to_owned();
+    }
+    let commit = mark.last_commit.get(..12).unwrap_or(&mark.last_commit);
+    format!(
+        "co-change: {} commits mined, up to {commit}; the last full mining {} ago",
+        mark.last_seq,
+        ago(mark.full_at_ms, now_ms)
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use cortex_core::ipc::Protocol;
+    use cortex_core::ipc::{GitReport, Protocol};
 
     use super::*;
 
@@ -260,10 +302,12 @@ mod tests {
             is_indexed: false,
             latencies: Vec::new(),
             recent_errors: Vec::new(),
+            git: Some(GitReport::default()),
         }
     }
 
-    /// A daemon that handled no hook and met no error says so.
+    /// A daemon that handled no hook and met no error says so, its miner still waiting for the
+    /// first index.
     #[test]
     fn a_quiet_daemon_says_so() {
         assert_eq!(
@@ -272,6 +316,7 @@ mod tests {
                 "daemon: running (process 7, Cortex 1.2.3, up 61 s)",
                 "queue: 0 events and 0 changes waiting; 0 events dropped, 0 batches not \
                  recorded, 0 checkpoints failed",
+                "git: not ready, waiting for the first index",
                 "daemon latency: no hook request handled yet",
                 "errors: none",
             ]
@@ -331,7 +376,7 @@ mod tests {
             "error: second (3 min ago, 3 times)",
             "error: third (12 s ago)",
         ];
-        assert_eq!(lines.get(2..), Some(expected.map(str::to_owned).as_slice()));
+        assert_eq!(lines.get(3..), Some(expected.map(str::to_owned).as_slice()));
     }
 
     /// Ages cross from seconds to minutes at two minutes and to hours at two hours; a time ahead
@@ -352,5 +397,67 @@ mod tests {
                 "{age_ms}"
             );
         }
+    }
+
+    /// Each of the miner's states reads as its own line, with the daemon's words after it when it
+    /// gave some, and a daemon that did not say is said not to.
+    #[test]
+    fn the_miner_reads_as_one_line() {
+        let line = |state, detail: Option<&str>| {
+            git_line(Some(&GitReport {
+                state,
+                detail: detail.map(str::to_owned),
+            }))
+        };
+        assert_eq!(git_line(None), "git: not reported by this daemon");
+        assert_eq!(
+            line(GitState::Waiting, None),
+            "git: not ready, waiting for the first index"
+        );
+        assert_eq!(
+            line(GitState::NoRepository, None),
+            "git: no repository at the root, so no history is mined"
+        );
+        assert_eq!(
+            line(GitState::Mining, None),
+            "git: not ready, mining the history"
+        );
+        assert_eq!(line(GitState::Ready, None), "git: ready");
+        assert_eq!(
+            line(GitState::Ready, Some("read with the git program")),
+            "git: ready: read with the git program"
+        );
+        assert_eq!(
+            line(GitState::Failed, Some("disk full")),
+            "git: not ready, mining failed and is tried again later: disk full"
+        );
+        assert_eq!(
+            line(GitState::Other, None),
+            "git: in a state this build does not know"
+        );
+    }
+
+    /// The co-change line says nothing was mined before a mark exists, that there is nothing to
+    /// mine on a branch with no commit, and otherwise how many commits, up to which (its first 12
+    /// characters), and how long ago the last full mining was: 3 min from 180 s.
+    #[test]
+    fn the_mark_reads_as_one_line() {
+        assert_eq!(cochange_line(None, 0), "co-change: nothing mined yet");
+        let mark = |commit: &str| Mark {
+            last_commit: commit.to_owned(),
+            last_seq: 42,
+            full_at_ms: 1_000_000,
+        };
+        assert_eq!(
+            cochange_line(Some(&mark("")), 1_180_000),
+            "co-change: nothing to mine, the branch has no commit yet"
+        );
+        assert_eq!(
+            cochange_line(
+                Some(&mark("0123456789abcdef0123456789abcdef01234567")),
+                1_180_000
+            ),
+            "co-change: 42 commits mined, up to 0123456789ab; the last full mining 3 min ago"
+        );
     }
 }

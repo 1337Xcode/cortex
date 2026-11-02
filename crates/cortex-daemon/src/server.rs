@@ -295,6 +295,7 @@ impl Server {
             is_indexed: counts.is_indexed,
             latencies: latencies.report(),
             recent_errors: self.inbox.recent_errors(),
+            git: Some(self.inbox.git()),
         }
     }
 
@@ -457,7 +458,7 @@ mod tests {
             matches!(answered, Err(Broken::Unwritable(FrameError::Io(_)))),
             "{answered:?}"
         );
-        assert_eq!(inbox.wait(Some(Instant::now())), Work::Stop);
+        assert!(matches!(inbox.wait(Some(Instant::now())), Work::Stop));
         Ok(())
     }
 

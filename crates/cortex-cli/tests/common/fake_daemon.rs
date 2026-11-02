@@ -9,8 +9,8 @@ use std::thread;
 use std::time::Duration;
 
 use cortex_core::ipc::{
-    CORTEX_VERSION, Mismatch, Protocol, Request, RequestBody, Response, ResponseBody, StatusReport,
-    Welcome, read_frame, write_frame,
+    CORTEX_VERSION, GitReport, Mismatch, Protocol, Request, RequestBody, Response, ResponseBody,
+    StatusReport, Welcome, read_frame, write_frame,
 };
 use cortex_core::{Endpoint, RepoId, RunFiles, UserFolder, canonical_root};
 use interprocess::local_socket::traits::{Listener as _, Stream as _};
@@ -199,6 +199,7 @@ fn indexing() -> StatusReport {
         is_indexed: false,
         latencies: Vec::new(),
         recent_errors: Vec::new(),
+        git: Some(GitReport::default()),
     }
 }
 

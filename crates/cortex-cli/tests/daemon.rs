@@ -1,6 +1,7 @@
 //! `cortex daemon` on temporary repositories, with an empty home folder so that no user
 //! configuration applies: it indexes and says so, indexes a file again after it changes, refuses a
-//! second daemon on the same repository, and in huge mode parses what it took inventory of.
+//! second daemon on the same repository, in huge mode parses what it took inventory of, and mines
+//! the history of a git repository.
 
 mod common;
 
@@ -8,8 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::{Daemon, TestResult, daemon_command, isolate, wait_for};
-use cortex_core::{Identifier, RepoId};
-use cortex_store::{MetaKey, Reader};
+use cortex_core::{EdgeType, Identifier, RepoId, RepoPath};
+use cortex_git::mine::Mark;
+use cortex_store::{FileId, MetaKey, NodeId, Reader};
 
 /// Runs git with `args` in `folder`, with `home` as the user's home folder.
 fn git(folder: &Path, home: &Path, args: &[&str]) -> TestResult {
@@ -21,6 +23,48 @@ fn git(folder: &Path, home: &Path, args: &[&str]) -> TestResult {
         return Err(format!("git {args:?} failed: {status}").into());
     }
     Ok(())
+}
+
+/// Writes `paths` in the repository at `root`, each with text that names `commit`, and commits them
+/// as `commit` with `home` as the user's home folder; returns the new HEAD.
+fn commit(root: &Path, home: &Path, commit: &str, paths: &[&str]) -> TestResult<String> {
+    for path in paths {
+        std::fs::write(root.join(path), format!("# {path} in {commit}\n"))?;
+    }
+    let mut add = vec!["add", "--"];
+    add.extend_from_slice(paths);
+    git(root, home, &add)?;
+    let mut command = Command::new("git");
+    command
+        .args(["commit", "-q", "-m", commit])
+        .current_dir(root)
+        .env("GIT_AUTHOR_NAME", "Cortex Test")
+        .env("GIT_AUTHOR_EMAIL", "test")
+        .env("GIT_COMMITTER_NAME", "Cortex Test")
+        .env("GIT_COMMITTER_EMAIL", "test");
+    isolate(&mut command, home);
+    if !command.status()?.success() {
+        return Err(format!("committing {commit} failed").into());
+    }
+    let mut head = Command::new("git");
+    head.args(["rev-parse", "HEAD"]).current_dir(root);
+    isolate(&mut head, home);
+    Ok(String::from_utf8(head.output()?.stdout)?.trim().to_owned())
+}
+
+/// The mark the last mining of the repository at `root` left, if any.
+fn mark(root: &Path) -> TestResult<Option<Mark>> {
+    Ok(Mark::read(
+        Reader::open(&root.join(".cortex"), 0)?.queries(),
+    )?)
+}
+
+/// What `cortex status --root <root>` printed, with `home` as the user's home folder.
+fn status_of(root: &Path, home: &Path) -> TestResult<String> {
+    let mut status = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    status.args(["status", "--root"]).arg(root);
+    isolate(&mut status, home);
+    Ok(String::from_utf8(status.output()?.stdout)?)
 }
 
 /// A path git reads from its configuration: with slashes, since git takes a backslash there as an
@@ -285,6 +329,123 @@ index: not ready, the last index did not finish; the next one reads every file a
     assert_eq!(
         redone.first_line()?,
         "cortex: daemon ready: mode medium; files: 3000 written, 0 unchanged"
+    );
+    Ok(())
+}
+
+/// The daemon mines the history once its first index is done, and then the commits HEAD gains.
+/// Two commits change `a.py` and `b.py` together: each file has 2 commits and the pair 2
+/// co-changes, at the same weights, so each file's edge to the other has a confidence of exactly
+/// 1 and a count of 2. A third commit changes `a.py` and `c.py`: `a.py` has 3 commits, the new
+/// pair 1 co-change, under the 2 an edge needs, and the mark moves to the new HEAD at sequence 3.
+/// Status says git is ready and how far the history is mined.
+#[test]
+fn the_daemon_mines_the_history_and_the_commits_head_gains() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, home.path(), &["init", "-q"])?;
+    commit(root, home.path(), "one", &["a.py", "b.py"])?;
+    let second = commit(root, home.path(), "two", &["a.py", "b.py"])?;
+    let daemon = Daemon::start(root, home.path())?;
+    daemon.first_line()?;
+    wait_for(|| Ok(mark(root)?.is_some_and(|mark| mark.last_commit == second)))?;
+    let reader = Reader::open(&root.join(".cortex"), 0)?;
+    let queries = reader.queries();
+    let file = |path: &str| -> TestResult<(FileId, NodeId)> {
+        let id = queries
+            .file(&RepoPath::new(path)?)?
+            .ok_or_else(|| format!("{path} is not stored"))?
+            .id;
+        let node = queries.file_node(id)?.ok_or("a file without its node")?;
+        Ok((id, node))
+    };
+    let (a, a_node) = file("a.py")?;
+    let (b, b_node) = file("b.py")?;
+    let edges = |node: NodeId| -> TestResult<Vec<(NodeId, f64, u32)>> {
+        Ok(queries
+            .edges_from(node)?
+            .into_iter()
+            .filter(|row| row.edge_type == EdgeType::CoChange)
+            .map(|row| (row.edge.dst, row.edge.weight, row.edge.count))
+            .collect())
+    };
+    assert_eq!(edges(a_node)?, [(b_node, 1.0, 2)]);
+    assert_eq!(edges(b_node)?, [(a_node, 1.0, 2)]);
+    let counts: Vec<(FileId, u32)> = queries
+        .file_commits_of(&[a, b])?
+        .into_iter()
+        .map(|row| (row.file, row.count))
+        .collect();
+    assert_eq!(counts, [(a, 2), (b, 2)]);
+
+    let third = commit(root, home.path(), "three", &["a.py", "c.py"])?;
+    wait_for(|| Ok(mark(root)?.is_some_and(|mark| mark.last_commit == third)))?;
+    assert_eq!(mark(root)?.map(|mark| mark.last_seq), Some(3));
+    let (c, c_node) = file("c.py")?;
+    let pairs: Vec<(FileId, FileId, u32)> = queries
+        .cochange_pairs_of(&[c])?
+        .into_iter()
+        .map(|pair| (pair.file_a, pair.file_b, pair.count))
+        .collect();
+    assert_eq!(pairs, [(a, c, 1)]);
+    assert_eq!(edges(c_node)?, []);
+    let counts: Vec<(FileId, u32)> = queries
+        .file_commits_of(&[a])?
+        .into_iter()
+        .map(|row| (row.file, row.count))
+        .collect();
+    assert_eq!(counts, [(a, 3)]);
+
+    let status = status_of(root, home.path())?;
+    assert!(status.contains("\ngit: ready\n"), "{status}");
+    let head_start = third.get(..12).ok_or("a short commit id")?;
+    assert!(
+        status.contains(&format!(
+            "\nco-change: 3 commits mined, up to {head_start}; "
+        )),
+        "{status}"
+    );
+    Ok(())
+}
+
+/// A repository whose root is not the top of a git repository has no history to mine, and the
+/// daemon's status says so.
+#[test]
+fn a_folder_without_git_is_said_to_have_no_history() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    std::fs::write(repo.path().join("a.py"), "def a():\n    pass\n")?;
+    let daemon = Daemon::start(repo.path(), home.path())?;
+    daemon.first_line()?;
+    let expected = "\ngit: no repository at the root, so no history is mined\n";
+    wait_for(|| Ok(status_of(repo.path(), home.path())?.contains(expected)))?;
+    let status = status_of(repo.path(), home.path())?;
+    assert!(
+        status.contains("\nco-change: nothing mined yet\n"),
+        "{status}"
+    );
+    Ok(())
+}
+
+/// A repository `gix` cannot read, here one whose objects are named by SHA-256 (this build's `gix`
+/// knows SHA-1 only), is mined with the `git` program, and status says so.
+#[test]
+fn a_repository_gix_cannot_read_is_mined_with_git() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, home.path(), &["init", "-q", "--object-format=sha256"])?;
+    commit(root, home.path(), "one", &["a.py", "b.py"])?;
+    let second = commit(root, home.path(), "two", &["a.py", "b.py"])?;
+    assert_eq!(second.len(), 64);
+    let daemon = Daemon::start(root, home.path())?;
+    daemon.first_line()?;
+    wait_for(|| Ok(mark(root)?.is_some_and(|mark| mark.last_commit == second)))?;
+    let status = status_of(root, home.path())?;
+    assert!(
+        status.contains("\ngit: ready: read with the git program, as gix could not: "),
+        "{status}"
     );
     Ok(())
 }

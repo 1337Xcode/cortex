@@ -13,14 +13,13 @@ use cortex_core::canonical_root;
 
 use crate::git_log::{self, FORMAT};
 use crate::git_program::GitProgram;
-use crate::history::{GitError, HistorySource, Mined, MinedCommit, PathChange, Window};
+use crate::history::{
+    GitError, HistorySource, Mined, MinedCommit, PathChange, Window, has_repository,
+};
 
 /// The most of a shallow clone's list of cut commits read: 25,000 ids. A longer list fails the
 /// read rather than leaving cut commits uncut.
 const MAX_SHALLOW_BYTES: u64 = 1024 * 1024;
-
-/// The name of the git folder at the top of a work tree.
-const DOT_GIT: &str = ".git";
 
 /// A repository's history read by running git.
 pub struct CliHistory {
@@ -37,7 +36,7 @@ impl CliHistory {
     /// [`GitError::NoRepository`] when `root` has no `.git`; [`GitError::Open`] when git is not on
     /// the `PATH`, does not answer, or names another folder as the work tree's top.
     pub fn open(root: &Path) -> Result<Self, GitError> {
-        if !root.join(DOT_GIT).exists() {
+        if !has_repository(root) {
             return Err(GitError::NoRepository(root.to_path_buf()));
         }
         let root = canonical_root(root).map_err(|error| GitError::Open(error.to_string()))?;

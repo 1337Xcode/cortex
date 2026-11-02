@@ -10,16 +10,15 @@ use cortex_core::canonical_root;
 use gix::diff::blob::Platform as ComparisonCache;
 use gix::object::tree::diff::{Action, Change};
 
-use crate::history::{GitError, HistorySource, Mined, MinedCommit, PathChange, Window};
+use crate::history::{
+    GitError, HistorySource, Mined, MinedCommit, PathChange, Window, has_repository,
+};
 use crate::renames::{MAX_COMPARED_BYTES, comparison_cache, rename_search};
 
 /// The memory kept for git objects read recently, chiefly trees: walking newest first, a commit's
 /// tree is read again as its child's parent tree. 4 MiB took reading 20,000 synthetic commits from
 /// about 2.5 s to about 1.3 s; larger caches gained nothing more.
 const OBJECT_CACHE_BYTES: usize = 4 * 1024 * 1024;
-
-/// The name of the git folder at the top of a work tree.
-const DOT_GIT: &str = ".git";
 
 /// The setting older versions of git use to name, in a partial clone, the remote that holds what
 /// the clone left out; newer ones set `promisor` on that remote instead.
@@ -42,7 +41,7 @@ impl GixHistory {
     /// [`GitError::NoRepository`] when `root` has no `.git`; [`GitError::Open`] when git cannot
     /// open the repository or its work tree is not `root`.
     pub fn open(root: &Path) -> Result<Self, GitError> {
-        if !root.join(DOT_GIT).exists() {
+        if !has_repository(root) {
             return Err(GitError::NoRepository(root.to_path_buf()));
         }
         let options = gix::open::Options::isolated()

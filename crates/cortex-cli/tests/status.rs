@@ -95,13 +95,14 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
     assert_eq!(
         empty.stdout,
         "daemon: not running\nindex: not ready, an index is under way\n\
-         mode: not counted yet\nfiles: 0 stored, 0 parsed\n"
+         mode: not counted yet\nfiles: 0 stored, 0 parsed\nco-change: nothing mined yet\n"
     );
     index(root, &mut writer)?;
     let ready = status(root, home.path())?;
     assert_eq!(
         ready.stdout,
-        "daemon: not running\nindex: ready\nmode: tiny\nfiles: 3 stored, 2 parsed\n"
+        "daemon: not running\nindex: ready\nmode: tiny\nfiles: 3 stored, 2 parsed\n\
+         co-change: nothing mined yet\n"
     );
     drop(writer);
     std::fs::write(root.join(".cortex/config.toml"), "mode = \"small\"\n")?;
@@ -109,7 +110,7 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
     assert_eq!(
         stopped.stdout,
         "daemon: not running\nindex: ready\nmode: tiny; pinned to small in the configuration\n\
-         files: 3 stored, 2 parsed\n"
+         files: 3 stored, 2 parsed\nco-change: nothing mined yet\n"
     );
     Ok(())
 }
@@ -168,7 +169,8 @@ fn status_finds_the_repository_from_a_folder_inside_it() -> TestResult {
         .output()?;
     assert_eq!(
         String::from_utf8(output.stdout)?,
-        "daemon: not running\nindex: ready\nmode: tiny\nfiles: 1 stored, 1 parsed\n"
+        "daemon: not running\nindex: ready\nmode: tiny\nfiles: 1 stored, 1 parsed\n\
+         co-change: nothing mined yet\n"
     );
     Ok(())
 }

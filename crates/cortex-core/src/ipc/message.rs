@@ -157,6 +157,57 @@ pub struct StatusReport {
     /// The daemon's latest errors, oldest first.
     #[serde(default)]
     pub recent_errors: Vec<RecentError>,
+    /// What the daemon's co-change miner is doing; none from a daemon that does not say, as one
+    /// older than the miner.
+    #[serde(default)]
+    pub git: Option<GitReport>,
+}
+
+/// What a daemon's co-change miner is doing, for its status. A daemon's miner starts out
+/// [`GitState::Waiting`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct GitReport {
+    /// Where the miner is.
+    #[serde(deserialize_with = "git_state_or_other")]
+    pub state: GitState,
+    /// More about it in words, when there is more: which program read the history when `gix`
+    /// could not, or why the last mining failed.
+    pub detail: Option<String>,
+}
+
+named_kind! {
+    /// Where a daemon's co-change miner is.
+    GitState {
+        /// Waiting for the daemon's first index, before which no file counts.
+        Waiting => "waiting",
+        /// The repository's root folder is not the top of a git repository.
+        NoRepository => "no_repository",
+        /// A mining is due: waiting for the index to take the files HEAD's move wrote, reading
+        /// the history, or waiting for what it found to be written.
+        Mining => "mining",
+        /// What the store holds was mined from HEAD as it is.
+        Ready => "ready",
+        /// The last try failed; the next comes after a pause, or sooner when HEAD moves.
+        Failed => "failed",
+        /// A state this version does not know.
+        Other => "other",
+    }
+}
+
+impl Default for GitState {
+    /// A daemon's miner waits for the first index before anything else.
+    fn default() -> Self {
+        Self::Waiting
+    }
+}
+
+/// A miner's state from its name, or [`GitState::Other`] for a name this version does not know,
+/// so that a newer daemon's status still reads.
+fn git_state_or_other<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<GitState, D::Error> {
+    let name = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+    Ok(GitState::from_name(&name).unwrap_or(GitState::Other))
 }
 
 /// How long a daemon took to handle one hook's latest requests, each from the first byte of the

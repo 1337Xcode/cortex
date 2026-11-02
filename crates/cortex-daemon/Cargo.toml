@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 cortex-core = { path = "../cortex-core" }
+cortex-git = { path = "../cortex-git" }
 cortex-index = { path = "../cortex-index" }
 cortex-learn = { path = "../cortex-learn" }
 cortex-store = { path = "../cortex-store" }

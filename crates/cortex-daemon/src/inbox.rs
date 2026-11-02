@@ -1,14 +1,17 @@
-//! What waits for the writer: hook events, the watcher's changes, word that the watcher stopped,
-//! and a request to stop, with the counts and the latest errors the daemon's status reports. One
-//! lock and one condition variable, so the writer sleeps until something arrives or a deadline
-//! passes.
+//! What waits for the writer: hook events, the watcher's changes, a mining of the history, word
+//! that the watcher stopped, and a request to stop, with the counts, the miner's state and the
+//! latest errors the daemon's status reports, and how many of the watcher's changes the writer has
+//! indexed, which the miner waits on. One lock and one condition variable, so the writer sleeps
+//! until something arrives or a deadline passes.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use cortex_core::ipc::RecentError;
+use cortex_core::ipc::{GitReport, RecentError};
 use cortex_core::{Event, HookKind, RepoPath, ToolKind};
+use cortex_git::mine::Mining;
 use cortex_index::Change;
 use cortex_store::CheckpointFailures;
 
@@ -51,6 +54,17 @@ struct State {
     changes: Vec<(Change, i64)>,
     /// Whether a change was dropped since the last drain.
     is_overflowed: bool,
+    /// How many changes the watcher put in since the daemon started, the dropped ones included.
+    changes_in: u64,
+    /// How many of those the writer had taken when it last drained the changes.
+    changes_taken: u64,
+    /// How many of those the writer has indexed: the ones it had taken before it last came back
+    /// for work.
+    changes_indexed: u64,
+    /// A mining waiting to be written: one at most, since the miner waits for the write.
+    mining: Option<MiningJob>,
+    /// What the co-change miner is doing.
+    git: GitReport,
     /// Whether the daemon was asked to stop.
     is_stopping: bool,
     /// Whether the writer has stopped working and takes no more events.
@@ -64,7 +78,7 @@ struct State {
 }
 
 /// What the writer is to do next.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) enum Work {
     /// Stop.
     Stop,
@@ -72,6 +86,8 @@ pub(crate) enum Work {
     Events(Vec<Event>),
     /// Index what changed.
     Changed(Changed),
+    /// Write what the miner found, and tell it how that went.
+    Mining(Box<MiningJob>),
     /// The watcher stopped: changes are no longer seen.
     WatcherStopped,
     /// Nothing arrived before the deadline.
@@ -87,6 +103,23 @@ pub(crate) enum Changed {
     /// Only these paths, in path order, each with when the first change naming it arrived, in UTC
     /// milliseconds: when the watcher saw it change.
     Paths(Vec<(RepoPath, i64)>),
+}
+
+/// A mining of the history for the writer to store, with where to say how that went.
+#[derive(Debug)]
+pub(crate) struct MiningJob {
+    /// What was mined.
+    pub(crate) mining: Mining,
+    /// Where the writer says whether it was stored, or why not.
+    written: SyncSender<Result<(), String>>,
+}
+
+impl MiningJob {
+    /// Tells the miner whether the mining was stored, or why not. A miner that stopped waiting is
+    /// told nothing.
+    pub(crate) fn answer(self, written: Result<(), String>) {
+        drop(self.written.send(written));
+    }
 }
 
 /// The inbox's counts, for the daemon's status.
@@ -184,6 +217,7 @@ impl Inbox {
     /// and marks the overflow when the inbox holds [`MAX_CHANGES`].
     pub(crate) fn push_change(&self, change: Change, seen_ms: i64) {
         let mut state = self.lock();
+        state.changes_in = state.changes_in.saturating_add(1);
         if state.changes.len() >= MAX_CHANGES {
             state.is_overflowed = true;
         } else {
@@ -204,16 +238,54 @@ impl Inbox {
         self.lock().last_request
     }
 
+    /// Puts in a mining for the writer, and returns where the writer will say whether it stored
+    /// it; `None` once the inbox is closed, when nothing would store it.
+    pub(crate) fn push_mining(&self, mining: Mining) -> Option<Receiver<Result<(), String>>> {
+        let mut state = self.lock();
+        if state.is_closed {
+            return None;
+        }
+        let (written, answer) = mpsc::sync_channel(1);
+        state.mining = Some(MiningJob { mining, written });
+        drop(state);
+        self.arrived.notify_one();
+        Some(answer)
+    }
+
+    /// How many changes the watcher put in since the daemon started.
+    pub(crate) fn changes_in(&self) -> u64 {
+        self.lock().changes_in
+    }
+
+    /// Whether the writer has indexed the first `count` changes the watcher put in: it took them,
+    /// then came back for more work.
+    pub(crate) fn has_indexed(&self, count: u64) -> bool {
+        self.lock().changes_indexed >= count
+    }
+
+    /// Reports what the co-change miner is doing, for the daemon's status.
+    pub(crate) fn set_git(&self, report: GitReport) {
+        self.lock().git = report;
+    }
+
+    /// What the co-change miner is doing.
+    pub(crate) fn git(&self) -> GitReport {
+        self.lock().git.clone()
+    }
+
     /// Asks the writer to stop.
     pub(crate) fn stop(&self) {
         self.lock().is_stopping = true;
         self.arrived.notify_one();
     }
 
-    /// Closes the inbox to events: what the writer does once it has stopped working, whatever
-    /// stopped it, before it records the last events waiting.
+    /// Closes the inbox to events and minings: what the writer does once it has stopped working,
+    /// whatever stopped it, before it records the last events waiting. A mining still waiting is
+    /// dropped unwritten, which ends the miner's wait for it; the next daemon mines again.
     pub(crate) fn close(&self) {
-        self.lock().is_closed = true;
+        let mut state = self.lock();
+        state.is_closed = true;
+        state.mining = None;
     }
 
     /// Says the watcher stopped feeding the inbox.
@@ -222,11 +294,13 @@ impl Inbox {
         self.arrived.notify_one();
     }
 
-    /// Waits until an event, a change, a stop or word of the watcher arrives, or `until` passes
-    /// (never, when `None`), and says what to do: a stop first, then every event waiting, then
-    /// every change waiting, drained into one, then that the watcher stopped.
+    /// Waits until an event, a change, a mining, a stop or word of the watcher arrives, or `until`
+    /// passes (never, when `None`), and says what to do: a stop first, then every event waiting,
+    /// then every change waiting, drained into one, then the mining, then that the watcher
+    /// stopped. Only the writer waits, so the changes it took before are indexed by now.
     pub(crate) fn wait(&self, until: Option<Instant>) -> Work {
         let mut state = self.lock();
+        state.changes_indexed = state.changes_taken;
         loop {
             if state.is_stopping {
                 return Work::Stop;
@@ -236,6 +310,9 @@ impl Inbox {
             }
             if !state.changes.is_empty() || state.is_overflowed {
                 return Work::Changed(drain(&mut state));
+            }
+            if let Some(job) = state.mining.take() {
+                return Work::Mining(Box::new(job));
             }
             if state.is_watcher_gone {
                 return Work::WatcherStopped;
@@ -279,6 +356,7 @@ fn is_droppable(event: &Event) -> bool {
 /// the paths they name, each with when the first change naming it arrived. The overflow mark is
 /// cleared with the changes.
 fn drain(state: &mut State) -> Changed {
+    state.changes_taken = state.changes_in;
     let mut paths: BTreeMap<RepoPath, i64> = BTreeMap::new();
     let mut is_everything = std::mem::take(&mut state.is_overflowed);
     for (change, seen_ms) in state.changes.drain(..) {
@@ -375,21 +453,21 @@ mod tests {
     #[test]
     fn a_stop_comes_first_and_deadlines_time_out() -> Result<(), cortex_core::PathError> {
         let inbox = Inbox::default();
-        assert_eq!(inbox.wait(Some(Instant::now())), Work::Timeout);
+        assert!(matches!(inbox.wait(Some(Instant::now())), Work::Timeout));
         let start = Instant::now();
-        assert_eq!(
+        assert!(matches!(
             inbox.wait(Some(start + Duration::from_millis(50))),
             Work::Timeout
-        );
+        ));
         assert!(start.elapsed() >= Duration::from_millis(50));
         inbox.push_change(paths(&["w.py"])?, 1);
         inbox.watcher_stopped();
         assert!(matches!(inbox.wait(None), Work::Changed(_)));
-        assert_eq!(inbox.wait(None), Work::WatcherStopped);
+        assert!(matches!(inbox.wait(None), Work::WatcherStopped));
         inbox.push_change(paths(&["a.py"])?, 1);
         inbox.stop();
-        assert_eq!(inbox.wait(None), Work::Stop);
-        assert_eq!(inbox.wait(None), Work::Stop);
+        assert!(matches!(inbox.wait(None), Work::Stop));
+        assert!(matches!(inbox.wait(None), Work::Stop));
         Ok(())
     }
 
@@ -493,6 +571,64 @@ mod tests {
             Some((false, vec!["x.py".to_owned()]))
         );
         thread.join().map_err(|_| "the sending thread panicked")?;
+        Ok(())
+    }
+
+    /// A mining waits behind the events and the changes waiting with it, and its answer reaches
+    /// the miner. A closed inbox takes no mining, and one waiting when it closes is dropped: the
+    /// miner's wait for its answer ends.
+    #[test]
+    fn a_mining_comes_after_events_and_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let inbox = Inbox::default();
+        let answer = inbox
+            .push_mining(Mining::Unchanged)
+            .ok_or("an open inbox takes a mining")?;
+        inbox.push_change(paths(&["a.py"])?, 1);
+        inbox.push_event(event(HookKind::Prompt, None, 1)?);
+        assert!(matches!(inbox.wait(None), Work::Events(_)));
+        assert!(matches!(inbox.wait(None), Work::Changed(_)));
+        let Work::Mining(job) = inbox.wait(None) else {
+            return Err("the mining did not come third".into());
+        };
+        job.answer(Err("full disk".to_owned()));
+        assert_eq!(answer.recv()?, Err("full disk".to_owned()));
+        let waiting = inbox
+            .push_mining(Mining::Unchanged)
+            .ok_or("an open inbox takes a mining")?;
+        inbox.close();
+        assert_eq!(
+            waiting.recv_timeout(Duration::from_secs(5)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+        assert!(inbox.push_mining(Mining::Unchanged).is_none());
+        Ok(())
+    }
+
+    /// The changes put in are counted, a dropped one too, and count as indexed only once the
+    /// writer, having taken them, comes back for work: taking them is not indexing them. A change
+    /// that comes while the writer works on the ones it took waits for the next round.
+    #[test]
+    fn changes_are_indexed_when_the_writer_comes_back() -> Result<(), Box<dyn std::error::Error>> {
+        let inbox = Inbox::default();
+        assert!(inbox.has_indexed(0));
+        for number in 0..MAX_CHANGES {
+            inbox.push_change(paths(&[&format!("f{number}.py")])?, 1);
+        }
+        inbox.push_change(paths(&["dropped.py"])?, 1);
+        let count = u64::try_from(MAX_CHANGES)? + 1;
+        assert_eq!(inbox.changes_in(), count);
+        assert!(!inbox.has_indexed(1));
+        assert!(matches!(
+            inbox.wait(None),
+            Work::Changed(Changed::Everything(_))
+        ));
+        assert!(!inbox.has_indexed(count));
+        inbox.push_change(paths(&["late.py"])?, 2);
+        assert!(matches!(inbox.wait(None), Work::Changed(_)));
+        assert!(inbox.has_indexed(count));
+        assert!(!inbox.has_indexed(count + 1));
+        assert!(matches!(inbox.wait(Some(Instant::now())), Work::Timeout));
+        assert!(inbox.has_indexed(count + 1));
         Ok(())
     }
 }
