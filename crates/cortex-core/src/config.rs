@@ -41,6 +41,32 @@ pub const DEFAULT_CRAWL_FILES_PER_SECOND: u64 = 100;
 /// effect can be compared with tasks it did not help.
 pub const DEFAULT_HOLDOUT_SHARE: f64 = 0.10;
 
+/// The default for `learning.eta`: how much one successful task strengthens the link between two
+/// files it edited, at full role weight.
+pub const DEFAULT_LEARNING_ETA: f64 = 0.1;
+
+/// The default for `learning.link_decay`: what a link keeps of its weight for each task in the
+/// repository since it was last strengthened.
+pub const DEFAULT_LINK_DECAY: f64 = 0.995;
+
+/// The default for `learning.interest_decay`: what a node keeps of its interest for each task in
+/// the repository since it was last touched (a half-life of about 34 tasks).
+pub const DEFAULT_INTEREST_DECAY: f64 = 0.98;
+
+/// The default for `git.max_commits`: the most commits of history the co-change miner reads.
+pub const DEFAULT_GIT_MAX_COMMITS: u64 = 20_000;
+
+/// The default for `git.max_age_days`: the oldest history the co-change miner reads, two years.
+pub const DEFAULT_GIT_MAX_AGE_DAYS: u64 = 730;
+
+/// The default for `git.max_files_per_commit`: commits touching more files than this (mass
+/// refactors, formatting) say nothing about which files belong together and are skipped.
+pub const DEFAULT_GIT_MAX_FILES_PER_COMMIT: u64 = 30;
+
+/// The default for `git.half_life_commits`: a commit this many commits older than the newest
+/// counts half as much toward co-change.
+pub const DEFAULT_GIT_HALF_LIFE_COMMITS: u64 = 500;
+
 /// The keys only the user's own configuration may set: what reaches the network is the user's to
 /// turn on, and a repository's file is the repository's, whoever wrote it.
 const USERS_ONLY: &[&str] = &["upkeep.llm.enabled"];
@@ -88,6 +114,28 @@ pub struct Config {
     /// `upkeep.llm.enabled`: let optional upkeep by a language model propose facts, with an API key
     /// the user provides. Default `false`.
     pub is_llm_upkeep_enabled: bool,
+    /// `learning.eta`: the link learning rate, above 0 and at most 1. Default
+    /// [`DEFAULT_LEARNING_ETA`].
+    pub learning_eta: f64,
+    /// `learning.link_decay`: what a link keeps of its weight per task, above 0 and at most 1.
+    /// Default [`DEFAULT_LINK_DECAY`].
+    pub link_decay: f64,
+    /// `learning.interest_decay`: what a node keeps of its interest per task, above 0 and at most 1.
+    /// Default [`DEFAULT_INTEREST_DECAY`].
+    pub interest_decay: f64,
+    /// `git.max_commits`: the most commits of history mined. Default [`DEFAULT_GIT_MAX_COMMITS`].
+    pub git_max_commits: u64,
+    /// `git.max_age_days`: the oldest history mined, in days. Default [`DEFAULT_GIT_MAX_AGE_DAYS`].
+    pub git_max_age_days: u64,
+    /// `git.max_files_per_commit`: commits touching more files are skipped. Default
+    /// [`DEFAULT_GIT_MAX_FILES_PER_COMMIT`].
+    pub git_max_files_per_commit: u64,
+    /// `git.half_life_commits`: the age, in commits, at which a commit counts half. Default
+    /// [`DEFAULT_GIT_HALF_LIFE_COMMITS`].
+    pub git_half_life_commits: u64,
+    /// `tests.extra_patterns`: regular expressions naming further test or build commands, matched
+    /// against a shell command's text. Default none.
+    pub test_extra_patterns: Vec<String>,
 }
 
 impl Default for Config {
@@ -104,6 +152,14 @@ impl Default for Config {
             store_prompt_excerpt: false,
             holdout_share: DEFAULT_HOLDOUT_SHARE,
             is_llm_upkeep_enabled: false,
+            learning_eta: DEFAULT_LEARNING_ETA,
+            link_decay: DEFAULT_LINK_DECAY,
+            interest_decay: DEFAULT_INTEREST_DECAY,
+            git_max_commits: DEFAULT_GIT_MAX_COMMITS,
+            git_max_age_days: DEFAULT_GIT_MAX_AGE_DAYS,
+            git_max_files_per_commit: DEFAULT_GIT_MAX_FILES_PER_COMMIT,
+            git_half_life_commits: DEFAULT_GIT_HALF_LIFE_COMMITS,
+            test_extra_patterns: Vec::new(),
         }
     }
 }
@@ -276,6 +332,39 @@ impl Config {
                 self.is_llm_upkeep_enabled =
                     value.as_bool().ok_or_else(|| refuse("true or false"))?;
             }
+            "learning.eta" => {
+                self.learning_eta =
+                    factor(value).ok_or_else(|| refuse("a number above 0 and at most 1"))?;
+            }
+            "learning.link_decay" => {
+                self.link_decay =
+                    factor(value).ok_or_else(|| refuse("a number above 0 and at most 1"))?;
+            }
+            "learning.interest_decay" => {
+                self.interest_decay =
+                    factor(value).ok_or_else(|| refuse("a number above 0 and at most 1"))?;
+            }
+            "git.max_commits" => {
+                self.git_max_commits =
+                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
+            }
+            "git.max_age_days" => {
+                self.git_max_age_days =
+                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
+            }
+            "git.max_files_per_commit" => {
+                self.git_max_files_per_commit =
+                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
+            }
+            "git.half_life_commits" => {
+                self.git_half_life_commits =
+                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
+            }
+            "tests.extra_patterns" => {
+                self.test_extra_patterns = string_list(value)
+                    .filter(|patterns| patterns.iter().all(|pattern| is_regex(pattern)))
+                    .ok_or_else(|| refuse("a list of regular expressions"))?;
+            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -311,6 +400,16 @@ fn share(value: &toml::Value) -> Option<f64> {
         _ => return None,
     };
     (0.0..=1.0).contains(&number).then_some(number)
+}
+
+/// The value as a factor above 0 and at most 1, written as a number with or without a fraction.
+fn factor(value: &toml::Value) -> Option<f64> {
+    share(value).filter(|number| *number > 0.0)
+}
+
+/// Whether `pattern` is a regular expression the `regex` crate accepts.
+fn is_regex(pattern: &str) -> bool {
+    regex::Regex::new(pattern).is_ok()
 }
 
 /// The value as a list of strings.
@@ -384,6 +483,14 @@ mod tests {
                 store_prompt_excerpt: false,
                 holdout_share: 0.1,
                 is_llm_upkeep_enabled: false,
+                learning_eta: 0.1,
+                link_decay: 0.995,
+                interest_decay: 0.98,
+                git_max_commits: 20_000,
+                git_max_age_days: 730,
+                git_max_files_per_commit: 30,
+                git_half_life_commits: 500,
+                test_extra_patterns: Vec::new(),
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -402,7 +509,10 @@ mod tests {
             "repository",
             "[index]\nmax_file_bytes = 5000\nparse_timeout_ms = 250\ncrawl_files_per_second = 7\n\
              [daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n\
-             [privacy]\nstore_prompt_excerpt = true\n[holdout]\nshare = 0.25\n",
+             [privacy]\nstore_prompt_excerpt = true\n[holdout]\nshare = 0.25\n\
+             [learning]\neta = 0.2\nlink_decay = 1\ninterest_decay = 0.5\n\
+             [git]\nmax_commits = 100\nmax_age_days = 7\nmax_files_per_commit = 5\n\
+             half_life_commits = 50\n[tests]\nextra_patterns = [\"^just test\", \"tox( |$)\"]\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -418,6 +528,14 @@ mod tests {
                 store_prompt_excerpt: true,
                 holdout_share: 0.25,
                 is_llm_upkeep_enabled: true,
+                learning_eta: 0.2,
+                link_decay: 1.0,
+                interest_decay: 0.5,
+                git_max_commits: 100,
+                git_max_age_days: 7,
+                git_max_files_per_commit: 5,
+                git_half_life_commits: 50,
+                test_extra_patterns: vec!["^just test".to_owned(), "tox( |$)".to_owned()],
             }
         );
         Ok(())
@@ -575,12 +693,77 @@ mod tests {
                 "true or false",
             ),
         ];
+        assert_refused(&cases);
+    }
+
+    /// The learning, git and tests keys refuse what they cannot use, naming the file, the key and
+    /// what it accepts: a factor out of its range, a count that is not a whole number above 0, a
+    /// pattern the `regex` crate refuses.
+    #[test]
+    fn bad_learning_and_git_values_are_refused() {
+        let cases = [
+            (
+                "learning.eta = 0",
+                "learning.eta",
+                "a number above 0 and at most 1",
+            ),
+            (
+                "learning.eta = 1.5",
+                "learning.eta",
+                "a number above 0 and at most 1",
+            ),
+            (
+                "learning.link_decay = -0.5",
+                "learning.link_decay",
+                "a number above 0 and at most 1",
+            ),
+            (
+                "learning.interest_decay = \"0.98\"",
+                "learning.interest_decay",
+                "a number above 0 and at most 1",
+            ),
+            (
+                "git.max_commits = 0",
+                "git.max_commits",
+                "a whole number above 0",
+            ),
+            (
+                "git.max_age_days = 1.5",
+                "git.max_age_days",
+                "a whole number above 0",
+            ),
+            (
+                "git.max_files_per_commit = -1",
+                "git.max_files_per_commit",
+                "a whole number above 0",
+            ),
+            (
+                "git.half_life_commits = \"500\"",
+                "git.half_life_commits",
+                "a whole number above 0",
+            ),
+            (
+                "tests.extra_patterns = [\"(unclosed\"]",
+                "tests.extra_patterns",
+                "a list of regular expressions",
+            ),
+            (
+                "tests.extra_patterns = \"pytest\"",
+                "tests.extra_patterns",
+                "a list of regular expressions",
+            ),
+        ];
+        assert_refused(&cases);
+    }
+
+    /// Checks that each file text in `cases` is refused for its key with what the key accepts.
+    fn assert_refused(cases: &[(&str, &str, &'static str)]) {
         for (text, key, expected) in cases {
             assert_eq!(
                 load(&[layer("f", text)]),
                 Err(ConfigError::Value {
                     origin: "f".to_owned(),
-                    key: key.to_owned(),
+                    key: (*key).to_owned(),
                     expected,
                 }),
                 "{text}"

@@ -35,6 +35,7 @@ proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 # Exactly the version the `scip` crate pins and was generated with; Cortex needs its `Message`
 # trait to read an index.
 protobuf = "=3.7.2"
+regex = "1.13.1"
 # Default features off: they add a WebAssembly build of SQLite for wasm32 targets, which Cortex
 # does not build for.
 rusqlite = { version = "0.41.1", default-features = false, features = ["backup", "bundled", "cache"] }
