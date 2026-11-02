@@ -4,6 +4,13 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+/// The names git's program has on this platform, for [`find_program`].
+pub const GIT: &[&str] = if cfg!(windows) {
+    &["git.exe"]
+} else {
+    &["git"]
+};
+
 /// The first program named one of `names` in the folders the `PATH` environment variable lists,
 /// each folder in turn and the names in order within it, as a shell finds it, but never one inside
 /// `repository`, which could have placed it there.

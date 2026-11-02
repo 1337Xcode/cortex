@@ -7,20 +7,13 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-use cortex_core::Captured;
+use cortex_core::{Captured, GIT};
 
 /// How long git has to answer.
 const GIT_WITHIN: Duration = Duration::from_secs(5);
 
 /// The most of git's answer read: a path, or a few paths, however long.
 const MAX_ANSWER_BYTES: u64 = 65_536;
-
-/// The name git's program has on this platform.
-const GIT: &[&str] = if cfg!(windows) {
-    &["git.exe"]
-} else {
-    &["git"]
-};
 
 /// What `git <args>` answered, run in `folder` by a git outside `bound`; or why it did not answer:
 /// git is not on the `PATH`, or it did not end in time.

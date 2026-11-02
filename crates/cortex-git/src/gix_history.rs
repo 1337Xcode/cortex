@@ -6,8 +6,7 @@
 use std::error::Error;
 use std::path::Path;
 
-use cortex_core::{RepoPath, canonical_root};
-use gix::bstr::BStr;
+use cortex_core::canonical_root;
 use gix::diff::blob::Platform as ComparisonCache;
 use gix::object::tree::diff::{Action, Change};
 
@@ -204,37 +203,18 @@ impl HistorySource for GixHistory {
     }
 }
 
-/// The change as a path change. A path that cannot be a repository path (not UTF-8, absolute,
-/// holding a backslash, or with an empty, `.` or `..` name), which no file Cortex indexes has, is
-/// left out; a rename from such a path is a change of the new path alone, and a rename to one a
-/// change of the old path alone.
+/// The change as a path change, by [`PathChange::from_git`]'s rules.
 fn path_change(change: &Change<'_, '_, '_>) -> Option<PathChange> {
     match change {
         Change::Addition { location, .. }
         | Change::Deletion { location, .. }
-        | Change::Modification { location, .. } => repo_path(location).map(|path| PathChange {
-            path,
-            renamed_from: None,
-        }),
+        | Change::Modification { location, .. } => PathChange::from_git(location, None),
         Change::Rewrite {
             source_location,
             location,
             ..
-        } => match (repo_path(location), repo_path(source_location)) {
-            (Some(path), renamed_from) => Some(PathChange { path, renamed_from }),
-            (None, Some(path)) => Some(PathChange {
-                path,
-                renamed_from: None,
-            }),
-            (None, None) => None,
-        },
+        } => PathChange::from_git(location, Some(source_location)),
     }
-}
-
-/// A git path as a repository path; `None` when it cannot be a file's.
-fn repo_path(path: &BStr) -> Option<RepoPath> {
-    let text = std::str::from_utf8(path).ok()?;
-    RepoPath::new(text).ok().filter(|path| !path.is_root())
 }
 
 /// Whether `repo` is a partial clone, as git tells one: `extensions.partialClone` set, or

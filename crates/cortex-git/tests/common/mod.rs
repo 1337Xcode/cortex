@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use cortex_core::RepoPath;
-use cortex_git::{MinedCommit, PathChange, Window};
+use cortex_git::{CliHistory, GixHistory, HistorySource, Mined, MinedCommit, PathChange, Window};
 use tempfile::TempDir;
 
 /// Result type for these tests: any failure fails the test.
@@ -160,6 +160,23 @@ impl Repo {
 /// with a different word shares no line with.
 pub fn lines(word: &str, count: usize) -> String {
     (1..=count).map(|line| format!("{word} {line}\n")).collect()
+}
+
+/// Both sources of the history of the repository at `root`, each with its name: what `gix` reads
+/// and what the `git` program lists. A test's expectations hold for both unless it says otherwise.
+pub fn sources(root: &Path) -> TestResult<Vec<(&'static str, Box<dyn HistorySource>)>> {
+    Ok(vec![
+        ("gix", Box::new(GixHistory::open(root)?)),
+        ("git", Box::new(CliHistory::open(root)?)),
+    ])
+}
+
+/// What each source reads of the repository at `root` within `window`, with the source's name.
+pub fn read_both(root: &Path, window: &Window) -> TestResult<Vec<(&'static str, Mined)>> {
+    sources(root)?
+        .into_iter()
+        .map(|(name, history)| Ok((name, history.read(window)?)))
+        .collect()
 }
 
 /// A window holding every commit of these histories, with a mass commit cut at 30 files.

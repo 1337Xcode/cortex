@@ -1,12 +1,12 @@
-//! How a read with `gix` recognises renamed files, and what it never does while comparing them:
-//! read contents it does not need, follow attributes, run a program the repository names. Each
-//! test makes a repository with git and compares the read with changes written by hand; where git's
-//! own view decides, git is asked.
+//! How each source recognises renamed files, and what neither does while comparing them: read
+//! contents it does not need, follow attributes, run a program the repository names. Each test
+//! makes a repository with git and compares what both sources read, `gix` and the `git` program,
+//! with changes written by hand; where git's own view decides, git is asked.
 
 mod common;
 
-use common::{Repo, TestResult, changed, commit, every_commit, lines, renamed};
-use cortex_git::{GixHistory, HistorySource, Window};
+use common::{Repo, TestResult, changed, commit, every_commit, lines, read_both, renamed};
+use cortex_git::{CliHistory, GitError, GixHistory, HistorySource, Window};
 
 /// A file moved with nine of its ten lines kept is a rename, named with the path it had. A file
 /// moved with every line rewritten shares nothing with what it was: a deletion and an addition.
@@ -22,7 +22,6 @@ fn a_rename_names_the_path_it_had() -> TestResult {
     repo.write("gone.rs", &lines("second", 10))?;
     let rewritten = repo.commit(3)?;
 
-    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
     let expected = vec![
         commit(
             &rewritten,
@@ -40,7 +39,9 @@ fn a_rename_names_the_path_it_had() -> TestResult {
             Some(vec![changed("old/name.rs")?, changed("other.rs")?]),
         ),
     ];
-    assert_eq!(mined.commits, expected);
+    for (name, mined) in read_both(&repo.root(), &every_commit())? {
+        assert_eq!(mined.commits, expected, "{name}");
+    }
     Ok(())
 }
 
@@ -69,7 +70,6 @@ fn renames_up_to_the_cut_are_found() -> TestResult {
         max_files: 3,
         ..every_commit()
     };
-    let mined = GixHistory::open(&repo.root())?.read(&window)?;
     let expected = commit(
         &moved,
         2,
@@ -79,7 +79,9 @@ fn renames_up_to_the_cut_are_found() -> TestResult {
             renamed("old3.txt", "new3.txt")?,
         ]),
     );
-    assert_eq!(mined.commits.first(), Some(&expected));
+    for (name, mined) in read_both(&repo.root(), &window)? {
+        assert_eq!(mined.commits.first(), Some(&expected), "{name}");
+    }
     Ok(())
 }
 
@@ -115,17 +117,17 @@ fn a_mass_commit_compares_no_contents() -> TestResult {
         max_files: 3,
         ..every_commit()
     };
-    let mined = GixHistory::open(&repo.root())?.read(&window)?;
-    assert_eq!(
-        mined.commits,
-        vec![commit(&day_2, 2, None), commit(&day_1, 1, None)]
-    );
+    let expected = vec![commit(&day_2, 2, None), commit(&day_1, 1, None)];
+    for (name, mined) in read_both(&repo.root(), &window)? {
+        assert_eq!(mined.commits, expected, "{name}");
+    }
     Ok(())
 }
 
-/// A file over 1 MiB is a rename only when its contents did not change, even where the
+/// For `gix`, a file over 1 MiB is a rename only when its contents did not change, even where the
 /// repository's own configuration would compare files up to 512 MiB: one moved with its last line
-/// changed is a deletion and an addition, one moved unchanged a rename.
+/// changed is a deletion and an addition, one moved unchanged a rename. Git compares files of any
+/// size, so the `git` program finds both renames.
 #[test]
 fn a_large_file_is_renamed_only_when_unchanged() -> TestResult {
     let repo = Repo::new()?;
@@ -138,8 +140,7 @@ fn a_large_file_is_renamed_only_when_unchanged() -> TestResult {
     let moved = repo.commit(2)?;
     repo.git(&["config", "core.bigFileThreshold", "512m"])?;
 
-    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
-    let expected = commit(
+    let by_gix = commit(
         &moved,
         2,
         Some(vec![
@@ -148,13 +149,26 @@ fn a_large_file_is_renamed_only_when_unchanged() -> TestResult {
             renamed("big2.txt", "moved2.txt")?,
         ]),
     );
-    assert_eq!(mined.commits.first(), Some(&expected));
+    let by_git = commit(
+        &moved,
+        2,
+        Some(vec![
+            renamed("big1.txt", "moved1.txt")?,
+            renamed("big2.txt", "moved2.txt")?,
+        ]),
+    );
+    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
+    assert_eq!(mined.commits.first(), Some(&by_gix));
+    let mined = CliHistory::open(&repo.root())?.read(&every_commit())?;
+    assert_eq!(mined.commits.first(), Some(&by_git));
     Ok(())
 }
 
 /// A partial clone holds only the contents it has needed, here those of the newest commit: a file
 /// moved with an edit is a deletion and an addition, since comparing it would need the contents
-/// it had, and a file moved unchanged is a rename. The read says the clone is partial.
+/// it had, and a file moved unchanged is a rename. The read says the clone is partial. The clone's
+/// origin is gone before the read, so a source that tried to fetch what the clone left out would
+/// fail.
 #[test]
 fn a_partial_clone_matches_identical_contents_only() -> TestResult {
     let origin = Repo::new()?;
@@ -166,8 +180,8 @@ fn a_partial_clone_matches_identical_contents_only() -> TestResult {
     origin.move_file("b.txt", "d.txt", None)?;
     let moved = origin.commit(2)?;
     let clone = Repo::clone_of(&origin, &["--filter=blob:none"])?;
+    drop(origin);
 
-    let mined = GixHistory::open(&clone.root())?.read(&every_commit())?;
     let expected = vec![
         commit(
             &moved,
@@ -180,8 +194,10 @@ fn a_partial_clone_matches_identical_contents_only() -> TestResult {
         ),
         commit(&first, 1, Some(vec![changed("a.txt")?, changed("b.txt")?])),
     ];
-    assert_eq!(mined.commits, expected);
-    assert!(mined.is_partial);
+    for (name, mined) in read_both(&clone.root(), &every_commit())? {
+        assert_eq!(mined.commits, expected, "{name}");
+        assert!(mined.is_partial, "{name}");
+    }
     Ok(())
 }
 
@@ -208,9 +224,10 @@ fn attributes_take_no_part_in_renames() -> TestResult {
         shown.starts_with('R') && shown.ends_with("a.txt\tb.txt"),
         "{shown}"
     );
-    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
     let expected = commit(&moved, 2, Some(vec![renamed("a.txt", "b.txt")?]));
-    assert_eq!(mined.commits.first(), Some(&expected));
+    for (name, mined) in read_both(&repo.root(), &every_commit())? {
+        assert_eq!(mined.commits.first(), Some(&expected), "{name}");
+    }
     Ok(())
 }
 
@@ -253,19 +270,21 @@ fn reading_runs_no_program_the_repository_names() -> TestResult {
     assert!(marker.exists(), "git did not run the text conversion");
     std::fs::remove_file(&marker)?;
 
-    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
     let expected = commit(&moved, 2, Some(vec![renamed("a.txt", "b.txt")?]));
-    assert_eq!(mined.commits.first(), Some(&expected));
-    assert!(
-        !marker.exists(),
-        "reading the history ran the text conversion"
-    );
+    for (name, mined) in read_both(&repo.root(), &every_commit())? {
+        assert_eq!(mined.commits.first(), Some(&expected), "{name}");
+        assert!(
+            !marker.exists(),
+            "{name}: reading the history ran the text conversion"
+        );
+    }
     Ok(())
 }
 
-/// A path no file can have is left out of a commit's changes and the commit's other files stay.
-/// The tree below, written by hand as git never writes one, names a file with no name, a file
-/// `..` and a file whose name holds a backslash beside `ok.txt`.
+/// For `gix`, a path no file can have is left out of a commit's changes and the commit's other
+/// files stay. The tree below, written by hand as git never writes one, names a file with no name,
+/// a file `..` and a file whose name holds a backslash beside `ok.txt`. The `git` program refuses
+/// to list such a tree, so that source cannot read the history.
 #[test]
 fn a_path_no_file_can_have_is_left_out() -> TestResult {
     let repo = Repo::new()?;
@@ -294,6 +313,8 @@ fn a_path_no_file_can_have_is_left_out() -> TestResult {
         mined.commits,
         vec![commit(&crafted, 1, Some(vec![changed("ok.txt")?]))]
     );
+    let listed = CliHistory::open(&repo.root())?.read(&every_commit());
+    assert!(matches!(listed, Err(GitError::Walk(_))), "{listed:?}");
     Ok(())
 }
 
@@ -314,12 +335,13 @@ fn a_path_that_is_not_utf8_is_left_out() -> TestResult {
     std::fs::rename(&bad, repo.root().join("good.txt"))?;
     let second = repo.commit(2)?;
 
-    let mined = GixHistory::open(&repo.root())?.read(&every_commit())?;
     let expected = vec![
         commit(&second, 2, Some(vec![changed("good.txt")?])),
         commit(&first, 1, Some(vec![changed("ok.txt")?])),
     ];
-    assert_eq!(mined.commits, expected);
+    for (name, mined) in read_both(&repo.root(), &every_commit())? {
+        assert_eq!(mined.commits, expected, "{name}");
+    }
     Ok(())
 }
 

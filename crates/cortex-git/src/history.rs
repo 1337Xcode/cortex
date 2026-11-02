@@ -33,6 +33,33 @@ pub struct PathChange {
     pub renamed_from: Option<RepoPath>,
 }
 
+impl PathChange {
+    /// The change git reports of the file at `path`, renamed from `renamed_from` when it was. A
+    /// path that cannot be a repository path (not UTF-8, absolute, holding a backslash, or with an
+    /// empty, `.` or `..` name), which no file Cortex indexes has and only a tree written by hand
+    /// holds, is left out: a rename from such a path is a change of the new path alone, a rename
+    /// to one a change of the old path alone, and a change of one nothing.
+    pub(crate) fn from_git(path: &[u8], renamed_from: Option<&[u8]>) -> Option<Self> {
+        match (repo_path(path), renamed_from.map(repo_path)) {
+            (Some(path), renamed_from) => Some(Self {
+                path,
+                renamed_from: renamed_from.flatten(),
+            }),
+            (None, Some(Some(path))) => Some(Self {
+                path,
+                renamed_from: None,
+            }),
+            (None, _) => None,
+        }
+    }
+}
+
+/// A path as git stores it, as a repository path; `None` when it cannot be a file's.
+fn repo_path(path: &[u8]) -> Option<RepoPath> {
+    let text = std::str::from_utf8(path).ok()?;
+    RepoPath::new(text).ok().filter(|path| !path.is_root())
+}
+
 /// One commit read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinedCommit {
