@@ -5,13 +5,15 @@
 //! it is. [`Commands`] tells what a shell command line ran: the checks of the runners it knows and
 //! git restores. [`judge`] tells what became of a task that has ended, from its state, and
 //! [`interest_of`] what its work adds to the interest of each node it touched, and
-//! [`links_of`] what it does to the links between them.
+//! [`links_of`] what it does to the links between them. [`episode_of`] is one record of what
+//! the task did, for the archetypes that cluster tasks later.
 
 #![warn(clippy::pedantic)]
 
 mod activity;
 mod commands;
 mod decay;
+mod episode;
 mod interest;
 mod links;
 mod outcome;
@@ -21,6 +23,7 @@ mod task_state;
 mod watcher_edits;
 
 pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore};
+pub use episode::episode_of;
 pub use interest::{EarnedInterest, add_interest, interest_of};
 pub use links::{EarnedLinks, Linking, add_links, links_of};
 pub use outcome::{FileNow, Judgement, judge, reverted_after};

@@ -225,17 +225,7 @@ fn restored(path: &RepoPath, edit: LastEdit, (did, next): (&Did<'_>, Option<&Did
         .into_iter()
         .flat_map(|next| next.restores.iter())
         .filter(|ran| ran.at_ms > edit.at_ms);
-    own.chain(after).any(|ran| covers(ran.restore, path))
-}
-
-/// Whether `restore` put back the file at `path`: every file, the file itself, or a folder holding
-/// it.
-fn covers(restore: &Restore, path: &RepoPath) -> bool {
-    match restore {
-        Restore::Everything => true,
-        Restore::Paths(paths) => std::iter::successors(Some(path.clone()), RepoPath::parent)
-            .any(|place| paths.contains(&place)),
-    }
+    own.chain(after).any(|ran| ran.restore.covers(path))
 }
 
 /// What the last check that finished after the task's last edit vouches for: one that exited 0
@@ -284,7 +274,7 @@ fn undone_at(did: &Did<'_>, last_edit: usize) -> Option<usize> {
     did.restores
         .iter()
         .filter(|ran| ran.step > last_edit)
-        .filter(|ran| did.edits.keys().any(|path| covers(ran.restore, path)))
+        .filter(|ran| did.edits.keys().any(|path| ran.restore.covers(path)))
         .map(|ran| ran.step)
         .max()
 }

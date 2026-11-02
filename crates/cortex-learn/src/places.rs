@@ -36,6 +36,20 @@ impl<'a> Places<'a> {
         path: &RepoPath,
         range: LineRange,
     ) -> Result<Vec<NodeId>, StoreError> {
+        Ok(self
+            .covering_spans(path, range)?
+            .into_iter()
+            .map(|span| span.node)
+            .collect())
+    }
+
+    /// Those symbols with the lines they cover, for a caller that needs to know where each one
+    /// starts.
+    pub(crate) fn covering_spans(
+        &mut self,
+        path: &RepoPath,
+        range: LineRange,
+    ) -> Result<Vec<SymbolSpan>, StoreError> {
         if !self.symbols.contains_key(path) {
             let file = self.queries.file(path)?.map(|row| row.id);
             let spans = match file {
@@ -50,7 +64,7 @@ impl<'a> Places<'a> {
             .filter(|span| {
                 span.start_line <= range.end_line() && range.start_line() <= span.end_line
             })
-            .map(|span| span.node)
+            .copied()
             .collect())
     }
 

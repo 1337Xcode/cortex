@@ -45,6 +45,19 @@ pub enum Restore {
     Paths(Vec<RepoPath>),
 }
 
+impl Restore {
+    /// Whether it put back the file at `path`: every file, the file itself, or a folder holding
+    /// it.
+    #[must_use]
+    pub fn covers(&self, path: &RepoPath) -> bool {
+        match self {
+            Self::Everything => true,
+            Self::Paths(paths) => std::iter::successors(Some(path.clone()), RepoPath::parent)
+                .any(|place| paths.contains(&place)),
+        }
+    }
+}
+
 /// A command a line ran that Cortex tells apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ran {
