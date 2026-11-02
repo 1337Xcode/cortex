@@ -377,6 +377,18 @@ pub(crate) const EPISODE_REPLACE: &str = "INSERT INTO episodes \
 pub(crate) const EPISODE_OF_TASK: &str = "SELECT localize, change, verify, pitfalls, outcome, \
      created_at FROM episodes WHERE task_id = ?1";
 
+/// Deletes every cluster of tasks.
+pub(crate) const ARCHETYPES_DELETE_ALL: &str = "DELETE FROM archetypes";
+/// Adds one cluster of tasks.
+pub(crate) const ARCHETYPE_INSERT: &str = "INSERT INTO archetypes \
+     (seed_terms, files, episode_count, updated_at) VALUES (?1, ?2, ?3, ?4)";
+/// Every cluster of tasks, oldest first.
+pub(crate) const ARCHETYPES: &str = "SELECT seed_terms, files, episode_count, updated_at \
+     FROM archetypes ORDER BY archetype_id";
+/// The records of the oldest tasks, at most as many as the first parameter.
+pub(crate) const EPISODES: &str = "SELECT task_id, localize, change, verify, pitfalls, \
+     outcome, created_at FROM episodes ORDER BY task_id LIMIT ?1";
+
 /// Row counts for status.
 pub(crate) const COUNTS: &str = "SELECT (SELECT count(*) FROM files), \
      (SELECT count(*) FROM symbols), (SELECT count(*) FROM refs), \

@@ -210,6 +210,41 @@ pub(crate) fn replace(connection: &Connection, episode: &EpisodeRecord) -> Resul
 }
 
 impl Queries<'_> {
+    /// The records of the oldest `limit` tasks, by task. The clustering reads them in this
+    /// order, so the oldest task of a cluster is the one the others are compared against.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn episodes(self, limit: usize) -> Result<Vec<EpisodeRecord>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = self
+            .connection()
+            .prepare_cached(schema::EPISODES)
+            .map_err(sqlite("reading episodes"))?;
+        let rows = statement
+            .query_map([limit], |row| {
+                let task_id: String = row.get(0)?;
+                Ok((task_id, read_parts(row)?))
+            })
+            .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
+            .map_err(sqlite("reading episodes"))?;
+        rows.into_iter()
+            .map(|(task_id, parts)| {
+                let task_id =
+                    cortex_core::Ulid::parse(&task_id).map_err(|_| StoreError::NotText {
+                        column: "episodes.task_id",
+                    })?;
+                let (localize, change, verify, pitfalls, outcome, created_at_ms) = parts;
+                checked(
+                    task_id,
+                    [localize, change, verify, pitfalls],
+                    (outcome, created_at_ms),
+                )
+            })
+            .collect()
+    }
+
     /// The record of the task `task_id`, when it has one.
     ///
     /// # Errors
@@ -235,6 +270,18 @@ impl Queries<'_> {
 /// `value` as the JSON it is stored as.
 fn json<T: Serialize>(value: &T, column: &'static str) -> Result<String, StoreError> {
     serde_json::to_string(value).map_err(|_| StoreError::NotText { column })
+}
+
+/// The parts of one row, by the column order of the queries that read a record.
+fn read_parts(row: &Row<'_>) -> rusqlite::Result<(String, String, String, String, String, i64)> {
+    Ok((
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+    ))
 }
 
 /// One row as the record it holds.

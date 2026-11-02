@@ -6,6 +6,7 @@ use cortex_core::{EdgeType, Identifier, RepoId, RepoPath, ScaleMode, TaskOutcome
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::activity::{self, EventRecord, SessionRecord, TaskRecord};
+use crate::archetype::{self, ArchetypeRecord};
 use crate::checkpoint::{CheckpointFailures, Checkpointer};
 use crate::cochange::{self, FileCommitsRow, GitStateKey, PairRow};
 use crate::connection::{self, Access};
@@ -388,6 +389,17 @@ impl WriteTx<'_> {
         edges: &[(NodeId, EdgeRecord)],
     ) -> Result<(), StoreError> {
         self.atomically(|connection| links::set_edges(connection, edge_type, edges))
+    }
+
+    /// Writes every cluster of tasks, replacing the clusters stored before. The clustering
+    /// reads every record and writes its clusters whole, so they are replaced together.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`], [`StoreError::NotText`] for a cluster that cannot be
+    /// written as JSON, and SQLite errors. Either all are written or none.
+    pub fn replace_archetypes(&mut self, archetypes: &[ArchetypeRecord]) -> Result<(), StoreError> {
+        self.atomically(|connection| archetype::replace(connection, archetypes))
     }
 
     /// Writes one task's record, replacing the one the task had.

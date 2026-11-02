@@ -11,6 +11,7 @@
 #![warn(clippy::pedantic)]
 
 mod activity;
+mod archetype;
 mod checkpoint;
 mod cochange;
 mod connection;
@@ -38,6 +39,7 @@ mod values;
 mod writer;
 
 pub use activity::{EventRecord, EventRow, SessionRecord, SessionRow, TaskRecord, TaskRow};
+pub use archetype::ArchetypeRecord;
 pub use checkpoint::CheckpointFailures;
 pub use cochange::{CountedFile, FileCommitsRow, GitStateKey, PairRow};
 pub use episode::{
