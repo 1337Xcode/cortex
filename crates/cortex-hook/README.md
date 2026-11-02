@@ -43,7 +43,10 @@ folder), the panic guard and the log's rate limit and rotation. The `cortex hook
 tested through the binary in `cortex-cli`'s `tests/hook.rs` and `tests/daemon_down.rs`.
 
 The client tests run a scripted daemon on a real socket or named pipe: an answer, a mismatch,
-silence until the deadline, a closed connection, broken frames, and no daemon at all.
+silence until the deadline, a closed connection, broken frames, and no daemon at all. The `run`
+tests call the hook's entry point against the same scripted daemon and read the hook log: an
+answer that takes nothing is noted, for an event and for `cortex doctor`'s probe, and a note the
+hook's own thread writes is in the log by the time the hook returns.
 
 The Claude Code tests normalize every captured payload under `tests/fixtures/claude/` and compare
 it with an event written out by hand from the fixture: paths, lines, commands, sizes and exit
