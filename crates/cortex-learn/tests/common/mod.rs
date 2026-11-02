@@ -10,11 +10,11 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use cortex_core::{
-    Agent, Event, EventKind, EventMeta, HookKind, Identifier, LineRange, RepoId, RepoPath,
-    StartSource, ToolKind, ToolResult, ToolTarget, Ulid,
+    Agent, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier, LineRange, RepoId,
+    RepoPath, StartSource, ToolKind, ToolResult, ToolTarget, Ulid,
 };
-use cortex_learn::Recorder;
-use cortex_store::{EventRecord, Writer, WriterOptions};
+use cortex_learn::{Recorder, TaskState};
+use cortex_store::{EventRecord, FileIndex, FileRecord, NodeId, Writer, WriterOptions};
 
 /// Result type for these tests: any failure fails the test.
 pub type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -144,14 +144,53 @@ impl Store {
         Ok(Self { root, writer })
     }
 
-    /// Records `events` with `recorder`, each in a transaction of its own.
-    pub fn record(&mut self, recorder: &mut Recorder, events: &[Event]) -> TestResult {
+    /// Records `events` with `recorder`, each in a transaction of its own, and returns the states
+    /// of the tasks they ended, in order.
+    pub fn record(
+        &mut self,
+        recorder: &mut Recorder,
+        events: &[Event],
+    ) -> TestResult<Vec<TaskState>> {
+        let mut ended = Vec::new();
         for event in events {
             let mut transaction = self.writer.transaction()?;
-            recorder.record(&mut transaction, event)?;
+            ended.extend(recorder.record(&mut transaction, event)?);
             transaction.commit()?;
         }
-        Ok(())
+        Ok(ended)
+    }
+
+    /// Stores the files at `paths` as the indexer would, with no language, and returns their
+    /// nodes in that order.
+    pub fn index(&mut self, paths: &[&str]) -> TestResult<Vec<NodeId>> {
+        let mut transaction = self.writer.transaction()?;
+        let mut nodes = Vec::new();
+        for path in paths {
+            let path = RepoPath::new(path)?;
+            transaction.replace_file(&FileIndex {
+                file: FileRecord {
+                    path: path.clone(),
+                    language: None,
+                    size_bytes: 10,
+                    line_count: None,
+                    content_hash: None,
+                    mtime_ns: 1,
+                    flags: FileFlags::empty(),
+                    indexed_at_ms: 1,
+                },
+                symbols: Vec::new(),
+                refs: Vec::new(),
+                passes_on: Vec::new(),
+            })?;
+            nodes.push(
+                transaction
+                    .queries()
+                    .file_node_at(&path)?
+                    .ok_or("no node for a stored file")?,
+            );
+        }
+        transaction.commit()?;
+        Ok(nodes)
     }
 
     /// Every event stored, in order, as (kind, task, session, path, range, meta) for comparing.

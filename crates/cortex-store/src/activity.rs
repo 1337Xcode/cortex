@@ -287,13 +287,14 @@ impl Queries<'_> {
             .transpose()
     }
 
-    /// The events of the task, in the order they were stored.
+    /// The events of the task, in the order they were stored, at most `limit` of them.
     ///
     /// # Errors
     ///
     /// SQLite errors and stored values that cannot be read back.
-    pub fn events_of_task(self, task_id: Ulid) -> Result<Vec<EventRow>, StoreError> {
-        self.event_rows(schema::EVENTS_OF_TASK, &task_id.to_string())
+    pub fn events_of_task(self, task_id: Ulid, limit: usize) -> Result<Vec<EventRow>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.event_rows(schema::EVENTS_OF_TASK, (task_id.to_string(), limit))
     }
 
     /// The events the session reported, by time, then in the order they were stored.
@@ -302,7 +303,7 @@ impl Queries<'_> {
     ///
     /// SQLite errors and stored values that cannot be read back.
     pub fn events_of_session(self, session_id: &Identifier) -> Result<Vec<EventRow>, StoreError> {
-        self.event_rows(schema::EVENTS_OF_SESSION, session_id.as_str())
+        self.event_rows(schema::EVENTS_OF_SESSION, [session_id.as_str()])
     }
 
     /// The events numbered after `after_seq`, in order, at most `limit` of them.
@@ -313,26 +314,21 @@ impl Queries<'_> {
     pub fn events_after(self, after_seq: u64, limit: usize) -> Result<Vec<EventRow>, StoreError> {
         let after = values::integer(after_seq, "events.seq")?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let raw: Vec<RawEvent> = self
-            .connection()
-            .prepare_cached(schema::EVENTS_AFTER)
-            .and_then(|mut statement| {
-                statement
-                    .query_map((after, limit), RawEvent::read)?
-                    .collect::<rusqlite::Result<_>>()
-            })
-            .map_err(sqlite("reading events"))?;
-        raw.into_iter().map(RawEvent::check).collect()
+        self.event_rows(schema::EVENTS_AFTER, (after, limit))
     }
 
-    /// The events one statement finds by one text parameter.
-    fn event_rows(self, sql: &'static str, key: &str) -> Result<Vec<EventRow>, StoreError> {
+    /// The events one statement finds with `params`.
+    fn event_rows(
+        self,
+        sql: &'static str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<EventRow>, StoreError> {
         let raw: Vec<RawEvent> = self
             .connection()
             .prepare_cached(sql)
             .and_then(|mut statement| {
                 statement
-                    .query_map([key], RawEvent::read)?
+                    .query_map(params, RawEvent::read)?
                     .collect::<rusqlite::Result<_>>()
             })
             .map_err(sqlite("reading events"))?;

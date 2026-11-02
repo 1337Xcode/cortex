@@ -102,13 +102,19 @@ fn tasks_and_events_read_back_in_order() -> TestResult {
             .map(|row| row.record.task_id),
         Some(first.task_id)
     );
-    let events = queries.events_of_task(first.task_id)?;
+    let events = queries.events_of_task(first.task_id, 10)?;
     let kinds: Vec<(u64, EventKind)> = events
         .iter()
         .map(|row| (row.seq, row.record.kind))
         .collect();
     assert_eq!(kinds, [(1, EventKind::Prompt), (2, EventKind::Edit)]);
     assert_eq!(events.last().map(|row| &row.record), Some(&edit));
+    let first_only: Vec<u64> = queries
+        .events_of_task(first.task_id, 1)?
+        .iter()
+        .map(|row| row.seq)
+        .collect();
+    assert_eq!(first_only, [1]);
     let (ended, ended_again, third_number) = committed(&mut writer, |transaction| {
         let ended = transaction.end_task(first.task_id, 250, TaskOutcome::Unknown)?;
         let ended_again = transaction.end_task(first.task_id, 260, TaskOutcome::Success)?;
@@ -281,7 +287,7 @@ fn damaged_activity_rows_are_reported() -> TestResult {
         _ => "another error",
     };
     assert_eq!(
-        queries.events_of_task(first.task_id).err().map(corrupt),
+        queries.events_of_task(first.task_id, 10).err().map(corrupt),
         Some("events.kind")
     );
     assert_eq!(

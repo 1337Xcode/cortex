@@ -102,7 +102,7 @@ impl Recorder {
             None => None,
         };
         let node_id = transaction.queries().file_node_at(path)?;
-        transaction.append_event(&EventRecord {
+        let row = EventRecord {
             task_id: task,
             session_id: session.clone(),
             ts_ms: seen_ms,
@@ -114,7 +114,8 @@ impl Recorder {
                 source: Some(EventSource::Watcher),
                 ..EventMeta::default()
             },
-        })?;
+        };
+        self.append(transaction, &row, (Vec::new(), Vec::new()))?;
         Ok(session.map_or(WatcherEdit::Nobody, WatcherEdit::Session))
     }
 }

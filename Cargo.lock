@@ -418,6 +418,7 @@ dependencies = [
  "cortex-store",
  "proptest",
  "regex",
+ "rusqlite",
  "tempfile",
  "thiserror 2.0.21",
 ]

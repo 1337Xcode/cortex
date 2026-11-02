@@ -81,9 +81,9 @@ pub(crate) const TASK_OPEN_OF_SESSION: &str = "SELECT rowid, task_id, session_id
 pub(crate) const EVENT_INSERT: &str = "INSERT INTO events (task_id, session_id, ts, kind, \
      node_id, path, range_start, range_end, meta) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
      RETURNING seq";
-/// A task's events, in the order they were stored.
+/// A task's events, in the order they were stored, at most ?2 of them.
 pub(crate) const EVENTS_OF_TASK: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, \
-     path, range_start, range_end, meta FROM events WHERE task_id = ?1 ORDER BY seq";
+     path, range_start, range_end, meta FROM events WHERE task_id = ?1 ORDER BY seq LIMIT ?2";
 /// A session's events by time, then in the order they were stored; the columns are those of
 /// [`EVENTS_OF_TASK`].
 pub(crate) const EVENTS_OF_SESSION: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, \

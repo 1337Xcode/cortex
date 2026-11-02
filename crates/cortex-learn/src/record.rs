@@ -7,18 +7,20 @@
 //! command keeps the runner and the kind of the check its exit status vouches for, never the
 //! command. An event from a session the store does not hold registers that session first. Every
 //! task that ends is marked `unknown`: telling success from failure needs the outcome rules, which
-//! are not part of the record.
+//! are not part of the record. Each row of a task is noted in the task's state as it is stored,
+//! and the state is handed out when the task ends.
 
 use std::collections::BTreeMap;
 
 use cortex_core::{
     CommandKind, ContentHash, Event, EventKind, EventMeta, HookKind, Identifier, LineRange,
-    MAX_RANGES, PromptExcerpt, TaskOutcome, ToolKind, Ulid,
+    MAX_RANGES, PromptExcerpt, RepoPath, TaskOutcome, ToolKind, Ulid,
 };
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
 
 use crate::activity::Activity;
-use crate::commands::{Check, Commands, Ran};
+use crate::commands::{Check, Commands, Ran, Restore};
+use crate::task_state::{TaskState, TaskStates};
 
 /// Most sessions the recorder remembers. Past that it forgets them all and reads each one again
 /// from the store when its next event comes, so memory stays bounded however long it runs.
@@ -40,6 +42,8 @@ pub struct Recorder {
     activity: Activity,
     /// What tells the checks a shell command ran.
     commands: Commands,
+    /// What each open task did.
+    states: TaskStates,
 }
 
 impl Recorder {
@@ -54,19 +58,23 @@ impl Recorder {
         }
     }
 
-    /// Records `event` in `transaction`.
+    /// Records `event` in `transaction`, and returns the state of the task it ended, if it ended
+    /// one: a prompt ends the task its session left open, the end of the answer or of the session
+    /// the session's open task.
     ///
     /// # Errors
     ///
     /// Store errors. The recorder may then remember a session or a task the transaction did not
-    /// keep, so after a failed transaction [`Recorder::forget_stored`] must be called.
+    /// keep, so after a failed transaction [`Recorder::forget_stored`] must be called. A state
+    /// returned for an event of a transaction that is then rolled back describes a task the store
+    /// still holds open, and is dropped with the transaction.
     pub fn record(
         &mut self,
         transaction: &mut WriteTx<'_>,
         event: &Event,
-    ) -> Result<(), StoreError> {
+    ) -> Result<Option<TaskState>, StoreError> {
         let Some(kind) = kind_of(event) else {
-            return Ok(());
+            return Ok(None);
         };
         match event.hook {
             HookKind::SessionStart | HookKind::SubagentStart => {
@@ -77,55 +85,89 @@ impl Recorder {
             }
             _ => self.register(transaction, event)?,
         }
-        let task = match event.hook {
+        let ends_task = matches!(event.hook, HookKind::Stop | HookKind::SessionEnd);
+        let (task, mut ended) = match event.hook {
             HookKind::Prompt => {
-                self.end_open_task(transaction, &event.session_id, event.ts_ms)?;
-                Some(self.start_task(transaction, event)?)
+                let ended = self.end_open_task(transaction, &event.session_id, event.ts_ms)?;
+                (Some(self.start_task(transaction, event)?), ended)
             }
-            HookKind::Stop | HookKind::SessionEnd => {
-                self.end_open_task(transaction, &event.session_id, event.ts_ms)?
-            }
-            _ => self.task_of(transaction, event)?,
+            // The end belongs to the task it ends, which ends once the end's row is in its state.
+            _ if ends_task => (self.open_task(transaction, &event.session_id)?, None),
+            _ => (self.task_of(transaction, event)?, None),
         };
-        let node_id = match event
-            .tool_target
-            .as_ref()
-            .and_then(|target| target.path.as_ref())
-        {
-            Some(path) => transaction.queries().file_node_at(path)?,
-            None => None,
-        };
-        let meta = meta_of(event, &self.commands);
-        for range in ranges_of(event) {
-            transaction.append_event(&EventRecord {
-                task_id: task,
-                session_id: Some(event.session_id.clone()),
-                ts_ms: event.ts_ms,
-                kind,
-                node_id,
-                path: event
-                    .tool_target
-                    .as_ref()
-                    .and_then(|target| target.path.clone()),
-                range,
-                meta: meta.clone(),
-            })?;
-        }
+        self.append_rows(transaction, (event, kind), task)?;
         self.activity.note(event, kind);
+        if ends_task {
+            ended = self.end_open_task(transaction, &event.session_id, event.ts_ms)?;
+        }
         if matches!(event.hook, HookKind::SessionEnd | HookKind::SubagentStop) {
             transaction.end_session(&event.session_id, event.ts_ms)?;
             self.parents.remove(&event.session_id);
             self.open_tasks.remove(&event.session_id);
         }
-        Ok(())
+        Ok(ended)
     }
 
     /// Forgets what it took the store to hold, after a transaction it recorded into was rolled
-    /// back: the sessions it took as stored and their open tasks. What it saw of sessions' work
-    /// stays: the events happened whether or not their rows were kept.
+    /// back: the sessions it took as stored, their open tasks, and the tasks' states, which are
+    /// rebuilt from what the store does hold. What it saw of sessions' work stays: the events
+    /// happened whether or not their rows were kept.
     pub fn forget_stored(&mut self) {
         self.parents.clear();
         self.open_tasks.clear();
+        self.states.clear();
+    }
+
+    /// Stores `row` and notes it in its task's state with what was seen of its event that the row
+    /// does not keep: the files a search found, the restores a shell line ran. A state that is not
+    /// held is rebuilt from the task's rows first, so that the row is noted once.
+    pub(crate) fn append(
+        &mut self,
+        transaction: &mut WriteTx<'_>,
+        row: &EventRecord,
+        (hits, restores): (Vec<RepoPath>, Vec<Restore>),
+    ) -> Result<(), StoreError> {
+        if let Some(task_id) = row.task_id {
+            self.states.ensure(transaction.queries(), task_id)?;
+        }
+        transaction.append_event(row)?;
+        self.states.note(row, hits, restores);
+        Ok(())
+    }
+
+    /// Stores the rows `event`, recorded as `kind`, is kept as, in `task`: one per range it covers.
+    fn append_rows(
+        &mut self,
+        transaction: &mut WriteTx<'_>,
+        (event, kind): (&Event, EventKind),
+        task: Option<Ulid>,
+    ) -> Result<(), StoreError> {
+        let target = event.tool_target.as_ref();
+        let path = target.and_then(|target| target.path.clone());
+        let node_id = match &path {
+            Some(path) => transaction.queries().file_node_at(path)?,
+            None => None,
+        };
+        let ran = ran_by(event, &self.commands);
+        let meta = meta_of(event, &ran);
+        // What the rows do not keep goes with the first: a search or a shell command has one.
+        let mut hits = target.map(|target| target.hits.clone()).unwrap_or_default();
+        let mut restores = restores_of(ran);
+        for range in ranges_of(event) {
+            let row = EventRecord {
+                task_id: task,
+                session_id: Some(event.session_id.clone()),
+                ts_ms: event.ts_ms,
+                kind,
+                node_id,
+                path: path.clone(),
+                range,
+                meta: meta.clone(),
+            };
+            let unkept = (std::mem::take(&mut hits), std::mem::take(&mut restores));
+            self.append(transaction, &row, unkept)?;
+        }
+        Ok(())
     }
 
     /// What the events showed of sessions' work.
@@ -225,19 +267,21 @@ impl Recorder {
         self.open_tasks.insert(session_id.clone(), open);
     }
 
-    /// Ends the open task of `session_id`, if it has one, as of `ended_at_ms`, and returns it.
+    /// Ends the open task of `session_id`, if it has one, as of `ended_at_ms`, and returns its
+    /// state.
     fn end_open_task(
         &mut self,
         transaction: &mut WriteTx<'_>,
         session_id: &Identifier,
         ended_at_ms: i64,
-    ) -> Result<Option<Ulid>, StoreError> {
+    ) -> Result<Option<TaskState>, StoreError> {
         let open = self.open_task(transaction, session_id)?;
-        if let Some(task) = open {
-            transaction.end_task(task, ended_at_ms, TaskOutcome::Unknown)?;
-        }
         self.remember_open_task(session_id, None);
-        Ok(open)
+        let Some(task_id) = open else {
+            return Ok(None);
+        };
+        transaction.end_task(task_id, ended_at_ms, TaskOutcome::Unknown)?;
+        self.states.end(transaction.queries(), task_id).map(Some)
     }
 
     /// Starts the task the prompt `event` opens and returns its id, made from the prompt's event.
@@ -319,26 +363,40 @@ fn ranges_of(event: &Event) -> Vec<Option<LineRange>> {
     ranges.iter().copied().map(Some).collect()
 }
 
-/// The facts a row keeps besides its kind, path and lines; for a shell command, the check its exit
-/// status vouches for, as `commands` tells it.
-fn meta_of(event: &Event, commands: &Commands) -> EventMeta {
-    // INVARIANT: no-content-stored (a tool's command, search pattern and output never reach the
-    // row: only how it ended, how much it printed, and the runner and kind of the check it ran)
-    let result = event.tool_result;
-    let check = event
+/// What `event`'s shell command ran that its exit status vouches for, as `commands` tells it;
+/// nothing for another event.
+fn ran_by(event: &Event, commands: &Commands) -> Vec<Ran> {
+    event
         .tool_target
         .as_ref()
         .and_then(|target| target.command.as_ref())
-        .and_then(|command| {
-            commands
-                .recognise(command, &event.repo_root, &event.cwd)
-                .into_iter()
-                .filter_map(|ran| match ran {
-                    Ran::Check(check) => Some(check),
-                    Ran::Restore(_) => None,
-                })
-                .min_by_key(|check| rank(check.kind))
-        });
+        .map(|command| commands.recognise(command, &event.repo_root, &event.cwd))
+        .unwrap_or_default()
+}
+
+/// The git restores of what a shell command `ran`.
+fn restores_of(ran: Vec<Ran>) -> Vec<Restore> {
+    ran.into_iter()
+        .filter_map(|ran| match ran {
+            Ran::Restore(restore) => Some(restore),
+            Ran::Check(_) => None,
+        })
+        .collect()
+}
+
+/// The facts a row keeps besides its kind, path and lines; for a shell command, the check of what
+/// it `ran` that stands for the line.
+fn meta_of(event: &Event, ran: &[Ran]) -> EventMeta {
+    // INVARIANT: no-content-stored (a tool's command, search pattern and output never reach the
+    // row: only how it ended, how much it printed, and the runner and kind of the check it ran)
+    let result = event.tool_result;
+    let check = ran
+        .iter()
+        .filter_map(|ran| match ran {
+            Ran::Check(check) => Some(*check),
+            Ran::Restore(_) => None,
+        })
+        .min_by_key(|check| rank(check.kind));
     EventMeta {
         source: None,
         tool: event.tool,
