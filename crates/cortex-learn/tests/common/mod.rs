@@ -10,13 +10,13 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use cortex_core::{
-    Agent, ContentHash, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier, Language,
-    LineRange, RepoId, RepoPath, ShortHash, StartSource, SymbolKind, ToolKind, ToolResult,
-    ToolTarget, Ulid,
+    Agent, ContentHash, EdgeType, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier,
+    Language, LineRange, RepoId, RepoPath, ShortHash, StartSource, SymbolKind, ToolKind,
+    ToolResult, ToolTarget, Ulid,
 };
 use cortex_learn::{Recorder, TaskState};
 use cortex_store::{
-    EventRecord, FileIndex, FileRecord, NodeId, SymbolRecord, Writer, WriterOptions,
+    EdgeRecord, EventRecord, FileIndex, FileRecord, NodeId, SymbolRecord, Writer, WriterOptions,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -251,6 +251,27 @@ impl Store {
         );
         transaction.commit()?;
         Ok(nodes)
+    }
+
+    /// Writes a structural edge from `from` to `to`, as the index writes one for a file whose
+    /// imports name another file, or for a symbol that names another.
+    pub fn names(&mut self, from: NodeId, to: NodeId) -> TestResult {
+        let mut transaction = self.writer.transaction()?;
+        transaction.set_edges(
+            EdgeType::Structural,
+            &[(
+                from,
+                EdgeRecord {
+                    dst: to,
+                    weight: 0.8,
+                    count: 1,
+                    last_seq: 0,
+                    is_directed: true,
+                },
+            )],
+        )?;
+        transaction.commit()?;
+        Ok(())
     }
 
     /// The node of the folder at `path`, added as the index adds it.

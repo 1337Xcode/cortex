@@ -12,8 +12,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{CommandKind, InterestTier, LineRange, RepoPath};
-use cortex_store::{InterestRow, NodeId, Queries, StoreError, SymbolSpan, WriteTx};
+use cortex_store::{InterestRow, NodeId, Queries, StoreError, WriteTx};
 
+use crate::decay::decayed;
+use crate::places::Places;
 use crate::task_state::{FileNode, Step, TaskState};
 
 /// What an edit adds to each symbol its lines touch, or to the file when they touch none. The work
@@ -219,13 +221,6 @@ fn add_within(
     Ok(())
 }
 
-/// The `score` a node had at task `last_seq`, brought forward to task `seq` by `decay` for each
-/// task since. A score written at a task yet to come is left as it is.
-fn decayed(score: f64, last_seq: u64, seq: u64, decay: f64) -> f64 {
-    let tasks = i32::try_from(seq.saturating_sub(last_seq)).unwrap_or(i32::MAX);
-    score * decay.powi(tasks)
-}
-
 /// The tier a score falls in on its own, before the landmarks are chosen.
 fn tier_of(score: f64) -> InterestTier {
     if score > INTERESTING_ABOVE {
@@ -264,62 +259,6 @@ fn landmark_count(files_in_repo: u64) -> usize {
     usize::try_from(share)
         .unwrap_or(usize::MAX)
         .clamp(LANDMARKS_MIN, LANDMARKS_MAX)
-}
-
-/// Where the increments of the files a task touched go, each file asked about once.
-struct Places<'a> {
-    /// The store.
-    queries: Queries<'a>,
-    /// Each file's symbols, by the file's path; empty for a file with none and for one the store
-    /// does not hold.
-    symbols: BTreeMap<RepoPath, Vec<SymbolSpan>>,
-    /// The node of the folder holding each file, by the file's path.
-    folders: BTreeMap<RepoPath, Option<NodeId>>,
-}
-
-impl<'a> Places<'a> {
-    /// Nothing asked yet.
-    fn new(queries: Queries<'a>) -> Self {
-        Self {
-            queries,
-            symbols: BTreeMap::new(),
-            folders: BTreeMap::new(),
-        }
-    }
-
-    /// The nodes of the symbols of the file at `path` that the lines `range` touch, in the order
-    /// they appear in the file.
-    fn covering(&mut self, path: &RepoPath, range: LineRange) -> Result<Vec<NodeId>, StoreError> {
-        if !self.symbols.contains_key(path) {
-            let file = self.queries.file(path)?.map(|row| row.id);
-            let spans = match file {
-                Some(file) => self.queries.symbol_spans_in_file(file)?,
-                None => Vec::new(),
-            };
-            self.symbols.insert(path.clone(), spans);
-        }
-        let spans = self.symbols.get(path).map_or(&[][..], Vec::as_slice);
-        Ok(spans
-            .iter()
-            .filter(|span| {
-                span.start_line <= range.end_line() && range.start_line() <= span.end_line
-            })
-            .map(|span| span.node)
-            .collect())
-    }
-
-    /// The node of the folder holding the file at `path`, when that folder has one.
-    fn folder_of(&mut self, path: &RepoPath) -> Result<Option<NodeId>, StoreError> {
-        if let Some(folder) = self.folders.get(path) {
-            return Ok(*folder);
-        }
-        let folder = match path.parent() {
-            Some(folder) => self.queries.folder_node_at(&folder)?,
-            None => None,
-        };
-        self.folders.insert(path.clone(), folder);
-        Ok(folder)
-    }
 }
 
 /// The step that first edited each file the task edited, with the file's node, by path. A file
@@ -377,18 +316,6 @@ mod tests {
         }
     }
 
-    /// A score decays by the factor for each task since it was written, worked out by hand: 1.0
-    /// written at task 1 and read at task 11 has decayed for 10 tasks, 0.98 to the tenth, which is
-    /// 0.8170728068875469. A score read at the task it was written at has not decayed at all, one
-    /// read at an earlier task is left as it is, and one left for a million tasks is gone.
-    #[test]
-    fn a_score_decays_by_the_factor_for_each_task_since() {
-        assert!((decayed(1.0, 1, 11, 0.98) - 0.817_072_806_887_546_9).abs() < 1e-12);
-        assert!((decayed(2.0, 11, 11, 0.98) - 2.0).abs() < 1e-12);
-        assert!((decayed(2.0, 11, 4, 0.98) - 2.0).abs() < 1e-12);
-        assert!(decayed(1.0, 1, 1_000_000, 0.98).abs() < 1e-12);
-    }
-
     /// The tier a score falls in on its own: the threshold is a score to stand above, so a score
     /// at it is still fog.
     #[test]
@@ -399,24 +326,6 @@ mod tests {
     }
 
     proptest! {
-        /// Decay never raises a score, never takes it below zero, and the longer a score has gone
-        /// untouched the less of it is left.
-        #[test]
-        fn decay_only_ever_takes_from_a_score(
-            score in 0.0..1e6_f64,
-            last_seq in 0..1_000_000_u64,
-            tasks in 0..1_000_000_u64,
-            more in 0..1_000_000_u64,
-            decay in 0.001..=1.0_f64,
-        ) {
-            let seq = last_seq.saturating_add(tasks);
-            let left = decayed(score, last_seq, seq, decay);
-            prop_assert!(left >= 0.0);
-            prop_assert!(left <= score);
-            let later = decayed(score, last_seq, seq.saturating_add(more), decay);
-            prop_assert!(later <= left);
-        }
-
         /// However large a repository, the landmarks it allows stay within their bounds.
         #[test]
         fn the_landmarks_allowed_stay_within_their_bounds(files_in_repo in 0..u64::MAX) {
