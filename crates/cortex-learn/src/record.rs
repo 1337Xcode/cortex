@@ -20,7 +20,7 @@ use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
 
 use crate::activity::Activity;
 use crate::commands::{Check, Commands, Ran, Restore};
-use crate::task_state::{TaskState, TaskStates, Unkept};
+use crate::task_state::{TaskEnd, TaskState, TaskStates, Unkept};
 use crate::watcher_edits::WatcherEdits;
 
 /// Most sessions the recorder remembers. Past that it forgets them all and reads each one again
@@ -92,7 +92,8 @@ impl Recorder {
         let ends_task = matches!(event.hook, HookKind::Stop | HookKind::SessionEnd);
         let (task, mut ended) = match event.hook {
             HookKind::Prompt => {
-                let ended = self.end_open_task(transaction, &event.session_id, event.ts_ms)?;
+                let ended =
+                    self.end_open_task(transaction, &event.session_id, event.ts_ms, TaskEnd::Left)?;
                 (Some(self.start_task(transaction, event)?), ended)
             }
             // The end belongs to the task it ends, which ends once the end's row is in its state.
@@ -102,7 +103,14 @@ impl Recorder {
         self.append_rows(transaction, (event, kind), task)?;
         self.activity.note(event, kind);
         if ends_task {
-            ended = self.end_open_task(transaction, &event.session_id, event.ts_ms)?;
+            // A session that ends with its answer unfinished leaves its task: the agent was
+            // interrupted, cleared or stopped.
+            let end = if event.hook == HookKind::Stop {
+                TaskEnd::Answered
+            } else {
+                TaskEnd::Left
+            };
+            ended = self.end_open_task(transaction, &event.session_id, event.ts_ms, end)?;
         }
         if matches!(event.hook, HookKind::SessionEnd | HookKind::SubagentStop) {
             transaction.end_session(&event.session_id, event.ts_ms)?;
@@ -310,13 +318,14 @@ impl Recorder {
         self.open_tasks.insert(session_id.clone(), open);
     }
 
-    /// Ends the open task of `session_id`, if it has one, as of `ended_at_ms`, and returns its
-    /// state.
+    /// Ends the open task of `session_id`, if it has one, as of `ended_at_ms` and in the way
+    /// `end` says, and returns its state.
     fn end_open_task(
         &mut self,
         transaction: &mut WriteTx<'_>,
         session_id: &Identifier,
         ended_at_ms: i64,
+        end: TaskEnd,
     ) -> Result<Option<TaskState>, StoreError> {
         let open = self.open_task(transaction, session_id)?;
         self.remember_open_task(session_id, None);
@@ -324,7 +333,9 @@ impl Recorder {
             return Ok(None);
         };
         transaction.end_task(task_id, ended_at_ms, TaskOutcome::Unknown)?;
-        self.states.end(transaction.queries(), task_id).map(Some)
+        self.states
+            .end(transaction.queries(), task_id, end)
+            .map(Some)
     }
 
     /// Starts the task the prompt `event` opens and returns its id, made from the prompt's event.

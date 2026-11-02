@@ -34,6 +34,16 @@ pub const MAX_TASK_STATES: usize = 32;
 /// it, and none after: a file a search found is the weakest thing a task did.
 pub const MAX_TASK_HIT_BYTES: usize = 64 * 1024;
 
+/// How a task ended, which tells whether the agent got to the end of an answer about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskEnd {
+    /// The answer to it ended.
+    Answered,
+    /// It was left: the session's next prompt came, or the session ended, with no end of an
+    /// answer, as when the agent was interrupted or stopped.
+    Left,
+}
+
 /// A file a step touched, and its graph node when the store has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileNode {
@@ -126,6 +136,8 @@ pub struct TaskState {
     steps: Vec<Step>,
     /// What each file it edited held before it first changed it, as far as that was seen.
     before: BTreeMap<RepoPath, FileContent>,
+    /// How it ended, once it has.
+    end: Option<TaskEnd>,
     /// How many of its rows the state was built from.
     rows: usize,
     /// How many bytes the paths of its searches' files hold.
@@ -141,6 +153,7 @@ impl TaskState {
             task_id,
             steps: Vec::new(),
             before: BTreeMap::new(),
+            end: None,
             rows: 0,
             hit_bytes: 0,
             is_partial: false,
@@ -166,6 +179,12 @@ impl TaskState {
     #[must_use]
     pub fn before(&self) -> &BTreeMap<RepoPath, FileContent> {
         &self.before
+    }
+
+    /// How the task ended: `None` while it is still open.
+    #[must_use]
+    pub fn end(&self) -> Option<TaskEnd> {
+        self.end
     }
 
     /// Whether the state shows only part of what the task did: the task had more than
@@ -257,8 +276,8 @@ impl TaskStates {
         state.note(row, unkept);
     }
 
-    /// The state of the task `task_id`, which has ended: the one held, else one rebuilt from its
-    /// rows, each file given the node `queries` finds for its path.
+    /// The state of the task `task_id`, which has ended as `end` says: the one held, else one
+    /// rebuilt from its rows, each file given the node `queries` finds for its path.
     ///
     /// # Errors
     ///
@@ -267,11 +286,13 @@ impl TaskStates {
         &mut self,
         queries: Queries<'_>,
         task_id: Ulid,
+        end: TaskEnd,
     ) -> Result<TaskState, StoreError> {
         let mut state = match self.held.remove(&task_id) {
             Some((_, state)) => state,
             None => rebuild(queries, task_id)?,
         };
+        state.end = Some(end);
         state.resolve(queries)?;
         Ok(state)
     }
