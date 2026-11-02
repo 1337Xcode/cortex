@@ -573,6 +573,30 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawEdge::check).collect()
     }
 
+    /// Every edge of `edge_type` that runs from one of `nodes` to another of them, by source and
+    /// then target. An undirected edge is stored once, from the smaller node, so a pair shows up
+    /// once however the two are given.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn edges_among(
+        self,
+        nodes: &[NodeId],
+        edge_type: EdgeType,
+    ) -> Result<Vec<EdgeRow>, StoreError> {
+        let listed = json_array(nodes.iter().map(|node| node.get().to_string()));
+        let mut statement = self
+            .connection
+            .prepare_cached(schema::EDGES_AMONG)
+            .map_err(sqlite("reading edges"))?;
+        let raw = statement
+            .query_map((edge_type.number(), listed), RawEdge::read)
+            .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
+            .map_err(sqlite("reading edges"))?;
+        raw.into_iter().map(RawEdge::check).collect()
+    }
+
     /// How many rows the index holds.
     ///
     /// # Errors

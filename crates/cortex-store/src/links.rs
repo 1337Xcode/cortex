@@ -38,6 +38,33 @@ pub(crate) fn set_resolutions(
     Ok(())
 }
 
+/// Sets each edge of `edge_type`: its weight, how many observations support it, the task it was
+/// last seen at and whether it points one way, adding the edge when it is not there and leaving
+/// every other edge of the type alone.
+pub(crate) fn set_edges(
+    connection: &Connection,
+    edge_type: EdgeType,
+    edges: &[(NodeId, EdgeRecord)],
+) -> Result<(), StoreError> {
+    let mut statement = connection
+        .prepare_cached(schema::EDGE_SET)
+        .map_err(sqlite("setting edges"))?;
+    for (src, edge) in edges {
+        statement
+            .execute((
+                src.get(),
+                edge.dst.get(),
+                edge_type.number(),
+                edge.weight,
+                edge.count,
+                edge.last_seq,
+                edge.is_directed,
+            ))
+            .map_err(sqlite("setting edges"))?;
+    }
+    Ok(())
+}
+
 /// Deletes every edge of `edge_type`.
 pub(crate) fn remove_edges_of_type(
     connection: &Connection,

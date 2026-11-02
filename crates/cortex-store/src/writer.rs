@@ -372,6 +372,23 @@ impl WriteTx<'_> {
         self.atomically(|connection| cochange::add(connection, files, pairs))
     }
 
+    /// Sets each edge of `edge_type`: its weight, how many observations support it, the task it
+    /// was last seen at and whether it points one way, adding an edge that is not there and
+    /// leaving every other edge of the type alone. For links a task learns, which change one pair
+    /// at a time, where [`WriteTx::replace_edges`] would drop a node's other edges.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors, including a node that does not exist.
+    /// Either all are written or none.
+    pub fn set_edges(
+        &mut self,
+        edge_type: EdgeType,
+        edges: &[(NodeId, EdgeRecord)],
+    ) -> Result<(), StoreError> {
+        self.atomically(|connection| links::set_edges(connection, edge_type, edges))
+    }
+
     /// Writes each node's interest, replacing what it had.
     ///
     /// # Errors

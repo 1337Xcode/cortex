@@ -340,6 +340,15 @@ pub(crate) const EDGE_INSERT: &str = "INSERT INTO edges (src, dst, type, w, n, l
 /// A node's outgoing edges, by type, then target.
 pub(crate) const EDGES_FROM: &str = "SELECT src, dst, type, w, n, last_seq, directed FROM edges \
      WHERE src = ?1 ORDER BY type, dst";
+/// The edges of a type running between two of the nodes whose ids a JSON array lists, by source
+/// and then target.
+pub(crate) const EDGES_AMONG: &str = "SELECT src, dst, type, w, n, last_seq, directed FROM edges \
+     WHERE type = ?1 AND src IN (SELECT value FROM json_each(?2)) \
+     AND dst IN (SELECT value FROM json_each(?2)) ORDER BY src, dst";
+/// Sets an edge's weight, count and task, adding it if it is not there.
+pub(crate) const EDGE_SET: &str = "INSERT INTO edges (src, dst, type, w, n, last_seq, directed) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (src, dst, type) DO UPDATE SET \
+     w = excluded.w, n = excluded.n, last_seq = excluded.last_seq, directed = excluded.directed";
 /// The nodes the edges of a type into a node start from, in order.
 pub(crate) const SOURCES_INTO: &str =
     "SELECT src FROM edges WHERE dst = ?1 AND type = ?2 ORDER BY src";
