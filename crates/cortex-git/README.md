@@ -37,6 +37,7 @@ read a repository.
 | `Mined`, `MinedCommit`, `PathChange` | What a read gives: each commit's id, time and changed files as repository paths in path order (`None` for a mass commit), whether the stop commit was reached, whether the history is a shallow clone's, and whether the repository is a partial clone |
 | `GixHistory::open` | The source that reads in-process with `gix`. A merge counts against its first parent. A file moved with at least half its contents kept is a rename, git's default threshold; near it the two can differ. In a partial clone, and for files over 1 MiB, only a file moved unchanged is a rename. A shallow clone's cut commits, whose parents are missing, are left out. A path no file can have (not UTF-8, absolute, with a backslash or an empty, `.` or `..` name) is left out |
 | `CliHistory::open` | The source that runs the `git` program found on the `PATH` outside the repository, for at most 10 s an answer and 300 s and 256 MiB a listing, with every option that shapes its listing on its command line. It reads what the `gix` source reads, except that git's own rename search decides renames, so an edited file over 1 MiB moved is a rename, and a tree written by hand with a name no file can have makes git refuse the whole listing |
+| `cochange::compute` | Which files change together, from the commits a read gave and the files that count by their current path (the caller leaves out generated and vendored files): each file's commit count, each pair's co-change count and the newest commit they share, both counts also weighted by recency (`0.5^(age / half-life)`, age in commits from the newest), and the edges. An edge runs from a file to a partner with at least 2 co-changes and a confidence, the weighted co-changes over the file's weighted commits, of at least 0.1; a file keeps at most 32, ranked by confidence times `ln(1 + co-changes)`, ties by partner. A commit's files are followed to their current paths through newer commits' renames; a mass commit ages older commits but adds nothing. Generic over the file id; deterministic |
 | `GitError` | Why a read failed: no repository at the folder's top, one that cannot be opened, HEAD, the walk or one commit's changes, each with its causes |
 
 ## Tests
@@ -57,3 +58,8 @@ cut allows, a mass commit whose deleted contents are gone from the repository (r
 comparing them), large files, a partial clone whose origin is gone, attributes that git ignores
 for renames too, a text conversion that must not run, a tree written by hand with names no file
 can have, and on Unix a path that is not UTF-8. The listing's parser has unit tests of its own.
+`cochange.rs` works small histories out by hand, the arithmetic in each test's comment: counts,
+weights and confidence, renames followed (also two in one commit), files that do not count, a
+mass commit's age, the edge thresholds, the partner cap and its ranking; and a property test
+over random histories (deterministic output, pair counts within their files', edges within the
+thresholds, at most 32 a file, everything in order).

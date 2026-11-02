@@ -346,6 +346,7 @@ version = "2.0.0-dev"
 dependencies = [
  "cortex-core",
  "gix",
+ "proptest",
  "tempfile",
  "thiserror 2.0.21",
 ]
