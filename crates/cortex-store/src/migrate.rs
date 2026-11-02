@@ -328,7 +328,8 @@ mod tests {
              VALUES ('src/a.py', 10, 1, 0, 2)",
             [],
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let fifth = MIGRATIONS.get(..5).ok_or("fewer than five migrations")?;
+        migrate(&mut connection, fifth, &backups)?;
         assert_eq!(schema_version(&connection)?, 5);
         let found = objects(&connection)?;
         for table in [
@@ -355,6 +356,58 @@ mod tests {
             )
             .optional()?;
         assert_eq!(completed.as_deref(), Some("2.0.0"));
+        Ok(())
+    }
+
+    /// The sixth schema adds the tables of what Cortex learns, empty, and keeps the index and the
+    /// activity a fifth-schema store holds.
+    #[test]
+    fn the_sixth_schema_adds_learning_and_keeps_activity() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let fifth = MIGRATIONS.get(..5).ok_or("fewer than five migrations")?;
+        migrate(&mut connection, fifth, &backups)?;
+        connection.execute_batch(
+            "INSERT INTO files (path, bytes, mtime_ns, flags, indexed_at) \
+             VALUES ('src/a.py', 10, 1, 0, 2); \
+             INSERT INTO sessions (session_id, agent, started_at, status) \
+             VALUES ('s1', 'claude', 5, 'live'); \
+             INSERT INTO tasks (task_id, session_id, seq, started_at) VALUES ('t1', 's1', 1, 6); \
+             INSERT INTO events (task_id, session_id, ts, kind, meta) \
+             VALUES ('t1', 's1', 7, 'prompt', '{}');",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 6);
+        let found = objects(&connection)?;
+        for table in [
+            "interest",
+            "cochange_stats",
+            "file_commits",
+            "git_state",
+            "episodes",
+            "archetypes",
+            "usage",
+        ] {
+            assert!(found.contains(&table.to_owned()), "{table}");
+        }
+        let kept: (i64, i64, i64, i64, i64) = connection.query_row(
+            "SELECT (SELECT count(*) FROM files), (SELECT count(*) FROM sessions), \
+             (SELECT count(*) FROM tasks), (SELECT count(*) FROM events), \
+             (SELECT count(*) FROM interest) + (SELECT count(*) FROM episodes) + \
+             (SELECT count(*) FROM usage)",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(kept, (1, 1, 1, 1, 0));
         Ok(())
     }
 

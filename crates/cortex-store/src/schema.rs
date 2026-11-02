@@ -35,10 +35,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 5,
         sql: include_str!("../migrations/0005_sessions_tasks_events.sql"),
     },
+    Migration {
+        version: 6,
+        sql: include_str!("../migrations/0006_learning.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 5;
+pub(crate) const SCHEMA_VERSION: u32 = 6;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -460,6 +464,80 @@ mod tests {
         ]
     }
 
+    /// The columns of the tables of what Cortex learns, typed from their table definitions.
+    fn expected_learning_columns() -> [(&'static str, Vec<Column>); 7] {
+        [
+            (
+                "interest",
+                column_list(&[
+                    ("node_id", "INTEGER", 1),
+                    ("score", "REAL", 0),
+                    ("last_seq", "INTEGER", 0),
+                    ("tier", "INTEGER", 0),
+                ]),
+            ),
+            (
+                "cochange_stats",
+                column_list(&[
+                    ("file_a", "INTEGER", 1),
+                    ("file_b", "INTEGER", 2),
+                    ("count", "INTEGER", 0),
+                    ("weighted", "REAL", 0),
+                    ("last_commit_seq", "INTEGER", 0),
+                ]),
+            ),
+            (
+                "file_commits",
+                column_list(&[
+                    ("file_id", "INTEGER", 1),
+                    ("count", "INTEGER", 0),
+                    ("weighted", "REAL", 0),
+                ]),
+            ),
+            (
+                "git_state",
+                column_list(&[("key", "TEXT", 1), ("value", "TEXT", 0)]),
+            ),
+            (
+                "episodes",
+                column_list(&[
+                    ("episode_id", "INTEGER", 1),
+                    ("task_id", "TEXT", 0),
+                    ("localize", "TEXT", 0),
+                    ("change", "TEXT", 0),
+                    ("verify", "TEXT", 0),
+                    ("pitfalls", "TEXT", 0),
+                    ("outcome", "TEXT", 0),
+                    ("created_at", "INTEGER", 0),
+                ]),
+            ),
+            (
+                "archetypes",
+                column_list(&[
+                    ("archetype_id", "INTEGER", 1),
+                    ("seed_terms", "TEXT", 0),
+                    ("files", "TEXT", 0),
+                    ("episode_count", "INTEGER", 0),
+                    ("updated_at", "INTEGER", 0),
+                ]),
+            ),
+            (
+                "usage",
+                column_list(&[
+                    ("session_id", "TEXT", 1),
+                    ("turn", "INTEGER", 2),
+                    ("ts", "INTEGER", 0),
+                    ("model", "TEXT", 0),
+                    ("input", "INTEGER", 0),
+                    ("cache_write", "INTEGER", 0),
+                    ("cache_read", "INTEGER", 0),
+                    ("output", "INTEGER", 0),
+                    ("reasoning", "INTEGER", 0),
+                ]),
+            ),
+        ]
+    }
+
     /// The columns of the tables of sessions, tasks and events, typed from their table
     /// definitions.
     fn expected_activity_columns() -> [(&'static str, Vec<Column>); 3] {
@@ -516,7 +594,7 @@ mod tests {
     /// references through imports by name, `nodes.path`, the uniqueness of folder paths and the
     /// names passed on as others, the second and the last two partial. Each entry: columns, unique,
     /// partial.
-    fn expected_indexes() -> [(&'static str, Vec<Index>); 10] {
+    fn expected_indexes() -> [(&'static str, Vec<Index>); 14] {
         [
             ("meta", index_list(&[(&["key"], true, false)])),
             (
@@ -570,6 +648,16 @@ mod tests {
                     (&["task_id"], false, false),
                     (&["session_id", "ts"], false, false),
                 ]),
+            ),
+            (
+                "cochange_stats",
+                index_list(&[(&["file_a", "file_b"], true, false)]),
+            ),
+            ("git_state", index_list(&[(&["key"], true, false)])),
+            ("episodes", index_list(&[(&["task_id"], true, false)])),
+            (
+                "usage",
+                index_list(&[(&["session_id", "turn"], true, false)]),
             ),
         ]
     }
@@ -683,9 +771,15 @@ mod tests {
         assert_eq!(
             tables,
             [
+                "archetypes",
+                "cochange_stats",
                 "edges",
+                "episodes",
                 "events",
+                "file_commits",
                 "files",
+                "git_state",
+                "interest",
                 "meta",
                 "nodes",
                 "passes_on",
@@ -693,12 +787,14 @@ mod tests {
                 "search_index",
                 "sessions",
                 "symbols",
-                "tasks"
+                "tasks",
+                "usage"
             ]
         );
         for (table, expected) in expected_columns()
             .iter()
             .chain(&expected_activity_columns())
+            .chain(&expected_learning_columns())
         {
             assert_eq!(&columns(&connection, table)?, expected, "{table}");
         }
@@ -730,6 +826,29 @@ mod tests {
                 key("nodes", "dst", "node_id", "CASCADE"),
                 key("nodes", "src", "node_id", "CASCADE"),
             ]
+        );
+        assert_eq!(
+            foreign_keys(&connection, "interest")?,
+            [key("nodes", "node_id", "node_id", "CASCADE")]
+        );
+        assert_eq!(
+            foreign_keys(&connection, "cochange_stats")?,
+            [
+                key("files", "file_a", "file_id", "CASCADE"),
+                key("files", "file_b", "file_id", "CASCADE"),
+            ]
+        );
+        assert_eq!(
+            foreign_keys(&connection, "file_commits")?,
+            [key("files", "file_id", "file_id", "CASCADE")]
+        );
+        assert_eq!(
+            foreign_keys(&connection, "episodes")?,
+            [key("tasks", "task_id", "task_id", "NO ACTION")]
+        );
+        assert_eq!(
+            foreign_keys(&connection, "usage")?,
+            [key("sessions", "session_id", "session_id", "NO ACTION")]
         );
         Ok(())
     }
