@@ -5,10 +5,26 @@
 use std::collections::HashMap;
 
 use cortex_core::{PathError, RepoPath};
-use cortex_git::cochange::{CoChange, CoChangeEdge, FileCommits, PairCommits, compute};
+use cortex_git::cochange::{
+    CoChange, CoChangeEdge, FileCommits, PairCommits, Weighting, compute, edges,
+};
 use cortex_git::{MinedCommit, PathChange};
 use proptest::prelude::*;
 
+/// What `commits` say with `current`'s files, numbered from `first_seq`, weighed as a full mining
+/// weighs them: from the newest given, at a half-life of `half_life_commits`.
+fn full<S: std::hash::BuildHasher>(
+    commits: &[MinedCommit],
+    current: &HashMap<RepoPath, u32, S>,
+    half_life_commits: u32,
+    first_seq: u64,
+) -> CoChange<u32> {
+    let weighting = Weighting {
+        half_life_commits,
+        anchor_seq: first_seq + commits.len().saturating_sub(1) as u64,
+    };
+    compute(commits, current, weighting, first_seq)
+}
 /// Result type for these tests: any failure fails the test.
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -66,7 +82,7 @@ fn near(actual: f64, expected: f64) -> bool {
 #[test]
 fn counts_weights_and_confidence() -> TestResult {
     let commits = [commit(&["a", "b"])?, commit(&["a", "b"])?, commit(&["a"])?];
-    let found = compute(&commits, &files(&["a", "b"])?, 1, 10);
+    let found = full(&commits, &files(&["a", "b"])?, 1, 10);
     let expected = CoChange {
         files: vec![
             FileCommits {
@@ -122,7 +138,7 @@ fn a_renamed_file_keeps_its_history() -> TestResult {
         commit(&["old", "x"])?,
         commit(&["old"])?,
     ];
-    let found = compute(&commits, &files(&["new", "x"])?, 1, 0);
+    let found = full(&commits, &files(&["new", "x"])?, 1, 0);
     assert_eq!(
         found.files,
         vec![
@@ -160,7 +176,7 @@ fn renames_in_one_commit_and_reused_paths() -> TestResult {
         commit(&["a<b", "b<c"])?,
         commit(&["b", "c"])?,
     ];
-    let found = compute(&commits, &files(&["a", "b", "c"])?, 1, 0);
+    let found = full(&commits, &files(&["a", "b", "c"])?, 1, 0);
     let counts: Vec<(u32, u32)> = found
         .files
         .iter()
@@ -182,7 +198,7 @@ fn renames_in_one_commit_and_reused_paths() -> TestResult {
 #[test]
 fn a_file_counts_once_a_commit() -> TestResult {
     let commits = [commit(&["y<x"])?, commit(&["x", "y"])?];
-    let found = compute(&commits, &files(&["y"])?, 1, 0);
+    let found = full(&commits, &files(&["y"])?, 1, 0);
     let counts: Vec<(u32, u32)> = found
         .files
         .iter()
@@ -198,7 +214,7 @@ fn a_file_counts_once_a_commit() -> TestResult {
 #[test]
 fn files_not_given_do_not_count() -> TestResult {
     let commits = [commit(&["a", "gen"])?, commit(&["a", "gone"])?];
-    let found = compute(&commits, &files(&["a"])?, 1, 0);
+    let found = full(&commits, &files(&["a"])?, 1, 0);
     assert_eq!(
         found.files,
         vec![FileCommits {
@@ -218,7 +234,7 @@ fn files_not_given_do_not_count() -> TestResult {
 #[test]
 fn a_mass_commit_ages_the_older_ones() -> TestResult {
     let commits = [mass(), commit(&["a", "b"])?, commit(&["a", "b"])?];
-    let found = compute(&commits, &files(&["a", "b"])?, 1, 0);
+    let found = full(&commits, &files(&["a", "b"])?, 1, 0);
     let weighted: Vec<f64> = found.files.iter().map(|file| file.weighted).collect();
     assert_eq!(weighted, [0.75, 0.75]);
     assert_eq!(found.pairs.first().map(|pair| pair.weighted), Some(0.75));
@@ -234,7 +250,7 @@ fn a_mass_commit_ages_the_older_ones() -> TestResult {
 ///   `e` is about 0.012, under 0.1, while `e` to `d` is 1.
 #[test]
 fn an_edge_needs_two_co_changes_and_a_tenth() -> TestResult {
-    let pq = compute(&[commit(&["p", "q"])?], &files(&["p", "q"])?, 1, 0);
+    let pq = full(&[commit(&["p", "q"])?], &files(&["p", "q"])?, 1, 0);
     assert_eq!(pq.pairs.len(), 1);
     assert!(pq.edges.is_empty());
 
@@ -245,7 +261,7 @@ fn an_edge_needs_two_co_changes_and_a_tenth() -> TestResult {
         commit(&["a"])?,
         commit(&["a", "b"])?,
     ];
-    let abc = compute(&commits, &files(&["a", "b", "c"])?, 1, 0);
+    let abc = full(&commits, &files(&["a", "b", "c"])?, 1, 0);
     let edges: Vec<(u32, u32)> = abc.edges.iter().map(|edge| (edge.from, edge.to)).collect();
     assert_eq!(edges, [(1, 3), (3, 1)]);
     assert!(
@@ -256,7 +272,7 @@ fn an_edge_needs_two_co_changes_and_a_tenth() -> TestResult {
 
     let mut commits = vec![commit(&["d"])?; 6];
     commits.extend([commit(&["d", "e"])?, commit(&["d", "e"])?]);
-    let de = compute(&commits, &files(&["d", "e"])?, 1, 0);
+    let de = full(&commits, &files(&["d", "e"])?, 1, 0);
     let edges: Vec<(u32, u32, f64)> = de
         .edges
         .iter()
@@ -278,7 +294,7 @@ fn a_file_keeps_its_best_partners() -> TestResult {
     let mut every: Vec<&str> = vec!["hub"];
     every.extend(partners.iter().map(String::as_str));
     let commits = [commit(&["hub", "p33"])?, commit(&every)?, commit(&every)?];
-    let found = compute(&commits, &files(&every)?, 1, 0);
+    let found = full(&commits, &files(&every)?, 1, 0);
     let from_hub: Vec<u32> = found
         .edges
         .iter()
@@ -313,7 +329,7 @@ fn partners_are_ranked_by_confidence_and_count() -> TestResult {
     }
     let mut every = vec!["hub", "a", "b"];
     every.extend(fillers.iter().map(String::as_str));
-    let found = compute(&commits, &files(&every)?, 4, 0);
+    let found = full(&commits, &files(&every)?, 4, 0);
     let from_hub: Vec<u32> = found
         .edges
         .iter()
@@ -381,8 +397,8 @@ proptest! {
         let current: HashMap<RepoPath, u32> = (0u8..8)
             .map(|index| Ok((RepoPath::new(&format!("f{index}"))?, u32::from(index))))
             .collect::<Result<_, PathError>>()?;
-        let found = compute(&commits, &current, half_life, 1);
-        prop_assert_eq!(&found, &compute(&commits, &current, half_life, 1));
+        let found = full(&commits, &current, half_life, 1);
+        prop_assert_eq!(&found, &full(&commits, &current, half_life, 1));
         let by_file: HashMap<u32, (u32, f64)> = found
             .files
             .iter()
@@ -421,4 +437,29 @@ proptest! {
             .all(|two| two.first().map(|a| (a.from, a.to)) < two.last().map(|b| (b.from, b.to)));
         prop_assert!(edges_in_order);
     }
+}
+
+/// A commit weighs `0.5^((anchor - seq) / half-life)`: the anchor 1, a commit a half-life older
+/// 0.5, one a half-life newer 2. A file whose commits all weigh nothing starts no edge, where its
+/// share would be 0 over 0.
+#[test]
+fn commits_weigh_from_the_anchor() {
+    let weighting = Weighting {
+        half_life_commits: 2,
+        anchor_seq: 10,
+    };
+    assert_eq!(
+        [8, 10, 12, 14].map(|seq| weighting.of(seq)),
+        [0.5, 1.0, 2.0, 4.0]
+    );
+    assert_eq!(weighting.half_lives_after(16), 3.0);
+    let pair = PairCommits {
+        file_a: 1_u32,
+        file_b: 2,
+        count: 2,
+        weighted: 0.0,
+        last_commit_seq: 1,
+    };
+    let weightless = HashMap::from([(1_u32, (2, 0.0)), (2, (2, 0.0))]);
+    assert_eq!(edges(&[pair], &weightless), []);
 }

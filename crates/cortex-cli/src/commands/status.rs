@@ -447,6 +447,7 @@ mod tests {
             last_commit: commit.to_owned(),
             last_seq: 42,
             full_at_ms: 1_000_000,
+            anchor_seq: 40,
         };
         assert_eq!(
             cochange_line(Some(&mark("")), 1_180_000),

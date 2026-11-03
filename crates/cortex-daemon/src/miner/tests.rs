@@ -189,8 +189,9 @@ fn mined(
 /// Two commits change `a.py` and `b.py`: the full mining counts each file twice, at 1.5, and the
 /// pair twice at 1.5, its newest commit numbered 2, so each file's edge to the other has
 /// confidence 1.5 / 1.5 = 1. A third commit changes `a.py` and adds `c.py`, which the index
-/// stores while the mining waits: the mining of the commit gained, numbered 3, counts `a.py` and
-/// `c.py` once at 1 and their pair once at 1, too few for an edge.
+/// stores while the mining waits: the mining of the commit gained, numbered 3, one half-life past
+/// the full mining's newest commit (its anchor, numbered 2), counts `a.py` and `c.py` once at 2 and
+/// their pair once at 2, too few for an edge.
 #[test]
 fn a_head_is_mined_once_the_index_has_taken_its_files() -> TestResult {
     let repo = Repo::new()?;
@@ -275,9 +276,9 @@ fn a_head_is_mined_once_the_index_has_taken_its_files() -> TestResult {
     );
     assert_eq!(
         harvest.cochange.files,
-        [commits(a, 1, 1.0), commits(c, 1, 1.0)]
+        [commits(a, 1, 2.0), commits(c, 1, 2.0)]
     );
-    assert_eq!(harvest.cochange.pairs, [pair(a, c, 1, 1.0, 3)]);
+    assert_eq!(harvest.cochange.pairs, [pair(a, c, 1, 2.0, 3)]);
     assert_eq!(harvest.cochange.edges, []);
     Ok(())
 }

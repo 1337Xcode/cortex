@@ -5,11 +5,14 @@
 //!
 //! A commit's files are followed to their current paths through the renames of newer commits, and
 //! only the files the caller names count (those that exist now, neither generated nor vendored). A
-//! commit made `age` commits before the newest one read weighs `0.5^(age / half-life)`; a mass
-//! commit counts towards the age of older ones but adds nothing, and its renames are not followed.
+//! commit weighs `0.5^((anchor - seq) / half-life)` for its sequence number `seq`: the anchor, the
+//! newest commit of a full mining, weighs 1, older ones less and commits gained after it more, so
+//! that counts added later stand to the stored ones as a full mining's would, every share alike. A
+//! mass commit takes its number but adds nothing, and its renames are not followed.
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasher, Hash};
+use std::ops::Neg;
 
 use cortex_core::RepoPath;
 
@@ -24,6 +27,41 @@ pub const MIN_CONFIDENCE: f64 = 0.1;
 /// The most edges that start at one file, to the partners ranked highest by confidence times
 /// `ln(1 + co-changes)`.
 pub const MAX_PARTNERS: usize = 32;
+
+/// The most half-lives a commit gained after the anchor may lie past it: it then weighs 2^64 times
+/// the anchor, far inside a float's range. Commits gained past that are mined again whole from a
+/// new anchor instead.
+pub const MAX_GAIN_HALF_LIVES: f64 = 64.0;
+
+/// How commits are weighed: a commit numbered `seq` weighs `0.5^((anchor_seq - seq) /
+/// half_life_commits)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Weighting {
+    /// The age, in commits, at which a commit weighs half as much.
+    pub half_life_commits: u32,
+    /// The sequence number of the commit that weighs 1.
+    pub anchor_seq: u64,
+}
+
+impl Weighting {
+    /// The weight of the commit numbered `seq`.
+    #[must_use]
+    pub fn of(self, seq: u64) -> f64 {
+        0.5_f64.powf(self.half_lives_after(seq).neg())
+    }
+
+    /// How many half-lives the commit numbered `seq` lies after the anchor; negative before it.
+    #[must_use]
+    pub fn half_lives_after(self, seq: u64) -> f64 {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "sequence numbers and half-lives are far below 2^52"
+        )]
+        let half_lives =
+            (seq as f64 - self.anchor_seq as f64) / f64::from(self.half_life_commits.max(1));
+        half_lives
+    }
+}
 
 /// A file's commit counts.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,13 +116,13 @@ pub struct CoChange<F> {
 }
 
 /// What the commits say. `commits` are newest first, as a read gives them; `current` names each
-/// file that counts by its current path; `half_life_commits` is the age at which a commit weighs
-/// half as much as the newest; `first_seq` numbers the oldest commit given.
+/// file that counts by its current path; `weighting` weighs each commit by its sequence number;
+/// `first_seq` numbers the oldest commit given.
 #[must_use]
 pub fn compute<F: Copy + Ord + Hash, S: BuildHasher>(
     commits: &[MinedCommit],
     current: &HashMap<RepoPath, F, S>,
-    half_life_commits: u32,
+    weighting: Weighting,
     first_seq: u64,
 ) -> CoChange<F> {
     let mut counter = Counter::new();
@@ -94,8 +132,8 @@ pub fn compute<F: Copy + Ord + Hash, S: BuildHasher>(
         let Some(changes) = &commit.changes else {
             continue;
         };
-        let weight = weight(age, half_life_commits);
         let seq = newest_seq - age as u64;
+        let weight = weighting.of(seq);
         let mut files: Vec<F> = changes
             .iter()
             .filter_map(|change| current.get(now_named(&change.path, &renamed_to)))
@@ -122,17 +160,6 @@ pub fn compute<F: Copy + Ord + Hash, S: BuildHasher>(
 /// The name `path` has now, following the renames of newer commits.
 fn now_named<'a>(path: &'a RepoPath, renamed_to: &'a HashMap<RepoPath, RepoPath>) -> &'a RepoPath {
     renamed_to.get(path).unwrap_or(path)
-}
-
-/// A commit's weight at `age` commits before the newest: `0.5^(age / half_life_commits)`, which is
-/// `exp(-age * ln 2 / half_life_commits)`.
-fn weight(age: usize, half_life_commits: u32) -> f64 {
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "ages and half-lives are far below 2^52"
-    )]
-    let halvings = age as f64 / f64::from(half_life_commits.max(1));
-    0.5_f64.powf(halvings)
 }
 
 /// Running totals of commit and co-change counts.
@@ -219,6 +246,11 @@ pub fn edges<F: Copy + Ord + Hash, S: BuildHasher>(
             let Some(&(_, weighted)) = files.get(&from) else {
                 continue;
             };
+            // A file whose commits all weigh nothing, far older than its half-life allows to
+            // keep, has no share to give: 0 over 0 is no confidence.
+            if weighted <= 0.0 {
+                continue;
+            }
             // A file's weighted commits hold every weighted co-change of its pairs; rounding
             // aside, the share is at most 1.
             let confidence = (pair.weighted / weighted).min(1.0);

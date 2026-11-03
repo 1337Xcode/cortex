@@ -20,6 +20,9 @@ pub enum GitStateKey {
     LastSeq,
     /// When the last full mining was written, in UTC milliseconds.
     FullAt,
+    /// The sequence number every commit is weighed from: the newest commit of the last full
+    /// mining.
+    AnchorSeq,
 }
 
 impl GitStateKey {
@@ -30,6 +33,7 @@ impl GitStateKey {
             Self::LastCommit => "last_commit",
             Self::LastSeq => "last_seq",
             Self::FullAt => "full_at",
+            Self::AnchorSeq => "anchor_seq",
         }
     }
 }

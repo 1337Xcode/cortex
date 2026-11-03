@@ -200,10 +200,13 @@ fn the_first_mining_reads_the_whole_window() -> TestResult {
     Ok(())
 }
 
-/// Commits HEAD gained are added, weighed from the new HEAD; then, HEAD unmoved, nothing is mined.
-/// After the first mining of the test above, day 4 changes `a` and `b`, weight 1 at age 0: `a` 4
-/// commits, 1.75 + 1 = 2.75; `b` 3, 0.75 + 1 = 1.75; the pair 3, 1.75, newest at sequence 4.
-/// Edges: `a` to `b` 1.75 / 2.75 = 7/11, `b` to `a` 1. The full mining's time stays.
+/// Commits HEAD gained are added, weighed from the full mining's anchor; then, HEAD unmoved,
+/// nothing is mined. After the first mining of the test above (anchor: sequence 3), day 4 changes
+/// `a` and `b` as sequence 4, one half-life past the anchor, weight 2: `a` 4 commits, 1.75 + 2 =
+/// 3.75; `b` 3, 0.75 + 2 = 2.75; the pair 3, 2.75, newest at sequence 4. Edges: `a` to `b` 2.75 /
+/// 3.75 = 11/15, `b` to `a` 1, the shares a full mining of the four commits finds (weights 1, 0.5,
+/// 0.25 and 0.125 from the newest: 1.375 / 1.875 = 11/15), which a mining into a new store is
+/// checked against. The full mining's time and anchor stay.
 #[test]
 fn commits_gained_are_added() -> TestResult {
     let repo = Repo::new()?;
@@ -227,12 +230,12 @@ fn commits_gained_are_added() -> TestResult {
             FileCommitsRow {
                 file: a,
                 count: 4,
-                weighted: 2.75,
+                weighted: 3.75,
             },
             FileCommitsRow {
                 file: b,
                 count: 3,
-                weighted: 1.75,
+                weighted: 2.75,
             },
         ]
     );
@@ -242,19 +245,42 @@ fn commits_gained_are_added() -> TestResult {
             file_a: a,
             file_b: b,
             count: 3,
-            weighted: 1.75,
+            weighted: 2.75,
             last_commit_seq: 4,
         }]
     );
     assert_eq!(
         edges,
-        [(a_node, b_node, 1.75 / 2.75, 3), (b_node, a_node, 1.0, 3)]
+        [(a_node, b_node, 2.75 / 3.75, 3), (b_node, a_node, 1.0, 3)]
     );
+    let mut fresh = store(&repo.root().join("fresh"), at(11))?;
+    let fresh_files = index(&mut fresh, &["a.txt", "b.txt"])?;
+    assert!(matches!(
+        mine_into(&repo.root(), &mut fresh, at(11))?,
+        Mining::Full(_)
+    ));
+    let (_, _, full_edges) = stored(&fresh, &fresh_files)?;
+    let shares = |found: &[(NodeId, NodeId, f64, u32)]| -> Vec<(f64, u32)> {
+        found.iter().map(|edge| (edge.2, edge.3)).collect()
+    };
+    let (gained, whole) = (shares(&edges), shares(&full_edges));
+    assert_eq!(gained.len(), whole.len());
+    for ((share, count), (full_share, full_count)) in gained.iter().zip(&whole) {
+        assert!(
+            (share - full_share).abs() < 1e-12,
+            "{share} against {full_share}"
+        );
+        assert_eq!(count, full_count);
+    }
     let queries = writer.queries();
     assert_eq!(queries.git_state(GitStateKey::LastCommit)?, Some(head));
     assert_eq!(
         queries.git_state(GitStateKey::LastSeq)?.as_deref(),
         Some("4")
+    );
+    assert_eq!(
+        queries.git_state(GitStateKey::AnchorSeq)?.as_deref(),
+        Some("3")
     );
     assert_eq!(
         queries.git_state(GitStateKey::FullAt)?,
@@ -509,6 +535,68 @@ fn a_write_under_way_holds_no_mark() -> TestResult {
     assert_eq!(
         writer.queries().git_state(GitStateKey::LastCommit)?,
         Some(head)
+    );
+    Ok(())
+}
+
+/// Commits gained that rename a file are mined again whole: the stored counts of the renamed file
+/// are under its old name, which a full mining follows to the new one. Days 1 and 2 change `a` and
+/// `b`; after the first mining day 3 renames `b` to `c`, so the whole window is read again, `c`
+/// takes `b`'s two co-changes with `a`, and the anchor moves to the new newest commit.
+#[test]
+fn commits_gained_that_rename_are_mined_whole() -> TestResult {
+    let repo = Repo::new()?;
+    change(&repo, 1, &["a.txt", "b.txt"])?;
+    change(&repo, 2, &["a.txt", "b.txt"])?;
+    let mut writer = store(&repo.root(), at(10))?;
+    index(&mut writer, &["a.txt", "b.txt"])?;
+    assert!(matches!(
+        mine_into(&repo.root(), &mut writer, at(10))?,
+        Mining::Full(_)
+    ));
+    repo.move_file("b.txt", "c.txt", None)?;
+    repo.commit(3)?;
+    let files = index(&mut writer, &["a.txt", "c.txt"])?;
+    let mining = mine_into(&repo.root(), &mut writer, at(11))?;
+    assert!(matches!(mining, Mining::Full(_)), "{mining:?}");
+    let (_, pairs, _) = stored(&writer, &files)?;
+    assert_eq!(pairs.iter().map(|pair| pair.count).collect::<Vec<_>>(), [2]);
+    assert_eq!(
+        writer
+            .queries()
+            .git_state(GitStateKey::AnchorSeq)?
+            .as_deref(),
+        Some("3")
+    );
+    Ok(())
+}
+
+/// Commits gained more than 64 half-lives past the anchor would weigh more than 2^64 times it, so
+/// the window is mined again whole from a new anchor. At a half-life of 1 commit: 64 commits gained
+/// are added, the 65th past them is not.
+#[test]
+fn commits_gained_too_far_past_the_anchor_are_mined_whole() -> TestResult {
+    let repo = Repo::new()?;
+    change(&repo, 1, &["a.txt", "b.txt"])?;
+    let mut writer = store(&repo.root(), at(10))?;
+    index(&mut writer, &["a.txt", "b.txt"])?;
+    mine_into(&repo.root(), &mut writer, at(10))?;
+    for commit in 0..64 {
+        repo.write("a.txt", &format!("a, commit {commit}\n"))?;
+        repo.commit(2)?;
+    }
+    let added = mine_into(&repo.root(), &mut writer, at(10))?;
+    assert!(matches!(added, Mining::Added(_)), "{added:?}");
+    repo.write("a.txt", "a, once more\n")?;
+    repo.commit(2)?;
+    let whole = mine_into(&repo.root(), &mut writer, at(10))?;
+    assert!(matches!(whole, Mining::Full(_)), "{whole:?}");
+    assert_eq!(
+        writer
+            .queries()
+            .git_state(GitStateKey::AnchorSeq)?
+            .as_deref(),
+        Some("66")
     );
     Ok(())
 }
