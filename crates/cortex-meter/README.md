@@ -30,8 +30,9 @@ cargo test -p cortex-meter
 
 The tests read three real Claude Code transcripts under `tests/fixtures/claude/2.1.316/transcripts`,
 reduced to the fields a usage reader looks at and scrubbed: every response's counts are written out
-by hand from the fixture, and for one session their sums are checked against the running totals
-Claude Code itself wrote in the same file. They read a transcript whole, cut short in the middle of
+by hand from the fixture, and their sums are checked against the running totals Claude Code
+itself wrote: equal for a session without `/compact`, and for one with it short by exactly the
+call that summarized the session, which no transcript line records and so is not counted. They read a transcript whole, cut short in the middle of
 a line, in pieces cut anywhere (a property: the pieces give what the whole gives), written again
 shorter, with a copy of a response raised and lowered, with a replayed and a synthetic response, with a line missing a count,
 past the number of responses remembered, and with a line longer than a read. The pricing tests

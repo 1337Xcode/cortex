@@ -38,11 +38,17 @@ pub(crate) struct Args {
     json: bool,
 }
 
+/// What the counts of usage leave out: Claude Code writes no transcript line for the call that
+/// summarizes a session at `/compact`, and its own totals count it.
+const UNCOUNTED: &str = "calls a transcript does not record, such as compaction";
+
 /// The receipts and what they were made with, as `--json` prints them.
 #[derive(Debug, Serialize)]
 struct Report {
     /// The price table the costs were estimated from, or why there is none.
     prices: Prices,
+    /// What the counts of usage leave out.
+    uncounted: &'static str,
     /// What the repository's store holds, or `None` when it has no store yet.
     recorded: Option<Recorded>,
 }
@@ -109,6 +115,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     };
     let report = Report {
         prices,
+        uncounted: UNCOUNTED,
         recorded: recorded(&root, args, table.as_ref())?,
     };
     if args.json {

@@ -1,6 +1,6 @@
-//! The receipts as lines of text: what the costs were estimated from, whether there is enough to
-//! compare held-out tasks with the rest, then each session with its tasks, the work outside any
-//! task, and its total.
+//! The receipts as lines of text: what the costs were estimated from, what the counts leave out,
+//! whether there is enough to compare held-out tasks with the rest, then each session with its
+//! tasks, the work outside any task, and its total.
 
 use std::path::Path;
 
@@ -22,6 +22,10 @@ pub(super) fn lines(report: &Report, root: &Path, days: Option<u32>) -> Vec<Stri
         ));
         return lines;
     };
+    lines.push(format!(
+        "usage: as each transcript records it; {}, are not counted",
+        report.uncounted
+    ));
     lines.push(holdout_line(&recorded.holdout));
     if recorded.sessions.is_empty() {
         lines.push(match days {
@@ -240,7 +244,7 @@ mod tests {
     use cortex_core::{Identifier, Ulid};
     use cortex_meter::{Arms, Estimate, SessionReceipt, Tally, TaskReceipt, Unpriced};
 
-    use super::super::{Holdout, Prices, Recorded, Report};
+    use super::super::{Holdout, Prices, Recorded, Report, UNCOUNTED};
     use super::{amount, grouped, lines, session_lines, usage, when};
 
     /// Digits grouped by hand.
@@ -308,6 +312,7 @@ mod tests {
             prices: Prices::Missing {
                 why: "no home folder".to_owned(),
             },
+            uncounted: UNCOUNTED,
             recorded: Some(Recorded {
                 holdout: Holdout {
                     arms: Arms {
@@ -323,12 +328,14 @@ mod tests {
             lines(&report, Path::new("repo"), Some(2)),
             [
                 "prices: none, so no cost is estimated (no home folder)",
+                "usage: as each transcript records it; calls a transcript does not record, such \
+                 as compaction, are not counted",
                 "holdout comparison: the repository has 31 tasks held out and 1,200 not; this \
                  version does not compare them",
                 "no session started in the last 2 days",
             ]
         );
-        assert_eq!(lines(&report, Path::new("repo"), None)[2], "no session");
+        assert_eq!(lines(&report, Path::new("repo"), None)[3], "no session");
     }
 
     /// A session of an agent whose transcripts Cortex does not read says its usage was not read,

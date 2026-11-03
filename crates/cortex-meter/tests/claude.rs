@@ -2,6 +2,7 @@
 //! scrubbed, read whole, in pieces, cut in the middle of a line, written again, and with lines
 //! changed to repeat, replay or fake a response.
 
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -97,6 +98,47 @@ impl Transcript {
         let mut file = File::open(&self.path)?;
         Ok(tail.read(&mut file, &Claude, max_bytes)?)
     }
+}
+
+/// What `turns` add up to, each response once at its last counts: input, cache writes, cache reads
+/// and output.
+fn summed(turns: &[Turn]) -> [u64; 4] {
+    let last: BTreeMap<u32, &Turn> = turns.iter().map(|turn| (turn.ordinal, turn)).collect();
+    last.values()
+        .fold([0; 4], |[input, written, read, output], turn| {
+            [
+                input + turn.usage.input,
+                written + turn.usage.cache_write,
+                read + turn.usage.cache_read,
+                output + turn.usage.output,
+            ]
+        })
+}
+
+/// Claude Code's own running totals in a `cost-state` line, every model's added up: input, cache
+/// writes, cache reads and output. `None` for any other line.
+fn cost_state(line: &str) -> Option<[u64; 4]> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value.get("type")?.as_str()? != "cost-state" {
+        return None;
+    }
+    let keys = [
+        "inputTokens",
+        "cacheCreationInputTokens",
+        "cacheReadInputTokens",
+        "outputTokens",
+    ];
+    value
+        .get("modelUsage")?
+        .as_object()?
+        .values()
+        .try_fold([0; 4], |totals, model| {
+            let mut next = totals;
+            for (total, key) in next.iter_mut().zip(keys) {
+                *total += model.get(key)?.as_u64()?;
+            }
+            Some(next)
+        })
 }
 
 /// The turns of `bytes` read whole by a new tail.
@@ -227,6 +269,58 @@ fn a_tool_s_result_counts_no_response() -> TestResult {
             (11, 2, 92, Some(0)),
         ]
     );
+    Ok(())
+}
+
+/// A call a transcript does not record, as Claude Code's summary of the session at `/compact` is
+/// not, is not counted; Claude Code's own totals, its `cost-state` lines, show the gap, worked out
+/// from the hook capture's lines. Before `/compact`, the first totals, line 68, are the main
+/// transcript's responses to that line (3,708 input, 36,319 written to the cache, 99,396 read from
+/// it, 1,650 output) and the Explore agent's two, which its own transcript holds (2,718, 25,800,
+/// 22,837, 369): 6,426, 62,119, 122,233 and 2,019. The last totals, line 168, hold one call more
+/// than the main transcript's eleven responses (7,786, 44,955, 344,724, 2,303) and the agent's
+/// two: the compaction's 2,217 input, 69 written, 37,225 read and 2,085 output, which no line
+/// records, making 12,721, 70,824, 404,786 and 4,757.
+#[test]
+fn a_call_the_transcript_does_not_record_is_not_counted() -> TestResult {
+    let main = String::from_utf8(fixture("hooks-session.jsonl")?)?;
+    let agent = summed(&read_whole(&fixture(
+        "hooks-session/subagents/agent-fixtureagent0001.jsonl",
+    )?)?);
+    assert_eq!(agent, [2_718, 25_800, 22_837, 369]);
+    let lines: Vec<&str> = main.lines().collect();
+    let states: Vec<(usize, [u64; 4])> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(at, line)| Some((at + 1, cost_state(line)?)))
+        .collect();
+    let first = states.first().ok_or("no totals")?;
+    let last = states.last().ok_or("no totals")?;
+    assert_eq!(first.0, 68);
+    let before: String = lines
+        .iter()
+        .take(68)
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let before = summed(&read_whole(before.as_bytes())?);
+    assert_eq!(before, [3_708, 36_319, 99_396, 1_650]);
+    assert_eq!(first.1, [6_426, 62_119, 122_233, 2_019]);
+    assert_eq!(last.0, 168);
+    let whole = summed(&read_whole(main.as_bytes())?);
+    assert_eq!(whole, [7_786, 44_955, 344_724, 2_303]);
+    assert_eq!(last.1, [12_721, 70_824, 404_786, 4_757]);
+    let counted: Vec<u64> = whole
+        .iter()
+        .zip(agent)
+        .map(|(main, agent)| main + agent)
+        .collect();
+    let compaction: Vec<u64> = last
+        .1
+        .iter()
+        .zip(&counted)
+        .map(|(all, counted)| all - counted)
+        .collect();
+    assert_eq!(compaction, [2_217, 69, 37_225, 2_085]);
     Ok(())
 }
 

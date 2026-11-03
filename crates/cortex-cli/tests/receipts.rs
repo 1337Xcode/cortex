@@ -156,6 +156,12 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             "source": "https://platform.claude.com/docs/en/about-claude/pricing",
         }))
     );
+    assert_eq!(
+        report.get("uncounted"),
+        Some(&json!(
+            "calls a transcript does not record, such as compaction"
+        ))
+    );
     let recorded = report.get("recorded").ok_or("recorded")?;
     assert_eq!(
         recorded.get("holdout"),
@@ -230,9 +236,9 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     assert!(printed.status.success(), "{printed:?}");
     let text = String::from_utf8(printed.stdout)?;
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 6, "{text}");
+    assert_eq!(lines.len(), 7, "{text}");
     assert_eq!(
-        lines[..2],
+        lines[..3],
         [
             format!(
                 "prices: as of 2026-11-03, read from \
@@ -241,17 +247,19 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
                 price_file.display()
             )
             .as_str(),
+            "usage: as each transcript records it; calls a transcript does not record, such as \
+             compaction, are not counted",
             "holdout comparison: not enough data yet (the repository has 0 tasks held out and 0 \
              not; 30 of each are needed)",
         ]
     );
-    let session_line = lines[2];
+    let session_line = lines[3];
     assert!(
         session_line.starts_with(&format!("session {S1} (claude, live), started ")),
         "{session_line}"
     );
     assert!(session_line.ends_with(" UTC, 1 subagent"), "{session_line}");
-    let task_line = lines[3];
+    let task_line = lines[4];
     assert!(
         task_line.starts_with("  task 1 (unknown), started "),
         "{task_line}"
@@ -265,7 +273,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         "{task_line}"
     );
     assert_eq!(
-        lines[4..],
+        lines[5..],
         [
             "  outside any task: 1 turn, 33,499 input tokens (3,702 uncached, 0 read from the \
              cache, 29,797 written to it), 100 output tokens, about $0.1276; 0 tool calls",
