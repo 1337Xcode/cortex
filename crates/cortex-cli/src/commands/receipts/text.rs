@@ -75,8 +75,19 @@ fn holdout_line(holdout: &Holdout) -> String {
     )
 }
 
-/// The lines of one session: itself, each task, the work outside any task, and its total.
+/// What a session of an agent whose transcripts Cortex does not read shows for its usage.
+const NOT_METERED: &str = "usage not read, as Cortex reads no transcript of this agent";
+
+/// The lines of one session: itself, each task, the work outside any task, and its total. A
+/// session whose agent is not metered says so in place of every count of usage.
 fn session_lines(session: &SessionReceipt) -> Vec<String> {
+    let usage = |tally: &Tally| {
+        if session.is_metered {
+            usage(tally)
+        } else {
+            NOT_METERED.to_owned()
+        }
+    };
     let mut lines = vec![format!(
         "session {} ({}, {}), started {}, {}",
         session.session_id.as_str(),
@@ -85,7 +96,12 @@ fn session_lines(session: &SessionReceipt) -> Vec<String> {
         when(session.started_at_ms),
         counted(session.subagents, "subagent", "subagents")
     )];
-    lines.extend(session.tasks.iter().map(task_line));
+    lines.extend(
+        session
+            .tasks
+            .iter()
+            .map(|task| task_line(task, usage(&task.usage))),
+    );
     if session.outside_tasks.turns > 0 || session.outside_tool_calls > 0 {
         lines.push(format!(
             "  outside any task: {}; {}",
@@ -101,18 +117,17 @@ fn session_lines(session: &SessionReceipt) -> Vec<String> {
     lines
 }
 
-/// The line of one task.
-fn task_line(task: &TaskReceipt) -> String {
+/// The line of one task, whose usage reads `usage`.
+fn task_line(task: &TaskReceipt, usage: String) -> String {
     let state = match (task.outcome, task.ended_at_ms) {
         (Some(outcome), _) => outcome,
         (None, Some(_)) => "ended",
         (None, None) => "open",
     };
     format!(
-        "  task {} ({state}), started {}: {}; {}; {} injected by Cortex",
+        "  task {} ({state}), started {}: {usage}; {}; {} injected by Cortex",
         task.seq,
         when(task.started_at_ms),
-        usage(&task.usage),
         counted(task.tool_calls, "tool call", "tool calls"),
         counted(task.injected_tokens, "token", "tokens")
     )
@@ -222,10 +237,11 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::Path;
 
-    use cortex_meter::{Arms, Estimate, Tally, Unpriced};
+    use cortex_core::{Identifier, Ulid};
+    use cortex_meter::{Arms, Estimate, SessionReceipt, Tally, TaskReceipt, Unpriced};
 
     use super::super::{Holdout, Prices, Recorded, Report};
-    use super::{amount, grouped, lines, usage, when};
+    use super::{amount, grouped, lines, session_lines, usage, when};
 
     /// Digits grouped by hand.
     #[test]
@@ -313,6 +329,68 @@ mod tests {
             ]
         );
         assert_eq!(lines(&report, Path::new("repo"), None)[2], "no session");
+    }
+
+    /// A session of an agent whose transcripts Cortex does not read says its usage was not read,
+    /// for each task and in its total, where a metered session with no response says none was
+    /// recorded.
+    #[test]
+    fn a_session_not_metered_says_its_usage_was_not_read() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let nothing = Tally {
+            turns: 0,
+            cumulative_input: 0,
+            uncached_input: 0,
+            cache_reads: 0,
+            cache_writes: 0,
+            output: 0,
+            estimate: None,
+        };
+        let task = TaskReceipt {
+            task_id: Ulid::from_seed(0, b"task"),
+            seq: 1,
+            started_at_ms: 60_000,
+            ended_at_ms: Some(120_000),
+            outcome: None,
+            held_out: None,
+            tool_calls: 2,
+            injected_tokens: 0,
+            usage: nothing.clone(),
+        };
+        let codex = SessionReceipt {
+            session_id: Identifier::new("s1")?,
+            agent: "codex",
+            is_metered: false,
+            started_at_ms: 0,
+            ended_at_ms: Some(180_000),
+            status: "ended",
+            subagents: 0,
+            tool_calls: 2,
+            tasks: vec![task],
+            outside_tasks: nothing.clone(),
+            outside_tool_calls: 0,
+            total: nothing,
+        };
+        assert_eq!(
+            session_lines(&codex),
+            [
+                "session s1 (codex, ended), started 1970-01-01 00:00 UTC, 0 subagents",
+                "  task 1 (ended), started 1970-01-01 00:01 UTC: usage not read, as Cortex reads \
+                 no transcript of this agent; 2 tool calls; 0 tokens injected by Cortex",
+                "  total: usage not read, as Cortex reads no transcript of this agent; 2 tool calls",
+            ]
+        );
+        let claude = SessionReceipt {
+            agent: "claude",
+            is_metered: true,
+            ..codex
+        };
+        let said = session_lines(&claude);
+        assert_eq!(
+            said.get(2).map(String::as_str),
+            Some("  total: no usage recorded; 2 tool calls")
+        );
+        Ok(())
     }
 
     /// Times by hand: 2000-03-01 is 11,017 days after 1970-01-01, and 3,723,004 ms is 01:02.

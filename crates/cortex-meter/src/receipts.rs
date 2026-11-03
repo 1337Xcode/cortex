@@ -16,6 +16,7 @@ use cortex_core::{Identifier, TaskOutcome, Ulid};
 use cortex_store::{SessionRow, TaskRow, UsageRow};
 use serde::Serialize;
 
+use crate::format::format_of;
 use crate::pricing::{Billed, Cost, PriceTable, Unpriced};
 
 /// How many tasks each arm needs before receipts compare held-out tasks with the rest: fewer
@@ -63,6 +64,9 @@ pub struct SessionReceipt {
     pub session_id: Identifier,
     /// The agent that ran it.
     pub agent: &'static str,
+    /// Whether Cortex reads its agent's transcripts. When it does not, the session's usage was
+    /// never read, which is not the same as none: its tallies are empty and say nothing.
+    pub is_metered: bool,
     /// When it started, in UTC milliseconds.
     pub started_at_ms: i64,
     /// When it ended, if it has.
@@ -161,6 +165,7 @@ pub fn receipt(activity: &Activity, prices: Option<&PriceTable>) -> SessionRecei
     SessionReceipt {
         session_id: session.record.session_id.clone(),
         agent: session.record.agent.name(),
+        is_metered: format_of(session.record.agent).is_some(),
         started_at_ms: session.record.started_at_ms,
         ended_at_ms: session.ended_at_ms,
         status: session.status.name(),

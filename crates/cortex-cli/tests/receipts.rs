@@ -172,6 +172,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         [
             "session_id",
             "agent",
+            "is_metered",
             "status",
             "subagents",
             "tool_calls",
@@ -181,6 +182,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         [
             json!(S1),
             json!("claude"),
+            json!(true),
             json!("live"),
             json!(1),
             json!(2),

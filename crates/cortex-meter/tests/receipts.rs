@@ -13,7 +13,7 @@ use cortex_store::{SessionRecord, SessionRow, TaskRecord, TaskRow, UsageRow};
 /// Result type for these tests: any failure fails the test.
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-/// The session `s1`, started at 900 and still live.
+/// The session `s1` of Claude Code, started at 900 and still live.
 fn session() -> TestResult<SessionRow> {
     Ok(SessionRow {
         record: SessionRecord {
@@ -230,6 +230,7 @@ fn responses_add_up_by_task() -> TestResult {
         ),
         ("s1", "claude", 900, "live", 1, 6, 2)
     );
+    assert!(receipt.is_metered, "Cortex reads Claude Code's transcripts");
     assert_eq!(
         serde_json::to_value(&receipt.outside_tasks.estimate)?,
         serde_json::json!({
@@ -261,6 +262,26 @@ fn without_prices_or_tasks_counts_stand_alone() -> TestResult {
     assert!(receipt.tasks.is_empty());
     assert_eq!(receipt.outside_tasks, counts);
     assert_eq!(receipt.total, counts);
+    Ok(())
+}
+
+/// A session of an agent whose transcripts Cortex does not read, Codex here, is not metered: its
+/// usage was never read, though its tallies hold nothing as a session with no response does.
+#[test]
+fn an_agent_whose_transcripts_are_not_read_is_not_metered() -> TestResult {
+    let mut codex = session()?;
+    codex.record.agent = Agent::Codex;
+    let activity = Activity {
+        session: codex,
+        subagents: 0,
+        tasks: vec![task(1, 1_000, Some(2_000))?],
+        usage: Vec::new(),
+        tool_calls: BTreeMap::new(),
+        outside_tool_calls: 0,
+    };
+    let receipt = receipt(&activity, None);
+    assert_eq!((receipt.agent, receipt.is_metered), ("codex", false));
+    assert_eq!(receipt.total, tally([0, 0, 0, 0, 0, 0], None));
     Ok(())
 }
 
