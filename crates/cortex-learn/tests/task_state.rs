@@ -648,3 +648,161 @@ fn a_task_keeps_what_each_file_held_before_it_changed_it() -> TestResult {
     );
     Ok(())
 }
+
+/// What a file held before a task first changed it is left unknown, rather than taken from what
+/// tells of an earlier change, when the task's edit comes too close to another's, and is taken
+/// when it does not, worked out by hand. Every file starts as read at 1 holding `<name> = 1`.
+///
+/// `s1`'s first task, from 1,000, edits `a.py` at 1,100, `g.py` at 1,120 and `d.py` at 1,150,
+/// writes `e.py` new at 1,180, edits `b.py` at 1,200 and `h.py` at 1,250, and fails to edit
+/// `k.py` at 1,260. The index reads `g = 2` at 1,130, `d = 2` and `h = 2` at 1,250, and `a = 2` at
+/// 1,300, whose report it holds from then. The task ends at 1,400 having kept what each file held
+/// first: `a`, `b`, `d`, `g` and `h` at 1, `e.py` no file.
+///
+/// The next task, from 1,500:
+/// - edits `b.py` at 1,700: the index has not read it since the first task's edit at 1,200, so the
+///   store still holds what it held before that edit: unknown;
+/// - edits `d.py` at 1,750: read at 1,250, after the edit at 1,150: `d = 2`;
+/// - edits `e.py` at 1,780: never read, and written at 1,180: unknown;
+/// - edits `c.py` at 1,800, which no task edited: `c = 1`;
+/// - edits `h.py` at 1,850: read at 1,250, the very moment of the edit, which may not have been
+///   seen: unknown;
+/// - edits `k.py` at 1,900: the edit at 1,260 failed and changed nothing: `k = 1`;
+/// - edits `a.py` at 3,250, 1,950 after the report's 1,300 and so within its hold, which the edit
+///   at 1,100 took as its own, being within 2 s of the report though not of this edit: unknown;
+/// - once that report is let go and the index has read `a = 2` at 3,450, and a change no hook made
+///   gives `g = 3`, held from 3,700 with `g = 2` before it, edits `g.py` at 3,800: the edit at
+///   1,120 is 2,580 before the report, too far to have made it, so the report tells: `g = 2`;
+/// - edits `a.py` again at 3,850, the store holding `a = 2` read after every edit of it: too late
+///   to say what it held before the task first changed it, at 3,250, so still unknown.
+///
+/// The next task keeps `c = 1`, `d = 2`, `g = 2` and `k = 1`.
+#[test]
+fn an_edit_too_close_to_another_leaves_what_its_file_held_unknown() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, Commands::default());
+    let names = ["a", "b", "c", "d", "g", "h", "k"];
+    let paths: Vec<String> = names.iter().map(|name| format!("{name}.py")).collect();
+    let texts: Vec<String> = names.iter().map(|name| format!("{name} = 1\n")).collect();
+    let files: Vec<(&str, &str)> = paths
+        .iter()
+        .zip(&texts)
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    store.index_text(&files)?;
+    let hashed = |text: &str| FileContent::Hashed(ContentHash::of(text.as_bytes()));
+    let made = || succeeded(None, None);
+    let change = |ts_ms: i64, path: &str| edit(("s1", ts_ms), path, &[(1, 1)], made());
+    let mut ended = store.record(
+        &mut recorder,
+        &[
+            start("s1", 500, StartSource::Startup)?,
+            prompt("s1", 1_000, "fix it")?,
+            change(1_100, "a.py")?,
+            change(1_120, "g.py")?,
+            change(1_150, "d.py")?,
+            tool(
+                HookKind::PostTool,
+                ("s1", 1_180),
+                (ToolKind::Write, target("e.py", &[])?, made()),
+            )?,
+            change(1_200, "b.py")?,
+            change(1_250, "h.py")?,
+            edit(("s1", 1_260), "k.py", &[(1, 1)], failed())?,
+        ],
+    )?;
+    store.index_text_at(&[("g.py", "g = 2\n")], 1_130)?;
+    store.index_text_at(&[("d.py", "d = 2\n"), ("h.py", "h = 2\n")], 1_250)?;
+    store.index_text_at(&[("a.py", "a = 2\n")], 1_300)?;
+    recorder.hold_watcher_edits([(RepoPath::new("a.py")?, hashed("a = 1\n"))], 1_300);
+    ended.extend(store.record(
+        &mut recorder,
+        &[
+            event(HookKind::Stop, "s1", 1_400)?,
+            prompt("s1", 1_500, "fix it again")?,
+            change(1_700, "b.py")?,
+            change(1_750, "d.py")?,
+            change(1_780, "e.py")?,
+            change(1_800, "c.py")?,
+            change(1_850, "h.py")?,
+            change(1_900, "k.py")?,
+            change(3_250, "a.py")?,
+        ],
+    )?);
+    record_due(&mut store, &mut recorder, 3_400)?;
+    store.index_text_at(&[("a.py", "a = 2\n")], 3_450)?;
+    store.index_text_at(&[("g.py", "g = 3\n")], 3_700)?;
+    recorder.hold_watcher_edits([(RepoPath::new("g.py")?, hashed("g = 2\n"))], 3_700);
+    ended.extend(store.record(
+        &mut recorder,
+        &[
+            change(3_800, "g.py")?,
+            change(3_850, "a.py")?,
+            event(HookKind::Stop, "s1", 4_000)?,
+        ],
+    )?);
+    let before: Vec<Vec<(String, FileContent)>> = ended
+        .iter()
+        .map(|state| {
+            state
+                .before()
+                .iter()
+                .map(|(path, content)| (path.to_string(), *content))
+                .collect()
+        })
+        .collect();
+    let kept = |name: &str, number: u32| {
+        (
+            format!("{name}.py"),
+            hashed(&format!("{name} = {number}\n")),
+        )
+    };
+    assert_eq!(
+        before,
+        [
+            vec![
+                kept("a", 1),
+                kept("b", 1),
+                kept("d", 1),
+                ("e.py".to_owned(), FileContent::Absent),
+                kept("g", 1),
+                kept("h", 1),
+            ],
+            vec![kept("c", 1), kept("d", 2), kept("g", 2), kept("k", 1)],
+        ]
+    );
+    Ok(())
+}
+
+/// A task whose state was let go and rebuilt from its rows does not know what the files it edited
+/// before held, and a later edit does not tell it: `c.py` (`c = 1`) is edited at 1,100, the
+/// recorder forgets its states (as after a batch that could not be recorded), the index reads
+/// `c = 2` at 1,300, and the task edits `c.py` again at 5,000. What the store holds then is what
+/// the task's first edit made, not what came before it, so the task keeps nothing for `c.py`.
+#[test]
+fn a_rebuilt_task_takes_no_later_content_as_its_files_earlier_one() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, Commands::default());
+    store.index_text(&[("c.py", "c = 1\n")])?;
+    store.record(
+        &mut recorder,
+        &[
+            start("s1", 500, StartSource::Startup)?,
+            prompt("s1", 1_000, "fix it")?,
+            edit(("s1", 1_100), "c.py", &[(1, 1)], succeeded(None, None))?,
+        ],
+    )?;
+    recorder.forget_stored();
+    store.index_text_at(&[("c.py", "c = 2\n")], 1_300)?;
+    let ended = store.record(
+        &mut recorder,
+        &[
+            edit(("s1", 5_000), "c.py", &[(1, 1)], succeeded(None, None))?,
+            event(HookKind::Stop, "s1", 6_000)?,
+        ],
+    )?;
+    let state = one(ended)?;
+    assert_eq!(state.steps().len(), 2);
+    assert!(state.before().is_empty(), "{:?}", state.before());
+    Ok(())
+}

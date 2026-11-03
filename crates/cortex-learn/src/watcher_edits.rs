@@ -10,7 +10,8 @@
 //!
 //! Each held edit also keeps what its file held before, as the index found it. The task an edit is
 //! recorded in keeps that as the file's content before the task: a hook's edit takes it from the
-//! held edit of its file, the watcher's edit from itself.
+//! held edit of its file, unless an earlier hook's edit already took that change as its own, and
+//! the watcher's edit from itself.
 
 use std::collections::BTreeMap;
 
@@ -93,11 +94,11 @@ impl WatcherEdits {
         due
     }
 
-    /// What `path` held before the change of it held now, when the watcher saw that change at most
-    /// [`HOLD_MS`] before or after `at_ms`.
-    pub(crate) fn before_near(&self, path: &RepoPath, at_ms: i64) -> Option<FileContent> {
+    /// The change of `path` held now, when the watcher saw it at most [`HOLD_MS`] before or after
+    /// `at_ms`: when it saw it, and what the file held before.
+    pub(crate) fn held_near(&self, path: &RepoPath, at_ms: i64) -> Option<(i64, FileContent)> {
         let (seen_ms, before) = self.held.get(path)?;
-        (seen_ms.abs_diff(at_ms) <= HOLD_MS.unsigned_abs()).then_some(*before)
+        (seen_ms.abs_diff(at_ms) <= HOLD_MS.unsigned_abs()).then_some((*seen_ms, *before))
     }
 }
 

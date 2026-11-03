@@ -97,6 +97,18 @@ impl Activity {
             .is_some_and(|times| times.range(around).next().is_some())
     }
 
+    /// Whether a hook reported an edit of `path` at or after `read_at_ms`, when the index last
+    /// read the file, or at all for a file the index never read: a change the index may not have
+    /// read yet.
+    pub(crate) fn is_reported_since(&self, path: &RepoPath, read_at_ms: Option<i64>) -> bool {
+        self.reported
+            .get(path)
+            .is_some_and(|times| match read_at_ms {
+                Some(read_at_ms) => times.range(read_at_ms..).next().is_some(),
+                None => !times.is_empty(),
+            })
+    }
+
     /// The session most likely to have made an edit seen at `seen_ms`: of those not ended before
     /// it, the one with the latest event from [`ATTRIBUTION_WINDOW_MS`] before it to [`HOLD_MS`]
     /// after it; of two as late, the one whose id sorts first. `None` when none was at work then.

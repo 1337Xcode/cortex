@@ -188,8 +188,12 @@ impl Recorder {
     /// What the file of `event`, recorded as `kind`, held before it, when the event is a hook's
     /// edit: what the change the watcher saw of it nearby, still held, held before; else what the
     /// store holds for it, the index not having seen the change yet. Of the two, whichever came
-    /// first tells. `None` for another event. A task keeps it with the edit's step, which an edit
-    /// that failed does not make.
+    /// first tells. A task keeps it with the edit's step, which an edit that failed does not make.
+    ///
+    /// `None` for another event, and when the edit came too close to an earlier hook's edit of the
+    /// same file to tell: the change held is that edit's, the watcher folding a second change
+    /// within its hold into the first, or the index has not read the file since that edit, so the
+    /// store holds what it held before that one.
     fn before_of(
         &self,
         transaction: &WriteTx<'_>,
@@ -202,10 +206,14 @@ impl Recorder {
         let Some(path) = path.filter(|_| kind == EventKind::Edit) else {
             return Ok(None);
         };
-        if let Some(before) = self.watcher_edits.before_near(path, event.ts_ms) {
-            return Ok(Some(before));
+        if let Some((seen_ms, before)) = self.watcher_edits.held_near(path, event.ts_ms) {
+            return Ok((!self.activity.is_reported(path, seen_ms)).then_some(before));
         }
         let stored = transaction.queries().file(path)?;
+        let read_at_ms = stored.as_ref().map(|row| row.file.indexed_at_ms);
+        if self.activity.is_reported_since(path, read_at_ms) {
+            return Ok(None);
+        }
         Ok(Some(stored.map_or(FileContent::Absent, |row| {
             FileContent::of_stored(row.file.content_hash)
         })))

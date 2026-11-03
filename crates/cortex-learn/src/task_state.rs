@@ -13,7 +13,7 @@
 //! state is built from (and a file's earlier content only with a row), and so many bytes of found
 //! files a state keeps.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{CommandKind, EventKind, FileContent, Identifier, LineRange, RepoPath, Ulid};
 use cortex_store::{EventRecord, NodeId, Queries, StoreError};
@@ -136,6 +136,8 @@ pub struct TaskState {
     steps: Vec<Step>,
     /// What each file it edited held before it first changed it, as far as that was seen.
     before: BTreeMap<RepoPath, FileContent>,
+    /// The files it edited for which that was not seen, which a later edit cannot tell.
+    unknown_before: BTreeSet<RepoPath>,
     /// How it ended, once it has.
     end: Option<TaskEnd>,
     /// How many of its rows the state was built from.
@@ -153,6 +155,7 @@ impl TaskState {
             task_id,
             steps: Vec::new(),
             before: BTreeMap::new(),
+            unknown_before: BTreeSet::new(),
             end: None,
             rows: 0,
             hit_bytes: 0,
@@ -175,7 +178,9 @@ impl TaskState {
     /// What each file the task edited held before the task first changed it, as far as that was
     /// seen while the daemon ran: from the index's report of the change, or from what the store
     /// held when the edit was recorded before the index saw it. A file created by the task held
-    /// nothing; one the index does not read, contents not known.
+    /// nothing; one the index does not read, contents not known. A file whose content was not
+    /// seen when the task first changed it, because the state was rebuilt from its rows or the
+    /// edit came too close to another's, is left out, and no later edit of it fills it in.
     #[must_use]
     pub fn before(&self) -> &BTreeMap<RepoPath, FileContent> {
         &self.before
@@ -209,8 +214,16 @@ impl TaskState {
         match &mut step {
             Step::Search { hits, .. } => self.hit_bytes = keep_within(hits, self.hit_bytes),
             Step::Edit { file, .. } => {
-                if let Some(before) = unkept.before {
-                    self.before.entry(file.path.clone()).or_insert(before);
+                let path = &file.path;
+                if !self.before.contains_key(path) && !self.unknown_before.contains(path) {
+                    match unkept.before {
+                        Some(before) => {
+                            self.before.insert(path.clone(), before);
+                        }
+                        None => {
+                            self.unknown_before.insert(path.clone());
+                        }
+                    }
                 }
             }
             Step::Read { .. } | Step::Run { .. } => {}
