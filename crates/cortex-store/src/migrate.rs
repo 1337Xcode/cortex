@@ -427,7 +427,8 @@ mod tests {
              INSERT INTO usage (session_id, turn, ts, model, input, cache_write, cache_read, \
              output, reasoning) VALUES ('s1', 1, 7, 'claude-sonnet-5-5', 3, 4, 5, 6, NULL);",
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let seventh = MIGRATIONS.get(..7).ok_or("fewer than seven migrations")?;
+        migrate(&mut connection, seventh, &backups)?;
         assert_eq!(schema_version(&connection)?, 7);
         let counts: (i64, i64, i64, i64) = connection.query_row(
             "SELECT input, cache_write, cache_read, output FROM usage",
@@ -442,6 +443,30 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(unknown, 1);
+        Ok(())
+    }
+
+    /// The eighth schema adds which response each usage row reports, unknown for the rows a
+    /// seventh-schema store holds, which keep their counts.
+    #[test]
+    fn the_eighth_schema_adds_which_response_a_row_is() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let seventh = MIGRATIONS.get(..7).ok_or("fewer than seven migrations")?;
+        migrate(&mut connection, seventh, &backups)?;
+        connection.execute_batch(
+            "INSERT INTO sessions (session_id, agent, started_at, status) \
+             VALUES ('s1', 'claude', 5, 'live'); \
+             INSERT INTO usage (session_id, turn, ts, model, input, cache_write, cache_read, \
+             output) VALUES ('s1', 1, 7, 'claude-sonnet-5-5', 3, 4, 5, 6);",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 8);
+        let row: (i64, i64, Option<Vec<u8>>) =
+            connection.query_row("SELECT input, output, response FROM usage", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
+        assert_eq!(row, (3, 6, None));
         Ok(())
     }
 

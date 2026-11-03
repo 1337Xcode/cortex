@@ -43,10 +43,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 7,
         sql: include_str!("../migrations/0007_usage_service.sql"),
     },
+    Migration {
+        version: 8,
+        sql: include_str!("../migrations/0008_usage_response.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 7;
+pub(crate) const SCHEMA_VERSION: u32 = 8;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -418,20 +422,29 @@ pub(crate) const INTEREST_REPLACE: &str = "INSERT INTO interest (node_id, score,
 /// Writes one response's usage, replacing what its session and turn had.
 pub(crate) const USAGE_REPLACE: &str = "INSERT INTO usage \
      (session_id, turn, ts, model, input, cache_write, cache_write_1h, cache_read, output, \
-     reasoning, service_tier, speed, inference_geo) \
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+     reasoning, service_tier, speed, inference_geo, response) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
      ON CONFLICT (session_id, turn) DO UPDATE SET \
      ts = excluded.ts, model = excluded.model, input = excluded.input, \
      cache_write = excluded.cache_write, cache_write_1h = excluded.cache_write_1h, \
      cache_read = excluded.cache_read, output = excluded.output, \
      reasoning = excluded.reasoning, service_tier = excluded.service_tier, \
-     speed = excluded.speed, inference_geo = excluded.inference_geo";
+     speed = excluded.speed, inference_geo = excluded.inference_geo, \
+     response = excluded.response";
 /// Removes every usage row of a session.
 pub(crate) const USAGE_FORGET: &str = "DELETE FROM usage WHERE session_id = ?1";
-/// A session's usage, by turn.
-pub(crate) const USAGE_OF_SESSION: &str = "SELECT rowid, session_id, turn, ts, input, \
-     cache_write, cache_write_1h, cache_read, output, reasoning, model, service_tier, speed, \
-     inference_geo FROM usage WHERE session_id = ?1 ORDER BY turn";
+/// A session's usage, by turn, without a response another session that started earlier reports
+/// too (of two that started together, the one with the smaller id keeps it).
+pub(crate) const USAGE_OF_SESSION: &str = "SELECT u.rowid, u.session_id, u.turn, u.ts, \
+     u.input, u.cache_write, u.cache_write_1h, u.cache_read, u.output, u.reasoning, u.model, \
+     u.service_tier, u.speed, u.inference_geo, u.response \
+     FROM usage AS u JOIN sessions AS s ON s.session_id = u.session_id \
+     WHERE u.session_id = ?1 AND NOT EXISTS (SELECT 1 FROM usage AS c \
+     JOIN sessions AS cs ON cs.session_id = c.session_id \
+     WHERE c.response = u.response AND c.session_id <> u.session_id \
+     AND (cs.started_at < s.started_at \
+     OR (cs.started_at = s.started_at AND c.session_id < u.session_id))) \
+     ORDER BY u.turn";
 
 /// Writes a task's record, replacing the one it had.
 pub(crate) const EPISODE_REPLACE: &str = "INSERT INTO episodes \
@@ -689,6 +702,7 @@ mod tests {
                     ("service_tier", "TEXT", 0),
                     ("speed", "TEXT", 0),
                     ("inference_geo", "TEXT", 0),
+                    ("response", "BLOB", 0),
                 ]),
             ),
         ]
@@ -813,7 +827,10 @@ mod tests {
             ("episodes", index_list(&[(&["task_id"], true, false)])),
             (
                 "usage",
-                index_list(&[(&["session_id", "turn"], true, false)]),
+                index_list(&[
+                    (&["session_id", "turn"], true, false),
+                    (&["response"], false, false),
+                ]),
             ),
         ]
     }

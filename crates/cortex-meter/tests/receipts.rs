@@ -70,6 +70,7 @@ fn response(
         service_tier: name("standard")?,
         speed: name("standard")?,
         inference_geo: name("global")?,
+        response: None,
     })
 }
 

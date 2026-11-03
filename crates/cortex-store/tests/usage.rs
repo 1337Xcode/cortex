@@ -6,10 +6,10 @@
 mod common;
 
 use common::{Scratch, TestResult, name};
-use cortex_core::Agent;
+use cortex_core::{Agent, ShortHash};
 use cortex_store::{SessionRecord, StoreError, UsageRow, Writer};
 
-/// A session of Claude Code with id `id`.
+/// A session of Claude Code with id `id`, started at 100 ms.
 fn session(id: &str) -> TestResult<SessionRecord> {
     Ok(SessionRecord {
         session_id: name(id)?,
@@ -47,6 +47,7 @@ fn usage(
         service_tier: Some(name("standard")?),
         speed: Some(name("standard")?),
         inference_geo: Some(name("global")?),
+        response: None,
     })
 }
 
@@ -100,6 +101,48 @@ fn usage_is_written_read_back_by_turn_and_replaced() -> TestResult {
     assert_eq!(queries.usage_of_session(&name("s1")?)?, [first, grown]);
     assert_eq!(queries.usage_of_session(&name("s2")?)?, [other]);
     assert_eq!(queries.usage_of_session(&name("s3")?)?, []);
+    Ok(())
+}
+
+/// A response two sessions report, as a forked session's transcript copies the responses of the
+/// one it was forked from, is read back for the session that started first only. `s1` and `s2`
+/// started at 100 ms and `s3` at 200 ms. `m1` is reported by all three: `s1` keeps it, as the
+/// smaller id of the two that started first. `m2` is reported by `s3` alone, which keeps it. A row
+/// whose response is not known is never taken for a copy.
+#[test]
+fn a_response_two_sessions_report_counts_once() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = with_sessions(&scratch)?;
+    let mut transaction = writer.transaction()?;
+    transaction.record_session(&SessionRecord {
+        started_at_ms: 200,
+        ..session("s3")?
+    })?;
+    let (m1, m2) = (Some(ShortHash::of(b"m1")), Some(ShortHash::of(b"m2")));
+    let of = |session_id: &str, turn: u32, response: Option<ShortHash>| {
+        usage(session_id, turn, (u64::from(turn), 0, 0, 1), None)
+            .map(|row| UsageRow { response, ..row })
+    };
+    let rows = [
+        of("s1", 1, m1)?,
+        of("s1", 2, None)?,
+        of("s2", 1, m1)?,
+        of("s3", 1, m1)?,
+        of("s3", 2, m2)?,
+        of("s3", 3, None)?,
+    ];
+    transaction.replace_usage(&rows)?;
+    transaction.commit()?;
+    let queries = writer.queries();
+    assert_eq!(
+        queries.usage_of_session(&name("s1")?)?,
+        [of("s1", 1, m1)?, of("s1", 2, None)?]
+    );
+    assert_eq!(queries.usage_of_session(&name("s2")?)?, []);
+    assert_eq!(
+        queries.usage_of_session(&name("s3")?)?,
+        [of("s3", 2, m2)?, of("s3", 3, None)?]
+    );
     Ok(())
 }
 
@@ -159,8 +202,8 @@ fn usage_that_cannot_be_stored_is_refused_whole() -> TestResult {
 }
 
 /// Rows damaged outside Cortex are reported as damaged, naming the column: a count below zero, a
-/// turn past what a turn number holds, an hour's cache writes below zero, and a model, tier, speed
-/// or region that is no name.
+/// turn past what a turn number holds, an hour's cache writes below zero, a model, tier, speed or
+/// region that is no name, and a response hash that is not 16 bytes.
 #[test]
 fn damaged_usage_rows_are_reported() -> TestResult {
     let scratch = Scratch::new()?;
@@ -194,6 +237,10 @@ fn damaged_usage_rows_are_reported() -> TestResult {
         (
             "UPDATE usage SET inference_geo = NULL, cache_write_1h = -1",
             "usage.cache_write_1h",
+        ),
+        (
+            "UPDATE usage SET cache_write_1h = NULL, response = x'0102'",
+            "usage.response",
         ),
     ];
     for (damage, column) in damages {

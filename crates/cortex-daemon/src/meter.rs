@@ -301,6 +301,7 @@ impl Meter {
                 service_tier: turn.service.tier,
                 speed: turn.service.speed,
                 inference_geo: turn.service.inference_geo,
+                response: Some(turn.response),
             })
             .collect();
         let written = writer.transaction().and_then(|mut transaction| {
@@ -483,8 +484,13 @@ mod tests {
         })?)
     }
 
-    /// Records session `session` in the store `writer` writes.
+    /// Records session `session`, started at 1 ms, in the store `writer` writes.
     fn record_session(writer: &mut Writer, session: &str) -> TestResult {
+        record_session_at(writer, session, 1)
+    }
+
+    /// Records session `session`, started at `started_at_ms`, in the store `writer` writes.
+    fn record_session_at(writer: &mut Writer, session: &str, started_at_ms: i64) -> TestResult {
         let mut transaction = writer.transaction()?;
         transaction.record_session(&SessionRecord {
             session_id: Identifier::new(session)?,
@@ -494,7 +500,7 @@ mod tests {
             parent_session_id: None,
             cwd: None,
             transcript_path: None,
-            started_at_ms: 1,
+            started_at_ms,
         })?;
         Ok(transaction.commit()?)
     }
@@ -601,6 +607,48 @@ mod tests {
         meter.read(&mut writer, &inbox, |_| Vec::new());
         assert_eq!(usage_of(&writer, "s1")?, [(1, 3_702, 29_797, 0, 100)]);
         assert_eq!(inbox.counts().failed_batches, 0);
+        Ok(())
+    }
+
+    /// A forked session's transcript, which starts with a copy of the responses of the session it
+    /// was forked from, adds none of them to its own usage: `s1`'s transcript is the Grep session,
+    /// and `s2`, started later, has a copy of it with one response of its own after, the fourth's
+    /// line with a message of its own. Read in either order, `s1` keeps the four and `s2` has its
+    /// one, numbered fifth in its transcript.
+    #[test]
+    fn a_forked_session_counts_only_its_own_responses() -> TestResult {
+        for fork_first in [false, true] {
+            let (home, path) = home_with_transcript()?;
+            let fork = path.with_file_name("s2.jsonl");
+            let fourth = GREP_SESSION
+                .lines()
+                .find(|line| line.contains("msg_fixture0004"))
+                .ok_or("no fourth response")?;
+            let own = fourth.replace("msg_fixture0004", "msg_fork0001");
+            fs::write(&fork, format!("{GREP_SESSION}{own}\n"))?;
+            let root = tempfile::tempdir()?;
+            let mut writer = writer(root.path())?;
+            record_session_at(&mut writer, "s1", 1)?;
+            record_session_at(&mut writer, "s2", 2)?;
+            let inbox = Inbox::default();
+            let mut meter = Meter::new(home.path(), &|_| None);
+            let (s1, s2) = (transcript("s1", &path)?, transcript("s2", &fork)?);
+            let order = if fork_first { [s2, s1] } else { [s1, s2] };
+            for one in order {
+                meter.wait([one]);
+                meter.read(&mut writer, &inbox, |_| Vec::new());
+            }
+            assert_eq!(
+                usage_of(&writer, "s1")?.len(),
+                4,
+                "fork first: {fork_first}"
+            );
+            assert_eq!(
+                usage_of(&writer, "s2")?,
+                [(5, 2, 763, 33_771, 3)],
+                "fork first: {fork_first}"
+            );
+        }
         Ok(())
     }
 

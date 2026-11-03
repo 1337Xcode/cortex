@@ -1,9 +1,9 @@
 //! What Cortex keeps of the tokens agents spent: one row per response a session's transcript
-//! reports, numbered by its order in the transcript, with the model, the time, the counts and how
-//! the response was served. Rows hold numbers, a session's id and short names the provider
-//! reports, nothing a transcript says otherwise.
+//! reports, numbered by its order in the transcript, with the model, the time, the counts, how the
+//! response was served and a hash of the provider's id for it. Rows hold numbers, a session's id,
+//! short names the provider reports and that hash, nothing a transcript says otherwise.
 
-use cortex_core::Identifier;
+use cortex_core::{Identifier, ShortHash};
 use rusqlite::{Connection, Row};
 
 use crate::error::{StoreError, sqlite};
@@ -39,6 +39,11 @@ pub struct UsageRow {
     pub speed: Option<Identifier>,
     /// Where it ran, when the transcript names it.
     pub inference_geo: Option<Identifier>,
+    /// Which response it is, as the hash of the provider's id for the message: a forked session's
+    /// transcript copies the responses of the session it was forked from with their ids, and a
+    /// response two sessions report counts for the one that started first. `None` for a row
+    /// written before it was kept, never taken for a copy.
+    pub response: Option<ShortHash>,
 }
 
 /// Writes `rows`, each replacing the row of its session and turn if there is one: a transcript
@@ -69,6 +74,7 @@ pub(crate) fn replace(connection: &Connection, rows: &[UsageRow]) -> Result<(), 
                 name(&row.service_tier),
                 name(&row.speed),
                 name(&row.inference_geo),
+                row.response.as_ref().map(|hash| hash.as_bytes().as_slice()),
             ))
             .map_err(sqlite("writing usage"))?;
     }
@@ -85,7 +91,9 @@ pub(crate) fn forget(connection: &Connection, session_id: &Identifier) -> Result
 }
 
 impl Queries<'_> {
-    /// The usage of `session_id`, by turn.
+    /// The usage of `session_id`, by turn, without a response a session that started before it
+    /// reports too (of two that started together, the one with the smaller id keeps it): a forked
+    /// session's copies of its origin's responses count for the origin.
     ///
     /// # Errors
     ///
@@ -117,6 +125,8 @@ struct RawUsage {
     counts: (i64, i64, Option<i64>, i64, i64, Option<i64>),
     /// `model`, `service_tier`, `speed` and `inference_geo`.
     names: [Option<String>; 4],
+    /// `response`.
+    response: Option<Vec<u8>>,
 }
 
 /// One row of [`schema::USAGE_OF_SESSION`].
@@ -135,12 +145,14 @@ fn read(row: &Row<'_>) -> rusqlite::Result<RawUsage> {
             row.get(9)?,
         ),
         names: [row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?],
+        response: row.get(14)?,
     })
 }
 
 impl RawUsage {
     /// The row, or the error that one of its values cannot be read back: a count below zero, a
-    /// turn out of range, or a session id or name that is no identifier.
+    /// turn out of range, a session id or name that is no identifier, or a response hash that is
+    /// not 16 bytes.
     fn check(self) -> Result<UsageRow, StoreError> {
         let row = self.rowid;
         let corrupt = |column| StoreError::Corrupt { column, row };
@@ -170,6 +182,11 @@ impl RawUsage {
             service_tier: name("usage.service_tier", service_tier)?,
             speed: name("usage.speed", speed)?,
             inference_geo: name("usage.inference_geo", inference_geo)?,
+            response: self
+                .response
+                .map(|bytes| <[u8; 16]>::try_from(bytes.as_slice()).map(ShortHash::from_bytes))
+                .transpose()
+                .map_err(|_| corrupt("usage.response"))?,
         })
     }
 }

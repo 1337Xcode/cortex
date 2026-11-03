@@ -9,6 +9,8 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
+use cortex_core::ShortHash;
+
 use crate::error::MeterError;
 use crate::format::TranscriptFormat;
 use crate::response::{Response, SYNTHETIC_MODEL, Service, Usage};
@@ -35,6 +37,9 @@ pub struct Turn {
     pub usage: Usage,
     /// How it was served.
     pub service: Service,
+    /// Which response it is: the hash of the provider's id for the message, which a copy of the
+    /// response in another transcript keeps.
+    pub response: ShortHash,
 }
 
 /// A response the tail has counted, as far as telling a repeat of it goes.
@@ -168,6 +173,7 @@ impl Tail {
 /// The turn `response` is, numbered `ordinal`.
 fn turn(ordinal: u32, response: Response) -> Turn {
     Turn {
+        response: ShortHash::of(response.message_id.as_bytes()),
         ordinal,
         at_ms: response.at_ms,
         model: response.model,

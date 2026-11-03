@@ -11,7 +11,7 @@ use std::process::Command;
 
 use common::hook_call::send;
 use common::{Daemon, TestResult, daemon_command, isolate, payloads, wait_for};
-use cortex_core::Identifier;
+use cortex_core::{Identifier, ShortHash};
 use cortex_store::{Reader, UsageRow};
 
 /// The Claude Code version whose captured payloads and transcripts these tests use.
@@ -51,10 +51,15 @@ fn status_of(root: &Path, home: &Path) -> TestResult<String> {
     Ok(String::from_utf8(status.output()?.stdout)?)
 }
 
-/// The row of turn `turn` of `session`, written at `at_ms`, with input, cache writes, the cache
-/// writes made for an hour, cache reads and output `counts` and no reasoning, served as every
-/// captured response was: at the standard tier and speed, run anywhere.
-fn row(session: &str, (turn, at_ms): (u32, i64), counts: [u64; 5]) -> TestResult<UsageRow> {
+/// The row of turn `turn` of `session`, the response the transcript gives the message id
+/// `message`, written at `at_ms`, with input, cache writes, the cache writes made for an hour,
+/// cache reads and output `counts` and no reasoning, served as every captured response was: at
+/// the standard tier and speed, run anywhere.
+fn row(
+    (session, message): (&str, &str),
+    (turn, at_ms): (u32, i64),
+    counts: [u64; 5],
+) -> TestResult<UsageRow> {
     let [input, cache_write, cache_write_1h, cache_read, output] = counts;
     Ok(UsageRow {
         session_id: Identifier::new(session)?,
@@ -70,6 +75,7 @@ fn row(session: &str, (turn, at_ms): (u32, i64), counts: [u64; 5]) -> TestResult
         service_tier: Some(Identifier::new("standard")?),
         speed: Some(Identifier::new("standard")?),
         inference_geo: Some(Identifier::new("global")?),
+        response: Some(ShortHash::of(message.as_bytes())),
     })
 }
 
@@ -108,13 +114,25 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
     let day_02 = 1_793_577_600_000;
     let first_four = [
         row(
-            S1,
+            (S1, "msg_fixture0001"),
             (1, day_02 + 83_057_241),
             [3_702, 29_797, 29_797, 0, 100],
         )?,
-        row(S1, (2, day_02 + 83_058_748), [2, 3_819, 3_819, 29_797, 95])?,
-        row(S1, (3, day_02 + 83_060_454), [2, 155, 155, 33_616, 360])?,
-        row(S1, (4, day_02 + 83_062_200), [2, 763, 763, 33_771, 3])?,
+        row(
+            (S1, "msg_fixture0002"),
+            (2, day_02 + 83_058_748),
+            [2, 3_819, 3_819, 29_797, 95],
+        )?,
+        row(
+            (S1, "msg_fixture0003"),
+            (3, day_02 + 83_060_454),
+            [2, 155, 155, 33_616, 360],
+        )?,
+        row(
+            (S1, "msg_fixture0004"),
+            (4, day_02 + 83_062_200),
+            [2, 763, 763, 33_771, 3],
+        )?,
     ];
     assert_eq!(usage(&repo, S1)?, first_four);
 
@@ -136,12 +154,12 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
         usage(&repo, &subagent_session)?,
         [
             row(
-                &subagent_session,
+                (&subagent_session, "msg_fixture0012"),
                 (1, day_01 + 68_493_153),
                 [2_716, 22_837, 0, 0, 148]
             )?,
             row(
-                &subagent_session,
+                (&subagent_session, "msg_fixture0013"),
                 (2, day_01 + 68_495_180),
                 [2, 2_963, 0, 22_837, 221]
             )?,
@@ -181,7 +199,11 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
     )?;
     wait_for(|| Ok(usage(&repo, S1)?.len() == 5))?;
     let mut all_five = first_four.to_vec();
-    all_five.push(row(S1, (5, day_02 + 83_070_000), [4, 12, 12, 34_534, 9])?);
+    all_five.push(row(
+        (S1, "msg_fixture0005"),
+        (5, day_02 + 83_070_000),
+        [4, 12, 12, 34_534, 9],
+    )?);
     assert_eq!(usage(&repo, S1)?, all_five);
     drop(daemon);
     Ok(())
