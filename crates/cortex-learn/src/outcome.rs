@@ -233,8 +233,13 @@ fn restored(path: &RepoPath, edit: LastEdit, (did, next): (&Did<'_>, Option<&Did
 /// task edited nothing, or when no such check finished after its last edit with its work still in
 /// place: a check before the last edit says nothing about what the task left behind, one a git
 /// restore of an edited file followed vouches for work that is gone, a lint vouches for no work,
-/// and a command that was interrupted or runs on in the background finished nothing.
+/// and a command that was interrupted or runs on in the background finished nothing. A state that
+/// lost its restores lets no check vouch: what came after one, or ran in its line, may have put
+/// its work back.
 fn checked(state: &TaskState, did: &Did<'_>) -> Option<Judgement> {
+    if state.has_lost_restores() {
+        return None;
+    }
     let steps = state.steps();
     let last_edit = steps
         .iter()

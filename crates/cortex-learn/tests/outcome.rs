@@ -845,3 +845,58 @@ fn a_failing_line_fails_only_the_check_it_is_the_exit_of() -> TestResult {
     }
     Ok(())
 }
+
+/// A task whose state is rebuilt from its rows, as after the daemon started again, has lost what
+/// its shell lines restored, so no check vouches for it: an edit of `a.py`, `cargo test` passing,
+/// then `git checkout -- a.py`, recorded by one recorder and ended by another, is unknown, where
+/// the recorder that saw the restore judges the same steps reverted. A task that ran no shell line
+/// lost nothing when rebuilt.
+#[test]
+fn a_rebuilt_task_lets_no_check_vouch() -> TestResult {
+    let mut store = Store::new()?;
+    let steps = |session: &str, at_ms: i64| -> TestResult<Vec<Event>> {
+        Ok(vec![
+            start(session, at_ms, StartSource::Startup)?,
+            prompt(session, at_ms + 1, "fix it")?,
+            edit(session, at_ms + 100, "a.py")?,
+            shell(session, at_ms + 200, "cargo test", Some(0))?,
+            shell(session, at_ms + 300, "git checkout -- a.py", Some(0))?,
+        ])
+    };
+    let mut seen = Recorder::new(false, Commands::default());
+    let mut events = steps("s1", 1_000)?;
+    events.push(event(HookKind::Stop, "s1", 2_000)?);
+    let whole = one(store.record(&mut seen, &events)?)?;
+    assert_eq!(
+        said(&judge(&whole, &BTreeMap::new())),
+        (
+            TaskOutcome::Reverted,
+            "every edited file was put back or restored by git"
+        )
+    );
+    let mut before_restart = Recorder::new(false, Commands::default());
+    assert!(
+        store
+            .record(&mut before_restart, &steps("s2", 3_000)?)?
+            .is_empty()
+    );
+    let mut after_restart = Recorder::new(false, Commands::default());
+    let rebuilt = one(store.record(&mut after_restart, &[event(HookKind::Stop, "s2", 4_000)?])?)?;
+    assert!(rebuilt.has_lost_restores());
+    assert_eq!(
+        said(&judge(&rebuilt, &BTreeMap::new())),
+        (TaskOutcome::Unknown, "")
+    );
+    // A task that ran no shell line restored nothing, rebuilt or not.
+    let mut earlier = Recorder::new(false, Commands::default());
+    let no_shell = [
+        start("s3", 5_000, StartSource::Startup)?,
+        prompt("s3", 5_001, "fix it")?,
+        edit("s3", 5_100, "a.py")?,
+    ];
+    assert!(store.record(&mut earlier, &no_shell)?.is_empty());
+    let mut later = Recorder::new(false, Commands::default());
+    let rebuilt = one(store.record(&mut later, &[event(HookKind::Stop, "s3", 6_000)?])?)?;
+    assert!(!rebuilt.has_lost_restores());
+    Ok(())
+}

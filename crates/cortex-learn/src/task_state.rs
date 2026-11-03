@@ -146,6 +146,9 @@ pub struct TaskState {
     hit_bytes: usize,
     /// Whether it shows only part of what the task did.
     is_partial: bool,
+    /// Whether it was rebuilt from rows that hold shell lines, which keep no git restore: what
+    /// those lines put back is then not known.
+    has_lost_restores: bool,
 }
 
 impl TaskState {
@@ -160,6 +163,7 @@ impl TaskState {
             rows: 0,
             hit_bytes: 0,
             is_partial: false,
+            has_lost_restores: false,
         }
     }
 
@@ -198,6 +202,15 @@ impl TaskState {
     #[must_use]
     pub fn is_partial(&self) -> bool {
         self.is_partial
+    }
+
+    /// Whether the git restores the task's shell lines ran are not known: the state was rebuilt
+    /// from rows that hold shell lines, after the daemon started again or the state was let go,
+    /// and rows keep no restore. A check then vouches for nothing, since a restore after it, or in
+    /// its own line, may have put its work back.
+    #[must_use]
+    pub fn has_lost_restores(&self) -> bool {
+        self.has_lost_restores
     }
 
     /// Notes `row`, the task's next, with what was seen of its event that the row does not keep.
@@ -352,6 +365,11 @@ fn rebuild(queries: Queries<'_>, task_id: Ulid) -> Result<TaskState, StoreError>
         Err(StoreError::Corrupt { .. }) => state.is_partial = true,
         Err(error) => return Err(error),
     }
+    // Only a shell line restores, and its row keeps none of what it restored.
+    state.has_lost_restores = state
+        .steps
+        .iter()
+        .any(|step| matches!(step, Step::Run { .. }));
     Ok(state)
 }
 
