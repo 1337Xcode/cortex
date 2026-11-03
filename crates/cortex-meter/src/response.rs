@@ -1,4 +1,6 @@
-//! One model response as a transcript line reports it, and the tokens it took.
+//! One model response as a transcript line reports it, the tokens it took and how it was served.
+
+use cortex_core::Identifier;
 
 /// The model name Claude Code gives the responses it writes itself, without calling a model; they
 /// cost nothing and are not counted.
@@ -34,6 +36,20 @@ impl Usage {
     }
 }
 
+/// How a response was served, as far as its price depends on it, each part only when the line
+/// names it with a name: the service tier (`standard`, or another the provider prices apart), the
+/// speed (`standard` or `fast`) and where it ran (`global`, or `us` for inference kept in the
+/// United States).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Service {
+    /// The service tier.
+    pub tier: Option<Identifier>,
+    /// The speed.
+    pub speed: Option<Identifier>,
+    /// Where it ran.
+    pub inference_geo: Option<Identifier>,
+}
+
 /// One response a transcript line reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
@@ -46,4 +62,6 @@ pub struct Response {
     pub model: String,
     /// The tokens it took.
     pub usage: Usage,
+    /// How it was served.
+    pub service: Service,
 }

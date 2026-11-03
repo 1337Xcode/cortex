@@ -377,7 +377,8 @@ mod tests {
              INSERT INTO events (task_id, session_id, ts, kind, meta) \
              VALUES ('t1', 's1', 7, 'prompt', '{}');",
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let sixth = MIGRATIONS.get(..6).ok_or("fewer than six migrations")?;
+        migrate(&mut connection, sixth, &backups)?;
         assert_eq!(schema_version(&connection)?, 6);
         let found = objects(&connection)?;
         for table in [
@@ -408,6 +409,39 @@ mod tests {
             },
         )?;
         assert_eq!(kept, (1, 1, 1, 1, 0));
+        Ok(())
+    }
+
+    /// The seventh schema adds what a response was served at to each usage row, unknown for the
+    /// rows a sixth-schema store holds, which keep their counts.
+    #[test]
+    fn the_seventh_schema_adds_how_responses_were_served() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let sixth = MIGRATIONS.get(..6).ok_or("fewer than six migrations")?;
+        migrate(&mut connection, sixth, &backups)?;
+        connection.execute_batch(
+            "INSERT INTO sessions (session_id, agent, started_at, status) \
+             VALUES ('s1', 'claude', 5, 'live'); \
+             INSERT INTO usage (session_id, turn, ts, model, input, cache_write, cache_read, \
+             output, reasoning) VALUES ('s1', 1, 7, 'claude-sonnet-5-5', 3, 4, 5, 6, NULL);",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 7);
+        let counts: (i64, i64, i64, i64) = connection.query_row(
+            "SELECT input, cache_write, cache_read, output FROM usage",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(counts, (3, 4, 5, 6));
+        let unknown: i64 = connection.query_row(
+            "SELECT count(*) FROM usage WHERE cache_write_1h IS NULL AND service_tier IS NULL \
+             AND speed IS NULL AND inference_geo IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(unknown, 1);
         Ok(())
     }
 

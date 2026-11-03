@@ -24,7 +24,8 @@ fn session(id: &str) -> TestResult<SessionRecord> {
 }
 
 /// The usage of turn `turn` of `session_id`: its counts are input, cache writes, cache reads,
-/// output and reasoning.
+/// output and reasoning; its cache writes all for five minutes, served at the standard tier and
+/// speed, run anywhere.
 fn usage(
     session_id: &str,
     turn: u32,
@@ -39,9 +40,13 @@ fn usage(
         model: Some(name("claude-sonnet-5-5")?),
         input,
         cache_write,
+        cache_write_1h: Some(0),
         cache_read,
         output,
         reasoning,
+        service_tier: Some(name("standard")?),
+        speed: Some(name("standard")?),
+        inference_geo: Some(name("global")?),
     })
 }
 
@@ -58,7 +63,9 @@ fn with_sessions(scratch: &Scratch) -> TestResult<Writer> {
 /// Rows read back for their session only, by turn, whatever order they were written in; writing
 /// a turn again replaces its row (a transcript read again after a copy of a response grew), and
 /// leaves the other turns and the other session alone. A reasoning count the transcript did not
-/// give stays absent rather than becoming zero, and so does a model it did not name.
+/// give stays absent rather than becoming zero, and so do a model, a split of the cache writes and
+/// how the response was served; a response served fast in the United States, with an hour's cache
+/// writes, keeps that.
 #[test]
 fn usage_is_written_read_back_by_turn_and_replaced() -> TestResult {
     let scratch = Scratch::new()?;
@@ -66,9 +73,18 @@ fn usage_is_written_read_back_by_turn_and_replaced() -> TestResult {
     let second = usage("s1", 2, (2, 3_819, 29_797, 95), Some(0))?;
     let first = UsageRow {
         model: None,
+        cache_write_1h: None,
+        service_tier: None,
+        speed: None,
+        inference_geo: None,
         ..usage("s1", 1, (3_702, 29_797, 0, 100), None)?
     };
-    let other = usage("s2", 1, (7, 0, 0, 1), Some(1))?;
+    let other = UsageRow {
+        cache_write_1h: Some(0),
+        speed: Some(name("fast")?),
+        inference_geo: Some(name("us")?),
+        ..usage("s2", 1, (7, 0, 0, 1), Some(1))?
+    };
     let mut transaction = writer.transaction()?;
     transaction.replace_usage(&[second.clone(), first.clone(), other.clone()])?;
     transaction.commit()?;
@@ -122,7 +138,8 @@ fn usage_that_cannot_be_stored_is_refused_whole() -> TestResult {
 }
 
 /// Rows damaged outside Cortex are reported as damaged, naming the column: a count below zero, a
-/// turn past what a turn number holds, and a model that is no name.
+/// turn past what a turn number holds, an hour's cache writes below zero, and a model, tier, speed
+/// or region that is no name.
 #[test]
 fn damaged_usage_rows_are_reported() -> TestResult {
     let scratch = Scratch::new()?;
@@ -140,6 +157,22 @@ fn damaged_usage_rows_are_reported() -> TestResult {
         (
             "UPDATE usage SET turn = 1, model = 'a' || char(10) || 'b'",
             "usage.model",
+        ),
+        (
+            "UPDATE usage SET model = NULL, speed = 'a' || char(10) || 'b'",
+            "usage.speed",
+        ),
+        (
+            "UPDATE usage SET speed = NULL, service_tier = 'a' || char(10) || 'b'",
+            "usage.service_tier",
+        ),
+        (
+            "UPDATE usage SET service_tier = NULL, inference_geo = 'a' || char(10) || 'b'",
+            "usage.inference_geo",
+        ),
+        (
+            "UPDATE usage SET inference_geo = NULL, cache_write_1h = -1",
+            "usage.cache_write_1h",
         ),
     ];
     for (damage, column) in damages {

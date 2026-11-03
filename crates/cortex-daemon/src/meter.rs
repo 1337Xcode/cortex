@@ -282,9 +282,13 @@ impl Meter {
                 model: Identifier::new(&turn.model).ok(),
                 input: turn.usage.input,
                 cache_write: turn.usage.cache_write,
+                cache_write_1h: turn.usage.cache_write_1h,
                 cache_read: turn.usage.cache_read,
                 output: turn.usage.output,
                 reasoning: turn.usage.reasoning,
+                service_tier: turn.service.tier,
+                speed: turn.service.speed,
+                inference_geo: turn.service.inference_geo,
             })
             .collect();
         let written = writer.transaction().and_then(|mut transaction| {

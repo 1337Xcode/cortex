@@ -6,9 +6,10 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use cortex_core::Agent;
+use cortex_core::{Agent, Identifier};
 use cortex_meter::{
-    Claude, MAX_LINE_BYTES, MAX_RECENT_RESPONSES, Tail, TranscriptFormat, Turn, Usage, format_of,
+    Claude, MAX_LINE_BYTES, MAX_RECENT_RESPONSES, Service, Tail, TranscriptFormat, Turn, Usage,
+    format_of,
 };
 use proptest::prelude::*;
 
@@ -29,11 +30,23 @@ fn fixture(name: &str) -> TestResult<Vec<u8>> {
     Ok(std::fs::read(transcripts().join(name))?)
 }
 
-/// What each of `turns` says, its model checked to be the one every fixture used.
+/// How every response of the fixtures was served: the standard tier and speed, run anywhere.
+fn standard() -> Service {
+    let name = |text| Identifier::new(text).ok();
+    Service {
+        tier: name("standard"),
+        speed: name("standard"),
+        inference_geo: name("global"),
+    }
+}
+
+/// What each of `turns` says, its model and how it was served checked to be what every fixture
+/// says.
 fn said(turns: &[Turn]) -> Vec<Said> {
     turns
         .iter()
         .inspect(|turn| assert_eq!(turn.model, "claude-sonnet-5-5"))
+        .inspect(|turn| assert_eq!(turn.service, standard()))
         .map(|turn| {
             let usage = turn.usage;
             (
@@ -428,6 +441,85 @@ fn first_response() -> TestResult<Vec<u8>> {
         .nth(21)
         .ok_or("line 22")?
         .to_vec())
+}
+
+/// How a response was served is read from its line: the first response's line rewritten to the
+/// priority tier, fast, run in the United States, gives those three; with its speed a text holding
+/// a control character and its region left out, neither is known, and its tier still is.
+#[test]
+fn how_a_response_was_served_is_read() -> TestResult {
+    let line = String::from_utf8(first_response()?)?;
+    let served = line
+        .replace(
+            "\"service_tier\":\"standard\"",
+            "\"service_tier\":\"priority\"",
+        )
+        .replace("\"speed\":\"standard\"", "\"speed\":\"fast\"")
+        .replace("\"inference_geo\":\"global\"", "\"inference_geo\":\"us\"");
+    let name = |text| Identifier::new(text).ok();
+    let services = |text: &str| -> TestResult<Vec<Service>> {
+        Ok(read_whole(text.as_bytes())?
+            .into_iter()
+            .map(|turn| turn.service)
+            .collect())
+    };
+    assert_eq!(
+        services(&served)?,
+        [Service {
+            tier: name("priority"),
+            speed: name("fast"),
+            inference_geo: name("us"),
+        }]
+    );
+    let unclear = served
+        .replace("\"speed\":\"fast\"", "\"speed\":\"fa\\u0007st\"")
+        .replace("\"inference_geo\":\"us\",", "");
+    assert_ne!(unclear, served);
+    assert_eq!(
+        services(&unclear)?,
+        [Service {
+            tier: name("priority"),
+            speed: None,
+            inference_geo: None,
+        }]
+    );
+    // Values of another type than text are not known either, and the response is still read.
+    let typed = served
+        .replace("\"speed\":\"fast\"", "\"speed\":1")
+        .replace(
+            "\"inference_geo\":\"us\"",
+            "\"inference_geo\":{\"region\":\"us\"}",
+        )
+        .replace("\"service_tier\":\"priority\"", "\"service_tier\":[]");
+    assert_ne!(typed, served);
+    let turns = read_whole(typed.as_bytes())?;
+    assert_eq!(
+        turns
+            .iter()
+            .map(|turn| (turn.usage.input, turn.service.clone()))
+            .collect::<Vec<_>>(),
+        [(3_702, Service::default())]
+    );
+    Ok(())
+}
+
+/// How cache writes split is known only when the line gives both lifetimes: the first response's
+/// line, which wrote 29,797 for an hour and none for five minutes, with its five-minute count
+/// left out says nothing of the split, and its writes are the flat 29,797.
+#[test]
+fn a_split_with_one_lifetime_missing_is_not_known() -> TestResult {
+    let line = String::from_utf8(first_response()?)?;
+    let one_missing = line.replace("\"ephemeral_5m_input_tokens\":0", "\"other\":0");
+    assert_ne!(one_missing, line);
+    let turns = read_whole(one_missing.as_bytes())?;
+    assert_eq!(
+        turns
+            .iter()
+            .map(|turn| (turn.usage.cache_write, turn.usage.cache_write_1h))
+            .collect::<Vec<_>>(),
+        [(29_797, None)]
+    );
+    Ok(())
 }
 
 /// A read stops after the whole lines that fit its allowance, but reads a line longer than the

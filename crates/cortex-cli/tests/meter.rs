@@ -103,10 +103,11 @@ fn status_of(root: &Path, home: &Path) -> TestResult<String> {
     Ok(String::from_utf8(status.output()?.stdout)?)
 }
 
-/// The row of turn `turn` of `session`, written at `at_ms`, with input, cache writes, cache
-/// reads and output `counts` and no reasoning.
-fn row(session: &str, (turn, at_ms): (u32, i64), counts: [u64; 4]) -> TestResult<UsageRow> {
-    let [input, cache_write, cache_read, output] = counts;
+/// The row of turn `turn` of `session`, written at `at_ms`, with input, cache writes, the cache
+/// writes made for an hour, cache reads and output `counts` and no reasoning, served as every
+/// captured response was: at the standard tier and speed, run anywhere.
+fn row(session: &str, (turn, at_ms): (u32, i64), counts: [u64; 5]) -> TestResult<UsageRow> {
+    let [input, cache_write, cache_write_1h, cache_read, output] = counts;
     Ok(UsageRow {
         session_id: Identifier::new(session)?,
         turn,
@@ -114,9 +115,13 @@ fn row(session: &str, (turn, at_ms): (u32, i64), counts: [u64; 4]) -> TestResult
         model: Some(Identifier::new(MODEL)?),
         input,
         cache_write,
+        cache_write_1h: Some(cache_write_1h),
         cache_read,
         output,
         reasoning: Some(0),
+        service_tier: Some(Identifier::new("standard")?),
+        speed: Some(Identifier::new("standard")?),
+        inference_geo: Some(Identifier::new("global")?),
     })
 }
 
@@ -151,10 +156,14 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
     wait_for(|| Ok(usage(&repo, S1)?.len() == 4))?;
     let day_02 = 1_793_577_600_000;
     let first_four = [
-        row(S1, (1, day_02 + 83_057_241), [3_702, 29_797, 0, 100])?,
-        row(S1, (2, day_02 + 83_058_748), [2, 3_819, 29_797, 95])?,
-        row(S1, (3, day_02 + 83_060_454), [2, 155, 33_616, 360])?,
-        row(S1, (4, day_02 + 83_062_200), [2, 763, 33_771, 3])?,
+        row(
+            S1,
+            (1, day_02 + 83_057_241),
+            [3_702, 29_797, 29_797, 0, 100],
+        )?,
+        row(S1, (2, day_02 + 83_058_748), [2, 3_819, 3_819, 29_797, 95])?,
+        row(S1, (3, day_02 + 83_060_454), [2, 155, 155, 33_616, 360])?,
+        row(S1, (4, day_02 + 83_062_200), [2, 763, 763, 33_771, 3])?,
     ];
     assert_eq!(usage(&repo, S1)?, first_four);
 
@@ -177,12 +186,12 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
             row(
                 &subagent_session,
                 (1, day_01 + 68_493_153),
-                [2_716, 22_837, 0, 148]
+                [2_716, 22_837, 0, 0, 148]
             )?,
             row(
                 &subagent_session,
                 (2, day_01 + 68_495_180),
-                [2, 2_963, 22_837, 221]
+                [2, 2_963, 0, 22_837, 221]
             )?,
         ]
     );
@@ -217,7 +226,7 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
     send(&captured("session-end.json", &repo, session)?, home.path())?;
     wait_for(|| Ok(usage(&repo, S1)?.len() == 5))?;
     let mut all_five = first_four.to_vec();
-    all_five.push(row(S1, (5, day_02 + 83_070_000), [4, 12, 34_534, 9])?);
+    all_five.push(row(S1, (5, day_02 + 83_070_000), [4, 12, 12, 34_534, 9])?);
     assert_eq!(usage(&repo, S1)?, all_five);
     drop(daemon);
     Ok(())

@@ -14,10 +14,11 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use cortex_core::Identifier;
 use serde::Deserialize;
 
 use crate::format::TranscriptFormat;
-use crate::response::{Response, Usage};
+use crate::response::{Response, Service, Usage};
 use crate::timestamp::utc_millis;
 
 /// The variable that moves Claude Code's configuration folder, `~/.claude`, and its session
@@ -55,6 +56,7 @@ impl TranscriptFormat for Claude {
             at_ms: utc_millis(line.timestamp.as_deref()?)?,
             model: message.model.filter(|model| !model.is_empty())?,
             usage: usage.counts()?,
+            service: usage.service(),
         })
     }
 }
@@ -101,6 +103,13 @@ struct RawUsage {
     output_tokens_details: Option<OutputDetails>,
     /// The cache writes by lifetime.
     cache_creation: Option<CacheCreation>,
+    /// The service tier, as written: a value of another type than text must not make the line
+    /// unreadable and lose its counts.
+    service_tier: Option<serde_json::Value>,
+    /// The speed, as written.
+    speed: Option<serde_json::Value>,
+    /// Where it ran, as written.
+    inference_geo: Option<serde_json::Value>,
 }
 
 /// What the output was spent on.
@@ -120,19 +129,30 @@ struct CacheCreation {
 }
 
 impl RawUsage {
+    /// How the response was served; a value that is not text, or text that is no name, too long or
+    /// holding control characters, is not known.
+    fn service(&self) -> Service {
+        let name = |value: &Option<serde_json::Value>| {
+            value
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .and_then(|text| Identifier::new(text).ok())
+        };
+        Service {
+            tier: name(&self.service_tier),
+            speed: name(&self.speed),
+            inference_geo: name(&self.inference_geo),
+        }
+    }
+
     /// The counts, when the four that every response reports are there; the writes by lifetime,
-    /// when given, are the writes.
+    /// when both are given, are the writes. With one of them missing, how the writes split is not
+    /// known, and the flat count is taken.
     fn counts(&self) -> Option<Usage> {
         let split = self.cache_creation.as_ref().and_then(|split| {
-            match (
-                split.ephemeral_5m_input_tokens,
-                split.ephemeral_1h_input_tokens,
-            ) {
-                (None, None) => None,
-                (five_minutes, one_hour) => {
-                    Some((five_minutes.unwrap_or(0), one_hour.unwrap_or(0)))
-                }
-            }
+            split
+                .ephemeral_5m_input_tokens
+                .zip(split.ephemeral_1h_input_tokens)
         });
         // INVARIANT: measured-claims (a count the transcript does not give is never taken as zero:
         // the line is not understood)

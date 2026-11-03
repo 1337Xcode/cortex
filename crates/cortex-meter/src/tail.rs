@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 use crate::error::MeterError;
 use crate::format::TranscriptFormat;
-use crate::response::{Response, SYNTHETIC_MODEL, Usage};
+use crate::response::{Response, SYNTHETIC_MODEL, Service, Usage};
 
 /// The longest line a tail reads. A read stops after the whole lines that fit the bytes it is
 /// allowed, but a line longer than that allowance is read on to its end, as far as this; one
@@ -33,6 +33,8 @@ pub struct Turn {
     pub model: String,
     /// The tokens it took.
     pub usage: Usage,
+    /// How it was served.
+    pub service: Service,
 }
 
 /// A response the tail has counted, as far as telling a repeat of it goes.
@@ -170,5 +172,6 @@ fn turn(ordinal: u32, response: Response) -> Turn {
         at_ms: response.at_ms,
         model: response.model,
         usage: response.usage,
+        service: response.service,
     }
 }
