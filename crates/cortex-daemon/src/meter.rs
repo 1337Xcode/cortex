@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use cortex_core::{Agent, Event, HookKind, Identifier};
 use cortex_index::{ReadError, open_regular};
@@ -321,12 +321,19 @@ impl Meter {
 }
 
 /// The canonical path of the transcript at `path`, when its agent's transcripts are kept in
-/// `folders`: `path` is absolute, its name ends in `.jsonl`, and it lies inside one of `folders`
-/// once every link on the way to either is followed. A folder that does not exist holds nothing.
+/// `folders`: `path` is absolute, its name ends in `.jsonl`, it lies inside one of `folders` by
+/// their text alone, and still does once every link on the way to either is followed. A folder
+/// that does not exist holds nothing.
 fn transcript_in(path: &Path, folders: &[PathBuf]) -> Result<PathBuf, Unread> {
     let is_named_as_one = path.is_absolute() && path.extension().is_some_and(|ext| ext == "jsonl");
     if !is_named_as_one {
         return Err(Unread::NotTranscript);
+    }
+    // INVARIANT: local-only (a payload's path is placed inside a transcripts folder by its text
+    // before anything on disk is touched: following a network path would open a connection, and
+    // on Windows send the user's credentials, before any check could refuse it)
+    if !folders.iter().any(|folder| is_inside_by_text(path, folder)) {
+        return Err(Unread::Outside);
     }
     let canonical = std::fs::canonicalize(path).map_err(Unread::Io)?;
     let is_inside = folders
@@ -337,6 +344,44 @@ fn transcript_in(path: &Path, folders: &[PathBuf]) -> Result<PathBuf, Unread> {
         return Err(Unread::Outside);
     }
     Ok(canonical)
+}
+
+/// Whether `path` lies inside `folder` by their text alone: `path` names no `.` or `..`, and its
+/// first components are the folder's, compared without case where the file system ignores it. On
+/// Windows the first is the prefix, so a network or device path (`\\host\share`, `\\?\C:`) is
+/// never inside a folder on a drive.
+fn is_inside_by_text(path: &Path, folder: &Path) -> bool {
+    let is_plain = path
+        .components()
+        .all(|component| !matches!(component, Component::CurDir | Component::ParentDir));
+    let mut own = path.components();
+    is_plain
+        && folder
+            .components()
+            .all(|part| own.next().is_some_and(|mine| is_same_part(mine, part)))
+}
+
+/// Whether two components of a path name the same folder or file: on Windows, whose file systems
+/// ignore case, the same but for the case of ASCII letters.
+#[cfg(windows)]
+fn is_same_part(one: Component<'_>, other: Component<'_>) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    let folded = |part: Component<'_>| -> Vec<u16> {
+        part.as_os_str()
+            .encode_wide()
+            .map(|unit| match u8::try_from(unit) {
+                Ok(byte) => u16::from(byte.to_ascii_lowercase()),
+                Err(_) => unit,
+            })
+            .collect()
+    };
+    folded(one) == folded(other)
+}
+
+/// Whether two components of a path name the same folder or file: alike byte for byte.
+#[cfg(not(windows))]
+fn is_same_part(one: Component<'_>, other: Component<'_>) -> bool {
+    one == other
 }
 
 #[cfg(test)]
@@ -784,6 +829,42 @@ mod tests {
                 .collect::<Vec<_>>(),
             [true, false, true]
         );
+        Ok(())
+    }
+
+    /// A path is placed by its text before the disk is asked: one that steps through `..` is
+    /// refused even when it ends inside the folder, and on Windows a network path is refused as
+    /// outside without being looked up, while a path that differs from the folder's only in case
+    /// is inside.
+    #[test]
+    fn a_path_is_placed_by_its_text_first() -> TestResult {
+        let (home, path) = home_with_transcript()?;
+        let folder = projects(home.path());
+        let stepped = folder
+            .join("C--repo")
+            .join("..")
+            .join("C--repo")
+            .join("s1.jsonl");
+        assert!(fs::metadata(&stepped).is_ok());
+        assert!(matches!(
+            transcript_in(&stepped, std::slice::from_ref(&folder)),
+            Err(Unread::Outside)
+        ));
+        assert!(transcript_in(&path, std::slice::from_ref(&folder)).is_ok());
+        #[cfg(windows)]
+        {
+            let network = Path::new(r"\\nohost.invalid\share\s1.jsonl");
+            assert!(matches!(
+                transcript_in(network, std::slice::from_ref(&folder)),
+                Err(Unread::Outside)
+            ));
+            let device = Path::new(r"\\?\C:\repo\s1.jsonl");
+            assert!(!is_inside_by_text(device, Path::new(r"C:\repo")));
+            let parent = path.parent().ok_or("a folder")?;
+            let name = path.file_name().ok_or("a name")?;
+            let upper = PathBuf::from(parent.to_string_lossy().to_uppercase()).join(name);
+            assert!(transcript_in(&upper, std::slice::from_ref(&folder)).is_ok());
+        }
         Ok(())
     }
 }
