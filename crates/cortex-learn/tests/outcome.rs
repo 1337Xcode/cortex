@@ -847,10 +847,12 @@ fn a_failing_line_fails_only_the_check_it_is_the_exit_of() -> TestResult {
 }
 
 /// A task whose state is rebuilt from its rows, as after the daemon started again, has lost what
-/// its shell lines restored, so no check vouches for it: an edit of `a.py`, `cargo test` passing,
-/// then `git checkout -- a.py`, recorded by one recorder and ended by another, is unknown, where
-/// the recorder that saw the restore judges the same steps reverted. A task that ran no shell line
-/// lost nothing when rebuilt.
+/// its shell lines restored, so no check vouches for it when a rebuilt shell line came after its
+/// last edit: an edit of `a.py`, `cargo test` passing, then `git checkout -- a.py`, recorded by one
+/// recorder and ended by another, three rebuilt steps, is unknown, where the recorder that saw the
+/// restore judges the same steps reverted. What happens after the rebuild is seen as it happens: a
+/// task whose two rebuilt steps are an edit and a restore, which then edits again and passes its
+/// tests, succeeded, since a restore before the last edit undoes nothing the tests ran on.
 #[test]
 fn a_rebuilt_task_lets_no_check_vouch() -> TestResult {
     let mut store = Store::new()?;
@@ -882,21 +884,33 @@ fn a_rebuilt_task_lets_no_check_vouch() -> TestResult {
     );
     let mut after_restart = Recorder::new(false, Commands::default());
     let rebuilt = one(store.record(&mut after_restart, &[event(HookKind::Stop, "s2", 4_000)?])?)?;
-    assert!(rebuilt.has_lost_restores());
+    assert_eq!(rebuilt.rebuilt_steps(), 3);
     assert_eq!(
         said(&judge(&rebuilt, &BTreeMap::new())),
         (TaskOutcome::Unknown, "")
     );
-    // A task that ran no shell line restored nothing, rebuilt or not.
     let mut earlier = Recorder::new(false, Commands::default());
-    let no_shell = [
+    let restored_first = [
         start("s3", 5_000, StartSource::Startup)?,
         prompt("s3", 5_001, "fix it")?,
         edit("s3", 5_100, "a.py")?,
+        shell("s3", 5_200, "git checkout -- a.py", Some(0))?,
     ];
-    assert!(store.record(&mut earlier, &no_shell)?.is_empty());
+    assert!(store.record(&mut earlier, &restored_first)?.is_empty());
     let mut later = Recorder::new(false, Commands::default());
-    let rebuilt = one(store.record(&mut later, &[event(HookKind::Stop, "s3", 6_000)?])?)?;
-    assert!(!rebuilt.has_lost_restores());
+    let then = [
+        edit("s3", 5_300, "a.py")?,
+        shell("s3", 5_400, "cargo test", Some(0))?,
+        event(HookKind::Stop, "s3", 6_000)?,
+    ];
+    let rebuilt = one(store.record(&mut later, &then)?)?;
+    assert_eq!((rebuilt.rebuilt_steps(), rebuilt.steps().len()), (2, 4));
+    assert_eq!(
+        said(&judge(&rebuilt, &BTreeMap::new())),
+        (
+            TaskOutcome::Success,
+            "tests by cargo exited 0 after the last edit"
+        )
+    );
     Ok(())
 }

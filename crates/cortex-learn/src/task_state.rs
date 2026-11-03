@@ -146,9 +146,9 @@ pub struct TaskState {
     hit_bytes: usize,
     /// Whether it shows only part of what the task did.
     is_partial: bool,
-    /// Whether it was rebuilt from rows that hold shell lines, which keep no git restore: what
-    /// those lines put back is then not known.
-    has_lost_restores: bool,
+    /// How many of its first steps were rebuilt from the task's rows, which keep no git restore a
+    /// shell line ran: what those lines put back is not known. 0 when every step was seen.
+    rebuilt_steps: usize,
 }
 
 impl TaskState {
@@ -163,7 +163,7 @@ impl TaskState {
             rows: 0,
             hit_bytes: 0,
             is_partial: false,
-            has_lost_restores: false,
+            rebuilt_steps: 0,
         }
     }
 
@@ -204,13 +204,12 @@ impl TaskState {
         self.is_partial
     }
 
-    /// Whether the git restores the task's shell lines ran are not known: the state was rebuilt
-    /// from rows that hold shell lines, after the daemon started again or the state was let go,
-    /// and rows keep no restore. A check then vouches for nothing, since a restore after it, or in
-    /// its own line, may have put its work back.
+    /// How many of the task's first steps were rebuilt from its rows, after the daemon started
+    /// again or the state was let go: the git restores their shell lines ran are not known, as
+    /// rows keep none. Steps after them were seen as they happened. 0 when every step was seen.
     #[must_use]
-    pub fn has_lost_restores(&self) -> bool {
-        self.has_lost_restores
+    pub fn rebuilt_steps(&self) -> usize {
+        self.rebuilt_steps
     }
 
     /// Notes `row`, the task's next, with what was seen of its event that the row does not keep.
@@ -365,11 +364,7 @@ fn rebuild(queries: Queries<'_>, task_id: Ulid) -> Result<TaskState, StoreError>
         Err(StoreError::Corrupt { .. }) => state.is_partial = true,
         Err(error) => return Err(error),
     }
-    // Only a shell line restores, and its row keeps none of what it restored.
-    state.has_lost_restores = state
-        .steps
-        .iter()
-        .any(|step| matches!(step, Step::Run { .. }));
+    state.rebuilt_steps = state.steps.len();
     Ok(state)
 }
 

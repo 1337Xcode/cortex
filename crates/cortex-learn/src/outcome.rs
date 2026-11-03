@@ -233,17 +233,24 @@ fn restored(path: &RepoPath, edit: LastEdit, (did, next): (&Did<'_>, Option<&Did
 /// task edited nothing, or when no such check finished after its last edit with its work still in
 /// place: a check before the last edit says nothing about what the task left behind, one a git
 /// restore of an edited file followed vouches for work that is gone, a lint vouches for no work,
-/// and a command that was interrupted or runs on in the background finished nothing. A state that
-/// lost its restores lets no check vouch: what came after one, or ran in its line, may have put
-/// its work back.
+/// and a command that was interrupted or runs on in the background finished nothing. Nor does any
+/// check when a shell line rebuilt from rows came after the last edit: it may have put the work
+/// back, and rows keep no restore. A restore before the last edit undoes nothing a check after it
+/// is judged on, so shell lines rebuilt before it are no matter.
 fn checked(state: &TaskState, did: &Did<'_>) -> Option<Judgement> {
-    if state.has_lost_restores() {
-        return None;
-    }
     let steps = state.steps();
     let last_edit = steps
         .iter()
         .rposition(|step| matches!(step, Step::Edit { .. }))?;
+    let rebuilt_after_edit = steps
+        .get(last_edit + 1..state.rebuilt_steps())
+        .unwrap_or_default();
+    if rebuilt_after_edit
+        .iter()
+        .any(|step| matches!(step, Step::Run { .. }))
+    {
+        return None;
+    }
     let vouches_from = undone_at(did, last_edit).unwrap_or(last_edit);
     let (vouched, runner, code) = steps
         .get(vouches_from + 1..)?
