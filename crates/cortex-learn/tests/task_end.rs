@@ -63,7 +63,8 @@ impl Learning {
                 .learn(&mut transaction, &state, &Config::default())?
                 .ok_or("a task with no ended row")?;
             transaction.commit()?;
-            self.learner.keep(store.writer.queries(), state)?;
+            self.learner
+                .keep(store.writer.queries(), state, learned.linked.clone())?;
             found.push((task_id, learned));
         }
         Ok(found)
@@ -97,6 +98,21 @@ fn recorded(store: &Store, task_id: Ulid) -> TestResult<TaskOutcome> {
 
 /// One link as compared here: from, to, weight, count, and the task it last changed at.
 type Link = (NodeId, NodeId, f64, u32, i64);
+
+/// What one end found, as compared here: what became of the task and the task before it found put
+/// back.
+fn found_as(learned: &Learned) -> (TaskOutcome, Option<Ulid>) {
+    (learned.outcome, learned.reverted_before)
+}
+
+/// Whether `link` is `expected`, its weight within a rounding error: a weight worked out by hand
+/// through decay is not always the float the sums give.
+fn is_link(link: Option<&Link>, expected: Link) -> bool {
+    link.is_some_and(|(src, dst, weight, count, last_seq)| {
+        (*src, *dst, *count, *last_seq) == (expected.0, expected.1, expected.3, expected.4)
+            && (weight - expected.2).abs() < 1e-12
+    })
+}
 
 /// The links stored among `nodes`.
 fn links(store: &Store, nodes: &[NodeId]) -> TestResult<Vec<Link>> {
@@ -157,13 +173,8 @@ fn a_task_that_passed_its_tests_leaves_every_mark() -> TestResult {
         ],
     )?);
     let (task_id, found) = learning.one(&mut store, &events)?;
-    assert_eq!(
-        found,
-        Learned {
-            outcome: TaskOutcome::Success,
-            reverted_before: None,
-        }
-    );
+    assert_eq!(found_as(&found), (TaskOutcome::Success, None));
+    assert_eq!(found.linked, [((ops, util), 0.1)].into_iter().collect());
     assert_eq!(
         judged(&store, task_id)?,
         (
@@ -272,8 +283,9 @@ fn failed_and_left_tasks_link_nothing() -> TestResult {
 /// times both roles times three tenths: 0.03. Then the files are put back as they were and the
 /// index reads them so, and the session's next task, which changes nothing, ends: every file the
 /// first changed is back, so the first is judged reverted, with words saying so by the end of the
-/// next task. Its link is weakened at task 2: what decay leaves of 0.03 over one task, 0.02985,
-/// less 0.05, is held at nothing, its second observation. Its record says it was put back.
+/// next task. At task 2 its link loses what the first gave it, which decayed as the link did, and
+/// a reverted task's 0.05: 0.02985 - 0.02985 - 0.05, held at nothing, its second observation. Its
+/// record says it was put back.
 #[test]
 fn a_revert_the_index_shows_late_is_found_at_the_next_tasks_end() -> TestResult {
     let mut store = Store::new()?;
@@ -288,13 +300,7 @@ fn a_revert_the_index_shows_late_is_found_at_the_next_tasks_end() -> TestResult 
     assert!(learning.feed(&mut store, &opening)?.is_empty());
     store.index_text_at(&[("a.py", "a2\n"), ("b.py", "b2\n")], 1_300)?;
     let (first_id, found) = learning.one(&mut store, &[event(HookKind::Stop, "s1", 1_401)?])?;
-    assert_eq!(
-        found,
-        Learned {
-            outcome: TaskOutcome::Unknown,
-            reverted_before: None,
-        }
-    );
+    assert_eq!(found_as(&found), (TaskOutcome::Unknown, None));
     assert_eq!(
         judged(&store, first_id)?,
         (Some(TaskOutcome::Unknown), None)
@@ -303,13 +309,7 @@ fn a_revert_the_index_shows_late_is_found_at_the_next_tasks_end() -> TestResult 
 
     store.index_text_at(&[("a.py", "a\n"), ("b.py", "b\n")], 1_500)?;
     let (_, found) = learning.one(&mut store, &task("s1", 2_000, Vec::new())?)?;
-    assert_eq!(
-        found,
-        Learned {
-            outcome: TaskOutcome::Unknown,
-            reverted_before: Some(first_id),
-        }
-    );
+    assert_eq!(found_as(&found), (TaskOutcome::Unknown, Some(first_id)));
     assert_eq!(
         judged(&store, first_id)?,
         (
@@ -325,42 +325,62 @@ fn a_revert_the_index_shows_late_is_found_at_the_next_tasks_end() -> TestResult 
     Ok(())
 }
 
-/// A success the next task puts back with git keeps its gain and loses a reverted task's share.
-/// The first task changes `a.py` and `b.py` and passes its tests: linked by 0.1 at task 1. The
-/// session's next task restores both with git and ends: the first is judged reverted, by the end
-/// of the next task, and its link weakened at task 2 to what decay leaves of 0.1 over one task,
-/// 0.1 x 0.995 = 0.0995, less 0.05: 0.0495, its second observation.
+/// A success the next task puts back with git loses what it gave the links, at both levels, and
+/// what other work gave them stays. `a.py` holds `f` and `b.py` holds `g`, both on lines 1 and 2,
+/// so an edit of line 1 touches the file and its symbol. A task of `s0` edits both files and
+/// passes its tests: `a`-`b` and `f`-`g` gain 0.1 each at task 1. A task of `s1` does the same:
+/// each link is 0.1 x 0.995 + 0.1 = 0.1995 at task 2, its second observation. The next task of
+/// `s1` restores both files with git and ends: the task before it is judged reverted, by the end
+/// of the next task. At task 3 each link loses the 0.1 that task gave it, decayed over one task to
+/// 0.0995, from 0.1995 x 0.995 = 0.1985025: 0.0990025, what `s0`'s 0.1 alone decays to over two
+/// tasks, 0.1 x 0.995^2. The files' link loses a reverted task's 0.05 as well: 0.0490025. Both are
+/// their third observation.
 #[test]
-fn a_success_put_back_later_keeps_its_gain_less_a_reverts_share() -> TestResult {
+fn a_success_put_back_later_loses_what_it_gave_the_links() -> TestResult {
     let mut store = Store::new()?;
     let mut learning = Learning::new();
-    let (a, b) = two_files(&mut store)?;
-    let mut events = vec![start("s1", 1_000, StartSource::Startup)?];
-    events.extend(task(
-        "s1",
-        1_001,
-        vec![
-            edit("s1", 1_002, "a.py")?,
-            edit("s1", 1_003, "b.py")?,
-            shell("s1", 1_004, "cargo test", Some(0))?,
-        ],
-    )?);
-    let (first_id, found) = learning.one(&mut store, &events)?;
-    assert_eq!(found.outcome, TaskOutcome::Success);
-    assert_eq!(links(&store, &[a, b])?, [(a, b, 0.1, 1, 1)]);
+    let a_nodes = store.index_symbols("a.py", &[("f", 1, 2)])?;
+    let (a, f) = (
+        a_nodes.first().copied().ok_or("no file")?,
+        a_nodes.get(1).copied().ok_or("no symbol")?,
+    );
+    let b_nodes = store.index_symbols("b.py", &[("g", 1, 2)])?;
+    let (b, g) = (
+        b_nodes.first().copied().ok_or("no file")?,
+        b_nodes.get(1).copied().ok_or("no symbol")?,
+    );
+    let mut events = vec![
+        start("s0", 1_000, StartSource::Startup)?,
+        start("s1", 1_000, StartSource::Startup)?,
+    ];
+    for (session, at_ms) in [("s0", 1_001), ("s1", 2_001)] {
+        events.extend(task(
+            session,
+            at_ms,
+            vec![
+                edit(session, at_ms + 1, "a.py")?,
+                edit(session, at_ms + 2, "b.py")?,
+                shell(session, at_ms + 3, "cargo test", Some(0))?,
+            ],
+        )?);
+    }
+    let found = learning.feed(&mut store, &events)?;
+    let first_id = found
+        .get(1)
+        .map(|(task_id, _)| *task_id)
+        .ok_or("no task of s1")?;
+    let both: Vec<TaskOutcome> = found.iter().map(|(_, learned)| learned.outcome).collect();
+    assert_eq!(both, [TaskOutcome::Success, TaskOutcome::Success]);
+    let held = links(&store, &[a, b, f, g])?;
+    assert!(is_link(held.first(), (a, b, 0.1995, 2, 2)), "{held:?}");
+    assert!(is_link(held.get(1), (f, g, 0.1995, 2, 2)), "{held:?}");
     let restore = task(
         "s1",
-        2_000,
-        vec![shell("s1", 2_002, "git restore a.py b.py", Some(0))?],
+        3_000,
+        vec![shell("s1", 3_002, "git restore a.py b.py", Some(0))?],
     )?;
     let (_, found) = learning.one(&mut store, &restore)?;
-    assert_eq!(
-        found,
-        Learned {
-            outcome: TaskOutcome::Unknown,
-            reverted_before: Some(first_id),
-        }
-    );
+    assert_eq!(found_as(&found), (TaskOutcome::Unknown, Some(first_id)));
     assert_eq!(
         judged(&store, first_id)?,
         (
@@ -371,7 +391,10 @@ fn a_success_put_back_later_keeps_its_gain_less_a_reverts_share() -> TestResult 
             )
         )
     );
-    assert_eq!(links(&store, &[a, b])?, [(a, b, 0.0495, 2, 2)]);
+    let held = links(&store, &[a, b, f, g])?;
+    assert_eq!(held.len(), 2, "{held:?}");
+    assert!(is_link(held.first(), (a, b, 0.049_002_5, 3, 3)), "{held:?}");
+    assert!(is_link(held.get(1), (f, g, 0.099_002_5, 3, 3)), "{held:?}");
     assert_eq!(recorded(&store, first_id)?, TaskOutcome::Reverted);
     Ok(())
 }

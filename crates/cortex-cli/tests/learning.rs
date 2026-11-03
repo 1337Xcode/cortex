@@ -165,6 +165,9 @@ impl Nodes {
 /// The next task puts line 13 back as it was, and once the daemon has read the file back, its
 /// answer ends: nothing vouches for it, so nothing is known of it, and the first task's work is
 /// gone, every file it edited holding again what it held before, so the first is now reverted.
+/// Its link loses what its success gave it, which decayed as the link did over the one task since:
+/// 0.02 x 0.995 less the same leaves nothing, its second observation, as of the second task. It
+/// edited one file, so no pair of edited files is weakened besides.
 #[test]
 fn a_session_s_tasks_are_learned_from_as_they_end() -> TestResult {
     let (home, repo) = repository()?;
@@ -233,6 +236,20 @@ fn a_session_s_tasks_are_learned_from_as_they_end() -> TestResult {
     assert_eq!(
         record.map(|record| record.outcome),
         Some(TaskOutcome::Reverted)
+    );
+    let links = read(&repo, |queries| {
+        Ok(queries.edges_among(&[nodes.ops, nodes.tests], EdgeType::CoAccess)?)
+    })?;
+    let [link] = links.as_slice() else {
+        return Err(format!("{} links", links.len()).into());
+    };
+    let second_seq = read(&repo, |queries| {
+        Ok(queries.task(second)?.ok_or("no task row")?.seq)
+    })?;
+    assert!(link.edge.weight.abs() < 1e-12, "{}", link.edge.weight);
+    assert_eq!(
+        (link.edge.count, link.edge.last_seq),
+        (2, i64::try_from(second_seq)?)
     );
     Ok(())
 }

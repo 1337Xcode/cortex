@@ -63,11 +63,15 @@ impl Learning {
         let ended = std::mem::take(&mut self.ended);
         for state in ended {
             let learned = writer.transaction().and_then(|mut transaction| {
-                self.learner.learn(&mut transaction, &state, config)?;
-                transaction.commit()
+                let learned = self.learner.learn(&mut transaction, &state, config)?;
+                transaction.commit()?;
+                Ok(learned)
             });
             // The learner remembers the task only once its learning is committed.
-            let kept = learned.and_then(|()| self.learner.keep(writer.queries(), state));
+            let kept = learned.and_then(|learned| match learned {
+                Some(learned) => self.learner.keep(writer.queries(), state, learned.linked),
+                None => Ok(()),
+            });
             if let Err(error) = kept {
                 count_failed(inbox, "what a task's end teaches", &error);
             }
