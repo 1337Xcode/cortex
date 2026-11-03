@@ -98,6 +98,11 @@ pub fn index_with_pause(
 /// daemon does when they change: on one thread, with a minute for each file and the default size
 /// limit, 1 MiB.
 pub fn index_changed(root: &Path, paths: &[&str]) -> TestResult<IndexReport> {
+    index_changed_at(root, paths, NOW_MS)
+}
+
+/// Indexes the files at `paths` as [`index_changed`] does, at the moment `now_ms`.
+pub fn index_changed_at(root: &Path, paths: &[&str], now_ms: i64) -> TestResult<IndexReport> {
     let mut writer = Writer::open(&WriterOptions {
         folder: &root.join(".cortex"),
         repo_id: &RepoId::of(root),
@@ -112,7 +117,7 @@ pub fn index_changed(root: &Path, paths: &[&str]) -> TestResult<IndexReport> {
         },
         parse_timeout: Duration::from_secs(60),
         threads: NonZeroUsize::MIN,
-        now_ms: NOW_MS,
+        now_ms,
         mode: ModeSetting::Auto,
         pause: None,
     };

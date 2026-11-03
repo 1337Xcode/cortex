@@ -7,7 +7,9 @@ mod common;
 use std::path::Path;
 use std::time::Duration;
 
-use common::{TestResult, expected, index, index_changed, ties, touch, write_all};
+use common::{
+    NOW_MS, TestResult, expected, index, index_changed, index_changed_at, ties, touch, write_all,
+};
 use cortex_core::{ContentHash, FileContent, Identifier, RepoPath};
 use cortex_index::EditedFile;
 use cortex_store::{ChangeKind, MetaKey, Reader};
@@ -23,6 +25,39 @@ fn stored_mtime(root: &Path, path: &str) -> TestResult<Option<i64>> {
     let reader = Reader::open(&root.join(".cortex"), 0)?;
     let row = reader.queries().file(&cortex_core::RepoPath::new(path)?)?;
     Ok(row.map(|row| row.file.mtime_ns))
+}
+
+/// When the index last read each file under `root`, by path.
+fn stored_reads(root: &Path, paths: &[&str]) -> TestResult<Vec<Option<i64>>> {
+    let reader = Reader::open(&root.join(".cortex"), 0)?;
+    let queries = reader.queries();
+    paths
+        .iter()
+        .map(|path| {
+            Ok(queries
+                .file(&RepoPath::new(path)?)?
+                .map(|row| row.file.indexed_at_ms))
+        })
+        .collect()
+}
+
+/// A file read again and found to hold what is stored keeps when it was read: both files are
+/// indexed at the first moment, then `a.py` is given a new time with the same contents and read
+/// again 5 s later, and its row says so, while `b.py`, not read again, keeps the first moment.
+#[test]
+fn a_file_read_again_unchanged_keeps_when_it_was_read() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write_all(root, &[("a.py", "a = 1\n"), ("b.py", "b = 1\n")])?;
+    index_changed_at(root, &["a.py", "b.py"], NOW_MS)?;
+    touch(root, "a.py")?;
+    let report = index_changed_at(root, &["a.py"], NOW_MS + 5_000)?;
+    assert_eq!((report.files, report.unchanged), (0, 1));
+    assert_eq!(
+        stored_reads(root, &["a.py", "b.py"])?,
+        [Some(NOW_MS + 5_000), Some(NOW_MS)]
+    );
+    Ok(())
 }
 
 /// Indexed again with nothing changed, every file is kept. A file with a new time and the same

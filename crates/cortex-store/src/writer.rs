@@ -226,18 +226,25 @@ impl WriteTx<'_> {
         })
     }
 
-    /// Sets the modification time of the stored file at `path` to `mtime_ns`, for a file whose
-    /// contents are as stored. Returns whether the store holds the file.
+    /// Sets the modification time of the stored file at `path` to `mtime_ns`, and when the index
+    /// read it to `indexed_at_ms`, for a file read again and found to hold what is stored: the row
+    /// then says the index saw those contents at that time. Returns whether the store holds the
+    /// file.
     ///
     /// # Errors
     ///
     /// [`StoreError::TransactionLost`] and SQLite errors.
-    pub fn set_file_mtime(&mut self, path: &RepoPath, mtime_ns: i64) -> Result<bool, StoreError> {
+    pub fn touch_file(
+        &mut self,
+        path: &RepoPath,
+        mtime_ns: i64,
+        indexed_at_ms: i64,
+    ) -> Result<bool, StoreError> {
         self.atomically(|connection| {
             connection
-                .execute(schema::FILE_MTIME_SET, (path.as_str(), mtime_ns))
+                .execute(schema::FILE_TOUCH, (path.as_str(), mtime_ns, indexed_at_ms))
                 .map(|rows| rows > 0)
-                .map_err(sqlite("writing a file's time"))
+                .map_err(sqlite("writing a file's times"))
         })
     }
 
@@ -337,6 +344,25 @@ impl WriteTx<'_> {
         outcome: TaskOutcome,
     ) -> Result<bool, StoreError> {
         self.atomically(|connection| activity::end_task(connection, task_id, ended_at_ms, outcome))
+    }
+
+    /// Sets what became of the ended task `task_id` to `outcome`, with `evidence`, the words that
+    /// say why: what a check vouched for, or what put the task's files back, never a command
+    /// line, a path or code. A later judgement replaces an earlier one, as when the next task shows
+    /// this one was put back. `false` when no such task has ended.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn set_task_outcome(
+        &mut self,
+        task_id: Ulid,
+        outcome: TaskOutcome,
+        evidence: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        self.atomically(|connection| {
+            activity::set_task_outcome(connection, task_id, outcome, evidence)
+        })
     }
 
     /// Appends the event and returns its number.

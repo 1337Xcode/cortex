@@ -7,7 +7,8 @@
 //! [`interest_of`] what its work adds to the interest of each node it touched, and
 //! [`links_of`] what it does to the links between them. [`episode_of`] is one record of what
 //! the task did, and [`archetypes_of`] clusters those records into the shapes of task a
-//! repository has.
+//! repository has. [`Learner`] does all of that as each task ends, and looks again at the task
+//! before it in the same session, which only the next task's end can show was put back.
 
 #![warn(clippy::pedantic)]
 
@@ -21,6 +22,7 @@ mod links;
 mod outcome;
 mod places;
 mod record;
+mod task_end;
 mod task_state;
 mod watcher_edits;
 
@@ -31,6 +33,7 @@ pub use interest::{EarnedInterest, add_interest, interest_of};
 pub use links::{EarnedLinks, Linking, add_links, links_of};
 pub use outcome::{FileNow, Judgement, judge, reverted_after};
 pub use record::Recorder;
+pub use task_end::{Learned, Learner, MAX_SESSIONS_KEPT, cluster_tasks};
 pub use task_state::{
     FileNode, MAX_TASK_HIT_BYTES, MAX_TASK_ROWS, MAX_TASK_STATES, RunCheck, Step, TaskEnd,
     TaskState,

@@ -944,10 +944,13 @@ fn file_rows_edge_sources_into_and_times() -> TestResult {
     );
     assert_eq!(queries.sources_into(a.file_node, EdgeType::Structural)?, []);
     assert_eq!(queries.sources_into(b.file_node, EdgeType::CoChange)?, []);
-    assert!(transaction.set_file_mtime(&path("a.py")?, 42)?);
-    assert!(!transaction.set_file_mtime(&path("gone.py")?, 42)?);
+    assert!(transaction.touch_file(&path("a.py")?, 42, 77)?);
+    assert!(!transaction.touch_file(&path("gone.py")?, 42, 77)?);
     let row = transaction.queries().file(&path("a.py")?)?;
-    assert_eq!(row.map(|row| row.file.mtime_ns), Some(42));
+    assert_eq!(
+        row.map(|row| (row.file.mtime_ns, row.file.indexed_at_ms)),
+        Some((42, 77))
+    );
     Ok(())
 }
 

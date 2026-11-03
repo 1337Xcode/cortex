@@ -112,7 +112,8 @@ are literal. Matching is case-sensitive on every platform.
 
 `index_repository` writes every file the walk finds that changed since the last index. A file found
 as stored, with the same modification time, size, language and flags, is kept without being read;
-one whose contents hash as stored gets only its new time. The first index, one after a Cortex of
+one read whose contents hash as stored gets only its new time and the time it was read, so its row
+says when the index last saw those contents. The first index, one after a Cortex of
 another version wrote the store, and one after an index or a parse that stopped partway (the process
 killed, a write failed) write every file: the rules perhaps changed, or references were left half
 tied. An index or a parse marks the store as under way before it writes and as complete once done. A

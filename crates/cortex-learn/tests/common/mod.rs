@@ -11,8 +11,8 @@ use std::path::PathBuf;
 
 use cortex_core::{
     Agent, ContentHash, EdgeType, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier,
-    Language, LineRange, RepoId, RepoPath, ShortHash, StartSource, SymbolKind, ToolKind,
-    ToolResult, ToolTarget, Ulid,
+    Language, LineRange, RepoId, RepoPath, ShellCommand, ShortHash, StartSource, SymbolKind,
+    ToolKind, ToolResult, ToolTarget, Ulid,
 };
 use cortex_learn::{Recorder, TaskState};
 use cortex_store::{
@@ -131,6 +131,32 @@ pub fn failed() -> Option<ToolResult> {
     })
 }
 
+/// The shell command `line` run by `session` at `ts_ms` in the repository's top folder, which
+/// exited `exit_code`, or was interrupted before it finished for none. The root is absolute on
+/// every platform, so that the paths a restore names resolve.
+pub fn shell(session: &str, ts_ms: i64, line: &str, exit_code: Option<i32>) -> TestResult<Event> {
+    let root = std::env::temp_dir().join("repo");
+    let target = ToolTarget {
+        command: Some(ShellCommand::cut(line)),
+        ..ToolTarget::default()
+    };
+    let result = Some(ToolResult {
+        exit_code,
+        is_success: exit_code == Some(0),
+        is_interrupted: exit_code.is_none(),
+        output_bytes: Some(20),
+    });
+    Ok(Event {
+        cwd: root.clone(),
+        repo_root: root,
+        ..tool(
+            HookKind::PostTool,
+            (session, ts_ms),
+            (ToolKind::Shell, target, result),
+        )?
+    })
+}
+
 /// A store in a temporary repository.
 pub struct Store {
     /// The repository root.
@@ -173,7 +199,7 @@ impl Store {
     pub fn index(&mut self, paths: &[&str]) -> TestResult<Vec<NodeId>> {
         let unread: Vec<(&str, Option<ContentHash>)> =
             paths.iter().map(|path| (*path, None)).collect();
-        self.store_files(&unread)
+        self.store_files(&unread, 1)
     }
 
     /// Stores each file of `files` as the indexer would after reading its text, and returns their
@@ -183,7 +209,21 @@ impl Store {
             .iter()
             .map(|(path, text)| (*path, Some(ContentHash::of(text.as_bytes()))))
             .collect();
-        self.store_files(&read)
+        self.store_files(&read, 1)
+    }
+
+    /// Stores each file of `files` as the indexer would after reading its text at
+    /// `indexed_at_ms`, and returns their nodes in that order.
+    pub fn index_text_at(
+        &mut self,
+        files: &[(&str, &str)],
+        indexed_at_ms: i64,
+    ) -> TestResult<Vec<NodeId>> {
+        let read: Vec<(&str, Option<ContentHash>)> = files
+            .iter()
+            .map(|(path, text)| (*path, Some(ContentHash::of(text.as_bytes()))))
+            .collect();
+        self.store_files(&read, indexed_at_ms)
     }
 
     /// Stores the file at `path` with one function symbol per entry of `symbols`, each named and
@@ -330,9 +370,13 @@ impl Store {
         Ok(node)
     }
 
-    /// Stores each file of `files` with its contents' hash, if read, and returns their nodes in
-    /// that order.
-    fn store_files(&mut self, files: &[(&str, Option<ContentHash>)]) -> TestResult<Vec<NodeId>> {
+    /// Stores each file of `files` with its contents' hash, if read, as indexed at `indexed_at_ms`,
+    /// and returns their nodes in that order.
+    fn store_files(
+        &mut self,
+        files: &[(&str, Option<ContentHash>)],
+        indexed_at_ms: i64,
+    ) -> TestResult<Vec<NodeId>> {
         let mut transaction = self.writer.transaction()?;
         let mut nodes = Vec::new();
         for (path, content_hash) in files {
@@ -346,7 +390,7 @@ impl Store {
                     content_hash: *content_hash,
                     mtime_ns: 1,
                     flags: FileFlags::empty(),
-                    indexed_at_ms: 1,
+                    indexed_at_ms,
                 },
                 symbols: Vec::new(),
                 refs: Vec::new(),

@@ -172,8 +172,9 @@ pub enum IndexError {
 enum Outcome {
     /// It is ready to write.
     Ready(Box<Prepared>),
-    /// Its contents are as stored: only its new modification time, in nanoseconds, needs writing.
-    Touched(RepoPath, i64),
+    /// Its contents are as stored: only its new modification time, in nanoseconds, and when it was
+    /// read, in UTC milliseconds, need writing.
+    Touched(RepoPath, i64, i64),
     /// Nothing to write: the file at this path was skipped, for this reason.
     Skipped(RepoPath, FileProblem),
     /// It was read but not parsed, for this reason: its row is written as read, defining nothing.
@@ -784,8 +785,8 @@ fn write_batch(
                 report.problems.push((file.path.clone(), problem));
                 Box::new(Prepared::unparsed(*file))
             }
-            Outcome::Touched(path, mtime_ns) => {
-                transaction.set_file_mtime(&path, mtime_ns)?;
+            Outcome::Touched(path, mtime_ns, read_at_ms) => {
+                transaction.touch_file(&path, mtime_ns, read_at_ms)?;
                 report.unchanged += 1;
                 continue;
             }
@@ -952,11 +953,19 @@ fn prepare(
                 if is_only_touched(&prepared.index.file, context) =>
             {
                 let file = prepared.index.file;
-                return Ok(Outcome::Touched(file.path, file.mtime_ns));
+                return Ok(Outcome::Touched(
+                    file.path,
+                    file.mtime_ns,
+                    file.indexed_at_ms,
+                ));
             }
             Read::Done(outcome) => return Ok(outcome),
             Read::Parse { record, .. } if is_only_touched(&record, context) => {
-                return Ok(Outcome::Touched(record.path, record.mtime_ns));
+                return Ok(Outcome::Touched(
+                    record.path,
+                    record.mtime_ns,
+                    record.indexed_at_ms,
+                ));
             }
             Read::Parse {
                 record,
@@ -1376,7 +1385,7 @@ mod tests {
                 Outcome::Unparsed(file, problem) => {
                     (*position, file.path.as_str(), Some(*problem), Vec::new())
                 }
-                Outcome::Touched(path, _) => (*position, path.as_str(), None, Vec::new()),
+                Outcome::Touched(path, ..) => (*position, path.as_str(), None, Vec::new()),
             })
             .collect();
         assert_eq!(
@@ -1492,7 +1501,7 @@ mod tests {
             skipped("kept.txt", FileProblem::Unreadable)?,
             skipped("new.txt", FileProblem::Panicked)?,
             skipped("slow.txt", FileProblem::TimedOut)?,
-            Outcome::Touched(RepoPath::new("a.txt")?, 99),
+            Outcome::Touched(RepoPath::new("a.txt")?, 99, 123),
         ];
         let written = write_batch(
             &mut writer,
@@ -1506,7 +1515,8 @@ mod tests {
             .collect();
         assert_eq!(report.unchanged, 1);
         let touched = writer.queries().file(&RepoPath::new("a.txt")?)?;
-        assert_eq!(touched.map(|row| row.file.mtime_ns), Some(99));
+        let times = touched.map(|row| (row.file.mtime_ns, row.file.indexed_at_ms));
+        assert_eq!(times, Some((99, 123)));
         assert_eq!(
             imports,
             [

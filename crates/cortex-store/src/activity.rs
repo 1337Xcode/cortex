@@ -99,6 +99,9 @@ pub struct TaskRow {
     pub holdout: Option<bool>,
     /// How it ended, once known.
     pub outcome: Option<TaskOutcome>,
+    /// The words that say why it ended as it did, once judged: what a check vouched for, or what
+    /// put the task's files back. Never a command line, a path or code.
+    pub outcome_evidence: Option<String>,
 }
 
 /// A stored event.
@@ -190,6 +193,23 @@ pub(crate) fn end_task(
         })
         .map(|rows| rows > 0)
         .map_err(sqlite("ending a task"))
+}
+
+/// Sets what became of the ended task `task_id` to `outcome`, with `evidence`, the words that
+/// say why, replacing what was set before. `false` when no such task has ended.
+pub(crate) fn set_task_outcome(
+    connection: &Connection,
+    task_id: Ulid,
+    outcome: TaskOutcome,
+    evidence: Option<&str>,
+) -> Result<bool, StoreError> {
+    connection
+        .prepare_cached(schema::TASK_OUTCOME)
+        .and_then(|mut statement| {
+            statement.execute((task_id.to_string(), outcome.name(), evidence))
+        })
+        .map(|rows| rows > 0)
+        .map_err(sqlite("setting a task's outcome"))
 }
 
 /// Appends the event and returns its number.
@@ -431,6 +451,8 @@ struct RawTask {
     holdout: Option<i64>,
     /// `outcome`.
     outcome: Option<String>,
+    /// `outcome_evidence`.
+    outcome_evidence: Option<String>,
 }
 
 impl RawTask {
@@ -447,6 +469,7 @@ impl RawTask {
             prompt_excerpt: row.get(7)?,
             holdout: row.get(8)?,
             outcome: row.get(9)?,
+            outcome_evidence: row.get(10)?,
         })
     }
 
@@ -482,6 +505,7 @@ impl RawTask {
             ended_at_ms: self.ended_at,
             holdout,
             outcome,
+            outcome_evidence: self.outcome_evidence,
         })
     }
 }

@@ -6,10 +6,9 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::{Store, TestResult, end, event, prompt, start, succeeded, target, tool};
+use common::{Store, TestResult, end, event, prompt, shell, start, succeeded, target, tool};
 use cortex_core::{
-    ContentHash, Event, FileContent, HookKind, RepoPath, ShellCommand, StartSource, TaskOutcome,
-    ToolKind, ToolResult, ToolTarget,
+    ContentHash, Event, FileContent, HookKind, RepoPath, StartSource, TaskOutcome, ToolKind,
 };
 use cortex_learn::{Commands, FileNow, Judgement, Recorder, TaskState, judge, reverted_after};
 
@@ -53,32 +52,6 @@ fn read(session: &str, ts_ms: i64, path: &str) -> TestResult<Event> {
             succeeded(None, Some(80)),
         ),
     )
-}
-
-/// The shell command `line` run by `session` at `ts_ms` in the repository's top folder, which
-/// exited `exit_code`, or was interrupted before it finished for none. The root is absolute on
-/// every platform, so that the paths a restore names resolve.
-fn shell(session: &str, ts_ms: i64, line: &str, exit_code: Option<i32>) -> TestResult<Event> {
-    let root = std::env::temp_dir().join("repo");
-    let target = ToolTarget {
-        command: Some(ShellCommand::cut(line)),
-        ..ToolTarget::default()
-    };
-    let result = Some(ToolResult {
-        exit_code,
-        is_success: exit_code == Some(0),
-        is_interrupted: exit_code.is_none(),
-        output_bytes: Some(20),
-    });
-    Ok(Event {
-        cwd: root.clone(),
-        repo_root: root,
-        ..tool(
-            HookKind::PostTool,
-            (session, ts_ms),
-            (ToolKind::Shell, target, result),
-        )?
-    })
 }
 
 /// What each file holds, read after every step of every task here.

@@ -70,13 +70,16 @@ pub(crate) const TASK_INSERT: &str = "INSERT INTO tasks (task_id, session_id, se
 /// Ends a task that is open: its end time and its outcome's stored name.
 pub(crate) const TASK_END: &str =
     "UPDATE tasks SET ended_at = ?2, outcome = ?3 WHERE task_id = ?1 AND ended_at IS NULL";
+/// Sets what became of a task that has ended, and the words that say why.
+pub(crate) const TASK_OUTCOME: &str = "UPDATE tasks SET outcome = ?2, outcome_evidence = ?3 \
+     WHERE task_id = ?1 AND ended_at IS NOT NULL";
 /// A task's row, with its row id first.
 pub(crate) const TASK_BY_ID: &str = "SELECT rowid, task_id, session_id, seq, started_at, ended_at, \
-     prompt_hash, prompt_excerpt, holdout, outcome FROM tasks WHERE task_id = ?1";
+     prompt_hash, prompt_excerpt, holdout, outcome, outcome_evidence FROM tasks WHERE task_id = ?1";
 /// A session's latest task that has not ended; the columns are those of [`TASK_BY_ID`].
 pub(crate) const TASK_OPEN_OF_SESSION: &str = "SELECT rowid, task_id, session_id, seq, \
-     started_at, ended_at, prompt_hash, prompt_excerpt, holdout, outcome FROM tasks \
-     WHERE session_id = ?1 AND ended_at IS NULL ORDER BY seq DESC LIMIT 1";
+     started_at, ended_at, prompt_hash, prompt_excerpt, holdout, outcome, outcome_evidence \
+     FROM tasks WHERE session_id = ?1 AND ended_at IS NULL ORDER BY seq DESC LIMIT 1";
 /// Appends an event and returns its number.
 pub(crate) const EVENT_INSERT: &str = "INSERT INTO events (task_id, session_id, ts, kind, \
      node_id, path, range_start, range_end, meta) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
@@ -127,8 +130,9 @@ pub(crate) const FILE_BY_PATH: &str = "SELECT file_id, path, lang, bytes, loc, c
 /// Every file's row, by path.
 pub(crate) const FILE_ROWS: &str = "SELECT file_id, path, lang, bytes, loc, content_hash, \
      mtime_ns, flags, indexed_at FROM files ORDER BY path";
-/// Sets a file's modification time, found by path.
-pub(crate) const FILE_MTIME_SET: &str = "UPDATE files SET mtime_ns = ?2 WHERE path = ?1";
+/// Sets a file's modification time and when the index last read it, found by path.
+pub(crate) const FILE_TOUCH: &str =
+    "UPDATE files SET mtime_ns = ?2, indexed_at = ?3 WHERE path = ?1";
 /// Every file's id and path, by path. Text compares byte by byte here, as Rust strings do.
 pub(crate) const FILE_PATHS: &str = "SELECT file_id, path FROM files ORDER BY path";
 

@@ -144,6 +144,68 @@ fn tasks_and_events_read_back_in_order() -> TestResult {
     Ok(())
 }
 
+/// What became of a task is set once it has ended, with the words that say why, and a later
+/// judgement replaces it: a task ended as unknown is judged a success, then put back by the next
+/// task. A task still open, and one that was never started, take no outcome.
+#[test]
+fn an_ended_task_is_given_its_outcome_and_why() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let (ended, open) = (task(b"ended", "s1", 100)?, task(b"open", "s1", 200)?);
+    let never = Ulid::from_seed(300, b"never");
+    let set = committed(&mut writer, |transaction| {
+        transaction.record_session(&session("s1", 50)?)?;
+        transaction.start_task(&ended)?;
+        transaction.end_task(ended.task_id, 150, TaskOutcome::Unknown)?;
+        transaction.start_task(&open)?;
+        Ok([
+            transaction.set_task_outcome(
+                ended.task_id,
+                TaskOutcome::Success,
+                Some("tests by cargo exited 0 after the last edit"),
+            )?,
+            transaction.set_task_outcome(open.task_id, TaskOutcome::Success, None)?,
+            transaction.set_task_outcome(never, TaskOutcome::Success, None)?,
+        ])
+    })?;
+    assert_eq!(set, [true, false, false]);
+    let judged = |writer: &Writer, task_id| -> TestResult<_> {
+        let row = writer.queries().task(task_id)?.ok_or("no task")?;
+        Ok((row.ended_at_ms, row.outcome, row.outcome_evidence))
+    };
+    assert_eq!(
+        judged(&writer, ended.task_id)?,
+        (
+            Some(150),
+            Some(TaskOutcome::Success),
+            Some("tests by cargo exited 0 after the last edit".to_owned())
+        )
+    );
+    assert_eq!(judged(&writer, open.task_id)?, (None, None, None));
+    committed(&mut writer, |transaction| {
+        transaction.set_task_outcome(
+            ended.task_id,
+            TaskOutcome::Reverted,
+            Some(
+                "every edited file is back as it was before the task, by the end of the next task",
+            ),
+        )?;
+        Ok(())
+    })?;
+    assert_eq!(
+        judged(&writer, ended.task_id)?,
+        (
+            Some(150),
+            Some(TaskOutcome::Reverted),
+            Some(
+                "every edited file is back as it was before the task, by the end of the next task"
+                    .to_owned()
+            )
+        )
+    );
+    Ok(())
+}
+
 /// A session seen again keeps its first start time, takes the facts newly given and keeps those
 /// not given again; ended, it reads as ended, and seen once more it is live again.
 #[test]
