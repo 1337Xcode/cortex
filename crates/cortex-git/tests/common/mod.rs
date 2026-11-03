@@ -186,6 +186,7 @@ pub fn every_commit() -> Window {
         oldest_s: 0,
         max_files: 30,
         stop_at: None,
+        from: None,
     }
 }
 

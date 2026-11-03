@@ -89,7 +89,9 @@ fn a_merge_counts_against_its_first_parent() -> TestResult {
 }
 
 /// The walk ends at the most commits the window takes, and at the first commit made before its
-/// oldest time: with the cut-off at noon on day 1, days 4, 3 and 2 are read and day 1 is not.
+/// oldest time: with the cut-off at noon on day 1, days 4, 3 and 2 are read and day 1 is not. It
+/// starts at the commit the window names, day 2 for days 2 and 1, however far HEAD has moved since;
+/// a name that is no commit's id is an error, never an option passed on.
 #[test]
 fn the_window_bounds_the_walk() -> TestResult {
     let repo = Repo::new()?;
@@ -122,6 +124,20 @@ fn the_window_bounds_the_walk() -> TestResult {
         );
         let all = ids(history.read(&every_commit())?);
         assert_eq!(all.last(), Some(&day_1), "{name}");
+        let from_day_2 = Window {
+            from: Some(day_2.clone()),
+            ..every_commit()
+        };
+        assert_eq!(
+            ids(history.read(&from_day_2)?),
+            [day_2.clone(), day_1.clone()],
+            "{name}"
+        );
+        let from_nothing = Window {
+            from: Some("--all".to_owned()),
+            ..every_commit()
+        };
+        assert!(history.read(&from_nothing).is_err(), "{name}");
     }
     Ok(())
 }

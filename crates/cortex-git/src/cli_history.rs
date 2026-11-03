@@ -142,6 +142,13 @@ impl CliHistory {
             "--find-renames=50%"
         };
         let limit = format!("-l{}", window.max_files.max(1));
+        // The commit to read from is an id the mining resolved, hexadecimal; anything else names
+        // no commit, and never reaches git as an option.
+        let from = match window.from.as_deref() {
+            Some(id) if id.bytes().all(|byte| byte.is_ascii_hexdigit()) => id,
+            Some(id) => return Err(GitError::Head(format!("{id} names no commit"))),
+            None => "HEAD",
+        };
         // Git older than 2.45 refuses `--no-lazy-fetch`, and so reads no partial clone.
         let options: &[&str] = if is_partial {
             &["--no-lazy-fetch", "-c", "log.showRoot=true"]
@@ -165,7 +172,7 @@ impl CliHistory {
             "--no-textconv",
             FORMAT,
             &max_count,
-            "HEAD",
+            from,
             "--",
         ];
         self.git.list(options, &args).map_err(GitError::Walk)
@@ -204,7 +211,7 @@ impl HistorySource for CliHistory {
             is_partial: self.is_partial()?,
             ..Mined::default()
         };
-        if self.head()?.is_none() {
+        if window.from.is_none() && self.head()?.is_none() {
             return Ok(mined);
         }
         let cut = self.shallow_cut()?;

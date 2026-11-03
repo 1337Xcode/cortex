@@ -118,10 +118,13 @@ pub fn mine(
         return Ok(Mining::Unchanged);
     }
     let fresh = fresh(mark, now_ms);
+    // Both reads start at the HEAD resolved above, never at HEAD as it is when they run: a commit
+    // made in between is the next mining's, not this one's twice.
+    let from = (!head.is_empty()).then(|| head.clone());
     let mined = source.read(&window(
         config,
         now_ms,
-        fresh.map(|mark| mark.last_commit.clone()),
+        (fresh.map(|mark| mark.last_commit.clone()), from.clone()),
     ))?;
     let half_life_commits = u32::try_from(config.git_half_life_commits).unwrap_or(u32::MAX);
     // Commits gained on top of what was mined are numbered on from the newest mined and weighed
@@ -134,7 +137,7 @@ pub fn mine(
         (mined, mark.last_seq + 1, mark.anchor_seq)
     } else {
         let whole = if mined.is_stop_reached {
-            source.read(&window(config, now_ms, None))?
+            source.read(&window(config, now_ms, (None, from)))?
         } else {
             mined
         };
@@ -194,8 +197,12 @@ fn fresh(mark: Option<&Mark>, now_ms: i64) -> Option<&Mark> {
     mark.filter(|mark| now_ms.saturating_sub(mark.full_at_ms) < FULL_EVERY_MS)
 }
 
-/// The window `config` sets at `now_ms`, stopping at `stop_at` when given.
-fn window(config: &Config, now_ms: i64, stop_at: Option<String>) -> Window {
+/// The window `config` sets at `now_ms`, read from `from` and stopping at `stop_at` when given.
+fn window(
+    config: &Config,
+    now_ms: i64,
+    (stop_at, from): (Option<String>, Option<String>),
+) -> Window {
     let max_age_s = i64::try_from(config.git_max_age_days)
         .unwrap_or(i64::MAX)
         .saturating_mul(DAY_S);
@@ -204,6 +211,7 @@ fn window(config: &Config, now_ms: i64, stop_at: Option<String>) -> Window {
         oldest_s: (now_ms / 1000).saturating_sub(max_age_s),
         max_files: usize::try_from(config.git_max_files_per_commit).unwrap_or(usize::MAX),
         stop_at,
+        from,
     }
 }
 

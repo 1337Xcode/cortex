@@ -159,7 +159,14 @@ impl HistorySource for GixHistory {
             is_partial: self.is_partial,
             ..Mined::default()
         };
-        let Some(head) = self.head_id()? else {
+        let start = match window.from.as_deref() {
+            Some(id) => Some(
+                gix::ObjectId::from_hex(id.as_bytes())
+                    .map_err(|error| GitError::Head(format!("{id} names no commit: {error}")))?,
+            ),
+            None => self.head_id()?,
+        };
+        let Some(head) = start else {
             return Ok(mined);
         };
         let shallow = self

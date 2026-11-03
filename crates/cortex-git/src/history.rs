@@ -33,6 +33,10 @@ pub struct Window {
     /// The commit at which to stop, not read itself: the newest one read before, when reading only
     /// what is new.
     pub stop_at: Option<String>,
+    /// The commit to read from, in hexadecimal: the HEAD a mining resolved, so that a commit made
+    /// after it is left to the next mining rather than counted now and again then. HEAD as it is
+    /// when the read starts when none is given.
+    pub from: Option<String>,
 }
 
 /// One file a commit changed.

@@ -36,7 +36,7 @@ them to the store, the whole window at first and then only the commits HEAD gain
 
 | Item | What it is |
 | --- | --- |
-| `HistorySource`, `head`, `read` | What a source of history gives: the commit HEAD points to (none before the first commit), and the commits a `Window` covers, newest first |
+| `HistorySource`, `head`, `read` | What a source of history gives: the commit HEAD points to (none before the first commit), and the commits a `Window` covers, newest first, from the commit it names (a mining names the HEAD it resolved, so that a commit made while it reads is the next mining's) or else from HEAD |
 | `Window` | What to read: at most `max_commits` commits, none made before `oldest_s` (the walk ends at the first such commit), a commit that changed more than `max_files` files read without its files, and an optional commit to stop at without reading it |
 | `Mined`, `MinedCommit`, `PathChange` | What a read gives: each commit's id, time and changed files as repository paths in path order (`None` for a mass commit), whether the stop commit was reached, whether the history is a shallow clone's, and whether the repository is a partial clone |
 | `has_repository` | Whether a folder holds a repository at its top (it has `.git`): what both sources check first, refusing a folder without one as no repository |
