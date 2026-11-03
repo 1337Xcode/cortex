@@ -153,9 +153,10 @@ fn earned_of(scores: &[(NodeId, f64)]) -> EarnedInterest {
 /// - runs `cargo test`, which exits 0: 0.5 to `calc/ops.py`, edited before it, and nothing to
 ///   `calc/util.py`, which it has not edited yet;
 /// - edits `calc/util.py` line 1, which no symbol covers: 1.0 to the file itself;
-/// - runs `pytest`, which exits 0: 0.5 to each of the two files edited before it.
+/// - runs `pytest`, which exits 0: 0.5 to `calc/util.py`, edited before it; `calc/ops.py` was
+///   vouched for already, and a file earns that once a task, however many checks pass after it.
 ///
-/// So `add` 1.0, `wrap` 0.4, `mul` 0.4, `calc/ops.py` 0.2 + 0.2 + 0.2 + 0.5 + 0.5 + 0.5 = 2.1,
+/// So `add` 1.0, `wrap` 0.4, `mul` 0.4, `calc/ops.py` 0.2 + 0.2 + 0.2 + 0.5 + 0.5 = 1.6,
 /// `calc` 0.1 + 0.1 + 0.25 = 0.45, `calc/util.py` 0.2 + 1.0 + 0.5 = 1.7, `main.py` 0.3 + 0.05 =
 /// 0.35 and `notes.md` 0.05.
 #[test]
@@ -192,7 +193,7 @@ fn a_task_s_work_earns_the_nodes_it_touched() -> TestResult {
     let nodes = [add_symbol, wrap, mul, ops_file, folder, util, main, notes];
     assert_eq!(
         earned_for(&earned, &nodes),
-        [1.0, 0.4, 0.4, 2.1, 0.45, 1.7, 0.35, 0.05]
+        [1.0, 0.4, 0.4, 1.6, 0.45, 1.7, 0.35, 0.05]
     );
     Ok(())
 }

@@ -75,6 +75,7 @@ pub fn interest_of(queries: Queries<'_>, state: &TaskState) -> Result<EarnedInte
     let mut earned = EarnedInterest::new();
     let mut places = Places::new(queries);
     let (first_edits, last_opens) = (first_edits(state), last_opens(state));
+    let mut vouched = BTreeSet::new();
     for (at, step) in state.steps().iter().enumerate() {
         match step {
             Step::Edit { file, range, .. } => {
@@ -97,15 +98,15 @@ pub fn interest_of(queries: Queries<'_>, state: &TaskState) -> Result<EarnedInte
                     }
                 }
             }
-            // A check that passed vouches for every file edited before it, each once however many
-            // times the task edited it.
+            // A check that passed vouches for every file edited before it, each once a task however
+            // many times the task edited it and however many checks passed after.
             Step::Run {
                 check: Some(check),
                 exit_code: Some(0),
                 ..
             } if matches!(check.kind, CommandKind::Test | CommandKind::Build) => {
                 for (node, edited_at) in first_edits.values() {
-                    if *edited_at < at {
+                    if *edited_at < at && vouched.insert(*node) {
                         add(&mut earned, *node, PASSED_AFTER_EDIT);
                     }
                 }
