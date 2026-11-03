@@ -6,6 +6,7 @@
 mod daemon;
 mod doctor;
 mod init;
+mod receipts;
 mod status;
 mod uninstall;
 mod version;
@@ -27,6 +28,8 @@ pub(crate) enum Command {
     Doctor(doctor::Args),
     /// Undo what init did to a repository and stop its daemon.
     Uninstall(uninstall::Args),
+    /// Show what each task of recent sessions took: turns, tool calls, tokens and estimated cost.
+    Receipts(receipts::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -42,5 +45,6 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Init(args) => init::run(&args),
         Command::Doctor(args) => doctor::run(&args),
         Command::Uninstall(args) => uninstall::run(&args),
+        Command::Receipts(args) => receipts::run(&args),
     }
 }

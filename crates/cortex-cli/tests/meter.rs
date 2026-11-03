@@ -4,22 +4,15 @@
 //! rows, numbered by the response's place in its transcript. A transcript outside Claude Code's
 //! projects folders is not read; the configuration folder `CLAUDE_CONFIG_DIR` names holds one.
 
-#![allow(
-    clippy::indexing_slicing,
-    reason = "the payloads edited here are JSON objects, where indexing a missing key adds it"
-)]
-
 mod common;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
 
-use common::hook_call::hook;
+use common::hook_call::send;
 use common::{Daemon, TestResult, daemon_command, isolate, payloads, wait_for};
 use cortex_core::Identifier;
 use cortex_store::{Reader, UsageRow};
-use serde_json::Value;
 
 /// The Claude Code version whose captured payloads and transcripts these tests use.
 const CAPTURED: &str = "2.1.316";
@@ -40,51 +33,6 @@ fn repository() -> TestResult<(tempfile::TempDir, PathBuf)> {
     std::fs::create_dir_all(&repo)?;
     std::fs::write(repo.join("a.py"), "a = 1\n")?;
     Ok((home, repo))
-}
-
-/// Copies the captured transcript `name` to `to`, making the folders it needs.
-fn copy_transcript(name: &str, to: &Path) -> TestResult {
-    let from = payloads::fixtures(CAPTURED).join("transcripts").join(name);
-    std::fs::create_dir_all(to.parent().ok_or("a transcript has a folder")?)?;
-    std::fs::copy(from, to)?;
-    Ok(())
-}
-
-/// The folder Claude Code keeps the transcripts of the repository in, under `home`.
-fn project(home: &Path) -> PathBuf {
-    home.join(".claude").join("projects").join("C--repo")
-}
-
-/// The captured payload `name`, its paths moved under `root`, sent as session `session`'s, with
-/// `transcript` as the transcript it names: its session's, or for a subagent's stop, the
-/// subagent's.
-fn captured(name: &str, root: &Path, (session, transcript): (&str, &Path)) -> TestResult<Value> {
-    let mut payload: Value = serde_json::from_slice(&payloads::payload(CAPTURED, name, root)?)?;
-    payload["session_id"] = Value::from(session);
-    let field = if payload.get("agent_transcript_path").is_some() {
-        "agent_transcript_path"
-    } else {
-        "transcript_path"
-    };
-    payload[field] = Value::from(transcript.to_string_lossy().into_owned());
-    Ok(payload)
-}
-
-/// Runs `cortex hook` for `payload` with `home` as the user's home folder, as Claude Code would.
-/// The call must end as an agent requires of a hook, silently.
-fn send(payload: &Value, home: &Path) -> TestResult {
-    let event = payload["hook_event_name"]
-        .as_str()
-        .ok_or("no event name")?
-        .to_owned();
-    let call = hook(
-        &["--agent", "claude", "--event", &event],
-        serde_json::to_vec(payload)?,
-        Duration::ZERO,
-        home,
-    )?;
-    assert!(call.is_silent_success(), "{event}: {:?}", call.output);
-    Ok(())
 }
 
 /// The usage rows of `session` the store of the repository at `root` holds, by turn.
@@ -140,8 +88,8 @@ fn row(session: &str, (turn, at_ms): (u32, i64), counts: [u64; 5]) -> TestResult
 #[test]
 fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
     let (home, repo) = repository()?;
-    let main = project(home.path()).join(format!("{S1}.jsonl"));
-    copy_transcript("grep-session.jsonl", &main)?;
+    let main = payloads::transcripts_folder(home.path()).join(format!("{S1}.jsonl"));
+    payloads::copy_transcript(CAPTURED, "grep-session.jsonl", &main)?;
     let daemon = Daemon::start(&repo, home.path())?;
     let line = daemon.first_line()?;
     assert!(line.starts_with("cortex: daemon ready"), "{line}");
@@ -151,7 +99,10 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
         "user-prompt-submit.json",
         "stop.json",
     ] {
-        send(&captured(name, &repo, session)?, home.path())?;
+        send(
+            &payloads::as_session(CAPTURED, name, &repo, session)?,
+            home.path(),
+        )?;
     }
     wait_for(|| Ok(usage(&repo, S1)?.len() == 4))?;
     let day_02 = 1_793_577_600_000;
@@ -167,15 +118,16 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
     ];
     assert_eq!(usage(&repo, S1)?, first_four);
 
-    let subagent = project(home.path())
+    let subagent = payloads::transcripts_folder(home.path())
         .join(S1)
         .join("subagents")
         .join("agent-fixtureagent0001.jsonl");
-    copy_transcript(
+    payloads::copy_transcript(
+        CAPTURED,
         "hooks-session/subagents/agent-fixtureagent0001.jsonl",
         &subagent,
     )?;
-    let stopped = captured("subagent-stop.json", &repo, (S1, &subagent))?;
+    let stopped = payloads::as_session(CAPTURED, "subagent-stop.json", &repo, (S1, &subagent))?;
     send(&stopped, home.path())?;
     let subagent_session = format!("{S1}/fixtureagent0001");
     wait_for(|| Ok(usage(&repo, &subagent_session)?.len() == 2))?;
@@ -223,7 +175,10 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
         .replace("\"output_tokens\":3,", "\"output_tokens\":9,");
     assert_ne!(fifth, fourth);
     std::fs::write(&main, format!("{transcript}{fifth}\n"))?;
-    send(&captured("session-end.json", &repo, session)?, home.path())?;
+    send(
+        &payloads::as_session(CAPTURED, "session-end.json", &repo, session)?,
+        home.path(),
+    )?;
     wait_for(|| Ok(usage(&repo, S1)?.len() == 5))?;
     let mut all_five = first_four.to_vec();
     all_five.push(row(S1, (5, day_02 + 83_070_000), [4, 12, 12, 34_534, 9])?);
@@ -240,14 +195,20 @@ fn a_session_s_usage_is_read_at_each_stop() -> TestResult {
 fn a_transcript_outside_the_projects_folder_is_not_read() -> TestResult {
     let (home, repo) = repository()?;
     let outside = home.path().join("elsewhere").join(format!("{S1}.jsonl"));
-    copy_transcript("grep-session.jsonl", &outside)?;
-    let inside = project(home.path()).join(format!("{S2}.jsonl"));
-    copy_transcript("grep-session.jsonl", &inside)?;
+    payloads::copy_transcript(CAPTURED, "grep-session.jsonl", &outside)?;
+    let inside = payloads::transcripts_folder(home.path()).join(format!("{S2}.jsonl"));
+    payloads::copy_transcript(CAPTURED, "grep-session.jsonl", &inside)?;
     let daemon = Daemon::start(&repo, home.path())?;
     let line = daemon.first_line()?;
     assert!(line.starts_with("cortex: daemon ready"), "{line}");
-    send(&captured("stop.json", &repo, (S1, &outside))?, home.path())?;
-    send(&captured("stop.json", &repo, (S2, &inside))?, home.path())?;
+    send(
+        &payloads::as_session(CAPTURED, "stop.json", &repo, (S1, &outside))?,
+        home.path(),
+    )?;
+    send(
+        &payloads::as_session(CAPTURED, "stop.json", &repo, (S2, &inside))?,
+        home.path(),
+    )?;
     wait_for(|| Ok(usage(&repo, S2)?.len() == 4))?;
     let refused = "a transcript is not read: it is not in its agent's transcripts folder";
     wait_for(|| Ok(status_of(&repo, home.path())?.contains(refused)))?;
@@ -267,14 +228,14 @@ fn a_moved_configuration_folder_holds_transcripts_the_daemon_reads() -> TestResu
         .join("projects")
         .join("C--repo")
         .join(format!("{S1}.jsonl"));
-    copy_transcript("grep-session.jsonl", &transcript)?;
+    payloads::copy_transcript(CAPTURED, "grep-session.jsonl", &transcript)?;
     let mut command = daemon_command(&repo, home.path());
     command.env("CLAUDE_CONFIG_DIR", &config);
     let daemon = Daemon::spawn(command)?;
     let line = daemon.first_line()?;
     assert!(line.starts_with("cortex: daemon ready"), "{line}");
     send(
-        &captured("stop.json", &repo, (S1, &transcript))?,
+        &payloads::as_session(CAPTURED, "stop.json", &repo, (S1, &transcript))?,
         home.path(),
     )?;
     wait_for(|| Ok(usage(&repo, S1)?.len() == 4))?;

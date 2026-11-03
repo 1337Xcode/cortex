@@ -11,9 +11,8 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use common::hook_call::hook;
+use common::hook_call::send;
 use common::{Daemon, TestResult, payloads, wait_for};
 use cortex_core::{
     CommandKind, ContentHash, EdgeType, EventKind, Identifier, InterestTier, RepoId, RepoPath,
@@ -121,24 +120,6 @@ fn prompt(root: &Path, words: &str) -> TestResult<Value> {
     let mut prompt = captured("user-prompt-submit.json", root)?;
     prompt["prompt"] = Value::from(words);
     Ok(prompt)
-}
-
-/// Runs `cortex hook` for `payload` with `home` as the user's home folder, as Claude Code would.
-/// The call must end as an agent requires of a hook: nothing has been learned that injects.
-fn send(payload: &Value, home: &Path) -> TestResult {
-    let event = payload["hook_event_name"]
-        .as_str()
-        .ok_or("no event name")?
-        .to_owned();
-    let input = serde_json::to_vec(payload)?;
-    let call = hook(
-        &["--agent", "claude", "--event", &event],
-        input,
-        Duration::ZERO,
-        home,
-    )?;
-    assert!(call.is_silent_success(), "{event}: {:?}", call.output);
-    Ok(())
 }
 
 /// Reads the store of the repository at `root` with `read`.

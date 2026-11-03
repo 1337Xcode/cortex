@@ -357,7 +357,7 @@ impl Queries<'_> {
 }
 
 /// A `sessions` row as SQLite returns it.
-struct RawSession {
+pub(crate) struct RawSession {
     /// `rowid`, for reporting a damaged row.
     rowid: i64,
     /// `session_id`.
@@ -384,7 +384,7 @@ struct RawSession {
 
 impl RawSession {
     /// Reads the columns of [`schema::SESSION_BY_ID`].
-    fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
+    pub(crate) fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             rowid: row.get(0)?,
             session_id: row.get(1)?,
@@ -401,7 +401,7 @@ impl RawSession {
     }
 
     /// The typed row, or [`StoreError::Corrupt`] naming the first column that cannot be read.
-    fn check(self) -> Result<SessionRow, StoreError> {
+    pub(crate) fn check(self) -> Result<SessionRow, StoreError> {
         let row = self.rowid;
         let name = |text: Option<String>, column| {
             text.map(|text| values::identifier(&text, column, row))
@@ -430,7 +430,7 @@ impl RawSession {
 }
 
 /// A `tasks` row as SQLite returns it.
-struct RawTask {
+pub(crate) struct RawTask {
     /// `rowid`, for reporting a damaged row.
     rowid: i64,
     /// `task_id`.
@@ -457,7 +457,7 @@ struct RawTask {
 
 impl RawTask {
     /// Reads the columns of [`schema::TASK_BY_ID`].
-    fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
+    pub(crate) fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             rowid: row.get(0)?,
             task_id: row.get(1)?,
@@ -474,7 +474,7 @@ impl RawTask {
     }
 
     /// The typed row, or [`StoreError::Corrupt`] naming the first column that cannot be read.
-    fn check(self) -> Result<TaskRow, StoreError> {
+    pub(crate) fn check(self) -> Result<TaskRow, StoreError> {
         let row = self.rowid;
         let corrupt = |column| StoreError::Corrupt { column, row };
         let excerpt = self

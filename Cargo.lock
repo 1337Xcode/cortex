@@ -301,6 +301,7 @@ dependencies = [
  "cortex-git",
  "cortex-hook",
  "cortex-index",
+ "cortex-meter",
  "cortex-store",
  "criterion",
  "interprocess",
@@ -429,6 +430,7 @@ name = "cortex-meter"
 version = "2.0.0-dev"
 dependencies = [
  "cortex-core",
+ "cortex-store",
  "proptest",
  "serde",
  "serde_json",

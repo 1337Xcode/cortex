@@ -36,6 +36,12 @@ impl UserFolder {
         self.0.join("config.toml")
     }
 
+    /// The user's price table, which receipts estimate costs from.
+    #[must_use]
+    pub fn pricing_path(&self) -> PathBuf {
+        self.0.join("pricing.toml")
+    }
+
     /// The folder of the logs.
     #[must_use]
     pub fn logs_folder(&self) -> PathBuf {

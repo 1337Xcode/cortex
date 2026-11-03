@@ -25,6 +25,51 @@ pub fn utc_millis(text: &str) -> Option<i64> {
     days.checked_mul(DAY_MS)?.checked_add(time)
 }
 
+/// The UTC time `millis` names, written as transcripts write times: the inverse of
+/// [`utc_millis`], with the milliseconds always written. `None` before 1970 or after the year
+/// 9999, which the form cannot write.
+///
+/// ```
+/// assert_eq!(cortex_meter::utc_text(86_401_500).as_deref(), Some("1970-01-02T00:00:01.500Z"));
+/// assert_eq!(cortex_meter::utc_text(-1), None);
+/// ```
+#[must_use]
+pub fn utc_text(millis: i64) -> Option<String> {
+    if millis < 0 {
+        return None;
+    }
+    let (mut days, time) = (millis / DAY_MS, millis % DAY_MS);
+    let mut year = 1970;
+    loop {
+        let length = if days_in_month(year, 2) == 29 {
+            366
+        } else {
+            365
+        };
+        if days < length {
+            break;
+        }
+        days -= length;
+        year += 1;
+        if year > 9999 {
+            return None;
+        }
+    }
+    let mut month = 1;
+    while days >= days_in_month(year, month) {
+        days -= days_in_month(year, month);
+        month += 1;
+    }
+    let (seconds, millis) = (time / 1_000, time % 1_000);
+    Some(format!(
+        "{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z",
+        day = days + 1,
+        hours = seconds / 3_600,
+        minutes = seconds / 60 % 60,
+        seconds = seconds % 60,
+    ))
+}
+
 /// The year, month and day of `YYYY-MM-DD`, each in its range.
 fn date_parts(date: &str) -> Option<(i64, i64, i64)> {
     let mut parts = date.split('-');
@@ -87,7 +132,9 @@ fn days_since_epoch(year: i64, month: i64, day: i64) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::utc_millis;
+    use proptest::prelude::*;
+
+    use super::{utc_millis, utc_text};
 
     /// Times worked out by hand: the epoch; 2000-03-01, after a leap day in a year divisible by
     /// 400 (30 years of 365 days plus 7 leap days, 10,957, then 31 + 29 days); a time of
@@ -120,6 +167,35 @@ mod tests {
             "+026-11-02T23:04:17Z",
         ] {
             assert_eq!(utc_millis(text), None, "{text}");
+        }
+    }
+
+    /// Times written by hand: the epoch; the leap day of 2000 (30 years of 365 days plus 7 leap
+    /// days, 10,957, then 31 + 28 days); the last moment of 1999; and none before 1970 or past
+    /// 9999.
+    #[test]
+    fn times_written_as_transcripts_write_them() {
+        assert_eq!(utc_text(0).as_deref(), Some("1970-01-01T00:00:00.000Z"));
+        assert_eq!(
+            utc_text(11_016 * 86_400_000 + 3_723_004).as_deref(),
+            Some("2000-02-29T01:02:03.004Z")
+        );
+        assert_eq!(
+            utc_text(10_957 * 86_400_000 - 1).as_deref(),
+            Some("1999-12-31T23:59:59.999Z")
+        );
+        assert_eq!(utc_text(-1), None);
+        assert_eq!(utc_text(i64::MAX), None);
+    }
+
+    proptest! {
+        /// Every time from 1970 to the end of 9999 reads back as the milliseconds it was written
+        /// from.
+        #[test]
+        fn a_written_time_reads_back(millis in 0..253_402_300_800_000_i64) {
+            let text = utc_text(millis);
+            prop_assert!(text.is_some());
+            prop_assert_eq!(text.and_then(|text| utc_millis(&text)), Some(millis));
         }
     }
 }

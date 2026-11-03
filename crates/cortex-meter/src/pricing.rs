@@ -112,7 +112,8 @@ impl Cost {
 }
 
 /// Why a response has no estimate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Unpriced {
     /// Its model is not in the table.
     Model,

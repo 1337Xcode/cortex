@@ -58,3 +58,20 @@ pub fn hook(args: &[&str], input: Vec<u8>, delay: Duration, home: &Path) -> Test
         is_input_taken,
     })
 }
+
+/// Runs `cortex hook` for the Claude Code `payload` as Claude Code would, with `home` as the
+/// user's home folder. The call must end as an agent requires of a hook, silently.
+pub fn send(payload: &serde_json::Value, home: &Path) -> TestResult {
+    let event = payload["hook_event_name"]
+        .as_str()
+        .ok_or("no event name")?
+        .to_owned();
+    let call = hook(
+        &["--agent", "claude", "--event", &event],
+        serde_json::to_vec(payload)?,
+        Duration::ZERO,
+        home,
+    )?;
+    assert!(call.is_silent_success(), "{event}: {:?}", call.output);
+    Ok(())
+}

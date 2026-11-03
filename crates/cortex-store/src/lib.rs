@@ -22,6 +22,7 @@ mod ids;
 mod interest;
 mod layout;
 mod links;
+mod listing;
 mod lock;
 mod meta;
 mod migrate;

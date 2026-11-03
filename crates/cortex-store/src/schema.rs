@@ -84,6 +84,43 @@ pub(crate) const TASK_BY_ID: &str = "SELECT rowid, task_id, session_id, seq, sta
 pub(crate) const TASK_OPEN_OF_SESSION: &str = "SELECT rowid, task_id, session_id, seq, \
      started_at, ended_at, prompt_hash, prompt_excerpt, holdout, outcome, outcome_evidence \
      FROM tasks WHERE session_id = ?1 AND ended_at IS NULL ORDER BY seq DESC LIMIT 1";
+/// The sessions that started at or after ?1, by start and then id; the columns are those of
+/// [`SESSION_BY_ID`].
+pub(crate) const SESSIONS_STARTED_SINCE: &str = "SELECT rowid, session_id, agent, agent_version, \
+     model, parent_session_id, cwd, transcript_path, started_at, ended_at, status FROM sessions \
+     WHERE started_at >= ?1 ORDER BY started_at, session_id";
+/// The sessions ?1 started, by start and then id; the columns are those of [`SESSION_BY_ID`].
+pub(crate) const SESSIONS_STARTED_BY: &str = "SELECT rowid, session_id, agent, agent_version, \
+     model, parent_session_id, cwd, transcript_path, started_at, ended_at, status FROM sessions \
+     WHERE parent_session_id = ?1 ORDER BY started_at, session_id";
+/// A session's tasks in order; the columns are those of [`TASK_BY_ID`].
+pub(crate) const TASKS_OF_SESSION: &str = "SELECT rowid, task_id, session_id, seq, started_at, \
+     ended_at, prompt_hash, prompt_excerpt, holdout, outcome, outcome_evidence FROM tasks \
+     WHERE session_id = ?1 ORDER BY seq";
+/// How many tool calls each task a JSON array lists made, with the first row of each. A report is
+/// stored as one row, or as one row per stretch of its file when it names several, each with its
+/// lines: rows without lines are a report each, and rows with lines count once for each session,
+/// time, kind and path they share. Rows of another source than a hook, the watcher's edits, are
+/// no calls.
+pub(crate) const TOOL_CALLS_OF_TASKS: &str = "SELECT task_id, count(*), min(first) FROM \
+     (SELECT task_id, min(rowid) AS first FROM events \
+     WHERE task_id IN (SELECT value FROM json_each(?1)) \
+     AND kind IN ('read', 'search', 'edit', 'shell', 'tool') \
+     AND coalesce(json_extract(meta, '$.source'), 'hook') = 'hook' \
+     GROUP BY task_id, session_id, ts, kind, path, \
+     CASE WHEN range_start IS NULL THEN rowid END) GROUP BY task_id ORDER BY task_id";
+/// How many tool calls session ?1 made while it had no task, counted as [`TOOL_CALLS_OF_TASKS`]
+/// counts them.
+pub(crate) const TOOL_CALLS_OUTSIDE_TASKS: &str = "SELECT count(*) FROM (SELECT 1 FROM events \
+     WHERE session_id = ?1 AND task_id IS NULL \
+     AND kind IN ('read', 'search', 'edit', 'shell', 'tool') \
+     AND coalesce(json_extract(meta, '$.source'), 'hook') = 'hook' \
+     GROUP BY ts, kind, path, CASE WHEN range_start IS NULL THEN rowid END)";
+/// How many of the repository's tasks were held out from Cortex, and how many were not, among
+/// those decided.
+pub(crate) const HOLDOUT_ARMS: &str = "SELECT coalesce(sum(holdout = 1), 0), \
+     coalesce(sum(holdout = 0), 0) FROM tasks";
+
 /// Appends an event and returns its number.
 pub(crate) const EVENT_INSERT: &str = "INSERT INTO events (task_id, session_id, ts, kind, \
      node_id, path, range_start, range_end, meta) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \

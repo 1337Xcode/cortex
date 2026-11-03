@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 cortex-core = { path = "../cortex-core" }
+cortex-store = { path = "../cortex-store" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

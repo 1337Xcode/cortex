@@ -81,3 +81,41 @@ pub fn event_name(payload: &[u8]) -> TestResult<String> {
         .ok_or("no event name")?
         .to_owned())
 }
+
+/// The payload `name` captured from Claude Code `version`, its paths moved under `root`, sent as
+/// session `session`'s, with `transcript` as the transcript it names: its session's, or for a
+/// subagent's stop, the subagent's.
+pub fn as_session(
+    version: &str,
+    name: &str,
+    root: &Path,
+    (session, transcript): (&str, &Path),
+) -> TestResult<Value> {
+    let mut payload: Value = serde_json::from_slice(&payload(version, name, root)?)?;
+    let Value::Object(fields) = &mut payload else {
+        return Err(format!("the payload {name} is not an object").into());
+    };
+    fields.insert("session_id".to_owned(), Value::from(session));
+    let field = if fields.contains_key("agent_transcript_path") {
+        "agent_transcript_path"
+    } else {
+        "transcript_path"
+    };
+    let transcript = Value::from(transcript.to_string_lossy().into_owned());
+    fields.insert(field.to_owned(), transcript);
+    Ok(payload)
+}
+
+/// Copies the transcript `name` captured from Claude Code `version` to `to`, making the folders
+/// it needs.
+pub fn copy_transcript(version: &str, name: &str, to: &Path) -> TestResult {
+    let from = fixtures(version).join("transcripts").join(name);
+    std::fs::create_dir_all(to.parent().ok_or("a transcript has a folder")?)?;
+    std::fs::copy(from, to)?;
+    Ok(())
+}
+
+/// The folder Claude Code keeps the transcripts of the test's repository in, under `home`.
+pub fn transcripts_folder(home: &Path) -> PathBuf {
+    home.join(".claude").join("projects").join("C--repo")
+}
