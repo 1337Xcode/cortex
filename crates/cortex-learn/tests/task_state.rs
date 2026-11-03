@@ -806,3 +806,60 @@ fn a_rebuilt_task_takes_no_later_content_as_its_files_earlier_one() -> TestResul
     assert!(state.before().is_empty(), "{:?}", state.before());
     Ok(())
 }
+
+/// While an index runs, a hook's edit takes nothing from a row that index wrote for its file, which
+/// may hold the edit's change already, the index's report of it not yet held; a file the index has
+/// not written, and any file once the index is done, gives its row. Worked out by hand: the rows
+/// read at 1 hold `a = 1`, `b = 1` and `c = 1`. An index that started at 2,000 writes `a = 2` and
+/// `c = 2`; meanwhile the task's edits of `a.py` at 2,050 (unknown) and `b.py` at 2,060 (`b = 1`)
+/// are recorded. Once the index is done, the task's edit of `c.py` at 2,500 finds `c = 2`, what
+/// the file holds before this edit.
+#[test]
+fn an_edit_recorded_while_an_index_runs_takes_nothing_from_what_it_wrote() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, Commands::default());
+    store.index_text(&[
+        ("a.py", "a = 1\n"),
+        ("b.py", "b = 1\n"),
+        ("c.py", "c = 1\n"),
+    ])?;
+    let hashed = |text: &str| FileContent::Hashed(ContentHash::of(text.as_bytes()));
+    let made = || succeeded(None, None);
+    store.record(
+        &mut recorder,
+        &[
+            start("s1", 500, StartSource::Startup)?,
+            prompt("s1", 1_000, "fix it")?,
+        ],
+    )?;
+    recorder.index_started(2_000);
+    store.index_text_at(&[("a.py", "a = 2\n"), ("c.py", "c = 2\n")], 2_000)?;
+    store.record(
+        &mut recorder,
+        &[
+            edit(("s1", 2_050), "a.py", &[(1, 1)], made())?,
+            edit(("s1", 2_060), "b.py", &[(1, 1)], made())?,
+        ],
+    )?;
+    recorder.index_done();
+    let ended = store.record(
+        &mut recorder,
+        &[
+            edit(("s1", 2_500), "c.py", &[(1, 1)], made())?,
+            event(HookKind::Stop, "s1", 3_000)?,
+        ],
+    )?;
+    let before: Vec<(String, FileContent)> = one(ended)?
+        .before()
+        .iter()
+        .map(|(path, content)| (path.to_string(), *content))
+        .collect();
+    assert_eq!(
+        before,
+        [
+            ("b.py".to_owned(), hashed("b = 1\n")),
+            ("c.py".to_owned(), hashed("c = 2\n")),
+        ]
+    );
+    Ok(())
+}

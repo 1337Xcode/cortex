@@ -48,6 +48,8 @@ pub struct Recorder {
     states: TaskStates,
     /// The edits the watcher saw, held until a hook can no longer claim them.
     watcher_edits: WatcherEdits,
+    /// When the index running now started, in UTC milliseconds, while one runs.
+    index_started_ms: Option<i64>,
 }
 
 impl Recorder {
@@ -118,6 +120,20 @@ impl Recorder {
             self.open_tasks.remove(&event.session_id);
         }
         Ok(ended)
+    }
+
+    /// Notes that an index that started at `started_ms` runs, until [`Recorder::index_done`]: a
+    /// hook's edit recorded meanwhile takes nothing from a row that index wrote for its file as what
+    /// the file held before it, since the row may hold the edit's change already while the index's
+    /// report of the change is not yet held.
+    pub fn index_started(&mut self, started_ms: i64) {
+        self.index_started_ms = Some(started_ms);
+    }
+
+    /// Notes that the index [`Recorder::index_started`] noted is done, the edits it found to be
+    /// held next.
+    pub fn index_done(&mut self) {
+        self.index_started_ms = None;
     }
 
     /// Forgets what it took the store to hold, after a transaction it recorded into was rolled
@@ -193,7 +209,9 @@ impl Recorder {
     /// `None` for another event, and when the edit came too close to an earlier hook's edit of the
     /// same file to tell: the change held is that edit's, the watcher folding a second change
     /// within its hold into the first, or the index has not read the file since that edit, so the
-    /// store holds what it held before that one.
+    /// store holds what it held before that one. `None` too while an index runs that wrote the
+    /// file's row: the row may hold this edit's change already, the index's report of it, with
+    /// what the file held before, not yet held.
     fn before_of(
         &self,
         transaction: &WriteTx<'_>,
@@ -211,7 +229,10 @@ impl Recorder {
         }
         let stored = transaction.queries().file(path)?;
         let read_at_ms = stored.as_ref().map(|row| row.file.indexed_at_ms);
-        if self.activity.is_reported_since(path, read_at_ms) {
+        let is_written_now = read_at_ms
+            .zip(self.index_started_ms)
+            .is_some_and(|(read_at_ms, started_ms)| read_at_ms >= started_ms);
+        if is_written_now || self.activity.is_reported_since(path, read_at_ms) {
             return Ok(None);
         }
         Ok(Some(stored.map_or(FileContent::Absent, |row| {

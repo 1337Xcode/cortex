@@ -262,7 +262,8 @@ impl<'a> Host<'a> {
     }
 
     /// Runs `index` with the options of an index on `threads` threads, timed now, and the pause
-    /// of [`Host::with_pause`].
+    /// of [`Host::with_pause`], the recorder told while it runs so that a hook's edit recorded in a
+    /// pause takes nothing from a row the index wrote as what its file held before.
     fn indexing<T>(
         &mut self,
         threads: NonZeroUsize,
@@ -270,13 +271,16 @@ impl<'a> Host<'a> {
     ) -> T {
         let options = self.options(threads);
         let (root, grammars) = (self.root, Arc::clone(&self.grammars));
-        self.with_pause(|writer, pause| {
+        self.recorder.index_started(options.now_ms);
+        let indexed = self.with_pause(|writer, pause| {
             let options = IndexOptions {
                 pause: Some(pause),
                 ..options
             };
             index(root, &grammars, writer, &options)
-        })
+        });
+        self.recorder.index_done();
+        indexed
     }
 
     /// Stores what the miner found in turns, with the pause of [`Host::with_pause`], and tells the
@@ -467,7 +471,7 @@ mod tests {
         RepoId, TaskOutcome, ToolKind, ToolResult, ToolTarget, Ulid,
     };
     use cortex_learn::{Commands, HOLD_MS};
-    use cortex_store::WriterOptions;
+    use cortex_store::{Pacer, WriterOptions};
 
     use super::*;
 
@@ -1035,6 +1039,39 @@ mod tests {
         inbox.stop();
         host.serve()?;
         assert_eq!(tasks_learned(root.path())?, (1, 1));
+        Ok(())
+    }
+
+    /// A hook's edit recorded in an index's pause, after that index wrote the file's new row, takes
+    /// nothing from the row as what the file held before, the row holding the edit's change
+    /// already: `a.py` goes from `a = 1` to `a = 2`, the index writes its row and then lets the
+    /// writer in while the hook's edit of it waits. The task ends with the file still `a = 2`, so
+    /// taking the row would judge it put back; knowing nothing of it, nothing is known of the task.
+    #[test]
+    fn an_edit_recorded_in_an_index_s_pause_is_not_taken_as_put_back() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        host.record(&[
+            event(HookKind::SessionStart, 1_000, b"start")?,
+            event(HookKind::Prompt, 1_001, b"prompt")?,
+        ])?;
+        std::fs::write(root.path().join("a.py"), "a = 2\n")?;
+        let changed = [RepoPath::new("a.py")?];
+        let edit = edit_of_a(root.path(), 1_200)?;
+        host.indexing(NonZeroUsize::MIN, |root, grammars, writer, options| {
+            let quiet = IndexOptions {
+                pause: None,
+                ..*options
+            };
+            let indexed = index_paths(root, grammars, writer, &quiet, &changed);
+            inbox.push_event(edit);
+            Pacer::new(options.pause).let_in(writer);
+            indexed
+        })?;
+        host.record(&[event(HookKind::Stop, now_ms(), b"stop")?])?;
+        host.learn();
+        assert_eq!(the_task(&host)?, (Some(TaskOutcome::Unknown), None, true));
         Ok(())
     }
 }
