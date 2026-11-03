@@ -52,7 +52,9 @@ pub(super) fn kind(name: &str) -> ToolKind {
 }
 
 /// What a call of `tool` at `hook` aimed at. Before a read runs its lines are the ones asked for;
-/// after, the ones it returned. A search without a path searched the working folder.
+/// after, the ones it returned, when it asked for a start or a limit: one that asked for neither
+/// asked for the whole file, however much of it Claude Code returned. A search without a path
+/// searched the working folder.
 pub(super) fn aim(tool: ToolKind, hook: HookKind, payload: &Payload<'_>, located: &Located) -> Aim {
     let Some(input) = payload.tool_input.as_ref() else {
         return Aim::Nothing;
@@ -65,6 +67,9 @@ pub(super) fn aim(tool: ToolKind, hook: HookKind, payload: &Payload<'_>, located
             place => ToolTarget {
                 path: place.path(),
                 ranges: match hook {
+                    HookKind::PostTool if input.offset.is_none() && input.limit.is_none() => {
+                        Vec::new()
+                    }
                     HookKind::PostTool => response
                         .and_then(|response| response.file.as_ref())
                         .map(lines_read)
