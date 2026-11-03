@@ -59,3 +59,24 @@ As for the 2.1.312 payloads, applied to the raw bytes, so key order and spacing 
   by zeros of the same length, since what it hashes is not documented.
 - Prompts, code and command output come from the synthetic capture repository and contain nothing
   else.
+
+## Transcripts
+
+`transcripts/` holds three of Claude Code 2.1.316's own transcript files from the same repository,
+for reading token usage:
+
+| File | What it is |
+| --- | --- |
+| `grep-session.jsonl` | The second session above: 47 lines, four responses written as seven lines (one per content block), and Claude Code's running totals in a `cost-state` line |
+| `hooks-session.jsonl` | The first session, across its several prompts, `/compact` and `/clear`: 168 lines, 11 responses written as 23 lines; the Explore agent's result carries that agent's last usage inside a user line |
+| `hooks-session/subagents/agent-fixtureagent0001.jsonl` | The Explore agent's own transcript, every line marked as a sidechain: 19 lines, two responses |
+
+They are reduced as well as scrubbed. Every line is kept, in order, with its `type`. An assistant
+line keeps its session, sidechain flag, agent, request id, time, version and ids, and its
+message's id, type, role, model, the kinds of its content blocks and its `usage`, as written. A
+`cost-state` line keeps `totalCostUSD` and `modelUsage`; a user line keeps the kinds of its
+content blocks and a tool result's `usage`; every other line keeps its type, session, ids and
+time. Everything else (prompts, tool input and output, the system prompt, request bodies, paths)
+is dropped. Ids are mapped in order of first appearance: session and line UUIDs to
+`00000000-0000-4000-8000-000000000101` on for the first file and `...000201` on for the other two,
+message ids to `msg_fixture0001`, request ids to `req_fixture0001`, the agent to `fixtureagent0001`.

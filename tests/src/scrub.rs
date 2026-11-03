@@ -27,13 +27,18 @@ const FOLDER_KEYS: &[&str] = &["cwd", "workdir"];
 /// Keys whose values are transcript paths, which must sit under a scrubbed home.
 const TRANSCRIPT_KEYS: &[&str] = &["transcript_path", "agent_transcript_path"];
 
-/// Keys whose values are session, prompt, turn, subagent or tool-call ids.
+/// Keys whose values are session, prompt, turn, subagent, tool-call or request ids, or the ids a
+/// transcript gives its lines.
 const ID_KEYS: &[&str] = &[
     "session_id",
     "prompt_id",
     "turn_id",
     "agent_id",
     "agentId",
+    "sessionId",
+    "requestId",
+    "uuid",
+    "parentUuid",
     "tool_use_id",
 ];
 

@@ -8,6 +8,7 @@ members = [
     "crates/cortex-hook",
     "crates/cortex-index",
     "crates/cortex-learn",
+    "crates/cortex-meter",
     "crates/cortex-store",
     "tests",
     "xtask",

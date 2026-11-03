@@ -1,10 +1,11 @@
-//! The captured hook payloads are intact, complete and scrubbed.
+//! The captured hook payloads and transcripts are intact, complete and scrubbed.
 //!
 //! Every fixture must parse as a JSON object whose `hook_event_name` matches its file name; every
 //! event and tool the adapters handle must have a fixture for each captured agent version, holding
 //! the fields its name promises (the table is in `src/required.rs`); every captured version must
-//! be in that table; the fixture folder may hold nothing but payloads and READMEs; and no fixture
-//! or README may carry a real path, id, user name or email.
+//! be in that table; the fixture folder may hold nothing but payloads, READMEs and, under a
+//! version's `transcripts/` folder, transcripts of one JSON object a line; and no fixture, line or
+//! README may carry a real path, id, user name or email.
 
 use std::error::Error;
 use std::fs;
@@ -154,8 +155,9 @@ fn every_version_folder_is_required() -> TestResult<()> {
     Ok(())
 }
 
-/// The fixture folder holds only `<agent>/<version>/` folders of JSON payloads and READMEs, so
-/// nothing escapes the checks by sitting elsewhere or under another extension.
+/// The fixture folder holds only `<agent>/<version>/` folders of JSON payloads and READMEs, and
+/// transcripts under a version's `transcripts/` folder, so nothing escapes the checks by sitting
+/// elsewhere or under another extension.
 #[test]
 fn fixture_tree_holds_only_payloads_and_readmes() -> TestResult<()> {
     let unexpected: Vec<String> = files_under(&fixtures_dir())?
@@ -163,8 +165,11 @@ fn fixture_tree_holds_only_payloads_and_readmes() -> TestResult<()> {
         .map(|path| fixture_relative(path))
         .filter(|relative| {
             let parts: Vec<&str> = relative.split('/').collect();
-            !matches!(parts.as_slice(), [_, _, name]
-                if *name == "README.md" || name.ends_with(".json"))
+            let is_payload = matches!(parts.as_slice(), [_, _, name]
+                if *name == "README.md" || name.ends_with(".json"));
+            let is_transcript = matches!(parts.as_slice(), [_, _, "transcripts", .., name]
+                if name.ends_with(".jsonl"));
+            !is_payload && !is_transcript
         })
         .collect();
     assert!(
@@ -187,6 +192,11 @@ fn fixtures_are_scrubbed() -> TestResult<()> {
         }
         if file_name(&path) == "README.md" {
             found.extend(scrub::text_problems(&String::from_utf8(bytes)?));
+        } else if file_name(&path).ends_with(".jsonl") {
+            for line in String::from_utf8(bytes)?.lines() {
+                let entry: serde_json::Value = serde_json::from_str(line)?;
+                found.extend(scrub::payload_problems(&entry));
+            }
         } else {
             let payload: serde_json::Value = serde_json::from_slice(&bytes)?;
             found.extend(scrub::payload_problems(&payload));
