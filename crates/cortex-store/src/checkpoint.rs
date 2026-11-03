@@ -141,8 +141,10 @@ mod tests {
         let read_only = connection::connect(&database, Access::ReadOnly)?;
         let checkpointer = Checkpointer::over(read_only)?;
         let failures = checkpointer.failures();
-        // On Windows SQLite tries a failing write again for about 1.5 s before it gives up.
-        let deadline = Instant::now() + 10 * CHECKPOINT_EVERY;
+        // On Windows SQLite tries a failing write again for about 1.5 s before it gives up, and a
+        // machine busy with other tests can take several seconds more per try: the deadline only
+        // bounds a test that would otherwise wait for ever, so it is generous.
+        let deadline = Instant::now() + 60 * CHECKPOINT_EVERY;
         while failures.count() < 2 && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
         }
