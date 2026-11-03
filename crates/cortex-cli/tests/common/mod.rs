@@ -6,10 +6,13 @@
     reason = "each test file uses a different part of these helpers"
 )]
 
+pub mod calc;
 pub mod fake_daemon;
+pub mod git;
 pub mod hook_call;
 pub mod init;
 pub mod payloads;
+pub mod receipts;
 
 use std::error::Error;
 use std::ffi::OsString;

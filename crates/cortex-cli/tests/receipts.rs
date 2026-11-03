@@ -6,10 +6,9 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use common::hook_call::send;
-use common::{Daemon, TestResult, isolate, payloads, wait_for};
+use common::{Daemon, TestResult, payloads, receipts, wait_for};
 use cortex_core::Identifier;
 use cortex_meter::{SHIPPED_PRICES, utc_text};
 use cortex_store::{Reader, TaskRow};
@@ -31,14 +30,6 @@ fn repository() -> TestResult<(tempfile::TempDir, PathBuf)> {
     std::fs::create_dir_all(&repo)?;
     std::fs::write(repo.join("a.py"), "a = 1\n")?;
     Ok((home, repo))
-}
-
-/// Runs `cortex receipts --root <root>` with `extra` arguments and `home` as the home folder.
-fn receipts(root: &Path, home: &Path, extra: &[&str]) -> TestResult<Output> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.args(["receipts", "--root"]).arg(root).args(extra);
-    isolate(&mut command, home);
-    Ok(command.output()?)
 }
 
 /// The tasks of `S1` the store of the repository at `root` holds.
@@ -151,7 +142,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     })?;
     drop(daemon);
 
-    let printed = receipts(&repo, home.path(), &["--json"])?;
+    let printed = receipts::run(&repo, home.path(), &["--json"])?;
     assert!(printed.status.success(), "{printed:?}");
     let report: Value = serde_json::from_slice(&printed.stdout)?;
     let price_file = home.path().join(".cortex").join("pricing.toml");
@@ -219,17 +210,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             json!(0)
         ]
     );
-    let usage = |turns: u64, [input, uncached, reads, writes, output]: [u64; 5], cost: u64| {
-        json!({
-            "turns": turns,
-            "cumulative_input": input,
-            "uncached_input": uncached,
-            "cache_reads": reads,
-            "cache_writes": writes,
-            "output": output,
-            "estimate": {"picodollars": cost, "priced_turns": turns, "unpriced_turns": {}},
-        })
-    };
+    let usage = receipts::tally;
     assert_eq!(
         field(task, "usage"),
         usage(5, [153_282, 2_724, 120_021, 30_537, 827], 109_168_100_000)
@@ -243,7 +224,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         usage(6, [186_781, 6_426, 120_021, 60_334, 927], 236_760_100_000)
     );
 
-    let printed = receipts(&repo, home.path(), &[])?;
+    let printed = receipts::run(&repo, home.path(), &[])?;
     assert!(printed.status.success(), "{printed:?}");
     let text = String::from_utf8(printed.stdout)?;
     let lines: Vec<&str> = text.lines().collect();
@@ -291,13 +272,13 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         ]
     );
 
-    let one = receipts(&repo, home.path(), &["--session", S1, "--json"])?;
+    let one = receipts::run(&repo, home.path(), &["--session", S1, "--json"])?;
     assert_eq!(serde_json::from_slice::<Value>(&one.stdout)?, report);
-    let none = receipts(&repo, home.path(), &["--session", "nobody"])?;
+    let none = receipts::run(&repo, home.path(), &["--session", "nobody"])?;
     assert!(!none.status.success());
     let error = String::from_utf8(none.stderr)?;
     assert!(error.contains("no session nobody in the store"), "{error}");
-    let sub = receipts(&repo, home.path(), &["--session", SUBAGENT])?;
+    let sub = receipts::run(&repo, home.path(), &["--session", SUBAGENT])?;
     assert!(!sub.status.success());
     let error = String::from_utf8(sub.stderr)?;
     let counted_in = format!("session {SUBAGENT} is a subagent of session {S1}, whose receipts");
@@ -314,7 +295,7 @@ fn a_repository_without_a_store_has_nothing_recorded() -> TestResult {
     let folder = home.path().join(".cortex");
     std::fs::create_dir_all(&folder)?;
     std::fs::write(folder.join("pricing.toml"), "updated = 3\n")?;
-    let printed = receipts(&repo, home.path(), &["--days", "2"])?;
+    let printed = receipts::run(&repo, home.path(), &["--days", "2"])?;
     assert!(printed.status.success(), "{printed:?}");
     let text = String::from_utf8(printed.stdout)?;
     let lines: Vec<&str> = text.lines().collect();
@@ -332,10 +313,10 @@ fn a_repository_without_a_store_has_nothing_recorded() -> TestResult {
         "{}",
         lines[1]
     );
-    let printed = receipts(&repo, home.path(), &["--json"])?;
+    let printed = receipts::run(&repo, home.path(), &["--json"])?;
     let report: Value = serde_json::from_slice(&printed.stdout)?;
     assert_eq!(report.get("recorded"), Some(&Value::Null));
-    let asked = receipts(&repo, home.path(), &["--session", S1])?;
+    let asked = receipts::run(&repo, home.path(), &["--session", S1])?;
     assert!(!asked.status.success());
     let error = String::from_utf8(asked.stderr)?;
     assert!(error.contains(&format!("no session {S1}: ")), "{error}");

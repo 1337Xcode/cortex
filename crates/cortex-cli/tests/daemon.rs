@@ -8,22 +8,11 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use common::git::{self, git};
 use common::{Daemon, TestResult, daemon_command, isolate, wait_for};
 use cortex_core::{EdgeType, Identifier, RepoId, RepoPath};
 use cortex_git::mine::Mark;
 use cortex_store::{FileId, MetaKey, NodeId, Reader};
-
-/// Runs git with `args` in `folder`, with `home` as the user's home folder.
-fn git(folder: &Path, home: &Path, args: &[&str]) -> TestResult {
-    let mut command = Command::new("git");
-    command.args(args).current_dir(folder);
-    isolate(&mut command, home);
-    let status = command.status()?;
-    if !status.success() {
-        return Err(format!("git {args:?} failed: {status}").into());
-    }
-    Ok(())
-}
 
 /// Writes `paths` in the repository at `root`, each with text that names `commit`, and commits them
 /// as `commit` with `home` as the user's home folder; returns the new HEAD.
@@ -31,25 +20,7 @@ fn commit(root: &Path, home: &Path, commit: &str, paths: &[&str]) -> TestResult<
     for path in paths {
         std::fs::write(root.join(path), format!("# {path} in {commit}\n"))?;
     }
-    let mut add = vec!["add", "--"];
-    add.extend_from_slice(paths);
-    git(root, home, &add)?;
-    let mut command = Command::new("git");
-    command
-        .args(["commit", "-q", "-m", commit])
-        .current_dir(root)
-        .env("GIT_AUTHOR_NAME", "Cortex Test")
-        .env("GIT_AUTHOR_EMAIL", "test")
-        .env("GIT_COMMITTER_NAME", "Cortex Test")
-        .env("GIT_COMMITTER_EMAIL", "test");
-    isolate(&mut command, home);
-    if !command.status()?.success() {
-        return Err(format!("committing {commit} failed").into());
-    }
-    let mut head = Command::new("git");
-    head.args(["rev-parse", "HEAD"]).current_dir(root);
-    isolate(&mut head, home);
-    Ok(String::from_utf8(head.output()?.stdout)?.trim().to_owned())
+    git::commit(root, home, commit, paths)
 }
 
 /// The mark the last mining of the repository at `root` left, if any.
