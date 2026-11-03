@@ -27,7 +27,7 @@ mod task_state;
 mod watcher_edits;
 
 pub use archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
-pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore};
+pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore, Told};
 pub use episode::episode_of;
 pub use interest::{EarnedInterest, add_interest, interest_of};
 pub use links::{EarnedLinks, Linking, add_links, links_of};

@@ -450,3 +450,40 @@ fn groups_nested_past_sixteen_tell_nothing() -> TestResult {
     assert_eq!(told(&"{ ".repeat(500))?, []);
     Ok(())
 }
+
+/// A line that exits otherwise than 0 is the failure of the check whose own exit status the
+/// line's is, and of no other: the check that ends the last pipeline of the last and-or list, when
+/// that pipeline is alone in it or follows `||`. Worked out by hand per line: `cd nowhere && cargo
+/// test` may have failed at the `cd`; `cargo check && cargo clippy` at either check; `cargo test
+/// && git push` at the push; `cargo test | tail` exits as `tail` does; `make || cargo test` exits
+/// otherwise only when the tests ran and failed; after `;` only the last list counts.
+#[test]
+fn a_failing_line_is_the_failure_of_its_last_check_alone() -> TestResult {
+    use CommandKind::Test;
+    let commands = Commands::new(&[])?;
+    let cargo_test = Some(Check {
+        runner: "cargo",
+        kind: Test,
+    });
+    let cases = [
+        ("cargo test", cargo_test),
+        ("cd nowhere && cargo test", None),
+        ("cargo check && cargo clippy -- -D warnings", None),
+        ("cargo test && git push", None),
+        ("cargo test 2>&1 | tail -20", None),
+        ("make || cargo test", cargo_test),
+        ("make && pytest || cargo test", cargo_test),
+        ("cargo test || true", None),
+        ("pytest -q; cargo test", cargo_test),
+        ("cd sub; cargo test", cargo_test),
+        ("(cargo test)", cargo_test),
+        ("! cargo test", None),
+        ("cargo test &", None),
+        ("cargo test && cd done", None),
+    ];
+    for (line, failure) in cases {
+        let told = commands.tell(&ShellCommand::cut(line), Path::new(ROOT), &folder(""));
+        assert_eq!(told.failure, failure, "{line}");
+    }
+    Ok(())
+}

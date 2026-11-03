@@ -778,3 +778,70 @@ fn the_task_after_a_task_can_show_its_work_is_gone() -> TestResult {
     );
     Ok(())
 }
+
+/// A line that exited otherwise than 0 after the last edit is a failure only of the check whose
+/// exit it is; when another command of the line may have failed, it says nothing, and the checks
+/// before it decide. Worked out by hand: `cargo check && cargo clippy` may have failed at either,
+/// `cargo test && git push` at the push and `cd nowhere && cargo test` at the `cd`, so the first
+/// three tasks are unknown; `make || cargo test` and `pytest; cargo test` exit 1 only when the
+/// tests did, failures; tests that passed after the edit, then a line that tells nothing, leave
+/// the passing tests to vouch.
+#[test]
+fn a_failing_line_fails_only_the_check_it_is_the_exit_of() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, Commands::default());
+    let failed_tests = (
+        TaskOutcome::Failure,
+        "tests by cargo exited 1 after the last edit",
+    );
+    let cases: [Lines; 6] = [
+        (
+            "t1",
+            1_000,
+            vec!["cargo check && cargo clippy -- -D warnings"],
+            (TaskOutcome::Unknown, ""),
+        ),
+        (
+            "t2",
+            2_000,
+            vec!["cargo test && git push"],
+            (TaskOutcome::Unknown, ""),
+        ),
+        (
+            "t3",
+            3_000,
+            vec!["cd nowhere && cargo test"],
+            (TaskOutcome::Unknown, ""),
+        ),
+        ("t4", 4_000, vec!["make || cargo test"], failed_tests),
+        ("t5", 5_000, vec!["pytest; cargo test"], failed_tests),
+        (
+            "t6",
+            6_000,
+            vec!["cargo test", "cargo test && git push"],
+            (
+                TaskOutcome::Success,
+                "tests by cargo exited 0 after the last edit",
+            ),
+        ),
+    ];
+    for (session, at_ms, lines, expected) in cases {
+        let mut steps = vec![edit(session, at_ms + 100, "a.py")?];
+        for (at, line) in (2_i64..).zip(&lines) {
+            // Every line but the last of a case passed; the last exited 1.
+            let code = if at - 1 == i64::try_from(lines.len())? {
+                1
+            } else {
+                0
+            };
+            steps.push(shell(session, at_ms + at * 100, line, Some(code))?);
+        }
+        let state = answered_task((&mut store, &mut recorder), (session, at_ms), &steps)?;
+        assert_eq!(
+            said(&judge(&state, &BTreeMap::new())),
+            expected,
+            "{session}"
+        );
+    }
+    Ok(())
+}

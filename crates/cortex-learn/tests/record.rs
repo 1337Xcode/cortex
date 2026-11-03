@@ -6,7 +6,8 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::{
-    Store, TestResult, end, event, name, prompt, row, start, succeeded, target, task_of, tool,
+    Store, TestResult, end, event, name, prompt, row, shell, start, succeeded, target, task_of,
+    tool,
 };
 use cortex_core::{
     CommandKind, CompactTrigger, ContentHash, Event, EventKind, EventMeta, FileFlags, HookKind,
@@ -630,6 +631,43 @@ fn a_shell_command_keeps_the_check_it_vouches_for() -> TestResult {
             (Some(name("configured")?), Some(CommandKind::Test)),
             (Some(name("make")?), Some(CommandKind::Build)),
             (None, None),
+        ]
+    );
+    Ok(())
+}
+
+/// A shell command that exited otherwise than 0 keeps the check whose failure that is, and none
+/// when another command of the line may have failed: `cargo check && cargo clippy` and `cd
+/// nowhere && cargo test` keep none, `make || cargo test` keeps the tests.
+#[test]
+fn a_failing_shell_command_keeps_only_the_check_that_failed() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, Commands::default());
+    let lines = [
+        "cargo check && cargo clippy -- -D warnings",
+        "cd nowhere && cargo test",
+        "make || cargo test",
+    ];
+    let mut events = vec![
+        start("s1", 500, StartSource::Startup)?,
+        prompt("s1", 1_000, "run the checks")?,
+    ];
+    for (at, line) in (1_i64..).zip(lines) {
+        events.push(shell("s1", 1_000 + at * 100, line, Some(1))?);
+    }
+    store.record(&mut recorder, &events)?;
+    let kept: Vec<(Option<Identifier>, Option<CommandKind>, Option<i32>)> = store
+        .events()?
+        .into_iter()
+        .filter(|row| row.kind == EventKind::Shell)
+        .map(|row| (row.meta.runner, row.meta.check, row.meta.exit_code))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            (None, None, Some(1)),
+            (None, None, Some(1)),
+            (Some(name("cargo")?), Some(CommandKind::Test), Some(1)),
         ]
     );
     Ok(())

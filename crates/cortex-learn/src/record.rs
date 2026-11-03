@@ -19,7 +19,7 @@ use cortex_core::{
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
 
 use crate::activity::Activity;
-use crate::commands::{Check, Commands, Ran, Restore};
+use crate::commands::{Check, Commands, Ran, Restore, Told};
 use crate::task_state::{TaskEnd, TaskState, TaskStates, Unkept};
 use crate::watcher_edits::WatcherEdits;
 
@@ -176,13 +176,13 @@ impl Recorder {
             Some(path) => transaction.queries().file_node_at(path)?,
             None => None,
         };
-        let ran = ran_by(event, &self.commands);
-        let meta = meta_of(event, &ran);
+        let told = told_by(event, &self.commands);
+        let meta = meta_of(event, &told);
         // What the rows do not keep goes with the first: a search or a shell command has one, and
         // an edit's file held one content before it.
         let mut unkept = Unkept {
             hits: target.map(|target| target.hits.clone()).unwrap_or_default(),
-            restores: restores_of(ran),
+            restores: restores_of(told.ran),
             before: self.before_of(transaction, (event, kind))?,
         };
         for range in ranges_of(event) {
@@ -446,14 +446,14 @@ fn ranges_of(event: &Event) -> Vec<Option<LineRange>> {
     ranges.iter().copied().map(Some).collect()
 }
 
-/// What `event`'s shell command ran that its exit status vouches for, as `commands` tells it;
-/// nothing for another event.
-fn ran_by(event: &Event, commands: &Commands) -> Vec<Ran> {
+/// What `event`'s shell command tells of what it ran, as `commands` tells it: what its exit of 0
+/// vouches for, and the check its exit otherwise is the failure of; nothing for another event.
+fn told_by(event: &Event, commands: &Commands) -> Told {
     event
         .tool_target
         .as_ref()
         .and_then(|target| target.command.as_ref())
-        .map(|command| commands.recognise(command, &event.repo_root, &event.cwd))
+        .map(|command| commands.tell(command, &event.repo_root, &event.cwd))
         .unwrap_or_default()
 }
 
@@ -467,23 +467,30 @@ fn restores_of(ran: Vec<Ran>) -> Vec<Restore> {
         .collect()
 }
 
-/// The facts a row keeps besides its kind, path and lines; for a shell command, the check of what
-/// it `ran` that stands for the line.
-fn meta_of(event: &Event, ran: &[Ran]) -> EventMeta {
+/// The facts a row keeps besides its kind, path and lines; for a shell command, the check its exit
+/// speaks for, as `told`: of an exit of 0, the check of what it vouches for that stands for the
+/// line; of an exit otherwise, the check whose failure it is, or none when it may be another
+/// command's.
+fn meta_of(event: &Event, told: &Told) -> EventMeta {
     // INVARIANT: no-content-stored (a tool's command, search pattern and output never reach the
     // row: only how it ended, how much it printed, and the runner and kind of the check it ran)
     let result = event.tool_result;
-    let check = ran
-        .iter()
-        .filter_map(|ran| match ran {
-            Ran::Check(check) => Some(*check),
-            Ran::Restore(_) => None,
-        })
-        .min_by_key(|check| rank(check.kind));
+    let exit_code = result.and_then(|result| result.exit_code);
+    let check = match exit_code {
+        Some(code) if code != 0 => told.failure,
+        _ => told
+            .ran
+            .iter()
+            .filter_map(|ran| match ran {
+                Ran::Check(check) => Some(*check),
+                Ran::Restore(_) => None,
+            })
+            .min_by_key(|check| rank(check.kind)),
+    };
     EventMeta {
         source: None,
         tool: event.tool,
-        exit_code: result.and_then(|result| result.exit_code),
+        exit_code,
         is_success: result.map(|result| result.is_success),
         is_interrupted: result.map(|result| result.is_interrupted),
         output_bytes: result.and_then(|result| result.output_bytes),

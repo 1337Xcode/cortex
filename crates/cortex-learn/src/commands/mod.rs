@@ -5,7 +5,13 @@
 //! pipeline (`cargo test | tail` exits as `tail` does), in the line's last and-or list, run
 //! whenever the commands before it in that list succeeded and followed by `&&` alone, neither
 //! inverted by `!` nor sent to the background. When the line exits otherwise, any of them may have
-//! failed or not run. A line the reader does not follow tells nothing.
+//! failed or not run.
+//!
+//! A line that exits otherwise is the failure of one check at most: the one whose own exit status
+//! the line's is, which ran whenever the line got that far. It ends the last pipeline of the
+//! line's last and-or list, a pipeline alone in that list or following `||` (`cd x && cargo test`
+//! may have failed at the `cd`, `make || cargo test` exits otherwise only when the tests did),
+//! neither inverted nor in the background. A line the reader does not follow tells nothing.
 //!
 //! Nothing here keeps the command's text: the caller keeps what was told, never the line.
 
@@ -77,6 +83,16 @@ pub struct PatternError {
     reason: String,
 }
 
+/// What a line told: the commands its exit 0 vouches for, and the check its exit otherwise is the
+/// failure of, if there is one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Told {
+    /// What an exit of 0 vouches for, in the order of the line.
+    pub ran: Vec<Ran>,
+    /// The check whose own exit status the line's is, when the line exits otherwise.
+    pub failure: Option<Check>,
+}
+
 /// The commands Cortex tells apart: the runners it knows and the user's patterns, compiled once.
 /// The default knows the runners alone.
 #[derive(Debug, Default)]
@@ -111,16 +127,27 @@ impl Commands {
     /// its exit status vouches for, in the order of the line.
     #[must_use]
     pub fn recognise(&self, command: &ShellCommand, root: &Path, cwd: &Path) -> Vec<Ran> {
+        self.tell(command, root, cwd).ran
+    }
+
+    /// What `command`, run in the folder `cwd` of the repository whose top is `root`, tells: what
+    /// an exit of 0 vouches for, and the check an exit otherwise is the failure of.
+    #[must_use]
+    pub fn tell(&self, command: &ShellCommand, root: &Path, cwd: &Path) -> Told {
         let Ok(list) = shell::read(command.as_str()) else {
-            return Vec::new();
+            return Told::default();
         };
         let mut walk = Walk {
             commands: self,
             root,
-            ran: Vec::new(),
+            told: Told::default(),
         };
-        walk.list(&list, &mut Folder::new(cwd), true);
-        walk.ran
+        let says = Says {
+            success: true,
+            failure: true,
+        };
+        walk.list(&list, &mut Folder::new(cwd), says);
+        walk.told
     }
 
     /// What the simple command `words`, run from `folder` in the repository whose top is `root`,
@@ -153,69 +180,101 @@ struct Walk<'a> {
     /// The repository's top folder.
     root: &'a Path,
     /// What was told so far.
-    ran: Vec<Ran>,
+    told: Told,
+}
+
+/// What the line's exit status says of a part of it: whether an exit of 0 says that it ran and
+/// succeeded, and whether an exit otherwise is its own.
+#[derive(Debug, Clone, Copy)]
+struct Says {
+    /// An exit of 0 says it ran and succeeded.
+    success: bool,
+    /// An exit otherwise is its exit.
+    failure: bool,
+}
+
+impl Says {
+    /// What is said of a part when `success` and `failure` hold for it too.
+    fn within(self, success: bool, failure: bool) -> Self {
+        Self {
+            success: self.success && success,
+            failure: self.failure && failure,
+        }
+    }
 }
 
 impl Walk<'_> {
-    /// Walks `list` from `folder`. When `is_vouched`, the line's exit status is the list's, which
-    /// is its last and-or list's unless that one runs in the background.
-    fn list(&mut self, list: &List, folder: &mut Folder, is_vouched: bool) {
+    /// Walks `list` from `folder`. The line's exit status is the list's, which is its last and-or
+    /// list's unless that one runs in the background.
+    fn list(&mut self, list: &List, folder: &mut Folder, says: Says) {
         let final_at = list.items.len().checked_sub(1);
         for (at, item) in list.items.iter().enumerate() {
-            let is_final = Some(at) == final_at;
-            self.and_or(item, folder, is_vouched && is_final && !item.is_background);
+            let is_said = Some(at) == final_at && !item.is_background;
+            self.and_or(item, folder, says.within(is_said, is_said));
         }
     }
 
-    /// Walks `and_or` from `folder`. When `is_vouched`, a pipeline in it is vouched for when it
-    /// runs whenever the ones before it succeeded (it is first, or follows `&&`) and only `&&`
-    /// follows it: the list then exits 0 only when it ran and exited 0.
-    fn and_or(&mut self, and_or: &AndOr, folder: &mut Folder, is_vouched: bool) {
+    /// Walks `and_or` from `folder`. A pipeline in it is vouched for when it runs whenever the
+    /// ones before it succeeded (it is first, or follows `&&`) and only `&&` follows it: the list
+    /// then exits 0 only when it ran and exited 0. The list's exit otherwise is its last
+    /// pipeline's when that one ran whatever came before it, alone or after `||`.
+    fn and_or(&mut self, and_or: &AndOr, folder: &mut Folder, says: Says) {
+        let last = and_or.pipelines.len().saturating_sub(1);
         for (at, pipeline) in and_or.pipelines.iter().enumerate() {
             let runs_after_success = at == 0 || and_or.joins.get(at - 1) == Some(&Join::And);
             let decides = tail(&and_or.joins, at)
                 .iter()
                 .all(|join| *join == Join::And);
+            let runs_after_failure = at == 0 || and_or.joins.get(at - 1) == Some(&Join::Or);
+            let ends = at == last && runs_after_failure;
             self.pipeline(
                 pipeline,
                 folder,
-                is_vouched && runs_after_success && decides,
+                says.within(runs_after_success && decides, ends),
             );
         }
     }
 
-    /// Walks `pipeline` from `folder`. When `is_vouched` and nothing inverts it, its last command
-    /// is vouched for. A pipeline of several commands runs each in a shell of its own, so a `cd`
-    /// in one moves nothing after it.
-    fn pipeline(&mut self, pipeline: &Pipeline, folder: &mut Folder, is_vouched: bool) {
+    /// Walks `pipeline` from `folder`. Unless something inverts it, what is said of it is said of
+    /// its last command, whose exit is the pipeline's. A pipeline of several commands runs each in
+    /// a shell of its own, so a `cd` in one moves nothing after it.
+    fn pipeline(&mut self, pipeline: &Pipeline, folder: &mut Folder, says: Says) {
         let last = pipeline.commands.len().saturating_sub(1);
         let is_alone = pipeline.commands.len() == 1;
         for (at, command) in pipeline.commands.iter().enumerate() {
-            let vouched = is_vouched && !pipeline.is_negated && at == last;
+            let is_said = !pipeline.is_negated && at == last;
+            let said = says.within(is_said, is_said);
             if is_alone {
-                self.command(command, folder, vouched);
+                self.command(command, folder, said);
             } else {
-                self.command(command, &mut folder.clone(), vouched);
+                self.command(command, &mut folder.clone(), said);
             }
         }
     }
 
     /// Walks `command` from `folder`, which a `cd` moves for what comes after it.
-    fn command(&mut self, command: &Command, folder: &mut Folder, is_vouched: bool) {
+    fn command(&mut self, command: &Command, folder: &mut Folder, says: Says) {
         match command {
             Command::Simple(words) => {
                 if let Some(moved) = folder.after(words) {
                     *folder = moved;
-                } else if is_vouched {
+                } else if says.success || says.failure {
                     let ran = self.commands.ran(words, folder, self.root);
-                    self.ran.extend(ran);
+                    if says.failure
+                        && let Some(Ran::Check(check)) = &ran
+                    {
+                        self.told.failure = Some(*check);
+                    }
+                    if says.success {
+                        self.told.ran.extend(ran);
+                    }
                 }
             }
             Command::Group { list, is_subshell } => {
                 if *is_subshell {
-                    self.list(list, &mut folder.clone(), is_vouched);
+                    self.list(list, &mut folder.clone(), says);
                 } else {
-                    self.list(list, folder, is_vouched);
+                    self.list(list, folder, says);
                 }
             }
         }
