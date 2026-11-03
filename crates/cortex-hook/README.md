@@ -53,8 +53,9 @@ hook's own thread writes is in the log by the time the hook returns.
 The Claude Code tests normalize every captured payload under `tests/fixtures/claude/` and compare
 it with an event written out by hand from the fixture: paths, lines, commands, sizes, exit codes
 and the files a search found. Grep's output is tested for each kind of line it prints (a match, a
-count, context, a line without its number, a search of one file), for files named twice, outside
-the repository or past the first 200 named, and for its caps at 50 files and 4 KiB of paths.
+count, context, a line without its number, a search of one file), in written cases and in captured
+runs given a folder, one file, context lines and count mode, for files named twice, outside the
+repository or past the first 200 named, and for its caps at 50 files and 4 KiB of paths.
 Property tests feed payloads of any shape, captured payloads with a byte changed, and search
 responses of any length and shape, and check that nothing panics, that each event keeps to its
 hook's fields, and that a search's files stay within their caps.

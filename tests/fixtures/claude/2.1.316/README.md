@@ -18,6 +18,11 @@ what Claude Code sends.
 | `user-prompt-submit.json` | UserPromptSubmit |
 | `pre-tool-use-<tool>.json`, `post-tool-use-<tool>.json` | Glob, Grep, Read, Bash, Edit, Write, Agent |
 | `*-grep-subagent.json` | A tool call made inside a subagent: carries `agent_id` and `agent_type` |
+| `post-tool-use-grep-folder.json`, `post-tool-use-grep-folder-content.json` | Grep given the folder `calc` as `path`, in files and in content mode: the paths it lists are still relative to the working folder |
+| `post-tool-use-grep-one-file.json` | Grep given the one file `calc/ops.py`, in content mode: each line starts with its number and names no file |
+| `post-tool-use-grep-one-file-count.json` | Grep given one file in count mode: the line still names the file |
+| `post-tool-use-grep-context.json` | Content mode with `-C 1`: context lines `path-N-text`, groups split by `--` |
+| `post-tool-use-grep-count.json` | Count mode over the repository: one `path:count` line a file |
 | `post-tool-use-bash.json` | A test command piped through `tail` |
 | `post-tool-use-failure-bash.json` | A Bash command that exited non-zero (`error` starts with `Exit code 3`) |
 | `post-tool-use-bash-test-passing.json` | A test command that passed, not piped |
@@ -34,6 +39,12 @@ During `/compact` the events arrived in this order: SessionStart (`resume`), Pre
 SubagentStop (internal), SessionStart (`compact`), PostCompact, SessionEnd. During `/clear`:
 SessionStart (`resume`), SessionEnd (`clear`) for the old session, SessionStart (`clear`) with a
 new `session_id`, SessionEnd (`other`).
+
+The six Grep files above that hold a folder, one file, context or counts come from a second
+session on 2026-11-02, in the same repository and version, allowed the Grep tool alone
+(`--allowedTools Grep` instead of skipping permissions), which is why their `permission_mode` is
+`default`. Their identifiers are mapped from the first again, so their session id repeats the
+other files'.
 
 ## Scrubbing
 

@@ -33,6 +33,17 @@ const S7: &str = "00000000-0000-4000-8000-000000000007";
 /// The Claude Code version whose payloads the table of events written by hand covers.
 const TABLED: &str = "2.1.312";
 
+/// The fixtures only the newest version has: Grep runs given a folder, one file, context lines and
+/// count mode, captured after the table's version, whose hits are read off them by hand.
+const NEWEST_ONLY: [&str; 6] = [
+    "post-tool-use-grep-context.json",
+    "post-tool-use-grep-count.json",
+    "post-tool-use-grep-folder-content.json",
+    "post-tool-use-grep-folder.json",
+    "post-tool-use-grep-one-file-count.json",
+    "post-tool-use-grep-one-file.json",
+];
+
 /// The folder of the fixtures of Claude Code `version`.
 fn fixtures_of(version: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -766,15 +777,18 @@ fn long_prompts_are_cut_and_bad_names_left_out() -> TestResult {
     Ok(())
 }
 
-/// The newest version Cortex knows has its fixtures, one for each the table covers, and the
-/// oldest it works with is no newer.
+/// The newest version Cortex knows has its fixtures, one for each the table covers and the Grep
+/// runs only it has, and no other; and the oldest it works with is no newer.
 #[test]
 fn the_known_versions_hold() -> TestResult {
     let claude = adapter("claude").ok_or("no Claude Code adapter")?;
     let versions = claude.versions();
+    let mut expected = fixture_names(&fixtures())?;
+    expected.extend(NEWEST_ONLY.iter().map(|name| (*name).to_owned()));
+    expected.sort_unstable();
     assert_eq!(
         fixture_names(&fixtures_of(versions.newest_tested))?,
-        fixture_names(&fixtures())?
+        expected
     );
     let oldest = cortex_core::ipc::CortexVersion::parse(versions.oldest)?;
     let newest = cortex_core::ipc::CortexVersion::parse(versions.newest_tested)?;
@@ -1427,11 +1441,17 @@ fn output_line() -> impl Strategy<Value = String> {
 
 /// The newest capture's searches name the files they found, read off the fixtures by hand: Glob's
 /// six files in the order listed; Grep's match line names `calc/ops.py`; the subagent's Grep names
-/// `tests/test_ops.py` (two lines, once), `NOTES.md` and `calc/ops.py`.
+/// `tests/test_ops.py` (two lines, once), `NOTES.md` and `calc/ops.py`. Grep given the folder
+/// `calc` lists `calc\ops.py`, in files mode and in content mode, relative to the working folder
+/// and not to `calc`, so it names `calc/ops.py`. Grep given the one file `calc/ops.py` prints lines
+/// that start with their numbers and name none, a hit missed; in count mode it prints
+/// `calc\ops.py:3`, which names it. With context, the match lines name `tests/test_ops.py`,
+/// `NOTES.md` and `calc/ops.py` and the context lines name nothing more; counting names the three
+/// files with a `def`, `tests/test_ops.py`, `tests/test_fail.py` and `calc/ops.py`.
 #[test]
 fn searches_name_the_files_they_found() -> TestResult {
     let claude = adapter("claude").ok_or("no Claude Code adapter")?;
-    let cases: [(&str, &[&str]); 3] = [
+    let cases: [(&str, &[&str]); 9] = [
         (
             "post-tool-use-glob.json",
             &[
@@ -1447,6 +1467,18 @@ fn searches_name_the_files_they_found() -> TestResult {
         (
             "post-tool-use-grep-subagent.json",
             &["tests/test_ops.py", "NOTES.md", "calc/ops.py"],
+        ),
+        ("post-tool-use-grep-folder.json", &["calc/ops.py"]),
+        ("post-tool-use-grep-folder-content.json", &["calc/ops.py"]),
+        ("post-tool-use-grep-one-file.json", &[]),
+        ("post-tool-use-grep-one-file-count.json", &["calc/ops.py"]),
+        (
+            "post-tool-use-grep-context.json",
+            &["tests/test_ops.py", "NOTES.md", "calc/ops.py"],
+        ),
+        (
+            "post-tool-use-grep-count.json",
+            &["tests/test_ops.py", "tests/test_fail.py", "calc/ops.py"],
         ),
     ];
     for (name, expected) in cases {
