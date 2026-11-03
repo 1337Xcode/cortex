@@ -11,17 +11,37 @@
 //! carries that subagent's last usage beside its message, which is the subagent's own transcript's
 //! to report.
 
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+
 use serde::Deserialize;
 
 use crate::format::TranscriptFormat;
 use crate::response::{Response, Usage};
 use crate::timestamp::utc_millis;
 
+/// The variable that moves Claude Code's configuration folder, `~/.claude`, and its session
+/// history with it.
+const CONFIG_FOLDER_VARIABLE: &str = "CLAUDE_CONFIG_DIR";
+
 /// Claude Code's transcript format.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Claude;
 
 impl TranscriptFormat for Claude {
+    fn folders(&self, home: &Path, variable: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+        // Claude Code's documentation asks for an absolute path here; a relative one would depend
+        // on the folder Claude Code started in, which the daemon cannot know.
+        let moved = variable(CONFIG_FOLDER_VARIABLE)
+            .map(PathBuf::from)
+            .filter(|folder| folder.is_absolute());
+        moved
+            .into_iter()
+            .chain([home.join(".claude")])
+            .map(|folder| folder.join("projects"))
+            .collect()
+    }
+
     fn response(&self, line: &[u8]) -> Option<Response> {
         // Most lines hold no usage at all; only the few that do are parsed.
         if !contains(line, b"\"usage\"") {

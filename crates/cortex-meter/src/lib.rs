@@ -23,5 +23,5 @@ pub use claude::Claude;
 pub use error::MeterError;
 pub use format::{TranscriptFormat, format_of};
 pub use response::{Response, SYNTHETIC_MODEL, Usage};
-pub use tail::{MAX_READ_BYTES, MAX_RECENT_RESPONSES, Tail, Turn};
+pub use tail::{MAX_LINE_BYTES, MAX_RECENT_RESPONSES, Tail, Turn};
 pub use timestamp::utc_millis;

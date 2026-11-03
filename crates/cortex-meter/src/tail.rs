@@ -7,15 +7,16 @@
 
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 use crate::error::MeterError;
 use crate::format::TranscriptFormat;
 use crate::response::{Response, SYNTHETIC_MODEL, Usage};
 
-/// Most bytes one read takes from a transcript. Whatever is beyond waits for the next read, so a
-/// transcript that grew by hundreds of megabytes is taken in steps without holding them at once.
-pub const MAX_READ_BYTES: u64 = 64 * 1024 * 1024;
+/// The longest line a tail reads. A read stops after the whole lines that fit the bytes it is
+/// allowed, but a line longer than that allowance is read on to its end, as far as this; one
+/// longer still is passed over, so that no line can hold a reader or its memory.
+pub const MAX_LINE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// How many of its latest responses a tail remembers, to know a line that repeats one of them:
 /// Claude Code writes a response's lines one after another, one per content block.
@@ -70,12 +71,13 @@ impl Tail {
         self.offset
     }
 
-    /// Reads `file`, a transcript written in `format`, from where the last read stopped, at most
-    /// `max_bytes` of it ([`MAX_READ_BYTES`] for the daemon), and returns the responses its new
-    /// whole lines report, in order. A line that repeats a response already counted, with no more
-    /// tokens, adds nothing; with more, it comes again with the response's number and the larger
-    /// counts, which replace the earlier ones. A file shorter than where the last read stopped is
-    /// read from its start, as a tail that has read nothing.
+    /// Reads `file`, a transcript written in `format`, from where the last read stopped: the whole
+    /// lines within the next `read_bytes` of it, or the one line they begin, read to its end as
+    /// far as [`MAX_LINE_BYTES`]. Returns the responses those lines report, in order. A line that
+    /// repeats a response already counted, with no more tokens, adds nothing; with more, it comes
+    /// again with the response's number and the larger counts, which replace the earlier ones. A
+    /// file shorter than where the last read stopped is read from its start, as a tail that has
+    /// read nothing.
     ///
     /// # Errors
     ///
@@ -84,23 +86,30 @@ impl Tail {
         &mut self,
         file: &mut File,
         format: &dyn TranscriptFormat,
-        max_bytes: u64,
+        read_bytes: u64,
     ) -> Result<Vec<Turn>, MeterError> {
         let length = file.metadata()?.len();
         let start = if length < self.offset { 0 } else { self.offset };
         file.seek(SeekFrom::Start(start))?;
         let mut bytes = Vec::new();
-        file.take(max_bytes).read_to_end(&mut bytes)?;
+        file.by_ref().take(read_bytes).read_to_end(&mut bytes)?;
+        let is_inside_one_line = !bytes.contains(&b'\n')
+            && u64::try_from(bytes.len()).is_ok_and(|read| read == read_bytes);
+        if is_inside_one_line {
+            let rest = MAX_LINE_BYTES.saturating_sub(read_bytes);
+            BufReader::new(file.take(rest)).read_until(b'\n', &mut bytes)?;
+        }
         if start < self.offset {
             *self = Self::default();
         }
-        Ok(self.take(&bytes, format, max_bytes))
+        Ok(self.take(&bytes, format))
     }
 
     /// Counts the responses the whole lines of `bytes`, read from the offset, report, moving the
-    /// offset past them. A read of the whole `max_bytes` that holds no line ending at all is a line
-    /// longer than any response's: it is passed over, its rest read next time as a broken line.
-    fn take(&mut self, bytes: &[u8], format: &dyn TranscriptFormat, max_bytes: u64) -> Vec<Turn> {
+    /// offset past them. A read of [`MAX_LINE_BYTES`] or more that holds no line ending at all is
+    /// a line longer than any a tail reads: it is passed over, its rest read next time as a broken
+    /// line.
+    fn take(&mut self, bytes: &[u8], format: &dyn TranscriptFormat) -> Vec<Turn> {
         let mut turns = Vec::new();
         let mut consumed: u64 = 0;
         for piece in bytes.split_inclusive(|byte| *byte == b'\n') {
@@ -113,10 +122,9 @@ impl Tail {
                 self.count(response, &mut turns);
             }
         }
-        let is_one_long_line = consumed == 0
-            && u64::try_from(bytes.len()).is_ok_and(|length| length >= max_bytes && length > 0);
-        if is_one_long_line {
-            consumed = max_bytes;
+        let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        if consumed == 0 && length >= MAX_LINE_BYTES {
+            consumed = length;
         }
         self.offset = self.offset.saturating_add(consumed);
         turns

@@ -35,6 +35,7 @@ mod records;
 mod replace;
 mod rows;
 mod schema;
+mod usage;
 mod values;
 mod writer;
 
@@ -59,4 +60,5 @@ pub use records::{
     Resolved, SymbolChange, SymbolRecord, Target,
 };
 pub use rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow, SymbolSpan};
+pub use usage::UsageRow;
 pub use writer::{WriteTx, Writer, WriterOptions};

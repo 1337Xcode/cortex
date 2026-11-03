@@ -7,7 +7,9 @@
 //! indexes again after each change. In huge mode it parses the files it took inventory of, those
 //! that changed first, at `index.crawl_files_per_second` on one thread. It stops when asked, or
 //! after `daemon.idle_shutdown_minutes` without a request or a file change, once nothing waits to
-//! be parsed. It says when the first index is done and the watcher runs.
+//! be parsed. It says when the first index is done and the watcher runs. As tasks end it learns
+//! from them, and at each stop it reads the transcript the stop names for the tokens each response
+//! took.
 //!
 //! Once it holds the repository it keeps a log, `~/.cortex/logs/daemon-<id>.log`: when it started
 //! and stopped and why, the first index, each hook request it handled, and every error it met from
@@ -24,14 +26,16 @@ mod latency;
 mod learning;
 mod listener;
 mod log;
+mod meter;
 mod miner;
+mod pending;
 mod recent_errors;
 mod server;
 pub mod settings;
 
 pub use instance::is_running;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,8 +49,9 @@ use cortex_store::{Writer, WriterOptions};
 use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
-use self::learning::Learning;
+use self::meter::Meter;
 use self::miner::Miner;
+use self::pending::Pending;
 use self::server::Server;
 
 /// Threads that serve connections. Requests are short; two keep one slow client from delaying
@@ -71,7 +76,8 @@ pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> any
     // daemon's lock and endpoint are the ones hooks and commands look for.
     let root =
         &canonical_root(root).with_context(|| format!("finding the folder {}", root.display()))?;
-    let user = UserFolder::of_current_user().context("finding the user's home folder")?;
+    let home = std::env::home_dir().context("finding the user's home folder")?;
+    let user = UserFolder::in_home(&home);
     let repo_id = RepoId::of(root);
     let _instance = Instance::acquire(&user, &repo_id)?;
     // Started once the repository is held, so that only the daemon serving it writes its log, and
@@ -84,7 +90,7 @@ pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> any
         root = %root.display(),
         "daemon started"
     );
-    let served = listen_and_serve(root, (&user, &repo_id), note);
+    let served = listen_and_serve(root, (&user, &repo_id, home), note);
     match &served {
         Ok(()) => tracing::info!("daemon stopped"),
         Err(error) => {
@@ -95,10 +101,11 @@ pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> any
 }
 
 /// Starts the server's runtime and listens for hooks and commands, then indexes, watches and serves
-/// until asked to stop or idle, and gives the connections still open a moment to finish.
+/// until asked to stop or idle, and gives the connections still open a moment to finish. The user's
+/// home folder, `home`, is where the agents keep the transcripts the stops name.
 fn listen_and_serve(
     root: &Path,
-    (user, repo_id): (&UserFolder, &RepoId),
+    (user, repo_id, home): (&UserFolder, &RepoId, PathBuf),
     note: &mut dyn FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -113,7 +120,7 @@ fn listen_and_serve(
         listener::bind(&user.run_files(repo_id)).context("listening for hooks")?
     };
     runtime.spawn(Arc::new(Server::new(Arc::clone(&inbox))).serve(listener));
-    let served = index_and_serve(root, (repo_id, &inbox), note);
+    let served = index_and_serve(root, (repo_id, &inbox, home), note);
     // However the work ended, before the writer opened included, the server takes no more events
     // in the moment it has left: nothing would record them.
     inbox.close();
@@ -121,10 +128,11 @@ fn listen_and_serve(
     served
 }
 
-/// Takes the store's writer, indexes, watches and serves the inbox until asked to stop or idle.
+/// Takes the store's writer, indexes, watches and serves the inbox until asked to stop or idle,
+/// reading the transcripts the stops name under the user's home folder, `home`.
 fn index_and_serve(
     root: &Path,
-    (repo_id, inbox): (&RepoId, &Arc<Inbox>),
+    (repo_id, inbox, home): (&RepoId, &Arc<Inbox>, PathBuf),
     note: &mut dyn FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let loaded = settings::load(root)?;
@@ -150,12 +158,13 @@ fn index_and_serve(
     // those that came while it opened are recorded at once.
     let excerpt = config.store_prompt_excerpt;
     let mut recorder = Recorder::new(excerpt, commands);
-    let mut learning = Learning::default();
-    learning.wait(host::record_waiting(&mut writer, &mut recorder, inbox));
+    // The environment is the one the daemon started in: a hook's, which is its agent's.
+    let mut pending = Pending::new(Meter::new(&home, &|name| std::env::var_os(name)));
+    pending.wait(host::record_waiting(&mut writer, &mut recorder, inbox));
     // From here on, a daemon that cannot go on still records the events it took before it stops.
     let grammars = or_close(
-        host::load_grammars((&mut writer, &mut recorder), &mut learning, inbox),
-        || close_and_learn(&mut writer, &mut recorder, &mut learning, (inbox, &config)),
+        host::load_grammars((&mut writer, &mut recorder), &mut pending, inbox),
+        || close_and_settle(&mut writer, &mut recorder, &mut pending, (inbox, &config)),
     )?;
     let global_gitignore = match global_ignore::find(root) {
         Ok(found) => found,
@@ -165,7 +174,7 @@ fn index_and_serve(
                 note(&format!(
                     "warning: the global gitignore is not read: {error:#}"
                 )),
-                || close_and_learn(&mut writer, &mut recorder, &mut learning, (inbox, &config)),
+                || close_and_settle(&mut writer, &mut recorder, &mut pending, (inbox, &config)),
             )?;
             None
         }
@@ -178,14 +187,14 @@ fn index_and_serve(
     let feed = WatcherFeed(Arc::clone(inbox));
     let watcher = or_close(
         watch(root, &discover, move |change| feed.push(change)).context("watching the repository"),
-        || close_and_learn(&mut writer, &mut recorder, &mut learning, (inbox, &config)),
+        || close_and_settle(&mut writer, &mut recorder, &mut pending, (inbox, &config)),
     )?;
-    learning.wait(host::record_waiting(&mut writer, &mut recorder, inbox));
+    pending.wait(host::record_waiting(&mut writer, &mut recorder, inbox));
     let mut host = Host::new(
         root,
         grammars,
         (&config, discover),
-        (writer, recorder, learning, inbox),
+        (writer, recorder, pending, inbox),
     );
     let report = or_close(host.index(&[]), || host.close())?;
     inbox.mark_indexed();
@@ -215,16 +224,17 @@ fn or_close<T>(result: anyhow::Result<T>, close: impl FnOnce()) -> anyhow::Resul
     result
 }
 
-/// Closes `inbox` to events, records with `recorder` the events it took, and learns from the tasks
-/// that ended and wait in `learning`: what a daemon that cannot go on does before it stops.
-fn close_and_learn(
+/// Closes `inbox` to events, records with `recorder` the events it took, learns from the tasks that
+/// ended and reads the transcripts named, which wait in `pending`: what a daemon that cannot go on
+/// does before it stops.
+fn close_and_settle(
     writer: &mut Writer,
     recorder: &mut Recorder,
-    learning: &mut Learning,
+    pending: &mut Pending,
     (inbox, config): (&Inbox, &Config),
 ) {
-    learning.wait(host::close(writer, recorder, inbox));
-    learning.learn((writer, recorder), inbox, config);
+    pending.wait(host::close(writer, recorder, inbox));
+    pending.settle((writer, recorder), inbox, config);
 }
 
 /// The watcher's way into the inbox. When the watcher lets go of it, the inbox learns that the

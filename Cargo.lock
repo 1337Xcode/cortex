@@ -333,6 +333,7 @@ dependencies = [
  "cortex-git",
  "cortex-index",
  "cortex-learn",
+ "cortex-meter",
  "cortex-store",
  "interprocess",
  "tempfile",

@@ -374,6 +374,17 @@ pub(crate) const INTEREST_REPLACE: &str = "INSERT INTO interest (node_id, score,
      VALUES (?1, ?2, ?3, ?4) ON CONFLICT (node_id) DO UPDATE SET score = excluded.score, \
      last_seq = excluded.last_seq, tier = excluded.tier";
 
+/// Writes one response's usage, replacing what its session and turn had.
+pub(crate) const USAGE_REPLACE: &str = "INSERT INTO usage \
+     (session_id, turn, ts, model, input, cache_write, cache_read, output, reasoning) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT (session_id, turn) DO UPDATE SET \
+     ts = excluded.ts, model = excluded.model, input = excluded.input, \
+     cache_write = excluded.cache_write, cache_read = excluded.cache_read, \
+     output = excluded.output, reasoning = excluded.reasoning";
+/// A session's usage, by turn.
+pub(crate) const USAGE_OF_SESSION: &str = "SELECT rowid, session_id, turn, ts, model, input, \
+     cache_write, cache_read, output, reasoning FROM usage WHERE session_id = ?1 ORDER BY turn";
+
 /// Writes a task's record, replacing the one it had.
 pub(crate) const EPISODE_REPLACE: &str = "INSERT INTO episodes \
      (task_id, localize, change, verify, pitfalls, outcome, created_at) \

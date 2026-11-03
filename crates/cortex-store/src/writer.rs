@@ -24,6 +24,7 @@ use crate::queries::Queries;
 use crate::records::{EdgeRecord, FileChange, FileIndex, FileRemoval, Resolved};
 use crate::replace;
 use crate::schema;
+use crate::usage::{self, UsageRow};
 
 /// What [`Writer::open`] needs.
 #[derive(Debug, Clone, Copy)]
@@ -449,6 +450,17 @@ impl WriteTx<'_> {
     /// written or none.
     pub fn replace_interest(&mut self, rows: &[InterestRow]) -> Result<(), StoreError> {
         self.atomically(|connection| interest::replace(connection, rows))
+    }
+
+    /// Writes each response's usage, replacing what its session and turn had.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`], [`StoreError::TooLarge`] for a count past what SQLite
+    /// stores, and SQLite errors, including a session that does not exist. Either all are
+    /// written or none.
+    pub fn replace_usage(&mut self, rows: &[UsageRow]) -> Result<(), StoreError> {
+        self.atomically(|connection| usage::replace(connection, rows))
     }
 
     /// Sets the co-change miner's state under `key` to `value`.

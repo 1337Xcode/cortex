@@ -71,6 +71,7 @@ pub use pipeline::{
 };
 pub use references::Qualifier;
 pub use rules::MAX_REPORTED_LINES;
+pub use safe_read::{ReadError, open_regular};
 pub use scale::{RepoSize, mode_for};
 pub use scip::{ScipOutcome, ScipProblem};
 pub use specifiers::{Import, Imported};

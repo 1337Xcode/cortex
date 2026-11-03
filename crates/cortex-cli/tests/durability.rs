@@ -1,11 +1,13 @@
 //! Hook events reach the store within a second of arriving, while the daemon loads its grammars and
-//! runs its first index too, and what reached the store survives a hard kill: a kill loses at most
-//! the last second of events.
+//! runs its first index too, and while it reads a long transcript, and what reached the store
+//! survives a hard kill: a kill loses at most the last second of events.
 
 mod common;
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use common::{Daemon, READY_WITHIN, TestResult};
@@ -19,6 +21,15 @@ use cortex_store::Reader;
 
 /// How late an event may reach the store.
 const WITHIN: Duration = Duration::from_secs(1);
+
+/// Held by each test whose daemon keeps the machine busy for seconds, so that none measures how late
+/// events are while another loads the machine as well.
+static BUSY: Mutex<()> = Mutex::new(());
+
+/// The machine to itself among the busy tests; a test that failed holding it leaves it free.
+fn alone() -> MutexGuard<'static, ()> {
+    BUSY.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// How often the test sends an event, then looks at the store: often enough that a start a fast
 /// machine gets through in a second or two still sees twenty events, as the test asks.
@@ -193,6 +204,7 @@ fn files_stored(root: &Path) -> TestResult<u64> {
 /// all of it.
 #[test]
 fn events_are_stored_within_a_second_while_the_daemon_starts() -> TestResult {
+    let _alone = alone();
     let home = tempfile::tempdir()?;
     let repo = tempfile::tempdir()?;
     package(repo.path(), 2_000, 24)?;
@@ -263,5 +275,88 @@ fn events_survive_a_kill_in_steady_state() -> TestResult {
     let missing = sender.missing_by(cutoff)?;
     assert!(missing.is_empty(), "events lost to the kill: {missing:?}");
     assert!(sender.sent.len() >= 10, "{} events", sender.sent.len());
+    Ok(())
+}
+
+/// How many responses the long transcript holds: 24 MiB of the shortest lines a response can be
+/// written on, about 190 bytes each.
+const LONG_TRANSCRIPT_RESPONSES: usize = 130_000;
+
+/// Writes at `path` a Claude Code transcript of [`LONG_TRANSCRIPT_RESPONSES`] responses, each on a
+/// line holding only what a response is read from: its message id, model, time and counts.
+fn long_transcript(path: &Path) -> TestResult {
+    let mut text = String::new();
+    for number in 0..LONG_TRANSCRIPT_RESPONSES {
+        text.push_str(&format!(
+            "{{\"timestamp\":\"2026-11-02T23:04:17.241Z\",\"message\":{{\"id\":\"msg_{number:07}\",\
+             \"model\":\"claude-sonnet-5-5\",\"usage\":{{\"input_tokens\":1,\
+             \"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":1}}}}}}\n"
+        ));
+    }
+    std::fs::create_dir_all(path.parent().ok_or("a transcript has a folder")?)?;
+    std::fs::write(path, text)?;
+    Ok(())
+}
+
+/// How many usage rows the session's transcript has given, none while the store cannot be read.
+fn usage_stored(root: &Path) -> TestResult<usize> {
+    let Ok(reader) = Reader::open(&root.join(".cortex"), 0) else {
+        return Ok(0);
+    };
+    Ok(reader
+        .queries()
+        .usage_of_session(&Identifier::new(SESSION)?)?
+        .len())
+}
+
+/// While the daemon reads a transcript of 24 MiB of short responses, which it reads in passes,
+/// every event it took more than a second earlier is in the store; at the end every response of
+/// the transcript has its row.
+#[test]
+fn events_are_stored_within_a_second_while_a_long_transcript_is_read() -> TestResult {
+    let _alone = alone();
+    let home = tempfile::tempdir()?;
+    let repo = tempfile::tempdir()?;
+    package(repo.path(), 1, 1)?;
+    let root = canonical_root(repo.path())?;
+    let transcript = home
+        .path()
+        .join(".claude")
+        .join("projects")
+        .join("C--repo")
+        .join(format!("{SESSION}.jsonl"));
+    long_transcript(&transcript)?;
+    let daemon = Daemon::start(&root, home.path())?;
+    let line = daemon.first_line()?;
+    assert!(line.starts_with("cortex: daemon ready"), "{line}");
+    let mut sender = Sender::new(&root, home.path());
+    let stop = Event {
+        hook: HookKind::Stop,
+        tool: None,
+        tool_target: None,
+        tool_result: None,
+        transcript_path: Some(transcript),
+        ..read_event(&root, 500)?
+    };
+    let body = RequestBody::Event {
+        event: Box::new(stop),
+    };
+    let answer = ask(&sender.files, Role::Hook, body, Instant::now() + WITHIN)?;
+    assert_eq!(answer.body, ResponseBody::Ack);
+    // Counting the rows reads them all, so it is done every half second rather than after each
+    // event, which would leave few events sent while the transcript is read.
+    let counted = Cell::new((Instant::now(), 0));
+    let is_reading = || -> TestResult<bool> {
+        let (at, rows) = counted.get();
+        if at.elapsed() < Duration::from_millis(500) {
+            return Ok(rows < LONG_TRANSCRIPT_RESPONSES);
+        }
+        let rows = usage_stored(&root)?;
+        counted.set((Instant::now(), rows));
+        Ok(rows < LONG_TRANSCRIPT_RESPONSES)
+    };
+    sender.send_while(is_reading, Duration::from_secs(120))?;
+    assert_eq!(usage_stored(&root)?, LONG_TRANSCRIPT_RESPONSES);
+    assert!(sender.sent.len() >= 20, "{} events", sender.sent.len());
     Ok(())
 }

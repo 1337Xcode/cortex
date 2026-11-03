@@ -100,14 +100,15 @@ pub fn daemon_command(root: &Path, home: &Path) -> Command {
     command
 }
 
-/// Makes `command` see `home` as the user's home folder and read no git configuration but what is
-/// there.
+/// Makes `command` see `home` as the user's home folder, read no git configuration but what is
+/// there, and find Claude Code's configuration folder, transcripts included, in its default place.
 pub fn isolate(command: &mut Command, home: &Path) {
     command
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("GIT_CONFIG_NOSYSTEM", "1");
     for name in [
+        "CLAUDE_CONFIG_DIR",
         "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_COUNT",
         "GIT_CONFIG_PARAMETERS",

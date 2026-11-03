@@ -1,5 +1,8 @@
 //! How each agent writes its transcript's lines: one format per agent, found by the agent.
 
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+
 use cortex_core::Agent;
 
 use crate::claude::Claude;
@@ -10,6 +13,11 @@ pub trait TranscriptFormat: Sync {
     /// The response `line` reports, without its line ending; `None` for a line that reports no
     /// response, or one that cannot be understood.
     fn response(&self, line: &[u8]) -> Option<Response>;
+
+    /// The folders the agent keeps its transcripts in: under the user's home folder, `home`, or
+    /// where the environment, read with `variable`, moves them. A transcript named anywhere else
+    /// is not the agent's.
+    fn folders(&self, home: &Path, variable: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf>;
 }
 
 /// The format of `agent`'s transcripts; `None` for an agent whose transcripts are not read yet.

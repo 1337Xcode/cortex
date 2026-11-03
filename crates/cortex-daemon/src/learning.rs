@@ -5,10 +5,10 @@
 //! again.
 
 use cortex_core::Config;
-use cortex_learn::{Learner, Recorder, TaskState, cluster_tasks};
+use cortex_learn::{Learner, TaskState, cluster_tasks};
 use cortex_store::Writer;
 
-use crate::host::{count_failed, now_ms, record_waiting};
+use crate::host::{count_failed, now_ms};
 use crate::inbox::Inbox;
 
 /// Most ended tasks waiting to be learned from. The writer learns between the batches it records,
@@ -47,15 +47,15 @@ impl Learning {
     }
 
     /// Learns from every task waiting, each in a transaction of `writer` of its own, with the
-    /// settings of `config`, recording with `recorder` the hook events waiting in `inbox` after
-    /// each; then writes the clusters of tasks again. A task whose learning the store refuses is
-    /// counted in `inbox` with the error and let go. Tasks that end while this runs wait for the
-    /// next time.
+    /// settings of `config`, running `between` after each to record the hook events waiting and
+    /// hand back the tasks they ended; then writes the clusters of tasks again. A task whose
+    /// learning the store refuses is counted in `inbox` with the error and let go. Tasks that end
+    /// while this runs wait for the next time.
     pub(crate) fn learn(
         &mut self,
-        (writer, recorder): (&mut Writer, &mut Recorder),
-        inbox: &Inbox,
-        config: &Config,
+        writer: &mut Writer,
+        (inbox, config): (&Inbox, &Config),
+        mut between: impl FnMut(&mut Writer) -> Vec<TaskState>,
     ) {
         if self.ended.is_empty() {
             return;
@@ -71,7 +71,7 @@ impl Learning {
             if let Err(error) = kept {
                 count_failed(inbox, "what a task's end teaches", &error);
             }
-            let more = record_waiting(writer, recorder, inbox);
+            let more = between(writer);
             self.wait(more);
         }
         let clustered = writer.transaction().and_then(|mut transaction| {

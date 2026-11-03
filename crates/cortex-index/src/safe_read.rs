@@ -1,5 +1,6 @@
-//! Reading files a repository holds, which someone hostile may have written: never through a
-//! symbolic link, never anything but a regular file, never more than a set number of bytes.
+//! Reading files someone hostile may have written, those a repository holds and the transcripts a
+//! hook names among them: never through a symbolic link, never anything but a regular file, never
+//! more than a set number of bytes.
 //!
 //! A path is inspected without following links, opened, and the opened file checked again, so a
 //! link swapped in between is caught. On Unix the check compares the device and inode; on Windows,
@@ -55,8 +56,13 @@ pub fn read_start(path: &Path, count: u64) -> Result<Vec<u8>, ReadError> {
     Ok(bytes)
 }
 
-/// Opens `path` when it is a regular file, and only that file.
-fn open_regular(path: &Path) -> Result<File, ReadError> {
+/// Opens `path` when it is a regular file, and only that file: a link at `path` is refused, not
+/// followed.
+///
+/// # Errors
+///
+/// [`ReadError::NotRegular`] and I/O errors.
+pub fn open_regular(path: &Path) -> Result<File, ReadError> {
     let inspected = fs::symlink_metadata(path)?;
     if !inspected.file_type().is_file() {
         return Err(ReadError::NotRegular);

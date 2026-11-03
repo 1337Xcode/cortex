@@ -7,7 +7,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use cortex_core::Agent;
-use cortex_meter::{Claude, MAX_READ_BYTES, MAX_RECENT_RESPONSES, Tail, Turn, Usage, format_of};
+use cortex_meter::{
+    Claude, MAX_LINE_BYTES, MAX_RECENT_RESPONSES, Tail, TranscriptFormat, Turn, Usage, format_of,
+};
 use proptest::prelude::*;
 
 /// Result type for these tests: any failure fails the test.
@@ -88,7 +90,7 @@ impl Transcript {
 fn read_whole(bytes: &[u8]) -> TestResult<Vec<Turn>> {
     let transcript = Transcript::new()?;
     transcript.append(bytes)?;
-    transcript.read(&mut Tail::new(), MAX_READ_BYTES)
+    transcript.read(&mut Tail::new(), MAX_LINE_BYTES)
 }
 
 /// The Grep capture's seven usage lines are four responses, one line per content block, read off
@@ -264,14 +266,14 @@ fn a_line_is_read_once_whole() -> TestResult {
     let transcript = Transcript::new()?;
     let mut tail = Tail::new();
     transcript.append(bytes.get(..cut).ok_or("the cut")?)?;
-    let first = transcript.read(&mut tail, MAX_READ_BYTES)?;
+    let first = transcript.read(&mut tail, MAX_LINE_BYTES)?;
     assert_eq!(ordinals(&first), [1, 2]);
     assert_eq!(tail.offset(), u64::try_from(third)?);
     transcript.append(bytes.get(cut..).ok_or("the rest")?)?;
-    let rest = transcript.read(&mut tail, MAX_READ_BYTES)?;
+    let rest = transcript.read(&mut tail, MAX_LINE_BYTES)?;
     assert_eq!(ordinals(&rest), [3, 4]);
     assert_eq!(tail.offset(), u64::try_from(bytes.len())?);
-    assert!(transcript.read(&mut tail, MAX_READ_BYTES)?.is_empty());
+    assert!(transcript.read(&mut tail, MAX_LINE_BYTES)?.is_empty());
     Ok(())
 }
 
@@ -303,12 +305,12 @@ fn a_transcript_written_again_is_read_from_its_start() -> TestResult {
     let mut tail = Tail::new();
     transcript.append(&bytes)?;
     assert_eq!(
-        ordinals(&transcript.read(&mut tail, MAX_READ_BYTES)?),
+        ordinals(&transcript.read(&mut tail, MAX_LINE_BYTES)?),
         [1, 2, 3, 4]
     );
     let shorter = *line_starts(&bytes).get(30).ok_or("line 31")?;
     transcript.rewrite(bytes.get(..shorter).ok_or("the first lines")?)?;
-    let again = transcript.read(&mut tail, MAX_READ_BYTES)?;
+    let again = transcript.read(&mut tail, MAX_LINE_BYTES)?;
     assert_eq!(
         said(&again),
         said(&read_whole(bytes.get(..shorter).ok_or("lines")?)?)
@@ -419,25 +421,49 @@ fn a_tail_remembers_so_many_responses() -> TestResult {
     Ok(())
 }
 
-/// A read of the whole allowance that finds no line ending passes the line over: with reads of 64
-/// bytes, a 100-byte line of letters is skipped in two reads, the second ending at its line
-/// ending, and the response after it is read whole.
-#[test]
-fn a_line_longer_than_a_read_is_passed_over() -> TestResult {
-    let response = fixture("grep-session.jsonl")?
+/// The first response of the Grep session's transcript, its line 22, with its line ending.
+fn first_response() -> TestResult<Vec<u8>> {
+    Ok(fixture("grep-session.jsonl")?
         .split_inclusive(|byte| *byte == b'\n')
         .nth(21)
         .ok_or("line 22")?
-        .to_vec();
+        .to_vec())
+}
+
+/// A read stops after the whole lines that fit its allowance, but reads a line longer than the
+/// allowance to its end: with reads of 64 bytes, a 100-byte line of letters is read whole, 101
+/// bytes with its ending, and the response after it, longer than 64 bytes too, is read whole by
+/// the next read.
+#[test]
+fn a_line_longer_than_a_read_is_read_whole() -> TestResult {
+    let response = first_response()?;
     let transcript = Transcript::new()?;
     transcript.append(&[b'x'; 100])?;
     transcript.append(b"\n")?;
     transcript.append(&response)?;
     let mut tail = Tail::new();
     assert!(transcript.read(&mut tail, 64)?.is_empty());
-    assert_eq!(tail.offset(), 64);
-    let limit = u64::try_from(response.len())? + 64;
-    assert_eq!(ordinals(&transcript.read(&mut tail, limit)?), [1]);
+    assert_eq!(tail.offset(), 101);
+    assert_eq!(ordinals(&transcript.read(&mut tail, 64)?), [1]);
+    assert_eq!(tail.offset(), 101 + u64::try_from(response.len())?);
+    Ok(())
+}
+
+/// A line longer than `MAX_LINE_BYTES` is passed over: the first read stops after exactly that
+/// many bytes of it with no response, and the next reads its last 10 bytes and ending as a broken
+/// line, then the response after it.
+#[test]
+fn a_line_longer_than_the_longest_is_passed_over() -> TestResult {
+    let response = first_response()?;
+    let transcript = Transcript::new()?;
+    let longest = usize::try_from(MAX_LINE_BYTES)?;
+    transcript.append(&vec![b'x'; longest + 10])?;
+    transcript.append(b"\n")?;
+    transcript.append(&response)?;
+    let mut tail = Tail::new();
+    assert!(transcript.read(&mut tail, 4_096)?.is_empty());
+    assert_eq!(tail.offset(), MAX_LINE_BYTES);
+    assert_eq!(ordinals(&transcript.read(&mut tail, 4_096)?), [1]);
     Ok(())
 }
 
@@ -472,9 +498,45 @@ proptest! {
         for to in cuts.into_iter().chain([bytes.len()]) {
             let piece = bytes.get(from..to).ok_or_else(|| TestCaseError::fail("a piece"))?;
             transcript.append(piece).map_err(|error| TestCaseError::fail(error.to_string()))?;
-            read.extend(transcript.read(&mut tail, MAX_READ_BYTES).map_err(|error| TestCaseError::fail(error.to_string()))?);
+            read.extend(transcript.read(&mut tail, MAX_LINE_BYTES).map_err(|error| TestCaseError::fail(error.to_string()))?);
             from = to;
         }
         prop_assert_eq!(read, whole);
     }
+}
+
+/// Claude Code keeps every transcript under `.claude/projects` in the user's home folder, one
+/// folder a project, the subagents' in a folder beside their session's transcript; with
+/// `CLAUDE_CONFIG_DIR` set to an absolute path, in its `projects` folder too. An empty or relative
+/// value moves nothing, and no other variable counts.
+#[test]
+fn claude_code_keeps_its_transcripts_in_its_projects_folders()
+-> Result<(), Box<dyn std::error::Error>> {
+    let base = std::env::current_dir()?;
+    let home = base.join("home");
+    let config = base.join("claude-work");
+    let default = home.join(".claude").join("projects");
+    let set_to = |value: &Path| {
+        let value = value.as_os_str().to_owned();
+        move |name: &str| (name == "CLAUDE_CONFIG_DIR").then(|| value.clone())
+    };
+    assert_eq!(
+        Claude.folders(&home, &|_| None),
+        std::slice::from_ref(&default)
+    );
+    assert_eq!(
+        Claude.folders(&home, &set_to(&config)),
+        [config.join("projects"), default.clone()]
+    );
+    assert_eq!(
+        Claude.folders(&home, &set_to(Path::new(""))),
+        std::slice::from_ref(&default)
+    );
+    assert_eq!(
+        Claude.folders(&home, &set_to(Path::new("claude-work"))),
+        std::slice::from_ref(&default)
+    );
+    let other = |name: &str| (name == "CODEX_HOME").then(|| config.as_os_str().to_owned());
+    assert_eq!(Claude.folders(&home, &other), [default]);
+    Ok(())
 }
