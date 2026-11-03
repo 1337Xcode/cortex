@@ -274,7 +274,8 @@ fn a_link_is_added_to_what_decay_leaves_and_held_within_bounds() -> TestResult {
         .into_iter()
         .collect();
     let mut transaction = store.writer.transaction()?;
-    add_links(&mut transaction, &linking(1, TaskOutcome::Success), &first)?;
+    let written = add_links(&mut transaction, &linking(1, TaskOutcome::Success), &first)?;
+    assert_eq!(written, first, "nothing near a bound: written as earned");
     transaction.commit()?;
     assert_eq!(stored(&store, (a, b))?, Some((1.0, 1, 1, false)));
     assert_eq!(stored(&store, (c, d))?, Some((4.98, 1, 1, false)));

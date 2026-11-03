@@ -8,9 +8,10 @@
 //! then; the next task's end looks again, once the index has. A git restore needs no reading and
 //! is seen at once.
 //!
-//! A task found put back only at the next end loses what its own end gave its links, brought
-//! forward to the next end by the links' decay, as well as a reverted task's share: the links are
-//! then what they would be had the task been judged reverted at once.
+//! A task found put back only at the next end loses what its own end gave its links, as written
+//! within their bounds and brought forward to the next end by the links' decay, as well as a
+//! reverted task's share: the links are then what they would be had the task's work drawn nothing,
+//! less that share.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -37,9 +38,9 @@ pub struct Learned {
     pub outcome: TaskOutcome,
     /// The task before it in its session, when this end showed that task was put back.
     pub reverted_before: Option<Ulid>,
-    /// What the task's end added to the links, by pair, before the bounds a link is held within:
-    /// what a later end takes back should it find the task put back. Empty for a task that failed
-    /// or was left; for a task put back at its own end, what weakened the links.
+    /// What the task's end changed the links by, pair by pair, as written within the bounds a link
+    /// is held within: what a later end takes back should it find the task put back. Empty for a
+    /// task that failed or was left; for a task put back at its own end, what weakened the links.
     pub linked: EarnedLinks,
 }
 
@@ -116,7 +117,7 @@ impl Learner {
         add_interest(transaction, (row.seq, config.interest_decay), &earned)?;
         let linking = linking(config, row.seq, judgement.outcome);
         let links = links_of(transaction.queries(), state, &linking)?;
-        add_links(transaction, &linking, &links)?;
+        let linked = add_links(transaction, &linking, &links)?;
         let record = episode_of(
             transaction.queries(),
             state,
@@ -130,7 +131,7 @@ impl Learner {
         Ok(Some(Learned {
             outcome: judgement.outcome,
             reverted_before,
-            linked: links,
+            linked,
         }))
     }
 

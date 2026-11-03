@@ -399,6 +399,63 @@ fn a_success_put_back_later_loses_what_it_gave_the_links() -> TestResult {
     Ok(())
 }
 
+/// What a late revert takes back is what its task's end wrote, after the ceiling of 5.0 took its
+/// part: `a.py` and `b.py` are linked by 4.95 as of task 0, before any task here. A task of `s1`
+/// edits both and passes its tests, which earns 0.1 on top of 4.95 x 0.995 = 4.92525: 5.02525,
+/// held at 5.0, so 0.07475 was written, the link's second observation. The next task of `s1`
+/// restores both with git: at task 2 the link is 5.0 x 0.995 = 4.975, less what was written
+/// decayed alike, 0.07475 x 0.995 = 0.07437625, less a reverted task's 0.05: 4.85062375, what
+/// 4.95 alone leaves after two tasks, 4.90062375, less that share. Taking back the 0.1 earned
+/// would have left 4.8255.
+#[test]
+fn a_late_revert_takes_back_what_the_ceiling_left() -> TestResult {
+    let mut store = Store::new()?;
+    let mut learning = Learning::new();
+    let (a, b) = two_files(&mut store)?;
+    let mut transaction = store.writer.transaction()?;
+    let planted = EdgeRecord {
+        dst: b,
+        weight: 4.95,
+        count: 1,
+        last_seq: 0,
+        is_directed: false,
+    };
+    transaction.set_edges(EdgeType::CoAccess, &[(a, planted)])?;
+    transaction.commit()?;
+    let mut events = vec![start("s1", 1_000, StartSource::Startup)?];
+    events.extend(task(
+        "s1",
+        1_001,
+        vec![
+            edit("s1", 1_002, "a.py")?,
+            edit("s1", 1_003, "b.py")?,
+            shell("s1", 1_004, "cargo test", Some(0))?,
+        ],
+    )?);
+    let (first_id, found) = learning.one(&mut store, &events)?;
+    assert_eq!(found.outcome, TaskOutcome::Success);
+    assert_eq!(links(&store, &[a, b])?, [(a, b, 5.0, 2, 1)]);
+    let written = found
+        .linked
+        .get(&(a, b))
+        .copied()
+        .ok_or("nothing written")?;
+    assert!((written - 0.074_75).abs() < 1e-12, "{written}");
+    let restore = task(
+        "s1",
+        2_000,
+        vec![shell("s1", 2_002, "git restore a.py b.py", Some(0))?],
+    )?;
+    let (_, found) = learning.one(&mut store, &restore)?;
+    assert_eq!(found_as(&found), (TaskOutcome::Unknown, Some(first_id)));
+    let held = links(&store, &[a, b])?;
+    assert!(
+        is_link(held.first(), (a, b, 4.850_623_75, 3, 2)),
+        "{held:?}"
+    );
+    Ok(())
+}
+
 /// A task whose work stood is left alone at the next end: the first task changes `a.py` and
 /// `b.py` and passes its tests, linked by 0.1; the index reads them changed; the session's next
 /// task ends having done nothing, and the first keeps its judgement, its link and its record.

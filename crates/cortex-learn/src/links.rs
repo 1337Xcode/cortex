@@ -107,6 +107,8 @@ pub fn links_of(
 /// Adds `links` to the stored links in `transaction`, each weight first brought forward to task
 /// `linking.seq` by `linking.link_decay` for each task since the link last changed, and held
 /// between 0 and [`MAX_WEIGHT`]. A pair with no link yet and nothing to gain is left unwritten.
+/// Returns what each written pair's weight changed by once held within those bounds: less than
+/// was earned when a bound took part of it.
 ///
 /// # Errors
 ///
@@ -115,7 +117,7 @@ pub fn add_links(
     transaction: &mut WriteTx<'_>,
     linking: &Linking,
     links: &EarnedLinks,
-) -> Result<(), StoreError> {
+) -> Result<EarnedLinks, StoreError> {
     let nodes: Vec<NodeId> = links
         .keys()
         .flat_map(|(left, right)| [*left, *right])
@@ -129,6 +131,7 @@ pub fn add_links(
         .map(|row| ((row.src, row.edge.dst), row.edge))
         .collect();
     let mut edges: Vec<(NodeId, EdgeRecord)> = Vec::new();
+    let mut applied = EarnedLinks::new();
     for (pair, add) in links {
         let before = held.get(pair);
         if before.is_none() && *add <= 0.0 {
@@ -143,18 +146,21 @@ pub fn add_links(
             )
         });
         let count = before.map_or(0, |edge| edge.count).saturating_add(1);
+        let held = (weight + add).clamp(0.0, MAX_WEIGHT);
+        applied.insert(*pair, held - weight);
         edges.push((
             pair.0,
             EdgeRecord {
                 dst: pair.1,
-                weight: (weight + add).clamp(0.0, MAX_WEIGHT),
+                weight: held,
                 count,
                 last_seq: i64::try_from(linking.seq).unwrap_or(i64::MAX),
                 is_directed: false,
             },
         ));
     }
-    transaction.set_edges(EdgeType::CoAccess, &edges)
+    transaction.set_edges(EdgeType::CoAccess, &edges)?;
+    Ok(applied)
 }
 
 /// What a task's outcome does to the weight of every pair in its working set, as a share of the
