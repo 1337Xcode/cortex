@@ -463,6 +463,16 @@ impl WriteTx<'_> {
         self.atomically(|connection| usage::replace(connection, rows))
     }
 
+    /// Removes every usage row of `session_id`: its transcript is about to be read again from its
+    /// start, and a row past the transcript's new end must not stay.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn forget_usage(&mut self, session_id: &Identifier) -> Result<(), StoreError> {
+        self.atomically(|connection| usage::forget(connection, session_id))
+    }
+
     /// Sets the co-change miner's state under `key` to `value`.
     ///
     /// # Errors

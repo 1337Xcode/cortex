@@ -75,6 +75,15 @@ pub(crate) fn replace(connection: &Connection, rows: &[UsageRow]) -> Result<(), 
     Ok(())
 }
 
+/// Removes every row of `session_id`, before its transcript is read again from its start.
+pub(crate) fn forget(connection: &Connection, session_id: &Identifier) -> Result<(), StoreError> {
+    connection
+        .prepare_cached(schema::USAGE_FORGET)
+        .and_then(|mut statement| statement.execute([session_id.as_str()]))
+        .map_err(sqlite("forgetting usage"))?;
+    Ok(())
+}
+
 impl Queries<'_> {
     /// The usage of `session_id`, by turn.
     ///

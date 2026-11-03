@@ -426,6 +426,8 @@ pub(crate) const USAGE_REPLACE: &str = "INSERT INTO usage \
      cache_read = excluded.cache_read, output = excluded.output, \
      reasoning = excluded.reasoning, service_tier = excluded.service_tier, \
      speed = excluded.speed, inference_geo = excluded.inference_geo";
+/// Removes every usage row of a session.
+pub(crate) const USAGE_FORGET: &str = "DELETE FROM usage WHERE session_id = ?1";
 /// A session's usage, by turn.
 pub(crate) const USAGE_OF_SESSION: &str = "SELECT rowid, session_id, turn, ts, input, \
      cache_write, cache_write_1h, cache_read, output, reasoning, model, service_tier, speed, \

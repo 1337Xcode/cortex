@@ -116,6 +116,9 @@ struct Pass {
     kept_as: PathBuf,
     /// The responses it added.
     turns: Vec<Turn>,
+    /// Whether it read from the transcript's start: the first pass over it, or one over a
+    /// transcript written again shorter than where the last pass stopped.
+    is_from_start: bool,
     /// Whether the transcript holds more after this pass, for the next.
     has_more: bool,
 }
@@ -252,6 +255,8 @@ impl Meter {
         Ok(Pass {
             kept_as,
             turns,
+            // A tail goes back only when it starts over, at a file shorter than its place.
+            is_from_start: start == 0 || offset < start,
             // A pass that moved and stopped short of the end has more to read; one that did not
             // move found only a line still being written.
             has_more: offset != start && offset < length,
@@ -259,16 +264,23 @@ impl Meter {
     }
 
     /// Writes the usage of `pass` as rows of `session_id`, in one transaction of `writer`, and
-    /// says whether it was written. When the store refuses it, the failure is counted in `inbox`
-    /// and the transcript's place forgotten, so that it is read from its start next time.
+    /// says whether it was written. A pass from the transcript's start replaces every row of the
+    /// session, so that none past the transcript's end stays. When the store refuses it, the
+    /// failure is counted in `inbox` and the transcript's place forgotten, so that it is read from
+    /// its start next time.
     fn write(
         &mut self,
         writer: &mut Writer,
         inbox: &Inbox,
         (session_id, pass): (&Identifier, Pass),
     ) -> bool {
-        let Pass { kept_as, turns, .. } = pass;
-        if turns.is_empty() {
+        let Pass {
+            kept_as,
+            turns,
+            is_from_start,
+            ..
+        } = pass;
+        if turns.is_empty() && !is_from_start {
             return true;
         }
         let rows: Vec<UsageRow> = turns
@@ -292,6 +304,9 @@ impl Meter {
             })
             .collect();
         let written = writer.transaction().and_then(|mut transaction| {
+            if is_from_start {
+                transaction.forget_usage(session_id)?;
+            }
             transaction.replace_usage(&rows)?;
             transaction.commit()
         });
@@ -556,6 +571,36 @@ mod tests {
             ]
         );
         assert_eq!(inbox.counts().failed_batches, 1);
+        Ok(())
+    }
+
+    /// A transcript written again from its start, shorter than where the last read stopped,
+    /// replaces its session's usage: once the Grep session's four responses are written, the file
+    /// is cut back to the lines before its second response, which hold the first alone, and read
+    /// again. Only the first response's row is left, where the three responses no longer in the
+    /// file would otherwise keep their rows.
+    #[test]
+    fn a_transcript_written_again_replaces_its_usage() -> TestResult {
+        let (home, path) = home_with_transcript()?;
+        let root = tempfile::tempdir()?;
+        let mut writer = writer(root.path())?;
+        record_session(&mut writer, "s1")?;
+        let inbox = Inbox::default();
+        let mut meter = Meter::new(home.path(), &|_| None);
+        meter.wait([transcript("s1", &path)?]);
+        meter.read(&mut writer, &inbox, |_| Vec::new());
+        assert_eq!(usage_of(&writer, "s1")?.len(), 4);
+        let before_second: String = GREP_SESSION
+            .lines()
+            .take_while(|line| !line.contains("msg_fixture0002"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        assert!(before_second.len() < GREP_SESSION.len());
+        fs::write(&path, before_second)?;
+        meter.wait([transcript("s1", &path)?]);
+        meter.read(&mut writer, &inbox, |_| Vec::new());
+        assert_eq!(usage_of(&writer, "s1")?, [(1, 3_702, 29_797, 0, 100)]);
+        assert_eq!(inbox.counts().failed_batches, 0);
         Ok(())
     }
 

@@ -103,6 +103,27 @@ fn usage_is_written_read_back_by_turn_and_replaced() -> TestResult {
     Ok(())
 }
 
+/// Forgetting a session's usage removes every row of that session and no other's, so that a
+/// transcript read again from its start leaves no row past its new end.
+#[test]
+fn a_session_s_usage_is_forgotten_whole() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = with_sessions(&scratch)?;
+    let other = usage("s2", 1, (7, 0, 0, 1), None)?;
+    let mut transaction = writer.transaction()?;
+    transaction.replace_usage(&[
+        usage("s1", 1, (3_702, 29_797, 0, 100), None)?,
+        usage("s1", 2, (2, 3_819, 29_797, 95), None)?,
+        other.clone(),
+    ])?;
+    transaction.forget_usage(&name("s1")?)?;
+    transaction.commit()?;
+    let queries = writer.queries();
+    assert_eq!(queries.usage_of_session(&name("s1")?)?, []);
+    assert_eq!(queries.usage_of_session(&name("s2")?)?, [other]);
+    Ok(())
+}
+
 /// A count past what SQLite stores is refused naming its column, and nothing of the batch is
 /// written; a row for a session the database does not know is refused too.
 #[test]
