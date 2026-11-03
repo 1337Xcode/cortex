@@ -463,14 +463,19 @@ impl WriteTx<'_> {
         self.atomically(|connection| usage::replace(connection, rows))
     }
 
-    /// Removes every usage row of `session_id`: its transcript is about to be read again from its
-    /// start, and a row past the transcript's new end must not stay.
+    /// Removes every usage row of `session_id` numbered past `last_turn`: its transcript was read
+    /// again from its start to its end and holds no more responses than that, so a row past it
+    /// is one the file no longer holds.
     ///
     /// # Errors
     ///
     /// [`StoreError::TransactionLost`] and SQLite errors.
-    pub fn forget_usage(&mut self, session_id: &Identifier) -> Result<(), StoreError> {
-        self.atomically(|connection| usage::forget(connection, session_id))
+    pub fn forget_usage_after(
+        &mut self,
+        session_id: &Identifier,
+        last_turn: u32,
+    ) -> Result<(), StoreError> {
+        self.atomically(|connection| usage::forget_after(connection, (session_id, last_turn)))
     }
 
     /// Sets the co-change miner's state under `key` to `value`.

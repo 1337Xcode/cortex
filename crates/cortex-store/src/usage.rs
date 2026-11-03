@@ -81,11 +81,14 @@ pub(crate) fn replace(connection: &Connection, rows: &[UsageRow]) -> Result<(), 
     Ok(())
 }
 
-/// Removes every row of `session_id`, before its transcript is read again from its start.
-pub(crate) fn forget(connection: &Connection, session_id: &Identifier) -> Result<(), StoreError> {
+/// Removes the rows of `session_id` numbered past `last_turn`.
+pub(crate) fn forget_after(
+    connection: &Connection,
+    (session_id, last_turn): (&Identifier, u32),
+) -> Result<(), StoreError> {
     connection
-        .prepare_cached(schema::USAGE_FORGET)
-        .and_then(|mut statement| statement.execute([session_id.as_str()]))
+        .prepare_cached(schema::USAGE_FORGET_AFTER)
+        .and_then(|mut statement| statement.execute((session_id.as_str(), last_turn)))
         .map_err(sqlite("forgetting usage"))?;
     Ok(())
 }

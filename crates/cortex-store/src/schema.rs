@@ -431,8 +431,8 @@ pub(crate) const USAGE_REPLACE: &str = "INSERT INTO usage \
      reasoning = excluded.reasoning, service_tier = excluded.service_tier, \
      speed = excluded.speed, inference_geo = excluded.inference_geo, \
      response = excluded.response";
-/// Removes every usage row of a session.
-pub(crate) const USAGE_FORGET: &str = "DELETE FROM usage WHERE session_id = ?1";
+/// Removes the usage rows of a session numbered past a turn.
+pub(crate) const USAGE_FORGET_AFTER: &str = "DELETE FROM usage WHERE session_id = ?1 AND turn > ?2";
 /// A session's usage, by turn, without a response another session that started earlier reports
 /// too (of two that started together, the one with the smaller id keeps it).
 pub(crate) const USAGE_OF_SESSION: &str = "SELECT u.rowid, u.session_id, u.turn, u.ts, \

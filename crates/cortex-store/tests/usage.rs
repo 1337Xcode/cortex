@@ -146,23 +146,26 @@ fn a_response_two_sessions_report_counts_once() -> TestResult {
     Ok(())
 }
 
-/// Forgetting a session's usage removes every row of that session and no other's, so that a
-/// transcript read again from its start leaves no row past its new end.
+/// Forgetting a session's usage past a turn removes that session's rows numbered after it and no
+/// other row, so that a transcript read again to its end leaves no row past its new end: of `s1`'s
+/// turns 1, 2 and 3, forgetting past 1 leaves turn 1, and `s2`'s turn 3 stays.
 #[test]
-fn a_session_s_usage_is_forgotten_whole() -> TestResult {
+fn a_session_s_usage_past_a_turn_is_forgotten() -> TestResult {
     let scratch = Scratch::new()?;
     let mut writer = with_sessions(&scratch)?;
-    let other = usage("s2", 1, (7, 0, 0, 1), None)?;
+    let first = usage("s1", 1, (3_702, 29_797, 0, 100), None)?;
+    let other = usage("s2", 3, (7, 0, 0, 1), None)?;
     let mut transaction = writer.transaction()?;
     transaction.replace_usage(&[
-        usage("s1", 1, (3_702, 29_797, 0, 100), None)?,
+        first.clone(),
         usage("s1", 2, (2, 3_819, 29_797, 95), None)?,
+        usage("s1", 3, (2, 155, 33_616, 360), None)?,
         other.clone(),
     ])?;
-    transaction.forget_usage(&name("s1")?)?;
+    transaction.forget_usage_after(&name("s1")?, 1)?;
     transaction.commit()?;
     let queries = writer.queries();
-    assert_eq!(queries.usage_of_session(&name("s1")?)?, []);
+    assert_eq!(queries.usage_of_session(&name("s1")?)?, [first]);
     assert_eq!(queries.usage_of_session(&name("s2")?)?, [other]);
     Ok(())
 }

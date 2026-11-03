@@ -78,6 +78,12 @@ impl Tail {
         self.offset
     }
 
+    /// How many responses the tail has counted: the number of the last one, 0 for none.
+    #[must_use]
+    pub fn counted(&self) -> u32 {
+        self.counted
+    }
+
     /// Reads `file`, a transcript written in `format`, from where the last read stopped: the whole
     /// lines within the next `read_bytes` of it, or the one line they begin, read to its end as
     /// far as [`MAX_LINE_BYTES`]. Returns the responses those lines report, in order. A line that

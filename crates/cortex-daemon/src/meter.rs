@@ -116,9 +116,9 @@ struct Pass {
     kept_as: PathBuf,
     /// The responses it added.
     turns: Vec<Turn>,
-    /// Whether it read from the transcript's start: the first pass over it, or one over a
-    /// transcript written again shorter than where the last pass stopped.
-    is_from_start: bool,
+    /// When it ended a reading of the transcript from its start, how many responses the
+    /// transcript holds: a row of the session numbered past them is one the file no longer holds.
+    trim_after: Option<u32>,
     /// Whether the transcript holds more after this pass, for the next.
     has_more: bool,
 }
@@ -130,6 +130,9 @@ struct Kept {
     tail: Tail,
     /// The number of the meter's read that last read it.
     read_number: u64,
+    /// Whether it is being read from its start, as it is the first time and after it was written
+    /// again shorter, until a pass reaches its end.
+    is_rereading: bool,
 }
 
 /// The transcripts that wait to be read, and where the reading of each read before stands.
@@ -237,35 +240,49 @@ impl Meter {
         let folders = self.folders.get(&agent).map_or(&[][..], Vec::as_slice);
         let kept_as = transcript_in(path, folders)?;
         let mut file = open_regular(path)?;
-        let mut tail = self
+        let (mut tail, was_rereading) = self
             .tails
             .remove(&kept_as)
-            .map(|kept| kept.tail)
-            .unwrap_or_default();
+            .map_or((Tail::default(), true), |kept| {
+                (kept.tail, kept.is_rereading)
+            });
         let start = tail.offset();
         let read = tail.read(&mut file, format, READ_PASS_BYTES);
         let offset = tail.offset();
+        let counted = tail.counted();
         self.reads += 1;
-        let read_number = self.reads;
-        self.tails
-            .insert(kept_as.clone(), Kept { tail, read_number });
+        let kept = Kept {
+            tail,
+            read_number: self.reads,
+            // A tail goes back only when it starts over, at a file shorter than its place.
+            is_rereading: was_rereading || offset < start,
+        };
+        let is_rereading = kept.is_rereading;
+        self.tails.insert(kept_as.clone(), kept);
         self.forget_oldest();
         let turns = read?;
         let length = file.metadata().map_err(Unread::Io)?.len();
+        // A pass that moved and stopped short of the end has more to read; one that did not move
+        // found only a line still being written.
+        let has_more = offset != start && offset < length;
+        let trim_after = (is_rereading && !has_more).then_some(counted);
+        if trim_after.is_some()
+            && let Some(kept) = self.tails.get_mut(&kept_as)
+        {
+            kept.is_rereading = false;
+        }
         Ok(Pass {
             kept_as,
             turns,
-            // A tail goes back only when it starts over, at a file shorter than its place.
-            is_from_start: start == 0 || offset < start,
-            // A pass that moved and stopped short of the end has more to read; one that did not
-            // move found only a line still being written.
-            has_more: offset != start && offset < length,
+            trim_after,
+            has_more,
         })
     }
 
     /// Writes the usage of `pass` as rows of `session_id`, in one transaction of `writer`, and
-    /// says whether it was written. A pass from the transcript's start replaces every row of the
-    /// session, so that none past the transcript's end stays. When the store refuses it, the
+    /// says whether it was written. The pass that ends a reading from the transcript's start also
+    /// removes the session's rows numbered past the responses the transcript holds, so that none
+    /// past its end stays while every row stays whole until then. When the store refuses it, the
     /// failure is counted in `inbox` and the transcript's place forgotten, so that it is read from
     /// its start next time.
     fn write(
@@ -277,10 +294,10 @@ impl Meter {
         let Pass {
             kept_as,
             turns,
-            is_from_start,
+            trim_after,
             ..
         } = pass;
-        if turns.is_empty() && !is_from_start {
+        if turns.is_empty() && trim_after.is_none() {
             return true;
         }
         let rows: Vec<UsageRow> = turns
@@ -305,10 +322,10 @@ impl Meter {
             })
             .collect();
         let written = writer.transaction().and_then(|mut transaction| {
-            if is_from_start {
-                transaction.forget_usage(session_id)?;
-            }
             transaction.replace_usage(&rows)?;
+            if let Some(last_turn) = trim_after {
+                transaction.forget_usage_after(session_id, last_turn)?;
+            }
             transaction.commit()
         });
         if let Err(error) = written {
@@ -725,6 +742,39 @@ mod tests {
         assert_eq!(turns, (1..=2_000).collect::<Vec<u32>>());
         assert_eq!(passes, 2);
         assert!(meter.is_idle());
+        Ok(())
+    }
+
+    /// A transcript read again from its start, as after the daemon started again, keeps its
+    /// session's rows whole while its passes go on: 2,000 responses, more than a pass holds, are
+    /// written by one meter; a new meter's first pass reads only part of the file and the session
+    /// still has 2,000 rows, as it does after the last pass.
+    #[test]
+    fn a_transcript_read_again_keeps_its_rows_whole() -> TestResult {
+        let (home, path) = home_with_transcript()?;
+        long_transcript(&path)?;
+        let root = tempfile::tempdir()?;
+        let mut writer = writer(root.path())?;
+        record_session(&mut writer, "s1")?;
+        let inbox = Inbox::default();
+        let all: Vec<u32> = (1..=2_000).collect();
+        let turns = |writer: &Writer| -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+            Ok(usage_of(writer, "s1")?.iter().map(|row| row.0).collect())
+        };
+        let mut before = Meter::new(home.path(), &|_| None);
+        before.wait([transcript("s1", &path)?]);
+        while !before.is_idle() {
+            before.read(&mut writer, &inbox, |_| Vec::new());
+        }
+        assert_eq!(turns(&writer)?, all);
+        let mut after = Meter::new(home.path(), &|_| None);
+        after.wait([transcript("s1", &path)?]);
+        after.read(&mut writer, &inbox, |_| Vec::new());
+        assert!(!after.is_idle(), "the first pass read part of the file");
+        assert_eq!(turns(&writer)?, all);
+        after.read(&mut writer, &inbox, |_| Vec::new());
+        assert!(after.is_idle());
+        assert_eq!(turns(&writer)?, all);
         Ok(())
     }
 
