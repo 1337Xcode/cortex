@@ -16,8 +16,8 @@ use std::time::Duration;
 use common::hook_call::hook;
 use common::{Daemon, TestResult, payloads, wait_for};
 use cortex_core::{
-    CommandKind, ContentHash, EdgeType, EventKind, Identifier, InterestTier, RepoPath, TaskOutcome,
-    Ulid,
+    CommandKind, ContentHash, EdgeType, EventKind, Identifier, InterestTier, RepoId, RepoPath,
+    TaskOutcome, Ulid, UserFolder, canonical_root,
 };
 use cortex_store::{
     ChangedFile, ChangedSymbol, NodeId, Pitfalls, Queries, RanCheck, ReadFile, Reader,
@@ -319,22 +319,57 @@ fn a_session_s_tasks_are_learned_from_as_they_end() -> TestResult {
     wait_for(|| is_learned(&repo, 1))?;
     let second = *tasks(&repo)?.get(1).ok_or("no second task")?;
     assert_eq!(outcome(&repo, second)?, (Some(TaskOutcome::Unknown), None));
-    assert_eq!(
-        outcome(&repo, first)?,
-        (
-            Some(TaskOutcome::Reverted),
-            Some(
-                "every edited file is back as it was before the task, by the end of the next task"
-                    .to_owned()
-            )
-        )
+    let reverted = (
+        Some(TaskOutcome::Reverted),
+        Some(
+            "every edited file is back as it was before the task, by the end of the next task"
+                .to_owned(),
+        ),
     );
+    let judged = outcome(&repo, first)?;
+    if judged != reverted {
+        let why = what_happened(&repo, home)?;
+        return Err(format!("the first task is {judged:?}, not {reverted:?}\n{why}").into());
+    }
     let record = read(&repo, |queries| Ok(queries.episode_of_task(first)?))?;
     assert_eq!(
         record.map(|record| record.outcome),
         Some(TaskOutcome::Reverted)
     );
     Ok(())
+}
+
+/// What the store and the daemon's log say of the session, for a failure to show: each event of
+/// the session (its kind, file, task, time and source) and the log's warnings and errors, none of
+/// which hold code or prompt text.
+fn what_happened(root: &Path, home: &Path) -> TestResult<String> {
+    let tasks = tasks(root)?;
+    let mut said = read(root, |queries| {
+        let mut lines = Vec::new();
+        for row in queries.events_of_session(&Identifier::new(S1)?)? {
+            let record = row.record;
+            let task = record
+                .task_id
+                .and_then(|task| tasks.iter().position(|known| *known == task));
+            lines.push(format!(
+                "event {:?} {:?} task {task:?} at {} source {:?}",
+                record.kind, record.path, record.ts_ms, record.meta.source
+            ));
+        }
+        Ok(lines)
+    })?;
+    let id = RepoId::of(&canonical_root(root)?);
+    let log = UserFolder::in_home(home)
+        .logs_folder()
+        .join(format!("daemon-{id}.log"));
+    if let Ok(text) = std::fs::read_to_string(log) {
+        said.extend(
+            text.lines()
+                .filter(|line| line.contains("WARN") || line.contains("ERROR"))
+                .map(str::to_owned),
+        );
+    }
+    Ok(said.join("\n"))
 }
 
 /// Checks the interest, the link, the record and the cluster the first task's end left, as worked
