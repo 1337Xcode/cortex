@@ -51,6 +51,16 @@ pub fn append_private_file(path: &Path) -> io::Result<File> {
     open_private(path, OpenOptions::new().append(true).create(true))
 }
 
+/// Creates `path` for writing, private, refusing a file already there.
+///
+/// # Errors
+///
+/// A file is already at `path` ([`io::ErrorKind::AlreadyExists`]), or it cannot be created or
+/// its mode set.
+pub fn create_new_private_file(path: &Path) -> io::Result<File> {
+    open_private(path, OpenOptions::new().write(true).create_new(true))
+}
+
 /// Opens `path` with `options`, a new file created private and a wider mode narrowed.
 fn open_private(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
     #[cfg(unix)]
@@ -97,6 +107,15 @@ mod tests {
         let log = folder.join("hook.log");
         drop(append_private_file(&log)?);
         assert_eq!(mode(&log)?, 0o600);
+        let table = folder.join("pricing.toml");
+        drop(create_new_private_file(&table)?);
+        assert_eq!(mode(&table)?, 0o600);
+        assert_eq!(
+            create_new_private_file(&table)
+                .map_err(|error| error.kind())
+                .err(),
+            Some(io::ErrorKind::AlreadyExists)
+        );
         Ok(())
     }
 }

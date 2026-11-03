@@ -15,6 +15,8 @@
 mod claude;
 mod error;
 mod format;
+mod price_file;
+mod pricing;
 mod response;
 mod tail;
 mod timestamp;
@@ -22,6 +24,10 @@ mod timestamp;
 pub use claude::Claude;
 pub use error::MeterError;
 pub use format::{TranscriptFormat, format_of};
+pub use price_file::{MAX_PRICE_FILE_BYTES, load_or_write};
+pub use pricing::{
+    Billed, Cost, ModelPrices, PriceTable, PricingError, Rates, SHIPPED_PRICES, Unpriced,
+};
 pub use response::{Response, SYNTHETIC_MODEL, Service, Usage};
 pub use tail::{MAX_LINE_BYTES, MAX_RECENT_RESPONSES, Tail, Turn};
 pub use timestamp::utc_millis;

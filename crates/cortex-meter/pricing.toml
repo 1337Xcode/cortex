@@ -1,0 +1,74 @@
+# What Cortex estimates model responses cost with, in US dollars per million tokens.
+#
+# Cortex shipped these prices as Anthropic's pricing page listed them on the date below. Change any
+# of them to what you pay and Cortex estimates with yours; add a model the same way. A response
+# whose model, speed, service tier or region has no price here, or whose cache writes the
+# transcript does not split between the two lifetimes, gets no estimate rather than a guess. Cache prices: `cache_write_5m` for input written to the five-minute cache,
+# `cache_write_1h` for the one-hour cache, `cache_read` for input read from the cache.
+#
+# A model's `standard` prices are those of the standard speed. `fast` holds its fast mode prices,
+# where it has a fast mode. `us_only` multiplies every price of a response kept to inference in
+# the United States, where the model offers it. `long_prompt` holds the prices of a request whose
+# prompt (its input, cache writes and cache reads together) is over `long_prompt_above_tokens`.
+# A dated model id such as `claude-haiku-4-5-20251001` takes the prices of `claude-haiku-4-5`.
+
+updated = "2026-11-03"
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+
+[models.claude-fable-5-1]
+standard = { input = 10.0, cache_write_5m = 12.5, cache_write_1h = 20.0, cache_read = 0.25, output = 50.0 }
+us_only = 1.1
+
+[models.claude-fable-5]
+standard = { input = 10.0, cache_write_5m = 12.5, cache_write_1h = 20.0, cache_read = 1.0, output = 50.0 }
+us_only = 1.1
+
+[models.claude-opus-5-5]
+standard = { input = 4.0, cache_write_5m = 5.0, cache_write_1h = 8.0, cache_read = 0.2, output = 20.0 }
+fast = { input = 8.0, cache_write_5m = 10.0, cache_write_1h = 16.0, cache_read = 0.4, output = 40.0 }
+us_only = 1.1
+
+[models.claude-opus-5]
+standard = { input = 5.0, cache_write_5m = 6.25, cache_write_1h = 10.0, cache_read = 0.5, output = 25.0 }
+fast = { input = 10.0, cache_write_5m = 12.5, cache_write_1h = 20.0, cache_read = 1.0, output = 50.0 }
+us_only = 1.1
+
+[models.claude-opus-4-8]
+standard = { input = 5.0, cache_write_5m = 6.25, cache_write_1h = 10.0, cache_read = 0.5, output = 25.0 }
+fast = { input = 10.0, cache_write_5m = 12.5, cache_write_1h = 20.0, cache_read = 1.0, output = 50.0 }
+us_only = 1.1
+
+[models.claude-opus-4-7]
+standard = { input = 5.0, cache_write_5m = 6.25, cache_write_1h = 10.0, cache_read = 0.5, output = 25.0 }
+us_only = 1.1
+
+[models.claude-opus-4-6]
+standard = { input = 5.0, cache_write_5m = 6.25, cache_write_1h = 10.0, cache_read = 0.5, output = 25.0 }
+us_only = 1.1
+
+[models.claude-opus-4-5]
+standard = { input = 5.0, cache_write_5m = 6.25, cache_write_1h = 10.0, cache_read = 0.5, output = 25.0 }
+
+[models.claude-sonnet-5-5]
+standard = { input = 2.0, cache_write_5m = 2.5, cache_write_1h = 4.0, cache_read = 0.1, output = 10.0 }
+us_only = 1.1
+
+[models.claude-sonnet-5]
+standard = { input = 2.0, cache_write_5m = 2.5, cache_write_1h = 4.0, cache_read = 0.2, output = 10.0 }
+us_only = 1.1
+
+[models.claude-sonnet-4-6]
+standard = { input = 3.0, cache_write_5m = 3.75, cache_write_1h = 6.0, cache_read = 0.3, output = 15.0 }
+us_only = 1.1
+
+[models.claude-sonnet-4-5]
+standard = { input = 3.0, cache_write_5m = 3.75, cache_write_1h = 6.0, cache_read = 0.3, output = 15.0 }
+
+[models.claude-haiku-5-5]
+standard = { input = 0.1, cache_write_5m = 0.125, cache_write_1h = 0.2, cache_read = 0.01, output = 0.5 }
+long_prompt = { input = 0.5, cache_write_5m = 0.625, cache_write_1h = 1.0, cache_read = 0.05, output = 2.5 }
+long_prompt_above_tokens = 100000
+us_only = 1.1
+
+[models.claude-haiku-4-5]
+standard = { input = 1.0, cache_write_5m = 1.25, cache_write_1h = 2.0, cache_read = 0.1, output = 5.0 }

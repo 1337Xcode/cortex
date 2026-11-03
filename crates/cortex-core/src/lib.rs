@@ -60,7 +60,9 @@ pub use language::{Language, Tier};
 pub use log_rotation::rotate_log;
 pub use one_line::one_line;
 pub use path::{PathError, RepoPath};
-pub use private::{append_private_file, create_private_folder, open_private_file};
+pub use private::{
+    append_private_file, create_new_private_file, create_private_folder, open_private_file,
+};
 pub use program::{GIT, find_program};
 pub use repo_id::RepoId;
 pub use root::canonical_root;
