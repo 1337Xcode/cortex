@@ -21,6 +21,7 @@ mod host;
 mod inbox;
 mod instance;
 mod latency;
+mod learning;
 mod listener;
 mod log;
 mod miner;
@@ -36,7 +37,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use cortex_core::ipc::CORTEX_VERSION;
-use cortex_core::{RepoId, UserFolder, canonical_root};
+use cortex_core::{Config, RepoId, UserFolder, canonical_root};
 use cortex_index::{Change, DiscoverOptions, IndexReport, watch};
 use cortex_learn::{Commands, Recorder};
 use cortex_store::{Writer, WriterOptions};
@@ -44,6 +45,7 @@ use cortex_store::{Writer, WriterOptions};
 use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
+use self::learning::Learning;
 use self::miner::Miner;
 use self::server::Server;
 
@@ -148,11 +150,12 @@ fn index_and_serve(
     // those that came while it opened are recorded at once.
     let excerpt = config.store_prompt_excerpt;
     let mut recorder = Recorder::new(excerpt, commands);
-    host::record_waiting(&mut writer, &mut recorder, inbox);
+    let mut learning = Learning::default();
+    learning.wait(host::record_waiting(&mut writer, &mut recorder, inbox));
     // From here on, a daemon that cannot go on still records the events it took before it stops.
     let grammars = or_close(
-        host::load_grammars(&mut writer, &mut recorder, inbox),
-        || host::close(&mut writer, &mut recorder, inbox),
+        host::load_grammars((&mut writer, &mut recorder), &mut learning, inbox),
+        || close_and_learn(&mut writer, &mut recorder, &mut learning, (inbox, &config)),
     )?;
     let global_gitignore = match global_ignore::find(root) {
         Ok(found) => found,
@@ -162,7 +165,7 @@ fn index_and_serve(
                 note(&format!(
                     "warning: the global gitignore is not read: {error:#}"
                 )),
-                || host::close(&mut writer, &mut recorder, inbox),
+                || close_and_learn(&mut writer, &mut recorder, &mut learning, (inbox, &config)),
             )?;
             None
         }
@@ -175,14 +178,14 @@ fn index_and_serve(
     let feed = WatcherFeed(Arc::clone(inbox));
     let watcher = or_close(
         watch(root, &discover, move |change| feed.push(change)).context("watching the repository"),
-        || host::close(&mut writer, &mut recorder, inbox),
+        || close_and_learn(&mut writer, &mut recorder, &mut learning, (inbox, &config)),
     )?;
-    host::record_waiting(&mut writer, &mut recorder, inbox);
+    learning.wait(host::record_waiting(&mut writer, &mut recorder, inbox));
     let mut host = Host::new(
         root,
         grammars,
         (&config, discover),
-        (writer, recorder, inbox),
+        (writer, recorder, learning, inbox),
     );
     let report = or_close(host.index(&[]), || host.close())?;
     inbox.mark_indexed();
@@ -210,6 +213,18 @@ fn or_close<T>(result: anyhow::Result<T>, close: impl FnOnce()) -> anyhow::Resul
         close();
     }
     result
+}
+
+/// Closes `inbox` to events, records with `recorder` the events it took, and learns from the tasks
+/// that ended and wait in `learning`: what a daemon that cannot go on does before it stops.
+fn close_and_learn(
+    writer: &mut Writer,
+    recorder: &mut Recorder,
+    learning: &mut Learning,
+    (inbox, config): (&Inbox, &Config),
+) {
+    learning.wait(host::close(writer, recorder, inbox));
+    learning.learn((writer, recorder), inbox, config);
 }
 
 /// The watcher's way into the inbox. When the watcher lets go of it, the inbox learns that the

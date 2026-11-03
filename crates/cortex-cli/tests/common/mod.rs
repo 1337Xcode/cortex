@@ -7,6 +7,7 @@
 )]
 
 pub mod fake_daemon;
+pub mod hook_call;
 pub mod init;
 pub mod payloads;
 

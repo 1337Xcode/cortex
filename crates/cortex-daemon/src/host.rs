@@ -1,8 +1,9 @@
 //! The daemon's work loop: the one writer, the hook events, the watcher's changes and the
 //! miner's findings its inbox holds, the edits the watcher saw while a hook may still claim them,
-//! the huge mode crawl between them, and the idle stop. While the writer indexes or stores a
-//! mining, the work lets it in between its write transactions, and the events waiting and the
-//! edits due are recorded there.
+//! what the tasks that end teach, the huge mode crawl between them, and the idle stop. While the
+//! writer indexes or stores a mining, the work lets it in between its write transactions, and the
+//! events waiting and the edits due are recorded there; the tasks they end wait to be learned from
+//! until the writer is free.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -18,10 +19,11 @@ use cortex_git::mine;
 use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
 };
-use cortex_learn::Recorder;
+use cortex_learn::{Recorder, TaskState};
 use cortex_store::{PAUSE_EVERY, Pause, StoreError, Writer};
 
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
+use crate::learning::Learning;
 
 /// How often the crawler takes a batch of `index.crawl_files_per_second` files.
 const CRAWL_PERIOD: Duration = Duration::from_secs(1);
@@ -43,19 +45,21 @@ pub(crate) struct Host<'a> {
     crawl: Crawl,
     /// What turns hook events into rows.
     recorder: Recorder,
+    /// The tasks that ended and wait to be learned from, and what learns from them.
+    learning: Learning,
     /// Where hook events, the watcher's changes and a stop arrive.
     inbox: &'a Inbox,
 }
 
 impl<'a> Host<'a> {
     /// A host over `writer` for the repository at `root`, with the settings in effect and the
-    /// walk's options, recording events with `recorder` and taking its work from `inbox`, no file
-    /// waiting yet.
+    /// walk's options, recording events with `recorder`, learning from the tasks they end with
+    /// `learning`, and taking its work from `inbox`, no file waiting yet.
     pub(crate) fn new(
         root: &'a Path,
         grammars: Arc<Grammars>,
         (config, discover): (&'a Config, DiscoverOptions<'a>),
-        (writer, recorder, inbox): (Writer, Recorder, &'a Inbox),
+        (writer, recorder, learning, inbox): (Writer, Recorder, Learning, &'a Inbox),
     ) -> Self {
         Self {
             root,
@@ -65,6 +69,7 @@ impl<'a> Host<'a> {
             writer,
             crawl: Crawl::default(),
             recorder,
+            learning,
             inbox,
         }
     }
@@ -94,12 +99,13 @@ impl<'a> Host<'a> {
     }
 
     /// Records the events and indexes after the changes the inbox brings, records the edits the
-    /// watcher saw once they are due, crawls while nothing comes, and returns when asked to stop,
-    /// or once nothing waits to be parsed or recorded and neither a request nor a change came for
-    /// `daemon.idle_shutdown_minutes`. A batch that cannot be recorded is counted, with its error,
-    /// and left; the daemon goes on. However it ends, the inbox then takes no more events, and the
-    /// events it took and the edits still held are recorded: an event a hook was answered for is
-    /// not lost to a stop.
+    /// watcher saw once they are due, learns from the tasks that ended, crawls while nothing comes,
+    /// and returns when asked to stop, or once nothing waits to be parsed or recorded and neither a
+    /// request nor a change came for `daemon.idle_shutdown_minutes`. A batch that cannot be
+    /// recorded is counted, with its error, and left; the daemon goes on. However it ends, the
+    /// inbox then takes no more events, the events it took and the edits still held are recorded,
+    /// and the tasks that ended are learned from: an event a hook was answered for is not lost to
+    /// a stop.
     ///
     /// # Errors
     ///
@@ -111,12 +117,25 @@ impl<'a> Host<'a> {
     }
 
     /// Closes the inbox to events and records what it took, and the edits the watcher saw that
-    /// are still held: what the daemon does last, however it stops.
+    /// are still held, then learns from the tasks waiting: what the daemon does last, however it
+    /// stops.
     pub(crate) fn close(&mut self) {
-        close(&mut self.writer, &mut self.recorder, self.inbox);
+        let ended = close(&mut self.writer, &mut self.recorder, self.inbox);
+        self.learning.wait(ended);
         // Every edit still held is recorded too: a hook has had its chance to claim most of the
         // hold, and a stop must not lose them.
-        record_due_edits(&mut self.writer, &mut self.recorder, self.inbox, i64::MAX);
+        let ended = record_due_edits(&mut self.writer, &mut self.recorder, self.inbox, i64::MAX);
+        self.learning.wait(ended);
+        self.learn();
+    }
+
+    /// Learns from the tasks that ended and wait, recording the events that wait between them.
+    fn learn(&mut self) {
+        self.learning.learn(
+            (&mut self.writer, &mut self.recorder),
+            self.inbox,
+            self.config,
+        );
     }
 
     /// The work of [`Host::serve`] until it is asked to stop, is idle long enough or fails.
@@ -126,7 +145,9 @@ impl<'a> Host<'a> {
         let mut last_activity = Instant::now();
         let mut next_crawl = Instant::now();
         loop {
-            record_due_edits(&mut self.writer, &mut self.recorder, inbox, now_ms());
+            let ended = record_due_edits(&mut self.writer, &mut self.recorder, inbox, now_ms());
+            self.learning.wait(ended);
+            self.learn();
             last_activity = last_activity.max(inbox.last_request().unwrap_or(last_activity));
             // An idle time too long to reach is never reached: the inbox is waited on for ever.
             let idle_at = last_activity.checked_add(idle);
@@ -171,9 +192,13 @@ impl<'a> Host<'a> {
         }
     }
 
-    /// When the work loop looks again if nothing arrives: at the next crawl while files wait to be
-    /// parsed, else at `idle_at`, and sooner when a held edit falls due.
+    /// When the work loop looks again if nothing arrives: at once while ended tasks wait to be
+    /// learned from, at the next crawl while files wait to be parsed, else at `idle_at`, and
+    /// sooner when a held edit falls due.
     fn deadline(&self, next_crawl: Instant, idle_at: Option<Instant>) -> Option<Instant> {
+        if !self.learning.is_idle() {
+            return Some(Instant::now());
+        }
         let work = if self.waiting() > 0 {
             Some(next_crawl)
         } else {
@@ -186,14 +211,17 @@ impl<'a> Host<'a> {
         work.into_iter().chain(edit_due).min()
     }
 
-    /// Records `events` in one transaction. When any of them cannot be recorded, none is: the
-    /// transaction is rolled back and the recorder forgets what it took as stored.
+    /// Records `events` in one transaction, the tasks they end left to wait to be learned from.
+    /// When any of them cannot be recorded, none is: the transaction is rolled back and the
+    /// recorder forgets what it took as stored.
     ///
     /// # Errors
     ///
     /// The store's error.
     pub(crate) fn record(&mut self, events: &[Event]) -> Result<(), StoreError> {
-        record_batch(&mut self.writer, &mut self.recorder, events)
+        let ended = record_batch(&mut self.writer, &mut self.recorder, events)?;
+        self.learning.wait(ended);
+        Ok(())
     }
 
     /// Indexes the files the watcher saw change, each with when a change first named it, on every
@@ -263,18 +291,24 @@ impl<'a> Host<'a> {
     }
 
     /// Runs `work` with the writer and a pause that records the hook events waiting, and the edits
-    /// due, whenever the work lets the writer in between its transactions. A batch the pause
-    /// cannot record is counted, as one the work loop cannot.
+    /// due, whenever the work lets the writer in between its transactions; the tasks they end wait
+    /// to be learned from once the work is done. A batch the pause cannot record is counted, as one
+    /// the work loop cannot.
     fn with_pause<T>(&mut self, work: impl FnOnce(&mut Writer, Pause<'_>) -> T) -> T {
         let inbox = self.inbox;
         let recorder = RefCell::new(&mut self.recorder);
+        let learning = RefCell::new(&mut self.learning);
         let pause = |writer: &mut Writer| {
             // INVARIANT: single-writer. Events are recorded through the writer the work lends,
             // between its transactions, on the writer's own thread. The work never calls the
-            // pause from within it, so the recorder is always free here.
-            if let Ok(mut recorder) = recorder.try_borrow_mut() {
-                record_waiting(writer, &mut recorder, inbox);
-                record_due_edits(writer, &mut recorder, inbox, now_ms());
+            // pause from within it, so the recorder and the learning are always free here.
+            if let (Ok(mut recorder), Ok(mut learning)) =
+                (recorder.try_borrow_mut(), learning.try_borrow_mut())
+            {
+                let ended = record_waiting(writer, &mut recorder, inbox);
+                learning.wait(ended);
+                let ended = record_due_edits(writer, &mut recorder, inbox, now_ms());
+                learning.wait(ended);
             }
         };
         work(&mut self.writer, Pause::new(&pause, PAUSE_EVERY))
@@ -295,14 +329,15 @@ impl<'a> Host<'a> {
 
 /// Loads every grammar on a thread of its own, recording the hook events that wait meanwhile every
 /// [`PAUSE_EVERY`]: a debug build takes seconds to load them, and the events must not wait as long.
-/// When the grammars cannot be had, the events waiting are recorded before the error is returned.
+/// The tasks they end wait in `learning`. When the grammars cannot be had, the events waiting are
+/// recorded before the error is returned.
 ///
 /// # Errors
 ///
 /// A grammar that cannot be loaded, or a loader that stopped without a word.
 pub(crate) fn load_grammars(
-    writer: &mut Writer,
-    recorder: &mut Recorder,
+    (writer, recorder): (&mut Writer, &mut Recorder),
+    learning: &mut Learning,
     inbox: &Inbox,
 ) -> anyhow::Result<Arc<Grammars>> {
     let (sender, receiver) = mpsc::sync_channel(1);
@@ -311,47 +346,61 @@ pub(crate) fn load_grammars(
         match receiver.recv_timeout(PAUSE_EVERY) {
             Ok(Ok(grammars)) => return Ok(Arc::new(grammars)),
             Ok(Err(error)) => break Err(error).context("loading the language grammars"),
-            Err(RecvTimeoutError::Timeout) => record_waiting(writer, recorder, inbox),
+            Err(RecvTimeoutError::Timeout) => {
+                learning.wait(record_waiting(writer, recorder, inbox))
+            }
             Err(RecvTimeoutError::Disconnected) => {
                 break Err(anyhow::anyhow!("loading the language grammars stopped"));
             }
         }
     };
-    record_waiting(writer, recorder, inbox);
+    learning.wait(record_waiting(writer, recorder, inbox));
     loaded
 }
 
 /// Closes `inbox` to events and records with `recorder` the events it took: what the daemon does
 /// last once its writer is open, however it stops, so that no event a hook was answered for is
-/// lost.
-pub(crate) fn close(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox) {
+/// lost. The tasks they ended, in order.
+pub(crate) fn close(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox) -> Vec<TaskState> {
     inbox.close();
-    record_waiting(writer, recorder, inbox);
+    record_waiting(writer, recorder, inbox)
 }
 
-/// Records the hook events waiting in `inbox` with `recorder`, all or none; a batch that cannot be
-/// recorded is counted, with its error.
-pub(crate) fn record_waiting(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox) {
+/// Records the hook events waiting in `inbox` with `recorder`, all or none, and returns the tasks
+/// they ended, in order; a batch that cannot be recorded is counted, with its error, and ends none.
+pub(crate) fn record_waiting(
+    writer: &mut Writer,
+    recorder: &mut Recorder,
+    inbox: &Inbox,
+) -> Vec<TaskState> {
     let events = inbox.take_events();
-    if !events.is_empty()
-        && let Err(error) = record_batch(writer, recorder, &events)
-    {
-        count_failed(inbox, "hook events", &error);
+    if events.is_empty() {
+        return Vec::new();
     }
+    record_batch(writer, recorder, &events).unwrap_or_else(|error| {
+        count_failed(inbox, "hook events", &error);
+        Vec::new()
+    })
 }
 
 /// Records the edits the watcher saw that are due by `now_ms`, all or none, after recording the
 /// hook events waiting in `inbox`, while the edits are still held: a hook's report of the same edit
 /// claims it first, and takes from it what the file held before. A batch that cannot be recorded
 /// is counted, with its error, and the recorder forgets what it took as stored, as after events.
-fn record_due_edits(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox, now_ms: i64) {
+/// The tasks the hook events ended, in order: an edit the watcher saw ends none.
+fn record_due_edits(
+    writer: &mut Writer,
+    recorder: &mut Recorder,
+    inbox: &Inbox,
+    now_ms: i64,
+) -> Vec<TaskState> {
     if recorder
         .next_watcher_edit_due_ms()
         .is_none_or(|due_ms| due_ms > now_ms)
     {
-        return;
+        return Vec::new();
     }
-    record_waiting(writer, recorder, inbox);
+    let ended = record_waiting(writer, recorder, inbox);
     let due = recorder.take_due_watcher_edits(now_ms);
     let recorded = writer.transaction().and_then(|mut transaction| {
         for edit in &due {
@@ -363,19 +412,21 @@ fn record_due_edits(writer: &mut Writer, recorder: &mut Recorder, inbox: &Inbox,
         recorder.forget_stored();
         count_failed(inbox, "the edits the watcher saw", &error);
     }
+    ended
 }
 
 /// Counts in `inbox` a batch of `what` the writer could not record, the store's `error` kept as
 /// the reason and logged. The store's errors name what it was doing and the file, row or setting
 /// involved, and carry no stored text but paths.
-fn count_failed(inbox: &Inbox, what: &str, error: &StoreError) {
+pub(crate) fn count_failed(inbox: &Inbox, what: &str, error: &StoreError) {
     tracing::warn!(what, error = %error, "a batch could not be recorded");
     inbox.count_failed_batch(&format!("recording {what} failed: {error}"), now_ms());
 }
 
-/// Records `events` with `recorder` in one transaction of `writer`. When any of them cannot be
-/// recorded, none is: the transaction is rolled back and the recorder forgets what it took as
-/// stored, which may include what was rolled back.
+/// Records `events` with `recorder` in one transaction of `writer`, and returns the tasks they
+/// ended, in order. When any of them cannot be recorded, none is: the transaction is rolled back,
+/// the recorder forgets what it took as stored, which may include what was rolled back, and no
+/// task has ended.
 ///
 /// # Errors
 ///
@@ -384,17 +435,21 @@ fn record_batch(
     writer: &mut Writer,
     recorder: &mut Recorder,
     events: &[Event],
-) -> Result<(), StoreError> {
+) -> Result<Vec<TaskState>, StoreError> {
+    let mut ended = Vec::new();
     let recorded = writer.transaction().and_then(|mut transaction| {
         for event in events {
-            recorder.record(&mut transaction, event)?;
+            ended.extend(recorder.record(&mut transaction, event)?);
         }
         transaction.commit()
     });
-    if recorded.is_err() {
-        recorder.forget_stored();
+    match recorded {
+        Ok(()) => Ok(ended),
+        Err(error) => {
+            recorder.forget_stored();
+            Err(error)
+        }
     }
-    recorded
 }
 
 /// The time now in UTC milliseconds; a clock set before 1970 reads as 0.
@@ -404,10 +459,14 @@ pub(crate) fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
-    use cortex_core::{Agent, EventKind, EventSource, HookKind, Identifier, RepoId, Ulid};
-    use cortex_learn::Commands;
+    use cortex_core::{
+        Agent, ContentHash, EventKind, EventSource, FileContent, HookKind, Identifier, LineRange,
+        RepoId, TaskOutcome, ToolKind, ToolResult, ToolTarget, Ulid,
+    };
+    use cortex_learn::{Commands, HOLD_MS};
     use cortex_store::WriterOptions;
 
     use super::*;
@@ -482,6 +541,7 @@ mod tests {
         let parts = (
             writer(root.path())?,
             Recorder::new(false, Commands::default()),
+            Learning::default(),
             &inbox,
         );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
@@ -512,6 +572,7 @@ mod tests {
         let parts = (
             writer(root.path())?,
             Recorder::new(false, Commands::default()),
+            Learning::default(),
             &inbox,
         );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
@@ -564,6 +625,7 @@ mod tests {
         let parts = (
             writer(root.path())?,
             Recorder::new(false, Commands::default()),
+            Learning::default(),
             &inbox,
         );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
@@ -594,6 +656,7 @@ mod tests {
         let parts = (
             writer(root)?,
             Recorder::new(false, Commands::default()),
+            Learning::default(),
             inbox,
         );
         let grammars = Arc::new(Grammars::load()?);
@@ -659,6 +722,7 @@ mod tests {
         let parts = (
             writer(root)?,
             Recorder::new(false, Commands::default()),
+            Learning::default(),
             inbox,
         );
         let grammars = Arc::new(Grammars::load()?);
@@ -717,6 +781,260 @@ mod tests {
         inbox.stop();
         host.serve()?;
         assert_eq!(watched(root.path())?, [("a.py".to_owned(), seen_ms)]);
+        Ok(())
+    }
+
+    /// An edit of line 1 of `a.py` by session `s1` at `ts_ms`, in the repository at `root`, as
+    /// Claude Code reports one that applied.
+    fn edit_of_a(root: &Path, ts_ms: i64) -> Result<Event, Box<dyn std::error::Error>> {
+        Ok(Event {
+            cwd: root.to_path_buf(),
+            repo_root: root.to_path_buf(),
+            tool: Some(ToolKind::Edit),
+            tool_target: Some(ToolTarget {
+                path: Some(RepoPath::new("a.py")?),
+                ranges: vec![LineRange::new(1, 1)?],
+                pattern: None,
+                command: None,
+                hits: Vec::new(),
+            }),
+            tool_result: Some(ToolResult {
+                exit_code: None,
+                is_success: true,
+                is_interrupted: false,
+                output_bytes: None,
+            }),
+            prompt_text: None,
+            ..event(HookKind::PostTool, ts_ms, b"edit")?
+        })
+    }
+
+    /// What the store says of a task: its outcome, the words that say why, and whether its record
+    /// is written.
+    type Judged = (Option<TaskOutcome>, Option<String>, bool);
+
+    /// The one task of session `s1` the host's store holds, as [`Judged`] says it.
+    fn the_task(host: &Host<'_>) -> Result<Judged, Box<dyn std::error::Error>> {
+        let session = Identifier::new("s1")?;
+        let queries = host.writer.queries();
+        let task_id = queries
+            .events_of_session(&session)?
+            .into_iter()
+            .find_map(|row| row.record.task_id)
+            .ok_or("no task")?;
+        let row = queries.task(task_id)?.ok_or("no task row")?;
+        let has_record = queries.episode_of_task(task_id)?.is_some();
+        Ok((row.outcome, row.outcome_evidence, has_record))
+    }
+
+    /// A task that ends is learned from before the daemon stops: a prompt and the end of its
+    /// answer wait in the inbox, and once the host closes, the task's record is written, which
+    /// only learning writes. It changed nothing and ran nothing, so nothing is known of it.
+    #[test]
+    fn a_task_that_ends_is_learned_from_before_a_stop() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
+        inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?);
+        inbox.push_event(event(HookKind::Stop, 30, b"stop")?);
+        host.close();
+        assert_eq!(the_task(&host)?, (Some(TaskOutcome::Unknown), None, true));
+        Ok(())
+    }
+
+    /// A hook's edit waiting in the inbox while the watcher's report of the same change falls due
+    /// is recorded first, so it claims the report and the watcher's edit is not recorded again:
+    /// `a.py` held `a = 1`, was changed to `a = 2` and indexed, and the hook's edit of it waits
+    /// while the report's hold runs out. The task keeps what the report says the file held before.
+    /// The file is then put back as it was and indexed again, and the task ends: it is reverted,
+    /// every file back as it was before it.
+    #[test]
+    fn a_waiting_hook_edit_claims_what_the_watcher_saw() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        host.record(&[
+            event(HookKind::SessionStart, 1_000, b"start")?,
+            event(HookKind::Prompt, 1_001, b"prompt")?,
+        ])?;
+        std::fs::write(root.path().join("a.py"), "a = 2\n")?;
+        host.update(&[(RepoPath::new("a.py")?, 1_100)])?;
+        inbox.push_event(edit_of_a(root.path(), 1_200)?);
+        let ended = record_due_edits(
+            &mut host.writer,
+            &mut host.recorder,
+            &inbox,
+            1_100 + HOLD_MS,
+        );
+        assert!(ended.is_empty());
+        assert_eq!(
+            watched(root.path())?,
+            [],
+            "the hook's edit claimed the watcher's"
+        );
+        std::fs::write(root.path().join("a.py"), "a = 1\n")?;
+        host.update(&[(RepoPath::new("a.py")?, now_ms())])?;
+        host.record(&[event(HookKind::Stop, now_ms(), b"stop")?])?;
+        host.learn();
+        assert_eq!(
+            the_task(&host)?,
+            (
+                Some(TaskOutcome::Reverted),
+                Some("every edited file is back as it was before the task".to_owned()),
+                true
+            )
+        );
+        Ok(())
+    }
+
+    /// The tasks of session `s1` the store in `root` holds, and how many of them have their
+    /// record, which only learning writes.
+    fn tasks_learned(root: &Path) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+        let reader = cortex_store::Reader::open(&root.join(".cortex"), 0)?;
+        let queries = reader.queries();
+        let tasks: BTreeSet<Ulid> = queries
+            .events_of_session(&Identifier::new("s1")?)?
+            .into_iter()
+            .filter_map(|row| row.record.task_id)
+            .collect();
+        let mut learned = 0;
+        for task in &tasks {
+            if queries.episode_of_task(*task)?.is_some() {
+                learned += 1;
+            }
+        }
+        Ok((tasks.len(), learned))
+    }
+
+    /// The writer records the hook events that wait while it learns from the tasks that ended:
+    /// two tasks end and wait, the end of the session arrives meanwhile, and once the tasks are
+    /// learned from it is stored too, nothing left waiting.
+    #[test]
+    fn events_waiting_are_recorded_while_tasks_are_learned_from() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        host.record(&[
+            event(HookKind::SessionStart, 5, b"start")?,
+            event(HookKind::Prompt, 10, b"prompt")?,
+            event(HookKind::Stop, 20, b"stop")?,
+            event(HookKind::Prompt, 30, b"prompt again")?,
+            event(HookKind::Stop, 40, b"stop again")?,
+        ])?;
+        assert_eq!(tasks_learned(root.path())?, (2, 0));
+        assert!(inbox.push_event(event(HookKind::SessionEnd, 50, b"end")?));
+        host.learn();
+        assert_eq!(tasks_learned(root.path())?, (2, 2));
+        assert_eq!(
+            stored_kinds(root.path())?,
+            [
+                EventKind::SessionStart,
+                EventKind::Prompt,
+                EventKind::Stop,
+                EventKind::Prompt,
+                EventKind::Stop,
+                EventKind::SessionEnd,
+            ]
+        );
+        Ok(())
+    }
+
+    /// A task that ended and waits to be learned from has the work loop look again at once, instead
+    /// of when the next crawl or the idle stop is due; with none waiting it waits for those again.
+    #[test]
+    fn a_task_waiting_to_be_learned_from_wakes_the_work_loop() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let idle_at = Instant::now() + Duration::from_secs(600);
+        assert_eq!(host.deadline(idle_at, Some(idle_at)), Some(idle_at));
+        host.record(&[
+            event(HookKind::SessionStart, 5, b"start")?,
+            event(HookKind::Prompt, 10, b"prompt")?,
+            event(HookKind::Stop, 20, b"stop")?,
+        ])?;
+        let now = Instant::now();
+        assert!(
+            host.deadline(idle_at, Some(idle_at))
+                .is_some_and(|at| at <= Instant::now() && at >= now)
+        );
+        host.learn();
+        assert_eq!(host.deadline(idle_at, Some(idle_at)), Some(idle_at));
+        Ok(())
+    }
+
+    /// Only so many ended tasks wait to be learned from: of 257 tasks that end in one batch, the
+    /// first is let go and the 256 after it are learned from.
+    #[test]
+    fn only_so_many_ended_tasks_wait() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let mut events = vec![event(HookKind::SessionStart, 5, b"start")?];
+        for task in 0..257_i64 {
+            let at_ms = 100 + task * 10;
+            events.push(event(HookKind::Prompt, at_ms, b"prompt")?);
+            events.push(event(HookKind::Stop, at_ms + 5, b"stop")?);
+        }
+        host.record(&events)?;
+        host.learn();
+        assert_eq!(tasks_learned(root.path())?, (257, 256));
+        let queries = host.writer.queries();
+        let first = queries
+            .events_of_session(&Identifier::new("s1")?)?
+            .into_iter()
+            .find_map(|row| row.record.task_id)
+            .ok_or("no task")?;
+        assert_eq!(queries.episode_of_task(first)?, None);
+        Ok(())
+    }
+
+    /// A task that ends in a batch an index's pause records waits until the index is done, then
+    /// is learned from: the session's start, a prompt and the end of its answer wait while 600
+    /// files are indexed, the pause records them, and the task is learned from once the host
+    /// learns, not before.
+    #[test]
+    fn a_task_a_pause_ended_waits_to_be_learned_from() -> TestResult {
+        let root = tempfile::tempdir()?;
+        write_modules(root.path())?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let parts = (
+            writer(root.path())?,
+            Recorder::new(false, Commands::default()),
+            Learning::default(),
+            &inbox,
+        );
+        let grammars = Arc::new(Grammars::load()?);
+        let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
+        inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
+        inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?);
+        inbox.push_event(event(HookKind::Stop, 20, b"stop")?);
+        host.index(&[])?;
+        assert_eq!(inbox.counts().events_waiting, 0);
+        assert_eq!(tasks_learned(root.path())?, (1, 0));
+        host.learn();
+        assert_eq!(tasks_learned(root.path())?, (1, 1));
+        Ok(())
+    }
+
+    /// A task that ends in the events recorded before the edits the watcher saw fall due is learned
+    /// from by the work loop: the session's start, a prompt and the end of its answer wait while
+    /// an edit is held past its time, and the daemon serves until it is asked to stop.
+    #[test]
+    fn a_task_ended_before_due_edits_is_learned_from() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let before = FileContent::Hashed(ContentHash::of(b"a = 1\n"));
+        host.recorder
+            .hold_watcher_edits([(RepoPath::new("a.py")?, before)], 1_000);
+        inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
+        inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?);
+        inbox.push_event(event(HookKind::Stop, 20, b"stop")?);
+        inbox.stop();
+        host.serve()?;
+        assert_eq!(tasks_learned(root.path())?, (1, 1));
         Ok(())
     }
 }

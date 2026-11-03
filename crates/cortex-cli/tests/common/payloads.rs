@@ -19,11 +19,34 @@ pub fn fixtures(version: &str) -> PathBuf {
 }
 
 /// The payload `name` captured from Claude Code `version`, with every path under the captured
-/// repository moved under `root`.
+/// repository moved under `root`, and the files a search found in this platform's form.
 pub fn payload(version: &str, name: &str, root: &Path) -> TestResult<Vec<u8>> {
     let mut value: Value = serde_json::from_slice(&std::fs::read(fixtures(version).join(name))?)?;
     move_paths(&mut value, root);
+    native_search_paths(&mut value);
     Ok(serde_json::to_vec(&value)?)
+}
+
+/// Writes the files a search found in this platform's form. Claude Code names them relative to the
+/// working folder, with backslashes on Windows, where the payloads were captured; elsewhere they
+/// take `/`. The captured matches' text holds no backslash, so Grep's output is rewritten whole.
+fn native_search_paths(value: &mut Value) {
+    if cfg!(windows) {
+        return;
+    }
+    let Some(response) = value.get_mut("tool_response") else {
+        return;
+    };
+    if let Some(Value::Array(files)) = response.get_mut("filenames") {
+        for file in files {
+            if let Value::String(path) = file {
+                *path = path.replace('\\', "/");
+            }
+        }
+    }
+    if let Some(Value::String(content)) = response.get_mut("content") {
+        *content = content.replace('\\', "/");
+    }
 }
 
 /// Moves every string in `value` that is a path under the captured repository to the same place
