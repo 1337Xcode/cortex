@@ -7,12 +7,13 @@
 )]
 
 use cortex_core::{
-    Agent, ContentHash, EdgeType, FileFlags, Identifier, InterestTier, Language, RepoId, RepoPath,
-    ShortHash, SymbolKind, Ulid,
+    Agent, ContentHash, EdgeType, Event, FileFlags, HookKind, Identifier, InterestTier, Language,
+    LineRange, RepoId, RepoPath, ShortHash, SymbolKind, ToolKind, ToolResult, ToolTarget, Ulid,
 };
+use cortex_learn::{Commands, Recorder};
 use cortex_store::{
-    EdgeRecord, FileIndex, FileRecord, InterestRow, NodeId, Reader, SessionRecord, SymbolRecord,
-    TaskRecord, Writer, WriterOptions,
+    ArchetypeRecord, EdgeRecord, FileIndex, FileRecord, InterestRow, NodeId, Reader, SessionRecord,
+    SymbolRecord, TaskRecord, Writer, WriterOptions,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -208,10 +209,126 @@ impl Repo {
         Ok(())
     }
 
+    /// Deletes what the store holds for the file at `path`, its node included.
+    pub fn remove(&mut self, path: &str) -> TestResult {
+        let mut transaction = self.writer.transaction()?;
+        transaction.remove_file(&RepoPath::new(path)?)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Stores `clusters` as the clusters of earlier tasks, replacing any: each its words, best
+    /// first, its files and how many tasks it covers.
+    pub fn clusters(&mut self, clusters: &[(&[&str], &[NodeId], u32)]) -> TestResult {
+        let records = clusters
+            .iter()
+            .map(|(words, files, episode_count)| {
+                Ok(ArchetypeRecord {
+                    seed_terms: words
+                        .iter()
+                        .map(|word| Identifier::new(word))
+                        .collect::<Result<_, _>>()?,
+                    files: files.to_vec(),
+                    episode_count: *episode_count,
+                    updated_at_ms: 1,
+                })
+            })
+            .collect::<TestResult<Vec<ArchetypeRecord>>>()?;
+        let mut transaction = self.writer.transaction()?;
+        transaction.replace_archetypes(&records)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// A reader of the store.
     pub fn reader(&self) -> TestResult<Reader> {
         Ok(Reader::open(&self.root.path().join(".cortex"), 0)?)
     }
+}
+
+/// An event of `hook` in `session` at `ts_ms`.
+pub fn event(session: &str, ts_ms: i64, hook: HookKind) -> TestResult<Event> {
+    Ok(Event {
+        event_id: Ulid::from_seed(u64::try_from(ts_ms)?, session.as_bytes()),
+        ts_ms,
+        agent: Agent::Claude,
+        agent_version: None,
+        session_id: Identifier::new(session)?,
+        parent_session_id: None,
+        cwd: std::path::PathBuf::from("/repo"),
+        repo_root: std::path::PathBuf::from("/repo"),
+        hook,
+        source: None,
+        tool: None,
+        tool_target: None,
+        tool_result: None,
+        prompt_text: (hook == HookKind::Prompt).then(|| "fix it".to_owned()),
+        transcript_path: None,
+        model: None,
+        subagent_type: None,
+        compact_trigger: None,
+        end_reason: None,
+        is_probe: false,
+    })
+}
+
+/// A tool's result in `session` at `ts_ms`: `tool` on `path`, the lines `ranges`, done.
+pub fn tool(
+    (session, ts_ms): (&str, i64),
+    tool: ToolKind,
+    (path, ranges): (&str, &[(u32, u32)]),
+) -> TestResult<Event> {
+    Ok(Event {
+        tool: Some(tool),
+        tool_target: Some(ToolTarget {
+            path: Some(RepoPath::new(path)?),
+            ranges: ranges
+                .iter()
+                .map(|(start, end)| LineRange::new(*start, *end))
+                .collect::<Result<_, _>>()?,
+            ..ToolTarget::default()
+        }),
+        tool_result: Some(ToolResult {
+            exit_code: None,
+            is_success: true,
+            is_interrupted: false,
+            output_bytes: None,
+        }),
+        ..event(session, ts_ms, HookKind::PostTool)?
+    })
+}
+
+/// `event`, failed.
+pub fn failed(event: Event) -> Event {
+    Event {
+        tool_result: Some(ToolResult {
+            exit_code: None,
+            is_success: false,
+            is_interrupted: false,
+            output_bytes: None,
+        }),
+        ..event
+    }
+}
+
+/// A subagent's event: its session is `parent/agent`, and its parent is `parent`.
+pub fn of_subagent(parent: &str, event: Event) -> TestResult<Event> {
+    Ok(Event {
+        session_id: Identifier::new(&format!("{parent}/agent"))?,
+        parent_session_id: Some(Identifier::new(parent)?),
+        ..event
+    })
+}
+
+/// Records `events` into `repo`'s store, each in a transaction of its own.
+pub fn record(repo: &mut Repo, events: &[Event]) -> TestResult {
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
+    for event in events {
+        let mut transaction = repo.writer.transaction()?;
+        recorder.record(&mut transaction, event)?;
+        transaction.commit()?;
+    }
+    Ok(())
 }
 
 /// The qualified name of `def` among `defs`: its parents' names and its own, joined by `.`.

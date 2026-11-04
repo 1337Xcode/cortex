@@ -2,99 +2,10 @@
 
 mod common;
 
-use common::{Repo, TestResult, function};
-use cortex_core::{
-    Agent, Event, FileFlags, HookKind, Identifier, LineRange, RepoPath, ShortHash, ToolKind,
-    ToolResult, ToolTarget, Ulid,
-};
-use cortex_learn::{Commands, Recorder};
+use common::{Repo, TestResult, event, failed, function, of_subagent, record, tool};
+use cortex_core::{FileFlags, HookKind, Identifier, LineRange, RepoPath, ShortHash, ToolKind};
 use cortex_retrieve::{GraphSettings, ReadSpan, SessionMatch, read_graph, session};
 use cortex_store::NodeId;
-
-/// An event of `hook` in `session` at `ts_ms`.
-fn event(session: &str, ts_ms: i64, hook: HookKind) -> TestResult<Event> {
-    Ok(Event {
-        event_id: Ulid::from_seed(u64::try_from(ts_ms)?, session.as_bytes()),
-        ts_ms,
-        agent: Agent::Claude,
-        agent_version: None,
-        session_id: Identifier::new(session)?,
-        parent_session_id: None,
-        cwd: std::path::PathBuf::from("/repo"),
-        repo_root: std::path::PathBuf::from("/repo"),
-        hook,
-        source: None,
-        tool: None,
-        tool_target: None,
-        tool_result: None,
-        prompt_text: (hook == HookKind::Prompt).then(|| "fix it".to_owned()),
-        transcript_path: None,
-        model: None,
-        subagent_type: None,
-        compact_trigger: None,
-        end_reason: None,
-        is_probe: false,
-    })
-}
-
-/// A tool's result in `session` at `ts_ms`: `tool` on `path`, the lines `ranges`, done.
-fn tool(
-    (session, ts_ms): (&str, i64),
-    tool: ToolKind,
-    (path, ranges): (&str, &[(u32, u32)]),
-) -> TestResult<Event> {
-    Ok(Event {
-        tool: Some(tool),
-        tool_target: Some(ToolTarget {
-            path: Some(RepoPath::new(path)?),
-            ranges: ranges
-                .iter()
-                .map(|(start, end)| LineRange::new(*start, *end))
-                .collect::<Result<_, _>>()?,
-            ..ToolTarget::default()
-        }),
-        tool_result: Some(ToolResult {
-            exit_code: None,
-            is_success: true,
-            is_interrupted: false,
-            output_bytes: None,
-        }),
-        ..event(session, ts_ms, HookKind::PostTool)?
-    })
-}
-
-/// `event`, failed.
-fn failed(event: Event) -> Event {
-    Event {
-        tool_result: Some(ToolResult {
-            exit_code: None,
-            is_success: false,
-            is_interrupted: false,
-            output_bytes: None,
-        }),
-        ..event
-    }
-}
-
-/// A subagent's event: its session is `parent/agent`, and its parent is `parent`.
-fn of_subagent(parent: &str, event: Event) -> TestResult<Event> {
-    Ok(Event {
-        session_id: Identifier::new(&format!("{parent}/agent"))?,
-        parent_session_id: Some(Identifier::new(parent)?),
-        ..event
-    })
-}
-
-/// Records `events` into `repo`'s store, each in a transaction of its own.
-fn record(repo: &mut Repo, events: &[Event]) -> TestResult {
-    let mut recorder = Recorder::new(false, 0.0, Commands::default());
-    for event in events {
-        let mut transaction = repo.writer.transaction()?;
-        recorder.record(&mut transaction, event)?;
-        transaction.commit()?;
-    }
-    Ok(())
-}
 
 /// What session `s1` shows of `repo`, with the graph's numbers of `nodes`.
 fn shown(repo: &Repo, nodes: &[NodeId]) -> TestResult<(SessionMatch, Vec<u32>)> {
