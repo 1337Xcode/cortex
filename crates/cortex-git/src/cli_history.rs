@@ -56,35 +56,6 @@ impl CliHistory {
         Ok(Self { git })
     }
 
-    /// Whether the repository is a partial clone, as git tells one: `extensions.partialClone`
-    /// set, or `promisor` true on a remote, read as git reads a boolean. A `promisor` git cannot
-    /// read as a boolean counts as set, as the `gix` source counts it: comparing contents in a
-    /// partial clone fails the read, comparing none only finds fewer renames.
-    ///
-    /// # Errors
-    ///
-    /// Git does not answer.
-    fn is_partial(&self) -> Result<bool, GitError> {
-        let partial_clone = self
-            .git
-            .ask(&["config", "--get", "extensions.partialClone"])
-            .map_err(GitError::Open)?;
-        if partial_clone.is_some() {
-            return Ok(true);
-        }
-        let promisors = self.git.ask(&[
-            "config",
-            "--type=bool",
-            "--get-regexp",
-            r"^remote\..*\.promisor$",
-        ]);
-        Ok(match promisors {
-            Ok(Some(lines)) => lines.lines().any(|line| line.ends_with(" true")),
-            Ok(None) => false,
-            Err(_) => true,
-        })
-    }
-
     /// The commits a shallow clone cut, whose parents it does not hold; none in a full clone.
     ///
     /// # Errors
@@ -208,7 +179,10 @@ impl HistorySource for CliHistory {
 
     fn read(&self, window: &Window) -> Result<Mined, GitError> {
         let mut mined = Mined {
-            is_partial: self.is_partial()?,
+            // A `promisor` git cannot read as a boolean counts as set, as the `gix` source counts
+            // it: comparing contents in a partial clone fails the read, comparing none only finds
+            // fewer renames.
+            is_partial: self.git.own_config().map_err(GitError::Open)?.is_partial,
             ..Mined::default()
         };
         if window.from.is_none() && self.head()?.is_none() {

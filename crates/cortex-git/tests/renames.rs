@@ -5,7 +5,9 @@
 
 mod common;
 
-use common::{Repo, TestResult, changed, commit, every_commit, lines, read_both, renamed};
+use common::{
+    Repo, TestResult, changed, commit, every_commit, git_version, lines, read_both, renamed,
+};
 use cortex_git::{CliHistory, GitError, GixHistory, HistorySource, Window};
 
 /// A file moved with nine of its ten lines kept is a rename, named with the path it had. A file
@@ -207,20 +209,6 @@ fn a_partial_clone_matches_identical_contents_only() -> TestResult {
         assert!(matches!(listed, Err(GitError::Walk(_))), "{listed:?}");
     }
     Ok(())
-}
-
-/// The major and minor version of the git on the `PATH`, from `git version`.
-fn git_version() -> TestResult<(u32, u32)> {
-    let output = std::process::Command::new("git").arg("version").output()?;
-    let text = String::from_utf8(output.stdout)?;
-    let number = text
-        .split_whitespace()
-        .nth(2)
-        .ok_or("git version printed no number")?;
-    let mut parts = number.split('.').map(str::parse::<u32>);
-    let major = parts.next().ok_or("no major version")??;
-    let minor = parts.next().ok_or("no minor version")??;
-    Ok((major, minor))
 }
 
 /// Attributes take no part in renames, as in git: files marked as not to be diffed, by the

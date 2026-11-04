@@ -87,6 +87,16 @@ impl Repo {
         Ok(())
     }
 
+    /// Gives the file at `path` in the work tree a modification time of 2001, unlike the one git's
+    /// index holds for it, so that git reads the file to tell whether it changed.
+    pub fn backdate(&self, path: &str) -> TestResult {
+        let file = std::fs::File::options()
+            .write(true)
+            .open(self.root().join(path))?;
+        file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000))?;
+        Ok(())
+    }
+
     /// Deletes the file at `path` in the work tree.
     pub fn remove(&self, path: &str) -> TestResult {
         std::fs::remove_file(self.root().join(path))?;
@@ -154,6 +164,20 @@ impl Repo {
     pub fn git_fed(&self, day: i64, args: &[&str], input: &[u8]) -> TestResult<String> {
         run_git(&self.root(), &self.home(), args, Some(day), Some(input))
     }
+}
+
+/// The major and minor version of the git on the `PATH`, from `git version`.
+pub fn git_version() -> TestResult<(u32, u32)> {
+    let output = Command::new("git").arg("version").output()?;
+    let text = String::from_utf8(output.stdout)?;
+    let number = text
+        .split_whitespace()
+        .nth(2)
+        .ok_or("git version printed no number")?;
+    let mut parts = number.split('.').map(str::parse::<u32>);
+    let major = parts.next().ok_or("no major version")??;
+    let minor = parts.next().ok_or("no minor version")??;
+    Ok((major, minor))
 }
 
 /// Text of `count` numbered lines starting with `word`: one file's contents, which a file made

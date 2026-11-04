@@ -31,6 +31,26 @@ const ABSENT: i32 = 1;
 /// The file git reads as an empty configuration.
 const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
+/// The first git that can be told not to fetch what a partial clone left out, with
+/// `GIT_NO_LAZY_FETCH` or `--no-lazy-fetch`: 2.45, as its major and minor versions.
+const NO_LAZY_FETCH_SINCE: (u32, u32) = (2, 45);
+
+/// The keys of a repository's own configuration that decide how its work tree may be read: a
+/// filter's, and those that make it a partial clone.
+const OWN_CONFIG_KEYS: &str = r"^filter\.|^extensions\.partialclone$|^remote\..*\.promisor$";
+
+/// What a repository's own configuration, with the files it includes, says that decides how
+/// Cortex may run git there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct OwnConfig {
+    /// It names a filter (any `filter.<driver>.<key>`), whose command git runs on a file the
+    /// attributes give it to when it reads the file.
+    pub(crate) names_filter: bool,
+    /// It is a partial clone: `extensions.partialClone` is set, or `promisor` is true on a
+    /// remote, so git fetches from the remote what the clone left out unless told not to.
+    pub(crate) is_partial: bool,
+}
+
 /// The git program for one repository.
 pub(crate) struct GitProgram {
     /// The program.
@@ -113,45 +133,200 @@ impl GitProgram {
             .map_err(|_| "git's answer is not UTF-8 text".to_owned())
     }
 
+    /// What the repository's own configuration, with the files it includes, says of filters and
+    /// of a partial clone, from one question to git, which reads no system or global
+    /// configuration for it.
+    ///
+    /// # Errors
+    ///
+    /// Git does not answer, or answers more than a short answer or other than text.
+    pub(crate) fn own_config(&self) -> Result<OwnConfig, String> {
+        let answer = self.ask(&[
+            "config",
+            "--includes",
+            "--null",
+            "--get-regexp",
+            OWN_CONFIG_KEYS,
+        ])?;
+        Ok(own_config_of(answer.as_deref().unwrap_or_default()))
+    }
+
+    /// Whether this git can be told not to fetch what a partial clone left out: whether its
+    /// version, as `git version` prints it, is [`NO_LAZY_FETCH_SINCE`] or later.
+    ///
+    /// # Errors
+    ///
+    /// Git does not answer, or prints a version that is not `git version <major>.<minor>...`.
+    pub(crate) fn can_refuse_fetching(&self) -> Result<bool, String> {
+        refuses_fetching(&self.ask(&["version"])?.unwrap_or_default())
+    }
+
     /// What git lists for `args`, with `options` before its command.
     ///
     /// # Errors
     ///
     /// Git does not end in time, fails, or lists more than [`MAX_LISTING_BYTES`].
     pub(crate) fn list(&self, options: &[&str], args: &[&str]) -> Result<Vec<u8>, String> {
-        let mut command = self.command(options, args);
-        listed(&mut command, (LIST_WITHIN, MAX_LISTING_BYTES))
+        let listing = run(
+            &mut self.command(options, args),
+            LIST_WITHIN,
+            MAX_LISTING_BYTES,
+        )?;
+        if !listing.status.success() {
+            return Err(format!("git ended with {}", listing.status));
+        }
+        if listing.is_cut {
+            return Err(format!("git listed more than {MAX_LISTING_BYTES} bytes"));
+        }
+        Ok(listing.stdout)
     }
 
     /// What git lists for `args`, with `options` before its command, reading the user's own
-    /// configuration ([`GitProgram::as_user`]), in at most `within` and `max_bytes`.
+    /// configuration ([`GitProgram::as_user`]), in at most `within`; `None` when it lists more
+    /// than `max_bytes`.
     ///
     /// # Errors
     ///
-    /// Git does not end in time, fails, or lists more than `max_bytes`.
+    /// Git does not end in time, or fails.
     pub(crate) fn list_as_user(
         &self,
         options: &[&str],
         args: &[&str],
-        bounds: (Duration, u64),
-    ) -> Result<Vec<u8>, String> {
-        listed(&mut self.as_user(options, args), bounds)
+        (within, max_bytes): (Duration, u64),
+    ) -> Result<Option<Vec<u8>>, String> {
+        let listing = run(&mut self.as_user(options, args), within, max_bytes)?;
+        if !listing.status.success() {
+            return Err(format!("git ended with {}", listing.status));
+        }
+        Ok((!listing.is_cut).then_some(listing.stdout))
     }
 }
 
-/// What `command`, a git listing, printed in at most `within` and `max_bytes`.
-fn listed(command: &mut Command, (within, max_bytes): (Duration, u64)) -> Result<Vec<u8>, String> {
-    let listing = run(command, within, max_bytes)?;
-    if !listing.status.success() {
-        return Err(format!("git ended with {}", listing.status));
+/// Whether the git whose `git version` answer is `answer` (`git version 2.45.1`, say) can be told
+/// not to fetch: whether its version is [`NO_LAZY_FETCH_SINCE`] or later.
+///
+/// # Errors
+///
+/// The answer is not `git version <major>.<minor>...`.
+fn refuses_fetching(answer: &str) -> Result<bool, String> {
+    let mut numbers = answer
+        .split_whitespace()
+        .nth(2)
+        .unwrap_or_default()
+        .split('.')
+        .map(str::parse::<u32>);
+    match (numbers.next(), numbers.next()) {
+        (Some(Ok(major)), Some(Ok(minor))) => Ok((major, minor) >= NO_LAZY_FETCH_SINCE),
+        _ => Err("git printed a version that cannot be read".to_owned()),
     }
-    if listing.is_cut {
-        return Err(format!("git listed more than {max_bytes} bytes"));
+}
+
+/// [`OwnConfig`] from `listing`, git's `config --null --get-regexp` answer for
+/// [`OWN_CONFIG_KEYS`]: entries ended by a NUL, each a key, then a newline and its value when it
+/// has one.
+fn own_config_of(listing: &str) -> OwnConfig {
+    let mut config = OwnConfig::default();
+    for entry in listing.split('\0').filter(|entry| !entry.is_empty()) {
+        let (key, value) = match entry.split_once('\n') {
+            Some((key, value)) => (key, Some(value)),
+            None => (entry, None),
+        };
+        if key.starts_with("filter.") {
+            config.names_filter = true;
+        }
+        let is_promisor = key.starts_with("remote.") && key.ends_with(".promisor");
+        if key == "extensions.partialclone" || (is_promisor && is_true(value)) {
+            config.is_partial = true;
+        }
     }
-    Ok(listing.stdout)
+    config
+}
+
+/// Whether git reads `value`, a configuration value or none for a key given without one, as true:
+/// a key without a value, `true`, `yes`, `on` or a whole number other than 0 is; `false`, `no`,
+/// `off`, `0` and an empty value are not. Any other text counts as true, as a value git cannot read
+/// as a boolean counts for a remote that might fetch.
+fn is_true(value: Option<&str>) -> bool {
+    let Some(value) = value else {
+        return true;
+    };
+    match value.to_ascii_lowercase().as_str() {
+        "" | "false" | "no" | "off" => false,
+        "true" | "yes" | "on" => true,
+        other => other.parse::<i64>() != Ok(0),
+    }
 }
 
 /// What `command` printed, run for at most `within` and `max_bytes` of output; why not, as text.
 fn run(command: &mut Command, within: Duration, max_bytes: u64) -> Result<Captured, String> {
     capture(command, within, max_bytes).map_err(|error| format!("git did not answer ({error})"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Versions as `git version` prints them on Linux, Windows and macOS: 2.45 and later can be
+    /// told not to fetch, 2.44, 2.43 and Apple's 2.39 cannot, and text that names no version is
+    /// an error rather than a guess.
+    #[test]
+    fn a_version_from_2_45_refuses_fetching() {
+        let cases = [
+            ("git version 2.43.0\n", Ok(false)),
+            ("git version 2.44.2", Ok(false)),
+            ("git version 2.39.3 (Apple Git-146)", Ok(false)),
+            ("git version 2.45.0", Ok(true)),
+            ("git version 2.55.0.windows.1\n", Ok(true)),
+            ("git version 3.0.0", Ok(true)),
+        ];
+        for (answer, expected) in cases {
+            assert_eq!(refuses_fetching(answer), expected, "{answer}");
+        }
+        for answer in ["", "git version", "git version two.45", "version 2.45.0"] {
+            assert!(refuses_fetching(answer).is_err(), "{answer}");
+        }
+    }
+
+    /// Git's booleans, as its configuration documentation gives them: no value, `true`, `yes`,
+    /// `on` and a number other than 0 are true, in any case; `false`, `no`, `off`, `0` and the
+    /// empty value are false; text git cannot read as a boolean counts as true.
+    #[test]
+    fn values_read_as_git_reads_a_boolean() {
+        for value in [
+            None,
+            Some("true"),
+            Some("Yes"),
+            Some("ON"),
+            Some("1"),
+            Some("-2"),
+        ] {
+            assert!(is_true(value), "{value:?}");
+        }
+        for value in ["false", "No", "OFF", "0", ""] {
+            assert!(!is_true(Some(value)), "{value:?}");
+        }
+        assert!(is_true(Some("maybe")));
+    }
+
+    /// The answer git gives, its layout as `git config --null --get-regexp` prints it (a key, a
+    /// newline and the value, then a NUL; a key without a value alone): a filter's key, whatever
+    /// its driver's case, names a filter; `extensions.partialclone` makes a partial clone, and so
+    /// does a promisor that reads as true, but not one that reads as false; nothing at all is
+    /// neither.
+    #[test]
+    fn the_answer_says_what_the_configuration_names() {
+        let read = |listing: &str| {
+            let config = own_config_of(listing);
+            (config.names_filter, config.is_partial)
+        };
+        assert_eq!(read(""), (false, false));
+        assert_eq!(read("filter.Marking.clean\ncat\0"), (true, false));
+        assert_eq!(read("extensions.partialclone\norigin\0"), (false, true));
+        assert_eq!(read("remote.o.promisor\0"), (false, true));
+        assert_eq!(read("remote.o.promisor\noff\0"), (false, false));
+        assert_eq!(
+            read("filter.x.process\nrun\0remote.p.promisor\nfalse\0remote.q.promisor\ntrue\0"),
+            (true, true)
+        );
+    }
 }
