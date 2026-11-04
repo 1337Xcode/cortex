@@ -5,7 +5,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 use crate::connection::{self, Access};
-use crate::error::{StoreError, io};
+use crate::error::{StoreError, io, sqlite};
 use crate::layout;
 use crate::migrate;
 use crate::queries::Queries;
@@ -59,6 +59,27 @@ impl Reader {
     #[must_use]
     pub fn queries(&self) -> Queries<'_> {
         Queries::new(&self.connection)
+    }
+
+    /// Runs `read` in one read transaction, so that all its queries see the database as one
+    /// moment left it, whatever the writer commits meanwhile.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors beginning or ending the transaction, and those of `read`.
+    pub fn consistently<T, E: From<StoreError>>(
+        &self,
+        read: impl FnOnce(Queries<'_>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(sqlite("beginning a read"))?;
+        let found = read(Queries::new(&transaction))?;
+        // A read writes nothing, so it ends as it began; ending it lets the writer's later commits
+        // be seen.
+        transaction.rollback().map_err(sqlite("ending a read"))?;
+        Ok(found)
     }
 }
 

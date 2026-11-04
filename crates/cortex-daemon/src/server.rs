@@ -22,6 +22,7 @@ use interprocess::local_socket::traits::tokio::Listener as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
 
+use crate::graph::Snapshot;
 use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
@@ -41,6 +42,8 @@ pub(crate) struct Server {
     started: Instant,
     /// The writer's inbox, which a Shutdown stops and which keeps the daemon's recent errors.
     inbox: Arc<Inbox>,
+    /// The graph retrieval spreads over, as the status reports it.
+    snapshot: Arc<Snapshot>,
     /// How long each hook's latest requests took to handle.
     latencies: Mutex<Latencies>,
     /// Probes, `cortex doctor`'s, answered since the daemon started.
@@ -98,10 +101,11 @@ impl Broken {
 
 impl Server {
     /// A server for a daemon started now, whose writer reads `inbox`.
-    pub(crate) fn new(inbox: Arc<Inbox>) -> Self {
+    pub(crate) fn new(inbox: Arc<Inbox>, snapshot: Arc<Snapshot>) -> Self {
         Self {
             started: Instant::now(),
             inbox,
+            snapshot,
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
         }
@@ -296,6 +300,7 @@ impl Server {
             latencies: latencies.report(),
             recent_errors: self.inbox.recent_errors(),
             git: Some(self.inbox.git()),
+            graph: self.snapshot.report(),
         }
     }
 
@@ -440,7 +445,7 @@ mod tests {
     #[test]
     fn a_stop_holds_when_its_answer_cannot_be_written() -> TestResult {
         let inbox = Arc::new(Inbox::default());
-        let server = Server::new(Arc::clone(&inbox));
+        let server = Server::new(Arc::clone(&inbox), Arc::default());
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let answered = runtime.block_on(async {
             let (client, mut daemon) = tokio::io::duplex(64);
@@ -495,7 +500,7 @@ mod tests {
     fn a_closed_inbox_takes_no_events() -> TestResult {
         let inbox = Arc::new(Inbox::default());
         inbox.close();
-        let server = Server::new(Arc::clone(&inbox));
+        let server = Server::new(Arc::clone(&inbox), Arc::default());
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let event = Received {
             request: Request {

@@ -19,6 +19,7 @@
 //! top level, and its errors are reported, never matched.
 
 mod global_ignore;
+mod graph;
 mod host;
 mod inbox;
 mod instance;
@@ -44,8 +45,10 @@ use cortex_core::ipc::CORTEX_VERSION;
 use cortex_core::{Config, RepoId, UserFolder, canonical_root};
 use cortex_index::{Change, DiscoverOptions, IndexReport, watch};
 use cortex_learn::{Commands, Recorder};
+use cortex_retrieve::GraphSettings;
 use cortex_store::{Writer, WriterOptions};
 
+use self::graph::{Rebuilder, Snapshot, store_reads};
 use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
@@ -115,12 +118,14 @@ fn listen_and_serve(
         .build()
         .context("starting the server's runtime")?;
     let inbox = Arc::new(Inbox::default());
+    let snapshot = Arc::new(Snapshot::default());
     let listener = {
         let _inside = runtime.enter();
         listener::bind(&user.run_files(repo_id)).context("listening for hooks")?
     };
-    runtime.spawn(Arc::new(Server::new(Arc::clone(&inbox))).serve(listener));
-    let served = index_and_serve(root, (repo_id, &inbox, home), note);
+    let server = Server::new(Arc::clone(&inbox), Arc::clone(&snapshot));
+    runtime.spawn(Arc::new(server).serve(listener));
+    let served = index_and_serve(root, (repo_id, (&inbox, &snapshot), home), note);
     // However the work ended, before the writer opened included, the server takes no more events
     // in the moment it has left: nothing would record them.
     inbox.close();
@@ -129,10 +134,11 @@ fn listen_and_serve(
 }
 
 /// Takes the store's writer, indexes, watches and serves the inbox until asked to stop or idle,
-/// reading the transcripts the stops name under the user's home folder, `home`.
+/// reading the transcripts the stops name under the user's home folder, `home`, and keeping
+/// `snapshot`'s graph rebuilt from the first index on.
 fn index_and_serve(
     root: &Path,
-    (repo_id, inbox, home): (&RepoId, &Arc<Inbox>, PathBuf),
+    (repo_id, (inbox, snapshot), home): (&RepoId, (&Arc<Inbox>, &Arc<Snapshot>), PathBuf),
     note: &mut dyn FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let loaded = settings::load(root)?;
@@ -194,7 +200,7 @@ fn index_and_serve(
         root,
         grammars,
         (&config, discover),
-        (writer, recorder, pending, inbox),
+        (writer, recorder, pending, (inbox, snapshot)),
     );
     let report = or_close(host.index(&[]), || host.close())?;
     inbox.mark_indexed();
@@ -205,12 +211,19 @@ fn index_and_serve(
         files_waiting = host.waiting(),
         "first index done"
     );
+    // The graph is built once the first index is done, before which a retrieval would find
+    // nothing; told to stop when dropped.
+    let rebuilder = Rebuilder::start(
+        snapshot,
+        store_reads((&folder, config.mmap_bytes), GraphSettings::from(&config)),
+    );
     or_close(note(&ready_line(&report, host.waiting())), || host.close())?;
     // The history is mined once the files that count are stored; told to stop when dropped. A
     // miner that cannot start leaves the daemon without co-change, as its status says.
     let miner = Miner::start(root, &config, inbox);
     host.serve()?;
     drop(miner);
+    drop(rebuilder);
     drop(watcher);
     Ok(())
 }

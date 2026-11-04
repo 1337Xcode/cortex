@@ -325,6 +325,7 @@ mod tests {
             latencies: Vec::new(),
             recent_errors: Vec::new(),
             git: None,
+            graph: None,
         }
     }
 

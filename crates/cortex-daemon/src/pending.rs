@@ -44,15 +44,15 @@ impl Pending {
     /// Learns from the tasks waiting, with the settings of `config`, then reads the transcripts
     /// waiting, those the events recorded meanwhile named among them, through `writer`; after each
     /// task and each transcript, records with `recorder` the hook events waiting in `inbox`. What
-    /// those events leave waits for the next time.
+    /// those events leave waits for the next time. Whether a task was learned from.
     pub(crate) fn settle(
         &mut self,
         (writer, recorder): (&mut Writer, &mut Recorder),
         inbox: &Inbox,
         config: &Config,
-    ) {
+    ) -> bool {
         let meter = &mut self.meter;
-        self.learning.learn(writer, (inbox, config), |writer| {
+        let is_learned = self.learning.learn(writer, (inbox, config), |writer| {
             let recorded = record_waiting(writer, recorder, inbox);
             meter.wait(recorded.transcripts);
             recorded.ended
@@ -63,5 +63,6 @@ impl Pending {
             learning.wait(recorded.ended);
             recorded.transcripts
         });
+        is_learned
     }
 }

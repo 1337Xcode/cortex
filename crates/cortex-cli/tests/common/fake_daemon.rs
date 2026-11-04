@@ -200,6 +200,7 @@ fn indexing() -> StatusReport {
         latencies: Vec::new(),
         recent_errors: Vec::new(),
         git: Some(GitReport::default()),
+        graph: None,
     }
 }
 

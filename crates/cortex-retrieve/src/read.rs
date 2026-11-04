@@ -22,7 +22,13 @@ pub struct GraphSettings {
 impl Default for GraphSettings {
     /// The settings' defaults.
     fn default() -> Self {
-        let config = Config::default();
+        Self::from(&Config::default())
+    }
+}
+
+impl From<&Config> for GraphSettings {
+    /// What weighs the graph under `config`.
+    fn from(config: &Config) -> Self {
         Self {
             type_weights: config.retrieval.type_weights,
             link_decay: config.link_decay,

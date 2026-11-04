@@ -8,7 +8,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
 use cortex_core::ipc::{
-    GitReport, GitState, HookLatency, RecentError, RequestBody, ResponseBody, StatusReport,
+    GitReport, GitState, GraphReport, HookLatency, RecentError, RequestBody, ResponseBody,
+    StatusReport,
 };
 use cortex_core::{FileFlags, ModeSetting, UserFolder, unix_millis};
 use cortex_daemon::settings;
@@ -138,6 +139,7 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
             report.failed_checkpoints
         ),
         git_line(report.git.as_ref()),
+        graph_line(report.graph.as_ref()),
     ];
     if report.latencies.is_empty() {
         lines.push("daemon latency: no hook request handled yet".to_owned());
@@ -172,6 +174,37 @@ fn git_line(report: Option<&GitReport>) -> String {
         Some(detail) => format!("git: {state}: {detail}"),
         None => format!("git: {state}"),
     }
+}
+
+/// What the daemon's graph holds, as a line, with how many of its rebuilds failed when any did,
+/// or that it has built none yet.
+fn graph_line(report: Option<&GraphReport>) -> String {
+    let counted = |count: u64, (one, many): (&str, &str)| match count {
+        1 => format!("1 {one}"),
+        count => format!("{count} {many}"),
+    };
+    let failed = match report.map_or(0, |report| report.failed_builds) {
+        0 => String::new(),
+        failed => format!("; {} failed", counted(failed, ("build", "builds"))),
+    };
+    let Some(report) = report.filter(|report| report.builds > 0) else {
+        return format!("graph: none built yet{failed}");
+    };
+    let cochange = if report.has_cochange {
+        "with"
+    } else {
+        "without"
+    };
+    let builds = match report.builds {
+        1 => "once".to_owned(),
+        builds => format!("{builds} times"),
+    };
+    format!(
+        "graph: {}, {}, {cochange} co-change links; built {builds}, the latest in {} ms{failed}",
+        counted(report.nodes, ("node", "nodes")),
+        counted(report.links, ("link", "links")),
+        report.build_ms
+    )
 }
 
 /// How long the daemon took to handle one hook's requests, not counting the hook's own process
@@ -303,11 +336,12 @@ mod tests {
             latencies: Vec::new(),
             recent_errors: Vec::new(),
             git: Some(GitReport::default()),
+            graph: None,
         }
     }
 
     /// A daemon that handled no hook and met no error says so, its miner still waiting for the
-    /// first index.
+    /// first index and its graph not built yet.
     #[test]
     fn a_quiet_daemon_says_so() {
         assert_eq!(
@@ -317,6 +351,7 @@ mod tests {
                 "queue: 0 events and 0 changes waiting; 0 events dropped, 0 batches not \
                  recorded, 0 checkpoints failed",
                 "git: not ready, waiting for the first index",
+                "graph: none built yet",
                 "daemon latency: no hook request handled yet",
                 "errors: none",
             ]
@@ -376,7 +411,7 @@ mod tests {
             "error: second (3 min ago, 3 times)",
             "error: third (12 s ago)",
         ];
-        assert_eq!(lines.get(3..), Some(expected.map(str::to_owned).as_slice()));
+        assert_eq!(lines.get(4..), Some(expected.map(str::to_owned).as_slice()));
     }
 
     /// Ages cross from seconds to minutes at two minutes and to hours at two hours; a time ahead
@@ -435,6 +470,59 @@ mod tests {
             line(GitState::Other, None),
             "git: in a state this build does not know"
         );
+    }
+
+    /// The graph's line, as typed out here: its size, one of a kind in the singular, whether it
+    /// holds co-change links, its builds, one said as once, and the failed ones when any failed;
+    /// none before the first build, with the failures when the first builds failed.
+    #[test]
+    fn the_graph_is_reported_in_one_line() {
+        let report = GraphReport {
+            nodes: 1200,
+            links: 3400,
+            has_cochange: true,
+            builds: 3,
+            build_ms: 45,
+            failed_builds: 0,
+        };
+        assert_eq!(
+            graph_line(Some(&report)),
+            "graph: 1200 nodes, 3400 links, with co-change links; built 3 times, the latest in 45 ms"
+        );
+        let failing = GraphReport {
+            failed_builds: 2,
+            ..report.clone()
+        };
+        assert_eq!(
+            graph_line(Some(&failing)),
+            "graph: 1200 nodes, 3400 links, with co-change links; built 3 times, the latest in 45 \
+             ms; 2 builds failed"
+        );
+        let never = GraphReport {
+            nodes: 0,
+            links: 0,
+            has_cochange: false,
+            builds: 0,
+            build_ms: 0,
+            failed_builds: 1,
+        };
+        assert_eq!(
+            graph_line(Some(&never)),
+            "graph: none built yet; 1 build failed"
+        );
+        let first = GraphReport {
+            nodes: 1,
+            links: 1,
+            has_cochange: false,
+            builds: 1,
+            build_ms: 45,
+            failed_builds: 0,
+        };
+        assert_eq!(
+            graph_line(Some(&first)),
+            "graph: 1 node, 1 link, without co-change links; built once, the latest in 45 ms"
+        );
+        assert_eq!(graph_line(None), "graph: none built yet");
     }
 
     /// The co-change line says nothing was mined before a mark exists, that there is nothing to

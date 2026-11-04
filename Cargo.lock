@@ -335,6 +335,7 @@ dependencies = [
  "cortex-index",
  "cortex-learn",
  "cortex-meter",
+ "cortex-retrieve",
  "cortex-store",
  "interprocess",
  "tempfile",

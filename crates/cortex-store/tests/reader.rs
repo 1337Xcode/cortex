@@ -40,6 +40,33 @@ fn a_reader_sees_only_committed_changes() -> TestResult {
     Ok(())
 }
 
+/// Reads in one read transaction see the database as it was when the first of them ran: a file
+/// the writer commits between two of them is not seen by the second, and is seen once the
+/// transaction ends.
+#[test]
+fn a_consistent_read_sees_one_moment() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let reader = scratch.reader()?;
+    let first = index("src/a.py", Vec::new(), Vec::new())?;
+    let second = index("src/b.py", Vec::new(), Vec::new())?;
+    let mut transaction = writer.transaction()?;
+    transaction.replace_file(&first)?;
+    transaction.commit()?;
+    let (before, after) = reader.consistently(|queries| -> TestResult<_> {
+        let before = queries.file(&path("src/a.py")?)?.is_some();
+        let mut transaction = writer.transaction()?;
+        transaction.replace_file(&second)?;
+        transaction.commit()?;
+        let after = queries.file(&path("src/b.py")?)?.is_some();
+        Ok((before, after))
+    })?;
+    assert!(before);
+    assert!(!after);
+    assert!(reader.queries().file(&path("src/b.py")?)?.is_some());
+    Ok(())
+}
+
 /// A reader opens a database whose writer has closed, and reads what it committed.
 #[test]
 fn a_reader_opens_after_the_writer_closed() -> TestResult {

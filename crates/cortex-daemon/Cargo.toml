@@ -15,6 +15,7 @@ cortex-git = { path = "../cortex-git" }
 cortex-index = { path = "../cortex-index" }
 cortex-learn = { path = "../cortex-learn" }
 cortex-meter = { path = "../cortex-meter" }
+cortex-retrieve = { path = "../cortex-retrieve" }
 cortex-store = { path = "../cortex-store" }
 interprocess = { workspace = true, features = ["tokio"] }
 tokio = { workspace = true, features = ["io-util", "rt-multi-thread", "sync", "time"] }

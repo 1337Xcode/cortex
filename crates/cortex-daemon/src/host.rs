@@ -22,6 +22,7 @@ use cortex_index::{
 use cortex_learn::{Recorder, TaskState};
 use cortex_store::{PAUSE_EVERY, Pause, StoreError, Writer};
 
+use crate::graph::Snapshot;
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
 use crate::meter::Transcript;
 use crate::pending::Pending;
@@ -50,18 +51,25 @@ pub(crate) struct Host<'a> {
     pending: Pending,
     /// Where hook events, the watcher's changes and a stop arrive.
     inbox: &'a Inbox,
+    /// The graph retrieval spreads over, told when a write changes what it holds.
+    snapshot: &'a Snapshot,
 }
 
 impl<'a> Host<'a> {
     /// A host over `writer` for the repository at `root`, with the settings in effect and the
     /// walk's options, recording events with `recorder`, learning from the tasks they end and
-    /// reading the transcripts they name with `pending`, and taking its work from `inbox`, no file
-    /// waiting yet.
+    /// reading the transcripts they name with `pending`, taking its work from `inbox` and telling
+    /// `snapshot` when a write changes the graph, no file waiting yet.
     pub(crate) fn new(
         root: &'a Path,
         grammars: Arc<Grammars>,
         (config, discover): (&'a Config, DiscoverOptions<'a>),
-        (writer, recorder, pending, inbox): (Writer, Recorder, Pending, &'a Inbox),
+        (writer, recorder, pending, (inbox, snapshot)): (
+            Writer,
+            Recorder,
+            Pending,
+            (&'a Inbox, &'a Snapshot),
+        ),
     ) -> Self {
         Self {
             root,
@@ -73,6 +81,7 @@ impl<'a> Host<'a> {
             recorder,
             pending,
             inbox,
+            snapshot,
         }
     }
 
@@ -133,13 +142,16 @@ impl<'a> Host<'a> {
     }
 
     /// Learns from the tasks that ended and wait and reads the transcripts that wait, recording
-    /// the events that wait between them.
+    /// the events that wait between them. What a task teaches changes the graph.
     fn settle(&mut self) {
-        self.pending.settle(
+        let is_learned = self.pending.settle(
             (&mut self.writer, &mut self.recorder),
             self.inbox,
             self.config,
         );
+        if is_learned {
+            self.snapshot.changed();
+        }
     }
 
     /// The work of [`Host::serve`] until it is asked to stop, is idle long enough or fails.
@@ -267,7 +279,8 @@ impl<'a> Host<'a> {
 
     /// Runs `index` with the options of an index on `threads` threads, timed now, and the pause
     /// of [`Host::with_pause`], the recorder told while it runs so that a hook's edit recorded in a
-    /// pause takes nothing from a row the index wrote as what its file held before.
+    /// pause takes nothing from a row the index wrote as what its file held before. However it
+    /// went, the graph is rebuilt from what it wrote.
     fn indexing<T>(
         &mut self,
         threads: NonZeroUsize,
@@ -284,14 +297,19 @@ impl<'a> Host<'a> {
             index(root, &grammars, writer, &options)
         });
         self.recorder.index_done();
+        self.snapshot.changed();
         indexed
     }
 
     /// Stores what the miner found in turns, with the pause of [`Host::with_pause`], and tells the
     /// miner how that went. A mining that cannot be stored leaves no mark, so the next is whole.
+    /// The graph is told when the write begins and ends, so that it takes co-change links only
+    /// from a complete mining.
     fn store_mining(&mut self, job: MiningJob) {
+        let writing = self.snapshot.mining_write();
         let stored = self
             .with_pause(|writer, pause| mine::write(writer, &job.mining, now_ms(), Some(pause)));
+        drop(writing);
         if let Err(error) = &stored {
             tracing::warn!(error = %error, "a mining could not be stored");
         }
@@ -563,11 +581,12 @@ mod tests {
         let config = Config::default();
         let grammars = Arc::new(Grammars::load()?);
         let inbox = Inbox::default();
+        let snapshot = Snapshot::default();
         let parts = (
             writer(root.path())?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            &inbox,
+            (&inbox, &snapshot),
         );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
@@ -594,11 +613,12 @@ mod tests {
         let config = Config::default();
         let grammars = Arc::new(Grammars::load()?);
         let inbox = Inbox::default();
+        let snapshot = Snapshot::default();
         let parts = (
             writer(root.path())?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            &inbox,
+            (&inbox, &snapshot),
         );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         let prompt = Event {
@@ -647,11 +667,12 @@ mod tests {
         let config = Config::default();
         let grammars = Arc::new(Grammars::load()?);
         let inbox = Inbox::default();
+        let snapshot = Snapshot::default();
         let parts = (
             writer(root.path())?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            &inbox,
+            (&inbox, &snapshot),
         );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         let prompt = event(HookKind::Prompt, 10, b"same")?;
@@ -674,7 +695,7 @@ mod tests {
     /// changed on disk.
     fn changed_repository<'a>(
         root: &'a Path,
-        (config, inbox): (&'a Config, &'a Inbox),
+        (config, inbox, snapshot): (&'a Config, &'a Inbox, &'a Snapshot),
     ) -> Result<Host<'a>, Box<dyn std::error::Error>> {
         std::fs::write(root.join("a.py"), "a = 1\n")?;
         std::fs::write(root.join("b.py"), "b = 1\n")?;
@@ -682,7 +703,7 @@ mod tests {
             writer(root)?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            inbox,
+            (inbox, snapshot),
         );
         let grammars = Arc::new(Grammars::load()?);
         let mut host = Host::new(root, grammars, (config, discover(config)), parts);
@@ -714,7 +735,8 @@ mod tests {
     fn each_edit_keeps_the_time_its_file_was_seen() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = changed_repository(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = changed_repository(root.path(), (&config, &inbox, &snapshot))?;
         host.update(&[
             (RepoPath::new("a.py")?, 1_000),
             (RepoPath::new("b.py")?, 9_000),
@@ -738,17 +760,17 @@ mod tests {
             .collect())
     }
 
-    /// A host on a repository of one file, indexed, with `config` and `inbox`.
+    /// A host on a repository of one file, indexed, with `config`, `inbox` and `snapshot`.
     fn indexed_host<'a>(
         root: &'a Path,
-        (config, inbox): (&'a Config, &'a Inbox),
+        (config, inbox, snapshot): (&'a Config, &'a Inbox, &'a Snapshot),
     ) -> Result<Host<'a>, Box<dyn std::error::Error>> {
         std::fs::write(root.join("a.py"), "a = 1\n")?;
         let parts = (
             writer(root)?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            inbox,
+            (inbox, snapshot),
         );
         let grammars = Arc::new(Grammars::load()?);
         let mut host = Host::new(root, grammars, (config, discover(config)), parts);
@@ -764,7 +786,8 @@ mod tests {
     fn waiting_events_are_recorded_at_a_stop() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         assert!(inbox.push_event(event(HookKind::SessionStart, 5, b"start")?));
         inbox.stop();
         assert!(inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?));
@@ -787,7 +810,8 @@ mod tests {
             ..Config::default()
         };
         let inbox = Inbox::default();
-        let host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         host.serve()?;
         assert!(!inbox.push_event(event(HookKind::Stop, 15, b"stop")?));
         assert_eq!(stored_kinds(root.path())?, []);
@@ -800,7 +824,8 @@ mod tests {
     fn held_edits_are_recorded_at_a_stop() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = changed_repository(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = changed_repository(root.path(), (&config, &inbox, &snapshot))?;
         let seen_ms = now_ms();
         host.update(&[(RepoPath::new("a.py")?, seen_ms)])?;
         inbox.stop();
@@ -852,6 +877,31 @@ mod tests {
         Ok((row.outcome, row.outcome_evidence, has_record))
     }
 
+    /// The graph is told of each write that changes it: the first index, and a task learned from
+    /// when the host closes; a host that closes with no task to learn from tells it nothing.
+    #[test]
+    fn the_graph_is_told_of_the_writes_that_change_it() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
+        assert!(snapshot.take_change());
+        inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
+        inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?);
+        inbox.push_event(event(HookKind::Stop, 30, b"stop")?);
+        host.close();
+        assert!(snapshot.take_change());
+
+        let other = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(other.path(), (&config, &inbox, &snapshot))?;
+        assert!(snapshot.take_change());
+        host.close();
+        assert!(!snapshot.take_change());
+        Ok(())
+    }
+
     /// A task that ends is learned from before the daemon stops: a prompt and the end of its
     /// answer wait in the inbox, and once the host closes, the task's record is written, which
     /// only learning writes. It changed nothing and ran nothing, so nothing is known of it.
@@ -859,7 +909,8 @@ mod tests {
     fn a_task_that_ends_is_learned_from_before_a_stop() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
         inbox.push_event(event(HookKind::Prompt, 10, b"prompt")?);
         inbox.push_event(event(HookKind::Stop, 30, b"stop")?);
@@ -884,7 +935,8 @@ mod tests {
             include_str!("../../../tests/fixtures/claude/2.1.316/transcripts/grep-session.jsonl"),
         )?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         host.pending = Pending::new(Meter::new(home.path(), &|_| None));
         inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
         inbox.push_event(Event {
@@ -913,7 +965,8 @@ mod tests {
     fn a_waiting_hook_edit_claims_what_the_watcher_saw() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         host.record(&[
             event(HookKind::SessionStart, 1_000, b"start")?,
             event(HookKind::Prompt, 1_001, b"prompt")?,
@@ -974,7 +1027,8 @@ mod tests {
     fn events_waiting_are_recorded_while_tasks_are_learned_from() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         host.record(&[
             event(HookKind::SessionStart, 5, b"start")?,
             event(HookKind::Prompt, 10, b"prompt")?,
@@ -1006,7 +1060,8 @@ mod tests {
     fn a_task_waiting_to_be_learned_from_wakes_the_work_loop() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         let idle_at = Instant::now() + Duration::from_secs(600);
         assert_eq!(host.deadline(idle_at, Some(idle_at)), Some(idle_at));
         host.record(&[
@@ -1030,7 +1085,8 @@ mod tests {
     fn only_so_many_ended_tasks_wait() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         let mut events = vec![event(HookKind::SessionStart, 5, b"start")?];
         for task in 0..257_i64 {
             let at_ms = 100 + task * 10;
@@ -1059,11 +1115,12 @@ mod tests {
         let root = tempfile::tempdir()?;
         write_modules(root.path())?;
         let (config, inbox) = (Config::default(), Inbox::default());
+        let snapshot = Snapshot::default();
         let parts = (
             writer(root.path())?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            &inbox,
+            (&inbox, &snapshot),
         );
         let grammars = Arc::new(Grammars::load()?);
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
@@ -1085,7 +1142,8 @@ mod tests {
     fn a_task_ended_before_due_edits_is_learned_from() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         let before = FileContent::Hashed(ContentHash::of(b"a = 1\n"));
         host.recorder
             .hold_watcher_edits([(RepoPath::new("a.py")?, before)], 1_000);
@@ -1107,7 +1165,8 @@ mod tests {
     fn an_edit_recorded_in_an_index_s_pause_is_not_taken_as_put_back() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
-        let mut host = indexed_host(root.path(), (&config, &inbox))?;
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         host.record(&[
             event(HookKind::SessionStart, 1_000, b"start")?,
             event(HookKind::Prompt, 1_001, b"prompt")?,

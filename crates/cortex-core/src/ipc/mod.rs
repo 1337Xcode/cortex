@@ -14,8 +14,8 @@ pub use self::frame::{
     write_frame,
 };
 pub use self::message::{
-    GitReport, GitState, Hello, HookLatency, Mismatch, RecentError, Request, RequestBody, Response,
-    ResponseBody, Role, StatusReport, Welcome,
+    GitReport, GitState, GraphReport, Hello, HookLatency, Mismatch, RecentError, Request,
+    RequestBody, Response, ResponseBody, Role, StatusReport, Welcome,
 };
 pub use self::version::{
     CORTEX_VERSION, CortexVersion, Protocol, VersionError, is_older_than_this_build,

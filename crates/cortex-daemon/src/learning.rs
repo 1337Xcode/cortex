@@ -50,15 +50,16 @@ impl Learning {
     /// settings of `config`, running `between` after each to record the hook events waiting and
     /// hand back the tasks they ended; then writes the clusters of tasks again. A task whose
     /// learning the store refuses is counted in `inbox` with the error and let go. Tasks that end
-    /// while this runs wait for the next time.
+    /// while this runs wait for the next time. Whether any task waited: what the store holds of
+    /// the tasks may then have changed.
     pub(crate) fn learn(
         &mut self,
         writer: &mut Writer,
         (inbox, config): (&Inbox, &Config),
         mut between: impl FnMut(&mut Writer) -> Vec<TaskState>,
-    ) {
+    ) -> bool {
         if self.ended.is_empty() {
-            return;
+            return false;
         }
         let ended = std::mem::take(&mut self.ended);
         for state in ended {
@@ -85,5 +86,6 @@ impl Learning {
         if let Err(error) = clustered {
             count_failed(inbox, "the clusters of tasks", &error);
         }
+        true
     }
 }

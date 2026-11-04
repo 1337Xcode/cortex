@@ -161,6 +161,29 @@ pub struct StatusReport {
     /// older than the miner.
     #[serde(default)]
     pub git: Option<GitReport>,
+    /// The graph retrieval spreads over, as last built, and how its rebuilds went; none before the
+    /// first rebuild ended, or from a daemon that does not say.
+    #[serde(default)]
+    pub graph: Option<GraphReport>,
+}
+
+/// What a daemon's graph holds, as last built, and how its rebuilds went, for its status. With no
+/// graph built yet, its size is 0.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct GraphReport {
+    /// Its nodes: files, symbols and folders.
+    pub nodes: u64,
+    /// Its links, each way of a link that runs both ways counted.
+    pub links: u64,
+    /// Whether it holds the co-change links of a complete mining.
+    pub has_cochange: bool,
+    /// How many graphs the daemon built since it started.
+    pub builds: u64,
+    /// How long the latest build took, in milliseconds.
+    pub build_ms: u64,
+    /// How many rebuilds failed since the daemon started; each was tried again.
+    #[serde(default)]
+    pub failed_builds: u64,
 }
 
 /// What a daemon's co-change miner is doing, for its status. A daemon's miner starts out

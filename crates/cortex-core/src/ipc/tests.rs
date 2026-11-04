@@ -186,12 +186,15 @@ fn a_status_from_any_version_reads() -> TestResult {
     let report: StatusReport = serde_json::from_str(older)?;
     assert_eq!((report.latencies, report.recent_errors), (vec![], vec![]));
     assert_eq!(report.git, None);
+    assert_eq!(report.graph, None);
     let newer = concat!(
         r#"{"cortex_version":"9.0.0","protocol":{"major":1,"minor":4},"pid":7,"#,
         r#""uptime_ms":5,"queues":{},"latencies":[{"hook":"permission_request","#,
         r#""requests":2,"p50_us":10,"p95_us":20,"p99_us":20,"p999_us":20}],"#,
         r#""recent_errors":[{"at_ms":3,"count":1,"message":"m","kind":"store"}],"#,
-        r#""git":{"state":"rebasing","detail":"d","commits":3}}"#
+        r#""git":{"state":"rebasing","detail":"d","commits":3},"#,
+        r#""graph":{"nodes":12,"links":30,"has_cochange":true,"builds":2,"build_ms":4,"#,
+        r#""failed_builds":1,"layers":1}}"#
     );
     let report: StatusReport = serde_json::from_str(newer)?;
     assert_eq!(
@@ -217,6 +220,17 @@ fn a_status_from_any_version_reads() -> TestResult {
         Some(GitReport {
             state: GitState::Other,
             detail: Some("d".to_owned()),
+        })
+    );
+    assert_eq!(
+        report.graph,
+        Some(GraphReport {
+            nodes: 12,
+            links: 30,
+            has_cochange: true,
+            builds: 2,
+            build_ms: 4,
+            failed_builds: 1,
         })
     );
     Ok(())

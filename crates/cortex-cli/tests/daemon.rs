@@ -309,7 +309,8 @@ index: not ready, the last index did not finish; the next one reads every file a
 /// co-changes, at the same weights, so each file's edge to the other has a confidence of exactly
 /// 1 and a count of 2. A third commit changes `a.py` and `c.py`: `a.py` has 3 commits, the new
 /// pair 1 co-change, under the 2 an edge needs, and the mark moves to the new HEAD at sequence 3.
-/// Status says git is ready and how far the history is mined.
+/// Status says git is ready and how far the history is mined, and that the graph holds the root
+/// folder, the three files and the two co-change links.
 #[test]
 fn the_daemon_mines_the_history_and_the_commits_head_gains() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -321,6 +322,13 @@ fn the_daemon_mines_the_history_and_the_commits_head_gains() -> TestResult {
     let daemon = Daemon::start(root, home.path())?;
     daemon.first_line()?;
     wait_for(|| Ok(mark(root)?.is_some_and(|mark| mark.last_commit == second)))?;
+    // Built at the first index without co-change links, the graph gains them only when the
+    // mining's write ends: the root folder, `a.py` and `b.py`, the folder's hold on each file both
+    // ways, and the two co-change links.
+    wait_for(|| {
+        Ok(status_of(root, home.path())?
+            .contains("\ngraph: 3 nodes, 6 links, with co-change links; built "))
+    })?;
     let reader = Reader::open(&root.join(".cortex"), 0)?;
     let queries = reader.queries();
     let file = |path: &str| -> TestResult<(FileId, NodeId)> {
@@ -368,6 +376,13 @@ fn the_daemon_mines_the_history_and_the_commits_head_gains() -> TestResult {
         .collect();
     assert_eq!(counts, [(a, 3)]);
 
+    // The graph is rebuilt once the mining's write ends: the root folder and the three files, no
+    // symbol among them, so four nodes; the folder's hold on each file, both ways, six links, and
+    // the two co-change links between `a.py` and `b.py`, one each way.
+    wait_for(|| {
+        Ok(status_of(root, home.path())?
+            .contains("\ngraph: 4 nodes, 8 links, with co-change links; built "))
+    })?;
     let status = status_of(root, home.path())?;
     assert!(status.contains("\ngit: ready\n"), "{status}");
     let head_start = third.get(..12).ok_or("a short commit id")?;
@@ -418,5 +433,29 @@ fn a_repository_gix_cannot_read_is_mined_with_git() -> TestResult {
         status.contains("\ngit: ready: read with the git program, as gix could not: "),
         "{status}"
     );
+    Ok(())
+}
+
+/// The graph follows the index: a repository of one Python file holding only a comment has a graph
+/// of two nodes, the root folder and the file, and two links, the folder's hold on the file each
+/// way; once a second such file is written, the watcher's change is indexed and the graph rebuilt
+/// with three nodes and four links. There is no git repository, so there is no co-change link.
+#[test]
+fn the_graph_follows_the_index() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    std::fs::write(root.join("a.py"), "# a\n")?;
+    let daemon = Daemon::start(root, home.path())?;
+    daemon.first_line()?;
+    wait_for(|| {
+        Ok(status_of(root, home.path())?
+            .contains("\ngraph: 2 nodes, 2 links, without co-change links; built "))
+    })?;
+    std::fs::write(root.join("b.py"), "# b\n")?;
+    wait_for(|| {
+        Ok(status_of(root, home.path())?
+            .contains("\ngraph: 3 nodes, 4 links, without co-change links; built "))
+    })?;
     Ok(())
 }
