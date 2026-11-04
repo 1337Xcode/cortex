@@ -270,6 +270,7 @@ mod tests {
         matcher: Some("Read"),
         hook: HookKind::PreTool,
         hard_timeout: Duration::from_millis(300),
+        gives_context: false,
     };
 
     /// A hook without a matcher and a hard timeout of 1,500 ms: 2 s once rounded up.
@@ -278,6 +279,7 @@ mod tests {
         matcher: None,
         hook: HookKind::SessionStart,
         hard_timeout: Duration::from_millis(1_500),
+        gives_context: true,
     };
 
     /// No file: a settings object holding only the two hooks, in the table's order.

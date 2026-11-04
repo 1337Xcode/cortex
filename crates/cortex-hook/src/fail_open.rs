@@ -8,10 +8,10 @@ use std::thread;
 use std::time::Instant;
 
 /// How work run [`within`] a deadline ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Outcome {
-    /// It returned.
-    Finished,
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Outcome<T> {
+    /// It returned this.
+    Finished(T),
     /// It panicked, and the panic was caught.
     Panicked,
     /// The deadline passed first; the work was left to the process's exit.
@@ -27,21 +27,26 @@ pub(crate) fn guard(body: impl FnOnce() + UnwindSafe) -> bool {
     panic::catch_unwind(body).is_ok()
 }
 
-/// Runs `work` guarded on a thread of its own and waits for it no later than `deadline`. Work still
-/// running then is left behind: the hook returns, and its process's exit ends the work.
-pub(crate) fn within(deadline: Instant, work: impl FnOnce() + Send + 'static) -> Outcome {
+/// Runs `work` guarded on a thread of its own and waits for what it returns no later than
+/// `deadline`. Work still running then is left behind: the hook returns, and its process's exit
+/// ends the work.
+pub(crate) fn within<T: Send + 'static>(
+    deadline: Instant,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Outcome<T> {
     let (sender, receiver) = mpsc::sync_channel(1);
     thread::spawn(move || {
-        let finished = guard(AssertUnwindSafe(work));
+        let mut returned = None;
+        let finished = guard(AssertUnwindSafe(|| returned = Some(work())));
         // The hook may have stopped waiting: nobody is left to tell.
-        let _ = sender.send(finished);
+        let _ = sender.send(returned.filter(|_| finished));
     });
     // INVARIANT: budgeted. Nothing that stalls (the payload, the file system, the daemon) holds the
     // agent past the deadline.
     match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-        Ok(true) => Outcome::Finished,
+        Ok(Some(returned)) => Outcome::Finished(returned),
         // A thread that ends without a word can only have panicked past its guard.
-        Ok(false) | Err(mpsc::RecvTimeoutError::Disconnected) => Outcome::Panicked,
+        Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => Outcome::Panicked,
         Err(mpsc::RecvTimeoutError::Timeout) => Outcome::OutOfTime,
     }
 }
@@ -62,7 +67,7 @@ mod tests {
         assert!(guard(|| {}));
 
         let soon = || Instant::now() + Duration::from_secs(10);
-        assert_eq!(within(soon(), || {}), Outcome::Finished);
+        assert_eq!(within(soon(), || 7), Outcome::Finished(7));
         #[allow(clippy::panic, reason = "the panic is what the guard must catch")]
         let outcome = within(soon(), || panic!("the work broke"));
         assert_eq!(outcome, Outcome::Panicked);

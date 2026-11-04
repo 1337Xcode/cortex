@@ -229,13 +229,8 @@ fn index_and_serve(
         files_waiting = host.waiting(),
         "first index done"
     );
-    // The graph is built once the first index is done, before which a retrieval would find
-    // nothing; told to stop when dropped.
-    let rebuilder = Rebuilder::start(
-        snapshot,
-        store_reads((&folder, config.mmap_bytes), GraphSettings::from(&config)),
-    );
-    // Installed once: the daemon serves one repository with one configuration.
+    // Installed once: the daemon serves one repository with one configuration. Installed before
+    // the graph's first build, so that a daemon whose status shows a graph answers with text.
     drop(service.set(Service::new(Settings {
         root: root.to_path_buf(),
         folder: folder.clone(),
@@ -244,6 +239,12 @@ fn index_and_serve(
         max_file_bytes: config.max_file_bytes,
         holdout_share: config.holdout_share,
     })));
+    // The graph is built once the first index is done, before which a retrieval would find
+    // nothing; told to stop when dropped.
+    let rebuilder = Rebuilder::start(
+        snapshot,
+        store_reads((&folder, config.mmap_bytes), GraphSettings::from(&config)),
+    );
     or_close(note(&ready_line(&report, host.waiting())), || host.close())?;
     // The history is mined once the files that count are stored; told to stop when dropped. A
     // miner that cannot start leaves the daemon without co-change, as its status says.

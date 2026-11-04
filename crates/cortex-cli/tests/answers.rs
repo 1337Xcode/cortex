@@ -1,7 +1,8 @@
-//! The daemon's answers that are text, through its endpoint, on a repository whose history ties
-//! its two files together: a prompt gets its work order, true to the files on disk, and leaves an
-//! injection row; a held-out task's prompt gets nothing and leaves what would have been given; a
-//! session's start gets the primer; a question asked directly is answered without the gate.
+//! The daemon's answers that are text, on a repository whose history ties its two files together,
+//! through the daemon's endpoint and through `cortex hook` as Claude Code runs it: a prompt gets
+//! its work order, true to the files on disk, and leaves an injection row; a held-out task's prompt
+//! gets nothing and leaves what would have been given; a session's start gets the primer, the same
+//! bytes for every session; a question asked directly is answered without the gate.
 
 mod common;
 
@@ -9,7 +10,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use common::git::{commit, git};
-use common::{Daemon, TestResult, isolate, wait_for};
+use common::hook_call::hook;
+use common::{Daemon, TestResult, graph_of, payloads, wait_for};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
 use cortex_core::{
     Agent, ContentHash, Event, HookKind, Identifier, ReasonKind, RepoId, RunFiles, StartSource,
@@ -17,6 +19,7 @@ use cortex_core::{
 };
 use cortex_hook::ask;
 use cortex_store::{InjectionRow, Reader};
+use serde_json::{Value, json};
 
 /// `src/orders/service.py`, its function on lines 1 to 3.
 const SERVICE: &str = "def create_order(cart):\n    total = sum(cart)\n    return total\n";
@@ -26,6 +29,19 @@ const MODEL: &str = "class Order:\n    def __init__(self):\n        self.lines =
 
 /// The prompt every test asks: it names `create_order`, and "orders" is in both files' paths.
 const PROMPT: &str = "fix create_order in the orders service";
+
+/// The primer of the repository of [`repository`]: medium mode, as its configuration pins it; its
+/// two source files of 4 lines each once the second commit added a line break to both; no
+/// landmarks while no task has ended.
+const PRIMER: &str = "[cortex] Project map · medium mode · about 2 source files, 8 lines\n\
+                      Cortex adds the code a prompt points at before the agent starts, when the \
+                      evidence agrees.\n";
+
+/// The Claude Code version whose captured payloads the hook is sent.
+const CAPTURED: &str = "2.1.312";
+
+/// The session of the captured payloads.
+const S1: &str = "00000000-0000-4000-8000-000000000001";
 
 /// A repository whose two commits change the service and the model together, pinned to medium
 /// mode, with `holdout_share` of tasks held out; its home folder; and its daemon, once the graph
@@ -56,16 +72,8 @@ fn repository(holdout_share: &str) -> TestResult<(tempfile::TempDir, tempfile::T
     )?;
     let daemon = Daemon::start(root, home.path())?;
     daemon.first_line()?;
-    wait_for(|| Ok(status_of(root, home.path())?.contains("with co-change links;")))?;
+    wait_for(|| Ok(graph_of(root, home.path())?.is_some_and(|graph| graph.has_cochange)))?;
     Ok((repo, home, daemon))
-}
-
-/// What `cortex status` prints for the repository at `root`.
-fn status_of(root: &Path, home: &Path) -> TestResult<String> {
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.args(["status", "--root"]).arg(root);
-    isolate(&mut command, home);
-    Ok(String::from_utf8(command.output()?.stdout)?)
 }
 
 /// The run files of the daemon of the repository at `root`.
@@ -121,6 +129,32 @@ fn injections_of(root: &Path, prompt: &Event) -> TestResult<Vec<InjectionRow>> {
     read()
 }
 
+/// The captured payload `name` from the repository at `root`, each of `fields` set to its text.
+fn captured(name: &str, root: &Path, fields: &[(&str, &str)]) -> TestResult<Vec<u8>> {
+    let mut payload: Value = serde_json::from_slice(&payloads::payload(CAPTURED, name, root)?)?;
+    let object = payload
+        .as_object_mut()
+        .ok_or("a payload is a JSON object")?;
+    for (field, text) in fields {
+        object.insert((*field).to_owned(), json!(text));
+    }
+    Ok(serde_json::to_vec(&payload)?)
+}
+
+/// What `cortex hook` gives Claude Code at `event` for `payload`: none when it prints nothing.
+fn given(event: &str, payload: Vec<u8>, home: &Path) -> TestResult<Option<String>> {
+    let args = ["--agent", "claude", "--event", event];
+    hook(&args, payload, Duration::ZERO, home)?.context(event)
+}
+
+/// The lines of `source`, as (line number, text), as a work order shows them.
+fn numbered(source: &str) -> Vec<(u32, String)> {
+    (1..)
+        .zip(source.lines())
+        .map(|(number, line)| (number, line.to_owned()))
+        .collect()
+}
+
 /// Every line the work order's "Current code" part shows of `path`, as (line number, text), as
 /// the work order writes them: under the path's own line, each as `  N | text`.
 fn shown_lines(text: &str, path: &str) -> Vec<(u32, String)> {
@@ -168,12 +202,10 @@ fn a_prompt_gets_its_work_order_and_leaves_its_injection() -> TestResult {
         text.contains("src/orders/service.py:1-3  create_order  (named in the prompt)"),
         "{text}"
     );
-    let on_disk: Vec<(u32, String)> = SERVICE
-        .lines()
-        .enumerate()
-        .map(|(at, line)| (u32::try_from(at + 1).unwrap_or(0), line.to_owned()))
-        .collect();
-    assert_eq!(shown_lines(&text, "src/orders/service.py"), on_disk);
+    assert_eq!(
+        shown_lines(&text, "src/orders/service.py"),
+        numbered(SERVICE)
+    );
     let [row] = &injections_of(root, &prompt)?[..] else {
         return Err("one injection".into());
     };
@@ -236,10 +268,7 @@ fn a_session_gets_its_primer_and_a_question_its_answer() -> TestResult {
         },
     )?
     .ok_or("a primer")?;
-    assert!(
-        primer.starts_with("[cortex] Project map · medium mode · about 2 source files, "),
-        "{primer}"
-    );
+    assert_eq!(primer, PRIMER);
     let compacted = Event {
         source: Some(StartSource::Compact),
         ..event(root, HookKind::SessionStart, 15)?
@@ -315,5 +344,79 @@ fn a_session_gets_its_primer_and_a_question_its_answer() -> TestResult {
         rows.first().and_then(|row| row.record.text_hash),
         Some(ContentHash::of(primer.as_bytes()))
     );
+    Ok(())
+}
+
+/// Through `cortex hook`, as Claude Code runs it: a session's start prints the primer, and the
+/// start of a second session the same bytes; a prompt that names `create_order` prints its work
+/// order, true to the file on disk; each is Claude Code's hook JSON, and each is recorded as given,
+/// with the hash of the text printed.
+#[test]
+fn the_hook_prints_the_primer_and_the_work_order() -> TestResult {
+    let (repo, home, _daemon) = repository("0")?;
+    let (root, home) = (repo.path(), home.path());
+    let start = captured("session-start-startup.json", root, &[])?;
+    let primer = given("SessionStart", start, home)?.ok_or("a primer")?;
+    assert_eq!(primer, PRIMER);
+    let other = captured("session-start-startup.json", root, &[("session_id", "s2")])?;
+    assert_eq!(given("SessionStart", other, home)?, Some(primer.clone()));
+    let prompt = captured("user-prompt-submit.json", root, &[("prompt", PROMPT)])?;
+    let order = given("UserPromptSubmit", prompt, home)?.ok_or("a work order")?;
+    assert!(order.starts_with("[cortex] Work order · "), "{order}");
+    assert!(
+        order.contains("src/orders/service.py:1-3  create_order  (named in the prompt)"),
+        "{order}"
+    );
+    assert_eq!(
+        shown_lines(&order, "src/orders/service.py"),
+        numbered(SERVICE)
+    );
+    let session = Identifier::new(S1)?;
+    let rows = || -> TestResult<Vec<(HookKind, Option<ContentHash>)>> {
+        let reader = Reader::open(&root.join(".cortex"), 0)?;
+        let rows = reader.queries().injections_of_session(&session)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.record.hook, row.record.text_hash))
+            .collect())
+    };
+    wait_for(|| Ok(rows()?.len() >= 2))?;
+    assert_eq!(
+        rows()?,
+        [
+            (
+                HookKind::SessionStart,
+                Some(ContentHash::of(primer.as_bytes()))
+            ),
+            (HookKind::Prompt, Some(ContentHash::of(order.as_bytes()))),
+        ]
+    );
+    Ok(())
+}
+
+/// With every task held out, the prompt through `cortex hook` prints nothing, and is recorded as
+/// held out with the hash of the text it would have been given; a session's start still prints the
+/// primer, which is a session's and never held out.
+#[test]
+fn the_hook_prints_nothing_for_a_held_out_prompt() -> TestResult {
+    let (repo, home, _daemon) = repository("1")?;
+    let (root, home) = (repo.path(), home.path());
+    let start = captured("session-start-startup.json", root, &[])?;
+    assert_eq!(given("SessionStart", start, home)?.as_deref(), Some(PRIMER));
+    let prompt = captured("user-prompt-submit.json", root, &[("prompt", PROMPT)])?;
+    assert_eq!(given("UserPromptSubmit", prompt, home)?, None);
+    let session = Identifier::new(S1)?;
+    let prompts = || -> TestResult<Vec<InjectionRow>> {
+        let reader = Reader::open(&root.join(".cortex"), 0)?;
+        let mut rows = reader.queries().injections_of_session(&session)?;
+        rows.retain(|row| row.record.hook == HookKind::Prompt);
+        Ok(rows)
+    };
+    wait_for(|| Ok(!prompts()?.is_empty()))?;
+    let [row] = &prompts()?[..] else {
+        return Err("one prompt's injection".into());
+    };
+    assert!(row.record.is_holdout && !row.record.is_gated_out);
+    assert!(row.record.text_hash.is_some());
     Ok(())
 }

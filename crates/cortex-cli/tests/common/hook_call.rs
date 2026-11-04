@@ -1,11 +1,13 @@
 //! Running `cortex hook` as an agent does: a payload on its standard input, its output and how
-//! long it took kept for the test to judge.
+//! long it took kept for the test to judge, and the context it gave Claude Code read back.
 
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
 
 use super::{TestResult, isolate};
 
@@ -26,6 +28,36 @@ impl Call {
         self.output.status.code() == Some(0)
             && self.output.stdout.is_empty()
             && self.output.stderr.is_empty()
+    }
+
+    /// What the call gave Claude Code to add to its context at `event`: none when it printed
+    /// nothing. The call must have ended as an agent requires: exit code 0, nothing on stderr, and
+    /// on stdout nothing, or one line holding Claude Code's hook JSON for `event` and nothing else.
+    pub fn context(&self, event: &str) -> TestResult<Option<String>> {
+        let output = &self.output;
+        if output.status.code() != Some(0) || !output.stderr.is_empty() {
+            return Err(format!("{event}: {output:?}").into());
+        }
+        if output.stdout.is_empty() {
+            return Ok(None);
+        }
+        let printed = std::str::from_utf8(&output.stdout)?;
+        let line = printed
+            .strip_suffix('\n')
+            .filter(|line| !line.contains('\n'))
+            .ok_or_else(|| format!("{event}: not one line: {printed:?}"))?;
+        let value: Value = serde_json::from_str(line)?;
+        let context = value
+            .pointer("/hookSpecificOutput/additionalContext")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{event}: no context: {line}"))?;
+        let expected = json!({
+            "hookSpecificOutput": {"hookEventName": event, "additionalContext": context}
+        });
+        if value != expected {
+            return Err(format!("{event}: not Claude Code's hook JSON for it: {line}").into());
+        }
+        Ok(Some(context.to_owned()))
     }
 }
 
@@ -60,7 +92,8 @@ pub fn hook(args: &[&str], input: Vec<u8>, delay: Duration, home: &Path) -> Test
 }
 
 /// Runs `cortex hook` for the Claude Code `payload` as Claude Code would, with `home` as the
-/// user's home folder. The call must end as an agent requires of a hook, silently.
+/// user's home folder. The call must end as an agent requires of a hook: silently, or, at a
+/// session's start and at a prompt, with Claude Code's hook JSON for its event.
 pub fn send(payload: &serde_json::Value, home: &Path) -> TestResult {
     let event = payload["hook_event_name"]
         .as_str()
@@ -72,6 +105,8 @@ pub fn send(payload: &serde_json::Value, home: &Path) -> TestResult {
         Duration::ZERO,
         home,
     )?;
-    assert!(call.is_silent_success(), "{event}: {:?}", call.output);
+    let context = call.context(&event)?;
+    let may_give = matches!(event.as_str(), "SessionStart" | "UserPromptSubmit");
+    assert!(context.is_none() || may_give, "{event}: {context:?}");
     Ok(())
 }

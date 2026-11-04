@@ -57,6 +57,11 @@ pub trait Adapter: Sync {
         locate: &dyn Fn(&Path) -> Option<Located>,
         stamp: Stamp,
     ) -> Result<Option<Event>, NormalizeError>;
+
+    /// `text` as the hook `entry` prints it for the agent to add to its context, in the agent's
+    /// hook protocol; none when the agent would not take the text as it is: longer than it takes
+    /// whole, or holding text it rewrites.
+    fn context_output(&self, entry: &HookEntry, text: &str) -> Option<String>;
 }
 
 /// One hook Cortex registers with an agent.
@@ -71,6 +76,10 @@ pub struct HookEntry {
     /// How long the whole hook may take: the deadline for the daemon's answer is this less a
     /// margin, and the agent's own timeout is set at or above it.
     pub hard_timeout: Duration,
+    /// Whether Cortex gives the agent text here: the agent adds what the hook prints to its
+    /// context, and the hook asks the daemon for the text its event gets (the primer at a
+    /// session's start, the work order at a prompt) instead of handing it the event alone.
+    pub gives_context: bool,
 }
 
 /// The versions of an agent Cortex knows.

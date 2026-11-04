@@ -1,5 +1,6 @@
 //! What the CLI's integration tests share: a daemon run on a temporary repository with an empty
-//! home folder, a guard that stops a daemon a command started, and waiting for a condition.
+//! home folder, its graph once built, a guard that stops a daemon a command started, and waiting
+//! for a condition.
 
 #![allow(
     dead_code,
@@ -24,7 +25,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use cortex_core::ipc::ResponseBody;
-use cortex_core::ipc::{RequestBody, Role};
+use cortex_core::ipc::{GraphReport, RequestBody, Role};
 use cortex_core::{RepoId, RunFiles, UserFolder, canonical_root};
 use cortex_daemon::is_running;
 use cortex_hook::{ClientError, ask};
@@ -274,6 +275,21 @@ pub fn stop_late_daemon(files: &RunFiles) {
         std::thread::sleep(POLL_EVERY);
     }
     let _ = wait_for(|| Ok(!files.pid_path().exists()));
+}
+
+/// The report on the graph of the daemon of the repository at `root`, `home` being the home
+/// folder, once it has built one: none before its first build.
+///
+/// # Errors
+///
+/// The daemon does not answer its status.
+pub fn graph_of(root: &Path, home: &Path) -> TestResult<Option<GraphReport>> {
+    let files = UserFolder::in_home(home).run_files(&RepoId::of(&canonical_root(root)?));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    match ask(&files, Role::Cli, RequestBody::Status, deadline)?.body {
+        ResponseBody::Status(report) => Ok(report.graph.filter(|graph| graph.builds > 0)),
+        other => Err(format!("the daemon answered its status with {other:?}").into()),
+    }
 }
 
 /// Waits until `condition` holds, for at most [`SEEN_WITHIN`].

@@ -1,6 +1,7 @@
 //! `cortex hook` end to end: captured Claude Code payloads through the real binary to a real
-//! daemon, and every way a call can go wrong. Each call ends with exit code 0 and nothing on stdout
-//! or stderr, as an agent requires of a hook.
+//! daemon, and every way a call can go wrong. Each call ends with exit code 0 and nothing on
+//! stderr, as an agent requires of a hook, and nothing on stdout but the primer at a session's
+//! start.
 
 #![allow(
     clippy::indexing_slicing,
@@ -14,8 +15,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use common::fake_daemon::{FakeDaemon, Script, kinds};
-use common::hook_call::{Call, hook};
-use common::{Daemon, TestResult, payloads, wait_for};
+use common::hook_call::hook;
+use common::{Daemon, TestResult, graph_of, payloads, wait_for};
 use cortex_core::ipc::{Request, RequestBody};
 use cortex_core::{EventKind, HookKind, Identifier, LineRange, UserFolder};
 use cortex_store::Reader;
@@ -29,21 +30,34 @@ const S1: &str = "00000000-0000-4000-8000-000000000001";
 /// The Claude Code version whose captured payloads these tests send.
 const CAPTURED: &str = "2.1.312";
 
+/// What a session's start gives Claude Code in the repository of [`repository`] once its daemon's
+/// graph is built: the primer of tiny mode, counting its one source file of 14 lines, with no
+/// landmarks. None is ever chosen here: one task ends in these tests (the captured session's, at
+/// its stop; the events after it belong to none), and it gives the file at most 1.8 of interest (a
+/// read of the whole file 0.3, an edit 1.0, tests passing after it 0.5), under the 3.0 a landmark
+/// needs.
+const PRIMER: &str = "[cortex] Project map · tiny mode · about 1 source file, 14 lines\n\
+                      Cortex records what agents do here; with this little code it adds nothing to \
+                      prompts.\n";
+
 /// The captured payload `name` with its paths moved under `root`.
 fn payload(name: &str, root: &Path) -> TestResult<Vec<u8>> {
     payloads::payload(CAPTURED, name, root)
 }
 
-/// Sends the captured payload `name` from a repository at `root` through `cortex hook`.
-fn send(name: &str, root: &Path, home: &Path) -> TestResult<Call> {
+/// Sends the captured payload `name` from a repository at `root` through `cortex hook`, and returns
+/// the context it gave Claude Code: none when it printed nothing. The call must end as an agent
+/// requires of a hook.
+fn send(name: &str, root: &Path, home: &Path) -> TestResult<Option<String>> {
     let payload = payload(name, root)?;
     let event = payloads::event_name(&payload)?;
-    hook(
+    let call = hook(
         &["--agent", "claude", "--event", &event],
         payload,
         Duration::ZERO,
         home,
-    )
+    )?;
+    call.context(&event)
 }
 
 /// A home folder holding a repository, as most are, with the file the captured payloads read and
@@ -65,16 +79,20 @@ fn repository() -> TestResult<(tempfile::TempDir, PathBuf)> {
     Ok((home, repo))
 }
 
-/// A session of the captured payloads, sent in the order Claude Code sent them, is recorded as the
-/// rows the recording rules give, counted by hand: the start, the prompt, the read of the whole
-/// file (no lines), the edit of line 13 (the one it changed), the shell, the stop and the end; the
-/// moment before the read is not stored. Every other captured payload goes through silently too.
+/// A session of the captured payloads, sent in the order Claude Code sent them once the daemon's
+/// graph is built, is recorded as the rows the recording rules give, counted by hand: the start,
+/// the prompt, the read of the whole file (no lines), the edit of line 13 (the one it changed), the
+/// shell, the stop and the end; the moment before the read is not stored. The start prints the
+/// primer, and nothing else prints anything: a tiny repository's prompt gets nothing. Of the other
+/// captured payloads, the starts after a resume and a clear print the primer too, the start after a
+/// compaction nothing, and the rest nothing.
 #[test]
 fn a_session_through_the_binary_is_recorded() -> TestResult {
     let (home, repo) = repository()?;
     let daemon = Daemon::start(&repo, home.path())?;
     let line = daemon.first_line()?;
     assert!(line.starts_with("cortex: daemon ready"), "{line}");
+    wait_for(|| Ok(graph_of(&repo, home.path())?.is_some()))?;
     let session = [
         "session-start-startup.json",
         "user-prompt-submit.json",
@@ -86,8 +104,8 @@ fn a_session_through_the_binary_is_recorded() -> TestResult {
         "session-end.json",
     ];
     for name in session {
-        let call = send(name, &repo, home.path())?;
-        assert!(call.is_silent_success(), "{name}: {:?}", call.output);
+        let primer = (name == "session-start-startup.json").then(|| PRIMER.to_owned());
+        assert_eq!(send(name, &repo, home.path())?, primer, "{name}");
     }
     let s1 = Identifier::new(S1)?;
     let rows = || -> TestResult<Vec<Row>> {
@@ -123,6 +141,8 @@ fn a_session_through_the_binary_is_recorded() -> TestResult {
         path.extension()
             .is_some_and(|extension| extension == "json")
     });
+    // The same order on every platform: a folder lists its entries in an order of its own.
+    others.sort();
     for path in others {
         let name = path
             .file_name()
@@ -131,8 +151,12 @@ fn a_session_through_the_binary_is_recorded() -> TestResult {
         if session.contains(&name) {
             continue;
         }
-        let call = send(name, &repo, home.path())?;
-        assert!(call.is_silent_success(), "{name}: {:?}", call.output);
+        let primer = matches!(
+            name,
+            "session-start-resume.json" | "session-start-clear.json"
+        )
+        .then(|| PRIMER.to_owned());
+        assert_eq!(send(name, &repo, home.path())?, primer, "{name}");
     }
     Ok(())
 }
@@ -212,9 +236,10 @@ fn folders_without_cortex_are_left_alone() -> TestResult {
 }
 
 /// A daemon that takes the event and never answers is given up at the event's deadline (500 ms
-/// for a tool's result, less the 15 ms the hook keeps), not before; the bound after it is loose,
-/// since starting a process on a busy machine is slow. One that speaks another protocol gets
-/// nothing more. Both calls are silent.
+/// for a tool's result, less the 15 ms the hook keeps), not before, and so is one that never
+/// answers a prompt's request for its work order (1,000 ms, less the same); the bound after it is
+/// loose, since starting a process on a busy machine is slow. One that speaks another protocol
+/// gets nothing more. Every call is silent.
 #[test]
 fn a_silent_or_foreign_daemon_is_left_silently() -> TestResult {
     let (home, repo) = marked_repository()?;
@@ -241,6 +266,21 @@ fn a_silent_or_foreign_daemon_is_left_silently() -> TestResult {
         [_, Request { body: RequestBody::Event { event }, .. }] if event.hook == HookKind::PostTool
     );
     assert!(sent_the_event, "{requests:?}");
+    // A prompt asks for its work order and is given up at its own deadline, 1,000 ms less the
+    // 15 ms the hook keeps: it prints nothing either.
+    let (release, released) = mpsc::channel();
+    let silent = FakeDaemon::start(&repo, home.path(), Script::Silent(released))?;
+    let call = hook(
+        &["--agent", "claude", "--event", "UserPromptSubmit"],
+        payload("user-prompt-submit.json", &repo)?,
+        Duration::ZERO,
+        home.path(),
+    )?;
+    let _ = release.send(());
+    assert!(call.is_silent_success(), "{:?}", call.output);
+    assert!(call.took >= Duration::from_millis(985), "{:?}", call.took);
+    assert!(call.took < Duration::from_secs(20), "{:?}", call.took);
+    assert_eq!(kinds(&silent.requests()?), ["hello", "retrieve"]);
 
     let foreign = FakeDaemon::start(&repo, home.path(), Script::Mismatch("99.0.0"))?;
     let call = hook(

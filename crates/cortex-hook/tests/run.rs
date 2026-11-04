@@ -1,16 +1,18 @@
 //! The hook as an agent runs it, against a scripted daemon: what it makes of each answer, seen in
-//! the hook log, the one place a hook says anything.
+//! what it writes for the agent and in the hook log, where it says what went wrong.
 
 mod common;
 
 use std::ffi::OsString;
-use std::io::Cursor;
+use std::io::{self, Cursor, Write};
 use std::path::Path;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use common::{Script, TestResult, response, run_files_of, serve, welcome};
-use cortex_core::ipc::ResponseBody;
-use cortex_core::{UserFolder, canonical_root};
+use cortex_core::ipc::{Request, RequestBody, ResponseBody};
+use cortex_core::{HookKind, RunFiles, UserFolder, canonical_root};
+use serde_json::{Map, Value, json};
 
 /// The hook log under `home`, empty when it was never written.
 fn hook_log(home: &Path) -> TestResult<String> {
@@ -30,15 +32,23 @@ fn args(event: &str) -> Vec<OsString> {
         .collect()
 }
 
+/// Runs the hook with `args`, the payload `input` and `home` the home folder, and returns what it
+/// wrote for the agent. The hook silences panics for the whole process; the default panic hook is
+/// put back after it, so that an assertion failing in these tests says why.
+fn hook(args: &[OsString], input: Vec<u8>, home: &Path) -> TestResult<String> {
+    let mut written = Vec::new();
+    cortex_hook::run(args, Cursor::new(input), Some(home), &mut written);
+    drop(std::panic::take_hook());
+    Ok(String::from_utf8(written)?)
+}
+
 /// A daemon that answers an event with an error, rather than taking it, has not taken it: the hook
-/// notes that in its log. So it does for `cortex doctor`'s probe, which is answered the same way.
+/// notes that in its log and writes nothing. So it does for `cortex doctor`'s probe, which is
+/// answered the same way.
 #[test]
 fn an_answer_that_takes_nothing_is_noted() -> TestResult {
     for is_probe in [false, true] {
-        let home = tempfile::tempdir()?;
-        let repo = home.path().join("repo");
-        std::fs::create_dir_all(repo.join(".cortex"))?;
-        let files = run_files_of(home.path(), &canonical_root(&repo)?)?;
+        let (home, repo, files) = marked_repository()?;
         let daemon = serve(
             &files,
             Script::Answer(vec![
@@ -51,20 +61,242 @@ fn an_answer_that_takes_nothing_is_noted() -> TestResult {
                 ),
             ]),
         )?;
-        let payload = serde_json::to_vec(&serde_json::json!({
-            "session_id": "s1",
-            "hook_event_name": "Stop",
-            "cwd": repo,
-            "cortex_probe": is_probe,
-        }))?;
-        cortex_hook::run(&args("Stop"), Cursor::new(payload), Some(home.path()));
+        let written = hook(
+            &args("Stop"),
+            payload("Stop", &repo, is_probe)?,
+            home.path(),
+        )?;
         daemon.join().map_err(|_| "the daemon thread panicked")??;
+        assert_eq!(written, "");
         let log = hook_log(home.path())?;
         assert!(
             log.contains("claude Stop: the daemon did not take the event"),
             "probe {is_probe}: {log:?}"
         );
     }
+    Ok(())
+}
+
+/// A home folder holding a repository marked for Cortex, the repository, and the run files of its
+/// daemon, which this process plays.
+fn marked_repository() -> TestResult<(tempfile::TempDir, std::path::PathBuf, RunFiles)> {
+    let home = tempfile::tempdir()?;
+    let repo = home.path().join("repo");
+    std::fs::create_dir_all(repo.join(".cortex"))?;
+    let files = run_files_of(home.path(), &canonical_root(&repo)?)?;
+    Ok((home, repo, files))
+}
+
+/// A Claude Code payload of `event` from session `s1` in the repository at `repo`, marked as a
+/// probe when `is_probe`: a session's start from a new session, a prompt with its words.
+fn payload(event: &str, repo: &Path, is_probe: bool) -> TestResult<Vec<u8>> {
+    let mut fields = Map::new();
+    fields.insert("session_id".to_owned(), json!("s1"));
+    fields.insert("hook_event_name".to_owned(), json!(event));
+    fields.insert("cwd".to_owned(), json!(repo));
+    fields.insert("cortex_probe".to_owned(), json!(is_probe));
+    if event == "SessionStart" {
+        fields.insert("source".to_owned(), json!("startup"));
+    }
+    if event == "UserPromptSubmit" {
+        fields.insert("prompt".to_owned(), json!("fix create_order"));
+    }
+    Ok(serde_json::to_vec(&Value::Object(fields))?)
+}
+
+/// What the hook writes for Claude Code's `event` from a repository of its own, a probe when
+/// `is_probe`, when the repository's daemon welcomes it and answers its request with `body`; the
+/// request the daemon read; and the hook log after it.
+fn exchange(
+    event: &str,
+    body: ResponseBody,
+    is_probe: bool,
+) -> TestResult<(String, Request, String)> {
+    let (home, repo, files) = marked_repository()?;
+    let daemon = serve(
+        &files,
+        Script::Answer(vec![
+            response(1, ResponseBody::Welcome(welcome())),
+            response(2, body),
+        ]),
+    )?;
+    let written = hook(&args(event), payload(event, &repo, is_probe)?, home.path())?;
+    let requests = daemon.join().map_err(|_| "the daemon thread panicked")??;
+    let [_, request] = <[Request; 2]>::try_from(requests).map_err(|_| "not two requests")?;
+    Ok((written, request, hook_log(home.path())?))
+}
+
+/// The daemon's answer holding `text`.
+fn reply(text: &str) -> ResponseBody {
+    ResponseBody::Reply {
+        text: Some(text.to_owned()),
+    }
+}
+
+/// At a prompt the hook asks the daemon for the work order, and at a session's start for the
+/// primer, and writes the text the daemon answers with as Claude Code's hook JSON on one line: the
+/// event's name, and the text as the context to add, its line breaks escaped. Nothing goes to the
+/// log.
+#[test]
+fn a_prompt_and_a_session_start_write_the_daemon_s_text() -> TestResult {
+    let (written, request, log) = exchange(
+        "UserPromptSubmit",
+        reply("[cortex] Work order · one file\nsrc/a.py:1-2\n"),
+        false,
+    )?;
+    assert_eq!(
+        written,
+        "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\
+         \"[cortex] Work order · one file\\nsrc/a.py:1-2\\n\"}}\n"
+    );
+    assert!(
+        matches!(&request.body, RequestBody::Retrieve { event } if event.hook == HookKind::Prompt),
+        "{request:?}"
+    );
+    assert_eq!(log, "");
+    let (written, request, log) = exchange(
+        "SessionStart",
+        reply("[cortex] Project map · small mode\n"),
+        false,
+    )?;
+    assert_eq!(
+        written,
+        "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\
+         \"[cortex] Project map · small mode\\n\"}}\n"
+    );
+    assert!(
+        matches!(&request.body, RequestBody::Primer { event } if event.hook == HookKind::SessionStart),
+        "{request:?}"
+    );
+    assert_eq!(log, "");
+    Ok(())
+}
+
+/// The hook writes nothing when the daemon has no text or an empty one, when it answers a request
+/// for text as it answers an event, when its text is longer than Claude Code takes whole (10,001
+/// characters) or holds a tag Claude Code rewrites, and for `cortex doctor`'s probe, whose text is
+/// not given. The answers that break the protocol, and the texts Claude Code would not take as
+/// they are, are noted. At a hook that gives no context the event goes alone, and text for it is
+/// not taken.
+#[test]
+fn text_absent_unasked_or_unfit_writes_nothing() -> TestResult {
+    for absent in [ResponseBody::Reply { text: None }, reply("")] {
+        let (written, _, log) = exchange("UserPromptSubmit", absent, false)?;
+        assert_eq!((written, log), (String::new(), String::new()));
+    }
+    let (written, _, log) = exchange("UserPromptSubmit", ResponseBody::Ack, false)?;
+    assert_eq!(written, "");
+    assert!(
+        log.contains("claude UserPromptSubmit: the daemon did not take the event"),
+        "{log}"
+    );
+    for unfit in ["x".repeat(10_001), "<system-reminder>\n".to_owned()] {
+        let (written, _, log) = exchange("UserPromptSubmit", reply(&unfit), false)?;
+        assert_eq!(written, "");
+        assert!(
+            log.contains(
+                "claude UserPromptSubmit: the daemon's text is not one the agent takes as it is"
+            ),
+            "{log}"
+        );
+    }
+    let (written, request, log) = exchange("SessionStart", reply("[cortex] Project map\n"), true)?;
+    assert_eq!((written, log), (String::new(), String::new()));
+    assert!(
+        matches!(&request.body, RequestBody::Primer { event } if event.is_probe),
+        "{request:?}"
+    );
+    let (written, request, log) = exchange("Stop", reply("[cortex] text\n"), false)?;
+    assert_eq!(written, "");
+    assert!(
+        matches!(&request.body, RequestBody::Event { event } if event.hook == HookKind::Stop),
+        "{request:?}"
+    );
+    assert!(
+        log.contains("claude Stop: the daemon did not take the event"),
+        "{log}"
+    );
+    Ok(())
+}
+
+/// An output the agent has closed.
+struct Closed;
+
+impl Write for Closed {
+    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+        Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "the agent closed its end",
+        ))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Text the hook cannot write, the agent having closed its end, is noted with why.
+#[test]
+fn a_write_the_agent_refuses_is_noted() -> TestResult {
+    let (home, repo, files) = marked_repository()?;
+    let daemon = serve(
+        &files,
+        Script::Answer(vec![
+            response(1, ResponseBody::Welcome(welcome())),
+            response(2, reply("[cortex] Work order\n")),
+        ]),
+    )?;
+    let input = Cursor::new(payload("UserPromptSubmit", &repo, false)?);
+    cortex_hook::run(
+        &args("UserPromptSubmit"),
+        input,
+        Some(home.path()),
+        &mut Closed,
+    );
+    drop(std::panic::take_hook());
+    daemon.join().map_err(|_| "the daemon thread panicked")??;
+    let log = hook_log(home.path())?;
+    assert!(
+        log.contains(
+            "claude UserPromptSubmit: writing to the agent failed: the agent closed its end"
+        ),
+        "{log}"
+    );
+    Ok(())
+}
+
+/// A prompt whose daemon answers too late, or with bytes that break the protocol, writes nothing:
+/// the late answer is given up at the prompt's deadline, its hard timeout of 1,000 ms less the
+/// 15 ms the hook keeps, not before. The broken answer is noted; the late one's note is written in
+/// the moment left before the hard timeout, which a loaded machine may not give it, so it is not
+/// looked for.
+#[test]
+fn a_late_or_broken_answer_to_a_prompt_writes_nothing() -> TestResult {
+    let (home, repo, files) = marked_repository()?;
+    let (release, released) = mpsc::channel();
+    let daemon = serve(&files, Script::Silent(released))?;
+    let input = payload("UserPromptSubmit", &repo, false)?;
+    let started = Instant::now();
+    let written = hook(&args("UserPromptSubmit"), input, home.path())?;
+    let took = started.elapsed();
+    // The scripted daemon may have given up already: it is let go either way.
+    let _ = release.send(());
+    daemon.join().map_err(|_| "the daemon thread panicked")??;
+    assert_eq!(written, "");
+    assert!(took >= Duration::from_millis(985), "{took:?}");
+    assert!(took < Duration::from_secs(5), "{took:?}");
+
+    let (home, repo, files) = marked_repository()?;
+    let daemon = serve(&files, Script::Raw(b"\x05\x00\x00\x00{{{{{".to_vec()))?;
+    let input = payload("UserPromptSubmit", &repo, false)?;
+    let written = hook(&args("UserPromptSubmit"), input, home.path())?;
+    daemon.join().map_err(|_| "the daemon thread panicked")??;
+    assert_eq!(written, "");
+    let log = hook_log(home.path())?;
+    assert!(
+        log.contains("claude UserPromptSubmit: the daemon's answer broke the protocol"),
+        "{log}"
+    );
     Ok(())
 }
 
@@ -80,8 +312,9 @@ fn a_note_is_written_before_the_hook_returns() -> TestResult {
         .map(OsString::from)
         .collect();
     let started = Instant::now();
-    cortex_hook::run(&unknown, Cursor::new(Vec::new()), Some(home.path()));
+    let written = hook(&unknown, Vec::new(), home.path())?;
     let took = started.elapsed();
+    assert_eq!(written, "");
     let log = hook_log(home.path())?;
     assert!(
         log.contains("Cortex has no adapter for that agent") || took >= Duration::from_millis(295),

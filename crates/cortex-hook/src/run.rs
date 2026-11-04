@@ -1,17 +1,20 @@
 //! `cortex hook --agent <agent> --event <event>`: what an agent runs at each of its hooks. The hook
 //! reads the payload, turns it into an event, hands the event to its repository's daemon before the
 //! event's deadline (starting a daemon in the background when none runs, unless the event is
-//! `cortex doctor`'s probe, which starts and stops none), and ends. Whatever happens it prints
-//! nothing and exits 0; what went wrong goes to the hook log.
+//! `cortex doctor`'s probe, which starts and stops none), and ends. At a hook where Cortex gives the
+//! agent text (a session's start, a prompt) it asks the daemon for that text with the event, and
+//! writes it in the agent's hook protocol to the output it was given, when the whole answer came in
+//! time. Whatever else happens it writes nothing and the hook exits 0; what went wrong goes to the
+//! hook log.
 
 use std::ffi::OsString;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cortex_core::ipc::{RequestBody, ResponseBody, Role, is_older_than_this_build};
-use cortex_core::{RepoId, RunFiles, Ulid, UserFolder, unix_millis};
+use cortex_core::{Event, HookKind, RepoId, RunFiles, Ulid, UserFolder, unix_millis};
 
 use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter, shortest_hard_timeout};
 use crate::client::{Answer, ClientError, ask};
@@ -58,9 +61,13 @@ enum Failure {
     /// The daemon could not be asked.
     #[error(transparent)]
     Daemon(#[from] ClientError),
-    /// The daemon answered with something other than taking the event.
+    /// The daemon answered with something other than taking the event, or the text asked for.
     #[error("the daemon did not take the event")]
     NotTaken,
+    /// The daemon's text is not one the agent takes as it is: longer than it takes whole, or
+    /// holding text it rewrites.
+    #[error("the daemon's text is not one the agent takes as it is")]
+    Unfit,
     /// No daemon was running, and none could be started.
     #[error("starting the daemon")]
     StartDaemon(#[source] std::io::Error),
@@ -70,9 +77,16 @@ enum Failure {
 }
 
 /// Runs the hook with `args`, the arguments that follow `hook` on the command line, the payload on
-/// `input` (standard input) and `home` the user's home folder. It never fails, never panics past
-/// this call, never prints, and returns by the event's hard timeout.
-pub fn run(args: &[OsString], input: impl Read + Send + 'static, home: Option<&Path>) {
+/// `input` (standard input) and `home` the user's home folder, writing to `output` (standard
+/// output) the agent's hook output holding the daemon's text when the daemon answered with text
+/// for the agent in time, and nothing otherwise. It never fails and never panics past this call,
+/// and it returns by the event's hard timeout unless writing to the agent waits on the agent.
+pub fn run(
+    args: &[OsString],
+    input: impl Read + Send + 'static,
+    home: Option<&Path>,
+    output: &mut dyn Write,
+) {
     let hook = Hook {
         started: Instant::now(),
         now: SystemTime::now(),
@@ -80,7 +94,7 @@ pub fn run(args: &[OsString], input: impl Read + Send + 'static, home: Option<&P
         names: None,
         hard_timeout: shortest_hard_timeout(),
     };
-    let finished = fail_open::guard(AssertUnwindSafe(|| hook.clone().call(args, input)));
+    let finished = fail_open::guard(AssertUnwindSafe(|| hook.clone().call(args, input, output)));
     if !finished {
         // Noting the panic runs guarded too: nothing may escape to the agent.
         fail_open::guard(AssertUnwindSafe(|| hook.note_in_time("the hook panicked")));
@@ -105,8 +119,13 @@ struct Hook {
 
 impl Hook {
     /// Reads the arguments, then does the rest on a thread of its own, waited for no longer than
-    /// the event's hard timeout.
-    fn call(mut self, args: &[OsString], input: impl Read + Send + 'static) {
+    /// the event's hard timeout, and writes what it gives the agent to `output`.
+    fn call(
+        mut self,
+        args: &[OsString],
+        input: impl Read + Send + 'static,
+        output: &mut dyn Write,
+    ) {
         let (adapter, entry) = match hook_of(args) {
             Ok(found) => found,
             Err(failure) => return self.note_in_time(&describe(&failure)),
@@ -118,56 +137,79 @@ impl Hook {
         // less the moment kept to note why when it does not finish.
         let work_until = self.started + entry.hard_timeout.saturating_sub(WORK_MARGIN);
         let outcome = fail_open::within(work_until, move || {
-            if let Err(failure) = worker.handle(adapter, entry, input) {
-                worker.note(&describe(&failure));
-            }
+            worker
+                .handle(adapter, entry, input)
+                .unwrap_or_else(|failure| {
+                    worker.note(&describe(&failure));
+                    None
+                })
         });
         match outcome {
-            Outcome::Finished => {}
+            Outcome::Finished(Some(given)) => self.give(&given, output),
+            Outcome::Finished(None) => {}
             Outcome::Panicked => self.note_in_time("the hook panicked"),
             Outcome::OutOfTime => self.note_in_time("the hook ran out of time"),
         }
     }
 
-    /// Reads the payload from `input`, normalizes it, and hands the event to the daemon.
+    /// Writes `given`, the agent's hook output, to `output`, then a line break. It is written from
+    /// the hook's own thread once the work is done, never by work given up at its deadline: a write
+    /// cut short by the process's exit would leave the agent part of an object, which it would
+    /// read as plain text. A write that fails is noted.
+    fn give(&self, given: &str, output: &mut dyn Write) {
+        if let Err(error) = writeln!(output, "{given}").and_then(|()| output.flush()) {
+            self.note_in_time(&format!("writing to the agent failed: {error}"));
+        }
+    }
+
+    /// Reads the payload from `input`, normalizes it, and hands the event to the daemon, asking
+    /// for its text where Cortex gives the agent some; returns the agent's hook output holding the
+    /// text the daemon answered with.
     fn handle(
         &self,
         adapter: &'static dyn Adapter,
         entry: &'static HookEntry,
         input: impl Read + Send + 'static,
-    ) -> Result<(), Failure> {
+    ) -> Result<Option<String>, Failure> {
         let payload = stdin::read_payload(input, self.started + STDIN_TIMEOUT)?;
         let home = self.home.as_deref();
         let locate = |cwd: &Path| root::locate(cwd, home);
         let Some(event) =
             adapter.normalize(entry.event_name, &payload, &locate, stamp(self.now))?
         else {
-            return Ok(());
+            return Ok(None);
         };
         let user = UserFolder::in_home(home.ok_or(Failure::NoHome)?);
         let files = user.run_files(&RepoId::of(&event.repo_root));
         let root = event.repo_root.clone();
         let is_probe = event.is_probe;
-        let body = RequestBody::Event {
-            event: Box::new(event),
-        };
+        let body = request_of(entry, event);
+        let asks_for_text = !matches!(body, RequestBody::Event { .. });
         let deadline = deadline(self.started, entry);
         let answer = ask(&files, Role::Hook, body, deadline);
         if is_probe {
-            return probed(answer);
+            return probed(answer, asks_for_text).map(|()| None);
         }
         match answer {
-            Ok(answer) if answer.body == ResponseBody::Ack => {
-                stop_older(&files, &answer.welcome.cortex_version, deadline)
+            Ok(answer) => {
+                let text = text_of(answer.body, asks_for_text)?;
+                // The answer came: a stop that fails is noted, and the text given all the same.
+                if let Err(failure) = stop_older(&files, &answer.welcome.cortex_version, deadline) {
+                    self.note(&describe(&failure));
+                }
+                // INVARIANT: silent-when-unsure. An empty text gives the agent nothing, not an
+                // empty context.
+                text.filter(|text| !text.is_empty())
+                    .map(|text| adapter.context_output(entry, &text).ok_or(Failure::Unfit))
+                    .transpose()
             }
-            Ok(_) => Err(Failure::NotTaken),
             // No daemon: start one and go on without it. The event that found none is not kept;
             // the next hook finds the daemon listening.
             Err(ClientError::NotRunning) => {
                 let program = std::env::current_exe().map_err(Failure::StartDaemon)?;
                 // A start made by another hook moments ago is under way: nothing to do.
                 spawn::start_daemon(&program, &root, &files, self.now)
-                    .map(drop)
+                    .map(|_| None)
                     .map_err(Failure::StartDaemon)
             }
             // A daemon of another protocol took nothing; an older one is still told to stop.
@@ -217,15 +259,40 @@ fn stop_older(files: &RunFiles, version: &str, deadline: Instant) -> Result<(), 
     Ok(())
 }
 
-/// What became of a probe, `cortex doctor`'s, by the daemon's `answer`. A probe measures the
-/// daemon that runs and changes nothing: it never asks an older one to stop, nor starts one when
-/// none runs.
-fn probed(answer: Result<Answer, ClientError>) -> Result<(), Failure> {
+/// What became of a probe, `cortex doctor`'s, by the daemon's `answer` to a request that asked
+/// for text or not. A probe measures the daemon that runs and changes nothing: it never asks an
+/// older one to stop, nor starts one when none runs, and the text it gets is not given.
+fn probed(answer: Result<Answer, ClientError>, asks_for_text: bool) -> Result<(), Failure> {
     match answer {
-        Ok(answer) if answer.body == ResponseBody::Ack => Ok(()),
-        Ok(_) => Err(Failure::NotTaken),
+        Ok(answer) => text_of(answer.body, asks_for_text).map(drop),
         Err(ClientError::NotRunning) => Err(Failure::ProbeWithoutDaemon),
         Err(error) => Err(error.into()),
+    }
+}
+
+/// The request the hook makes of the daemon with `event` at the hook `entry`: the text Cortex
+/// gives the agent there, where it gives some (the primer at a session's start, the work order at
+/// a prompt); the event alone otherwise.
+fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
+    let event = Box::new(event);
+    match entry.hook {
+        HookKind::SessionStart if entry.gives_context => RequestBody::Primer { event },
+        HookKind::Prompt if entry.gives_context => RequestBody::Retrieve { event },
+        _ => RequestBody::Event { event },
+    }
+}
+
+/// The text in the daemon's answer `body` to a request that asked for text or not: none for the
+/// event taken, or when the daemon has no text to give.
+///
+/// # Errors
+///
+/// The answer is not the one the request asks for: an error, or another kind of answer.
+fn text_of(body: ResponseBody, asks_for_text: bool) -> Result<Option<String>, Failure> {
+    match (body, asks_for_text) {
+        (ResponseBody::Ack, false) => Ok(None),
+        (ResponseBody::Reply { text }, true) => Ok(text),
+        _ => Err(Failure::NotTaken),
     }
 }
 
