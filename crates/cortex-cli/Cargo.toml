@@ -20,7 +20,9 @@ cortex-daemon = { path = "../cortex-daemon" }
 cortex-git = { path = "../cortex-git" }
 cortex-hook = { path = "../cortex-hook" }
 cortex-index = { path = "../cortex-index" }
+cortex-learn = { path = "../cortex-learn" }
 cortex-meter = { path = "../cortex-meter" }
+cortex-retrieve = { path = "../cortex-retrieve" }
 cortex-store = { path = "../cortex-store" }
 serde.workspace = true
 # The order of a settings file's keys is the user's, and a merge keeps it.

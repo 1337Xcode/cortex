@@ -1,7 +1,8 @@
 //! `cortex status`: whether the repository's daemon runs and, from the daemon itself, its queue,
 //! what its co-change miner is doing, how long it takes to handle each hook and its latest errors;
 //! then whether the index is ready, the scale mode, how many files are stored, parsed and waiting
-//! to be parsed, and how far the history is mined. The store is only read.
+//! to be parsed, how far the history is mined, what the gate asks before it hands a work order
+//! over, and what the self-check last found of the work orders given. The store is only read.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -16,7 +17,9 @@ use cortex_daemon::settings;
 use cortex_git::mine::Mark;
 use cortex_hook::{Answer, ClientError};
 use cortex_index::waits_to_be_parsed;
-use cortex_store::{MetaKey, Queries, Reader, StoreError, is_writer_running};
+use cortex_learn::{MAX_RAISE_STEPS, raise_of, recent_precision};
+use cortex_retrieve::{AGREEING_KINDS, LEXICAL_BAR};
+use cortex_store::{MetaKey, Queries, Reader, SelfCheckRecord, StoreError, is_writer_running};
 
 use crate::{output, repository, upgrade};
 
@@ -349,12 +352,55 @@ fn status_lines(
         files.push_str(&format!(", {waiting} waiting to be parsed"));
     }
     let mark = Mark::read(queries)?;
-    Ok(vec![
+    let mut lines = vec![
         format!("index: {index}"),
         format!("mode: {mode}"),
         format!("files: {files}"),
         cochange_line(mark.as_ref(), unix_millis(SystemTime::now())),
-    ])
+    ];
+    match queries.self_check() {
+        Ok(record) => lines.extend([gate_line(&record), self_check_line(&record)]),
+        Err(StoreError::CorruptMeta { .. }) => {
+            lines.push("gate: the self-check's record cannot be read".to_owned());
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(lines)
+}
+
+/// What the gate asks before it hands a work order over, its bar for the prompt's words raised as
+/// far as the self-check's `record` says.
+fn gate_line(record: &SelfCheckRecord) -> String {
+    let bar = LEXICAL_BAR + raise_of(record);
+    format!(
+        "gate: a work order when the prompt's words match a file at {bar:.2} or more and \
+         {AGREEING_KINDS} kinds of evidence agree, or when a session goes on with its own work"
+    )
+}
+
+/// What the self-check last found, as its `record` keeps it: how often the latest work orders
+/// given were used, and how far it raised the gate's bar.
+fn self_check_line(record: &SelfCheckRecord) -> String {
+    let found = match recent_precision(record) {
+        None => "no work order given is labelled yet".to_owned(),
+        Some(precision) => format!(
+            "precision {precision:.2} over the latest {}",
+            counted(
+                u64::from(record.recent_labelled),
+                ("work order given", "work orders given")
+            ),
+        ),
+    };
+    let raised = match record.raise_steps {
+        0 => "the bar is not raised".to_owned(),
+        steps => format!(
+            "the bar is raised {steps} of {MAX_RAISE_STEPS} steps, by {:.2}, last when {} had \
+             been labelled",
+            raise_of(record),
+            counted(record.raised_at, ("work order", "work orders")),
+        ),
+    };
+    format!("self-check: {found}; {raised}")
 }
 
 /// How far the history is mined, from the `mark` the last mining left, with how long before

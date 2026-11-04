@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use cortex_core::{ModeSetting, RepoId};
 use cortex_index::{DiscoverOptions, Grammars, IndexOptions, index_repository};
-use cortex_store::{Writer, WriterOptions};
+use cortex_store::{SelfCheckRecord, Writer, WriterOptions};
 
 /// Result type for these tests: any failure fails the test.
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -95,14 +95,20 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
     assert_eq!(
         empty.stdout,
         "daemon: not running\nindex: not ready, an index is under way\n\
-         mode: not counted yet\nfiles: 0 stored, 0 parsed\nco-change: nothing mined yet\n"
+         mode: not counted yet\nfiles: 0 stored, 0 parsed\nco-change: nothing mined yet\n\
+         gate: a work order when the prompt's words match a file at 0.50 or more and 2 kinds of \
+         evidence agree, or when a session goes on with its own work\n\
+         self-check: no work order given is labelled yet; the bar is not raised\n"
     );
     index(root, &mut writer)?;
     let ready = status(root, home.path())?;
     assert_eq!(
         ready.stdout,
         "daemon: not running\nindex: ready\nmode: tiny\nfiles: 3 stored, 2 parsed\n\
-         co-change: nothing mined yet\n"
+         co-change: nothing mined yet\n\
+         gate: a work order when the prompt's words match a file at 0.50 or more and 2 kinds of \
+         evidence agree, or when a session goes on with its own work\n\
+         self-check: no work order given is labelled yet; the bar is not raised\n"
     );
     drop(writer);
     std::fs::write(root.join(".cortex/config.toml"), "mode = \"small\"\n")?;
@@ -110,7 +116,10 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
     assert_eq!(
         stopped.stdout,
         "daemon: not running\nindex: ready\nmode: tiny; pinned to small in the configuration\n\
-         files: 3 stored, 2 parsed\nco-change: nothing mined yet\n"
+         files: 3 stored, 2 parsed\nco-change: nothing mined yet\n\
+         gate: a work order when the prompt's words match a file at 0.50 or more and 2 kinds of \
+         evidence agree, or when a session goes on with its own work\n\
+         self-check: no work order given is labelled yet; the bar is not raised\n"
     );
     Ok(())
 }
@@ -170,7 +179,57 @@ fn status_finds_the_repository_from_a_folder_inside_it() -> TestResult {
     assert_eq!(
         String::from_utf8(output.stdout)?,
         "daemon: not running\nindex: ready\nmode: tiny\nfiles: 1 stored, 1 parsed\n\
-         co-change: nothing mined yet\n"
+         co-change: nothing mined yet\n\
+         gate: a work order when the prompt's words match a file at 0.50 or more and 2 kinds of \
+         evidence agree, or when a session goes on with its own work\n\
+         self-check: no work order given is labelled yet; the bar is not raised\n"
+    );
+    Ok(())
+}
+
+/// What the self-check last found shows in the gate's bar and the self-check's line. Its record
+/// here: 52 of the latest 100 work orders given used, so a precision of 0.52; the bar raised 2
+/// steps of 0.05, so by 0.10, to 0.50 + 0.10 = 0.60; raised last when 130 had been labelled. A
+/// record that cannot be read is said to be so, the rest of the status standing.
+#[test]
+fn status_shows_the_gate_as_the_self_check_left_it() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    std::fs::write(root.join("a.py"), "def a():\n    pass\n")?;
+    let mut writer = writer(root)?;
+    index(root, &mut writer)?;
+    let mut transaction = writer.transaction()?;
+    transaction.set_self_check(&SelfCheckRecord {
+        raise_steps: 2,
+        raised_at: 130,
+        recent_labelled: 100,
+        recent_used: 52,
+    })?;
+    transaction.commit()?;
+    drop(writer);
+    let raised = status(root, home.path())?;
+    assert_eq!(
+        raised.stdout,
+        "daemon: not running\nindex: ready\nmode: tiny\nfiles: 1 stored, 1 parsed\n\
+         co-change: nothing mined yet\n\
+         gate: a work order when the prompt's words match a file at 0.60 or more and 2 kinds of \
+         evidence agree, or when a session goes on with its own work\n\
+         self-check: precision 0.52 over the latest 100 work orders given; the bar is raised 2 \
+         of 4 steps, by 0.10, last when 130 work orders had been labelled\n"
+    );
+    let store = rusqlite::Connection::open(root.join(".cortex/cortex.db"))?;
+    store.execute(
+        "UPDATE meta SET value = '{not a record' WHERE key = 'self_check'",
+        [],
+    )?;
+    drop(store);
+    let unreadable = status(root, home.path())?;
+    assert_eq!(unreadable.code, Some(0), "{}", unreadable.stderr);
+    assert_eq!(
+        unreadable.stdout,
+        "daemon: not running\nindex: ready\nmode: tiny\nfiles: 1 stored, 1 parsed\n\
+         co-change: nothing mined yet\ngate: the self-check's record cannot be read\n"
     );
     Ok(())
 }
