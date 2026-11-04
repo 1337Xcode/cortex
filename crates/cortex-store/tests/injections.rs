@@ -373,3 +373,75 @@ fn only_a_text_the_agent_got_was_delivered() -> TestResult {
     }
     Ok(())
 }
+
+/// Only an injection that reached the agent and is labelled counts for the self-check, the newest
+/// first, as `InjectionRecord::was_delivered` tells one: of a delivered work order labelled 1, one
+/// the gate kept back, one held out and one whose text was not written in time, each labelled 1,
+/// a delivered one not labelled yet and a delivered one labelled 0, recorded in that order, the
+/// labels are 0 then 1 and the count is 2.
+#[test]
+fn only_labelled_deliveries_count() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let session = Identifier::new("s1")?;
+    let tasks: Vec<Ulid> = (1..=6)
+        .map(|at| Ulid::from_seed(at, b"self-check"))
+        .collect();
+    session_with(&mut writer, &session, &tasks)?;
+    let delivered = |task: Ulid| InjectionRecord {
+        task_id: Some(task),
+        session_id: session.clone(),
+        hook: HookKind::Prompt,
+        at_ms: 2_000,
+        files: Vec::new(),
+        tokens: 20,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"the work order")),
+        features: None,
+    };
+    let rows = [
+        (delivered(tasks[0]), Some(true)),
+        (
+            InjectionRecord {
+                is_gated_out: true,
+                text_hash: None,
+                ..delivered(tasks[1])
+            },
+            Some(true),
+        ),
+        (
+            InjectionRecord {
+                is_holdout: true,
+                ..delivered(tasks[2])
+            },
+            Some(true),
+        ),
+        (
+            InjectionRecord {
+                text_hash: None,
+                ..delivered(tasks[3])
+            },
+            Some(true),
+        ),
+        (delivered(tasks[4]), None),
+        (delivered(tasks[5]), Some(false)),
+    ];
+    let mut transaction = writer.transaction()?;
+    let mut counted = 0;
+    for (record, label) in &rows {
+        let id = transaction.record_injection(record)?;
+        if let Some(label) = label {
+            transaction.label_injection(id, 0, *label)?;
+            counted += usize::from(record.was_delivered());
+        }
+    }
+    transaction.commit()?;
+    let queries = writer.queries();
+    assert_eq!(queries.delivered_labels(10)?, [false, true]);
+    assert_eq!(queries.delivered_labels(1)?, [false]);
+    assert_eq!(queries.delivered_labelled()?, 2);
+    assert_eq!(counted, 2, "the store's count agrees with was_delivered");
+    Ok(())
+}

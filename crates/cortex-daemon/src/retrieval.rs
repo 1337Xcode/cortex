@@ -5,7 +5,8 @@
 //! event they answer.
 //!
 //! A prompt of a held-out task is retrieved for in full and gets nothing; what would have been
-//! given is recorded all the same. Before the graph is built, and while the store has no mode (its
+//! given is recorded all the same. Every retrieval takes the gate's bar as the self-check last
+//! raised it, and the recent precision it last found, from the store. Before the graph is built, and while the store has no mode (its
 //! first index not done), every answer is silent.
 
 use std::path::PathBuf;
@@ -16,6 +17,7 @@ use cortex_core::{
     ContentHash, Event, HookKind, RetrievalConfig, ScaleMode, StartSource, estimate_tokens,
     is_held_out, task_id_of_prompt,
 };
+use cortex_learn::{raise_of, recent_precision};
 use cortex_retrieve::{Graph, Outcome, Request, Retrieval, locate, primer, retrieve};
 use cortex_store::{InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError};
 
@@ -104,6 +106,7 @@ impl Service {
             };
             let task_id = task_id_of_prompt(event.event_id, event.ts_ms);
             let is_holdout = is_held_out(task_id, self.holdout_share);
+            let check = queries.self_check()?;
             let request = Request {
                 prompt,
                 session: Some(&event.session_id),
@@ -111,8 +114,8 @@ impl Service {
                 mode,
                 settings: &self.settings,
                 max_file_bytes: self.max_file_bytes,
-                raise: 0.0,
-                recent_precision: None,
+                raise: raise_of(&check),
+                recent_precision: recent_precision(&check),
                 deadline: Some(Instant::now() + SPREAD_FOR),
                 root: &self.root,
             };
@@ -193,6 +196,7 @@ impl Service {
             let Some(mode) = mode_of(queries)? else {
                 return Ok(None);
             };
+            let check = queries.self_check()?;
             let request = Request {
                 prompt: question,
                 session: None,
@@ -200,8 +204,8 @@ impl Service {
                 mode,
                 settings: &self.settings,
                 max_file_bytes: self.max_file_bytes,
-                raise: 0.0,
-                recent_precision: None,
+                raise: raise_of(&check),
+                recent_precision: recent_precision(&check),
                 deadline: Some(Instant::now() + SPREAD_FOR),
                 root: &self.root,
             };

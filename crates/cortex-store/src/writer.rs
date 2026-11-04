@@ -25,6 +25,7 @@ use crate::queries::Queries;
 use crate::records::{EdgeRecord, FileChange, FileIndex, FileRemoval, Resolved};
 use crate::replace;
 use crate::schema;
+use crate::self_check::{self, SelfCheckRecord};
 use crate::usage::{self, UsageRow};
 
 /// What [`Writer::open`] needs.
@@ -396,6 +397,15 @@ impl WriteTx<'_> {
         record: &InjectionRecord,
     ) -> Result<InjectionId, StoreError> {
         self.atomically(|connection| injections::record(connection, record))
+    }
+
+    /// Keeps `record` as what the self-check last found.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn set_self_check(&mut self, record: &SelfCheckRecord) -> Result<(), StoreError> {
+        self.atomically(|connection| self_check::set(connection, record))
     }
 
     /// Sets what the end of its task found of injection `id`: `used_count`, how many of its files

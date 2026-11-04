@@ -18,7 +18,7 @@ use cortex_core::{
     Ulid, UserFolder, canonical_root, estimate_tokens, task_id_of_prompt,
 };
 use cortex_hook::ask;
-use cortex_store::{InjectionRow, Reader};
+use cortex_store::{InjectionRow, Reader, SelfCheckRecord, Writer, WriterOptions};
 use serde_json::{Value, json};
 
 /// `src/orders/service.py`, its function on lines 1 to 3.
@@ -47,6 +47,15 @@ const S1: &str = "00000000-0000-4000-8000-000000000001";
 /// mode, with `holdout_share` of tasks held out; its home folder; and its daemon, once the graph
 /// holds the co-change links.
 fn repository(holdout_share: &str) -> TestResult<(tempfile::TempDir, tempfile::TempDir, Daemon)> {
+    repository_with(holdout_share, None)
+}
+
+/// The repository of [`repository`], its store first holding `found` as what the self-check last
+/// found, when given, written before the daemon starts.
+fn repository_with(
+    holdout_share: &str,
+    found: Option<SelfCheckRecord>,
+) -> TestResult<(tempfile::TempDir, tempfile::TempDir, Daemon)> {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     let root = repo.path();
@@ -70,6 +79,17 @@ fn repository(holdout_share: &str) -> TestResult<(tempfile::TempDir, tempfile::T
         root.join(".cortex/config.toml"),
         format!("mode = \"medium\"\n[holdout]\nshare = {holdout_share}\n"),
     )?;
+    if let Some(found) = found {
+        let mut writer = Writer::open(&WriterOptions {
+            folder: &root.join(".cortex"),
+            repo_id: &RepoId::of(&canonical_root(root)?),
+            mmap_bytes: 0,
+            now_ms: 1,
+        })?;
+        let mut transaction = writer.transaction()?;
+        transaction.set_self_check(&found)?;
+        transaction.commit()?;
+    }
     let daemon = Daemon::start(root, home.path())?;
     daemon.first_line()?;
     wait_for(|| Ok(graph_of(root, home.path())?.is_some_and(|graph| graph.has_cochange)))?;
@@ -490,5 +510,33 @@ fn an_answer_worked_out_too_late_gives_nothing() -> TestResult {
         errors,
         [("an answer was worked out after its hook stopped waiting", 2)]
     );
+    Ok(())
+}
+
+/// A prompt is weighed with what the self-check last found: with 62 of the latest 100 delivered
+/// work orders used and the bar raised once, kept in the store before the daemon started, the
+/// prompt's recorded gate numbers hold the recent precision 62 / 100 = 0.62.
+#[test]
+fn a_prompt_is_weighed_with_what_the_self_check_found() -> TestResult {
+    let found = SelfCheckRecord {
+        raise_steps: 1,
+        raised_at: 100,
+        recent_labelled: 100,
+        recent_used: 62,
+    };
+    let (repo, home, _daemon) = repository_with("0", Some(found))?;
+    let root = repo.path();
+    let files = run_files(root, home.path())?;
+    let prompt = Event {
+        prompt_text: Some(PROMPT.to_owned()),
+        ..event(root, HookKind::Prompt, 20)?
+    };
+    reply(&files, work_order_request(prompt.clone()))?;
+    let [row] = &injections_of(root, &prompt)?[..] else {
+        return Err("one injection".into());
+    };
+    let features = row.record.features.ok_or("the gate's numbers")?;
+    let precision = features.recent_precision.ok_or("a recent precision")?;
+    assert!((precision - 0.62).abs() < 1e-12, "{precision}");
     Ok(())
 }

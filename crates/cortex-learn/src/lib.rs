@@ -25,6 +25,7 @@ mod links;
 mod outcome;
 mod places;
 mod record;
+mod self_check;
 mod task_end;
 mod task_state;
 mod watcher_edits;
@@ -38,6 +39,10 @@ pub use labels::{LABELLED_FILES, label_injections};
 pub use links::{EarnedLinks, Linking, MAX_LINK_WEIGHT, add_links, links_of};
 pub use outcome::{FileNow, Judgement, judge, reverted_after};
 pub use record::Recorder;
+pub use self_check::{
+    MAX_RAISE_STEPS, RAISE_STEP, SELF_CHECK_FLOOR, SELF_CHECK_WINDOW, check_self, raise_of,
+    recent_precision, self_checked,
+};
 pub use task_end::{Learned, Learner, MAX_SESSIONS_KEPT, cluster_tasks};
 pub use task_state::{
     FileNode, MAX_TASK_HIT_BYTES, MAX_TASK_ROWS, MAX_TASK_STATES, RunCheck, Step, TaskEnd,

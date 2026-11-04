@@ -1,4 +1,5 @@
-//! The keys of the `meta` table: facts about the database itself.
+//! The keys of the `meta` table: facts about the database itself, and what the self-check last
+//! found of the work orders the gate let through.
 
 /// A key in the `meta` table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +15,8 @@ pub enum MetaKey {
     CreatedAt,
     /// The scale mode the index was built for.
     ScaleMode,
+    /// What the self-check last found, as JSON.
+    SelfCheck,
 }
 
 impl MetaKey {
@@ -26,6 +29,7 @@ impl MetaKey {
             Self::CortexVersion => "cortex_version",
             Self::CreatedAt => "created_at",
             Self::ScaleMode => "scale_mode",
+            Self::SelfCheck => "self_check",
         }
     }
 }

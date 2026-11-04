@@ -542,6 +542,18 @@ pub(crate) const INJECTION_INSERT: &str = "INSERT INTO injections \
     (task_id, session_id, hook, ts, items, tokens_est, confidence, gated_out, holdout, \
     rendered_hash, features) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
 
+/// The labels of the latest injections that reached the agent and are labelled, the newest first:
+/// neither kept back nor held out, with their text's hash, as `InjectionRecord::was_delivered`
+/// tells one (a primer is never labelled, so none is among them).
+pub(crate) const DELIVERED_LABELS: &str = "SELECT label FROM injections \
+    WHERE gated_out = 0 AND holdout = 0 AND rendered_hash IS NOT NULL AND label IS NOT NULL \
+    ORDER BY injection_id DESC LIMIT ?1";
+
+/// How many injections that reached the agent are labelled, told as [`DELIVERED_LABELS`] tells
+/// them.
+pub(crate) const COUNT_DELIVERED_LABELLED: &str = "SELECT count(*) FROM injections \
+    WHERE gated_out = 0 AND holdout = 0 AND rendered_hash IS NOT NULL AND label IS NOT NULL";
+
 /// Sets what the end of its task found of one injection: its used count and its label.
 pub(crate) const INJECTION_LABEL: &str =
     "UPDATE injections SET used_count = ?2, label = ?3 WHERE injection_id = ?1";

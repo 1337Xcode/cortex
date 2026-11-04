@@ -123,6 +123,12 @@ pub enum StoreError {
         /// The table and column, such as `sessions.cwd`.
         column: &'static str,
     },
+    /// A value of the `meta` table cannot be read back as what its key holds.
+    #[error("stored meta {key} cannot be read")]
+    CorruptMeta {
+        /// The key.
+        key: &'static str,
+    },
     /// An update named a row that does not exist.
     #[error("no row {id} in {table}")]
     UnknownRow {

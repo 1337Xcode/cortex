@@ -19,7 +19,8 @@ pub const LABELLED_FILES: usize = 3;
 
 /// Labels each injection of the task `state` shows ended, in `transaction`: with how many of its
 /// files the task read or edited, and whether it used one of the first [`LABELLED_FILES`]. A task
-/// with no injection writes nothing.
+/// with no injection writes nothing. Returns how many of the injections labelled reached the agent,
+/// which is when the self-check has new labels to look at.
 ///
 /// # Errors
 ///
@@ -27,17 +28,19 @@ pub const LABELLED_FILES: usize = 3;
 pub fn label_injections(
     transaction: &mut WriteTx<'_>,
     state: &TaskState,
-) -> Result<(), StoreError> {
+) -> Result<usize, StoreError> {
     let rows = transaction.queries().injections_of_task(state.task_id())?;
     if rows.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let roles = file_roles(transaction.queries(), state)?;
+    let mut delivered = 0;
     for row in rows {
         let (used_count, label) = labelled(&row.record.files, &roles);
         transaction.label_injection(row.id, used_count, label)?;
+        delivered += usize::from(row.record.was_delivered());
     }
-    Ok(())
+    Ok(delivered)
 }
 
 /// The used count and the label of an injection of `files`, the best first, for a task whose files
