@@ -1,15 +1,16 @@
-//! Reading the whole graph at once, as retrieval holds it in memory: every node with its kind and,
-//! for a symbol, the node of the file it is defined in; every edge; and the number of the latest
-//! task, which faded weights are brought forward to.
+//! Reading the whole graph at once, as retrieval holds it in memory: every node with its kind, for a
+//! symbol the node of the file it is defined in, its interest and for a file its flags; every edge;
+//! and the number of the latest task, which faded weights and interest are brought forward to.
 //!
 //! Each read streams its rows to the caller, so that a graph of millions of edges is never held
 //! twice, once as rows and once as what the caller builds from them.
 
-use cortex_core::NodeKind;
+use cortex_core::{FileFlags, NodeKind};
 use rusqlite::Row;
 
 use crate::error::{StoreError, sqlite};
 use crate::ids::NodeId;
+use crate::interest::{InterestRow, checked};
 use crate::queries::Queries;
 use crate::raw::RawEdge;
 use crate::rows::EdgeRow;
@@ -17,7 +18,7 @@ use crate::schema;
 use crate::values;
 
 /// One node as the graph reads it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphNodeRow {
     /// The node.
     pub node: NodeId,
@@ -25,10 +26,15 @@ pub struct GraphNodeRow {
     pub kind: NodeKind,
     /// For a symbol, the node of the file it is defined in.
     pub file: Option<NodeId>,
+    /// Its interest, when it has any.
+    pub interest: Option<InterestRow>,
+    /// For a file, its flags.
+    pub flags: Option<FileFlags>,
 }
 
 impl Queries<'_> {
-    /// Hands `each` every node, by node, with its kind and, for a symbol, its file's node.
+    /// Hands `each` every node, by node, with its kind, for a symbol its file's node, its interest
+    /// and for a file its flags.
     ///
     /// # Errors
     ///
@@ -88,16 +94,46 @@ impl Queries<'_> {
     }
 }
 
+/// The columns of a row of [`schema::GRAPH_NODES`]: the node, its kind and file, its interest's
+/// score, task and tier, and a file's flags.
+type RawGraphNode = (
+    i64,
+    String,
+    Option<i64>,
+    Option<f64>,
+    Option<i64>,
+    Option<u8>,
+    Option<i64>,
+);
+
 /// The node `row` of [`schema::GRAPH_NODES`] holds.
 fn graph_node(row: &Row<'_>) -> Result<GraphNodeRow, StoreError> {
-    let read = |row: &Row<'_>| -> rusqlite::Result<(i64, String, Option<i64>)> {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    let read = |row: &Row<'_>| -> rusqlite::Result<RawGraphNode> {
+        Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            row.get(5)?,
+            row.get(6)?,
+        ))
     };
-    let (node, kind, file) = read(row).map_err(sqlite("reading the graph's nodes"))?;
+    let (node, kind, file, score, last_seq, tier, flags) =
+        read(row).map_err(sqlite("reading the graph's nodes"))?;
     let kind = values::kind(&kind, NodeKind::from_name, "nodes.kind", node)?;
+    let interest = match (score, last_seq, tier) {
+        (Some(score), Some(last_seq), Some(tier)) => Some(checked((node, score, last_seq, tier))?),
+        _ => None,
+    };
+    let flags = flags
+        .map(|bits| values::number(bits, "files.flags", node).map(FileFlags::from_bits))
+        .transpose()?;
     Ok(GraphNodeRow {
         node: NodeId(node),
         kind,
         file: file.map(NodeId),
+        interest,
+        flags,
     })
 }

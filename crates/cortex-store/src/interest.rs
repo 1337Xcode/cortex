@@ -90,7 +90,9 @@ fn read(row: &Row<'_>) -> rusqlite::Result<(i64, f64, i64, u8)> {
 }
 
 /// The row these stored values make, or the error that one of them cannot be read back.
-fn checked((node, score, last_seq, tier): (i64, f64, i64, u8)) -> Result<InterestRow, StoreError> {
+pub(crate) fn checked(
+    (node, score, last_seq, tier): (i64, f64, i64, u8),
+) -> Result<InterestRow, StoreError> {
     Ok(InterestRow {
         node: NodeId(node),
         score,

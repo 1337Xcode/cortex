@@ -3,8 +3,8 @@
 mod common;
 
 use common::{Repo, TestResult, function};
-use cortex_core::{EdgeType, FileFlags, TypeWeights};
-use cortex_retrieve::read_graph;
+use cortex_core::{EdgeType, FileFlags, InterestTier};
+use cortex_retrieve::{GraphSettings, Standing, read_graph};
 
 /// Worked by hand. In `src`, `a.py` holds `f` and `b.py` holds `g`; `a.py` imports `b.py` at
 /// confidence 0.8, `f` calls `g` at 0.6, `a.py` changes with `b.py` at 0.5, and the two were used
@@ -34,7 +34,7 @@ fn the_store_s_graph_is_weighed_as_worked_out() -> TestResult {
     repo.link((file_a, file_b), EdgeType::CoChange, (0.5, 3, 0))?;
     repo.link((file_a, file_b), EdgeType::CoAccess, (2.5, 4, 0))?;
     let reader = repo.reader()?;
-    let graph = read_graph(reader.queries(), TypeWeights::default(), 0.995)?;
+    let graph = read_graph(reader.queries(), &GraphSettings::default())?;
     let index = |node| graph.index_of(node).ok_or("a node of the store");
     let links = |node, kind| -> TestResult<Vec<(u32, f64)>> {
         Ok(graph.links(index(node)?, kind).collect())
@@ -73,5 +73,58 @@ fn the_store_s_graph_is_weighed_as_worked_out() -> TestResult {
     ));
     assert!(links(file_b, EdgeType::CoChange)?.is_empty());
     assert_eq!(graph.file_of(index(g)?), Some(index(file_b)?));
+    Ok(())
+}
+
+/// Each node's standing as of the latest task, worked out by hand at the default decay of 0.98 a
+/// task, ten tasks after its interest was written at task 0 (0.98^10 = 0.8170728068875467): `f`,
+/// 0.5 stored as interesting, stands at 0.4085, interesting; `b.py`, 0.22 stored as interesting,
+/// at 0.1798, fog; `l.py`, a landmark, stays one; `g` has no interest, dark at 0. A generated or a
+/// vendored file is not listed; every other node is.
+#[test]
+fn each_node_stands_as_of_the_latest_task() -> TestResult {
+    let mut repo = Repo::new()?;
+    let a = repo.file(
+        "a.py",
+        "def f():\n    pass\n",
+        &[function("f", 1, 2)],
+        FileFlags::empty(),
+    )?;
+    let b = repo.file(
+        "b.py",
+        "def g():\n    pass\n",
+        &[function("g", 1, 2)],
+        FileFlags::empty(),
+    )?;
+    let l = repo.file("l.py", "x = 1\n", &[], FileFlags::empty())?[0];
+    let generated = repo.file("gen.py", "x = 1\n", &[], FileFlags::GENERATED)?[0];
+    let vendored = repo.file("vendor/x.py", "x = 1\n", &[], FileFlags::VENDORED)?[0];
+    repo.interest(&[
+        (a[1], (0.5, 0), InterestTier::Interesting),
+        (b[0], (0.22, 0), InterestTier::Interesting),
+        (l, (3.0, 0), InterestTier::Landmark),
+    ])?;
+    repo.tasks(10)?;
+    let reader = repo.reader()?;
+    let graph = read_graph(reader.queries(), &GraphSettings::default())?;
+    let standing = |node| {
+        graph
+            .index_of(node)
+            .and_then(|index| graph.standing(index))
+            .ok_or("a node of the graph")
+    };
+    let faded = 0.817_072_806_887_546_7;
+    let f = standing(a[1])?;
+    assert!((f.interest - 0.5 * faded).abs() < 1e-12);
+    assert_eq!(f.tier, InterestTier::Interesting);
+    let file_b = standing(b[0])?;
+    assert!((file_b.interest - 0.22 * faded).abs() < 1e-12);
+    assert_eq!(file_b.tier, InterestTier::Dark);
+    assert_eq!(standing(l)?.tier, InterestTier::Landmark);
+    assert_eq!(standing(b[1])?, Standing::default());
+    assert!(!standing(generated)?.is_listed);
+    assert!(!standing(vendored)?.is_listed);
+    assert!(standing(a[0])?.is_listed);
+    assert!(standing(l)?.is_listed);
     Ok(())
 }

@@ -12,11 +12,14 @@
 //! file. Two links of one kind between the same nodes add up, so the sum may pass 1; a link to
 //! itself carries nothing and is left out.
 //!
+//! Each node also carries its standing: how much agents have worked on it, as of the latest task,
+//! and for a file whether a work order may point at it.
+//!
 //! Nodes are numbered from 0 in the order of their ids, and each node's links are sorted by
 //! target, so the same rows always make the same graph, whatever order they came in. Node numbers
 //! and each kind's count of links are 32-bit, so a graph past that is refused rather than cut.
 
-use cortex_core::{EdgeType, NodeKind, TypeWeights};
+use cortex_core::{EdgeType, InterestTier, NodeKind, TypeWeights};
 use cortex_learn::{MAX_LINK_WEIGHT, decayed};
 
 /// No file: what a folder's entry in the table of files holds.
@@ -33,8 +36,32 @@ pub enum GraphError {
     },
 }
 
+/// What the store says of a node besides its kind and file: how much agents have worked on it, and
+/// whether a work order may point at it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Standing {
+    /// Its interest brought forward to the latest task; 0 for a node with none.
+    pub interest: f64,
+    /// The tier that interest puts it in as of the latest task.
+    pub tier: InterestTier,
+    /// Whether a work order may point at it: not for a generated or vendored file, which the index
+    /// holds at file level only.
+    pub is_listed: bool,
+}
+
+impl Default for Standing {
+    /// A node agents have not worked on, which a work order may point at.
+    fn default() -> Self {
+        Self {
+            interest: 0.0,
+            tier: InterestTier::Dark,
+            is_listed: true,
+        }
+    }
+}
+
 /// One node as the graph takes it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NodeInput<Id> {
     /// Its id.
     pub id: Id,
@@ -42,6 +69,8 @@ pub struct NodeInput<Id> {
     pub kind: NodeKind,
     /// For a symbol, the file it is defined in.
     pub file: Option<Id>,
+    /// What the store says of it.
+    pub standing: Standing,
 }
 
 /// One stored link as the graph takes it, as the store keeps it: a strength in 0 to 1, or for a
@@ -187,6 +216,8 @@ pub struct Graph<Id> {
     kinds: Vec<NodeKind>,
     /// Each node's file: a symbol's file, a file itself, [`NO_FILE`] for anything else.
     files: Vec<u32>,
+    /// What the store says of each node.
+    standings: Vec<Standing>,
     /// Each kind's links, in the order of [`EdgeType::number`].
     rows: Vec<Rows>,
     /// The sum of each node's link weights over every kind.
@@ -222,6 +253,7 @@ impl<Id: Ord + Copy> Graph<Id> {
                 .and_then(|at| u32::try_from(at).ok())
         };
         let kinds: Vec<NodeKind> = sorted.iter().map(|node| node.kind).collect();
+        let standings: Vec<Standing> = sorted.iter().map(|node| node.standing).collect();
         let mut files = vec![NO_FILE; ids.len()];
         let mut by_kind: Vec<Vec<(u32, u32, f64)>> = vec![Vec::new(); EdgeType::ALL.len()];
         let containment = usize::from(EdgeType::Containment.number());
@@ -287,6 +319,7 @@ impl<Id: Ord + Copy> Graph<Id> {
             ids,
             kinds,
             files,
+            standings,
             rows,
             out_weights,
         })
@@ -334,6 +367,12 @@ impl<Id: Ord + Copy> Graph<Id> {
             .filter(|file| *file != NO_FILE)
     }
 
+    /// What the store says of node `node`, if there is such a node.
+    #[must_use]
+    pub fn standing(&self, node: u32) -> Option<Standing> {
+        self.standings.get(usize::try_from(node).ok()?).copied()
+    }
+
     /// Node `node`'s links of `kind`, each target with the weight it carries, by target.
     pub fn links(&self, node: u32, kind: EdgeType) -> impl Iterator<Item = (u32, f64)> + '_ {
         self.rows
@@ -376,7 +415,12 @@ mod tests {
 
     /// A node.
     fn node(id: i64, kind: NodeKind, file: Option<i64>) -> NodeInput<i64> {
-        NodeInput { id, kind, file }
+        NodeInput {
+            id,
+            kind,
+            file,
+            standing: Standing::default(),
+        }
     }
 
     /// A link last changed at task 0.

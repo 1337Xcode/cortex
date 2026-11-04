@@ -4,8 +4,8 @@
 mod common;
 
 use common::{Repo, TestResult, function};
-use cortex_core::{FileFlags, TypeWeights};
-use cortex_retrieve::{Graph, LexicalMatch, PromptTerms, lexical, read_graph};
+use cortex_core::FileFlags;
+use cortex_retrieve::{Graph, GraphSettings, LexicalMatch, PromptTerms, lexical, read_graph};
 use cortex_store::NodeId;
 
 /// A shop of three files in `shop`: `orders.py` with `create_order` (lines 1 to 5) and
@@ -62,7 +62,7 @@ impl Shop {
     /// What `prompt` finds, with the graph it is numbered in.
     fn find(&self, prompt: &str) -> TestResult<(LexicalMatch, Graph<NodeId>)> {
         let reader = self.repo.reader()?;
-        let graph = read_graph(reader.queries(), TypeWeights::default(), 0.995)?;
+        let graph = read_graph(reader.queries(), &GraphSettings::default())?;
         let found = lexical(reader.queries(), &graph, &PromptTerms::of(prompt))?;
         Ok((found, graph))
     }
@@ -230,7 +230,7 @@ fn a_name_many_symbols_share_names_none() -> TestResult {
         )?;
     }
     let reader = repo.reader()?;
-    let graph = read_graph(reader.queries(), TypeWeights::default(), 0.995)?;
+    let graph = read_graph(reader.queries(), &GraphSettings::default())?;
     let found = lexical(reader.queries(), &graph, &PromptTerms::of("`run`"))?;
     assert!(found.files.values().all(|file| !file.is_named));
     assert!(!found.seeds.is_empty());

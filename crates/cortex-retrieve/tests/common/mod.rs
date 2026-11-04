@@ -7,10 +7,12 @@
 )]
 
 use cortex_core::{
-    ContentHash, EdgeType, FileFlags, Identifier, Language, RepoId, RepoPath, ShortHash, SymbolKind,
+    Agent, ContentHash, EdgeType, FileFlags, Identifier, InterestTier, Language, RepoId, RepoPath,
+    ShortHash, SymbolKind, Ulid,
 };
 use cortex_store::{
-    EdgeRecord, FileIndex, FileRecord, NodeId, Reader, SymbolRecord, Writer, WriterOptions,
+    EdgeRecord, FileIndex, FileRecord, InterestRow, NodeId, Reader, SessionRecord, SymbolRecord,
+    TaskRecord, Writer, WriterOptions,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -157,6 +159,51 @@ impl Repo {
                 },
             )],
         )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Stores each node's interest of `rows`: its score as of a task, and the tier it was given.
+    pub fn interest(&mut self, rows: &[(NodeId, (f64, u64), InterestTier)]) -> TestResult {
+        let rows: Vec<InterestRow> = rows
+            .iter()
+            .map(|(node, (score, last_seq), tier)| InterestRow {
+                node: *node,
+                score: *score,
+                last_seq: *last_seq,
+                tier: *tier,
+            })
+            .collect();
+        let mut transaction = self.writer.transaction()?;
+        transaction.replace_interest(&rows)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Starts `count` tasks in a session of their own, so that the latest task is number `count`.
+    pub fn tasks(&mut self, count: u32) -> TestResult {
+        let session_id = Identifier::new("tasks")?;
+        let mut transaction = self.writer.transaction()?;
+        transaction.record_session(&SessionRecord {
+            session_id: session_id.clone(),
+            agent: Agent::Claude,
+            agent_version: None,
+            model: None,
+            parent_session_id: None,
+            cwd: None,
+            transcript_path: None,
+            started_at_ms: 1,
+        })?;
+        for at in 1..=count {
+            transaction.start_task(&TaskRecord {
+                task_id: Ulid::from_seed(u64::from(at), b"task"),
+                session_id: session_id.clone(),
+                started_at_ms: i64::from(at),
+                prompt_hash: None,
+                prompt_excerpt: None,
+                holdout: None,
+            })?;
+        }
         transaction.commit()?;
         Ok(())
     }

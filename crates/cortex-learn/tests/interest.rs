@@ -10,8 +10,10 @@ use cortex_core::{
     Event, HookKind, InterestTier, RepoPath, ShellCommand, StartSource, ToolKind, ToolResult,
     ToolTarget,
 };
-use cortex_learn::{Commands, EarnedInterest, Recorder, TaskState, add_interest, interest_of};
-use cortex_store::NodeId;
+use cortex_learn::{
+    Commands, EarnedInterest, Recorder, TaskState, add_interest, interest_of, tier_now,
+};
+use cortex_store::{InterestRow, NodeId};
 
 /// A read by `session` at `ts_ms` of `path`, the lines `range`, or of the whole file for none.
 fn read(session: &str, ts_ms: i64, path: &str, range: &[(u32, u32)]) -> TestResult<Event> {
@@ -380,5 +382,56 @@ fn a_file_that_falls_out_of_the_landmarks_is_written_back() -> TestResult {
         stored_for(&store, &[a])?,
         [Some((3.5, 1, InterestTier::Interesting))]
     );
+    Ok(())
+}
+
+/// The tier a stored row stands in later, worked out by hand at a decay of 0.98 a task: 0.3 stored
+/// as interesting at task 1 is 0.3 x 0.98^99 = 0.0406 at task 100, fog; 5.0 at task 99 is 4.9 at
+/// task 100, interesting; a landmark stays one however its score has faded (3.5 at task 1 is 0.47 at
+/// task 100), until the landmarks are chosen again; 0.2 at the task it was stored is at the
+/// threshold, fog; 0.21 is above it.
+#[test]
+fn a_stored_tier_is_read_as_of_the_task_that_asks() -> TestResult {
+    let mut store = Store::new()?;
+    let nodes = store.index(&["a.py", "b.py", "c.py", "d.py", "e.py"])?;
+    let row = |at: usize, (score, last_seq): (f64, u64), tier: InterestTier| {
+        nodes.get(at).map(|node| InterestRow {
+            node: *node,
+            score,
+            last_seq,
+            tier,
+        })
+    };
+    let cases = [
+        (
+            row(0, (0.3, 1), InterestTier::Interesting),
+            100,
+            InterestTier::Dark,
+        ),
+        (
+            row(1, (5.0, 99), InterestTier::Interesting),
+            100,
+            InterestTier::Interesting,
+        ),
+        (
+            row(2, (3.5, 1), InterestTier::Landmark),
+            100,
+            InterestTier::Landmark,
+        ),
+        (row(3, (0.2, 7), InterestTier::Dark), 7, InterestTier::Dark),
+        (
+            row(4, (0.21, 7), InterestTier::Interesting),
+            7,
+            InterestTier::Interesting,
+        ),
+    ];
+    for (row, seq, expected) in cases {
+        let row = row.ok_or("a node")?;
+        assert_eq!(
+            tier_now(&row, (seq, 0.98)),
+            expected,
+            "{row:?} at task {seq}"
+        );
+    }
     Ok(())
 }

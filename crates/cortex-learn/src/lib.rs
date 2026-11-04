@@ -30,7 +30,7 @@ pub use archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
 pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore, Told};
 pub use decay::decayed;
 pub use episode::episode_of;
-pub use interest::{EarnedInterest, add_interest, interest_of};
+pub use interest::{EarnedInterest, add_interest, interest_of, tier_now};
 pub use links::{EarnedLinks, Linking, MAX_LINK_WEIGHT, add_links, links_of};
 pub use outcome::{FileNow, Judgement, judge, reverted_after};
 pub use record::Recorder;

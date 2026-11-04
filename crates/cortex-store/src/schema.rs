@@ -403,10 +403,14 @@ pub(crate) const SEARCH_TOKENS: &str = "SELECT tokens FROM search_index WHERE ro
 pub(crate) const SEARCH_TOKENS_OF: &str = "SELECT rowid, tokens FROM search_index \
      WHERE rowid IN (SELECT value FROM json_each(?1)) ORDER BY rowid";
 
-/// Every node, by node, with its kind and, for a symbol, the node of the file it is defined in.
-pub(crate) const GRAPH_NODES: &str = "SELECT n.node_id, n.kind, f.node_id FROM nodes AS n \
+/// Every node, by node, with its kind; for a symbol, the node of the file it is defined in; its
+/// interest, when it has any; and for a file, its flags.
+pub(crate) const GRAPH_NODES: &str = "SELECT n.node_id, n.kind, f.node_id, i.score, i.last_seq, \
+     i.tier, ff.flags FROM nodes AS n \
      LEFT JOIN symbols AS s ON n.kind = 'symbol' AND s.symbol_id = n.ref_id \
-     LEFT JOIN nodes AS f ON f.kind = 'file' AND f.ref_id = s.file_id ORDER BY n.node_id";
+     LEFT JOIN nodes AS f ON f.kind = 'file' AND f.ref_id = s.file_id \
+     LEFT JOIN interest AS i ON i.node_id = n.node_id \
+     LEFT JOIN files AS ff ON n.kind = 'file' AND ff.file_id = n.ref_id ORDER BY n.node_id";
 /// Every edge, in the order of its key: source, target, type.
 pub(crate) const ALL_EDGES: &str =
     "SELECT src, dst, type, w, n, last_seq, directed FROM edges ORDER BY src, dst, type";

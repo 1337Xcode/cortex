@@ -222,6 +222,17 @@ fn add_within(
     Ok(())
 }
 
+/// The tier `row`'s node stands in at task `seq`, its score brought forward by `decay` for each task
+/// since: a landmark as the last task to choose the landmarks left it, since they are chosen again
+/// only when a task ends; else interesting while its score is above the fog's; else dark.
+#[must_use]
+pub fn tier_now(row: &InterestRow, (seq, decay): (u64, f64)) -> InterestTier {
+    if row.tier == InterestTier::Landmark {
+        return InterestTier::Landmark;
+    }
+    tier_of(decayed(row.score, row.last_seq, seq, decay))
+}
+
 /// The tier a score falls in on its own, before the landmarks are chosen.
 fn tier_of(score: f64) -> InterestTier {
     if score > INTERESTING_ABOVE {

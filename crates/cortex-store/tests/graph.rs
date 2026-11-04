@@ -4,12 +4,12 @@ mod common;
 
 use common::{Scratch, TestResult};
 use cortex_core::{
-    ContentHash, EdgeType, FileFlags, Identifier, Language, NodeKind, RepoPath, ShortHash,
-    SymbolKind, Ulid,
+    ContentHash, EdgeType, FileFlags, Identifier, InterestTier, Language, NodeKind, RepoPath,
+    ShortHash, SymbolKind, Ulid,
 };
 use cortex_store::{
-    EdgeRecord, EdgeRow, FileIndex, FileRecord, GraphNodeRow, SessionRecord, SymbolRecord,
-    TaskRecord,
+    EdgeRecord, EdgeRow, FileIndex, FileRecord, GraphNodeRow, InterestRow, SessionRecord,
+    SymbolRecord, TaskRecord,
 };
 
 /// `path`'s rows, with one function `name` on lines 1 and 2.
@@ -43,8 +43,10 @@ fn file_with(path: &str, name: &str) -> TestResult<FileIndex> {
 }
 
 /// Two files with a function each and a folder: the graph's nodes come in node order, each with
-/// its kind, a symbol with its file's node and nothing else with a file; the edges come in source,
-/// target and type order; the latest task is 0 with no task, then the number of the last one.
+/// its kind, a symbol with its file's node and nothing else with a file, the one node given
+/// interest (`f`) with its row and the rest with none, each file with its flags and nothing else
+/// with any; the edges come in source, target and type order; the latest task is 0 with no task,
+/// then the number of the last one.
 #[test]
 fn the_whole_graph_reads_back() -> TestResult {
     let scratch = Scratch::new()?;
@@ -83,6 +85,13 @@ fn the_whole_graph_reads_back() -> TestResult {
         &[(b, edge(a, 0.25, true)), (a, edge(b, 0.5, true))],
     )?;
     transaction.set_edges(EdgeType::Containment, &[(folder, edge(a, 1.0, false))])?;
+    let interest = InterestRow {
+        node: f,
+        score: 0.7,
+        last_seq: 3,
+        tier: InterestTier::Interesting,
+    };
+    transaction.replace_interest(std::slice::from_ref(&interest))?;
     transaction.commit()?;
     let queries = writer.queries();
     let mut nodes = Vec::new();
@@ -95,26 +104,36 @@ fn the_whole_graph_reads_back() -> TestResult {
             node: a,
             kind: NodeKind::File,
             file: None,
+            interest: None,
+            flags: Some(FileFlags::PARSED),
         },
         GraphNodeRow {
             node: f,
             kind: NodeKind::Symbol,
             file: Some(a),
+            interest: Some(interest),
+            flags: None,
         },
         GraphNodeRow {
             node: b,
             kind: NodeKind::File,
             file: None,
+            interest: None,
+            flags: Some(FileFlags::PARSED),
         },
         GraphNodeRow {
             node: g,
             kind: NodeKind::Symbol,
             file: Some(b),
+            interest: None,
+            flags: None,
         },
         GraphNodeRow {
             node: folder,
             kind: NodeKind::Dir,
             file: None,
+            interest: None,
+            flags: None,
         },
     ];
     expected.sort_by_key(|row| row.node);

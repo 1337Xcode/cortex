@@ -5,10 +5,10 @@ mod common;
 use common::{Repo, TestResult, function};
 use cortex_core::{
     Agent, Event, FileFlags, HookKind, Identifier, LineRange, RepoPath, ShortHash, ToolKind,
-    ToolResult, ToolTarget, TypeWeights, Ulid,
+    ToolResult, ToolTarget, Ulid,
 };
 use cortex_learn::{Commands, Recorder};
-use cortex_retrieve::{ReadSpan, SessionMatch, read_graph, session};
+use cortex_retrieve::{GraphSettings, ReadSpan, SessionMatch, read_graph, session};
 use cortex_store::NodeId;
 
 /// An event of `hook` in `session` at `ts_ms`.
@@ -99,7 +99,7 @@ fn record(repo: &mut Repo, events: &[Event]) -> TestResult {
 /// What session `s1` shows of `repo`, with the graph's numbers of `nodes`.
 fn shown(repo: &Repo, nodes: &[NodeId]) -> TestResult<(SessionMatch, Vec<u32>)> {
     let reader = repo.reader()?;
-    let graph = read_graph(reader.queries(), TypeWeights::default(), 0.995)?;
+    let graph = read_graph(reader.queries(), &GraphSettings::default())?;
     let found = session(reader.queries(), &graph, &Identifier::new("s1")?)?;
     let numbers = nodes
         .iter()

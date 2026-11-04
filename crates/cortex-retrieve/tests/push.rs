@@ -3,8 +3,8 @@
 
 use cortex_core::{EdgeType, NodeKind, TypeWeights};
 use cortex_retrieve::{
-    Activation, Graph, L1_TOLERANCE, LinkInput, MAX_PUSHES, NodeInput, SPREAD_THRESHOLD, Weighing,
-    spread,
+    Activation, Graph, L1_TOLERANCE, LinkInput, MAX_PUSHES, NodeInput, SPREAD_THRESHOLD, Standing,
+    Weighing, spread,
 };
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -30,6 +30,7 @@ fn graph_of(count: i64, rows: &[(i64, i64, u8, f64)]) -> Graph<i64> {
             id,
             kind: NodeKind::File,
             file: None,
+            standing: Standing::default(),
         })
         .collect();
     let links: Vec<LinkInput<i64>> = rows
