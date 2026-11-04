@@ -55,10 +55,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 10,
         sql: include_str!("../migrations/0010_session_indexes.sql"),
     },
+    Migration {
+        version: 11,
+        sql: include_str!("../migrations/0011_injections.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 10;
+pub(crate) const SCHEMA_VERSION: u32 = 11;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -533,6 +537,23 @@ pub(crate) const COUNTS: &str = "SELECT (SELECT count(*) FROM files), \
      (SELECT count(*) FROM refs WHERE dst_symbol_id IS NOT NULL), \
      (SELECT count(*) FROM nodes), (SELECT count(*) FROM edges)";
 
+/// Records an injection, returning its row id.
+pub(crate) const INJECTION_INSERT: &str = "INSERT INTO injections \
+    (task_id, session_id, hook, ts, items, tokens_est, confidence, gated_out, holdout, \
+    rendered_hash, features) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
+
+/// The injections of one task, in the order they were recorded, read back as
+/// [`crate::injections`] reads them.
+pub(crate) const INJECTIONS_OF_TASK: &str = "SELECT injection_id, task_id, session_id, hook, ts, \
+    items, tokens_est, confidence, gated_out, holdout, rendered_hash, used_count, label, features \
+    FROM injections WHERE task_id = ?1 ORDER BY injection_id";
+
+/// The injections of one session, in the order they were recorded, read back as
+/// [`crate::injections`] reads them.
+pub(crate) const INJECTIONS_OF_SESSION: &str = "SELECT injection_id, task_id, session_id, hook, \
+    ts, items, tokens_est, confidence, gated_out, holdout, rendered_hash, used_count, label, \
+    features FROM injections WHERE session_id = ?1 ORDER BY injection_id";
+
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
@@ -822,7 +843,7 @@ mod tests {
     /// references through imports by name, `nodes.path`, the uniqueness of folder paths and the
     /// names passed on as others, the second and the last two partial. Each entry: columns, unique,
     /// partial.
-    fn expected_indexes() -> [(&'static str, Vec<Index>); 14] {
+    fn expected_indexes() -> [(&'static str, Vec<Index>); 15] {
         [
             ("meta", index_list(&[(&["key"], true, false)])),
             (
@@ -895,7 +916,37 @@ mod tests {
                     (&["response"], false, false),
                 ]),
             ),
+            (
+                "injections",
+                index_list(&[
+                    (&["task_id"], false, false),
+                    (&["session_id", "ts"], false, false),
+                ]),
+            ),
         ]
+    }
+
+    /// The injections table, column by column.
+    fn expected_injection_columns() -> [(&'static str, Vec<Column>); 1] {
+        [(
+            "injections",
+            column_list(&[
+                ("injection_id", "INTEGER", 1),
+                ("task_id", "TEXT", 0),
+                ("session_id", "TEXT", 0),
+                ("hook", "TEXT", 0),
+                ("ts", "INTEGER", 0),
+                ("items", "TEXT", 0),
+                ("tokens_est", "INTEGER", 0),
+                ("confidence", "REAL", 0),
+                ("gated_out", "INTEGER", 0),
+                ("holdout", "INTEGER", 0),
+                ("rendered_hash", "BLOB", 0),
+                ("used_count", "INTEGER", 0),
+                ("label", "INTEGER", 0),
+                ("features", "TEXT", 0),
+            ]),
+        )]
     }
 
     /// Which files hold a reference of a name that goes through an import is read from the index of
@@ -1024,8 +1075,7 @@ mod tests {
     /// and primary keys as the index's tables define them. Two indexes are added, `refs.dst_name`
     /// for resolving references by name and `nodes.path` for finding the nodes under a path, and
     /// folder paths are unique; one table is added, `passes_on`, what each file passes on of its
-    /// imports, indexed by file. Foreign keys refuse references to missing rows, and an edge goes
-    /// with either of its nodes.
+    /// imports, indexed by file. The injections table is indexed by task and by session and time.
     #[test]
     fn schema_matches_the_table_definitions() -> Result<(), Box<dyn std::error::Error>> {
         let connection = Connection::open_in_memory()?;
@@ -1050,6 +1100,7 @@ mod tests {
                 "file_commits",
                 "files",
                 "git_state",
+                "injections",
                 "interest",
                 "meta",
                 "nodes",
@@ -1067,11 +1118,24 @@ mod tests {
             .iter()
             .chain(&expected_activity_columns())
             .chain(&expected_learning_columns())
+            .chain(&expected_injection_columns())
         {
             assert_eq!(&columns(&connection, table)?, expected, "{table}");
         }
         for (table, expected) in &expected_indexes() {
             assert_eq!(&indexes(&connection, table)?, expected, "{table}");
+        }
+        Ok(())
+    }
+
+    /// The foreign keys are the table definitions typed below: each refuses a reference to a
+    /// missing row, an edge goes with either of its nodes, and co-change counts and interest go
+    /// with their files and nodes.
+    #[test]
+    fn foreign_keys_match_the_table_definitions() -> Result<(), Box<dyn std::error::Error>> {
+        let connection = Connection::open_in_memory()?;
+        for migration in MIGRATIONS {
+            connection.execute_batch(migration.sql)?;
         }
         assert_eq!(
             foreign_keys(&connection, "symbols")?,
@@ -1121,6 +1185,14 @@ mod tests {
         assert_eq!(
             foreign_keys(&connection, "usage")?,
             [key("sessions", "session_id", "session_id", "NO ACTION")]
+        );
+        // An injection belongs to a stored task and session.
+        assert_eq!(
+            foreign_keys(&connection, "injections")?,
+            [
+                key("sessions", "session_id", "session_id", "NO ACTION"),
+                key("tasks", "task_id", "task_id", "NO ACTION"),
+            ]
         );
         Ok(())
     }

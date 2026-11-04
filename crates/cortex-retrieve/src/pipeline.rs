@@ -12,12 +12,12 @@
 use std::path::Path;
 use std::time::Instant;
 
-use cortex_core::{Identifier, RetrievalConfig, ScaleMode};
+use cortex_core::{GateFeatures, Identifier, RetrievalConfig, ScaleMode};
 use cortex_store::{NodeId, Queries};
 
 use crate::error::RetrieveError;
 use crate::features::{Found, GATED_FILES, features_of};
-use crate::gate::{Features, Rule, Shut, Verdict, decide};
+use crate::gate::{Rule, Shut, Verdict, decide};
 use crate::graph::Graph;
 use crate::items::{Listed, Listing, listed};
 use crate::prompt::PromptTerms;
@@ -83,7 +83,7 @@ pub struct Retrieval {
     /// What it came to.
     pub outcome: Outcome,
     /// The gate's features, when the retrieval reached the gate.
-    pub features: Option<Features>,
+    pub features: Option<GateFeatures>,
     /// The files the work order lists, the best first, each with the spans whose lines it writes;
     /// none when it is silent.
     pub listed: Vec<Listed>,
@@ -93,7 +93,7 @@ pub struct Retrieval {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Location {
     /// The gate's features and what the gate would have said; none when nothing was found.
-    pub judged: Option<(Features, Verdict)>,
+    pub judged: Option<(GateFeatures, Verdict)>,
     /// The files found, the best first, each with its spans and its reason.
     pub listed: Vec<Listed>,
 }
@@ -216,7 +216,7 @@ impl Reached {
         &'a self,
         graph: &'a Graph<NodeId>,
         request: &Request<'_>,
-    ) -> (Support<'a, NodeId>, Features, Verdict) {
+    ) -> (Support<'a, NodeId>, GateFeatures, Verdict) {
         let support = Support::new(graph, &self.seeds);
         let found = Found {
             seeds: &self.seeds,

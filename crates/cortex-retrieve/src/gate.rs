@@ -6,35 +6,14 @@
 //! strongly, or the session is plainly continuing its own work. A missing signal lowers nothing
 //! into a yes; it only leaves the gate shut.
 
+use cortex_core::GateFeatures;
+
 /// How many independent kinds of evidence must support one top file for them to agree.
 pub const AGREEING_KINDS: u8 = 2;
 
 /// The top lexical score the cold-start rule asks for, before any raise the self-check made: half
 /// of the prompt's searchable words, weighed by how rare each is, matched by one file.
 pub const LEXICAL_BAR: f64 = 0.5;
-
-/// What the gate weighs, from one retrieval. The cold-start rule reads the top lexical score, the
-/// kinds agreeing and the session's continuity; every feature is kept with the retrieval, for the
-/// model calibrated on the repository's own injections once there are enough of them.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Features {
-    /// How well the best-matching file matches the prompt's words, from 0 to 1.
-    pub top_lexical: f64,
-    /// The share of all activation that the top five files hold, from 0 to 1.
-    pub top_mass: f64,
-    /// The most independent kinds of evidence that support any one of the top three files.
-    pub agreeing_kinds: u8,
-    /// How many independent kinds of evidence support at least one of the top three files.
-    pub supporting_kinds: u8,
-    /// How alike the prompt is to the most alike cluster of earlier tasks, from 0 to 1.
-    pub similar_task: f64,
-    /// The share of the repository's latest delivered injections that were used, when there are
-    /// any.
-    pub recent_precision: Option<f64>,
-    /// Whether the session is plainly continuing its own work: a top file was edited earlier in it,
-    /// or is changed and not committed, and the prompt's words match that file.
-    pub is_continuing: bool,
-}
 
 /// What the gate says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +45,7 @@ pub enum Shut {
 /// Whether to hand over what `features` describe, the cold-start rule's lexical bar raised by
 /// `raise` (the self-check's). A raise only ever lifts the bar: one below zero counts as none.
 #[must_use]
-pub fn decide(features: &Features, raise: f64) -> Verdict {
+pub fn decide(features: &GateFeatures, raise: f64) -> Verdict {
     let is_agreed = features.agreeing_kinds >= AGREEING_KINDS;
     let is_strong = features.top_lexical >= LEXICAL_BAR + raise.max(0.0);
     if is_agreed && is_strong {
@@ -88,9 +67,9 @@ pub fn decide(features: &Features, raise: f64) -> Verdict {
 mod tests {
     use super::*;
 
-    /// Features with nothing behind them.
-    fn none() -> Features {
-        Features {
+    /// The gate's features with nothing behind them.
+    fn none() -> GateFeatures {
+        GateFeatures {
             top_lexical: 0.0,
             top_mass: 0.0,
             agreeing_kinds: 0,
@@ -108,7 +87,7 @@ mod tests {
     /// nothing, so a match of 0 or 0.499 still does not clear.
     #[test]
     fn the_cold_start_rule_decides_case_by_case() {
-        let agreed = |top_lexical| Features {
+        let agreed = |top_lexical| GateFeatures {
             top_lexical,
             agreeing_kinds: 2,
             supporting_kinds: 3,
@@ -123,7 +102,7 @@ mod tests {
             (agreed(0.0), -0.5, Verdict::Silent(Shut::WeakMatch)),
             (agreed(0.499), -0.1, Verdict::Silent(Shut::WeakMatch)),
             (
-                Features {
+                GateFeatures {
                     top_lexical: 1.0,
                     agreeing_kinds: 1,
                     supporting_kinds: 4,
@@ -136,7 +115,7 @@ mod tests {
                 Verdict::Silent(Shut::TooFewKinds),
             ),
             (
-                Features {
+                GateFeatures {
                     is_continuing: true,
                     ..none()
                 },

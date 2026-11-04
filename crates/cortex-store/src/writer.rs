@@ -13,7 +13,8 @@ use crate::connection::{self, Access};
 use crate::episode::{self, EpisodeRecord};
 use crate::error::{StoreError, io, sqlite};
 use crate::folders;
-use crate::ids::NodeId;
+use crate::ids::{InjectionId, NodeId};
+use crate::injections::{self, InjectionRecord};
 use crate::interest::{self, InterestRow};
 use crate::layout;
 use crate::links;
@@ -383,6 +384,18 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn clear_cochange(&mut self) -> Result<(), StoreError> {
         self.atomically(cochange::clear)
+    }
+
+    /// Records `record`, what an injection gave or weighed, returning its row.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn record_injection(
+        &mut self,
+        record: &InjectionRecord,
+    ) -> Result<InjectionId, StoreError> {
+        self.atomically(|connection| injections::record(connection, record))
     }
 
     /// Adds `files` and `pairs` to the stored counts, storing those not stored yet: counts and

@@ -38,3 +38,8 @@ row_id! {
     /// A node of the graph: a row of `nodes`.
     NodeId
 }
+
+row_id! {
+    /// A row of `injections`.
+    InjectionId
+}

@@ -20,6 +20,7 @@ mod error;
 mod folders;
 mod graph;
 mod ids;
+mod injections;
 mod interest;
 mod layout;
 mod links;
@@ -52,7 +53,8 @@ pub use episode::{
 };
 pub use error::StoreError;
 pub use graph::GraphNodeRow;
-pub use ids::{FileId, NodeId, RefId, SymbolId};
+pub use ids::{FileId, InjectionId, NodeId, RefId, SymbolId};
+pub use injections::{InjectedFile, InjectionRecord, InjectionRow};
 pub use interest::InterestRow;
 pub use lock::is_writer_running;
 pub use meta::MetaKey;

@@ -1,0 +1,278 @@
+//! Injections recorded and read back: what a prompt's retrieval gave or weighed and what a primer
+//! gave, keeping node ids, line ranges, the kinds of reasons and the gate's numbers, and nothing a
+//! prompt or a file says.
+
+mod common;
+
+use common::{Scratch, TestResult, index};
+use cortex_core::{Agent, ContentHash, GateFeatures, HookKind, Identifier, ReasonKind, Ulid};
+use cortex_store::{InjectedFile, InjectionRecord, NodeId, SessionRecord, TaskRecord, Writer};
+
+/// Stores files at `paths` and returns their nodes, in that order.
+fn nodes(writer: &mut Writer, paths: &[&str]) -> TestResult<Vec<NodeId>> {
+    let mut transaction = writer.transaction()?;
+    let mut nodes = Vec::new();
+    for path in paths {
+        let change = transaction.replace_file(&index(path, Vec::new(), Vec::new())?)?;
+        nodes.push(change.file_node);
+    }
+    transaction.commit()?;
+    Ok(nodes)
+}
+
+/// Records session `session` and, in it, the tasks `tasks`, so that injections may belong to them.
+fn session_with(writer: &mut Writer, session: &Identifier, tasks: &[Ulid]) -> TestResult {
+    let mut transaction = writer.transaction()?;
+    transaction.record_session(&SessionRecord {
+        session_id: session.clone(),
+        agent: Agent::Claude,
+        agent_version: None,
+        model: None,
+        parent_session_id: None,
+        cwd: None,
+        transcript_path: None,
+        started_at_ms: 500,
+    })?;
+    for (at, task) in tasks.iter().enumerate() {
+        transaction.start_task(&TaskRecord {
+            task_id: *task,
+            session_id: session.clone(),
+            started_at_ms: 1_500 + i64::try_from(at)?,
+            prompt_hash: None,
+            prompt_excerpt: None,
+            holdout: Some(false),
+        })?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+/// The gate's numbers of one retrieval, as typed here.
+fn features() -> GateFeatures {
+    GateFeatures {
+        top_lexical: 1.0,
+        top_mass: 0.625,
+        agreeing_kinds: 2,
+        supporting_kinds: 3,
+        similar_task: 0.0,
+        recent_precision: None,
+        is_continuing: false,
+    }
+}
+
+/// A prompt's work order of two files, and a primer, recorded and read back as they were
+/// recorded, by task and by session; the task's injection unlabelled until its task ends.
+#[test]
+fn injections_are_read_back_as_recorded() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let [service, model] = nodes(&mut writer, &["src/service.py", "src/model.py"])?[..] else {
+        return Err("two nodes".into());
+    };
+    let session = Identifier::new("s1")?;
+    let task = Ulid::parse("01JC0000000000000000000000")?;
+    session_with(&mut writer, &session, &[task])?;
+    let order = InjectionRecord {
+        task_id: Some(task),
+        session_id: session.clone(),
+        hook: HookKind::Prompt,
+        at_ms: 2_000,
+        files: vec![
+            InjectedFile {
+                node: service,
+                spans: vec![(1, 4)],
+                reason: Some(ReasonKind::Named),
+            },
+            InjectedFile {
+                node: model,
+                spans: vec![(1, 3), (10, 12)],
+                reason: Some(ReasonKind::ChangesWith),
+            },
+        ],
+        tokens: 182,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"the work order")),
+        features: Some(features()),
+    };
+    let primer = InjectionRecord {
+        task_id: None,
+        session_id: session.clone(),
+        hook: HookKind::SessionStart,
+        at_ms: 1_000,
+        files: Vec::new(),
+        tokens: 40,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"the primer")),
+        features: None,
+    };
+    let mut transaction = writer.transaction()?;
+    let primer_id = transaction.record_injection(&primer)?;
+    let order_id = transaction.record_injection(&order)?;
+    transaction.commit()?;
+    let queries = writer.queries();
+    let of_task = queries.injections_of_task(task)?;
+    let [row] = &of_task[..] else {
+        return Err(format!("{of_task:?}").into());
+    };
+    assert_eq!(row.id, order_id);
+    assert_eq!(row.record, order);
+    assert_eq!((row.used_count, row.label), (None, None));
+    let of_session: Vec<_> = queries
+        .injections_of_session(&session)?
+        .into_iter()
+        .map(|row| (row.id, row.record))
+        .collect();
+    assert_eq!(of_session, [(primer_id, primer), (order_id, order)]);
+    Ok(())
+}
+
+/// A retrieval the gate kept back is recorded with the files it weighed, with no span, no reason
+/// and no text; a held-out task's, which the gate let through, with what would have been given.
+/// The two are told apart.
+#[test]
+fn what_was_kept_back_is_recorded_too() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let [tax, service] = nodes(&mut writer, &["src/tax.py", "src/service.py"])?[..] else {
+        return Err("two nodes".into());
+    };
+    let (gated, held) = (
+        Ulid::parse("01JC0000000000000000000001")?,
+        Ulid::parse("01JC0000000000000000000004")?,
+    );
+    let session = Identifier::new("s2")?;
+    session_with(&mut writer, &session, &[gated, held])?;
+    let kept_back = InjectionRecord {
+        task_id: Some(gated),
+        session_id: session.clone(),
+        hook: HookKind::Prompt,
+        at_ms: 3_000,
+        files: vec![InjectedFile {
+            node: tax,
+            spans: Vec::new(),
+            reason: None,
+        }],
+        tokens: 0,
+        confidence: None,
+        is_gated_out: true,
+        is_holdout: false,
+        text_hash: None,
+        features: Some(features()),
+    };
+    let held_out = InjectionRecord {
+        task_id: Some(held),
+        session_id: session,
+        hook: HookKind::Prompt,
+        at_ms: 3_500,
+        files: vec![InjectedFile {
+            node: service,
+            spans: vec![(1, 4)],
+            reason: Some(ReasonKind::Named),
+        }],
+        tokens: 120,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: true,
+        text_hash: Some(ContentHash::of(b"what would have been given")),
+        features: Some(features()),
+    };
+    let mut transaction = writer.transaction()?;
+    transaction.record_injection(&kept_back)?;
+    transaction.record_injection(&held_out)?;
+    transaction.commit()?;
+    let queries = writer.queries();
+    let records = |task| -> TestResult<Vec<InjectionRecord>> {
+        Ok(queries
+            .injections_of_task(task)?
+            .into_iter()
+            .map(|row| row.record)
+            .collect())
+    };
+    assert_eq!(records(gated)?, [kept_back]);
+    assert_eq!(records(held)?, [held_out]);
+    Ok(())
+}
+
+/// The items are stored as typed here, node ids, line ranges and the kind of each reason, and
+/// nothing else: no word of the prompt and no name of a file.
+#[test]
+fn an_injection_holds_no_words() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let [service] = nodes(&mut writer, &["src/service.py"])?[..] else {
+        return Err("one node".into());
+    };
+    let task = Ulid::parse("01JC0000000000000000000002")?;
+    let session = Identifier::new("s3")?;
+    session_with(&mut writer, &session, &[task])?;
+    let mut transaction = writer.transaction()?;
+    transaction.record_injection(&InjectionRecord {
+        task_id: Some(task),
+        session_id: session,
+        hook: HookKind::Prompt,
+        at_ms: 4_000,
+        files: vec![InjectedFile {
+            node: service,
+            spans: vec![(1, 4)],
+            reason: Some(ReasonKind::Matches),
+        }],
+        tokens: 90,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"matches order, orders")),
+        features: Some(features()),
+    })?;
+    transaction.commit()?;
+    drop(writer);
+    let connection = rusqlite::Connection::open(scratch.folder.join("cortex.db"))?;
+    let (items, features): (String, String) =
+        connection.query_row("SELECT items, features FROM injections", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+    assert_eq!(
+        items,
+        format!(
+            r#"[{{"node":{},"spans":[[1,4]],"reason":"matches"}}]"#,
+            service.get()
+        )
+    );
+    assert_eq!(
+        features,
+        r#"{"top_lexical":1.0,"top_mass":0.625,"agreeing_kinds":2,"supporting_kinds":3,"similar_task":0.0,"recent_precision":null,"is_continuing":false}"#
+    );
+    Ok(())
+}
+
+/// An injection belongs to a stored session and, for a prompt's, a stored task: one recorded
+/// before its task is refused, and nothing of it is kept.
+#[test]
+fn an_injection_needs_its_task() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let session = Identifier::new("s4")?;
+    session_with(&mut writer, &session, &[])?;
+    let task = Ulid::parse("01JC0000000000000000000003")?;
+    let mut transaction = writer.transaction()?;
+    let refused = transaction.record_injection(&InjectionRecord {
+        task_id: Some(task),
+        session_id: session.clone(),
+        hook: HookKind::Prompt,
+        at_ms: 5_000,
+        files: Vec::new(),
+        tokens: 0,
+        confidence: None,
+        is_gated_out: true,
+        is_holdout: false,
+        text_hash: None,
+        features: Some(features()),
+    });
+    assert!(refused.is_err());
+    transaction.commit()?;
+    assert!(writer.queries().injections_of_session(&session)?.is_empty());
+    Ok(())
+}

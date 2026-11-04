@@ -1,5 +1,6 @@
 //! Why a file is listed: the strongest true reason chosen, written in at most 60 characters.
 
+use cortex_core::ReasonKind;
 use cortex_retrieve::{ItemEvidence, MAX_REASON_CHARS, Reason, reason_of};
 
 /// Every reason written as typed here.
@@ -117,4 +118,53 @@ fn the_strongest_reason_is_chosen() {
         ]
     );
     assert_eq!(reason_of(&ItemEvidence::default()), None);
+}
+
+/// Each reason names its kind, as typed here, and the kind's stored name: the words a reason says
+/// are not part of it.
+#[test]
+fn each_reason_names_its_kind() {
+    let cases = [
+        (Reason::Named, ReasonKind::Named, "named"),
+        (Reason::EditedHere, ReasonKind::EditedHere, "edited_here"),
+        (
+            Reason::Matches(vec!["order".to_owned()]),
+            ReasonKind::Matches,
+            "matches",
+        ),
+        (
+            Reason::ChangesWith {
+                other: "a.py".to_owned(),
+                together: 1,
+                of: 2,
+            },
+            ReasonKind::ChangesWith,
+            "changes_with",
+        ),
+        (
+            Reason::RefersTo("a.py".to_owned()),
+            ReasonKind::RefersTo,
+            "refers_to",
+        ),
+        (
+            Reason::ReferredToBy("a.py".to_owned()),
+            ReasonKind::ReferredToBy,
+            "referred_to_by",
+        ),
+        (
+            Reason::LikeEarlierWork,
+            ReasonKind::LikeEarlierWork,
+            "like_earlier_work",
+        ),
+        (
+            Reason::WorkedOnWith("a.py".to_owned()),
+            ReasonKind::WorkedOnWith,
+            "worked_on_with",
+        ),
+        (Reason::ReadHere, ReasonKind::ReadHere, "read_here"),
+    ];
+    for (reason, kind, name) in cases {
+        assert_eq!(reason.kind(), kind, "{reason:?}");
+        assert_eq!(kind.name(), name);
+    }
 }

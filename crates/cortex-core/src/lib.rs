@@ -20,6 +20,7 @@ mod event;
 mod file_content;
 mod hash;
 mod identifier;
+mod injection;
 pub mod ipc;
 mod kinds;
 mod language;
@@ -59,6 +60,7 @@ pub use event::{
 pub use file_content::FileContent;
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
+pub use injection::{GateFeatures, ReasonKind};
 pub use kinds::{EdgeType, FileFlags, InterestTier, NodeKind, RefKind, Resolution, SymbolKind};
 pub use language::{Language, Tier};
 pub use log_rotation::rotate_log;

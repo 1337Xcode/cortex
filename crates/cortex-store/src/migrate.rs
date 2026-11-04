@@ -513,7 +513,8 @@ mod tests {
              INSERT INTO tasks (task_id, session_id, seq, started_at) \
              VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAV', 's1', 1, 6);",
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let tenth = MIGRATIONS.get(..10).ok_or("fewer than ten migrations")?;
+        migrate(&mut connection, tenth, &backups)?;
         assert_eq!(schema_version(&connection)?, 10);
         let objects = objects(&connection)?;
         for index in ["tasks_session", "events_edits"] {
@@ -525,6 +526,30 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(tasks, 1);
+        Ok(())
+    }
+
+    /// The eleventh schema adds the injections table and its two indexes, and keeps the rows a
+    /// tenth-schema store holds.
+    #[test]
+    fn the_eleventh_schema_records_injections() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let tenth = MIGRATIONS.get(..10).ok_or("fewer than ten migrations")?;
+        migrate(&mut connection, tenth, &backups)?;
+        connection.execute_batch(
+            "INSERT INTO sessions (session_id, agent, started_at, status) \
+             VALUES ('s1', 'claude', 5, 'live');",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 11);
+        let objects = objects(&connection)?;
+        for object in ["injections", "injections_task", "injections_session"] {
+            assert!(objects.contains(&object.to_owned()), "{object}");
+        }
+        let sessions: i64 =
+            connection.query_row("SELECT count(*) FROM sessions", [], |row| row.get(0))?;
+        assert_eq!(sessions, 1);
         Ok(())
     }
 

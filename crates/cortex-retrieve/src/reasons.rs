@@ -8,6 +8,8 @@
 //! before; the session read it. A file none of these holds is not listed: a reason is never made
 //! up.
 
+use cortex_core::ReasonKind;
+
 /// Most characters a reason may hold.
 pub const MAX_REASON_CHARS: usize = 60;
 
@@ -45,6 +47,22 @@ pub enum Reason {
 }
 
 impl Reason {
+    /// What kind of reason it is, without the words it says it in.
+    #[must_use]
+    pub fn kind(&self) -> ReasonKind {
+        match self {
+            Self::Named => ReasonKind::Named,
+            Self::EditedHere => ReasonKind::EditedHere,
+            Self::Matches(_) => ReasonKind::Matches,
+            Self::ChangesWith { .. } => ReasonKind::ChangesWith,
+            Self::RefersTo(_) => ReasonKind::RefersTo,
+            Self::ReferredToBy(_) => ReasonKind::ReferredToBy,
+            Self::LikeEarlierWork => ReasonKind::LikeEarlierWork,
+            Self::WorkedOnWith(_) => ReasonKind::WorkedOnWith,
+            Self::ReadHere => ReasonKind::ReadHere,
+        }
+    }
+
     /// The reason as the work order writes it, at most [`MAX_REASON_CHARS`] characters: a name too
     /// long to fit is cut short with `...`.
     #[must_use]

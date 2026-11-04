@@ -8,7 +8,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::gate::Features;
+use cortex_core::GateFeatures;
+
 use crate::push::Activation;
 use crate::score::ScoredFile;
 use crate::seeds::Seeds;
@@ -39,7 +40,7 @@ pub struct Found<'a, Id> {
 pub fn features_of<Id: Ord + Copy>(
     found: &Found<'_, Id>,
     recent_precision: Option<f64>,
-) -> Features {
+) -> GateFeatures {
     let top = found.scored.iter().take(GATED_FILES);
     let kinds: Vec<(u32, BTreeSet<Evidence>)> = top
         .map(|file| (file.file, found.support.of(file.file)))
@@ -57,7 +58,7 @@ pub fn features_of<Id: Ord + Copy>(
     let is_continuing = kinds.iter().any(|(file, kinds)| {
         found.seeds.session.edited_files.contains(file) && kinds.contains(&Evidence::Lexical)
     });
-    Features {
+    GateFeatures {
         top_lexical: found.seeds.lexical.top_lexical,
         top_mass: top_mass(found.activation, found.scored),
         agreeing_kinds: u8::try_from(agreeing).unwrap_or(u8::MAX),
