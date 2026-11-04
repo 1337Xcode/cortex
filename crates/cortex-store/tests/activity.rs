@@ -63,6 +63,72 @@ fn committed<T>(
     Ok(value)
 }
 
+/// A session's edits are those of its tasks, its subagent's included and another session's not,
+/// newest first by time; its reads and compactions are its own, newest first by time even when
+/// stored out of order. Worked by hand from the rows written: edits 8 (330), 4 (180), 1 (150);
+/// reads and compactions 7 (320), 9 (310), 6 (190), 2 (160).
+#[test]
+fn a_sessions_edits_and_reads_read_back_newest_first() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let first = task(b"first", "s1", 100)?;
+    let other = task(b"other", "s2", 110)?;
+    let third = task(b"third", "s1", 300)?;
+    let subagent = SessionRecord {
+        parent_session_id: Some(name("s1")?),
+        ..session("s1/agent", 70)?
+    };
+    let of = |session_id: &str, record: EventRecord| -> TestResult<EventRecord> {
+        Ok(EventRecord {
+            session_id: Some(name(session_id)?),
+            ..record
+        })
+    };
+    let rows = [
+        event(Some(first.task_id), 150, EventKind::Edit)?,
+        event(Some(first.task_id), 160, EventKind::Read)?,
+        of("s2", event(Some(other.task_id), 170, EventKind::Edit)?)?,
+        of(
+            "s1/agent",
+            event(Some(first.task_id), 180, EventKind::Edit)?,
+        )?,
+        of(
+            "s1/agent",
+            event(Some(first.task_id), 185, EventKind::Read)?,
+        )?,
+        event(Some(first.task_id), 190, EventKind::Compact)?,
+        event(Some(third.task_id), 320, EventKind::Read)?,
+        event(Some(third.task_id), 330, EventKind::Edit)?,
+        event(Some(third.task_id), 310, EventKind::Read)?,
+    ];
+    committed(&mut writer, |transaction| {
+        transaction.record_session(&session("s1", 50)?)?;
+        transaction.record_session(&session("s2", 60)?)?;
+        transaction.record_session(&subagent)?;
+        transaction.start_task(&first)?;
+        transaction.start_task(&other)?;
+        transaction.start_task(&third)?;
+        for row in &rows {
+            transaction.append_event(row)?;
+        }
+        Ok(())
+    })?;
+    let queries = writer.queries();
+    let numbers = |rows: Vec<cortex_store::EventRow>| -> Vec<u64> {
+        rows.iter().map(|row| row.seq).collect()
+    };
+    let s1 = name("s1")?;
+    assert_eq!(numbers(queries.edits_of_session(&s1, 10)?), [8, 4, 1]);
+    assert_eq!(numbers(queries.edits_of_session(&s1, 2)?), [8, 4]);
+    assert_eq!(numbers(queries.reads_of_session(&s1, 10)?), [7, 9, 6, 2]);
+    assert_eq!(numbers(queries.reads_of_session(&s1, 2)?), [7, 9]);
+    assert_eq!(
+        numbers(queries.edits_of_session(&name("s3")?, 10)?),
+        Vec::<u64>::new()
+    );
+    Ok(())
+}
+
 /// Tasks are numbered across the repository, not per session: two sessions' tasks get 1, 2 and
 /// 3 in the order they start. A session's open task is its latest unended one; ending it closes
 /// it once. Events read back per task and per session, in order, with their paths, lines and

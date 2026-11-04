@@ -328,6 +328,36 @@ impl Queries<'_> {
         self.event_rows(schema::EVENTS_OF_SESSION, [session_id.as_str()])
     }
 
+    /// The edits of the tasks of `session_id`, its subagents' edits included, newest first, at
+    /// most `limit` of them.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn edits_of_session(
+        self,
+        session_id: &Identifier,
+        limit: usize,
+    ) -> Result<Vec<EventRow>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.event_rows(schema::EDITS_OF_SESSION, (session_id.as_str(), limit))
+    }
+
+    /// The reads and compactions `session_id` itself reported, newest first, at most `limit` of
+    /// them: a subagent's are its own.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn reads_of_session(
+        self,
+        session_id: &Identifier,
+        limit: usize,
+    ) -> Result<Vec<EventRow>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.event_rows(schema::READS_OF_SESSION, (session_id.as_str(), limit))
+    }
+
     /// The events numbered after `after_seq`, in order, at most `limit` of them.
     ///
     /// # Errors

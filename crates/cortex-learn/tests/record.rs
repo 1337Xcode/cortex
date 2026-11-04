@@ -6,12 +6,12 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::{
-    Store, TestResult, end, event, name, prompt, row, shell, start, succeeded, target, task_of,
-    tool,
+    Store, TestResult, end, event, failed, name, prompt, row, shell, start, succeeded, target,
+    task_of, tool,
 };
 use cortex_core::{
     CommandKind, CompactTrigger, ContentHash, Event, EventKind, EventMeta, FileFlags, HookKind,
-    Identifier, Language, LineRange, RepoPath, SessionStatus, ShellCommand, StartSource,
+    Identifier, Language, LineRange, RepoPath, SessionStatus, ShellCommand, ShortHash, StartSource,
     TaskOutcome, ToolKind, ToolTarget, Ulid,
 };
 use cortex_learn::{Commands, Recorder};
@@ -147,6 +147,57 @@ fn a_task_from_prompt_to_stop() -> TestResult {
         },
     ];
     assert_eq!(store.events()?, expected);
+    Ok(())
+}
+
+/// A read of a file the index has read keeps the short hash of what the index holds for it; a read
+/// of a file the index holds without its contents, of a file it does not hold, or a read that
+/// failed keeps none.
+#[test]
+fn a_read_keeps_the_hash_of_what_the_index_held() -> TestResult {
+    let mut store = Store::new()?;
+    let text = "def divide(a, b):
+    return a / b
+";
+    store.index_text(&[("calc/ops.py", text)])?;
+    store.index(&["calc/unread.py"])?;
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
+    let read = |ts_ms: i64, path: &str| -> TestResult<Event> {
+        tool(
+            HookKind::PostTool,
+            ("s1", ts_ms),
+            (ToolKind::Read, target(path, &[])?, None),
+        )
+    };
+    let events = [
+        start("s1", 1_000, StartSource::Startup)?,
+        prompt("s1", 2_000, "fix divide")?,
+        read(2_100, "calc/ops.py")?,
+        read(2_200, "calc/unread.py")?,
+        read(2_300, "calc/missing.py")?,
+        tool(
+            HookKind::PostTool,
+            ("s1", 2_400),
+            (ToolKind::Read, target("calc/ops.py", &[])?, failed()),
+        )?,
+    ];
+    store.record(&mut recorder, &events)?;
+    let kept: Vec<(Option<RepoPath>, Option<ShortHash>)> = store
+        .events()?
+        .into_iter()
+        .filter(|row| row.kind == EventKind::Read)
+        .map(|row| (row.path, row.meta.content))
+        .collect();
+    let path = |text: &str| RepoPath::new(text).map(Some);
+    assert_eq!(
+        kept,
+        [
+            (path("calc/ops.py")?, Some(ShortHash::of(text.as_bytes()))),
+            (path("calc/unread.py")?, None),
+            (path("calc/missing.py")?, None),
+            (path("calc/ops.py")?, None),
+        ]
+    );
     Ok(())
 }
 

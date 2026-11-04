@@ -182,7 +182,19 @@ impl Recorder {
             None => None,
         };
         let told = told_by(event, &self.commands);
-        let meta = meta_of(event, &told);
+        let mut meta = meta_of(event, &told);
+        // A read keeps the short hash the index holds for its file: while the index still holds
+        // that hash, the agent still holds the lines it read.
+        if kind == EventKind::Read
+            && meta.is_success != Some(false)
+            && let Some(path) = &path
+        {
+            meta.content = transaction
+                .queries()
+                .file(path)?
+                .and_then(|row| row.file.content_hash)
+                .map(|hash| hash.short());
+        }
         // What the rows do not keep goes with the first: a search or a shell command has one, and
         // an edit's file held one content before it.
         let mut unkept = Unkept {
@@ -505,6 +517,7 @@ fn meta_of(event: &Event, told: &Told) -> EventMeta {
         // Every runner's name is an identifier (a test of the runners says so), so none is lost.
         runner: check.and_then(|Check { runner, .. }| Identifier::new(runner).ok()),
         check: check.map(|check| check.kind),
+        content: None,
     }
 }
 

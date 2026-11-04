@@ -4,7 +4,8 @@
 //! silent unless the signals agree, and the work order and the session's primer, rendered from the
 //! files as they are on disk.
 //!
-//! So far it holds what a prompt points at ([`PromptTerms`]), the graph activation spreads over
+//! So far it holds what a prompt points at ([`PromptTerms`]) and what its words find
+//! ([`lexical`]), what the session has been doing ([`session`]), the graph activation spreads over
 //! ([`Graph`], read from the store by [`read_graph`]), the spreading itself ([`spread`]), the
 //! gate's rule ([`decide`]) and the reading of a file that lends lines only when it is the file the
 //! index read ([`CheckedFile`]).
@@ -19,6 +20,7 @@ mod lexical;
 mod prompt;
 mod push;
 mod read;
+mod session;
 
 pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
@@ -28,3 +30,4 @@ pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};
 pub use prompt::{Mention, PromptTerms};
 pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, SPREAD_THRESHOLD, spread};
 pub use read::read_graph;
+pub use session::{EDITED_WEIGHT, READ_WEIGHT, ReadSpan, SEEDED_READS, SessionMatch, session};

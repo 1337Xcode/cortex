@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::named::named_kind;
-use crate::{CompactTrigger, Identifier, StartSource, ToolKind};
+use crate::{CompactTrigger, Identifier, ShortHash, StartSource, ToolKind};
 
 /// Most characters of a prompt kept when the user asks for an excerpt.
 pub const PROMPT_EXCERPT_CHARS: usize = 200;
@@ -135,6 +135,10 @@ pub struct EventMeta {
     /// What that check checks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<CommandKind>,
+    /// For a read, the short hash of what the index held for the file when the read was recorded:
+    /// while the file still holds that, the agent holds what it read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<ShortHash>,
 }
 
 /// The start of a prompt, kept only when the user asks: at most [`PROMPT_EXCERPT_CHARS`]
@@ -192,6 +196,21 @@ mod tests {
         assert_eq!(serde_json::to_string(&meta)?, json);
         assert_eq!(serde_json::from_str::<EventMeta>(json)?, meta);
         assert_eq!(serde_json::to_string(&EventMeta::default())?, "{}");
+        Ok(())
+    }
+
+    /// A read's meta keeps the short hash of what the index held for its file as hexadecimal, in
+    /// the JSON typed here by hand, and reads back.
+    #[test]
+    fn a_reads_meta_keeps_the_hash_of_its_file() -> Result<(), serde_json::Error> {
+        let meta = EventMeta {
+            tool: Some(ToolKind::Read),
+            content: Some(ShortHash::of(b"")),
+            ..EventMeta::default()
+        };
+        let json = r#"{"tool":"read","content":"af1349b9f5f9a1a6a0404dea36dcc949"}"#;
+        assert_eq!(serde_json::to_string(&meta)?, json);
+        assert_eq!(serde_json::from_str::<EventMeta>(json)?, meta);
         Ok(())
     }
 }

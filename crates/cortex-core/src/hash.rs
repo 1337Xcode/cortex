@@ -29,6 +29,12 @@ impl ContentHash {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
+
+    /// Its first 16 bytes: the short hash of the same bytes, as [`ShortHash::of`] gives it.
+    #[must_use]
+    pub fn short(&self) -> ShortHash {
+        ShortHash(self.0.first_chunk().copied().unwrap_or_default())
+    }
 }
 
 impl ShortHash {
@@ -50,6 +56,45 @@ impl ShortHash {
     #[must_use]
     pub fn from_bytes(bytes: [u8; 16]) -> Self {
         Self(bytes)
+    }
+
+    /// The hash written as 32 lower-case hexadecimal characters, as `Display` writes it; `None`
+    /// for any other text.
+    #[must_use]
+    pub fn from_hex(text: &str) -> Option<Self> {
+        if text.len() != 32 {
+            return None;
+        }
+        let mut bytes = [0_u8; 16];
+        for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks(2)) {
+            let digit = |c: u8| match c {
+                b'0'..=b'9' => Some(c - b'0'),
+                b'a'..=b'f' => Some(c - b'a' + 10),
+                _ => None,
+            };
+            let [high, low] = pair else {
+                return None;
+            };
+            *byte = (digit(*high)? << 4) | digit(*low)?;
+        }
+        Some(Self(bytes))
+    }
+}
+
+impl serde::Serialize for ShortHash {
+    /// Its 32 lower-case hexadecimal characters.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ShortHash {
+    /// Read from its 32 lower-case hexadecimal characters, and from nothing else.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        Self::from_hex(&text).ok_or_else(|| {
+            serde::de::Error::custom("not a short hash of 32 hexadecimal characters")
+        })
     }
 }
 
@@ -122,6 +167,48 @@ mod tests {
                 "{length}"
             );
         }
+    }
+
+    /// The short form of a file's hash is the short hash of the same bytes.
+    #[test]
+    fn a_content_hash_shortens_to_the_short_hash() {
+        for input in [&b""[..], b"fn main() {}", &[0xff_u8; 300]] {
+            assert_eq!(ContentHash::of(input).short(), ShortHash::of(input));
+        }
+    }
+
+    /// A short hash reads back from the hexadecimal `Display` writes and from nothing else: the
+    /// first half of the published hash of no bytes reads as the short hash of no bytes; the same
+    /// in upper case, a character short, a character over, or with a character outside `0-9a-f`
+    /// reads as nothing.
+    #[test]
+    fn a_short_hash_reads_back_from_its_hexadecimal() {
+        let hex = "af1349b9f5f9a1a6a0404dea36dcc949";
+        assert_eq!(ShortHash::from_hex(hex), Some(ShortHash::of(b"")));
+        assert_eq!(ShortHash::of(b"").to_string(), hex);
+        let refused = [
+            hex.to_uppercase(),
+            hex[..31].to_owned(),
+            format!("{hex}0"),
+            format!("g{}", &hex[1..]),
+        ];
+        for text in refused {
+            assert_eq!(ShortHash::from_hex(&text), None, "{text}");
+        }
+    }
+
+    /// A short hash is written in stored facts as its hexadecimal, and read back from that alone.
+    #[test]
+    fn a_short_hash_is_stored_as_its_hexadecimal() -> Result<(), serde_json::Error> {
+        let short = ShortHash::of(b"");
+        let json = serde_json::to_string(&short)?;
+        assert_eq!(json, r#""af1349b9f5f9a1a6a0404dea36dcc949""#);
+        assert_eq!(serde_json::from_str::<ShortHash>(&json)?, short);
+        assert!(
+            serde_json::from_str::<ShortHash>(r#""AF1349B9F5F9A1A6A0404DEA36DCC949""#).is_err()
+        );
+        assert!(serde_json::from_str::<ShortHash>("16").is_err());
+        Ok(())
     }
 
     /// Stored bytes read back give the same hash.

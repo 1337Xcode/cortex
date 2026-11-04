@@ -51,10 +51,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 9,
         sql: include_str!("../migrations/0009_search_terms.sql"),
     },
+    Migration {
+        version: 10,
+        sql: include_str!("../migrations/0010_session_indexes.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 9;
+pub(crate) const SCHEMA_VERSION: u32 = 10;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -140,6 +144,19 @@ pub(crate) const EVENTS_OF_TASK: &str = "SELECT seq, task_id, session_id, ts, ki
 /// [`EVENTS_OF_TASK`].
 pub(crate) const EVENTS_OF_SESSION: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, \
      path, range_start, range_end, meta FROM events WHERE session_id = ?1 ORDER BY ts, seq";
+
+/// The edits of the tasks of session ?1, its subagents' edits included, newest first by time and
+/// then by number, at most ?2 of them; the columns are those of [`EVENTS_OF_TASK`]. Only the edit
+/// rows of the session's tasks are read (the index of edits), and only those are sorted.
+pub(crate) const EDITS_OF_SESSION: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, \
+     path, range_start, range_end, meta FROM events \
+     WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id = ?1) AND kind = 'edit' \
+     ORDER BY ts DESC, seq DESC LIMIT ?2";
+/// The reads and compactions session ?1 itself reported, newest first by time and then by
+/// number, at most ?2 of them; the columns are those of [`EVENTS_OF_TASK`].
+pub(crate) const READS_OF_SESSION: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, \
+     path, range_start, range_end, meta FROM events \
+     WHERE session_id = ?1 AND kind IN ('read', 'compact') ORDER BY ts DESC, seq DESC LIMIT ?2";
 
 /// Events numbered after ?1, in order, at most ?2 of them; the columns are those of
 /// [`EVENTS_OF_TASK`].
@@ -840,13 +857,18 @@ mod tests {
             ("sessions", index_list(&[(&["session_id"], true, false)])),
             (
                 "tasks",
-                index_list(&[(&["task_id"], true, false), (&["seq"], true, false)]),
+                index_list(&[
+                    (&["task_id"], true, false),
+                    (&["seq"], true, false),
+                    (&["session_id", "seq"], false, false),
+                ]),
             ),
             (
                 "events",
                 index_list(&[
                     (&["task_id"], false, false),
                     (&["session_id", "ts"], false, false),
+                    (&["task_id"], false, true),
                 ]),
             ),
             (
@@ -909,6 +931,41 @@ mod tests {
                 .iter()
                 .any(|step| step.contains("USING INDEX passes_on_aliases")),
             "{steps:?}"
+        );
+        Ok(())
+    }
+
+    /// A session's edits are found through the index of tasks by session and the index of edits
+    /// alone, and its reads through the index of events by session and time, read newest first
+    /// without a sort, as the query plans show.
+    #[test]
+    fn a_sessions_edits_and_reads_are_found_by_their_indexes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let connection = Connection::open_in_memory()?;
+        for migration in MIGRATIONS {
+            connection.execute_batch(migration.sql)?;
+        }
+        let plan = |sql: &str| -> rusqlite::Result<Vec<String>> {
+            let mut statement = connection.prepare(&["EXPLAIN QUERY PLAN ", sql].concat())?;
+            statement.query_map(("s1", 10), |row| row.get(3))?.collect()
+        };
+        let edits = plan(EDITS_OF_SESSION)?;
+        for index in ["INDEX tasks_session", "INDEX events_edits"] {
+            assert!(
+                edits.iter().any(|step| step.contains(index)),
+                "{index}: {edits:?}"
+            );
+        }
+        let reads = plan(READS_OF_SESSION)?;
+        assert!(
+            reads
+                .iter()
+                .any(|step| step.contains("INDEX events_session_ts")),
+            "{reads:?}"
+        );
+        assert!(
+            !reads.iter().any(|step| step.contains("TEMP B-TREE")),
+            "{reads:?}"
         );
         Ok(())
     }

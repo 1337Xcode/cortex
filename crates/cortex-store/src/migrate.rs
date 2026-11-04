@@ -484,7 +484,8 @@ mod tests {
             "INSERT INTO search_index (rowid, node_id, tokens) VALUES (1, 1, 'parse order'); \
              INSERT INTO search_index (rowid, node_id, tokens) VALUES (2, 2, 'parse parse');",
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let ninth = MIGRATIONS.get(..9).ok_or("fewer than nine migrations")?;
+        migrate(&mut connection, ninth, &backups)?;
         assert_eq!(schema_version(&connection)?, 9);
         let count = |word: &str| -> rusqlite::Result<i64> {
             connection.query_row(
@@ -495,6 +496,35 @@ mod tests {
         };
         assert_eq!(count("order")?, 1);
         assert_eq!(count("parse")?, 2);
+        Ok(())
+    }
+
+    /// The tenth schema indexes the tasks by session and the edits by task, and keeps the rows a
+    /// ninth-schema store holds.
+    #[test]
+    fn the_tenth_schema_indexes_a_sessions_work() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let ninth = MIGRATIONS.get(..9).ok_or("fewer than nine migrations")?;
+        migrate(&mut connection, ninth, &backups)?;
+        connection.execute_batch(
+            "INSERT INTO sessions (session_id, agent, started_at, status) \
+             VALUES ('s1', 'claude', 5, 'live'); \
+             INSERT INTO tasks (task_id, session_id, seq, started_at) \
+             VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAV', 's1', 1, 6);",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 10);
+        let objects = objects(&connection)?;
+        for index in ["tasks_session", "events_edits"] {
+            assert!(objects.contains(&index.to_owned()), "{index}");
+        }
+        let tasks: i64 = connection.query_row(
+            "SELECT count(*) FROM tasks WHERE session_id = 's1'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(tasks, 1);
         Ok(())
     }
 
