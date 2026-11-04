@@ -41,6 +41,18 @@ pub fn repository() -> io::Result<PathBuf> {
         std::fs::write(root.join(CHANGED_FILE), source)?;
         return Ok(root);
     }
+    write_into(&root)?;
+    std::fs::write(root.join(COMPLETE_MARK), "complete\n")?;
+    Ok(root)
+}
+
+/// Writes the synthetic repository's 10,000 files under `root`, each folder `pkgNN` made as it is
+/// needed.
+///
+/// # Errors
+///
+/// I/O errors while writing them.
+pub fn write_into(root: &Path) -> io::Result<()> {
     for folder in 0..FOLDERS {
         let folder_path = root.join(format!("pkg{folder:02}"));
         std::fs::create_dir_all(&folder_path)?;
@@ -49,8 +61,7 @@ pub fn repository() -> io::Result<PathBuf> {
             std::fs::write(folder_path.join(name), source)?;
         }
     }
-    std::fs::write(root.join(COMPLETE_MARK), "complete\n")?;
-    Ok(root)
+    Ok(())
 }
 
 /// The repository-relative path of the file the reparse benchmark changes.

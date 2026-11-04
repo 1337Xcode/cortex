@@ -39,10 +39,14 @@ struct Budget {
 }
 
 /// The benchmarks the budgets read: each package and its benchmark target.
-const BENCHES: [(&str, &str); 2] = [("cortex-index", "index"), ("cortex-cli", "hooks")];
+const BENCHES: [(&str, &str); 3] = [
+    ("cortex-index", "index"),
+    ("cortex-retrieve", "spread"),
+    ("cortex-cli", "hooks"),
+];
 
 /// Every budget a benchmark checks. The limits are the product's latency budgets.
-const BUDGETS: [Budget; 13] = [
+const BUDGETS: [Budget; 18] = [
     Budget {
         group: "index",
         function: "initial_10k",
@@ -99,6 +103,43 @@ const BUDGETS: [Budget; 13] = [
         what: "hook cold start with no input, start to exit",
         limit: Duration::from_millis(10),
         platforms: Platforms::Reference,
+    },
+    // Spreading is one step of a retrieval, so it is held to the whole retrieval's budget at every
+    // size; a huge repository spreads in two stages.
+    Budget {
+        group: "spread",
+        function: "nodes/10000",
+        what: "spreading over 10,000 nodes",
+        limit: Duration::from_millis(120),
+        platforms: Platforms::Every,
+    },
+    Budget {
+        group: "spread",
+        function: "nodes/100000",
+        what: "spreading over 100,000 nodes",
+        limit: Duration::from_millis(120),
+        platforms: Platforms::Every,
+    },
+    Budget {
+        group: "spread",
+        function: "nodes/1000000",
+        what: "spreading over 1,000,000 nodes",
+        limit: Duration::from_millis(120),
+        platforms: Platforms::Every,
+    },
+    Budget {
+        group: "spread",
+        function: "two_stage_nodes/1000000",
+        what: "two-stage spreading over 1,000,000 nodes",
+        limit: Duration::from_millis(120),
+        platforms: Platforms::Every,
+    },
+    Budget {
+        group: "retrieval",
+        function: "medium_10k",
+        what: "a prompt's retrieval in the daemon, 10,000 source files",
+        limit: Duration::from_millis(120),
+        platforms: Platforms::Every,
     },
     // With the daemon down a hook tries it, starts one and exits: each event keeps its budget.
     Budget {
@@ -271,7 +312,8 @@ mod tests {
     }
 
     /// Every hook the benchmarks run has a budget, read from the hooks group with the daemon running
-    /// and from its own group with the daemon down, and the index's two budgets hold everywhere.
+    /// and from its own group with the daemon down; the index's two budgets, spreading's four and
+    /// retrieval's hold everywhere, spreading and retrieval within 120 ms.
     #[test]
     fn every_hook_benchmark_has_its_budget() {
         let hooks: Vec<(&str, u128)> = BUDGETS
@@ -310,6 +352,23 @@ mod tests {
             .filter(|budget| budget.platforms == Platforms::Every)
             .map(|budget| budget.function)
             .collect();
-        assert_eq!(everywhere, ["initial_10k", "one_file_changed_10k"]);
+        assert_eq!(
+            everywhere,
+            [
+                "initial_10k",
+                "one_file_changed_10k",
+                "nodes/10000",
+                "nodes/100000",
+                "nodes/1000000",
+                "two_stage_nodes/1000000",
+                "medium_10k"
+            ]
+        );
+        let retrieving: Vec<u128> = BUDGETS
+            .iter()
+            .filter(|budget| budget.group == "spread" || budget.group == "retrieval")
+            .map(|budget| budget.limit.as_millis())
+            .collect();
+        assert_eq!(retrieving, [120, 120, 120, 120, 120]);
     }
 }

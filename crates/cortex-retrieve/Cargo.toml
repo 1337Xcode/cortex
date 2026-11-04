@@ -16,9 +16,14 @@ cortex-store = { path = "../cortex-store" }
 thiserror.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 petgraph.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
+
+[[bench]]
+name = "spread"
+harness = false
 
 [lints]
 workspace = true

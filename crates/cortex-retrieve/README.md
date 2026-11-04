@@ -46,9 +46,14 @@ read.
 
 ```sh
 cargo test -p cortex-retrieve
+cargo bench -p cortex-retrieve --bench spread
 ```
 
 Weights are worked out by hand in each test's comment; a property checks that the same rows in any
 order give the same graph. Spreading is checked against exact personalized PageRank, computed by
 power iteration over a petgraph copy of each random graph (`tests/push.rs`); the gate against a
-table of cases; reading against files changed, too large or not files at all.
+table of cases; reading against files changed, too large or not files at all. The `spread`
+benchmark spreads over generated graphs of 10,000, 100,000 and 1,000,000 nodes (files of five
+symbols, each referring to two symbols elsewhere, each file changing with three others and
+worked on with two) from five seeds, and spreads in two stages over the largest, its view by files
+built beforehand as the daemon builds it.
