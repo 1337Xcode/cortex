@@ -18,6 +18,7 @@ mod connection;
 mod episode;
 mod error;
 mod folders;
+mod graph;
 mod ids;
 mod interest;
 mod layout;
@@ -49,6 +50,7 @@ pub use episode::{
     ReadFile,
 };
 pub use error::StoreError;
+pub use graph::GraphNodeRow;
 pub use ids::{FileId, NodeId, RefId, SymbolId};
 pub use interest::InterestRow;
 pub use lock::is_writer_running;

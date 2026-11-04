@@ -446,6 +446,7 @@ dependencies = [
  "cortex-core",
  "cortex-index",
  "cortex-learn",
+ "cortex-store",
  "petgraph",
  "proptest",
  "tempfile",

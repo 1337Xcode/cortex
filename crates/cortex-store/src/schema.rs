@@ -382,6 +382,16 @@ pub(crate) const SEARCH_TOKENS: &str = "SELECT tokens FROM search_index WHERE ro
 pub(crate) const SEARCH_TOKENS_OF: &str = "SELECT rowid, tokens FROM search_index \
      WHERE rowid IN (SELECT value FROM json_each(?1)) ORDER BY rowid";
 
+/// Every node, by node, with its kind and, for a symbol, the node of the file it is defined in.
+pub(crate) const GRAPH_NODES: &str = "SELECT n.node_id, n.kind, f.node_id FROM nodes AS n \
+     LEFT JOIN symbols AS s ON n.kind = 'symbol' AND s.symbol_id = n.ref_id \
+     LEFT JOIN nodes AS f ON f.kind = 'file' AND f.ref_id = s.file_id ORDER BY n.node_id";
+/// Every edge, in the order of its key: source, target, type.
+pub(crate) const ALL_EDGES: &str =
+    "SELECT src, dst, type, w, n, last_seq, directed FROM edges ORDER BY src, dst, type";
+/// The number of the latest task, 0 when there is none.
+pub(crate) const LATEST_TASK_SEQ: &str = "SELECT coalesce(max(seq), 0) FROM tasks";
+
 /// Deletes a node's outgoing edges of one type.
 pub(crate) const EDGES_DELETE_FROM: &str = "DELETE FROM edges WHERE src = ?1 AND type = ?2";
 /// Deletes every edge of one type.

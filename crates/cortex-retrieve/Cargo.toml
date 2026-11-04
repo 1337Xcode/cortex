@@ -12,6 +12,7 @@ publish.workspace = true
 cortex-core = { path = "../cortex-core" }
 cortex-index = { path = "../cortex-index" }
 cortex-learn = { path = "../cortex-learn" }
+cortex-store = { path = "../cortex-store" }
 thiserror.workspace = true
 
 [dev-dependencies]

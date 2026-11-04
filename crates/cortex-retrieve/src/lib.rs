@@ -5,19 +5,24 @@
 //! files as they are on disk.
 //!
 //! So far it holds what a prompt points at ([`PromptTerms`]), the graph activation spreads over
-//! ([`Graph`]), the spreading itself ([`spread`]), the gate's rule ([`decide`]) and the reading of
-//! a file that lends lines only when it is the file the index read ([`CheckedFile`]).
+//! ([`Graph`], read from the store by [`read_graph`]), the spreading itself ([`spread`]), the
+//! gate's rule ([`decide`]) and the reading of a file that lends lines only when it is the file the
+//! index read ([`CheckedFile`]).
 
 #![warn(clippy::pedantic)]
 
 mod disk;
+mod error;
 mod gate;
 mod graph;
 mod prompt;
 mod push;
+mod read;
 
 pub use disk::{CheckedFile, Unchecked};
+pub use error::RetrieveError;
 pub use gate::{AGREEING_KINDS, Features, LEXICAL_BAR, Rule, Shut, Verdict, decide};
 pub use graph::{Graph, GraphError, LinkInput, NodeInput, Weighing};
 pub use prompt::{Mention, PromptTerms};
 pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, SPREAD_THRESHOLD, spread};
+pub use read::read_graph;
