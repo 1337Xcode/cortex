@@ -2,13 +2,13 @@
 //! changes what it holds: an index, a stored mining, a task's learning.
 //!
 //! A request takes the graph as it stands and never waits for a rebuild. The rebuilds run on a
-//! thread of their own, each built from one read transaction, so that it sees the store as one
-//! moment left it, and swapped in whole. However often the store changes, a rebuild starts at least
-//! half a second after the one before, and at least four times as long after it as that one took,
-//! so that rebuilding a large graph takes at most a quarter of one core. A rebuild that fails, or
-//! panics, is counted, kept out of the graph, and tried again, a second later after one failure,
-//! twice as long after each further one in a row, at most a minute; the status says how many
-//! failed. A stop is taken at once, between rebuilds or while waiting for the next.
+//! thread of their own (`paced`), each built from one read transaction, so that it sees the store
+//! as one moment left it, and swapped in whole. However often the store changes, a rebuild starts
+//! at least half a second after the one before, and at least four times as long after it as that
+//! one took, so that rebuilding a large graph takes at most a quarter of one core. A rebuild that
+//! fails, or panics, is counted, kept out of the graph, and tried again, a second later after one
+//! failure, twice as long after each further one in a row, at most a minute; the status says how
+//! many failed. A stop is taken at once, between rebuilds or while waiting for the next.
 //!
 //! Co-change links are taken only from a complete mining. The miner takes its mark out of the store
 //! before it writes and puts it back once done, and the host holds a [`MiningWrite`] while it
@@ -16,25 +16,25 @@
 //! since the end of the write asks for another; one that finds no mark otherwise (no mining yet, or
 //! one cut short), or that would be the first graph, is built without co-change links.
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::thread::JoinHandle;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use cortex_core::ipc::GraphReport;
 use cortex_retrieve::{Graph, GraphSettings, RetrieveError, read_graph};
 use cortex_store::{GitStateKey, NodeId, Reader};
 
-/// The least time between the starts of two rebuilds: writes that come closer together share one.
-const REBUILD_EVERY: Duration = Duration::from_millis(500);
+use crate::paced::{Asks, Paced, Pacing};
 
-/// How many times as long as a rebuild took the next waits, at least, from its start: rebuilding
-/// then takes at most a quarter of the thread's time.
-const REBUILD_SPACING: u32 = 4;
-
-/// The longest a rebuild that failed waits before it is tried again.
-const MAX_RETRY_WAIT: Duration = Duration::from_secs(60);
+/// How the rebuilds are spaced: at least half a second apart, so that writes that come closer
+/// together share one; at least four times as long after one as it took, so that rebuilding takes
+/// at most a quarter of the thread's time; and at most a minute after failures.
+const PACING: Pacing = Pacing {
+    every: Duration::from_millis(500),
+    spacing: 4,
+    max_retry_wait: Duration::from_secs(60),
+};
 
 /// A graph, with whether it holds the co-change links of a complete mining.
 pub(crate) type Read = (Graph<NodeId>, bool);
@@ -44,10 +44,10 @@ pub(crate) type Read = (Graph<NodeId>, bool);
 pub(crate) struct Snapshot {
     /// The graph, once one is built, and how the rebuilds went.
     held: Mutex<Held>,
-    /// What the rebuilding thread waits for.
-    wanted: Mutex<Wanted>,
-    /// Wakes the rebuilding thread when what it waits for changes.
-    wake: Condvar,
+    /// The rebuilds asked for.
+    asks: Arc<Asks>,
+    /// Whether a mining is being written.
+    is_mining: AtomicBool,
 }
 
 /// The graph, once one is built, and how the rebuilds since the daemon started went.
@@ -72,28 +72,6 @@ struct Built {
     took_ms: u64,
 }
 
-/// What the rebuilding thread waits for.
-#[derive(Debug, Default)]
-struct Wanted {
-    /// The store changed since the latest rebuild began, or the latest failed.
-    is_changed: bool,
-    /// A mining is being written.
-    is_mining: bool,
-    /// The thread is to stop.
-    is_stopping: bool,
-}
-
-/// How the latest rebuild went, which paces the next.
-#[derive(Debug, Clone, Copy)]
-struct Last {
-    /// When it started.
-    started: Instant,
-    /// How long it took.
-    took: Duration,
-    /// How many rebuilds in a row, it included, failed.
-    failures: u32,
-}
-
 /// What the host holds while it writes a mining: the snapshot knows the write is under way, and
 /// is asked to rebuild when it ends, however it went.
 #[derive(Debug)]
@@ -105,11 +83,8 @@ pub(crate) struct MiningWrite<'a> {
 impl Drop for MiningWrite<'_> {
     /// The write is over: the next rebuild takes what it left.
     fn drop(&mut self) {
-        let mut wanted = self.snapshot.wanted();
-        wanted.is_mining = false;
-        wanted.is_changed = true;
-        drop(wanted);
-        self.snapshot.wake.notify_all();
+        self.snapshot.is_mining.store(false, Ordering::SeqCst);
+        self.snapshot.asks.ask();
     }
 }
 
@@ -145,13 +120,12 @@ impl Snapshot {
 
     /// Notes that the store changed, so that the graph is rebuilt.
     pub(crate) fn changed(&self) {
-        self.wanted().is_changed = true;
-        self.wake.notify_all();
+        self.asks.ask();
     }
 
     /// Notes that a mining's write begins, until what this returns is dropped.
     pub(crate) fn mining_write(&self) -> MiningWrite<'_> {
-        self.wanted().is_mining = true;
+        self.is_mining.store(true, Ordering::SeqCst);
         MiningWrite { snapshot: self }
     }
 
@@ -160,66 +134,23 @@ impl Snapshot {
         self.held.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// What the rebuilding thread waits for, locked.
-    fn wanted(&self) -> MutexGuard<'_, Wanted> {
-        self.wanted.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// Takes the change waiting, as the rebuilding thread does: whether the store changed since
     /// the last time. For the tests of what tells the snapshot.
     #[cfg(test)]
     pub(crate) fn take_change(&self) -> bool {
-        std::mem::take(&mut self.wanted().is_changed)
+        self.asks.take()
     }
 
     /// Whether a mining's write is under way, as the snapshot was told. For tests.
     #[cfg(test)]
     pub(crate) fn is_mining(&self) -> bool {
-        self.wanted().is_mining
-    }
-
-    /// Tells the rebuilding thread to stop.
-    fn stop(&self) {
-        self.wanted().is_stopping = true;
-        self.wake.notify_all();
-    }
-
-    /// Waits until the store changed and `not_before` has come, or the thread is to stop, and takes
-    /// the change: `false` to stop. A stop is taken at once, however long the wait still had.
-    fn wait_for_change(&self, not_before: Option<Instant>) -> bool {
-        let mut wanted = self.wanted();
-        loop {
-            if wanted.is_stopping {
-                return false;
-            }
-            if !wanted.is_changed {
-                wanted = self
-                    .wake
-                    .wait(wanted)
-                    .unwrap_or_else(PoisonError::into_inner);
-                continue;
-            }
-            let now = Instant::now();
-            match not_before.filter(|at| *at > now) {
-                Some(at) => {
-                    wanted = self
-                        .wake
-                        .wait_timeout(wanted, at - now)
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .0;
-                }
-                None => {
-                    wanted.is_changed = false;
-                    return true;
-                }
-            }
-        }
+        self.is_mining.load(Ordering::SeqCst)
     }
 
     /// Takes in `read`, a graph read from the store, unless a mining is being written and the graph
     /// standing came from before it: a read that finds the mark out then holds part of the write.
     fn take(&self, (graph, has_cochange): Read, took: Duration) {
-        let is_mining = self.wanted().is_mining;
+        let is_mining = self.is_mining.load(Ordering::SeqCst);
         let took_ms = u64::try_from(took.as_millis()).unwrap_or(u64::MAX);
         let (nodes, links) = (graph.len(), graph.link_count());
         {
@@ -239,59 +170,36 @@ impl Snapshot {
         tracing::info!(nodes, links, has_cochange, took_ms, "graph rebuilt");
     }
 
-    /// Counts a rebuild that failed, and asks for another.
+    /// Counts a rebuild that failed; the thread asks for another.
     fn fail(&self, why: &str) {
         self.held().failed += 1;
-        self.wanted().is_changed = true;
         tracing::warn!(error = %why, "the graph is not rebuilt");
     }
 }
 
-/// The thread that rebuilds a snapshot, stopped and waited for when dropped.
-#[derive(Debug)]
-pub(crate) struct Rebuilder {
-    /// The snapshot it rebuilds.
-    snapshot: Arc<Snapshot>,
-    /// The thread, when it started.
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Rebuilder {
-    /// Starts rebuilding `snapshot` with what `read` reads: at once, then after every change. A
-    /// thread that cannot start is logged, and the daemon retrieves nothing.
-    pub(crate) fn start(
-        snapshot: &Arc<Snapshot>,
-        read: impl FnMut() -> Result<Read, String> + Send + 'static,
-    ) -> Self {
-        let shared = Arc::clone(snapshot);
-        snapshot.changed();
-        let thread = std::thread::Builder::new()
-            .name("cortex-graph".to_owned())
-            .spawn(move || rebuild_until_stopped(&shared, read));
-        let thread = match thread {
-            Ok(thread) => Some(thread),
-            Err(error) => {
-                tracing::warn!(error = %error, "the graph's thread did not start");
-                None
-            }
-        };
-        Self {
-            snapshot: Arc::clone(snapshot),
-            thread,
-        }
-    }
-}
-
-impl Drop for Rebuilder {
-    /// Stops the thread and waits for it: a rebuild under way finishes first.
-    fn drop(&mut self) {
-        self.snapshot.stop();
-        if let Some(thread) = self.thread.take()
-            && thread.join().is_err()
-        {
-            tracing::warn!("the graph's thread panicked");
-        }
-    }
+/// Rebuilds `snapshot` with what `read` reads: at once, then after every change, as [`PACING`]
+/// spaces the rebuilds; a read that fails or panics is counted and tried again. A thread that
+/// cannot start is logged, and the daemon retrieves nothing. Stopped, and waited for, when what
+/// this returns is dropped.
+pub(crate) fn rebuild(
+    snapshot: &Arc<Snapshot>,
+    mut read: impl FnMut() -> Result<Read, String> + Send + 'static,
+) -> Paced {
+    let (taking, failing) = (Arc::clone(snapshot), Arc::clone(snapshot));
+    Paced::start(
+        "cortex-graph",
+        &snapshot.asks,
+        PACING,
+        (
+            move || {
+                let started = Instant::now();
+                let graph = read()?;
+                taking.take(graph, started.elapsed());
+                Ok(())
+            },
+            move |why: &str| failing.fail(why),
+        ),
+    )
 }
 
 /// What reads the graph from the store in the `.cortex` folder `folder`, opened with `mmap_bytes`
@@ -326,47 +234,6 @@ fn read_whole(reader: &Reader, settings: &GraphSettings) -> Result<Read, Retriev
         }
         Ok((read_graph(queries, &weighed)?, has_cochange))
     })
-}
-
-/// Rebuilds `snapshot` with what `read` reads after each change until told to stop, each start as
-/// [`next_start`] paces it. A read that fails or panics is counted and tried again.
-fn rebuild_until_stopped(snapshot: &Snapshot, mut read: impl FnMut() -> Result<Read, String>) {
-    let mut last: Option<Last> = None;
-    while snapshot.wait_for_change(last.map(next_start)) {
-        let started = Instant::now();
-        let outcome = catch_unwind(AssertUnwindSafe(&mut read))
-            .unwrap_or_else(|_| Err("reading the graph panicked".to_owned()));
-        let took = started.elapsed();
-        let failures = match outcome {
-            Ok(graph) => {
-                snapshot.take(graph, took);
-                0
-            }
-            Err(why) => {
-                snapshot.fail(&why);
-                last.map_or(0, |last| last.failures).saturating_add(1)
-            }
-        };
-        last = Some(Last {
-            started,
-            took,
-            failures,
-        });
-    }
-}
-
-/// When the rebuild after `last` may start: at least [`REBUILD_EVERY`] after it, at least
-/// [`REBUILD_SPACING`] times as long as it took, and after failures in a row a second, twice as
-/// long for each further one, at most [`MAX_RETRY_WAIT`].
-fn next_start(last: Last) -> Instant {
-    let paced = REBUILD_EVERY.max(last.took.saturating_mul(REBUILD_SPACING));
-    let retry = match last.failures {
-        0 => Duration::ZERO,
-        failures => REBUILD_EVERY
-            .saturating_mul(2_u32.saturating_pow(failures))
-            .min(MAX_RETRY_WAIT),
-    };
-    last.started + paced.max(retry)
 }
 
 #[cfg(test)]
@@ -472,9 +339,9 @@ mod tests {
     }
 
     /// Starts rebuilding a snapshot of the store at `root`.
-    fn rebuilding(root: &Path) -> (Arc<Snapshot>, Rebuilder) {
+    fn rebuilding(root: &Path) -> (Arc<Snapshot>, Paced) {
         let snapshot = Arc::new(Snapshot::default());
-        let rebuilder = Rebuilder::start(&snapshot, reads_of(root));
+        let rebuilder = rebuild(&snapshot, reads_of(root));
         (snapshot, rebuilder)
     }
 
@@ -498,7 +365,7 @@ mod tests {
     /// Waits until the rebuilding thread has taken the change waiting, at most [`PATIENCE`].
     fn change_taken(snapshot: &Snapshot) -> TestResult {
         let until = Instant::now() + PATIENCE;
-        while snapshot.wanted().is_changed {
+        while snapshot.asks.is_asked() {
             if Instant::now() >= until {
                 return Err("the change was never taken".into());
             }
@@ -555,7 +422,7 @@ mod tests {
         snapshot.changed();
         change_taken(&snapshot)?;
         // Once taken, the change is read at once: a rebuild period is time enough to let it go.
-        std::thread::sleep(REBUILD_EVERY);
+        std::thread::sleep(PACING.every);
         assert_eq!(snapshot.report(), Some(complete.clone()));
         drop(writing);
         let after = report_when(&snapshot, |report| report.builds > complete.builds)?;
@@ -571,7 +438,7 @@ mod tests {
         let _writer = two_files(root.path())?;
         let snapshot = Arc::new(Snapshot::default());
         let _writing = snapshot.mining_write();
-        let _rebuilder = Rebuilder::start(&snapshot, reads_of(root.path()));
+        let _rebuilder = rebuild(&snapshot, reads_of(root.path()));
         let first = report_when(&snapshot, |report| report.builds > 0)?;
         assert!(!first.has_cochange);
         Ok(())
@@ -599,7 +466,7 @@ mod tests {
         let snapshot = Arc::new(Snapshot::default());
         let mut reads = reads_of(root.path());
         let mut tries = 0;
-        let _rebuilder = Rebuilder::start(&snapshot, move || {
+        let _rebuilder = rebuild(&snapshot, move || {
             tries += 1;
             if tries <= 2 {
                 return Err("the disk is busy".to_owned());
@@ -623,7 +490,7 @@ mod tests {
         let snapshot = Arc::new(Snapshot::default());
         let mut reads = reads_of(root.path());
         let mut has_panicked = false;
-        let _rebuilder = Rebuilder::start(&snapshot, move || {
+        let _rebuilder = rebuild(&snapshot, move || {
             if !std::mem::replace(&mut has_panicked, true) {
                 panic!("a read that panics");
             }
@@ -644,45 +511,12 @@ mod tests {
         let (snapshot, rebuilder) = rebuilding(root.path());
         report_when(&snapshot, |report| report.builds > 0)?;
         snapshot.changed();
-        std::thread::sleep(REBUILD_EVERY / 5);
+        std::thread::sleep(PACING.every / 5);
         let stopping = Instant::now();
         drop(rebuilder);
         let waited = stopping.elapsed();
-        assert!(waited < REBUILD_EVERY / 2, "{waited:?}");
+        assert!(waited < PACING.every / 2, "{waited:?}");
         Ok(())
-    }
-
-    /// A rebuild starts half a second after the one before, or four times as long as that one
-    /// took when that is longer: 100 ms of rebuilding waits 0.5 s, 200 ms 0.8 s, and 2 s 8 s.
-    /// After failures in a row it waits a second for one, two for two, four for three, and at
-    /// most a minute: 64 s for seven is held to 60.
-    #[test]
-    fn rebuilds_are_paced_by_how_long_they_take_and_how_many_failed() {
-        let started = Instant::now();
-        let cases = [
-            ((100, 0), 500),
-            ((125, 0), 500),
-            ((200, 0), 800),
-            ((2_000, 0), 8_000),
-            ((10, 1), 1_000),
-            ((10, 2), 2_000),
-            ((10, 3), 4_000),
-            ((10, 7), 60_000),
-            ((10, 40), 60_000),
-            ((1_000, 1), 4_000),
-        ];
-        for ((took_ms, failures), wait_ms) in cases {
-            let last = Last {
-                started,
-                took: Duration::from_millis(took_ms),
-                failures,
-            };
-            assert_eq!(
-                next_start(last),
-                started + Duration::from_millis(wait_ms),
-                "{took_ms} ms, {failures} failures"
-            );
-        }
     }
 
     /// Changes that come closer together than a rebuild period share rebuilds: fifty, one every
@@ -700,9 +534,9 @@ mod tests {
             snapshot.changed();
             std::thread::sleep(Duration::from_millis(20));
         }
-        let periods = started.elapsed().as_millis() / REBUILD_EVERY.as_millis();
+        let periods = started.elapsed().as_millis() / PACING.every.as_millis();
         report_when(&snapshot, |report| report.builds > first.builds)?;
-        std::thread::sleep(REBUILD_EVERY * 2);
+        std::thread::sleep(PACING.every * 2);
         let last = snapshot.report().ok_or("a graph")?;
         let builds = u128::from(last.builds - first.builds);
         assert!(

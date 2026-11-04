@@ -29,6 +29,7 @@ mod listener;
 mod log;
 mod meter;
 mod miner;
+mod paced;
 mod pending;
 mod recent_errors;
 mod retrieval;
@@ -49,7 +50,7 @@ use cortex_learn::{Commands, Recorder};
 use cortex_retrieve::GraphSettings;
 use cortex_store::{Writer, WriterOptions};
 
-use self::graph::{Rebuilder, Snapshot, store_reads};
+use self::graph::{Snapshot, rebuild, store_reads};
 use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
@@ -241,7 +242,7 @@ fn index_and_serve(
     })));
     // The graph is built once the first index is done, before which a retrieval would find
     // nothing; told to stop when dropped.
-    let rebuilder = Rebuilder::start(
+    let rebuilder = rebuild(
         snapshot,
         store_reads((&folder, config.mmap_bytes), GraphSettings::from(&config)),
     );
