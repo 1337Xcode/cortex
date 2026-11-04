@@ -29,6 +29,7 @@ fn task(seed: &[u8], session_id: &str, started_at_ms: i64) -> TestResult<TaskRec
         started_at_ms,
         prompt_hash: Some(ContentHash::of(b"rename the parser")),
         prompt_excerpt: None,
+        holdout: None,
     })
 }
 

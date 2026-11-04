@@ -40,10 +40,10 @@ fn task(seq: u64, started_at_ms: i64, ended_at_ms: Option<i64>) -> TestResult<Ta
             started_at_ms,
             prompt_hash: None,
             prompt_excerpt: None,
+            holdout: None,
         },
         seq,
         ended_at_ms,
-        holdout: None,
         outcome: ended_at_ms.map(|_| TaskOutcome::Success),
         outcome_evidence: None,
     })
@@ -294,10 +294,9 @@ fn arms_are_shown_and_counted_as_decided() -> TestResult {
         .iter()
         .zip(1..)
         .map(|(holdout, seq)| {
-            Ok(TaskRow {
-                holdout: *holdout,
-                ..task(seq, i64::try_from(seq)? * 1_000, None)?
-            })
+            let mut row = task(seq, i64::try_from(seq)? * 1_000, None)?;
+            row.record.holdout = *holdout;
+            Ok(row)
         })
         .collect::<TestResult<Vec<_>>>()?;
     let activity = Activity {

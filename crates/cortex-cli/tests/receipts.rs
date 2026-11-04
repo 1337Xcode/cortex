@@ -27,8 +27,13 @@ const SUBAGENT: &str = "00000000-0000-4000-8000-000000000001/fixtureagent0001";
 fn repository() -> TestResult<(tempfile::TempDir, PathBuf)> {
     let home = tempfile::tempdir()?;
     let repo = home.path().join("repo");
-    std::fs::create_dir_all(&repo)?;
+    std::fs::create_dir_all(repo.join(".cortex"))?;
     std::fs::write(repo.join("a.py"), "a = 1\n")?;
+    // No task is held out, so that the task's arm does not hang on its id.
+    std::fs::write(
+        repo.join(".cortex").join("config.toml"),
+        "[holdout]\nshare = 0\n",
+    )?;
     Ok((home, repo))
 }
 
@@ -165,7 +170,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     let recorded = report.get("recorded").ok_or("recorded")?;
     assert_eq!(
         recorded.get("holdout"),
-        Some(&json!({"held_out": 0, "treated": 0, "needed_per_arm": 30}))
+        Some(&json!({"held_out": 0, "treated": 1, "needed_per_arm": 30}))
     );
     let sessions = recorded
         .get("sessions")
@@ -213,7 +218,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             json!(1),
             json!(started_ms),
             json!("unknown"),
-            Value::Null,
+            json!(false),
             json!(2),
             json!(0)
         ]
@@ -249,7 +254,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             .as_str(),
             "usage: as each transcript records it; calls a transcript does not record, such as \
              compaction, are not counted",
-            "holdout comparison: not enough data yet (the repository has 0 tasks held out and 0 \
+            "holdout comparison: not enough data yet (the repository has 0 tasks held out and 1 \
              not; 30 of each are needed)",
         ]
     );

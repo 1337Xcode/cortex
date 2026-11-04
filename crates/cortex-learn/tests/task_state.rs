@@ -130,7 +130,7 @@ fn one(ended: Vec<TaskState>) -> TestResult<TaskState> {
 #[test]
 fn a_task_s_state_holds_what_it_did_in_order() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let ops = only(store.index(&["calc/ops.py"])?)?;
     let opening = prompt("s1", 1_000, "fix divide")?;
     store.record(
@@ -241,7 +241,7 @@ fn a_task_s_state_holds_what_it_did_in_order() -> TestResult {
 fn a_task_open_across_a_restart_is_rebuilt_from_its_rows() -> TestResult {
     let mut store = Store::new()?;
     let ops = only(store.index(&["calc/ops.py"])?)?;
-    let mut before = Recorder::new(false, Commands::default());
+    let mut before = Recorder::new(false, 0.0, Commands::default());
     store.record(
         &mut before,
         &[
@@ -262,7 +262,7 @@ fn a_task_open_across_a_restart_is_rebuilt_from_its_rows() -> TestResult {
         ],
     )?;
     drop(before);
-    let mut after = Recorder::new(false, Commands::default());
+    let mut after = Recorder::new(false, 0.0, Commands::default());
     let ended = store.record(
         &mut after,
         &[
@@ -331,7 +331,7 @@ fn a_task_past_its_row_cap_is_partial() -> TestResult {
         for restarts in [false, true] {
             let case = format!("{reads} reads, ended by {end:?}, restarts {restarts}");
             let mut store = Store::new()?;
-            let mut recorder = Recorder::new(false, Commands::default());
+            let mut recorder = Recorder::new(false, 0.0, Commands::default());
             store.record(
                 &mut recorder,
                 &[
@@ -345,7 +345,7 @@ fn a_task_past_its_row_cap_is_partial() -> TestResult {
             }
             transaction.commit()?;
             if restarts {
-                recorder = Recorder::new(false, Commands::default());
+                recorder = Recorder::new(false, 0.0, Commands::default());
             }
             let ending = match end {
                 HookKind::Prompt => prompt("s1", 9_000, "next")?,
@@ -376,7 +376,7 @@ fn a_task_past_its_row_cap_is_partial() -> TestResult {
 #[test]
 fn the_state_touched_longest_ago_is_dropped_for_room() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let mut events = Vec::new();
     for number in 0..32 {
         let session = format!("s{number}");
@@ -427,7 +427,7 @@ fn the_state_touched_longest_ago_is_dropped_for_room() -> TestResult {
 #[test]
 fn a_task_keeps_its_searches_files_within_their_bound() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let named = |letters: usize| -> Vec<String> {
         (0..100)
             .map(|number| format!("{}{number:02}.py", "a".repeat(letters)))
@@ -489,7 +489,7 @@ fn a_task_keeps_its_searches_files_within_their_bound() -> TestResult {
 #[test]
 fn a_row_that_cannot_be_read_leaves_the_state_partial() -> TestResult {
     let mut store = Store::new()?;
-    let mut before = Recorder::new(false, Commands::default());
+    let mut before = Recorder::new(false, 0.0, Commands::default());
     store.record(
         &mut before,
         &[
@@ -501,7 +501,7 @@ fn a_row_that_cannot_be_read_leaves_the_state_partial() -> TestResult {
     let connection = rusqlite::Connection::open(store.folder().join("cortex.db"))?;
     connection.execute("UPDATE events SET kind = 'reed' WHERE kind = 'read'", [])?;
     drop(connection);
-    let mut after = Recorder::new(false, Commands::default());
+    let mut after = Recorder::new(false, 0.0, Commands::default());
     let state = one(store.record(
         &mut after,
         &[
@@ -526,7 +526,7 @@ fn a_row_that_cannot_be_read_leaves_the_state_partial() -> TestResult {
 #[test]
 fn a_rolled_back_batch_leaves_the_states_to_the_store() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.record(
         &mut recorder,
         &[
@@ -584,7 +584,7 @@ fn record_due(store: &mut Store, recorder: &mut Recorder, now_ms: i64) -> TestRe
 #[test]
 fn a_task_keeps_what_each_file_held_before_it_changed_it() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[
         ("a.py", "a = 1\n"),
         ("b.py", "b = 1\n"),
@@ -680,7 +680,7 @@ fn a_task_keeps_what_each_file_held_before_it_changed_it() -> TestResult {
 #[test]
 fn an_edit_too_close_to_another_leaves_what_its_file_held_unknown() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let names = ["a", "b", "c", "d", "g", "h", "k"];
     let paths: Vec<String> = names.iter().map(|name| format!("{name}.py")).collect();
     let texts: Vec<String> = names.iter().map(|name| format!("{name} = 1\n")).collect();
@@ -782,7 +782,7 @@ fn an_edit_too_close_to_another_leaves_what_its_file_held_unknown() -> TestResul
 #[test]
 fn a_rebuilt_task_takes_no_later_content_as_its_files_earlier_one() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[("c.py", "c = 1\n")])?;
     store.record(
         &mut recorder,
@@ -817,7 +817,7 @@ fn a_rebuilt_task_takes_no_later_content_as_its_files_earlier_one() -> TestResul
 #[test]
 fn an_edit_recorded_while_an_index_runs_takes_nothing_from_what_it_wrote() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[
         ("a.py", "a = 1\n"),
         ("b.py", "b = 1\n"),

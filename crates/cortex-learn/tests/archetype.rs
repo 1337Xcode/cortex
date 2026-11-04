@@ -91,7 +91,7 @@ fn words(terms: &[&str]) -> Vec<String> {
 #[test]
 fn tasks_that_changed_the_same_files_fall_into_one_cluster() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let nodes = store.index(&PATHS)?;
     let node = |at: usize| nodes.get(at).copied().ok_or("no such file");
     let (f0, f1, f2, f3, f4, f5) = (node(0)?, node(1)?, node(2)?, node(3)?, node(4)?, node(5)?);
@@ -138,7 +138,7 @@ fn tasks_that_changed_the_same_files_fall_into_one_cluster() -> TestResult {
 #[test]
 fn the_clustering_reads_only_the_newest_records_it_is_asked_for() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let nodes = store.index(&PATHS)?;
     let (f0, f2) = (
         nodes.first().copied().ok_or("no file")?,
@@ -161,7 +161,7 @@ fn the_clustering_reads_only_the_newest_records_it_is_asked_for() -> TestResult 
 #[test]
 fn only_tasks_whose_work_stood_are_clustered() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let nodes = store.index(&PATHS)?;
     let f2 = nodes.get(2).copied().ok_or("no file")?;
     let outcomes = [
@@ -202,7 +202,7 @@ fn only_tasks_whose_work_stood_are_clustered() -> TestResult {
 #[test]
 fn a_task_joins_the_cluster_it_is_most_like() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let paths = [
         "a.py", "b.py", "c.py", "d.py", "e.py", "f.py", "g.py", "h.py", "i.py",
     ];
@@ -246,7 +246,7 @@ fn a_task_joins_the_cluster_it_is_most_like() -> TestResult {
 #[test]
 fn ties_go_to_newer_work_and_to_words_more_tasks_gave() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let nodes = store.index(&["lone.py", "shared/a.py", "shared/b.py"])?;
     let node = |at: usize| nodes.get(at).copied().ok_or("no such file");
     let (lone, a, b) = (node(0)?, node(1)?, node(2)?);
@@ -284,7 +284,7 @@ fn ties_go_to_newer_work_and_to_words_more_tasks_gave() -> TestResult {
 #[test]
 fn a_cluster_is_found_by_the_words_most_of_its_tasks_gave() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let notify = store.index(&["notify.py"])?;
     let refund = store.index_symbols("billing/refund.py", &[("issueRefund", 1, 3)])?;
     let (notify, refund) = (
@@ -313,7 +313,7 @@ fn a_cluster_is_found_by_the_words_most_of_its_tasks_gave() -> TestResult {
 #[test]
 fn a_word_too_long_to_name_anything_is_left_out() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let path = format!("{}.py", "w".repeat(300));
     let nodes = store.index(&[path.as_str()])?;
     store.task_that_changed(&mut recorder, ("s1", 1_000), &[path.as_str()])?;
@@ -329,7 +329,7 @@ fn a_word_too_long_to_name_anything_is_left_out() -> TestResult {
 #[test]
 fn a_cluster_keeps_only_so_many_files_and_words() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let paths: Vec<String> = (0..60).map(|at| format!("d{at:02}/n{at:02}.py")).collect();
     let listed: Vec<&str> = paths.iter().map(String::as_str).collect();
     let nodes = store.index(&listed)?;
@@ -356,7 +356,7 @@ fn a_cluster_keeps_only_so_many_files_and_words() -> TestResult {
 #[test]
 fn the_clustering_keeps_only_so_many_clusters() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let mut paths: Vec<String> = (0..256).map(|at| format!("d{at:03}/n{at:03}.py")).collect();
     paths.push("pair/both.py".to_owned());
     let listed: Vec<&str> = paths.iter().map(String::as_str).collect();
@@ -414,6 +414,7 @@ fn a_pass_reads_at_most_so_many_records() -> TestResult {
             started_at_ms,
             prompt_hash: None,
             prompt_excerpt: None,
+            holdout: None,
         })?;
         transaction.replace_episode(&EpisodeRecord {
             task_id,
@@ -439,7 +440,7 @@ fn a_pass_reads_at_most_so_many_records() -> TestResult {
 #[test]
 fn a_repository_with_no_records_has_no_clusters() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     assert_eq!(said(&store, (100, 9_000))?, []);
     store.index(&PATHS)?;
     store.task_that_changed(&mut recorder, ("s1", 1_000), &["tax.py"])?;

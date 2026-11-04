@@ -140,7 +140,7 @@ fn said(judgement: &Judgement) -> (TaskOutcome, &str) {
 #[test]
 fn the_checks_after_the_last_edit_decide_the_outcome() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let cases: [Case; 10] = [
         (
             "s1",
@@ -264,7 +264,7 @@ fn the_checks_after_the_last_edit_decide_the_outcome() -> TestResult {
 #[test]
 fn a_task_whose_edited_files_hold_what_they_held_is_reverted() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[("a.py", "a = 1\n"), ("b.py", "b = 1\n")])?;
     let steps = |session: &str, at_ms: i64| -> TestResult<Vec<Event>> {
         Ok(vec![
@@ -312,7 +312,7 @@ fn a_task_whose_edited_files_hold_what_they_held_is_reverted() -> TestResult {
 #[test]
 fn a_created_file_that_is_gone_again_is_back() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[("a.py", "a = 1\n")])?;
     let state = answered_task(
         (&mut store, &mut recorder),
@@ -349,7 +349,7 @@ fn a_created_file_that_is_gone_again_is_back() -> TestResult {
 #[test]
 fn a_git_restore_after_the_last_edit_reverts_the_task() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[
         ("a.py", "a = 1\n"),
         ("b.py", "b = 1\n"),
@@ -435,7 +435,7 @@ fn a_git_restore_after_the_last_edit_reverts_the_task() -> TestResult {
 #[test]
 fn a_task_left_before_its_answer_ended_was_abandoned() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let left = (
         TaskOutcome::Abandoned,
         "the task was left before its answer ended",
@@ -488,7 +488,7 @@ fn a_task_left_before_its_answer_ended_was_abandoned() -> TestResult {
 #[test]
 fn a_task_whose_state_is_partial_has_no_outcome() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.record(
         &mut recorder,
         &[
@@ -550,7 +550,7 @@ fn a_task_whose_state_is_partial_has_no_outcome() -> TestResult {
 #[test]
 fn a_restore_after_a_check_leaves_it_vouching_for_nothing() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[("a.py", "a = 1\n"), ("b.py", "b = 1\n")])?;
     let both = |session: &str, at_ms: i64| -> TestResult<Vec<Event>> {
         Ok(vec![
@@ -602,7 +602,7 @@ fn a_restore_after_a_check_leaves_it_vouching_for_nothing() -> TestResult {
 #[test]
 fn a_revert_outranks_a_passing_check() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[("a.py", "a = 1\n")])?;
     let state = answered_task(
         (&mut store, &mut recorder),
@@ -632,7 +632,7 @@ fn a_revert_outranks_a_passing_check() -> TestResult {
 #[test]
 fn a_content_read_before_the_last_edit_shows_nothing() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[("a.py", "a = 1\n")])?;
     let state = answered_task(
         (&mut store, &mut recorder),
@@ -665,7 +665,7 @@ fn a_content_read_before_the_last_edit_shows_nothing() -> TestResult {
 #[test]
 fn a_revert_can_be_part_contents_and_part_restore() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[("a.py", "a = 1\n"), ("b.py", "b = 1\n")])?;
     let steps = |session: &str, at_ms: i64| -> TestResult<Vec<Event>> {
         Ok(vec![
@@ -709,7 +709,7 @@ fn a_revert_can_be_part_contents_and_part_restore() -> TestResult {
 #[test]
 fn the_task_after_a_task_can_show_its_work_is_gone() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index_text(&[("a.py", "a = 1\n")])?;
     let pair = |session: &str, at_ms: i64, second: Vec<Event>| -> TestResult<Vec<Event>> {
         let mut events = vec![
@@ -789,7 +789,7 @@ fn the_task_after_a_task_can_show_its_work_is_gone() -> TestResult {
 #[test]
 fn a_failing_line_fails_only_the_check_it_is_the_exit_of() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let failed_tests = (
         TaskOutcome::Failure,
         "tests by cargo exited 1 after the last edit",
@@ -865,7 +865,7 @@ fn a_rebuilt_task_lets_no_check_vouch() -> TestResult {
             shell(session, at_ms + 300, "git checkout -- a.py", Some(0))?,
         ])
     };
-    let mut seen = Recorder::new(false, Commands::default());
+    let mut seen = Recorder::new(false, 0.0, Commands::default());
     let mut events = steps("s1", 1_000)?;
     events.push(event(HookKind::Stop, "s1", 2_000)?);
     let whole = one(store.record(&mut seen, &events)?)?;
@@ -876,20 +876,20 @@ fn a_rebuilt_task_lets_no_check_vouch() -> TestResult {
             "every edited file was put back or restored by git"
         )
     );
-    let mut before_restart = Recorder::new(false, Commands::default());
+    let mut before_restart = Recorder::new(false, 0.0, Commands::default());
     assert!(
         store
             .record(&mut before_restart, &steps("s2", 3_000)?)?
             .is_empty()
     );
-    let mut after_restart = Recorder::new(false, Commands::default());
+    let mut after_restart = Recorder::new(false, 0.0, Commands::default());
     let rebuilt = one(store.record(&mut after_restart, &[event(HookKind::Stop, "s2", 4_000)?])?)?;
     assert_eq!(rebuilt.rebuilt_steps(), 3);
     assert_eq!(
         said(&judge(&rebuilt, &BTreeMap::new())),
         (TaskOutcome::Unknown, "")
     );
-    let mut earlier = Recorder::new(false, Commands::default());
+    let mut earlier = Recorder::new(false, 0.0, Commands::default());
     let restored_first = [
         start("s3", 5_000, StartSource::Startup)?,
         prompt("s3", 5_001, "fix it")?,
@@ -897,7 +897,7 @@ fn a_rebuilt_task_lets_no_check_vouch() -> TestResult {
         shell("s3", 5_200, "git checkout -- a.py", Some(0))?,
     ];
     assert!(store.record(&mut earlier, &restored_first)?.is_empty());
-    let mut later = Recorder::new(false, Commands::default());
+    let mut later = Recorder::new(false, 0.0, Commands::default());
     let then = [
         edit("s3", 5_300, "a.py")?,
         shell("s3", 5_400, "cargo test", Some(0))?,

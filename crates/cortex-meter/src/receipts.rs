@@ -189,7 +189,7 @@ fn task_receipt(task: &TaskRow, usage: Tally, tool_calls: &BTreeMap<Ulid, u64>) 
         started_at_ms: task.record.started_at_ms,
         ended_at_ms: task.ended_at_ms,
         outcome: task.outcome.map(TaskOutcome::name),
-        held_out: task.holdout,
+        held_out: task.record.holdout,
         tool_calls: tool_calls.get(&task.record.task_id).copied().unwrap_or(0),
         injected_tokens: 0,
         usage,

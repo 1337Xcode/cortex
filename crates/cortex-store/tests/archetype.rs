@@ -90,6 +90,7 @@ fn the_clustering_reads_the_newest_records_oldest_first() -> TestResult {
             started_at_ms: 1_000 + i64::try_from(at)?,
             prompt_hash: None,
             prompt_excerpt: None,
+            holdout: None,
         })?;
         transaction.replace_episode(&EpisodeRecord {
             task_id,

@@ -175,7 +175,7 @@ impl Three {
 #[test]
 fn a_successful_task_links_what_it_used_together() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let three = Three::index(&mut store)?;
     let state = three.task(&mut store, &mut recorder, "s1")?;
     let links = links_of(
@@ -205,7 +205,7 @@ fn a_successful_task_links_what_it_used_together() -> TestResult {
 #[test]
 fn what_became_of_a_task_decides_what_its_links_gain() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let three = Three::index(&mut store)?;
     let cases = [
         (TaskOutcome::Success, Some(0.06)),
@@ -236,7 +236,7 @@ fn what_became_of_a_task_decides_what_its_links_gain() -> TestResult {
 #[test]
 fn a_reverted_task_weakens_the_files_it_edited_together() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let three = Three::index(&mut store)?;
     let state = answered_task(
         (&mut store, &mut recorder),
@@ -357,7 +357,7 @@ proptest! {
 #[test]
 fn a_task_too_large_keeps_the_nodes_that_mattered_most() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let paths: Vec<String> = (0..45).map(|at| format!("f{at:02}.py")).collect();
     let nodes = store.index(&paths.iter().map(String::as_str).collect::<Vec<&str>>())?;
     let mut steps = Vec::new();

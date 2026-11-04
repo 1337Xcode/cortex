@@ -162,7 +162,7 @@ fn earned_of(scores: &[(NodeId, f64)]) -> EarnedInterest {
 #[test]
 fn a_task_s_work_earns_the_nodes_it_touched() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let ops = store.index_symbols(
         "calc/ops.py",
         &[("add", 1, 5), ("wrap", 7, 20), ("mul", 10, 15)],
@@ -205,7 +205,7 @@ fn a_task_s_work_earns_the_nodes_it_touched() -> TestResult {
 #[test]
 fn work_that_vouches_for_nothing_earns_nothing() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let a = store.index(&["a.py"])?[0];
     let state = answered_task(
         (&mut store, &mut recorder),

@@ -157,7 +157,7 @@ fn index_and_serve(
     // The store opens first, so that hook events arriving while the grammars load are recorded;
     // those that came while it opened are recorded at once.
     let excerpt = config.store_prompt_excerpt;
-    let mut recorder = Recorder::new(excerpt, commands);
+    let mut recorder = Recorder::new(excerpt, config.holdout_share, commands);
     // The environment is the one the daemon started in: a hook's, which is its agent's.
     let mut pending = Pending::new(Meter::new(&home, &|name| std::env::var_os(name)));
     pending.wait(host::record_waiting(&mut writer, &mut recorder, inbox));

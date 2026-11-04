@@ -37,6 +37,7 @@ fn task_record(task_id: Ulid, session_id: &str, started_at_ms: i64) -> TestResul
         started_at_ms,
         prompt_hash: None,
         prompt_excerpt: None,
+        holdout: None,
     })
 }
 

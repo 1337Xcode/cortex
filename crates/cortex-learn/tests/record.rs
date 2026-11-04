@@ -24,7 +24,7 @@ use cortex_store::{EventRecord, FileIndex, FileRecord};
 #[test]
 fn a_task_from_prompt_to_stop() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let started = Event {
         model: Some(name("sonnet")?),
         transcript_path: Some(PathBuf::from("/home/dev/s1.jsonl")),
@@ -150,6 +150,25 @@ fn a_task_from_prompt_to_stop() -> TestResult {
     Ok(())
 }
 
+/// A task is held out by its id at the share the recorder was given: at a share of 1 every task
+/// it starts is held out, at 0 none is, and either way the task keeps the id its prompt names.
+#[test]
+fn a_task_is_held_out_at_the_share_given() -> TestResult {
+    for (share, expected) in [(1.0, Some(true)), (0.0, Some(false))] {
+        let mut store = Store::new()?;
+        let mut recorder = Recorder::new(false, share, Commands::default());
+        let asked = prompt("s1", 2_000, "fix divide")?;
+        let task = task_of(&asked)?;
+        store.record(
+            &mut recorder,
+            &[start("s1", 1_000, StartSource::Startup)?, asked],
+        )?;
+        let stored = store.writer.queries().task(task)?.ok_or("task")?;
+        assert_eq!(stored.record.holdout, expected, "share {share}");
+    }
+    Ok(())
+}
+
 /// `/compact` in the order captured: the session resumes, PreCompact, Claude Code's own
 /// compaction agent stops (a subagent session never started, registered on its stop and ended),
 /// the session starts again from the compaction, then ends. The open task carries through: the
@@ -157,7 +176,7 @@ fn a_task_from_prompt_to_stop() -> TestResult {
 #[test]
 fn compaction_keeps_the_open_task() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let asked = prompt("s1", 100, "refactor parse")?;
     let task = Some(task_of(&asked)?);
     let compact = Event {
@@ -223,7 +242,7 @@ fn compaction_keeps_the_open_task() -> TestResult {
 #[test]
 fn clearing_ends_one_session_and_starts_another() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let events = [
         start("s1", 10, StartSource::Resume)?,
         end("s1", 20, "clear")?,
@@ -261,7 +280,7 @@ fn clearing_ends_one_session_and_starts_another() -> TestResult {
 #[test]
 fn a_subagent_works_inside_its_parent_s_task() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let asked = prompt("s1", 100, "find the parser")?;
     let task = Some(task_of(&asked)?);
     let child = |hook, ts_ms| -> TestResult<Event> {
@@ -318,7 +337,7 @@ fn a_subagent_works_inside_its_parent_s_task() -> TestResult {
 #[test]
 fn a_lost_stop_is_closed_by_the_next_prompt() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let first = prompt("s1", 100, "one")?;
     let second = prompt("s1", 200, "two")?;
     let (first_task, second_task) = (task_of(&first)?, task_of(&second)?);
@@ -342,7 +361,7 @@ fn a_lost_stop_is_closed_by_the_next_prompt() -> TestResult {
 #[test]
 fn an_unknown_session_is_registered_by_its_first_event() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let read = tool(
         HookKind::PostTool,
         ("s9", 700),
@@ -372,7 +391,7 @@ fn an_unknown_session_is_registered_by_its_first_event() -> TestResult {
 #[test]
 fn edits_are_rows_per_stretch_up_to_sixteen() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let two: Vec<(u32, u32)> = vec![(1, 2), (8, 9)];
     let seventeen: Vec<(u32, u32)> = (1..=17).map(|line| (line * 10, line * 10 + 1)).collect();
     let edit = |ts_ms, ranges: &[(u32, u32)]| {
@@ -409,7 +428,7 @@ fn prompts_commands_and_patterns_stay_out_of_the_database() -> TestResult {
     let excerpt_task = task_of(&with_excerpt)?;
     let mut store = Store::new()?;
     store.record(
-        &mut Recorder::new(true, Commands::default()),
+        &mut Recorder::new(true, 0.0, Commands::default()),
         &[with_excerpt],
     )?;
     let kept = store.writer.queries().task(excerpt_task)?.ok_or("task")?;
@@ -438,7 +457,7 @@ fn prompts_commands_and_patterns_stay_out_of_the_database() -> TestResult {
             (ToolKind::Grep, search, succeeded(None, Some(9))),
         )?,
     ];
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.record(&mut recorder, &events)?;
     let folder = store.folder();
     // Close the database before scanning its files, and keep the temporary folder until the scan
@@ -490,7 +509,7 @@ fn a_subagent_s_parent_is_read_from_the_store() -> TestResult {
         ..event(HookKind::SubagentStart, "s1/a1", 200)?
     };
     store.record(
-        &mut Recorder::new(false, Commands::default()),
+        &mut Recorder::new(false, 0.0, Commands::default()),
         &[start("s1", 50, StartSource::Startup)?, asked, started],
     )?;
     let read = tool(
@@ -498,7 +517,7 @@ fn a_subagent_s_parent_is_read_from_the_store() -> TestResult {
         ("s1/a1", 300),
         (ToolKind::Read, target("a.py", &[])?, None),
     )?;
-    store.record(&mut Recorder::new(false, Commands::default()), &[read])?;
+    store.record(&mut Recorder::new(false, 0.0, Commands::default()), &[read])?;
     let last = store.events()?.pop().ok_or("the read")?;
     assert_eq!((last.kind, last.task_id), (EventKind::Read, task));
     Ok(())
@@ -541,7 +560,7 @@ fn rows_name_an_indexed_file_s_node() -> TestResult {
             (ToolKind::Grep, target("calc", &[])?, None),
         )?,
     ];
-    store.record(&mut Recorder::new(false, Commands::default()), &events)?;
+    store.record(&mut Recorder::new(false, 0.0, Commands::default()), &events)?;
     let nodes: Vec<_> = store
         .events()?
         .into_iter()
@@ -556,7 +575,7 @@ fn rows_name_an_indexed_file_s_node() -> TestResult {
 #[test]
 fn sessions_past_the_memory_bound_are_read_again() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let asked = prompt("s0", 10, "first")?;
     let task = task_of(&asked)?;
     let mut events = vec![start("s0", 5, StartSource::Startup)?, asked];
@@ -585,7 +604,7 @@ fn sessions_past_the_memory_bound_are_read_again() -> TestResult {
 fn a_shell_command_keeps_the_check_it_vouches_for() -> TestResult {
     let mut store = Store::new()?;
     let commands = Commands::new(&[r"^\./scripts/e2e\.sh$".to_owned()])?;
-    let mut recorder = Recorder::new(false, commands);
+    let mut recorder = Recorder::new(false, 0.0, commands);
     let lines = [
         "cargo check && cargo test",
         "pytest -q && cargo test",
@@ -642,7 +661,7 @@ fn a_shell_command_keeps_the_check_it_vouches_for() -> TestResult {
 #[test]
 fn a_failing_shell_command_keeps_only_the_check_that_failed() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let lines = [
         "cargo check && cargo clippy -- -D warnings",
         "cd nowhere && cargo test",

@@ -150,7 +150,7 @@ fn verified(record: &EpisodeRecord) -> Vec<(String, CommandKind, Option<i32>)> {
 #[test]
 fn a_record_says_what_one_task_did() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let ops = store.index_symbols("calc/ops.py", &[("add", 1, 5), ("mul", 10, 15)])?;
     let (ops_file, add, mul) = (ops[0], ops[1], ops[2]);
     let util = store.index_symbols("calc/util.py", &[])?[0];
@@ -220,7 +220,7 @@ fn a_record_says_what_one_task_did() -> TestResult {
 #[test]
 fn a_stretch_read_over_and_over_is_a_pitfall() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let a = store.index(&["a.py"])?[0];
     let mut steps = Vec::new();
     for at in 0..4 {
@@ -257,7 +257,7 @@ fn a_stretch_read_over_and_over_is_a_pitfall() -> TestResult {
 #[test]
 fn a_record_of_a_large_task_is_trimmed_to_fit() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     let read_paths: Vec<String> = (0..30).map(|at| format!("r{at:03}.py")).collect();
     let changed_paths: Vec<String> = (0..300).map(|at| format!("c{at:03}.py")).collect();
     store.index(&read_paths.iter().map(String::as_str).collect::<Vec<&str>>())?;
@@ -315,7 +315,7 @@ fn a_record_of_a_large_task_is_trimmed_to_fit() -> TestResult {
 #[test]
 fn a_record_holds_no_text_of_the_work() -> TestResult {
     let mut store = Store::new()?;
-    let mut recorder = Recorder::new(false, Commands::default());
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
     store.index(&["a.py"])?;
     let searched = ToolTarget {
         pattern: Some("patternmarker".to_owned()),

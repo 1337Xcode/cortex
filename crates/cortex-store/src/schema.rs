@@ -73,8 +73,8 @@ pub(crate) const SESSION_BY_ID: &str = "SELECT rowid, session_id, agent, agent_v
      WHERE session_id = ?1";
 /// Adds a task numbered one past every task stored, and returns the number.
 pub(crate) const TASK_INSERT: &str = "INSERT INTO tasks (task_id, session_id, seq, started_at, \
-     prompt_hash, prompt_excerpt) \
-     VALUES (?1, ?2, (SELECT coalesce(max(seq), 0) + 1 FROM tasks), ?3, ?4, ?5) RETURNING seq";
+     prompt_hash, prompt_excerpt, holdout) \
+     VALUES (?1, ?2, (SELECT coalesce(max(seq), 0) + 1 FROM tasks), ?3, ?4, ?5, ?6) RETURNING seq";
 /// Ends a task that is open: its end time and its outcome's stored name.
 pub(crate) const TASK_END: &str =
     "UPDATE tasks SET ended_at = ?2, outcome = ?3 WHERE task_id = ?1 AND ended_at IS NULL";

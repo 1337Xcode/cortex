@@ -565,7 +565,7 @@ mod tests {
         let inbox = Inbox::default();
         let parts = (
             writer(root.path())?,
-            Recorder::new(false, Commands::default()),
+            Recorder::new(false, 0.0, Commands::default()),
             pending(),
             &inbox,
         );
@@ -596,7 +596,7 @@ mod tests {
         let inbox = Inbox::default();
         let parts = (
             writer(root.path())?,
-            Recorder::new(false, Commands::default()),
+            Recorder::new(false, 0.0, Commands::default()),
             pending(),
             &inbox,
         );
@@ -649,7 +649,7 @@ mod tests {
         let inbox = Inbox::default();
         let parts = (
             writer(root.path())?,
-            Recorder::new(false, Commands::default()),
+            Recorder::new(false, 0.0, Commands::default()),
             pending(),
             &inbox,
         );
@@ -680,7 +680,7 @@ mod tests {
         std::fs::write(root.join("b.py"), "b = 1\n")?;
         let parts = (
             writer(root)?,
-            Recorder::new(false, Commands::default()),
+            Recorder::new(false, 0.0, Commands::default()),
             pending(),
             inbox,
         );
@@ -746,7 +746,7 @@ mod tests {
         std::fs::write(root.join("a.py"), "a = 1\n")?;
         let parts = (
             writer(root)?,
-            Recorder::new(false, Commands::default()),
+            Recorder::new(false, 0.0, Commands::default()),
             pending(),
             inbox,
         );
@@ -1061,7 +1061,7 @@ mod tests {
         let (config, inbox) = (Config::default(), Inbox::default());
         let parts = (
             writer(root.path())?,
-            Recorder::new(false, Commands::default()),
+            Recorder::new(false, 0.0, Commands::default()),
             pending(),
             &inbox,
         );

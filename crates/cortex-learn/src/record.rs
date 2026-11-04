@@ -14,7 +14,8 @@ use std::collections::BTreeMap;
 
 use cortex_core::{
     CommandKind, ContentHash, Event, EventKind, EventMeta, FileContent, HookKind, Identifier,
-    LineRange, MAX_RANGES, PromptExcerpt, TaskOutcome, ToolKind, Ulid,
+    LineRange, MAX_RANGES, PromptExcerpt, TaskOutcome, ToolKind, Ulid, is_held_out,
+    task_id_of_prompt,
 };
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
 
@@ -36,6 +37,8 @@ const MAX_REMEMBERED_SESSIONS: usize = 1_000;
 pub struct Recorder {
     /// Whether a task keeps the first characters of its prompt (`privacy.store_prompt_excerpt`).
     keeps_prompt_excerpt: bool,
+    /// The share of tasks held out from Cortex's injections (`holdout.share`).
+    holdout_share: f64,
     /// Sessions known to be stored, each with the session that started it, if any.
     parents: BTreeMap<Identifier, Option<Identifier>>,
     /// Each remembered session's open task, or `None` when it has none.
@@ -53,12 +56,14 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    /// A recorder that keeps prompt excerpts when `keeps_prompt_excerpt` says so, and tells the
-    /// checks shell commands ran with `commands`.
+    /// A recorder that keeps prompt excerpts when `keeps_prompt_excerpt` says so, holds out
+    /// `holdout_share` of the tasks it starts, and tells the checks shell commands ran with
+    /// `commands`.
     #[must_use]
-    pub fn new(keeps_prompt_excerpt: bool, commands: Commands) -> Self {
+    pub fn new(keeps_prompt_excerpt: bool, holdout_share: f64, commands: Commands) -> Self {
         Self {
             keeps_prompt_excerpt,
+            holdout_share,
             commands,
             ..Self::default()
         }
@@ -367,16 +372,14 @@ impl Recorder {
             .map(Some)
     }
 
-    /// Starts the task the prompt `event` opens and returns its id, made from the prompt's event.
+    /// Starts the task the prompt `event` opens and returns its id, made from the prompt's event,
+    /// held out or not by that id.
     fn start_task(
         &mut self,
         transaction: &mut WriteTx<'_>,
         event: &Event,
     ) -> Result<Ulid, StoreError> {
-        let task_id = Ulid::from_seed(
-            u64::try_from(event.ts_ms).unwrap_or(0),
-            event.event_id.to_string().as_bytes(),
-        );
+        let task_id = task_id_of_prompt(event.event_id, event.ts_ms);
         let prompt = event.prompt_text.as_deref();
         transaction.start_task(&TaskRecord {
             task_id,
@@ -388,6 +391,7 @@ impl Recorder {
             prompt_excerpt: prompt
                 .filter(|_| self.keeps_prompt_excerpt)
                 .map(PromptExcerpt::of),
+            holdout: Some(is_held_out(task_id, self.holdout_share)),
         })?;
         self.remember_open_task(&event.session_id, Some(task_id));
         Ok(task_id)

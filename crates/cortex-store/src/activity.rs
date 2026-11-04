@@ -52,6 +52,9 @@ pub struct TaskRecord {
     pub prompt_hash: Option<ContentHash>,
     /// The prompt's first characters, only when the user asks for them.
     pub prompt_excerpt: Option<PromptExcerpt>,
+    /// Whether its injections are held back, so that it can be compared with the tasks Cortex
+    /// helps; none for a task recorded before that was decided at its start.
+    pub holdout: Option<bool>,
 }
 
 /// One event to append.
@@ -95,8 +98,6 @@ pub struct TaskRow {
     pub seq: u64,
     /// When it ended, if it has.
     pub ended_at_ms: Option<i64>,
-    /// Whether its injections were held back, once decided.
-    pub holdout: Option<bool>,
     /// How it ended, once known.
     pub outcome: Option<TaskOutcome>,
     /// The words that say why it ended as it did, once judged: what a check vouched for, or what
@@ -171,6 +172,7 @@ pub(crate) fn start_task(connection: &Connection, task: &TaskRecord) -> Result<u
                     task.started_at_ms,
                     task.prompt_hash.as_ref().map(|hash| *hash.as_bytes()),
                     task.prompt_excerpt.as_ref().map(PromptExcerpt::as_str),
+                    task.holdout,
                 ),
                 |row| row.get(0),
             )
@@ -500,10 +502,10 @@ impl RawTask {
                 started_at_ms: self.started_at,
                 prompt_hash: self.prompt_hash.map(ContentHash::from_bytes),
                 prompt_excerpt: excerpt,
+                holdout,
             },
             seq: values::number(self.seq, "tasks.seq", row)?,
             ended_at_ms: self.ended_at,
-            holdout,
             outcome,
             outcome_evidence: self.outcome_evidence,
         })

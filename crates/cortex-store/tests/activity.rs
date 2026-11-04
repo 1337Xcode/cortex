@@ -34,6 +34,7 @@ fn task(seed: &[u8], session_id: &str, started_at_ms: i64) -> TestResult<TaskRec
         started_at_ms,
         prompt_hash: Some(ContentHash::of(b"fix the divide")),
         prompt_excerpt: None,
+        holdout: None,
     })
 }
 
@@ -128,7 +129,7 @@ fn tasks_and_events_read_back_in_order() -> TestResult {
         (1, Some(250), Some(TaskOutcome::Unknown))
     );
     assert_eq!(first_row.record, first);
-    assert_eq!(first_row.holdout, None);
+    assert_eq!(first_row.record.holdout, None);
     assert_eq!(
         queries
             .open_task(&name("s1")?)?
@@ -320,6 +321,38 @@ fn excerpts_and_watcher_events_read_back() -> TestResult {
         .collect();
     assert_eq!(stored, [watcher_edit]);
     assert_eq!(queries.events_after(1, 10)?, []);
+    Ok(())
+}
+
+/// Whether a task is held out is kept as its start gave it, held out, helped or not decided, and
+/// read back as given; the repository's arms count the decided tasks only: one held out, one
+/// helped.
+#[test]
+fn whether_a_task_is_held_out_reads_back() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let held = TaskRecord {
+        holdout: Some(true),
+        ..task(b"held", "s1", 10)?
+    };
+    let helped = TaskRecord {
+        holdout: Some(false),
+        ..task(b"helped", "s1", 20)?
+    };
+    let undecided = task(b"undecided", "s1", 30)?;
+    committed(&mut writer, |transaction| {
+        transaction.record_session(&session("s1", 5)?)?;
+        for record in [&held, &helped, &undecided] {
+            transaction.start_task(record)?;
+        }
+        Ok(())
+    })?;
+    let queries = writer.queries();
+    for record in [held, helped, undecided] {
+        let row = queries.task(record.task_id)?.ok_or("the task")?;
+        assert_eq!(row.record, record);
+    }
+    assert_eq!(queries.holdout_arms()?, (1, 1));
     Ok(())
 }
 

@@ -45,7 +45,7 @@ impl Learning {
     /// A recorder that tells the runners Cortex knows, and a learner that has seen nothing.
     fn new() -> Self {
         Self {
-            recorder: Recorder::new(false, Commands::default()),
+            recorder: Recorder::new(false, 0.0, Commands::default()),
             learner: Learner::new(),
         }
     }
