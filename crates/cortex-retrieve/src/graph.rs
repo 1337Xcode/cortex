@@ -133,13 +133,15 @@ struct Rows {
     offsets: Vec<u32>,
     /// Each link's target.
     targets: Vec<u32>,
-    /// Each link's weight.
+    /// Each link's weight: the links between the same two nodes added up.
     weights: Vec<f32>,
+    /// Each link's heaviest part: the weight of the heaviest single link added up into it.
+    peaks: Vec<f32>,
 }
 
 impl Rows {
     /// The rows of `links` over `nodes` nodes: each `(source, target, weight)`, sorted and with
-    /// links between the same two nodes added up.
+    /// links between the same two nodes added up, the heaviest of them kept beside the sum.
     ///
     /// # Errors
     ///
@@ -156,12 +158,16 @@ impl Rows {
             offsets: Vec::with_capacity(nodes + 1),
             targets: Vec::with_capacity(links.len()),
             weights: Vec::with_capacity(links.len()),
+            peaks: Vec::with_capacity(links.len()),
         };
-        let mut merged: Vec<(u32, u32, f64)> = Vec::with_capacity(links.len());
-        for link in links {
+        let mut merged: Vec<(u32, u32, f64, f64)> = Vec::with_capacity(links.len());
+        for (source, target, weight) in links {
             match merged.last_mut() {
-                Some(last) if (last.0, last.1) == (link.0, link.1) => last.2 += link.2,
-                _ => merged.push(link),
+                Some(last) if (last.0, last.1) == (source, target) => {
+                    last.2 += weight;
+                    last.3 = last.3.max(weight);
+                }
+                _ => merged.push((source, target, weight, weight)),
             }
         }
         let offset = |length: usize| {
@@ -170,16 +176,13 @@ impl Rows {
         let mut at = 0;
         for node in 0..nodes {
             rows.offsets.push(offset(rows.targets.len())?);
-            while let Some(&(source, target, weight)) = merged.get(at) {
+            while let Some(&(source, target, weight, peak)) = merged.get(at) {
                 if usize::try_from(source).unwrap_or(usize::MAX) != node {
                     break;
                 }
                 rows.targets.push(target);
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "weights are kept as 32-bit floats, which spreading needs no more of"
-                )]
-                rows.weights.push(weight as f32);
+                rows.weights.push(narrowed(weight));
+                rows.peaks.push(narrowed(peak));
                 at += 1;
             }
         }
@@ -189,22 +192,48 @@ impl Rows {
 
     /// Node `node`'s links: each target and weight.
     fn of_node(&self, node: u32) -> impl Iterator<Item = (u32, f64)> + '_ {
-        let at = usize::try_from(node).unwrap_or(usize::MAX);
-        let start = self
-            .offsets
-            .get(at)
-            .map_or(0, |offset| usize::try_from(*offset).unwrap_or(0));
-        let end = self
-            .offsets
-            .get(at + 1)
-            .map_or(start, |offset| usize::try_from(*offset).unwrap_or(start));
+        self.paired(node, &self.weights)
+    }
+
+    /// Node `node`'s links: each target and the weight of its heaviest part.
+    fn peaks_of_node(&self, node: u32) -> impl Iterator<Item = (u32, f64)> + '_ {
+        self.paired(node, &self.peaks)
+    }
+
+    /// Node `node`'s links: each target with its value in `values`, which runs beside the targets.
+    fn paired<'a>(&'a self, node: u32, values: &'a [f32]) -> impl Iterator<Item = (u32, f64)> + 'a {
+        let (start, end) = span_of(&self.offsets, node);
         let targets = self.targets.get(start..end).unwrap_or_default();
-        let weights = self.weights.get(start..end).unwrap_or_default();
+        let values = values.get(start..end).unwrap_or_default();
         targets
             .iter()
-            .zip(weights)
-            .map(|(target, weight)| (*target, f64::from(*weight)))
+            .zip(values)
+            .map(|(target, value)| (*target, f64::from(*value)))
     }
+}
+
+/// Where node `node`'s entries run in the rows `offsets` index: from its offset up to the next.
+fn span_of(offsets: &[u32], node: u32) -> (usize, usize) {
+    let at = usize::try_from(node).unwrap_or(usize::MAX);
+    let start = offsets
+        .get(at)
+        .map_or(0, |offset| usize::try_from(*offset).unwrap_or(0));
+    let end = offsets
+        .get(at.saturating_add(1))
+        .map_or(start, |offset| usize::try_from(*offset).unwrap_or(start));
+    (start, end)
+}
+
+/// `weight` as the 32-bit float the rows keep: spreading needs no more, and the floors a link is
+/// held to are narrowed the same way, so a link at a floor stays at it.
+#[must_use]
+pub(crate) fn narrowed(weight: f64) -> f32 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "weights are kept as 32-bit floats, which spreading needs no more of"
+    )]
+    let narrowed = weight as f32;
+    narrowed
 }
 
 /// The graph: its nodes, numbered from 0 in the order of their ids, and each kind's links.
@@ -218,10 +247,17 @@ pub struct Graph<Id> {
     files: Vec<u32>,
     /// What the store says of each node.
     standings: Vec<Standing>,
+    /// Where each node's symbols start in `symbols`, and one past the last node's end: only a file
+    /// has any.
+    symbol_offsets: Vec<u32>,
+    /// Each file's symbols, file by file, each file's in node order.
+    symbols: Vec<u32>,
     /// Each kind's links, in the order of [`EdgeType::number`].
     rows: Vec<Rows>,
     /// The sum of each node's link weights over every kind.
     out_weights: Vec<f64>,
+    /// The weight of each kind of link it was weighed by.
+    type_weights: TypeWeights,
 }
 
 impl<Id: Ord + Copy> Graph<Id> {
@@ -306,6 +342,7 @@ impl<Id: Ord + Copy> Graph<Id> {
             .into_iter()
             .map(|links| Rows::of(ids.len(), links))
             .collect::<Result<_, _>>()?;
+        let (symbol_offsets, symbols) = members(&kinds, &files)?;
         let out_weights = (0..ids.len())
             .map(|node| {
                 let node = u32::try_from(node).unwrap_or(u32::MAX);
@@ -320,8 +357,11 @@ impl<Id: Ord + Copy> Graph<Id> {
             kinds,
             files,
             standings,
+            symbol_offsets,
+            symbols,
             rows,
             out_weights,
+            type_weights: weighing.type_weights,
         })
     }
 
@@ -373,12 +413,35 @@ impl<Id: Ord + Copy> Graph<Id> {
         self.standings.get(usize::try_from(node).ok()?).copied()
     }
 
+    /// The symbols defined in file `file`, in node order; none for a node that is no file.
+    #[must_use]
+    pub fn symbols_of(&self, file: u32) -> &[u32] {
+        let (start, end) = span_of(&self.symbol_offsets, file);
+        self.symbols.get(start..end).unwrap_or_default()
+    }
+
+    /// The weight of each kind of link it was weighed by.
+    #[must_use]
+    pub fn type_weights(&self) -> TypeWeights {
+        self.type_weights
+    }
+
     /// Node `node`'s links of `kind`, each target with the weight it carries, by target.
     pub fn links(&self, node: u32, kind: EdgeType) -> impl Iterator<Item = (u32, f64)> + '_ {
         self.rows
             .get(usize::from(kind.number()))
             .into_iter()
             .flat_map(move |rows| rows.of_node(node))
+    }
+
+    /// Node `node`'s links of `kind`, each target with the weight of the heaviest single link
+    /// added up into it: what one reference, one co-change link or one co-access link carries
+    /// alone, by target.
+    pub fn peak_links(&self, node: u32, kind: EdgeType) -> impl Iterator<Item = (u32, f64)> + '_ {
+        self.rows
+            .get(usize::from(kind.number()))
+            .into_iter()
+            .flat_map(move |rows| rows.peaks_of_node(node))
     }
 
     /// The sum of node `node`'s link weights over every kind, by which each is divided while
@@ -396,6 +459,40 @@ impl<Id: Ord + Copy> Graph<Id> {
     pub fn link_count(&self) -> usize {
         self.rows.iter().map(|rows| rows.targets.len()).sum()
     }
+}
+
+/// Each file's symbols, as compressed rows over the nodes `kinds` and `files` describe: where each
+/// node's symbols start, and the symbols, file by file.
+///
+/// # Errors
+///
+/// [`GraphError::TooLarge`] for more symbols than a 32-bit offset reaches.
+fn members(kinds: &[NodeKind], files: &[u32]) -> Result<(Vec<u32>, Vec<u32>), GraphError> {
+    let mut pairs: Vec<(u32, u32)> = kinds
+        .iter()
+        .zip(files)
+        .enumerate()
+        .filter(|(_, (kind, file))| **kind == NodeKind::Symbol && **file != NO_FILE)
+        .filter_map(|(at, (_, file))| Some((*file, u32::try_from(at).ok()?)))
+        .collect();
+    pairs.sort_unstable();
+    let offset =
+        |length: usize| u32::try_from(length).map_err(|_| GraphError::TooLarge { what: "symbols" });
+    let mut offsets = Vec::with_capacity(kinds.len() + 1);
+    let mut symbols = Vec::with_capacity(pairs.len());
+    let mut at = 0;
+    for node in 0..kinds.len() {
+        offsets.push(offset(symbols.len())?);
+        while let Some(&(file, symbol)) = pairs.get(at) {
+            if usize::try_from(file).unwrap_or(usize::MAX) != node {
+                break;
+            }
+            symbols.push(symbol);
+            at += 1;
+        }
+    }
+    offsets.push(offset(symbols.len())?);
+    Ok((offsets, symbols))
 }
 
 #[cfg(test)]
@@ -527,13 +624,24 @@ mod tests {
         assert_eq!(file_of(2), graph.index_of(2));
         assert_eq!(file_of(4), graph.index_of(2));
         assert_eq!(file_of(5), graph.index_of(3));
+        let symbols_of = |id| -> Vec<u32> {
+            graph
+                .index_of(id)
+                .map(|node| graph.symbols_of(node).to_vec())
+                .unwrap_or_default()
+        };
+        assert_eq!(symbols_of(2), [index(4)]);
+        assert_eq!(symbols_of(3), [index(5)]);
+        assert_eq!(symbols_of(1), Vec::<u32>::new());
+        assert_eq!(symbols_of(4), Vec::<u32>::new());
+        assert_eq!(graph.type_weights(), TypeWeights::default());
         assert_eq!(graph.link_count(), 16);
         Ok(())
     }
 
     /// A kind weighed 0 is left out, a file's hold on its symbols included when containment is:
     /// with co-change at 0, A's out-weight is 1.69601 less its co-change 0.3; with containment at
-    /// 0, the folder has no links at all and S only its call.
+    /// 0, the folder has no links at all and S only its call, though A still lists S as its symbol.
     #[test]
     fn a_kind_weighed_zero_is_left_out() -> Result<(), GraphError> {
         let mut no_cochange = weighing();
@@ -549,11 +657,13 @@ mod tests {
         assert_eq!(graph.out_weight(graph.index_of(1).unwrap_or(u32::MAX)), 0.0);
         assert!(agree(&of(&graph, 4, EdgeType::Structural), &[(5, 0.6)]));
         assert_eq!(of(&graph, 4, EdgeType::Containment), []);
+        let a = graph.index_of(2).unwrap_or(u32::MAX);
+        assert_eq!(graph.symbols_of(a), [graph.index_of(4).unwrap_or(u32::MAX)]);
         Ok(())
     }
 
     /// Two structural links between A and B, 0.5 one way and 0.3 the other, add up both ways to
-    /// 0.8. A link to a node not given, to itself, or of weight 0 or below is left out; a strength
+    /// 0.8, the heavier of the two, 0.5, kept as the link's heaviest part. A link to a node not given, to itself, or of weight 0 or below is left out; a strength
     /// above 1 counts as 1; a co-access link of weight 5 last changed 200 tasks ago keeps
     /// 0.995^200 = 0.3669578 of it, so 0.8 x 5 x 0.3669578 / 5 = 0.2935663.
     #[test]
@@ -573,6 +683,12 @@ mod tests {
         let graph = Graph::build(&nodes(), &rows, &faded)?;
         assert!(agree(&of(&graph, 2, EdgeType::Structural), &[(3, 0.8)]));
         assert!(agree(&of(&graph, 3, EdgeType::Structural), &[(2, 0.8)]));
+        let a = graph.index_of(2).unwrap_or(u32::MAX);
+        let peaks: Vec<(i64, f64)> = graph
+            .peak_links(a, EdgeType::Structural)
+            .filter_map(|(target, peak)| Some((graph.id(target)?, peak)))
+            .collect();
+        assert!(agree(&peaks, &[(3, 0.5)]));
         assert_eq!(of(&graph, 4, EdgeType::Structural), []);
         assert_eq!(of(&graph, 5, EdgeType::CoChange), []);
         assert!(agree(&of(&graph, 1, EdgeType::About), &[(2, 1.0)]));
