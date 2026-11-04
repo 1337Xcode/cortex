@@ -460,13 +460,41 @@ mod tests {
              INSERT INTO usage (session_id, turn, ts, model, input, cache_write, cache_read, \
              output) VALUES ('s1', 1, 7, 'claude-sonnet-5-5', 3, 4, 5, 6);",
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let eighth = MIGRATIONS.get(..8).ok_or("fewer than eight migrations")?;
+        migrate(&mut connection, eighth, &backups)?;
         assert_eq!(schema_version(&connection)?, 8);
         let row: (i64, i64, Option<Vec<u8>>) =
             connection.query_row("SELECT input, output, response FROM usage", [], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             })?;
         assert_eq!(row, (3, 6, None));
+        Ok(())
+    }
+
+    /// The ninth schema adds the search vocabulary, which counts the rows an eighth-schema store
+    /// already holds: one row holds `order`, two hold `parse`.
+    #[test]
+    fn the_ninth_schema_counts_the_rows_each_word_is_in() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let eighth = MIGRATIONS.get(..8).ok_or("fewer than eight migrations")?;
+        migrate(&mut connection, eighth, &backups)?;
+        connection.execute_batch(
+            "INSERT INTO search_index (rowid, node_id, tokens) VALUES (1, 1, 'parse order'); \
+             INSERT INTO search_index (rowid, node_id, tokens) VALUES (2, 2, 'parse parse');",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 9);
+        let count = |word: &str| -> rusqlite::Result<i64> {
+            connection.query_row(
+                "SELECT doc FROM search_terms WHERE term = ?1",
+                [word],
+                |row| row.get(0),
+            )
+        };
+        assert_eq!(count("order")?, 1);
+        assert_eq!(count("parse")?, 2);
         Ok(())
     }
 

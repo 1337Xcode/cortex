@@ -37,6 +37,7 @@ mod records;
 mod replace;
 mod rows;
 mod schema;
+mod search;
 mod usage;
 mod values;
 mod writer;

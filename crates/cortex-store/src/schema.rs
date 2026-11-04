@@ -47,10 +47,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 8,
         sql: include_str!("../migrations/0008_usage_response.sql"),
     },
+    Migration {
+        version: 9,
+        sql: include_str!("../migrations/0009_search_terms.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 8;
+pub(crate) const SCHEMA_VERSION: u32 = 9;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -391,6 +395,22 @@ pub(crate) const ALL_EDGES: &str =
     "SELECT src, dst, type, w, n, last_seq, directed FROM edges ORDER BY src, dst, type";
 /// The number of the latest task, 0 when there is none.
 pub(crate) const LATEST_TASK_SEQ: &str = "SELECT coalesce(max(seq), 0) FROM tasks";
+
+/// How many search rows hold a word, from the index's vocabulary.
+pub(crate) const SEARCH_TERM_ROWS: &str = "SELECT doc FROM search_terms WHERE term = ?1";
+/// The best search rows for a full-text expression, best first and then by node, at most ?2, each
+/// with its BM25 score made positive: the index gives the best match the lowest.
+pub(crate) const SEARCH_MATCH: &str = "SELECT rowid, -rank FROM search_index \
+     WHERE search_index MATCH ?1 ORDER BY rank, rowid LIMIT ?2";
+/// The files whose path is ?1 or matches ?2, a `LIKE` pattern escaped with a backslash, by path,
+/// with their ids and nodes.
+pub(crate) const FILES_NAMED: &str = "SELECT f.path, f.file_id, n.node_id FROM files AS f \
+     JOIN nodes AS n ON n.kind = 'file' AND n.ref_id = f.file_id \
+     WHERE f.path = ?1 OR f.path LIKE ?2 ESCAPE '\\' ORDER BY f.path";
+/// The nodes of the symbols named ?1, by node, at most ?2.
+pub(crate) const SYMBOL_NODES_NAMED: &str = "SELECT n.node_id FROM symbols AS s \
+     JOIN nodes AS n ON n.kind = 'symbol' AND n.ref_id = s.symbol_id \
+     WHERE s.name = ?1 ORDER BY n.node_id LIMIT ?2";
 
 /// Deletes a node's outgoing edges of one type.
 pub(crate) const EDGES_DELETE_FROM: &str = "DELETE FROM edges WHERE src = ?1 AND type = ?2";
@@ -968,6 +988,7 @@ mod tests {
                 "passes_on",
                 "refs",
                 "search_index",
+                "search_terms",
                 "sessions",
                 "symbols",
                 "tasks",
