@@ -18,7 +18,9 @@ use cortex_store::{
     Queries, StoreError, WriteTx, Writer,
 };
 
-use crate::cochange::{self, CoChange, CoChangeEdge, MAX_GAIN_HALF_LIVES, PairCommits, Weighting};
+use crate::cochange::{
+    self, CoChange, CoChangeEdge, FileCommits, MAX_GAIN_HALF_LIVES, PairCommits, Weighting,
+};
 use crate::history::{GitError, HistorySource, MinedCommit, Window};
 
 /// How long a full mining stands: a week, after which the next mining is a full one again.
@@ -86,7 +88,7 @@ pub enum Mining {
 /// What a mining counted and where it ended.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Harvest {
-    /// The counts and edges.
+    /// The counts.
     pub cochange: CoChange<FileId>,
     /// HEAD's commit, empty when HEAD's branch has no commit.
     pub head: String,
@@ -220,7 +222,8 @@ fn window(
 /// transaction and comes back in the last, so that a write cut short (the daemon killed between
 /// two, or an error) leaves none, and the next mining is a full one. A full mining replaces the
 /// counts and every co-change edge; commits gained add to the counts and rewrite the edges of the
-/// files they changed from the sums. Files removed since the mining read them are left out.
+/// files they changed from the sums. Files removed since the mining read them are left out, and each
+/// file's partners are chosen among the files left.
 ///
 /// # Errors
 ///
@@ -239,38 +242,46 @@ pub fn write(
     let mut pacer = Pacer::new(pause);
     let nodes = begin(writer, is_full)?;
     pacer.let_in(writer);
-    let files: Vec<FileCommitsRow> = harvest
+    let files: Vec<FileCommits<FileId>> = harvest
         .cochange
         .files
         .iter()
         .filter(|file| nodes.contains_key(&file.file))
-        .map(|file| FileCommitsRow {
-            file: file.file,
-            count: file.count,
-            weighted: file.weighted,
-        })
+        .cloned()
         .collect();
-    let pairs: Vec<PairRow> = harvest
+    let pairs: Vec<PairCommits<FileId>> = harvest
         .cochange
         .pairs
         .iter()
         .filter(|pair| nodes.contains_key(&pair.file_a) && nodes.contains_key(&pair.file_b))
-        .map(|pair| PairRow {
+        .cloned()
+        .collect();
+    in_turns(writer, &mut pacer, &files, |transaction, file| {
+        let row = FileCommitsRow {
+            file: file.file,
+            count: file.count,
+            weighted: file.weighted,
+        };
+        transaction.add_cochange(&[row], &[])
+    })?;
+    in_turns(writer, &mut pacer, &pairs, |transaction, pair| {
+        let row = PairRow {
             file_a: pair.file_a,
             file_b: pair.file_b,
             count: pair.count,
             weighted: pair.weighted,
             last_commit_seq: pair.last_commit_seq,
-        })
-        .collect();
-    in_turns(writer, &mut pacer, &files, |transaction, file| {
-        transaction.add_cochange(std::slice::from_ref(file), &[])
-    })?;
-    in_turns(writer, &mut pacer, &pairs, |transaction, pair| {
-        transaction.add_cochange(&[], std::slice::from_ref(pair))
+        };
+        transaction.add_cochange(&[], &[row])
     })?;
     let sources = if is_full {
-        edges_from(&harvest.cochange.edges, &nodes, None)
+        // The edges come from the counts left once the removed files are, so that a file removed
+        // since the mining read it takes no other file's place among a file's partners.
+        let weights: HashMap<FileId, (u32, f64)> = files
+            .iter()
+            .map(|file| (file.file, (file.count, file.weighted)))
+            .collect();
+        edges_from(&cochange::edges(&pairs, &weights), &nodes, None)
     } else {
         let changed: Vec<FileId> = files.iter().map(|file| file.file).collect();
         let edges = edges_of(writer.queries(), &changed)?;

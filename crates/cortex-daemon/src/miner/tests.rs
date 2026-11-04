@@ -5,7 +5,7 @@
 use std::process::Command;
 
 use cortex_core::{FileFlags, RepoId, RepoPath};
-use cortex_git::cochange::{CoChangeEdge, FileCommits, PairCommits};
+use cortex_git::cochange::{FileCommits, PairCommits};
 use cortex_git::mine::{FULL_EVERY_MS, Mining};
 use cortex_index::Change;
 use cortex_store::{FileId, FileIndex, FileRecord, Writer, WriterOptions};
@@ -235,18 +235,11 @@ fn a_head_is_mined_once_the_index_has_taken_its_files() -> TestResult {
         weighted,
         last_commit_seq,
     };
-    let edge = |from, to| CoChangeEdge {
-        from,
-        to,
-        confidence: 1.0,
-        co_changes: 2,
-    };
     assert_eq!(
         harvest.cochange.files,
         [commits(a, 2, 1.5), commits(b, 2, 1.5)]
     );
     assert_eq!(harvest.cochange.pairs, [pair(a, b, 2, 1.5, 2)]);
-    assert_eq!(harvest.cochange.edges, [edge(a, b), edge(b, a)]);
     assert_eq!(
         inbox.git(),
         GitReport {
@@ -279,7 +272,6 @@ fn a_head_is_mined_once_the_index_has_taken_its_files() -> TestResult {
         [commits(a, 1, 2.0), commits(c, 1, 2.0)]
     );
     assert_eq!(harvest.cochange.pairs, [pair(a, c, 1, 2.0, 3)]);
-    assert_eq!(harvest.cochange.edges, []);
     Ok(())
 }
 

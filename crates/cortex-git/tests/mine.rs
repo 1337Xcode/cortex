@@ -449,6 +449,62 @@ fn a_file_removed_before_the_write_is_left_out() -> TestResult {
     Ok(())
 }
 
+/// A file removed between the mining and the write takes no other file's place among a file's
+/// partners. Twice, `hub` changes with `p00` to `p33`, 34 partners, so each pair co-changes in
+/// every commit `hub` has: every partner's confidence is 1, and all rank alike, by id. With room
+/// for 32, the mining's own partners would be `p00` to `p31`; `p00` is removed before the write, so
+/// the 32 kept are `p01` to `p32`, and `p33` is the one left out. The commits change 35 files, so
+/// the mass-commit bar is raised to 40.
+#[test]
+fn a_file_removed_before_the_write_frees_its_place_among_the_partners() -> TestResult {
+    let repo = Repo::new()?;
+    let partners: Vec<String> = (0..34).map(|index| format!("p{index:02}.txt")).collect();
+    let mut every: Vec<&str> = vec!["hub.txt"];
+    every.extend(partners.iter().map(String::as_str));
+    change(&repo, 1, &every)?;
+    change(&repo, 2, &every)?;
+    let mut writer = store(&repo.root(), at(10))?;
+    let files = index(&mut writer, &every)?;
+    let config = Config {
+        git_max_files_per_commit: 40,
+        ..Config::default()
+    };
+    let counted = writer.queries().cochange_files()?;
+    let mining = mine(
+        &GixHistory::open(&repo.root())?,
+        None,
+        &counted,
+        &config,
+        at(10),
+    )?;
+    let mut transaction = writer.transaction()?;
+    transaction.remove_file(&RepoPath::new("p00.txt")?)?;
+    transaction.commit()?;
+    write(&mut writer, &mining, at(10), None)?;
+
+    let Some(&(_, hub)) = files.first() else {
+        return Err("the hub is stored".into());
+    };
+    let mut partnered: Vec<NodeId> = writer
+        .queries()
+        .edges_from(hub)?
+        .into_iter()
+        .filter(|row| row.edge_type == EdgeType::CoChange)
+        .map(|row| row.edge.dst)
+        .collect();
+    partnered.sort();
+    let mut expected: Vec<NodeId> = files
+        .get(2..=33)
+        .ok_or("p01 to p32 are stored")?
+        .iter()
+        .map(|(_, node)| *node)
+        .collect();
+    expected.sort();
+    assert_eq!(partnered.len(), 32);
+    assert_eq!(partnered, expected);
+    Ok(())
+}
+
 /// A write cut into turns, its pause due before every row (a period of zero), stores what the first
 /// mining of the first test stores in one turn: `a` 3 commits weighing 1.75, `b` 2 weighing 0.75,
 /// the pair 2 weighing 0.75 at sequence 2, edges 3/7 and 1. The caller is let in more than once.

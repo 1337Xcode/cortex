@@ -5,25 +5,45 @@
 use std::collections::HashMap;
 
 use cortex_core::{PathError, RepoPath};
-use cortex_git::cochange::{
-    CoChange, CoChangeEdge, FileCommits, PairCommits, Weighting, compute, edges,
-};
+use cortex_git::cochange::{CoChangeEdge, FileCommits, PairCommits, Weighting, compute, edges};
 use cortex_git::{MinedCommit, PathChange};
 use proptest::prelude::*;
 
+/// What a full mining finds: the counts, and the edges they support.
+#[derive(Debug, PartialEq)]
+struct Found {
+    /// Each file's counts, in file order.
+    files: Vec<FileCommits<u32>>,
+    /// Each pair's counts, in file order.
+    pairs: Vec<PairCommits<u32>>,
+    /// The edges, by the file they start at, then by partner.
+    edges: Vec<CoChangeEdge<u32>>,
+}
+
 /// What `commits` say with `current`'s files, numbered from `first_seq`, weighed as a full mining
-/// weighs them: from the newest given, at a half-life of `half_life_commits`.
+/// weighs them: from the newest given, at a half-life of `half_life_commits`; and the edges their
+/// counts support.
 fn full<S: std::hash::BuildHasher>(
     commits: &[MinedCommit],
     current: &HashMap<RepoPath, u32, S>,
     half_life_commits: u32,
     first_seq: u64,
-) -> CoChange<u32> {
+) -> Found {
     let weighting = Weighting {
         half_life_commits,
         anchor_seq: first_seq + commits.len().saturating_sub(1) as u64,
     };
-    compute(commits, current, weighting, first_seq)
+    let counted = compute(commits, current, weighting, first_seq);
+    let weights: HashMap<u32, (u32, f64)> = counted
+        .files
+        .iter()
+        .map(|file| (file.file, (file.count, file.weighted)))
+        .collect();
+    Found {
+        edges: edges(&counted.pairs, &weights),
+        files: counted.files,
+        pairs: counted.pairs,
+    }
 }
 /// Result type for these tests: any failure fails the test.
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -83,7 +103,7 @@ fn near(actual: f64, expected: f64) -> bool {
 fn counts_weights_and_confidence() -> TestResult {
     let commits = [commit(&["a", "b"])?, commit(&["a", "b"])?, commit(&["a"])?];
     let found = full(&commits, &files(&["a", "b"])?, 1, 10);
-    let expected = CoChange {
+    let expected = Found {
         files: vec![
             FileCommits {
                 file: 1,

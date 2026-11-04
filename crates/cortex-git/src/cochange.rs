@@ -1,7 +1,7 @@
 //! Which files change together: from the commits a read gave, newest first, each file's commit
-//! count and each pair's co-change count, both also weighted by how recent each commit is, and the
-//! co-change edges they support. Pure: the caller reads the history and the files, and stores the
-//! result.
+//! count and each pair's co-change count, both also weighted by how recent each commit is; and,
+//! from such counts, the co-change edges they support. Pure: the caller reads the history and the
+//! files, and stores the result.
 //!
 //! A commit's files are followed to their current paths through the renames of newer commits, and
 //! only the files the caller names count (those that exist now, neither generated nor vendored). A
@@ -111,8 +111,6 @@ pub struct CoChange<F> {
     pub files: Vec<FileCommits<F>>,
     /// Each pair of files some commit changed together, in file order.
     pub pairs: Vec<PairCommits<F>>,
-    /// The edges, by the file they start at, then by their partner.
-    pub edges: Vec<CoChangeEdge<F>>,
 }
 
 /// What the commits say. `commits` are newest first, as a read gives them; `current` names each
@@ -195,7 +193,7 @@ impl<F: Copy + Ord + Hash> Counter<F> {
         }
     }
 
-    /// The counts in file order, and the edges they support.
+    /// The counts, in file order.
     fn finish(self) -> CoChange<F> {
         let mut files: Vec<FileCommits<F>> = self
             .files
@@ -221,12 +219,7 @@ impl<F: Copy + Ord + Hash> Counter<F> {
             )
             .collect();
         pairs.sort_unstable_by_key(|pair| (pair.file_a, pair.file_b));
-        let edges = edges(&pairs, &self.files);
-        CoChange {
-            files,
-            pairs,
-            edges,
-        }
+        CoChange { files, pairs }
     }
 }
 
