@@ -25,6 +25,7 @@ use std::time::Instant;
 use cortex_core::EdgeType;
 
 use crate::graph::Graph;
+use crate::node_hash::NodeHashing;
 
 /// The first threshold: the least a node must have to spread for it to be pushed. Below it, what a
 /// node holds is too little to change which nodes rank highest.
@@ -115,7 +116,7 @@ struct Spreading<'a, N> {
     /// What is spread over.
     network: &'a N,
     /// What each node touched holds.
-    held: HashMap<u32, Held>,
+    held: HashMap<u32, Held, NodeHashing>,
     /// The nodes waiting to be pushed, in the order they came to have the threshold.
     queue: VecDeque<u32>,
     /// What a node must have to spread to be pushed.
@@ -205,7 +206,7 @@ pub fn spread<N: Network>(
     start.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.total_cmp(&right.1)));
     let mut spreading = Spreading {
         network,
-        held: HashMap::new(),
+        held: HashMap::default(),
         queue: VecDeque::new(),
         threshold: SPREAD_THRESHOLD,
         teleport,

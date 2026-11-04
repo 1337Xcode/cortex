@@ -21,6 +21,7 @@ mod gate;
 mod graph;
 mod items;
 mod lexical;
+mod node_hash;
 mod pipeline;
 mod primer;
 mod prompt;
