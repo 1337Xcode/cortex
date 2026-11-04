@@ -25,6 +25,7 @@ mod score;
 mod seeds;
 mod session;
 mod similar;
+mod spans;
 mod support;
 
 pub use disk::{CheckedFile, Unchecked};
@@ -40,4 +41,5 @@ pub use score::{INTERESTING_PRIOR, LANDMARK_PRIOR, ScoredFile, scored_files};
 pub use seeds::{SeedQuery, Seeds, seeds, shares, summed};
 pub use session::{EDITED_WEIGHT, READ_WEIGHT, ReadSpan, SEEDED_READS, SessionMatch, session};
 pub use similar::{SIMILAR_BAR, SIMILAR_WEIGHT, SimilarMatch, similar};
+pub use spans::{MAX_SPANS_PER_FILE, Outlined, Span, is_in_context, outline_of, spans_of};
 pub use support::{COACCESS_FLOOR, Evidence, STRUCTURAL_FLOOR, Support};

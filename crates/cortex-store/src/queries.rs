@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use cortex_core::{
-    EdgeType, FileFlags, Identifier, Language, NodeKind, RefKind, RepoPath, Resolution,
+    EdgeType, FileFlags, Identifier, Language, NodeKind, RefKind, RepoPath, Resolution, SymbolKind,
 };
 use rusqlite::{Connection, OptionalExtension, Row};
 
@@ -435,27 +435,54 @@ impl<'c> Queries<'c> {
             .map_err(sqlite("reading a folder's node"))
     }
 
-    /// The node and lines of each symbol defined in `file`, in the order they appear.
+    /// The node, lines, row, enclosing symbol, kind and name of each symbol defined in `file`, in
+    /// the order they appear.
     ///
     /// # Errors
     ///
-    /// SQLite errors.
+    /// SQLite errors and a stored kind or name that cannot be read back.
     pub fn symbol_spans_in_file(self, file: FileId) -> Result<Vec<SymbolSpan>, StoreError> {
         let mut statement = self
             .connection
             .prepare_cached(schema::SYMBOL_SPANS_IN_FILE)
             .map_err(sqlite("reading a file's symbol spans"))?;
-        let rows = statement
+        let rows: Vec<RawSpan> = statement
             .query_map([file.0], |row| {
-                Ok(SymbolSpan {
-                    node: NodeId(row.get(0)?),
+                Ok(RawSpan {
+                    node: row.get(0)?,
                     start_line: row.get(1)?,
                     end_line: row.get(2)?,
+                    symbol: row.get(3)?,
+                    parent: row.get(4)?,
+                    kind: row.get(5)?,
+                    name: row.get(6)?,
                 })
             })
             .and_then(Iterator::collect)
             .map_err(sqlite("reading a file's symbol spans"))?;
-        Ok(rows)
+        rows.into_iter().map(RawSpan::check).collect()
+    }
+
+    /// The files the file nodes `nodes` stand for, each with its node, by node; a node that stands
+    /// for no file is left out.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn files_of_nodes(self, nodes: &[NodeId]) -> Result<Vec<(NodeId, FileRow)>, StoreError> {
+        let listed = json_array(nodes.iter().map(|node| node.get().to_string()));
+        let raw: Vec<(i64, RawFile)> = self
+            .connection
+            .prepare_cached(schema::FILES_OF_NODES)
+            .and_then(|mut statement| {
+                statement
+                    .query_map((listed,), |row| Ok((row.get(9)?, RawFile::read(row)?)))?
+                    .collect::<rusqlite::Result<_>>()
+            })
+            .map_err(sqlite("reading the files of nodes"))?;
+        raw.into_iter()
+            .map(|(node, file)| Ok((NodeId(node), file.check()?)))
+            .collect()
     }
 
     /// The row and path of the file `node` stands for, when it stands for a file.
@@ -706,6 +733,44 @@ impl<'c> Queries<'c> {
     ) -> rusqlite::Result<Vec<T>> {
         let mut statement = self.connection.prepare_cached(sql)?;
         statement.query_map([], read)?.collect()
+    }
+}
+
+/// One row of [`schema::SYMBOL_SPANS_IN_FILE`] as SQLite gives it.
+struct RawSpan {
+    /// `nodes.node_id`.
+    node: i64,
+    /// `symbols.start_line`.
+    start_line: u32,
+    /// `symbols.end_line`.
+    end_line: u32,
+    /// `symbols.symbol_id`.
+    symbol: i64,
+    /// `symbols.parent_id`.
+    parent: Option<i64>,
+    /// `symbols.kind`.
+    kind: String,
+    /// `symbols.name`.
+    name: String,
+}
+
+impl RawSpan {
+    /// The span these values hold, or the error that one cannot be read back.
+    fn check(self) -> Result<SymbolSpan, StoreError> {
+        Ok(SymbolSpan {
+            node: NodeId(self.node),
+            start_line: self.start_line,
+            end_line: self.end_line,
+            symbol: SymbolId(self.symbol),
+            parent: self.parent.map(SymbolId),
+            kind: values::kind(
+                &self.kind,
+                SymbolKind::from_name,
+                "symbols.kind",
+                self.symbol,
+            )?,
+            name: values::identifier(&self.name, "symbols.name", self.symbol)?,
+        })
     }
 }
 

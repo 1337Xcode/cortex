@@ -206,3 +206,88 @@ fn a_read_stops_at_the_caller_s_error() -> TestResult {
     assert_eq!(seen, 1);
     Ok(())
 }
+
+/// The files that file nodes stand for read back by node, with their rows; a symbol's node (even
+/// one whose row number is a file's), a folder's and a node asked for twice stand for nothing more. A file's symbol spans carry their
+/// rows, the symbol around each, their kinds and names: `Order` (a class on lines 1 to 9) holds
+/// `total` (a method on lines 2 to 4).
+#[test]
+fn files_of_nodes_and_symbol_spans_read_back() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    transaction.replace_file(&file_with("src/a.py", "f")?)?;
+    let mut b = file_with("src/b.py", "Order")?;
+    b.symbols = vec![
+        SymbolRecord {
+            kind: SymbolKind::Class,
+            end_line: 9,
+            ..b.symbols.first().ok_or("a symbol")?.clone()
+        },
+        SymbolRecord {
+            parent: Some(0),
+            kind: SymbolKind::Method,
+            name: Identifier::new("total")?,
+            qual_name: Identifier::new("Order.total")?,
+            start_line: 2,
+            end_line: 4,
+            ..b.symbols.first().ok_or("a symbol")?.clone()
+        },
+    ];
+    transaction.replace_file(&b)?;
+    let folder = transaction.folder_node(&RepoPath::new("src")?)?;
+    transaction.commit()?;
+    let queries = writer.queries();
+    let node = |path: &str| -> TestResult<cortex_store::NodeId> {
+        Ok(queries
+            .file_node_at(&RepoPath::new(path)?)?
+            .ok_or("a file node")?)
+    };
+    let (a, b) = (node("src/a.py")?, node("src/b.py")?);
+    let b_row = queries
+        .file(&RepoPath::new("src/b.py")?)?
+        .ok_or("b's row")?;
+    let spans = queries.symbol_spans_in_file(b_row.id)?;
+    let read: Vec<(SymbolKind, Option<cortex_store::SymbolId>, String, u32, u32)> = spans
+        .iter()
+        .map(|span| {
+            (
+                span.kind,
+                span.parent,
+                span.name.as_str().to_owned(),
+                span.start_line,
+                span.end_line,
+            )
+        })
+        .collect();
+    let class = spans.first().ok_or("the class")?.symbol;
+    assert_eq!(
+        read,
+        [
+            (SymbolKind::Class, None, "Order".to_owned(), 1, 9),
+            (SymbolKind::Method, Some(class), "total".to_owned(), 2, 4),
+        ]
+    );
+    let method = spans.get(1).ok_or("the method")?.node;
+    // The class's row number is also `b.py`'s, so its node would name that file if symbols were
+    // not told from files.
+    assert_eq!(class.get(), b_row.id.get());
+    let class_node = spans.first().ok_or("the class")?.node;
+    let files = queries.files_of_nodes(&[b, method, class_node, folder, a, b])?;
+    let paths: Vec<(cortex_store::NodeId, String)> = files
+        .iter()
+        .map(|(node, row)| (*node, row.file.path.as_str().to_owned()))
+        .collect();
+    let mut expected = vec![(a, "src/a.py".to_owned()), (b, "src/b.py".to_owned())];
+    expected.sort();
+    assert_eq!(paths, expected);
+    assert_eq!(
+        files
+            .iter()
+            .find(|(node, _)| *node == b)
+            .map(|(_, row)| row),
+        Some(&b_row)
+    );
+    assert!(queries.files_of_nodes(&[])?.is_empty());
+    Ok(())
+}

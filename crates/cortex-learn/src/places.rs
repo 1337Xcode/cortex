@@ -64,7 +64,7 @@ impl<'a> Places<'a> {
             .filter(|span| {
                 span.start_line <= range.end_line() && range.start_line() <= span.end_line
             })
-            .copied()
+            .cloned()
             .collect())
     }
 

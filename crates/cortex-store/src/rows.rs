@@ -14,8 +14,8 @@ pub struct FileRow {
     pub file: FileRecord,
 }
 
-/// A symbol's node and the lines it covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A symbol's node and the lines it covers, with what it is, its name and the symbol around it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolSpan {
     /// Its node in the graph.
     pub node: NodeId,
@@ -23,6 +23,14 @@ pub struct SymbolSpan {
     pub start_line: u32,
     /// The 1-based line where it ends.
     pub end_line: u32,
+    /// Its row.
+    pub symbol: SymbolId,
+    /// The definition around it.
+    pub parent: Option<SymbolId>,
+    /// What it is.
+    pub kind: SymbolKind,
+    /// Its name.
+    pub name: Identifier,
 }
 
 /// A stored symbol.

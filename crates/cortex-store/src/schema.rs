@@ -228,9 +228,16 @@ pub(crate) const SYMBOLS_IN_FILE: &str = concat!(
     "WHERE file_id = ?1 ORDER BY start_byte, symbol_id"
 );
 /// The node and lines of each symbol in a file, in the order they appear.
-pub(crate) const SYMBOL_SPANS_IN_FILE: &str = "SELECT n.node_id, s.start_line, s.end_line \
+pub(crate) const SYMBOL_SPANS_IN_FILE: &str = "SELECT n.node_id, s.start_line, s.end_line, \
+     s.symbol_id, s.parent_id, s.kind, s.name \
      FROM symbols AS s JOIN nodes AS n ON n.kind = 'symbol' AND n.ref_id = s.symbol_id \
      WHERE s.file_id = ?1 ORDER BY s.start_byte, s.symbol_id";
+/// The files the file nodes in a JSON array stand for, by node; the columns are those of
+/// [`FILE_BY_PATH`] and then the node.
+pub(crate) const FILES_OF_NODES: &str = "SELECT f.file_id, f.path, f.lang, f.bytes, f.loc, \
+     f.content_hash, f.mtime_ns, f.flags, f.indexed_at, n.node_id FROM nodes AS n \
+     JOIN files AS f ON f.file_id = n.ref_id \
+     WHERE n.node_id IN (SELECT value FROM json_each(?1)) AND n.kind = 'file' ORDER BY n.node_id";
 
 /// The symbols with a name, oldest first.
 pub(crate) const SYMBOLS_NAMED: &str =
