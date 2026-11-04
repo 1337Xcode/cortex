@@ -8,7 +8,8 @@
 
 use cortex_core::{
     Agent, ContentHash, EdgeType, Event, FileFlags, HookKind, Identifier, InterestTier, Language,
-    LineRange, RepoId, RepoPath, ShortHash, SymbolKind, ToolKind, ToolResult, ToolTarget, Ulid,
+    LineRange, RepoId, RepoPath, ScaleMode, ShortHash, SymbolKind, ToolKind, ToolResult,
+    ToolTarget, Ulid,
 };
 use cortex_learn::{Commands, Recorder};
 use cortex_store::{
@@ -236,6 +237,14 @@ impl Repo {
             .collect::<TestResult<Vec<ArchetypeRecord>>>()?;
         let mut transaction = self.writer.transaction()?;
         transaction.replace_archetypes(&records)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Records `mode` as the repository's mode, as the first index does.
+    pub fn mode(&mut self, mode: ScaleMode) -> TestResult {
+        let mut transaction = self.writer.transaction()?;
+        transaction.set_scale_mode(mode)?;
         transaction.commit()?;
         Ok(())
     }
