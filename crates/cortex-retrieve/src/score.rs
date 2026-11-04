@@ -74,6 +74,31 @@ pub fn scored_files<Id: Ord + Copy>(graph: &Graph<Id>, activation: &Activation) 
     ranked
 }
 
+/// `scored` with the symbols of its first `staged` files scored from `activation` instead: each
+/// symbol's activation times its prior, those above zero, the best first and then by node. The
+/// files keep their own scores.
+#[must_use]
+pub fn with_symbols<Id: Ord + Copy>(
+    graph: &Graph<Id>,
+    mut scored: Vec<ScoredFile>,
+    activation: &Activation,
+    staged: usize,
+) -> Vec<ScoredFile> {
+    for file in scored.iter_mut().take(staged) {
+        let mut symbols: Vec<(u32, f64)> = graph
+            .symbols_of(file.file)
+            .iter()
+            .filter_map(|symbol| {
+                let score = activation.of(*symbol) * prior(graph, *symbol);
+                (score > 0.0).then_some((*symbol, score))
+            })
+            .collect();
+        symbols.sort_by(|left, right| right.1.total_cmp(&left.1).then(left.0.cmp(&right.0)));
+        file.symbols = symbols;
+    }
+    scored
+}
+
 /// What node `node`'s activation is multiplied by, from its tier as of the latest task.
 fn prior<Id: Ord + Copy>(graph: &Graph<Id>, node: u32) -> f64 {
     match graph.standing(node).map(|standing| standing.tier) {

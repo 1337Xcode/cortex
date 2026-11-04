@@ -33,6 +33,7 @@ mod session;
 mod similar;
 mod spans;
 mod support;
+mod two_stage;
 
 pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
@@ -47,15 +48,16 @@ pub use pipeline::{
 };
 pub use primer::{MAX_PRIMER_LANDMARKS, MAX_PRIMER_TOKENS, primer};
 pub use prompt::{Mention, PromptTerms};
-pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, SPREAD_THRESHOLD, spread};
+pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, Network, SPREAD_THRESHOLD, spread};
 pub use read::{GraphSettings, read_graph};
 pub use reasons::{ItemEvidence, MAX_REASON_CHARS, Reason, reason_of};
 pub use render::{
     Basis, Item, ItemSpan, Limits, MAX_WORK_ORDER_CHARS, Rendered, WorkOrder, render,
 };
-pub use score::{INTERESTING_PRIOR, LANDMARK_PRIOR, ScoredFile, scored_files};
+pub use score::{INTERESTING_PRIOR, LANDMARK_PRIOR, ScoredFile, scored_files, with_symbols};
 pub use seeds::{SeedQuery, Seeds, seeds, shares, summed};
 pub use session::{EDITED_WEIGHT, READ_WEIGHT, ReadSpan, SEEDED_READS, SessionMatch, session};
 pub use similar::{SIMILAR_BAR, SIMILAR_WEIGHT, SimilarMatch, similar};
 pub use spans::{MAX_SPANS_PER_FILE, Outlined, Span, is_in_context, outline_of, spans_of};
 pub use support::{COACCESS_FLOOR, Evidence, STRUCTURAL_FLOOR, Support};
+pub use two_stage::{STAGED_FILES, Staged, two_stage};

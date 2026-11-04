@@ -778,3 +778,28 @@ fn a_work_order_showing_none_of_the_files_weighed_is_not_given() -> TestResult {
     assert!(retrieval.listed.is_empty());
     Ok(())
 }
+
+/// A huge repository spreads over files first, then over the symbols of the best files. Here it
+/// gives the work order medium mode gives, typed out by hand above: each file listed has one
+/// symbol, so the spans are the same, and the evidence is read from the whole graph either way. The
+/// gate weighs the files-first activation, which holds nothing on a symbol, so its activation mass
+/// is not the one a single spreading over symbols gives.
+#[test]
+fn a_huge_repository_spreads_over_files_then_symbols() -> TestResult {
+    let repo = repository()?;
+    let prompt = "fix create_order in the orders service";
+    let medium = asked(&repo, prompt, ScaleMode::Medium)?;
+    let huge = asked(&repo, prompt, ScaleMode::Huge)?;
+    assert_eq!(huge.outcome, medium.outcome);
+    let (medium, huge) = (
+        medium.features.ok_or("the gate's features")?,
+        huge.features.ok_or("the gate's features")?,
+    );
+    assert!(
+        (medium.top_mass - huge.top_mass).abs() > 1e-9,
+        "{} {}",
+        medium.top_mass,
+        huge.top_mass
+    );
+    Ok(())
+}

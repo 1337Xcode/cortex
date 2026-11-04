@@ -26,6 +26,7 @@ use crate::render::{Basis, Item, Limits, Rendered, WorkOrder, render};
 use crate::score::{ScoredFile, scored_files};
 use crate::seeds::{SeedQuery, Seeds, seeds};
 use crate::support::{Evidence, Support};
+use crate::two_stage::{Staged, two_stage};
 
 /// The most tokens a work order holds in small mode, whatever the setting.
 pub const SMALL_MODE_MAX_TOKENS: u32 = 400;
@@ -253,8 +254,18 @@ fn reached(
         .iter()
         .map(|(node, share)| (*node, *share))
         .collect();
-    let activation = spread(graph, &start, request.settings.teleport, request.deadline);
-    let scored = scored_files(graph, &activation);
+    let (teleport, deadline) = (request.settings.teleport, request.deadline);
+    // Huge repositories spread over files first, then over the symbols of the best files.
+    let (activation, scored) = if request.mode == ScaleMode::Huge {
+        let Staged {
+            activation, scored, ..
+        } = two_stage(graph, &start, teleport, deadline);
+        (activation, scored)
+    } else {
+        let activation = spread(graph, &start, teleport, deadline);
+        let scored = scored_files(graph, &activation);
+        (activation, scored)
+    };
     Ok(Some(Reached {
         seeds,
         activation,

@@ -45,6 +45,34 @@ pub const MAX_PUSHES: u32 = 50_000;
 /// How many pushes go between two looks at the deadline: looking costs a clock read.
 const PUSHES_PER_CLOCK_READ: u32 = 256;
 
+/// What activation spreads over: nodes numbered from 0, each with weighed links to others.
+pub trait Network {
+    /// How many nodes it numbers.
+    fn node_count(&self) -> usize;
+    /// The sum of the weights of node `node`'s links: what it spreads over.
+    fn out_weight(&self, node: u32) -> f64;
+    /// Calls `visit` with each link of node `node`: its target and its weight.
+    fn each_link(&self, node: u32, visit: impl FnMut(u32, f64));
+}
+
+impl<Id: Ord + Copy> Network for Graph<Id> {
+    fn node_count(&self) -> usize {
+        self.len()
+    }
+
+    fn out_weight(&self, node: u32) -> f64 {
+        Graph::out_weight(self, node)
+    }
+
+    fn each_link(&self, node: u32, mut visit: impl FnMut(u32, f64)) {
+        for kind in EdgeType::ALL {
+            for (target, weight) in self.links(node, *kind) {
+                visit(target, weight);
+            }
+        }
+    }
+}
+
 /// What spreading activation found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Activation {
@@ -83,9 +111,9 @@ struct Held {
 }
 
 /// A spreading under way: what each node holds, the nodes waiting to be pushed, and the threshold.
-struct Spreading<'a, Id> {
-    /// The graph spread over.
-    graph: &'a Graph<Id>,
+struct Spreading<'a, N> {
+    /// What is spread over.
+    network: &'a N,
     /// What each node touched holds.
     held: HashMap<u32, Held>,
     /// The nodes waiting to be pushed, in the order they came to have the threshold.
@@ -100,7 +128,7 @@ struct Spreading<'a, Id> {
     pushes: u32,
 }
 
-impl<Id: Ord + Copy> Spreading<'_, Id> {
+impl<N: Network> Spreading<'_, N> {
     /// Adds `share` to what `node` has to spread, queueing it once it has the threshold.
     fn give(&mut self, node: u32, share: f64) {
         let node_held = self.held.entry(node).or_default();
@@ -122,18 +150,16 @@ impl<Id: Ord + Copy> Spreading<'_, Id> {
             node_held.kept += self.teleport * to_spread;
             to_spread
         };
-        let total = self.graph.out_weight(node);
+        let total = self.network.out_weight(node);
         if total <= 0.0 {
             self.left -= to_spread;
             return;
         }
         self.left -= self.teleport * to_spread;
         let share = (1.0 - self.teleport) * to_spread / total;
-        for kind in EdgeType::ALL {
-            for (target, weight) in self.graph.links(node, *kind) {
-                self.give(target, share * weight);
-            }
-        }
+        // The network is a reference of its own, so its links are read while `self` takes them.
+        let network = self.network;
+        network.each_link(node, |target, weight| self.give(target, share * weight));
     }
 
     /// Lowers the threshold tenfold and queues, in node order, every node that now has it.
@@ -155,12 +181,13 @@ impl<Id: Ord + Copy> Spreading<'_, Id> {
     }
 }
 
-/// Spreads activation over `graph` from `seeds`, each a node and its share of the start, with the
-/// restart probability `teleport`, stopping at `deadline` if it comes first. Shares of one node add
-/// up; a share for a node the graph does not hold, not above zero or not finite, is left out.
+/// Spreads activation over `network` from `seeds`, each a node and its share of the start, with
+/// the restart probability `teleport`, stopping at `deadline` if it comes first. Shares of one node
+/// add up; a share for a node the network does not number, not above zero or not finite, is left
+/// out.
 #[must_use]
-pub fn spread<Id: Ord + Copy>(
-    graph: &Graph<Id>,
+pub fn spread<N: Network>(
+    network: &N,
     seeds: &[(u32, f64)],
     teleport: f64,
     deadline: Option<Instant>,
@@ -169,7 +196,7 @@ pub fn spread<Id: Ord + Copy>(
         .iter()
         .copied()
         .filter(|(node, share)| {
-            usize::try_from(*node).is_ok_and(|at| at < graph.len())
+            usize::try_from(*node).is_ok_and(|at| at < network.node_count())
                 && share.is_finite()
                 && *share > 0.0
         })
@@ -177,7 +204,7 @@ pub fn spread<Id: Ord + Copy>(
     // INVARIANT: deterministic (the queue starts in node order, whatever order the seeds came in)
     start.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.total_cmp(&right.1)));
     let mut spreading = Spreading {
-        graph,
+        network,
         held: HashMap::new(),
         queue: VecDeque::new(),
         threshold: SPREAD_THRESHOLD,
