@@ -1,0 +1,23 @@
+[package]
+name = "cortex-retrieve"
+description = "Cortex retrieval: seeds from a prompt and a session, spreading activation over the learned graph, the gate, and the work order and primer it renders."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+cortex-core = { path = "../cortex-core" }
+cortex-index = { path = "../cortex-index" }
+cortex-learn = { path = "../cortex-learn" }
+thiserror.workspace = true
+
+[dev-dependencies]
+petgraph.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

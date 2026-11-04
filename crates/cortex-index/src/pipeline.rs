@@ -1113,13 +1113,15 @@ fn read_contents(record: &mut FileRecord, root: &Path, max_file_bytes: u64) -> O
     Some(source)
 }
 
-/// How many lines `source` has: one per line feed, and one more for text after the last.
+/// How many lines `source` has: one per line feed, and one more for text after the last. The
+/// line count the index stores for a file, and the numbering every line Cortex shows follows.
+#[must_use]
 #[allow(
     clippy::naive_bytecount,
     reason = "a file read here is at most `index.max_file_bytes` long, so one pass over it costs \
               little next to parsing it, and a counting crate is not worth a dependency"
 )]
-fn count_lines(source: &[u8]) -> u64 {
+pub fn count_lines(source: &[u8]) -> u64 {
     let feeds = source.iter().filter(|byte| **byte == b'\n').count();
     let has_open_line = source.last().is_some_and(|byte| *byte != b'\n');
     u64::try_from(feeds)

@@ -44,7 +44,7 @@ const WEAKEN_REVERTED: f64 = 0.05;
 const MAX_WORKING_SET: usize = 40;
 
 /// The most a link can weigh, however many tasks draw it.
-const MAX_WEIGHT: f64 = 5.0;
+pub const MAX_LINK_WEIGHT: f64 = 5.0;
 
 /// What a task's work does to the links between the nodes it used, by pair, the smaller node
 /// first. A pair's number is what to add to its weight, which can be negative.
@@ -106,9 +106,9 @@ pub fn links_of(
 
 /// Adds `links` to the stored links in `transaction`, each weight first brought forward to task
 /// `linking.seq` by `linking.link_decay` for each task since the link last changed, and held
-/// between 0 and [`MAX_WEIGHT`]. A pair with no link yet and nothing to gain is left unwritten.
-/// Returns what each written pair's weight changed by once held within those bounds: less than
-/// was earned when a bound took part of it.
+/// between 0 and [`MAX_LINK_WEIGHT`]. A pair with no link yet and nothing to gain is left
+/// unwritten. Returns what each written pair's weight changed by once held within those bounds:
+/// less than was earned when a bound took part of it.
 ///
 /// # Errors
 ///
@@ -146,7 +146,7 @@ pub fn add_links(
             )
         });
         let count = before.map_or(0, |edge| edge.count).saturating_add(1);
-        let held = (weight + add).clamp(0.0, MAX_WEIGHT);
+        let held = (weight + add).clamp(0.0, MAX_LINK_WEIGHT);
         applied.insert(*pair, held - weight);
         edges.push((
             pair.0,

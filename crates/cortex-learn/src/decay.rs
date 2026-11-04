@@ -7,7 +7,8 @@
 /// The `weight` a row held at task `last_seq`, brought forward to task `seq` by `factor` for each
 /// task since. A weight written at a task yet to come is left as it is, and one left long enough
 /// fades to nothing.
-pub(crate) fn decayed(weight: f64, last_seq: u64, seq: u64, factor: f64) -> f64 {
+#[must_use]
+pub fn decayed(weight: f64, last_seq: u64, seq: u64, factor: f64) -> f64 {
     let tasks = i32::try_from(seq.saturating_sub(last_seq)).unwrap_or(i32::MAX);
     weight * factor.powi(tasks)
 }

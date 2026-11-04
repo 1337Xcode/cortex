@@ -1,0 +1,33 @@
+# cortex-retrieve
+
+What Cortex hands an agent before it starts searching. So far it holds the graph that activation
+spreads over, the spreading itself, the gate's rule, and the reading of a file that lends its lines
+only when it is the file the index read.
+
+## What it must never do
+
+- Inject anything it is not sure of: its gate stays silent unless independent signals agree, and
+  silence is what a missing signal gives, never a guessed span.
+- Show a line number or a line of code it has not just checked against the file on disk.
+- Let the order rows came in, a hash map's order or a clock reach what it renders.
+- Write the store: it reads, and the daemon's single writer records what it rendered.
+
+## Entry points
+
+| Item | What it is |
+| --- | --- |
+| `Graph`, `NodeInput`, `LinkInput`, `Weighing`, `GraphError` | The graph of the store's nodes and links, as compressed sparse rows per kind of link, nodes numbered in id order. A link weighs its kind's weight from `retrieval.type_weights` times its strength in 0 to 1: a reference's confidence, a co-change confidence, a co-access link's weight faded by `learning.link_decay` to the latest task and taken over the most a link can weigh, a folder's hold on its files. Co-change links run the way history shows them; every other link both ways. A file is joined to each of its symbols both ways at the containment weight. Links of one kind between the same nodes add up; a link to itself, to a node not given, or of no weight is left out; a node given twice keeps the first of its kinds and files in their order, and a symbol whose file is no file node has none. A graph past 32-bit node numbers or link counts is refused (`GraphError`). `out_weight` is a node's links' sum over every kind, by which spreading divides them |
+| `spread`, `Activation`, `SPREAD_THRESHOLD`, `L1_TOLERANCE`, `MAX_PUSHES` | Spreading activation from seeds: an approximate personalized PageRank by local push, with the restart probability given (`retrieval.teleport`). A node is pushed while it has the threshold left to spread (first 1e-5), in the order nodes came to have it; when none has but more than 1e-3 is left in all, the threshold is lowered tenfold and pushing goes on, so a spreading that ends on its own is within 1e-3 (L1) of exact PageRank. It stops cut short after 50,000 pushes or at a deadline. A node never keeps more than its exact value, and what is left to spread bounds the shortfall |
+| `decide`, `Features`, `Verdict`, `Rule`, `Shut`, `AGREEING_KINDS`, `LEXICAL_BAR` | The gate. The cold-start rule lets a work order through when two independent kinds of evidence support one top file and the prompt's best-matching file scores at least 0.5 (plus the self-check's raise), or when the session is plainly continuing its own work; otherwise it is silent and says why |
+| `CheckedFile`, `Unchecked` | A repository file read whole, never through a link at its own path and never past a size limit, only when its BLAKE3 hash is the one the index stored, so a link among the folders above it cannot lend other bytes either; its lines numbered from 1 as the index counts them (`cortex_index::count_lines`) |
+
+## Tests
+
+```sh
+cargo test -p cortex-retrieve
+```
+
+Weights are worked out by hand in each test's comment; a property checks that the same rows in any
+order give the same graph. Spreading is checked against exact personalized PageRank, computed by
+power iteration over a petgraph copy of each random graph (`tests/push.rs`); the gate against a
+table of cases; reading against files changed, too large or not files at all.

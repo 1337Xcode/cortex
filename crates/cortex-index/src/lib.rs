@@ -66,7 +66,7 @@ pub use discover::{
 pub use extract::{ExtractError, Extraction, Extractor, LeftOut};
 pub use grammar::{GrammarError, Grammars};
 pub use pipeline::{
-    EditedFile, FileProblem, IndexError, IndexOptions, IndexReport, index_repository,
+    EditedFile, FileProblem, IndexError, IndexOptions, IndexReport, count_lines, index_repository,
     waits_to_be_parsed,
 };
 pub use references::Qualifier;
