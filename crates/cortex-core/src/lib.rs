@@ -4,17 +4,18 @@
 //! repository root with `/` separators, hashes are BLAKE3 at the sizes storage uses, a
 //! [`Language`] has one stable name, an [`Identifier`] is the only text besides paths that the
 //! index stores, each record kind such as [`SymbolKind`] has a fixed stored name or number, and
-//! [`Config`] holds every setting with its default, and [`identifier_tokens`] splits names and
-//! paths into the words a search matches. Its only I/O is what every process needs alike:
-//! canonicalizing a repository's folder, creating folders and files only their user can read,
-//! reading a small text file whole, and finding and running another program, bounded in time and
-//! output.
+//! [`Config`] holds every setting with its default, [`identifier_tokens`] splits names and paths
+//! into the words a search matches, and [`estimate_tokens`] sizes the text Cortex injects. Its
+//! only I/O is what every process needs alike: canonicalizing a repository's folder, creating
+//! folders and files only their user can read, reading a small text file whole, and finding and
+//! running another program, bounded in time and output.
 
 #![warn(clippy::pedantic)]
 
 mod activity;
 mod child;
 mod config;
+mod estimate;
 mod event;
 mod file_content;
 mod hash;
@@ -45,8 +46,10 @@ pub use child::{Captured, capture, time_fed};
 pub use config::{
     Config, ConfigError, ConfigLayer, DEFAULT_HOLDOUT_SHARE, DEFAULT_IDLE_SHUTDOWN_MINUTES,
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, LoadedConfig,
-    MAX_MMAP_BYTES, ModeSetting, keys_set as config_keys_set, load as load_config,
+    MAX_MMAP_BYTES, MAX_WORK_ORDER_TOKENS, ModeSetting, RetrievalConfig, TypeWeights,
+    keys_set as config_keys_set, load as load_config,
 };
+pub use estimate::estimate_tokens;
 pub use event::{
     Agent, CompactTrigger, Event, HookKind, LineRange, LineRangeError, MAX_COMMAND_CHARS, MAX_HITS,
     MAX_HITS_BYTES, MAX_RANGES, ShellCommand, ShellCommandError, StartSource, ToolKind, ToolResult,

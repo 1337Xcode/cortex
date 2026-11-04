@@ -7,8 +7,11 @@
 //! out of range is an error that names the file and the key: Cortex never guesses what a broken
 //! setting meant.
 
+mod retrieval;
+
 use thiserror::Error;
 
+pub use self::retrieval::{MAX_WORK_ORDER_TOKENS, RetrievalConfig, TypeWeights};
 use crate::ScaleMode;
 
 /// The default for `index.max_file_bytes`: one mebibyte. Larger files are almost always data or
@@ -136,6 +139,8 @@ pub struct Config {
     /// `tests.extra_patterns`: regular expressions naming further test or build commands, matched
     /// against a shell command's text. Default none.
     pub test_extra_patterns: Vec<String>,
+    /// The `retrieval.*` keys: how much a work order holds and how activation spreads.
+    pub retrieval: RetrievalConfig,
 }
 
 impl Default for Config {
@@ -160,6 +165,7 @@ impl Default for Config {
             git_max_files_per_commit: DEFAULT_GIT_MAX_FILES_PER_COMMIT,
             git_half_life_commits: DEFAULT_GIT_HALF_LIFE_COMMITS,
             test_extra_patterns: Vec::new(),
+            retrieval: RetrievalConfig::default(),
         }
     }
 }
@@ -365,7 +371,10 @@ impl Config {
                     .filter(|patterns| patterns.iter().all(|pattern| is_regex(pattern)))
                     .ok_or_else(|| refuse("a list of regular expressions"))?;
             }
-            _ => return Ok(false),
+            _ => match self.retrieval.apply(key, value) {
+                Some(set) => set.map_err(refuse)?,
+                None => return Ok(false),
+            },
         }
         Ok(true)
     }
@@ -491,6 +500,20 @@ mod tests {
                 git_max_files_per_commit: 30,
                 git_half_life_commits: 500,
                 test_extra_patterns: Vec::new(),
+                retrieval: RetrievalConfig {
+                    max_tokens: 900,
+                    max_files: 5,
+                    max_code_spans: 2,
+                    span_max_lines: 60,
+                    teleport: 0.5,
+                    type_weights: TypeWeights {
+                        structural: 1.0,
+                        cochange: 0.6,
+                        coaccess: 0.8,
+                        about: 1.0,
+                        containment: 0.1,
+                    },
+                },
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -512,7 +535,11 @@ mod tests {
              [privacy]\nstore_prompt_excerpt = true\n[holdout]\nshare = 0.25\n\
              [learning]\neta = 0.2\nlink_decay = 1\ninterest_decay = 0.5\n\
              [git]\nmax_commits = 100\nmax_age_days = 7\nmax_files_per_commit = 5\n\
-             half_life_commits = 50\n[tests]\nextra_patterns = [\"^just test\", \"tox( |$)\"]\n",
+             half_life_commits = 50\n[tests]\nextra_patterns = [\"^just test\", \"tox( |$)\"]\n\
+             [retrieval]\nmax_tokens = 1200\nmax_files = 20\nmax_code_spans = 0\n\
+             span_max_lines = 1\nteleport = 1\n\
+             [retrieval.type_weights]\nstructural = 0\ncochange = 1\ncoaccess = 0.25\nabout = 0.5\n\
+             containment = 0.05\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -536,6 +563,20 @@ mod tests {
                 git_max_files_per_commit: 5,
                 git_half_life_commits: 50,
                 test_extra_patterns: vec!["^just test".to_owned(), "tox( |$)".to_owned()],
+                retrieval: RetrievalConfig {
+                    max_tokens: 1200,
+                    max_files: 20,
+                    max_code_spans: 0,
+                    span_max_lines: 1,
+                    teleport: 1.0,
+                    type_weights: TypeWeights {
+                        structural: 0.0,
+                        cochange: 1.0,
+                        coaccess: 0.25,
+                        about: 0.5,
+                        containment: 0.05,
+                    },
+                },
             }
         );
         Ok(())
@@ -754,6 +795,113 @@ mod tests {
             ),
         ];
         assert_refused(&cases);
+    }
+
+    /// The retrieval keys refuse what retrieval cannot use, naming the file, the key and what it
+    /// accepts: a work order past its hard cap of 1,200 tokens or of no tokens at all, more files,
+    /// code spans or lines than a work order may hold, a restart probability of 0 or above 1, a
+    /// link weight outside 0 to 1. A kind of link Cortex does not weigh is an unknown key.
+    #[test]
+    fn bad_retrieval_values_are_refused() -> Result<(), ConfigError> {
+        let cases = [
+            (
+                "retrieval.max_tokens = 0",
+                "retrieval.max_tokens",
+                "a whole number from 1 to 1200",
+            ),
+            (
+                "retrieval.max_tokens = 1201",
+                "retrieval.max_tokens",
+                "a whole number from 1 to 1200",
+            ),
+            (
+                "retrieval.max_tokens = \"900\"",
+                "retrieval.max_tokens",
+                "a whole number from 1 to 1200",
+            ),
+            (
+                "retrieval.max_files = 0",
+                "retrieval.max_files",
+                "a whole number from 1 to 20",
+            ),
+            (
+                "retrieval.max_files = 21",
+                "retrieval.max_files",
+                "a whole number from 1 to 20",
+            ),
+            (
+                "retrieval.max_code_spans = -1",
+                "retrieval.max_code_spans",
+                "a whole number from 0 to 5",
+            ),
+            (
+                "retrieval.max_code_spans = 6",
+                "retrieval.max_code_spans",
+                "a whole number from 0 to 5",
+            ),
+            (
+                "retrieval.span_max_lines = 0",
+                "retrieval.span_max_lines",
+                "a whole number from 1 to 200",
+            ),
+            (
+                "retrieval.span_max_lines = 201",
+                "retrieval.span_max_lines",
+                "a whole number from 1 to 200",
+            ),
+            (
+                "retrieval.span_max_lines = 4294967356",
+                "retrieval.span_max_lines",
+                "a whole number from 1 to 200",
+            ),
+            (
+                "retrieval.teleport = 0",
+                "retrieval.teleport",
+                "a number above 0 and at most 1",
+            ),
+            (
+                "retrieval.teleport = 1.5",
+                "retrieval.teleport",
+                "a number above 0 and at most 1",
+            ),
+            (
+                "retrieval.type_weights.structural = -0.1",
+                "retrieval.type_weights.structural",
+                "a number from 0 to 1",
+            ),
+            (
+                "retrieval.type_weights.cochange = 1.5",
+                "retrieval.type_weights.cochange",
+                "a number from 0 to 1",
+            ),
+            (
+                "retrieval.type_weights.coaccess = \"high\"",
+                "retrieval.type_weights.coaccess",
+                "a number from 0 to 1",
+            ),
+            (
+                "retrieval.type_weights.about = nan",
+                "retrieval.type_weights.about",
+                "a number from 0 to 1",
+            ),
+            (
+                "retrieval.type_weights.containment = 2",
+                "retrieval.type_weights.containment",
+                "a number from 0 to 1",
+            ),
+        ];
+        assert_refused(&cases);
+        let loaded = load(&[layer(
+            "f",
+            "retrieval.type_weights.semantic = 0.5
+",
+        )])?;
+        assert_eq!(loaded.config.retrieval, RetrievalConfig::default());
+        assert_eq!(
+            loaded.warnings,
+            ["f: unknown key `retrieval.type_weights.semantic` is ignored"]
+        );
+        Ok(())
     }
 
     /// Checks that each file text in `cases` is refused for its key with what the key accepts.
