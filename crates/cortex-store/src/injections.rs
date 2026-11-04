@@ -75,6 +75,15 @@ pub struct InjectionRecord {
     pub features: Option<GateFeatures>,
 }
 
+impl InjectionRecord {
+    /// Whether its text reached the agent: the gate let it through, the task was not held out,
+    /// and the text was written in time, so that it has a hash.
+    #[must_use]
+    pub fn was_delivered(&self) -> bool {
+        !self.is_gated_out && !self.is_holdout && self.text_hash.is_some()
+    }
+}
+
 /// One injection as the store holds it: its record, and what its task's end said of it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InjectionRow {

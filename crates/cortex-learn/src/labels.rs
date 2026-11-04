@@ -51,6 +51,6 @@ fn labelled(files: &[InjectedFile], roles: &BTreeMap<NodeId, Role>) -> (u32, boo
     let label = files
         .iter()
         .take(LABELLED_FILES)
-        .any(|file| role_of(file).is_some_and(Role::is_used));
+        .any(|file| role_of(file).is_some_and(Role::is_edited_or_read_and_used));
     (u32::try_from(used_count).unwrap_or(u32::MAX), label)
 }

@@ -334,3 +334,42 @@ fn a_label_is_kept_with_its_injection() -> TestResult {
     assert_eq!(labelled(&writer)?, (Some(0), Some(false)));
     Ok(())
 }
+
+/// An injection was delivered only when its text reached the agent: a work order with its text's
+/// hash was; one the gate kept back, one held out (its text's hash kept all the same) and one whose
+/// text was not written in time (no hash) were not.
+#[test]
+fn only_a_text_the_agent_got_was_delivered() -> TestResult {
+    let session = Identifier::new("s1")?;
+    let shown = InjectionRecord {
+        task_id: None,
+        session_id: session,
+        hook: HookKind::Prompt,
+        at_ms: 1,
+        files: Vec::new(),
+        tokens: 10,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"the work order")),
+        features: None,
+    };
+    assert!(shown.was_delivered());
+    let kept_back = InjectionRecord {
+        is_gated_out: true,
+        text_hash: None,
+        ..shown.clone()
+    };
+    let held_out = InjectionRecord {
+        is_holdout: true,
+        ..shown.clone()
+    };
+    let late = InjectionRecord {
+        text_hash: None,
+        ..shown.clone()
+    };
+    for record in [kept_back, held_out, late] {
+        assert!(!record.was_delivered(), "{record:?}");
+    }
+    Ok(())
+}

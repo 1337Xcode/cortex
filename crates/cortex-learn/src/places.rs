@@ -62,7 +62,8 @@ impl<'a> Places<'a> {
         Ok(spans
             .iter()
             .filter(|span| {
-                span.start_line <= range.end_line() && range.start_line() <= span.end_line
+                LineRange::new(span.start_line, span.end_line)
+                    .is_ok_and(|lines| lines.overlaps(range))
             })
             .cloned()
             .collect())

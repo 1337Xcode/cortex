@@ -189,6 +189,13 @@ impl LineRange {
     pub fn end_line(self) -> u32 {
         self.end_line
     }
+
+    /// Whether this range and `other` share a line: lines 3 to 5 and 5 to 9 do, 3 to 5 and 6 to 9
+    /// do not.
+    #[must_use]
+    pub fn overlaps(self, other: Self) -> bool {
+        self.start_line <= other.end_line && other.start_line <= self.end_line
+    }
 }
 
 impl TryFrom<RangeLines> for LineRange {

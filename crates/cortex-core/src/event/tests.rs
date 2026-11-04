@@ -150,3 +150,20 @@ fn debug_output_withholds_prompts_patterns_and_commands() -> TestResult {
     assert!(shown.contains("calc/ops.py"), "{shown}");
     Ok(())
 }
+
+/// Two ranges overlap when they share a line, worked by hand: 3 to 5 meets 5 to 9, 1 to 9, 4 to
+/// 4 and itself, either way round; it does not meet 6 to 9 or 1 to 2.
+#[test]
+fn ranges_overlap_when_they_share_a_line() -> Result<(), LineRangeError> {
+    let lines = |start, end| LineRange::new(start, end);
+    let middle = lines(3, 5)?;
+    for other in [lines(5, 9)?, lines(1, 9)?, lines(4, 4)?, middle] {
+        assert!(middle.overlaps(other), "{other:?}");
+        assert!(other.overlaps(middle), "{other:?}");
+    }
+    for other in [lines(6, 9)?, lines(1, 2)?] {
+        assert!(!middle.overlaps(other), "{other:?}");
+        assert!(!other.overlaps(middle), "{other:?}");
+    }
+    Ok(())
+}

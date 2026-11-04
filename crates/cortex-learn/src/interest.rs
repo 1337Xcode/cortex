@@ -3,7 +3,8 @@
 //! Interest follows what the task did, an edit counting for most and a file a search found but
 //! never opened for least. An edit or a read of some of a file's lines goes to the symbols those
 //! lines touch, and a symbol's increment also brightens its file and the folder holding it, so
-//! that the map lights up around the work. Nothing of this reaches an agent yet: interest is the
+//! that the map lights up around the work. A span the task's prompt was given earns more when the
+//! task went on to read or edit it. Nothing of this reaches an agent yet: interest is the
 //! map's brightness and, later, part of what retrieval ranks by.
 //!
 //! A score is kept as of the task it was last touched at and decays by a factor for each task
@@ -15,6 +16,7 @@ use cortex_core::{CommandKind, InterestTier, LineRange, RepoPath};
 use cortex_store::{InterestRow, NodeId, Queries, StoreError, WriteTx};
 
 use crate::decay::decayed;
+use crate::given::{GivenFile, given_to};
 use crate::places::Places;
 use crate::task_state::{FileNode, Step, TaskState};
 
@@ -33,6 +35,11 @@ const READ_RANGE: f64 = 0.4;
 /// What a read of a whole file adds to it. Less than a read of chosen lines, which says which part
 /// of the file the reader was after.
 const READ_FILE: f64 = 0.3;
+
+/// What a span the task's prompt was given adds to each symbol it covers, or to its file when it
+/// covers none, when the task went on to read or edit some of its lines: the work order pointed at
+/// what the task needed.
+const GIVEN_SPAN_USED: f64 = 0.3;
 
 /// What a file a search found adds to it when the task went on to read or edit it.
 const HIT_OPENED: f64 = 0.2;
@@ -66,7 +73,7 @@ const LANDMARK_IN: u64 = 100;
 pub type EarnedInterest = BTreeMap<NodeId, f64>;
 
 /// What the work `state` shows earns each node, read with `queries` for the symbols the lines
-/// touch and the folders holding the files.
+/// touch, the folders holding the files, and the spans the task's prompt was given.
 ///
 /// # Errors
 ///
@@ -114,7 +121,40 @@ pub fn interest_of(queries: Queries<'_>, state: &TaskState) -> Result<EarnedInte
             Step::Run { .. } => {}
         }
     }
+    let given = given_to(queries, state.task_id())?;
+    add_given(&mut earned, &mut places, state, &given)?;
     Ok(earned)
+}
+
+/// Adds to `earned` what the spans `given` showed earn: [`GIVEN_SPAN_USED`] for each span the task
+/// `state` went on to read or edit, once however often it did, credited as a read of its lines is.
+fn add_given(
+    earned: &mut EarnedInterest,
+    places: &mut Places<'_>,
+    state: &TaskState,
+    given: &[GivenFile],
+) -> Result<(), StoreError> {
+    for file in given {
+        for span in &file.spans {
+            if let Some(reached) = reaching(state, file.node, *span) {
+                add_within(earned, places, (reached, Some(*span)), GIVEN_SPAN_USED)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The file of the first step of `state` that read or edited lines `span` of the file `node`, or
+/// the whole of it.
+fn reaching(state: &TaskState, node: NodeId, span: LineRange) -> Option<&FileNode> {
+    state.steps().iter().find_map(|step| match step {
+        Step::Read { file, range, .. } | Step::Edit { file, range, .. }
+            if file.node == Some(node) && range.is_none_or(|lines| lines.overlaps(span)) =>
+        {
+            Some(file)
+        }
+        _ => None,
+    })
 }
 
 /// Adds `earned` to the stored interest in `transaction`, each score first brought forward to task

@@ -1,7 +1,7 @@
 //! The links a task's work draws between the nodes it used together.
 //!
 //! What a task edited, read and had to look at belongs together: that is what a co-access link
-//! says. Every pair of nodes in a task's working set gains weight when the task succeeded, less
+//! says, and so does what the task's prompt was given and the task then built on. Every pair of nodes in a task's working set gains weight when the task succeeded, less
 //! when nobody can say how it went, nothing when it failed, and the files a reverted task edited
 //! together lose a little, since what they had in common was undone.
 //!
@@ -15,6 +15,7 @@ use cortex_core::{EdgeType, LineRange, TaskOutcome};
 use cortex_store::{EdgeRecord, NodeId, Queries, StoreError, WriteTx};
 
 use crate::decay::decayed;
+use crate::given::given_to;
 use crate::places::Places;
 use crate::task_state::{FileNode, Step, TaskState};
 
@@ -24,6 +25,10 @@ const ROLE_EDITED: f64 = 1.0;
 /// What a node the task read counts for when an edited file names it: the task did not only look
 /// at it, it is part of what changed.
 const ROLE_READ_AND_USED: f64 = 0.6;
+
+/// What a node the task's prompt was given counts for when the task, without reading it, edited a
+/// node that names it: the agent built on what it was given, as on what it read.
+const ROLE_GIVEN_AND_USED: f64 = 0.6;
 
 /// What a node the task only read counts for.
 const ROLE_READ_ONLY: f64 = 0.2;
@@ -179,6 +184,7 @@ fn weight_of(role: Role) -> f64 {
     match role {
         Role::Edited => ROLE_EDITED,
         Role::ReadAndUsed => ROLE_READ_AND_USED,
+        Role::GivenAndUsed => ROLE_GIVEN_AND_USED,
         Role::ReadOnly => ROLE_READ_ONLY,
     }
 }
@@ -188,7 +194,9 @@ fn weight_of(role: Role) -> f64 {
 pub(crate) enum Role {
     /// Only read.
     ReadOnly,
-    /// Read, and named by a file the task edited.
+    /// Not read, but given by the task's prompt and named by a node of its level the task edited.
+    GivenAndUsed,
+    /// Read, and named by a node of its level the task edited.
     ReadAndUsed,
     /// Edited.
     Edited,
@@ -199,21 +207,24 @@ impl Role {
     pub(crate) fn is_read_or_edited(self) -> bool {
         match self {
             Self::ReadOnly | Self::ReadAndUsed | Self::Edited => true,
+            Self::GivenAndUsed => false,
         }
     }
 
-    /// Whether the task used the node: edited it, or read it and edited a node that names it.
-    pub(crate) fn is_used(self) -> bool {
+    /// Whether the task edited the node, or read it and edited a node that names it: what an
+    /// injection's label asks of a file. A node used only as it was given is not, as the label asks
+    /// for a read.
+    pub(crate) fn is_edited_or_read_and_used(self) -> bool {
         match self {
             Self::ReadAndUsed | Self::Edited => true,
-            Self::ReadOnly => false,
+            Self::ReadOnly | Self::GivenAndUsed => false,
         }
     }
 }
 
-/// What each file `state` shows the task touched was to it, as its working set gives it before
-/// the set's cap, read with `queries` for the files an edited file names: edited, read and named
-/// by a file it edited, or only read.
+/// What each file `state` shows the task touched, or its prompt was given, was to it, as its
+/// working set gives it before the set's cap, read with `queries` for the files an edited file
+/// names: edited, read and named by a file it edited, given and named by one, or only read.
 ///
 /// # Errors
 ///
@@ -228,7 +239,11 @@ pub(crate) fn file_roles(
             raise(&mut files, node, role);
         }
     }
-    mark_used(queries, &mut files)?;
+    let given: BTreeSet<NodeId> = given_to(queries, state.task_id())?
+        .into_iter()
+        .map(|file| file.node)
+        .collect();
+    mark_used(queries, &mut files, &given)?;
     Ok(files)
 }
 
@@ -241,11 +256,17 @@ fn touched(state: &TaskState) -> impl Iterator<Item = (&FileNode, Option<LineRan
     })
 }
 
-/// Raises every node of `level`, one level of a working set, that the task only read to read and
-/// used when a node of the level it edited names it: the index's structural edges run from the
-/// file or symbol that names another to the one it names.
-fn mark_used(queries: Queries<'_>, level: &mut BTreeMap<NodeId, Role>) -> Result<(), StoreError> {
-    let nodes: Vec<NodeId> = level.keys().copied().collect();
+/// Marks what a node of `level`, one level of a working set, that the task edited names: a node
+/// the task only read becomes read and used, and a node of `given`, what the task's prompt was
+/// given at this level, that the task did not touch joins the level as given and used. The
+/// index's structural edges run from the file or symbol that names another to the one it names.
+fn mark_used(
+    queries: Queries<'_>,
+    level: &mut BTreeMap<NodeId, Role>,
+    given: &BTreeSet<NodeId>,
+) -> Result<(), StoreError> {
+    let nodes: BTreeSet<NodeId> = level.keys().chain(given).copied().collect();
+    let nodes: Vec<NodeId> = nodes.into_iter().collect();
     let named: Vec<NodeId> = queries
         .edges_among(&nodes, EdgeType::Structural)?
         .into_iter()
@@ -253,13 +274,36 @@ fn mark_used(queries: Queries<'_>, level: &mut BTreeMap<NodeId, Role>) -> Result
         .map(|row| row.edge.dst)
         .collect();
     for node in named {
-        if let Some(role) = level.get_mut(&node)
-            && *role == Role::ReadOnly
-        {
-            *role = Role::ReadAndUsed;
+        match level.get_mut(&node) {
+            Some(role) if *role == Role::ReadOnly => *role = Role::ReadAndUsed,
+            None if given.contains(&node) => {
+                level.insert(node, Role::GivenAndUsed);
+            }
+            // Edited, or already used, or neither touched nor given: nothing to raise.
+            Some(_) | None => {}
         }
     }
     Ok(())
+}
+
+/// The nodes the task `state`'s prompt was given, by level: the files, and the symbols the lines
+/// of their spans touch, read with `queries` and `places`.
+fn given_nodes(
+    queries: Queries<'_>,
+    places: &mut Places<'_>,
+    state: &TaskState,
+) -> Result<(BTreeSet<NodeId>, BTreeSet<NodeId>), StoreError> {
+    let (mut files, mut symbols) = (BTreeSet::new(), BTreeSet::new());
+    for file in given_to(queries, state.task_id())? {
+        files.insert(file.node);
+        let Some((_, path)) = queries.node_file(file.node)? else {
+            continue;
+        };
+        for span in &file.spans {
+            symbols.extend(places.covering(&path, *span)?);
+        }
+    }
+    Ok((files, symbols))
 }
 
 /// The nodes a task used, by level, each with what it was to the task.
@@ -283,9 +327,9 @@ impl WorkingSet {
         for (file, range, role) in touched(state) {
             set.touch(&mut places, (file, range), role)?;
         }
-        for level in [&mut set.files, &mut set.symbols] {
-            mark_used(queries, level)?;
-        }
+        let (given_files, given_symbols) = given_nodes(queries, &mut places, state)?;
+        mark_used(queries, &mut set.files, &given_files)?;
+        mark_used(queries, &mut set.symbols, &given_symbols)?;
         Ok(set)
     }
 

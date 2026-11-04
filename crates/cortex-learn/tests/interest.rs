@@ -5,7 +5,9 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::{Store, TestResult, answered_task, edit, read, succeeded, tool};
+use common::{
+    Given, GivenSpans, Store, TestResult, answered_task, edit, given_task, read, succeeded, tool,
+};
 use cortex_core::{
     Event, HookKind, InterestTier, RepoPath, ShellCommand, ToolKind, ToolResult, ToolTarget,
 };
@@ -388,6 +390,62 @@ fn a_stored_tier_is_read_as_of_the_task_that_asks() -> TestResult {
             expected,
             "{row:?} at task {seq}"
         );
+    }
+    Ok(())
+}
+
+/// A span the task's prompt was given earns more once the task reads or edits it, worked out by
+/// hand. `calc/ops.py` holds `add` over lines 1 to 5, `wrap` over 7 to 20 and `mul` over 10 to
+/// 15; `main.py` and `calc/util.py` hold none. The work order gave `calc/ops.py` lines 1 to 5 and
+/// 10 to 15, `main.py` lines 1 to 3 and `calc/util.py` lines 1 to 2. The task reads `calc/ops.py`
+/// lines 2 to 3 and edits `main.py` line 2:
+///
+/// - the read earns `add`, which covers it, 0.4, the file 0.2 and `calc` 0.1; it reaches the span
+///   1 to 5, which earns `add` 0.3 more, the file 0.15 and `calc` 0.075; nothing reaches 10 to 15;
+/// - the edit earns `main.py` 1.0, and reaches its span, which covers no symbol: 0.3 more to it;
+/// - `calc/util.py` was given and never touched: nothing.
+///
+/// So `add` 0.7, `wrap` and `mul` 0, `calc/ops.py` 0.35, `calc` 0.175, `main.py` 1.3 and
+/// `calc/util.py` 0. The same work after a work order the gate kept back, or in a task held out,
+/// earns only what the steps earn: `add` 0.4, the file 0.2, `calc` 0.1 and `main.py` 1.0.
+#[test]
+fn a_span_given_earns_once_the_task_reads_or_edits_it() -> TestResult {
+    let mut store = Store::new()?;
+    let ops = store.index_symbols(
+        "calc/ops.py",
+        &[("add", 1, 5), ("wrap", 7, 20), ("mul", 10, 15)],
+    )?;
+    let (ops_file, add_symbol, wrap, mul) = (ops[0], ops[1], ops[2], ops[3]);
+    let util = store.index_symbols("calc/util.py", &[])?[0];
+    let main = store.index(&["main.py"])?[0];
+    let folder = store.folder_node("calc")?;
+    let nodes = [add_symbol, wrap, mul, ops_file, folder, main, util];
+    let given: [GivenSpans<'_>; 3] = [
+        (ops_file, &[(1, 5), (10, 15)]),
+        (main, &[(1, 3)]),
+        (util, &[(1, 2)]),
+    ];
+    let unaided = [0.4, 0.0, 0.0, 0.2, 0.1, 1.0, 0.0];
+    let cases = [
+        (Given::Shown, [0.7, 0.0, 0.0, 0.35, 0.175, 1.3, 0.0]),
+        (Given::KeptBack, unaided),
+        (Given::HeldOut, unaided),
+    ];
+    for (at, (fared, expected)) in (1_i64..).zip(cases) {
+        let session = format!("s{at}");
+        let at_ms = at * 1_000;
+        let mut recorder = Recorder::new(false, 0.0, Commands::default());
+        let state = given_task(
+            (&mut store, &mut recorder),
+            (&session, at_ms),
+            (&given, fared),
+            &[
+                read(&session, at_ms + 100, "calc/ops.py", &[(2, 3)])?,
+                edit(&session, at_ms + 200, "main.py", &[(2, 2)])?,
+            ],
+        )?;
+        let earned = interest_of(store.writer.queries(), &state)?;
+        assert_eq!(earned_for(&earned, &nodes), expected, "{fared:?}");
     }
     Ok(())
 }

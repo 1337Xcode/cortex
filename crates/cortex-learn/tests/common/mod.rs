@@ -16,7 +16,8 @@ use cortex_core::{
 };
 use cortex_learn::{Recorder, TaskState};
 use cortex_store::{
-    EdgeRecord, EventRecord, FileIndex, FileRecord, NodeId, SymbolRecord, Writer, WriterOptions,
+    EdgeRecord, EventRecord, FileIndex, FileRecord, InjectedFile, InjectionRecord, NodeId,
+    SymbolRecord, Writer, WriterOptions,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -500,6 +501,73 @@ pub fn asked_task(
     events.extend(steps.iter().cloned());
     events.push(event(HookKind::Stop, session, at_ms + 1_000)?);
     let mut ended = store.record(recorder, &events)?.into_iter();
+    let state = ended.next().ok_or("no task ended")?;
+    assert!(ended.next().is_none(), "more than one task ended");
+    Ok(state)
+}
+
+/// How an injection's text fared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Given {
+    /// It reached the agent.
+    Shown,
+    /// The gate kept it back, so there was no text.
+    KeptBack,
+    /// The task was held out: the text was recorded, and not given.
+    HeldOut,
+}
+
+/// One file of an injection, with the first and last lines of each of its spans.
+pub type GivenSpans<'a> = (NodeId, &'a [(u32, u32)]);
+
+/// An injection for the task `task`, which a prompt of `session` began at `at_ms`, of `files`, the
+/// best first, its text faring as `given` says.
+pub fn injection(
+    (session, task, at_ms): (&str, Ulid, i64),
+    files: &[GivenSpans<'_>],
+    given: Given,
+) -> TestResult<InjectionRecord> {
+    Ok(InjectionRecord {
+        task_id: Some(task),
+        session_id: Identifier::new(session)?,
+        hook: HookKind::Prompt,
+        at_ms,
+        files: files
+            .iter()
+            .map(|(node, spans)| InjectedFile {
+                node: *node,
+                spans: spans.to_vec(),
+                reason: None,
+            })
+            .collect(),
+        tokens: 50,
+        confidence: None,
+        is_gated_out: given == Given::KeptBack,
+        is_holdout: given == Given::HeldOut,
+        text_hash: (given != Given::KeptBack).then(|| ContentHash::of(b"the work order")),
+        features: None,
+    })
+}
+
+/// The state of one task whose prompt got an injection: a session started at `at_ms`, a prompt,
+/// an injection of `files` faring as `given` says, then `steps` and the end of the answer, recorded
+/// as the daemon records them.
+pub fn given_task(
+    (store, recorder): (&mut Store, &mut Recorder),
+    (session, at_ms): (&str, i64),
+    (files, given): (&[GivenSpans<'_>], Given),
+    steps: &[Event],
+) -> TestResult<TaskState> {
+    let asked = prompt(session, at_ms + 1, "fix it")?;
+    let started = start(session, at_ms, StartSource::Startup)?;
+    store.record(recorder, &[started, asked.clone()])?;
+    let task = task_of(&asked)?;
+    let mut transaction = store.writer.transaction()?;
+    transaction.record_injection(&injection((session, task, at_ms + 1), files, given)?)?;
+    transaction.commit()?;
+    let mut rest = steps.to_vec();
+    rest.push(event(HookKind::Stop, session, at_ms + 1_000)?);
+    let mut ended = store.record(recorder, &rest)?.into_iter();
     let state = ended.next().ok_or("no task ended")?;
     assert!(ended.next().is_none(), "more than one task ended");
     Ok(state)

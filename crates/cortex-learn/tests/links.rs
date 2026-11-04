@@ -6,7 +6,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::{Store, TestResult, answered_task, edit, read};
+use common::{Given, GivenSpans, Store, TestResult, answered_task, edit, given_task, read};
 use cortex_core::{EdgeType, TaskOutcome};
 use cortex_learn::{Commands, EarnedLinks, Linking, Recorder, TaskState, add_links, links_of};
 use cortex_store::NodeId;
@@ -348,6 +348,44 @@ fn a_task_too_large_keeps_the_nodes_that_mattered_most() -> TestResult {
                 .any(|(left, right)| left == dropped || right == dropped),
             "a file past the cap was kept"
         );
+    }
+    Ok(())
+}
+
+/// A node the task's prompt was given counts once the task, without reading it, edits a node that
+/// names it, worked out by hand: the work order gave `calc/ops.py` lines 1 to 5, which `add`
+/// covers, and `calc/util.py` lines 1 to 8, `fmt`'s; the task edits `main.py` lines 1 to 2, in
+/// `run`. `main.py` names `calc/ops.py` and `run` names `add`, so both are given and used, 0.6
+/// each, and the successful task's pairs gain 0.1 x 1.0 x 0.6 = 0.06 at each level;
+/// `calc/util.py` and `fmt`, which only a node given names, are not in the working set. The same
+/// work after a work order the gate kept back draws no link: the task edited one file, one symbol.
+#[test]
+fn a_node_given_counts_once_an_edited_node_names_it() -> TestResult {
+    let mut store = Store::new()?;
+    let three = Three::index(&mut store)?;
+    let given: [GivenSpans<'_>; 2] = [(three.ops.0, &[(1, 5)]), (three.util.0, &[(1, 8)])];
+    let shown = BTreeMap::from([
+        (pair(three.main.0, three.ops.0), 0.06),
+        (pair(three.main.1, three.ops.1), 0.06),
+    ]);
+    let cases = [
+        ("s1", 1_000, Given::Shown, shown),
+        ("s2", 5_000, Given::KeptBack, BTreeMap::new()),
+    ];
+    for (session, at_ms, fared, expected) in cases {
+        let mut recorder = Recorder::new(false, 0.0, Commands::default());
+        let state = given_task(
+            (&mut store, &mut recorder),
+            (session, at_ms),
+            (&given, fared),
+            &[edit(session, at_ms + 100, "main.py", &[(1, 2)])?],
+        )?;
+        let earned = links_of(
+            store.writer.queries(),
+            &state,
+            &linking(5, TaskOutcome::Success),
+        )?;
+        assert_eq!(rounded(&earned), expected, "{fared:?}");
     }
     Ok(())
 }

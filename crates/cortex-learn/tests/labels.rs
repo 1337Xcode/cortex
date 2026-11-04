@@ -5,10 +5,12 @@
 
 mod common;
 
-use common::{Store, TestResult, edit, event, prompt, read, start, task_of};
-use cortex_core::{Config, Event, HookKind, Identifier, StartSource, Ulid};
+use common::{
+    Given, GivenSpans, Store, TestResult, edit, event, given_task, prompt, read, start, task_of,
+};
+use cortex_core::{Config, Event, HookKind, Identifier, StartSource};
 use cortex_learn::{Commands, Learner, Recorder};
-use cortex_store::{InjectedFile, InjectionRecord, NodeId};
+use cortex_store::{InjectionRecord, NodeId};
 
 /// Five files, `a.py` naming `b.py`, as the index writes them: their nodes, in path order.
 fn five(store: &mut Store) -> TestResult<[NodeId; 5]> {
@@ -20,64 +22,29 @@ fn five(store: &mut Store) -> TestResult<[NodeId; 5]> {
     Ok([a, b, c, d, e])
 }
 
-/// An injection for the task `task`, which a prompt of `session` began at `at_ms`, of `files`, the
-/// best first, kept back by the gate or held out as `(is_gated_out, is_holdout)` say.
-fn injection(
-    (session, task, at_ms): (&str, Ulid, i64),
-    files: &[NodeId],
-    (is_gated_out, is_holdout): (bool, bool),
-) -> TestResult<InjectionRecord> {
-    Ok(InjectionRecord {
-        task_id: Some(task),
-        session_id: Identifier::new(session)?,
-        hook: HookKind::Prompt,
-        at_ms,
-        files: files
-            .iter()
-            .map(|node| InjectedFile {
-                node: *node,
-                spans: vec![(1, 2)],
-                reason: None,
-            })
-            .collect(),
-        tokens: 50,
-        confidence: None,
-        is_gated_out,
-        is_holdout,
-        text_hash: None,
-        features: None,
-    })
-}
-
-/// Records in `store` a session `session` started at `at_ms` and a prompt, then an injection of
-/// `given`'s files kept as it says, then `steps` and the end of the answer, and learns from the
+/// Records in `store` a task of session `session` started at `at_ms` whose prompt got an injection
+/// of `given`'s files, each with lines 1 to 2, faring as it says, then `steps`, and learns from the
 /// task as the daemon does; the injection's used count and label as the store then holds them.
 fn labelled(
     store: &mut Store,
     (session, at_ms): (&str, i64),
-    given: (&[NodeId], (bool, bool)),
+    (files, given): (&[NodeId], Given),
     steps: &[Event],
 ) -> TestResult<(Option<u32>, Option<bool>)> {
     let mut recorder = Recorder::new(false, 0.0, Commands::default());
-    let asked = prompt(session, at_ms + 1, "fix it")?;
-    let started = start(session, at_ms, StartSource::Startup)?;
-    store.record(&mut recorder, &[started, asked.clone()])?;
-    let task = task_of(&asked)?;
-    let mut transaction = store.writer.transaction()?;
-    transaction.record_injection(&injection((session, task, at_ms + 1), given.0, given.1)?)?;
-    transaction.commit()?;
-    let mut rest = steps.to_vec();
-    rest.push(event(HookKind::Stop, session, at_ms + 1_000)?);
-    let ended = store.record(&mut recorder, &rest)?;
-    let [state] = &ended[..] else {
-        return Err("one task ended".into());
-    };
+    let spans: Vec<GivenSpans<'_>> = files.iter().map(|node| (*node, &[(1, 2)][..])).collect();
+    let state = given_task(
+        (store, &mut recorder),
+        (session, at_ms),
+        (&spans, given),
+        steps,
+    )?;
     let mut transaction = store.writer.transaction()?;
     Learner::new()
-        .learn(&mut transaction, state, &Config::default())?
+        .learn(&mut transaction, &state, &Config::default())?
         .ok_or("nothing learnt")?;
     transaction.commit()?;
-    let rows = store.writer.queries().injections_of_task(task)?;
+    let rows = store.writer.queries().injections_of_task(state.task_id())?;
     let [row] = &rows[..] else {
         return Err(format!("{rows:?}").into());
     };
@@ -86,7 +53,7 @@ fn labelled(
 
 /// One case: the injection's files, the best first, how it was kept, the task's steps, and the
 /// used count and label expected.
-type Case<'a> = (&'a [NodeId], (bool, bool), Vec<Event>, (u32, bool));
+type Case<'a> = (&'a [NodeId], Given, Vec<Event>, (u32, bool));
 
 /// Each case worked by hand from its steps, `a.py` naming `b.py`. An edited file among the first
 /// three labels the injection 1 (c edited; a, fourth, only read: 2 used). A read file the task
@@ -94,13 +61,14 @@ type Case<'a> = (&'a [NodeId], (bool, bool), Vec<Event>, (u32, bool));
 /// Files only read do not (b and c read: 2 used, 0). A used file past the first three does not
 /// either (b used, fourth: 1 used, 0). Nothing of it touched is 0 used, 0. A retrieval the gate
 /// kept back and a held-out task's are labelled the same way: c edited, 1 used, 1; d only read,
-/// 1 used, 0.
+/// 1 used, 0. A file used only as it was given, b never read while a, which names it, is edited,
+/// is neither counted nor labels it: 0 used, 0.
 #[test]
 fn an_injection_is_labelled_by_what_its_task_did() -> TestResult {
     let mut store = Store::new()?;
     let [a, b, c, d, e] = five(&mut store)?;
-    let shown = (false, false);
-    let cases: [Case<'_>; 7] = [
+    let shown = Given::Shown;
+    let cases: [Case<'_>; 8] = [
         (
             &[c, d, b, a],
             shown,
@@ -145,15 +113,21 @@ fn an_injection_is_labelled_by_what_its_task_did() -> TestResult {
         ),
         (
             &[c, d],
-            (true, false),
+            Given::KeptBack,
             vec![edit("s6", 6_010, "c.py", &[(1, 2)])?],
             (1, true),
         ),
         (
             &[d],
-            (false, true),
+            Given::HeldOut,
             vec![read("s7", 7_010, "d.py", &[])?],
             (1, false),
+        ),
+        (
+            &[b],
+            shown,
+            vec![edit("s8", 8_010, "a.py", &[(1, 2)])?],
+            (0, false),
         ),
     ];
     for (at, (files, kept, steps, (used, label))) in (1_i64..).zip(cases) {
@@ -192,7 +166,7 @@ fn only_a_task_s_injections_are_labelled() -> TestResult {
     let given = labelled(
         &mut store,
         ("s1", 1_000),
-        (&[c], (false, false)),
+        (&[c], Given::Shown),
         &[edit("s1", 1_010, "c.py", &[(1, 2)])?],
     )?;
     assert_eq!(given, (Some(1), Some(true)));
