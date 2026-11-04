@@ -10,6 +10,9 @@
 //! failure, twice as long after each further one in a row, at most a minute; the status says how
 //! many failed. A stop is taken at once, between rebuilds or while waiting for the next.
 //!
+//! A huge repository's graph is also viewed by files as it is rebuilt, since its retrievals spread
+//! over files first: that view is built here, off the requests' way, and kept with the graph.
+//!
 //! Co-change links are taken only from a complete mining. The miner takes its mark out of the store
 //! before it writes and puts it back once done, and the host holds a [`MiningWrite`] while it
 //! writes. A rebuild that finds no mark while a write is under way is let go, the graph standing,
@@ -21,11 +24,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use cortex_core::ScaleMode;
 use cortex_core::ipc::GraphReport;
 use cortex_retrieve::{Graph, GraphSettings, RetrieveError, read_graph};
 use cortex_store::{GitStateKey, NodeId, Reader};
 
 use crate::paced::{Asks, Paced, Pacing};
+use crate::retrieval::mode_of;
 
 /// How the rebuilds are spaced: at least half a second apart, so that writes that come closer
 /// together share one; at least four times as long after one as it took, so that rebuilding takes
@@ -241,16 +246,23 @@ pub(crate) fn store_reads(
 }
 
 /// The whole graph the store `reader` reads holds, weighed by `settings`, in one read transaction:
-/// with its co-change links only when the miner's mark is there.
+/// with its co-change links only when the miner's mark is there, and viewed by files, once the
+/// transaction is over, when the store is in huge mode.
 fn read_whole(reader: &Reader, settings: &GraphSettings) -> Result<Read, RetrieveError> {
-    reader.consistently(|queries| -> Result<_, RetrieveError> {
-        let has_cochange = queries.git_state(GitStateKey::LastCommit)?.is_some();
-        let mut weighed = *settings;
-        if !has_cochange {
-            weighed.type_weights.cochange = 0.0;
-        }
-        Ok((read_graph(queries, &weighed)?, has_cochange))
-    })
+    let (graph, has_cochange, is_huge) =
+        reader.consistently(|queries| -> Result<_, RetrieveError> {
+            let has_cochange = queries.git_state(GitStateKey::LastCommit)?.is_some();
+            let mut weighed = *settings;
+            if !has_cochange {
+                weighed.type_weights.cochange = 0.0;
+            }
+            let is_huge = mode_of(queries)? == Some(ScaleMode::Huge);
+            Ok((read_graph(queries, &weighed)?, has_cochange, is_huge))
+        })?;
+    if is_huge {
+        graph.prepare_by_files()?;
+    }
+    Ok((graph, has_cochange))
 }
 
 #[cfg(test)]
@@ -415,6 +427,27 @@ mod tests {
         let _rebuilder = rebuild(&snapshot, reads_of(root.path()));
         let first = report_when(&snapshot, |report| report.builds > 0)?;
         assert!(!first.has_cochange);
+        Ok(())
+    }
+
+    /// A huge repository's graph comes viewed by files, so that no prompt waits for the view; any
+    /// other's does not, and the view is left until something spreads in two stages over it. The
+    /// store starts in no mode, is rebuilt, then is put in huge mode and rebuilt again.
+    #[test]
+    fn a_huge_repositorys_graph_comes_viewed_by_files() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut writer = two_files(root.path())?;
+        let (snapshot, _rebuilder) = rebuilding(root.path());
+        let first = report_when(&snapshot, |report| report.builds > 0)?;
+        let graph = snapshot.graph().ok_or("no graph after the first build")?;
+        assert!(!graph.is_prepared_by_files());
+        let mut transaction = writer.transaction()?;
+        transaction.set_scale_mode(ScaleMode::Huge)?;
+        transaction.commit()?;
+        snapshot.changed();
+        report_when(&snapshot, |report| report.builds > first.builds)?;
+        let graph = snapshot.graph().ok_or("no graph after the second build")?;
+        assert!(graph.is_prepared_by_files());
         Ok(())
     }
 

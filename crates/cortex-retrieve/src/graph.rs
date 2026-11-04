@@ -22,6 +22,8 @@
 use cortex_core::{EdgeType, InterestTier, NodeKind, TypeWeights};
 use cortex_learn::{MAX_LINK_WEIGHT, decayed};
 
+use crate::by_files::{ByFiles, FileView};
+
 /// No file: what a folder's entry in the table of files holds.
 const NO_FILE: u32 = u32::MAX;
 
@@ -128,7 +130,7 @@ impl Weighing {
 /// One kind's links, as compressed sparse rows: node `n`'s links are the targets and weights from
 /// `offsets[n]` up to `offsets[n + 1]`.
 #[derive(Debug, Clone, Default, PartialEq)]
-struct Rows {
+pub(crate) struct Rows {
     /// Where each node's links start, and one past the last node's end.
     offsets: Vec<u32>,
     /// Each link's target.
@@ -146,7 +148,7 @@ impl Rows {
     /// # Errors
     ///
     /// [`GraphError::TooLarge`] for more links than a 32-bit offset reaches.
-    fn of(nodes: usize, mut links: Vec<(u32, u32, f64)>) -> Result<Self, GraphError> {
+    pub(crate) fn of(nodes: usize, mut links: Vec<(u32, u32, f64)>) -> Result<Self, GraphError> {
         // INVARIANT: deterministic (links between the same nodes are added in weight order, so
         // the sums do not depend on the order the rows came in)
         links.sort_by(|left, right| {
@@ -191,7 +193,7 @@ impl Rows {
     }
 
     /// Node `node`'s links: each target and weight.
-    fn of_node(&self, node: u32) -> impl Iterator<Item = (u32, f64)> + '_ {
+    pub(crate) fn of_node(&self, node: u32) -> impl Iterator<Item = (u32, f64)> + '_ {
         self.paired(node, &self.weights)
     }
 
@@ -258,6 +260,8 @@ pub struct Graph<Id> {
     out_weights: Vec<f64>,
     /// The weight of each kind of link it was weighed by.
     type_weights: TypeWeights,
+    /// Its view by files, once built.
+    by_files: ByFiles,
 }
 
 impl<Id: Ord + Copy> Graph<Id> {
@@ -362,6 +366,7 @@ impl<Id: Ord + Copy> Graph<Id> {
             rows,
             out_weights,
             type_weights: weighing.type_weights,
+            by_files: ByFiles::default(),
         })
     }
 
@@ -452,6 +457,32 @@ impl<Id: Ord + Copy> Graph<Id> {
             .get(usize::try_from(node).unwrap_or(usize::MAX))
             .copied()
             .unwrap_or(0.0)
+    }
+
+    /// Its view by files, which the first stage of two-stage spreading runs over: built on first
+    /// use and kept with the graph.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::TooLarge`] for more links between files than a 32-bit offset reaches.
+    pub(crate) fn by_files(&self) -> Result<&FileView, GraphError> {
+        self.by_files.of(self)
+    }
+
+    /// Builds its view by files now, if it was not yet, so that the first two-stage spreading over
+    /// it does not wait for it: the daemon does so after rebuilding a huge repository's graph.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::TooLarge`] for more links between files than a 32-bit offset reaches.
+    pub fn prepare_by_files(&self) -> Result<(), GraphError> {
+        self.by_files().map(drop)
+    }
+
+    /// Whether its view by files is built.
+    #[must_use]
+    pub fn is_prepared_by_files(&self) -> bool {
+        self.by_files.is_built()
     }
 
     /// How many links it holds, counting each direction of a link that runs both ways.

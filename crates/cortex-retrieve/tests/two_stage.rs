@@ -3,7 +3,8 @@
 
 use cortex_core::{EdgeType, NodeKind, TypeWeights};
 use cortex_retrieve::{
-    Graph, L1_TOLERANCE, LinkInput, NodeInput, STAGED_FILES, Standing, Weighing, two_stage,
+    Graph, GraphError, L1_TOLERANCE, LinkInput, NodeInput, STAGED_FILES, Standing, Weighing,
+    two_stage,
 };
 
 /// The restart probability the settings default to.
@@ -77,9 +78,9 @@ fn near(actual: f64, expected: f64) -> bool {
 /// 0.5 m `b`, `b` = 0.5 k `a` + 0.5 `B`, `a` = 0.5 + 0.5 k `b` + 0.5 `A`; so `b` = 0.4651163 `a`
 /// and `a` = 0.5 / 0.7658562 = 0.6528578, `b` = 0.3036548.
 #[test]
-fn files_first_then_the_symbols_of_the_best() {
+fn files_first_then_the_symbols_of_the_best() -> Result<(), GraphError> {
     let graph = graph_of(&[1, 2, 3], &[(11, 1), (12, 2), (13, 3)], &[(11, 12)]);
-    let staged = two_stage(&graph, &[(at(&graph, 11), 1.0)], TELEPORT, None);
+    let staged = two_stage(&graph, &[(at(&graph, 11), 1.0)], TELEPORT, None)?;
     let (a_file, b_file) = (at(&graph, 1), at(&graph, 2));
     assert!(
         staged
@@ -109,6 +110,7 @@ fn files_first_then_the_symbols_of_the_best() {
     };
     assert!(near(score(0), 0.652_857_8), "{}", score(0));
     assert!(near(score(1), 0.303_654_8), "{}", score(1));
+    Ok(())
 }
 
 /// Only the best files' symbols are spread over in the second stage: a hub file whose symbol calls
@@ -116,12 +118,12 @@ fn files_first_then_the_symbols_of_the_best() {
 /// by node; the second spreads over the hub and the 29 files after it, whose symbols get their
 /// share, and reaches no node of the last six files, which keep no symbol.
 #[test]
-fn the_second_stage_holds_to_the_best_files() {
+fn the_second_stage_holds_to_the_best_files() -> Result<(), GraphError> {
     let files: Vec<i64> = (1..=36).collect();
     let symbols: Vec<(i64, i64)> = files.iter().map(|file| (100 + file, *file)).collect();
     let refs: Vec<(i64, i64)> = (2..=36).map(|file| (101, 100 + file)).collect();
     let graph = graph_of(&files, &symbols, &refs);
-    let staged = two_stage(&graph, &[(at(&graph, 101), 1.0)], TELEPORT, None);
+    let staged = two_stage(&graph, &[(at(&graph, 101), 1.0)], TELEPORT, None)?;
     assert_eq!(staged.scored.len(), 36);
     assert_eq!(
         staged.scored.first().map(|file| file.file),
@@ -161,4 +163,38 @@ fn the_second_stage_holds_to_the_best_files() {
         staged.within.kept
     );
     assert!(staged.within.kept.len() >= 2 * STAGED_FILES);
+    Ok(())
+}
+
+/// The graph's view by files is built once and kept: a graph is not prepared until it is, by
+/// [`Graph::prepare_by_files`] or the first two-stage spreading, and a prepared graph spreads as an
+/// unprepared one does and is equal to it.
+#[test]
+fn the_view_by_files_is_built_once_and_kept() -> Result<(), GraphError> {
+    let graph = graph_of(
+        &[1, 2, 3],
+        &[(11, 1), (12, 2), (13, 3)],
+        &[(11, 12), (13, 11)],
+    );
+    let seeds = [(at(&graph, 13), 1.0)];
+    let prepared = graph.clone();
+    assert!(!prepared.is_prepared_by_files());
+    prepared.prepare_by_files()?;
+    assert!(prepared.is_prepared_by_files());
+    assert!(!graph.is_prepared_by_files());
+    let unprepared_staged = two_stage(&graph, &seeds, TELEPORT, None)?;
+    assert!(graph.is_prepared_by_files());
+    assert_eq!(
+        two_stage(&prepared, &seeds, TELEPORT, None)?,
+        unprepared_staged
+    );
+    assert_eq!(
+        prepared,
+        graph_of(
+            &[1, 2, 3],
+            &[(11, 1), (12, 2), (13, 3)],
+            &[(11, 12), (13, 11)]
+        )
+    );
+    Ok(())
 }

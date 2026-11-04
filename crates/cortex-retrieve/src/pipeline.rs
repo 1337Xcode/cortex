@@ -300,7 +300,7 @@ fn reached(
     let (activation, scored) = if request.mode == ScaleMode::Huge {
         let Staged {
             activation, scored, ..
-        } = two_stage(graph, &start, teleport, deadline);
+        } = two_stage(graph, &start, teleport, deadline)?;
         (activation, scored)
     } else {
         let activation = spread(graph, &start, teleport, deadline);

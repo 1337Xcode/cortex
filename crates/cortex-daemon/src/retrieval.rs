@@ -243,7 +243,7 @@ impl Service {
 }
 
 /// The store's scale mode; none before the first index set one.
-fn mode_of(queries: Queries<'_>) -> Result<Option<ScaleMode>, StoreError> {
+pub(crate) fn mode_of(queries: Queries<'_>) -> Result<Option<ScaleMode>, StoreError> {
     Ok(queries
         .meta(MetaKey::ScaleMode)?
         .and_then(|name| ScaleMode::from_name(&name)))

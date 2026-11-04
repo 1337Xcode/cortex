@@ -12,6 +12,7 @@
 
 #![warn(clippy::pedantic)]
 
+mod by_files;
 mod disk;
 mod error;
 mod exploration;
