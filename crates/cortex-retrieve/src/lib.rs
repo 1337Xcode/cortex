@@ -15,6 +15,7 @@
 mod disk;
 mod error;
 mod exploration;
+mod features;
 mod gate;
 mod graph;
 mod lexical;
@@ -31,6 +32,7 @@ mod support;
 pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
 pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
+pub use features::{Found, GATED_FILES, MASSED_FILES, features_of};
 pub use gate::{AGREEING_KINDS, Features, LEXICAL_BAR, Rule, Shut, Verdict, decide};
 pub use graph::{Graph, GraphError, LinkInput, NodeInput, Standing, Weighing};
 pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};
