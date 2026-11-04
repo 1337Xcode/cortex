@@ -283,3 +283,42 @@ proptest! {
         let _ = decode::<Response>(body.as_bytes());
     }
 }
+
+/// The requests that answer with text, and the answer, are written as typed here and read back as
+/// they were.
+#[test]
+fn text_requests_and_replies_read_back() -> TestResult {
+    let ask = Request {
+        request_id: 2,
+        body: RequestBody::Where {
+            query: "where is create_order".to_owned(),
+            limit: 3,
+        },
+    };
+    let frame = encode(&ask)?;
+    assert_eq!(
+        frame.get(LENGTH_PREFIX_BYTES..),
+        Some(
+            r#"{"request_id":2,"body":{"type":"where","query":"where is create_order","limit":3}}"#
+                .as_bytes()
+        )
+    );
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, ask);
+    for text in [Some("[cortex] Work order".to_owned()), None] {
+        let reply = Response {
+            request_id: 2,
+            body: ResponseBody::Reply { text },
+        };
+        let frame = encode(&reply)?;
+        assert_eq!(decode::<Response>(&frame[LENGTH_PREFIX_BYTES..])?, reply);
+    }
+    let silent = encode(&Response {
+        request_id: 3,
+        body: ResponseBody::Reply { text: None },
+    })?;
+    assert_eq!(
+        silent.get(LENGTH_PREFIX_BYTES..),
+        Some(r#"{"request_id":3,"body":{"type":"reply","text":null}}"#.as_bytes())
+    );
+    Ok(())
+}

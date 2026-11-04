@@ -114,6 +114,14 @@ impl Drop for MiningWrite<'_> {
 }
 
 impl Snapshot {
+    /// The graph as it stands, once one is built: requests take it and never wait for a rebuild.
+    pub(crate) fn graph(&self) -> Option<Arc<Graph<NodeId>>> {
+        self.held()
+            .graph
+            .as_ref()
+            .map(|built| Arc::clone(&built.graph))
+    }
+
     /// What the daemon's status says of the graph: none before the first rebuild ended.
     pub(crate) fn report(&self) -> Option<GraphReport> {
         let held = self.held();

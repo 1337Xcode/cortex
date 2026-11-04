@@ -30,6 +30,24 @@ pub enum RequestBody {
         /// The event.
         event: Box<Event>,
     },
+    /// Record a prompt's event, and answer with the work order the prompt gets, if any.
+    Retrieve {
+        /// The prompt's event.
+        event: Box<Event>,
+    },
+    /// Record a session's start, and answer with the primer the session gets, if any.
+    Primer {
+        /// The session's start.
+        event: Box<Event>,
+    },
+    /// Answer a question with what the engine finds for it without the gate, as `cortex where`
+    /// asks: the files, their code and their reasons, and what the gate would have said.
+    Where {
+        /// The question, in the words a prompt would use.
+        query: String,
+        /// The most files to name, from 1 to 5.
+        limit: u8,
+    },
     /// Report the daemon's state.
     Status,
     /// Stop gracefully. Frozen.
@@ -89,6 +107,12 @@ pub enum ResponseBody {
     Ack,
     /// The daemon's state.
     Status(StatusReport),
+    /// The text a request asked for; none when there is nothing to give, as when the gate stays
+    /// shut.
+    Reply {
+        /// The text.
+        text: Option<String>,
+    },
     /// The request could not be served.
     Error {
         /// What went wrong, without file contents or prompt text.

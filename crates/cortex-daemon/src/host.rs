@@ -20,7 +20,7 @@ use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
 };
 use cortex_learn::{Recorder, TaskState};
-use cortex_store::{PAUSE_EVERY, Pause, StoreError, Writer};
+use cortex_store::{InjectionRecord, PAUSE_EVERY, Pause, StoreError, Writer};
 
 use crate::graph::Snapshot;
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
@@ -178,6 +178,9 @@ impl<'a> Host<'a> {
                         count_failed(inbox, "hook events", &error);
                     }
                     last_activity = Instant::now();
+                }
+                Work::Injections(injections) => {
+                    record_injections(&mut self.writer, inbox, &injections);
                 }
                 Work::Changed(changed) => {
                     match changed {
@@ -397,14 +400,37 @@ pub(crate) fn record_waiting(
     recorder: &mut Recorder,
     inbox: &Inbox,
 ) -> Recorded {
-    let events = inbox.take_events();
-    if events.is_empty() {
-        return Recorded::default();
-    }
-    record_batch(writer, recorder, &events).unwrap_or_else(|error| {
-        count_failed(inbox, "hook events", &error);
+    let (events, injections) = inbox.take_waiting();
+    let recorded = if events.is_empty() {
         Recorded::default()
-    })
+    } else {
+        record_batch(writer, recorder, &events).unwrap_or_else(|error| {
+            count_failed(inbox, "hook events", &error);
+            Recorded::default()
+        })
+    };
+    // After the events: an injection's prompt, its task and its session are recorded by now.
+    record_injections(writer, inbox, &injections);
+    recorded
+}
+
+/// Records `injections` with `writer`, in one transaction; one the store refuses (its prompt's
+/// batch not recorded, so its task missing) is counted, with its error, and the rest kept.
+fn record_injections(writer: &mut Writer, inbox: &Inbox, injections: &[InjectionRecord]) {
+    if injections.is_empty() {
+        return;
+    }
+    let recorded = writer.transaction().and_then(|mut transaction| {
+        for injection in injections {
+            if let Err(error) = transaction.record_injection(injection) {
+                count_failed(inbox, "an injection", &error);
+            }
+        }
+        transaction.commit()
+    });
+    if let Err(error) = recorded {
+        count_failed(inbox, "injections", &error);
+    }
 }
 
 /// Records the edits the watcher saw that are due by `now_ms`, all or none, after recording the

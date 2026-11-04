@@ -204,13 +204,17 @@ fn indexing() -> StatusReport {
     }
 }
 
-/// The kind of each request, for comparing: `hello`, `event`, `status` or `shutdown`.
+/// The kind of each request, for comparing: `hello`, `event`, `retrieve`, `primer`, `where`,
+/// `status` or `shutdown`.
 pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
     requests
         .iter()
         .map(|request| match request.body {
             RequestBody::Hello(_) => "hello",
             RequestBody::Event { .. } => "event",
+            RequestBody::Retrieve { .. } => "retrieve",
+            RequestBody::Primer { .. } => "primer",
+            RequestBody::Where { .. } => "where",
             RequestBody::Status => "status",
             RequestBody::Shutdown => "shutdown",
         })

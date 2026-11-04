@@ -76,14 +76,16 @@ pub enum Outcome {
     Silent(Silence),
 }
 
-/// One retrieval: what it came to, the gate's features when it got that far, and the files the
-/// work order lists.
+/// One retrieval: what it came to, the gate's features and the files it weighed when it got that
+/// far, and the files the work order lists.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Retrieval {
     /// What it came to.
     pub outcome: Outcome,
     /// The gate's features, when the retrieval reached the gate.
     pub features: Option<GateFeatures>,
+    /// The files the gate weighed, the three best, by node; none when it did not get that far.
+    pub weighed: Vec<NodeId>,
     /// The files the work order lists, the best first, each with the spans whose lines it writes;
     /// none when it is silent.
     pub listed: Vec<Listed>,
@@ -94,8 +96,12 @@ pub struct Retrieval {
 pub struct Location {
     /// The gate's features and what the gate would have said; none when nothing was found.
     pub judged: Option<(GateFeatures, Verdict)>,
-    /// The files found, the best first, each with its spans and its reason.
+    /// The files found, the best first, each with the spans its answer writes and its reason.
     pub listed: Vec<Listed>,
+    /// The answer as text: the files, their reasons and code as they are on disk, under a header
+    /// saying what found them and what the gate would have said; none when nothing was found or
+    /// nothing could be shown.
+    pub rendered: Option<Rendered>,
 }
 
 /// The retrieval `request` asks for, over the store `queries` reads and its `graph`.
@@ -108,23 +114,27 @@ pub fn retrieve(
     graph: &Graph<NodeId>,
     request: &Request<'_>,
 ) -> Result<Retrieval, RetrieveError> {
-    let silent = |silence, features| Retrieval {
+    let silent = |silence, features: Option<GateFeatures>, weighed: &[NodeId]| Retrieval {
         outcome: Outcome::Silent(silence),
         features,
+        weighed: weighed.to_vec(),
         listed: Vec::new(),
     };
     // INVARIANT: silent-when-unsure (tiny mode retrieves nothing, and a retrieval with no seed
     // spreads nothing: each says so instead of guessing)
     if request.mode == ScaleMode::Tiny {
-        return Ok(silent(Silence::Tiny, None));
+        return Ok(silent(Silence::Tiny, None, &[]));
     }
     let Some(reached) = reached(queries, graph, request)? else {
-        return Ok(silent(Silence::NothingFound, None));
+        return Ok(silent(Silence::NothingFound, None, &[]));
     };
     let (support, features, verdict) = reached.judged(graph, request);
+    let weighed = reached.weighed(graph);
     let rule = match verdict {
         Verdict::Inject(rule) => rule,
-        Verdict::Silent(shut) => return Ok(silent(Silence::Gate(shut), Some(features))),
+        Verdict::Silent(shut) => {
+            return Ok(silent(Silence::Gate(shut), Some(features), &weighed));
+        }
     };
     let listing = Listing {
         queries,
@@ -139,24 +149,25 @@ pub fn retrieve(
         (max_files, request.settings.span_max_lines),
     )?;
     if listed.is_empty() {
-        return Ok(silent(Silence::NothingToShow, Some(features)));
+        return Ok(silent(Silence::NothingToShow, Some(features), &weighed));
     }
     let order = WorkOrder {
         basis: basis_of(rule, &reached.scored, &support),
         items: listed.iter().map(|entry| entry.item.clone()).collect(),
     };
     let Some(rendered) = render(&order, request.root, &limits_of(request)) else {
-        return Ok(silent(Silence::NothingToShow, Some(features)));
+        return Ok(silent(Silence::NothingToShow, Some(features), &weighed));
     };
     let listed = written_of(&listed, &rendered.written);
     // INVARIANT: silent-when-unsure (the gate weighed the three best files: a work order showing
     // none of them shows what the gate never weighed)
     if !shows_gated(&reached.scored, &listed) {
-        return Ok(silent(Silence::NothingToShow, Some(features)));
+        return Ok(silent(Silence::NothingToShow, Some(features), &weighed));
     }
     Ok(Retrieval {
         outcome: Outcome::WorkOrder(rule, rendered),
         features: Some(features),
+        weighed,
         listed,
     })
 }
@@ -179,6 +190,7 @@ pub fn locate(
         return Ok(Location {
             judged: None,
             listed: Vec::new(),
+            rendered: None,
         });
     };
     let (support, features, verdict) = reached.judged(graph, request);
@@ -193,9 +205,26 @@ pub fn locate(
         &reached.scored,
         (limit, request.settings.span_max_lines),
     )?;
+    let answer = WorkOrder {
+        basis: Basis::Located {
+            kinds: most_kinds(&reached.scored, &support),
+            verdict,
+        },
+        items: listed.iter().map(|entry| entry.item.clone()).collect(),
+    };
+    let limits = Limits {
+        max_files: limit,
+        ..limits_of(request)
+    };
+    let rendered = render(&answer, request.root, &limits);
+    let listed = rendered
+        .as_ref()
+        .map(|rendered| written_of(&listed, &rendered.written))
+        .unwrap_or_default();
     Ok(Location {
         judged: Some((features, verdict)),
         listed,
+        rendered,
     })
 }
 
@@ -210,6 +239,15 @@ struct Reached {
 }
 
 impl Reached {
+    /// The files the gate weighs, the three best, by node.
+    fn weighed(&self, graph: &Graph<NodeId>) -> Vec<NodeId> {
+        self.scored
+            .iter()
+            .take(GATED_FILES)
+            .filter_map(|file| graph.id(file.file))
+            .collect()
+    }
+
     /// The evidence behind the files reached over `graph`, the gate's features, and what the gate
     /// says, its bar raised as `request` asks.
     fn judged<'a>(
@@ -307,21 +345,28 @@ fn shows_gated(scored: &[ScoredFile], listed: &[Listed]) -> bool {
 }
 
 /// What the header says agreed: for agreement, the kinds of evidence behind the one of the top
-/// three files that has the most, the better ranked of two alike.
+/// three files that has the most.
 fn basis_of<Id: Ord + Copy>(rule: Rule, scored: &[ScoredFile], support: &Support<'_, Id>) -> Basis {
     match rule {
         Rule::Continuity => Basis::Continuity,
-        Rule::Agreement => {
-            let mut most: Vec<Evidence> = Vec::new();
-            for file in scored.iter().take(GATED_FILES) {
-                let kinds: Vec<Evidence> = support.of(file.file).into_iter().collect();
-                if kinds.len() > most.len() {
-                    most = kinds;
-                }
-            }
-            Basis::Agreement(most.into_iter().map(evidence_name).collect())
+        Rule::Agreement => Basis::Agreement(most_kinds(scored, support)),
+    }
+}
+
+/// The names of the kinds of evidence behind the one of the three best files that has the most,
+/// the better ranked of two alike.
+fn most_kinds<Id: Ord + Copy>(
+    scored: &[ScoredFile],
+    support: &Support<'_, Id>,
+) -> Vec<&'static str> {
+    let mut most: Vec<Evidence> = Vec::new();
+    for file in scored.iter().take(GATED_FILES) {
+        let kinds: Vec<Evidence> = support.of(file.file).into_iter().collect();
+        if kinds.len() > most.len() {
+            most = kinds;
         }
     }
+    most.into_iter().map(evidence_name).collect()
 }
 
 /// How the header names a kind of evidence.

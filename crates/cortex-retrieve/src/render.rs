@@ -23,19 +23,28 @@ use cortex_core::{
 };
 
 use crate::disk::CheckedFile;
+use crate::gate::{Rule, Shut, Verdict};
 use crate::reasons::Reason;
 use crate::spans::MAX_SPANS_PER_FILE;
 
 /// Most characters a work order may hold, whatever its token cap.
 pub const MAX_WORK_ORDER_CHARS: usize = 8_000;
 
-/// What the work order's header says agreed.
+/// What the header says: for a work order, what agreed; for the engine asked directly, what found
+/// the files and what the gate would have said.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Basis {
     /// Independent kinds of evidence agreed: their names as the header says them.
     Agreement(Vec<&'static str>),
     /// The session is continuing its own work.
     Continuity,
+    /// The engine was asked directly, without the gate.
+    Located {
+        /// The kinds of evidence behind the best-supported top file, as the header names them.
+        kinds: Vec<&'static str>,
+        /// What the gate would have said.
+        verdict: Verdict,
+    },
 }
 
 /// A stretch of an item's file.
@@ -212,7 +221,7 @@ impl Plan {
     /// The text this plan writes of `order`, its code from `files`.
     fn write(&self, order: &WorkOrder, files: &[Option<CheckedFile>]) -> String {
         let mut text = String::new();
-        let _ = writeln!(text, "[cortex] Work order · {}", basis_text(&order.basis));
+        let _ = writeln!(text, "{}", heading(&order.basis));
         let is_shown = |at: usize| self.shown.iter().any(|(item, _)| *item == at);
         let start: Vec<&(usize, Vec<usize>)> =
             self.kept.iter().filter(|(at, _)| is_shown(*at)).collect();
@@ -250,15 +259,40 @@ impl Plan {
     }
 }
 
-/// The header's account of `basis`.
-fn basis_text(basis: &Basis) -> String {
+/// The header line for `basis`.
+fn heading(basis: &Basis) -> String {
     match basis {
-        Basis::Continuity => "continuing this session's work".to_owned(),
-        Basis::Agreement(kinds) => match kinds.as_slice() {
-            [] => "the evidence agrees".to_owned(),
-            [only] => format!("{only} points here"),
-            [first @ .., last] => format!("{} and {last} agree", first.join(", ")),
-        },
+        Basis::Continuity => "[cortex] Work order · continuing this session's work".to_owned(),
+        Basis::Agreement(kinds) => format!("[cortex] Work order · {}", agreed(kinds)),
+        Basis::Located { kinds, verdict } => {
+            let found = match kinds.as_slice() {
+                [] => "no kind of evidence points here".to_owned(),
+                [only] => format!("{only} alone"),
+                more => agreed(more),
+            };
+            let gate = match verdict {
+                Verdict::Inject(Rule::Agreement) => "the gate would give it",
+                Verdict::Inject(Rule::Continuity) => {
+                    "the gate would give it, the session continuing its own work"
+                }
+                Verdict::Silent(Shut::TooFewKinds) => {
+                    "the gate would stay silent: too few kinds of evidence agree"
+                }
+                Verdict::Silent(Shut::WeakMatch) => {
+                    "the gate would stay silent: the words match no file strongly"
+                }
+            };
+            format!("[cortex] Where · {found} · {gate}")
+        }
+    }
+}
+
+/// `kinds` said as agreeing: "a and b agree", "a, b and c agree".
+fn agreed(kinds: &[&str]) -> String {
+    match kinds {
+        [] => "the evidence agrees".to_owned(),
+        [only] => format!("{only} points here"),
+        [first @ .., last] => format!("{} and {last} agree", first.join(", ")),
     }
 }
 

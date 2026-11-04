@@ -532,6 +532,7 @@ fn a_question_that_points_at_nothing_finds_nothing() -> TestResult {
         Location {
             judged: None,
             listed: Vec::new(),
+            rendered: None,
         }
     );
     Ok(())
@@ -801,5 +802,62 @@ fn a_huge_repository_spreads_over_files_then_symbols() -> TestResult {
         medium.top_mass,
         huge.top_mass
     );
+    Ok(())
+}
+
+/// The engine without the gate writes its answer under a header of its own, saying what found the
+/// files and what the gate would have said. Typed out by hand: "rate" finds the tax file by the
+/// prompt's words alone, so the gate would stay silent for too few kinds of evidence; the file is
+/// listed with its code.
+#[test]
+fn the_engine_without_the_gate_writes_its_own_answer() -> TestResult {
+    let repo = repository()?;
+    let location = located(&repo, "change rate", (ScaleMode::Medium, None), 5)?;
+    let rendered = location.rendered.ok_or("an answer")?;
+    let expected = "\
+[cortex] Where · the prompt's words alone · the gate would stay silent: too few kinds of evidence agree
+Start here:
+  1. src/billing/tax.py:1-2  rate  (matches rate)
+Current code:
+  src/billing/tax.py:1-2
+  1 | def rate():
+  2 |     return 0.2
+";
+    assert_eq!(rendered.text, expected);
+    let question = "fix create_order in the orders service";
+    let agreed = located(&repo, question, (ScaleMode::Medium, None), 1)?;
+    let header = agreed
+        .rendered
+        .as_ref()
+        .and_then(|rendered| rendered.text.lines().next())
+        .ok_or("a header")?;
+    assert_eq!(
+        header,
+        "[cortex] Where · the prompt's words and the commit history agree · the gate would give it"
+    );
+    Ok(())
+}
+
+/// A retrieval the gate keeps back keeps the files it weighed: for "change rate", the tax file
+/// alone, the one file reached; one that finds nothing weighed nothing.
+#[test]
+fn a_retrieval_keeps_the_files_the_gate_weighed() -> TestResult {
+    let repo = repository()?;
+    let retrieval = asked(&repo, "change rate", ScaleMode::Medium)?;
+    assert_eq!(
+        retrieval.outcome,
+        Outcome::Silent(Silence::Gate(Shut::TooFewKinds))
+    );
+    let tax = repo
+        .reader()?
+        .queries()
+        .cochange_files()?
+        .into_iter()
+        .find(|file| file.path.as_str() == "src/billing/tax.py")
+        .map(|file| file.node)
+        .ok_or("the tax file is stored")?;
+    assert_eq!(retrieval.weighed, [tax]);
+    let vague = asked(&repo, "make it better", ScaleMode::Medium)?;
+    assert!(vague.weighed.is_empty());
     Ok(())
 }

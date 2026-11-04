@@ -31,13 +31,14 @@ mod meter;
 mod miner;
 mod pending;
 mod recent_errors;
+mod retrieval;
 mod server;
 pub mod settings;
 
 pub use instance::is_running;
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -55,6 +56,7 @@ use self::instance::Instance;
 use self::meter::Meter;
 use self::miner::Miner;
 use self::pending::Pending;
+use self::retrieval::{Service, Settings};
 use self::server::Server;
 
 /// Threads that serve connections. Requests are short; two keep one slow client from delaying
@@ -117,20 +119,35 @@ fn listen_and_serve(
         .enable_all()
         .build()
         .context("starting the server's runtime")?;
-    let inbox = Arc::new(Inbox::default());
-    let snapshot = Arc::new(Snapshot::default());
+    let shared = Shared::default();
     let listener = {
         let _inside = runtime.enter();
         listener::bind(&user.run_files(repo_id)).context("listening for hooks")?
     };
-    let server = Server::new(Arc::clone(&inbox), Arc::clone(&snapshot));
+    let server = Server::new(
+        Arc::clone(&shared.inbox),
+        Arc::clone(&shared.snapshot),
+        Arc::clone(&shared.service),
+    );
     runtime.spawn(Arc::new(server).serve(listener));
-    let served = index_and_serve(root, (repo_id, (&inbox, &snapshot), home), note);
+    let served = index_and_serve(root, (repo_id, &shared, home), note);
     // However the work ended, before the writer opened included, the server takes no more events
     // in the moment it has left: nothing would record them.
-    inbox.close();
+    shared.inbox.close();
     runtime.shutdown_timeout(STOP_GRACE);
     served
+}
+
+/// What the server and the writer share: the writer's inbox, the graph, and what answers with text
+/// once the first index is done.
+#[derive(Debug, Default)]
+struct Shared {
+    /// The writer's inbox.
+    inbox: Arc<Inbox>,
+    /// The graph retrieval spreads over.
+    snapshot: Arc<Snapshot>,
+    /// What answers with text.
+    service: Arc<OnceLock<Service>>,
 }
 
 /// Takes the store's writer, indexes, watches and serves the inbox until asked to stop or idle,
@@ -138,9 +155,10 @@ fn listen_and_serve(
 /// `snapshot`'s graph rebuilt from the first index on.
 fn index_and_serve(
     root: &Path,
-    (repo_id, (inbox, snapshot), home): (&RepoId, (&Arc<Inbox>, &Arc<Snapshot>), PathBuf),
+    (repo_id, shared, home): (&RepoId, &Shared, PathBuf),
     note: &mut dyn FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    let (inbox, snapshot, service) = (&shared.inbox, &shared.snapshot, &shared.service);
     let loaded = settings::load(root)?;
     for warning in &loaded.warnings {
         tracing::warn!(warning = %warning, "the configuration");
@@ -217,6 +235,15 @@ fn index_and_serve(
         snapshot,
         store_reads((&folder, config.mmap_bytes), GraphSettings::from(&config)),
     );
+    // Installed once: the daemon serves one repository with one configuration.
+    drop(service.set(Service::new(Settings {
+        root: root.to_path_buf(),
+        folder: folder.clone(),
+        mmap_bytes: config.mmap_bytes,
+        retrieval: config.retrieval,
+        max_file_bytes: config.max_file_bytes,
+        holdout_share: config.holdout_share,
+    })));
     or_close(note(&ready_line(&report, host.waiting())), || host.close())?;
     // The history is mined once the files that count are stored; told to stop when dropped. A
     // miner that cannot start leaves the daemon without co-change, as its status says.

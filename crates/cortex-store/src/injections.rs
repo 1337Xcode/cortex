@@ -68,7 +68,8 @@ pub struct InjectionRecord {
     pub is_gated_out: bool,
     /// Whether the task was held out, so that nothing was given.
     pub is_holdout: bool,
-    /// The hash of the text given, or that would have been.
+    /// The hash of the text given, or that would have been for a held-out task; none when no
+    /// text was given: the gate kept it back, or its answer could not be written.
     pub text_hash: Option<ContentHash>,
     /// The gate's numbers; none for a primer.
     pub features: Option<GateFeatures>,

@@ -9,14 +9,16 @@
 
 use std::io;
 use std::sync::atomic::{self, AtomicU64};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use cortex_core::HookKind;
 use cortex_core::ipc::{
     CORTEX_VERSION, FrameError, LENGTH_PREFIX_BYTES, Mismatch, Protocol, Request, RequestBody,
     Response, ResponseBody, StatusReport, Welcome, body_len, decode, encode,
 };
+use cortex_core::{Event, HookKind};
+use cortex_retrieve::Graph;
+use cortex_store::{InjectionRecord, NodeId};
 use interprocess::local_socket::tokio::{Listener, Stream};
 use interprocess::local_socket::traits::tokio::Listener as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -26,6 +28,7 @@ use crate::graph::Snapshot;
 use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
+use crate::retrieval::Service;
 
 /// Most connections served at once. Hooks and commands hold a connection for one exchange, so more
 /// at once means something is flooding the daemon; a connection past this is closed at once.
@@ -42,12 +45,36 @@ pub(crate) struct Server {
     started: Instant,
     /// The writer's inbox, which a Shutdown stops and which keeps the daemon's recent errors.
     inbox: Arc<Inbox>,
-    /// The graph retrieval spreads over, as the status reports it.
+    /// The graph retrieval spreads over.
     snapshot: Arc<Snapshot>,
+    /// What answers with text, once the first index is done.
+    service: Arc<OnceLock<Service>>,
     /// How long each hook's latest requests took to handle.
     latencies: Mutex<Latencies>,
     /// Probes, `cortex doctor`'s, answered since the daemon started.
     probes_answered: AtomicU64,
+}
+
+/// `injection` as recorded when its answer could not be written: what would have been given, but
+/// no text that reached the agent, so no hash and no tokens.
+fn not_delivered(injection: InjectionRecord) -> InjectionRecord {
+    InjectionRecord {
+        tokens: 0,
+        text_hash: None,
+        ..injection
+    }
+}
+
+/// The most files a question asked directly names.
+const MAX_WHERE_FILES: u8 = 5;
+
+/// Which text a hook's request asks for.
+#[derive(Debug, Clone, Copy)]
+enum Asked {
+    /// The work order a prompt gets.
+    WorkOrder,
+    /// The primer a session's start gets.
+    Primer,
 }
 
 /// A request as read, with when the first byte of its frame arrived.
@@ -101,11 +128,16 @@ impl Broken {
 
 impl Server {
     /// A server for a daemon started now, whose writer reads `inbox`.
-    pub(crate) fn new(inbox: Arc<Inbox>, snapshot: Arc<Snapshot>) -> Self {
+    pub(crate) fn new(
+        inbox: Arc<Inbox>,
+        snapshot: Arc<Snapshot>,
+        service: Arc<OnceLock<Service>>,
+    ) -> Self {
         Self {
             started: Instant::now(),
             inbox,
             snapshot,
+            service,
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
         }
@@ -214,6 +246,7 @@ impl Server {
     ) -> Result<bool, Broken> {
         let Received { request, began } = received;
         let is_shutdown = request.body == RequestBody::Shutdown;
+        let mut injection = None;
         let (body, hook) = match request.body {
             RequestBody::Status => (ResponseBody::Status(self.report()), None),
             RequestBody::Shutdown => (ResponseBody::Ack, None),
@@ -227,6 +260,17 @@ impl Server {
                     .map_err(Broken::Unwritable)?;
                 return Ok(false);
             }
+            RequestBody::Retrieve { event } => {
+                let (body, hook, given) = self.answer_with_text(*event, Asked::WorkOrder).await;
+                injection = given;
+                (body, hook)
+            }
+            RequestBody::Primer { event } => {
+                let (body, hook, given) = self.answer_with_text(*event, Asked::Primer).await;
+                injection = given;
+                (body, hook)
+            }
+            RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
             RequestBody::Event { event } => {
                 let hook = event.hook;
                 // The moment before a tool runs is answered, not recorded: the tool's result is,
@@ -254,6 +298,16 @@ impl Server {
             self.latencies().note(hook, took);
         }
         let answered = write_response(writer, request.request_id, body).await;
+        // Recorded once its answer is written, after its event: an answer that could not be
+        // written gave the agent nothing, and is recorded as not delivered.
+        if let Some(injection) = injection {
+            let injection = if answered.is_ok() {
+                injection
+            } else {
+                not_delivered(injection)
+            };
+            self.inbox.push_injection(injection, now_ms());
+        }
         if is_shutdown {
             // A stop holds whether or not the client stays for its acknowledgement.
             self.inbox.stop();
@@ -270,6 +324,84 @@ impl Server {
             );
         }
         Ok(!is_shutdown)
+    }
+
+    /// Records `event` as an event request does, then works out the text `asked` names on the
+    /// blocking pool, returning the answer and what is to be recorded of it once the answer is
+    /// written. A probe is answered and counted, and nothing of it recorded; an event of another
+    /// hook than `asked` takes is refused, and nothing of it recorded either.
+    async fn answer_with_text(
+        &self,
+        event: Event,
+        asked: Asked,
+    ) -> (ResponseBody, Option<HookKind>, Option<InjectionRecord>) {
+        let (hook, is_probe) = (event.hook, event.is_probe);
+        let expected = match asked {
+            Asked::WorkOrder => HookKind::Prompt,
+            Asked::Primer => HookKind::SessionStart,
+        };
+        if hook != expected {
+            return (
+                error("the request's event is of another hook than it asks for"),
+                Some(hook),
+                None,
+            );
+        }
+        if is_probe {
+            self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
+        } else if !self.inbox.push_event(event.clone()) {
+            return (
+                error("the daemon is stopping and records no more events"),
+                Some(hook),
+                None,
+            );
+        }
+        let answer = self
+            .with_service(move |service, graph| match asked {
+                Asked::WorkOrder => service.prompt(&event, graph),
+                Asked::Primer => service.primer(&event, graph),
+            })
+            .await
+            .unwrap_or_default();
+        let injection = answer.injection.filter(|_| !is_probe);
+        (
+            ResponseBody::Reply { text: answer.text },
+            Some(hook),
+            injection,
+        )
+    }
+
+    /// What the engine finds for `query` without the gate, at most `limit` files (1 to 5).
+    async fn locate(&self, query: String, limit: u8) -> ResponseBody {
+        let limit = usize::from(limit.clamp(1, MAX_WHERE_FILES));
+        let text = self
+            .with_service(move |service, graph| service.locate(&query, limit, graph))
+            .await
+            .flatten();
+        ResponseBody::Reply { text }
+    }
+
+    /// Runs `work` with the service and the graph as it stands on the blocking pool, so that no
+    /// connection's worker waits on the store; none before the service is installed, or when the
+    /// work panicked, which is kept among the recent errors.
+    async fn with_service<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&Service, Option<&Arc<Graph<NodeId>>>) -> T + Send + 'static,
+    ) -> Option<T> {
+        let graph = self.snapshot.graph();
+        let service = Arc::clone(&self.service);
+        let done = tokio::task::spawn_blocking(move || {
+            service.get().map(|service| work(service, graph.as_ref()))
+        })
+        .await;
+        match done {
+            Ok(answered) => answered,
+            Err(failure) => {
+                tracing::warn!(error = %failure, "an answer's work failed");
+                self.inbox.note_error("an answer's work failed", now_ms());
+                None
+            }
+        }
     }
 
     /// Keeps what broke a connection among the recent errors, and logs it.
@@ -445,7 +577,7 @@ mod tests {
     #[test]
     fn a_stop_holds_when_its_answer_cannot_be_written() -> TestResult {
         let inbox = Arc::new(Inbox::default());
-        let server = Server::new(Arc::clone(&inbox), Arc::default());
+        let server = Server::new(Arc::clone(&inbox), Arc::default(), Arc::default());
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let answered = runtime.block_on(async {
             let (client, mut daemon) = tokio::io::duplex(64);
@@ -464,6 +596,36 @@ mod tests {
             "{answered:?}"
         );
         assert!(matches!(inbox.wait(Some(Instant::now())), Work::Stop));
+        Ok(())
+    }
+
+    /// An answer that could not be written is recorded as given to no one: what the retrieval
+    /// gave stays, its files and its features, but there is no text's hash and no token.
+    #[test]
+    fn an_answer_not_written_is_not_delivered() -> TestResult {
+        let given = InjectionRecord {
+            task_id: None,
+            session_id: cortex_core::Identifier::new("s1")?,
+            hook: HookKind::Prompt,
+            at_ms: 5,
+            files: Vec::new(),
+            tokens: 120,
+            confidence: None,
+            is_gated_out: false,
+            is_holdout: false,
+            text_hash: Some(cortex_core::ContentHash::of(b"a work order")),
+            features: None,
+        };
+        let lost = not_delivered(given.clone());
+        assert_eq!((lost.tokens, lost.text_hash), (0, None));
+        assert_eq!(
+            InjectionRecord {
+                tokens: given.tokens,
+                text_hash: given.text_hash,
+                ..lost
+            },
+            given
+        );
         Ok(())
     }
 
@@ -500,7 +662,7 @@ mod tests {
     fn a_closed_inbox_takes_no_events() -> TestResult {
         let inbox = Arc::new(Inbox::default());
         inbox.close();
-        let server = Server::new(Arc::clone(&inbox), Arc::default());
+        let server = Server::new(Arc::clone(&inbox), Arc::default(), Arc::default());
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let event = Received {
             request: Request {
