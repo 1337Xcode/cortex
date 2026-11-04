@@ -34,11 +34,23 @@ pub enum RequestBody {
     Retrieve {
         /// The prompt's event.
         event: Box<Event>,
+        /// When the hook stops reading the answer, in UTC milliseconds by the wall clock, the one
+        /// clock two processes share (a step of it in between misjudges the time): a work order
+        /// that cannot reach the hook by then gives the agent nothing, so it is sent without its
+        /// text and recorded as not delivered. None from a client that waits as long as it takes
+        /// (protocol 2.1 added it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_by_ms: Option<i64>,
     },
     /// Record a session's start, and answer with the primer the session gets, if any.
     Primer {
         /// The session's start.
         event: Box<Event>,
+        /// When the hook stops reading the answer, in UTC milliseconds by the wall clock, as for
+        /// `Retrieve`: a primer that cannot reach the hook by then is sent without its text and
+        /// recorded as not delivered. None from a client that waits as long as it takes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_by_ms: Option<i64>,
     },
     /// Answer a question with what the engine finds for it without the gate, as `cortex where`
     /// asks: the files, their code and their reasons, and what the gate would have said.

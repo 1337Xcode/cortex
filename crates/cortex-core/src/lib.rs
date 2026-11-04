@@ -30,6 +30,7 @@ mod one_line;
 mod path;
 mod private;
 mod program;
+mod reminder_tag;
 mod repo_id;
 mod root;
 mod scale_mode;
@@ -70,6 +71,7 @@ pub use private::{
     append_private_file, create_new_private_file, create_private_folder, open_private_file,
 };
 pub use program::{GIT, find_program};
+pub use reminder_tag::{REMINDER_TAGS, holds_reminder_tag};
 pub use repo_id::RepoId;
 pub use root::canonical_root;
 pub use scale_mode::ScaleMode;

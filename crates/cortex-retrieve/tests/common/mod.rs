@@ -78,12 +78,24 @@ impl Repo {
         defs: &[Def<'_>],
         flags: FileFlags,
     ) -> TestResult<Vec<NodeId>> {
-        let path = RepoPath::new(path)?;
-        let native = path.to_native(self.root.path());
+        let native = RepoPath::new(path)?.to_native(self.root.path());
         if let Some(folder) = native.parent() {
             std::fs::create_dir_all(folder)?;
         }
         std::fs::write(&native, text)?;
+        self.stored(path, text, defs, flags)
+    }
+
+    /// Stores the file at `path` as [`Repo::file`] does, holding `text`, without writing it to
+    /// disk: for a name not every file system takes, such as one holding `<`.
+    pub fn stored(
+        &mut self,
+        path: &str,
+        text: &str,
+        defs: &[Def<'_>],
+        flags: FileFlags,
+    ) -> TestResult<Vec<NodeId>> {
+        let path = RepoPath::new(path)?;
         let symbols = defs
             .iter()
             .map(|def| {

@@ -8,7 +8,9 @@
 
 use std::fmt::Write as _;
 
-use cortex_core::{FileFlags, InterestTier, NodeKind, ScaleMode, estimate_tokens};
+use cortex_core::{
+    FileFlags, InterestTier, NodeKind, ScaleMode, estimate_tokens, holds_reminder_tag,
+};
 use cortex_store::{MetaKey, NodeId, Queries, StoreError};
 
 use crate::graph::Graph;
@@ -56,7 +58,7 @@ pub fn primer(queries: Queries<'_>, graph: &Graph<NodeId>) -> Result<Option<Stri
 }
 
 /// The paths of the landmark files, at most [`MAX_PRIMER_LANDMARKS`] of the most interesting, by
-/// path.
+/// path; a path holding an agent's reminder tag is not named, as the agent would get it altered.
 fn landmarks(queries: Queries<'_>, graph: &Graph<NodeId>) -> Result<Vec<String>, StoreError> {
     let mut chosen: Vec<(u32, f64)> = (0..graph.len())
         .filter_map(|at| u32::try_from(at).ok())
@@ -76,6 +78,8 @@ fn landmarks(queries: Queries<'_>, graph: &Graph<NodeId>) -> Result<Vec<String>,
         .files_of_nodes(&ids)?
         .into_iter()
         .map(|(_, row)| row.file.path.as_str().to_owned())
+        // INVARIANT: true-at-render. A path the agent would get altered is not named.
+        .filter(|path| !holds_reminder_tag(path))
         .collect();
     paths.sort();
     Ok(paths)

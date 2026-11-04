@@ -8,7 +8,10 @@
 //! index read lends no lines, and its item is listed by path alone. Control characters (but tabs)
 //! and the characters that reorder or hide text are taken out of the code shown; an item whose
 //! path, symbol or reason holds one is not listed at all, since it could only be shown as a name
-//! that is not the file's.
+//! that is not the file's. An agent's reminder tag (`cortex_core::REMINDER_TAGS`) is never
+//! written, since the agent would get it altered or take it for its own words: a span whose lines
+//! hold one, as they would be shown, is neither shown nor named, and an item whose path, symbol or
+//! reason holds one is not listed. Every other part of the text is the work order's own words.
 //!
 //! The text is held to its caps where it is built: at most the files, spans a file and lines a span
 //! the caller gives, the token cap the caller gives, never above the hard cap of 1,200 tokens,
@@ -19,7 +22,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use cortex_core::{
-    ContentHash, Identifier, LineRange, MAX_WORK_ORDER_TOKENS, RepoPath, estimate_tokens, is_hidden,
+    ContentHash, Identifier, LineRange, MAX_WORK_ORDER_TOKENS, RepoPath, estimate_tokens,
+    holds_reminder_tag, is_hidden,
 };
 
 use crate::disk::CheckedFile;
@@ -175,6 +179,7 @@ impl Plan {
                                 span.lines.end_line() <= file.line_count()
                                     && span.lines.end_line() - span.lines.start_line()
                                         < limits.span_max_lines
+                                    && !is_reminder(file, span.lines)
                             })
                         })
                         .take(MAX_SPANS_PER_FILE)
@@ -298,9 +303,11 @@ fn agreed(kinds: &[&str]) -> String {
 
 /// Whether `item` can be listed as it is: its path, its spans' symbols and its reason hold no
 /// character the work order would have to take out, so what it names is the file and the symbol
-/// themselves.
+/// themselves, and none of an agent's reminder tags.
 fn is_shown_as_it_is(item: &Item) -> bool {
-    let is_plain = |text: &str| text.chars().all(|character| !is_taken_out(character));
+    let is_plain = |text: &str| {
+        text.chars().all(|character| !is_taken_out(character)) && !holds_reminder_tag(text)
+    };
     is_plain(item.path.as_str())
         && is_plain(&item.reason.text())
         && item
@@ -364,6 +371,17 @@ fn write_code(text: &mut String, (item, span): (&Item, &ItemSpan), file: &Checke
     for (number, line) in lines {
         let _ = writeln!(text, "  {number:>width$} | {}", clean(line));
     }
+}
+
+/// Whether the lines `range` of `file`, as the work order would show them, hold one of an agent's
+/// reminder tags: looked for once the characters taken out are gone, which may join a tag.
+fn is_reminder(file: &CheckedFile, range: LineRange) -> bool {
+    // INVARIANT: true-at-render. A line the agent would get altered is not shown.
+    file.lines(range).is_some_and(|lines| {
+        lines
+            .iter()
+            .any(|(_, line)| holds_reminder_tag(&clean(line)))
+    })
 }
 
 /// `text` without the characters [`is_taken_out`] names: what the agent reads is what the file

@@ -69,11 +69,9 @@ fn frozen_messages_keep_their_shape() -> TestResult {
     Ok(())
 }
 
-/// An event request written as a frame reads back as the same request, and two frames written
-/// one after the other read back in order.
-#[test]
-fn frames_read_back_in_order() -> TestResult {
-    let event = Event {
+/// An event of `hook` from session `session-1` in `/repo`, at 1,700,000,000,000 ms.
+fn event_of(hook: HookKind) -> Result<Event, Box<dyn std::error::Error>> {
+    Ok(Event {
         event_id: Ulid::from_seed(1_700_000_000_000, b"seed"),
         ts_ms: 1_700_000_000_000,
         agent: Agent::Claude,
@@ -82,7 +80,7 @@ fn frames_read_back_in_order() -> TestResult {
         parent_session_id: None,
         cwd: PathBuf::from("/repo"),
         repo_root: PathBuf::from("/repo"),
-        hook: HookKind::Stop,
+        hook,
         source: None,
         tool: None,
         tool_target: None,
@@ -94,11 +92,17 @@ fn frames_read_back_in_order() -> TestResult {
         compact_trigger: None,
         end_reason: None,
         is_probe: false,
-    };
+    })
+}
+
+/// An event request written as a frame reads back as the same request, and two frames written
+/// one after the other read back in order.
+#[test]
+fn frames_read_back_in_order() -> TestResult {
     let first = Request {
         request_id: 1,
         body: RequestBody::Event {
-            event: Box::new(event),
+            event: Box::new(event_of(HookKind::Stop)?),
         },
     };
     let second = Request {
@@ -320,5 +324,38 @@ fn text_requests_and_replies_read_back() -> TestResult {
         silent.get(LENGTH_PREFIX_BYTES..),
         Some(r#"{"request_id":3,"body":{"type":"reply","text":null}}"#.as_bytes())
     );
+    Ok(())
+}
+
+/// A request for text that says until when its hook reads the answer carries the time as written
+/// and reads back with it; one that does not, as a client of protocol 2.0 writes it, has no such
+/// field written and reads back with none.
+#[test]
+fn a_request_for_text_says_until_when_it_is_read() -> TestResult {
+    let timed = Request {
+        request_id: 2,
+        body: RequestBody::Retrieve {
+            event: Box::new(event_of(HookKind::Prompt)?),
+            answer_by_ms: Some(1_700_000_000_975),
+        },
+    };
+    let frame = encode(&timed)?;
+    let json = std::str::from_utf8(frame.get(LENGTH_PREFIX_BYTES..).ok_or("a body")?)?;
+    assert!(
+        json.ends_with(r#","answer_by_ms":1700000000975}}"#),
+        "{json}"
+    );
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, timed);
+    let untimed = Request {
+        request_id: 3,
+        body: RequestBody::Primer {
+            event: Box::new(event_of(HookKind::SessionStart)?),
+            answer_by_ms: None,
+        },
+    };
+    let frame = encode(&untimed)?;
+    let json = std::str::from_utf8(frame.get(LENGTH_PREFIX_BYTES..).ok_or("a body")?)?;
+    assert!(!json.contains("answer_by_ms"), "{json}");
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, untimed);
     Ok(())
 }

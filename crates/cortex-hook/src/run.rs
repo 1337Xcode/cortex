@@ -272,12 +272,25 @@ fn probed(answer: Result<Answer, ClientError>, asks_for_text: bool) -> Result<()
 
 /// The request the hook makes of the daemon with `event` at the hook `entry`: the text Cortex
 /// gives the agent there, where it gives some (the primer at a session's start, the work order at
-/// a prompt); the event alone otherwise.
+/// a prompt), saying when the hook stops reading the answer; the event alone otherwise.
 fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
+    // The event's time is the clock at the hook's start, from which its deadline counts.
+    let wait = entry.hard_timeout.saturating_sub(EXIT_MARGIN);
+    let answer_by_ms = Some(
+        event
+            .ts_ms
+            .saturating_add(i64::try_from(wait.as_millis()).unwrap_or(i64::MAX)),
+    );
     let event = Box::new(event);
     match entry.hook {
-        HookKind::SessionStart if entry.gives_context => RequestBody::Primer { event },
-        HookKind::Prompt if entry.gives_context => RequestBody::Retrieve { event },
+        HookKind::SessionStart if entry.gives_context => RequestBody::Primer {
+            event,
+            answer_by_ms,
+        },
+        HookKind::Prompt if entry.gives_context => RequestBody::Retrieve {
+            event,
+            answer_by_ms,
+        },
         _ => RequestBody::Event { event },
     }
 }

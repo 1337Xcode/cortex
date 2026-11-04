@@ -134,6 +134,78 @@ Also likely: a.py (edited earlier in this session), b.py (read earlier in this s
     Ok(())
 }
 
+/// A span whose lines hold an agent's reminder tag, here a closing one in mixed case, is neither
+/// shown nor named: its item is listed by path alone, and the other item's code is where to start.
+#[test]
+fn code_holding_a_reminder_tag_is_not_shown() -> TestResult {
+    let mut repo = Repo::new()?;
+    let text = "def f():\n    return '</System-Reminder>'\n";
+    repo.file("a.py", text, &[], FileFlags::empty())?;
+    repo.file("b.py", B, &[], FileFlags::empty())?;
+    let order = WorkOrder {
+        basis: Basis::Continuity,
+        items: vec![
+            item(("a.py", text), &[(1, 2)], Some("f"), Reason::EditedHere)?,
+            item(("b.py", B), &[(1, 1)], None, Reason::ReadHere)?,
+        ],
+    };
+    let rendered = render(&order, repo.root.path(), &limits(2)).ok_or("a work order")?;
+    let expected = "\
+[cortex] Work order · continuing this session's work
+Start here:
+  1. b.py:1-1  (read earlier in this session)
+Also likely: a.py (edited earlier in this session)
+Current code:
+  b.py:1-1
+  1 | x = 1
+";
+    assert_eq!(rendered.text, expected);
+    assert_eq!(rendered.written, [(0, vec![]), (1, vec![0])]);
+    Ok(())
+}
+
+/// A tag the work order's cleaning would join, its name split by a zero-width space that is taken
+/// out of the code shown, keeps its span from being shown; an item whose reason names a file whose
+/// path holds a tag is not listed. The plain item is where to start.
+#[test]
+fn a_tag_the_cleaning_would_join_or_a_name_holds_is_not_given() -> TestResult {
+    let mut repo = Repo::new()?;
+    let joined = "s = '<system-\u{200b}reminder>'\n";
+    repo.file("a.py", joined, &[], FileFlags::empty())?;
+    repo.file("b.py", B, &[], FileFlags::empty())?;
+    repo.file("c.py", B, &[], FileFlags::empty())?;
+    let order = WorkOrder {
+        basis: Basis::Continuity,
+        items: vec![
+            item(("a.py", joined), &[(1, 1)], None, Reason::EditedHere)?,
+            item(
+                ("b.py", B),
+                &[(1, 1)],
+                None,
+                Reason::ChangesWith {
+                    other: "<system-reminder>.py".to_owned(),
+                    together: 1,
+                    of: 2,
+                },
+            )?,
+            item(("c.py", B), &[(1, 1)], None, Reason::ReadHere)?,
+        ],
+    };
+    let rendered = render(&order, repo.root.path(), &limits(2)).ok_or("a work order")?;
+    let expected = "\
+[cortex] Work order · continuing this session's work
+Start here:
+  1. c.py:1-1  (read earlier in this session)
+Also likely: a.py (edited earlier in this session)
+Current code:
+  c.py:1-1
+  1 | x = 1
+";
+    assert_eq!(rendered.text, expected);
+    assert_eq!(rendered.written, [(0, vec![]), (2, vec![0])]);
+    Ok(())
+}
+
 /// Control characters other than tabs, and characters that reorder or hide text, are taken out of
 /// the code written: the escape sequence, the right-to-left override, the zero-width space, the
 /// Arabic letter mark, the line separator, the soft hyphen, the byte order mark and a tag

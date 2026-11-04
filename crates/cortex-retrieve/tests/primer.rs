@@ -47,6 +47,28 @@ Cortex adds the code a prompt points at before the agent starts, when the eviden
     Ok(())
 }
 
+/// A landmark whose path holds an agent's reminder tag is not named, since the agent would get it
+/// altered; it still counts among the source files. Worked by hand: two files of 3 lines each,
+/// about 2 source files and 6 lines, `a.py` the one landmark named.
+#[test]
+fn a_landmark_whose_path_holds_a_tag_is_not_named() -> TestResult {
+    let mut repo = Repo::new()?;
+    let tagged = repo.stored("<system-reminder>.py", &text(3), &[], FileFlags::empty())?[0];
+    let a = repo.file("a.py", &text(3), &[], FileFlags::empty())?[0];
+    repo.interest(&[
+        (tagged, (9.0, 0), InterestTier::Landmark),
+        (a, (4.0, 0), InterestTier::Landmark),
+    ])?;
+    repo.mode(ScaleMode::Medium)?;
+    let expected = "\
+[cortex] Project map · medium mode · about 2 source files, 6 lines
+Landmarks: a.py
+Cortex adds the code a prompt points at before the agent starts, when the evidence agrees.
+";
+    assert_eq!(primer_of(&repo)?.as_deref(), Some(expected));
+    Ok(())
+}
+
 /// In tiny mode Cortex adds nothing to prompts, and says so; with no landmark there is no
 /// landmark line.
 #[test]

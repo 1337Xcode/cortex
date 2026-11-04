@@ -134,7 +134,9 @@ fn reply(text: &str) -> ResponseBody {
 }
 
 /// At a prompt the hook asks the daemon for the work order, and at a session's start for the
-/// primer, and writes the text the daemon answers with as Claude Code's hook JSON on one line: the
+/// primer, each saying when the hook stops reading the answer (the prompt's hard timeout of
+/// 1,000 ms less the 15 ms the hook keeps, 985 ms after the event's time; the start's of 1,500 ms,
+/// 1,485), and writes the text the daemon answers with as Claude Code's hook JSON on one line: the
 /// event's name, and the text as the context to add, its line breaks escaped. Nothing goes to the
 /// log.
 #[test]
@@ -150,7 +152,8 @@ fn a_prompt_and_a_session_start_write_the_daemon_s_text() -> TestResult {
          \"[cortex] Work order · one file\\nsrc/a.py:1-2\\n\"}}\n"
     );
     assert!(
-        matches!(&request.body, RequestBody::Retrieve { event } if event.hook == HookKind::Prompt),
+        matches!(&request.body, RequestBody::Retrieve { event, answer_by_ms }
+            if event.hook == HookKind::Prompt && *answer_by_ms == Some(event.ts_ms + 985)),
         "{request:?}"
     );
     assert_eq!(log, "");
@@ -165,7 +168,8 @@ fn a_prompt_and_a_session_start_write_the_daemon_s_text() -> TestResult {
          \"[cortex] Project map · small mode\\n\"}}\n"
     );
     assert!(
-        matches!(&request.body, RequestBody::Primer { event } if event.hook == HookKind::SessionStart),
+        matches!(&request.body, RequestBody::Primer { event, answer_by_ms }
+            if event.hook == HookKind::SessionStart && *answer_by_ms == Some(event.ts_ms + 1_485)),
         "{request:?}"
     );
     assert_eq!(log, "");
@@ -203,7 +207,7 @@ fn text_absent_unasked_or_unfit_writes_nothing() -> TestResult {
     let (written, request, log) = exchange("SessionStart", reply("[cortex] Project map\n"), true)?;
     assert_eq!((written, log), (String::new(), String::new()));
     assert!(
-        matches!(&request.body, RequestBody::Primer { event } if event.is_probe),
+        matches!(&request.body, RequestBody::Primer { event, .. } if event.is_probe),
         "{request:?}"
     );
     let (written, request, log) = exchange("Stop", reply("[cortex] text\n"), false)?;

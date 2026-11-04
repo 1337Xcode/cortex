@@ -1,6 +1,7 @@
 //! What the hook prints for Claude Code to add to its context: Claude Code's hook JSON,
 //! `{"hookSpecificOutput":{"hookEventName":...,"additionalContext":...}}`, alone on stdout.
 
+use cortex_core::holds_reminder_tag;
 use serde_json::Value;
 
 /// The most characters Claude Code takes whole as a hook's `additionalContext`. Past it, Claude
@@ -9,22 +10,17 @@ use serde_json::Value;
 /// JavaScript program, measures a string; never fewer than the text's characters.
 pub(crate) const MAX_CONTEXT_CHARS: usize = 10_000;
 
-/// The tags Claude Code rewrites in a hook's `additionalContext`, its `<` written as `&lt;`, so
-/// that text from a hook cannot pass for its own reminders. Matched whatever their case, and
-/// whatever follows the name: a text the agent would get altered is not given.
-const REWRITTEN_TAGS: [&str; 2] = ["<system-reminder", "</system-reminder"];
-
 /// `text` as the hook of `event_name` prints it for Claude Code to add to its context, the two
 /// strings written as JSON strings; none when Claude Code would not take the text as it is: past
-/// [`MAX_CONTEXT_CHARS`], or holding a tag of [`REWRITTEN_TAGS`].
+/// [`MAX_CONTEXT_CHARS`], or holding one of its reminder tags, whose `<` it writes as `&lt;` in a
+/// hook's text (`cortex_core::REMINDER_TAGS`).
 pub(crate) fn context(event_name: &str, text: &str) -> Option<String> {
     // INVARIANT: budgeted. A text past the agent's limit is not given in part.
     if text.encode_utf16().count() > MAX_CONTEXT_CHARS {
         return None;
     }
     // INVARIANT: true-at-render. A code line the agent would get altered is not given.
-    let lowered = text.to_ascii_lowercase();
-    if REWRITTEN_TAGS.iter().any(|tag| lowered.contains(tag)) {
+    if holds_reminder_tag(text) {
         return None;
     }
     // A JSON value is displayed as its compact JSON text, its strings escaped; that cannot fail,

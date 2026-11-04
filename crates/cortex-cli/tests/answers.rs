@@ -117,6 +117,23 @@ fn reply(files: &RunFiles, body: RequestBody) -> TestResult<Option<String>> {
     }
 }
 
+/// A request for the work order `prompt` gets, from a client that waits as long as it takes.
+fn work_order_request(prompt: Event) -> RequestBody {
+    RequestBody::Retrieve {
+        event: Box::new(prompt),
+        answer_by_ms: None,
+    }
+}
+
+/// A request for the primer the session `start` begins gets, from a client that waits as long as
+/// it takes.
+fn primer_request(start: Event) -> RequestBody {
+    RequestBody::Primer {
+        event: Box::new(start),
+        answer_by_ms: None,
+    }
+}
+
 /// The injections of the task `prompt` began, once one is recorded.
 fn injections_of(root: &Path, prompt: &Event) -> TestResult<Vec<InjectionRow>> {
     let task = task_id_of_prompt(prompt.event_id, prompt.ts_ms);
@@ -190,13 +207,7 @@ fn a_prompt_gets_its_work_order_and_leaves_its_injection() -> TestResult {
         prompt_text: Some(PROMPT.to_owned()),
         ..event(root, HookKind::Prompt, 20)?
     };
-    let text = reply(
-        &files,
-        RequestBody::Retrieve {
-            event: Box::new(prompt.clone()),
-        },
-    )?
-    .ok_or("a work order")?;
+    let text = reply(&files, work_order_request(prompt.clone()))?.ok_or("a work order")?;
     assert!(text.starts_with("[cortex] Work order · "), "{text}");
     assert!(
         text.contains("src/orders/service.py:1-3  create_order  (named in the prompt)"),
@@ -231,12 +242,7 @@ fn a_held_out_prompt_gets_nothing_and_leaves_what_it_would_have_got() -> TestRes
         prompt_text: Some(PROMPT.to_owned()),
         ..event(root, HookKind::Prompt, 30)?
     };
-    let text = reply(
-        &files,
-        RequestBody::Retrieve {
-            event: Box::new(prompt.clone()),
-        },
-    )?;
+    let text = reply(&files, work_order_request(prompt.clone()))?;
     assert_eq!(text, None);
     let [row] = &injections_of(root, &prompt)?[..] else {
         return Err("one injection".into());
@@ -247,6 +253,20 @@ fn a_held_out_prompt_gets_nothing_and_leaves_what_it_would_have_got() -> TestRes
         Some(ReasonKind::Named)
     );
     assert!(row.record.text_hash.is_some());
+    // A held-out task's record stands however late its answer: nothing was to be given.
+    let late = Event {
+        prompt_text: Some(PROMPT.to_owned()),
+        ..event(root, HookKind::Prompt, 31)?
+    };
+    let asked = RequestBody::Retrieve {
+        event: Box::new(late.clone()),
+        answer_by_ms: Some(0),
+    };
+    assert_eq!(reply(&files, asked)?, None);
+    let [row] = &injections_of(root, &late)?[..] else {
+        return Err("one injection".into());
+    };
+    assert!(row.record.is_holdout && row.record.text_hash.is_some());
     Ok(())
 }
 
@@ -261,31 +281,15 @@ fn a_session_gets_its_primer_and_a_question_its_answer() -> TestResult {
         source: Some(StartSource::Startup),
         ..event(root, HookKind::SessionStart, 10)?
     };
-    let primer = reply(
-        &files,
-        RequestBody::Primer {
-            event: Box::new(start),
-        },
-    )?
-    .ok_or("a primer")?;
+    let primer = reply(&files, primer_request(start))?.ok_or("a primer")?;
     assert_eq!(primer, PRIMER);
     let compacted = Event {
         source: Some(StartSource::Compact),
         ..event(root, HookKind::SessionStart, 15)?
     };
-    assert_eq!(
-        reply(
-            &files,
-            RequestBody::Primer {
-                event: Box::new(compacted)
-            }
-        )?,
-        None
-    );
+    assert_eq!(reply(&files, primer_request(compacted))?, None);
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mismatched = RequestBody::Retrieve {
-        event: Box::new(event(root, HookKind::SessionStart, 12)?),
-    };
+    let mismatched = work_order_request(event(root, HookKind::SessionStart, 12)?);
     assert!(matches!(
         ask(&files, Role::Hook, mismatched, deadline)?.body,
         ResponseBody::Error { .. }
@@ -294,15 +298,7 @@ fn a_session_gets_its_primer_and_a_question_its_answer() -> TestResult {
         prompt_text: Some("make it better".to_owned()),
         ..event(root, HookKind::Prompt, 40)?
     };
-    assert_eq!(
-        reply(
-            &files,
-            RequestBody::Retrieve {
-                event: Box::new(vague)
-            }
-        )?,
-        None
-    );
+    assert_eq!(reply(&files, work_order_request(vague))?, None);
     let answer = reply(
         &files,
         RequestBody::Where {
@@ -322,13 +318,7 @@ fn a_session_gets_its_primer_and_a_question_its_answer() -> TestResult {
         session_id: later.clone(),
         ..event(root, HookKind::SessionStart, 50)?
     };
-    reply(
-        &files,
-        RequestBody::Primer {
-            event: Box::new(other),
-        },
-    )?
-    .ok_or("the other session's primer")?;
+    reply(&files, primer_request(other))?.ok_or("the other session's primer")?;
     let reader = || Reader::open(&root.join(".cortex"), 0);
     wait_for(|| {
         Ok(!reader()?
@@ -418,5 +408,87 @@ fn the_hook_prints_nothing_for_a_held_out_prompt() -> TestResult {
     };
     assert!(row.record.is_holdout && !row.record.is_gated_out);
     assert!(row.record.text_hash.is_some());
+    Ok(())
+}
+
+/// A request for text whose hook reads the answer until the end of time gets its text, recorded as
+/// given with its hash. One whose hook stopped reading long before (at the start of 1970) gets no
+/// text, the work order's and the primer's alike, and what it would have given is recorded as not
+/// delivered: no hash and no tokens, neither kept back nor held out. The daemon's latest errors
+/// say so, once for each.
+#[test]
+fn an_answer_worked_out_too_late_gives_nothing() -> TestResult {
+    let (repo, home, _daemon) = repository("0")?;
+    let root = repo.path();
+    let files = run_files(root, home.path())?;
+    let prompt = |ts_ms| -> TestResult<Event> {
+        Ok(Event {
+            prompt_text: Some(PROMPT.to_owned()),
+            ..event(root, HookKind::Prompt, ts_ms)?
+        })
+    };
+    let in_time = prompt(60)?;
+    let text = reply(
+        &files,
+        RequestBody::Retrieve {
+            event: Box::new(in_time.clone()),
+            answer_by_ms: Some(i64::MAX),
+        },
+    )?
+    .ok_or("a work order")?;
+    let [row] = &injections_of(root, &in_time)?[..] else {
+        return Err("one injection".into());
+    };
+    assert_eq!(row.record.text_hash, Some(ContentHash::of(text.as_bytes())));
+    let late = prompt(70)?;
+    let asked = RequestBody::Retrieve {
+        event: Box::new(late.clone()),
+        answer_by_ms: Some(0),
+    };
+    assert_eq!(reply(&files, asked)?, None);
+    let [row] = &injections_of(root, &late)?[..] else {
+        return Err("one injection".into());
+    };
+    assert!(!row.record.is_gated_out && !row.record.is_holdout);
+    assert_eq!((row.record.text_hash, row.record.tokens), (None, 0));
+    assert_eq!(
+        row.record.files.first().and_then(|file| file.reason),
+        Some(ReasonKind::Named)
+    );
+    let later = Identifier::new("s3")?;
+    let start = Event {
+        source: Some(StartSource::Startup),
+        session_id: later.clone(),
+        ..event(root, HookKind::SessionStart, 80)?
+    };
+    let asked = RequestBody::Primer {
+        event: Box::new(start),
+        answer_by_ms: Some(0),
+    };
+    assert_eq!(reply(&files, asked)?, None);
+    let primers = || -> TestResult<Vec<InjectionRow>> {
+        Ok(Reader::open(&root.join(".cortex"), 0)?
+            .queries()
+            .injections_of_session(&later)?)
+    };
+    wait_for(|| Ok(!primers()?.is_empty()))?;
+    let [row] = &primers()?[..] else {
+        return Err("one primer".into());
+    };
+    assert_eq!((row.record.text_hash, row.record.tokens), (None, 0));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let ResponseBody::Status(report) = ask(&files, Role::Cli, RequestBody::Status, deadline)?.body
+    else {
+        return Err("a status".into());
+    };
+    let errors: Vec<(&str, u64)> = report
+        .recent_errors
+        .iter()
+        .map(|error| (error.message.as_str(), error.count))
+        .collect();
+    assert_eq!(
+        errors,
+        [("an answer was worked out after its hook stopped waiting", 2)]
+    );
     Ok(())
 }
