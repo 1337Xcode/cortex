@@ -38,6 +38,8 @@ pub struct Request<'a> {
     pub prompt: &'a str,
     /// The session it comes in; none for a question asked outside one.
     pub session: Option<&'a Identifier>,
+    /// The file nodes of the uncommitted diff, as the daemon last read them; empty when it has not.
+    pub uncommitted: &'a [NodeId],
     /// The repository's mode.
     pub mode: ScaleMode,
     /// The `retrieval.*` settings.
@@ -282,6 +284,7 @@ fn reached(
         &SeedQuery {
             terms: &terms,
             session: request.session,
+            uncommitted: request.uncommitted,
         },
     )?;
     if seeds.vector.is_empty() {

@@ -178,9 +178,10 @@ fn a_handshake_from_any_version_reads() -> TestResult {
 }
 
 /// A status answer reads across versions: one from an older daemon, without latencies, recent
-/// errors or the miner's part, reads with both empty and no miner's part; one from a newer
-/// daemon, with fields this version does not know, a hook it does not know and a miner's state it
-/// does not know, reads with that hook's name as it came and the state as another.
+/// errors, the miner's part, the graph's or the work tree's, reads with both empty and none of the
+/// parts; one from a newer daemon, with fields this version does not know, a hook it does not know
+/// and a miner's and a work tree's state it does not know, reads with that hook's name as it came
+/// and each state as another.
 #[test]
 fn a_status_from_any_version_reads() -> TestResult {
     let older = concat!(
@@ -191,6 +192,7 @@ fn a_status_from_any_version_reads() -> TestResult {
     assert_eq!((report.latencies, report.recent_errors), (vec![], vec![]));
     assert_eq!(report.git, None);
     assert_eq!(report.graph, None);
+    assert_eq!(report.worktree, None);
     let newer = concat!(
         r#"{"cortex_version":"9.0.0","protocol":{"major":1,"minor":4},"pid":7,"#,
         r#""uptime_ms":5,"queues":{},"latencies":[{"hook":"permission_request","#,
@@ -198,7 +200,9 @@ fn a_status_from_any_version_reads() -> TestResult {
         r#""recent_errors":[{"at_ms":3,"count":1,"message":"m","kind":"store"}],"#,
         r#""git":{"state":"rebasing","detail":"d","commits":3},"#,
         r#""graph":{"nodes":12,"links":30,"has_cochange":true,"builds":2,"build_ms":4,"#,
-        r#""failed_builds":1,"layers":1}}"#
+        r#""failed_builds":1,"layers":1},"#,
+        r#""worktree":{"state":"stashed","uncommitted_files":1,"listed_files":4,"looks":2,"#,
+        r#""failed_looks":0,"skipped_files":3}}"#
     );
     let report: StatusReport = serde_json::from_str(newer)?;
     assert_eq!(
@@ -235,6 +239,16 @@ fn a_status_from_any_version_reads() -> TestResult {
             builds: 2,
             build_ms: 4,
             failed_builds: 1,
+        })
+    );
+    assert_eq!(
+        report.worktree,
+        Some(WorktreeReport {
+            state: WorktreeState::Other,
+            uncommitted_files: 1,
+            listed_files: 4,
+            looks: 2,
+            failed_looks: 0,
         })
     );
     Ok(())

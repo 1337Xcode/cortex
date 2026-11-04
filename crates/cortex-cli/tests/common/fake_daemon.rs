@@ -201,6 +201,7 @@ fn indexing() -> StatusReport {
         recent_errors: Vec::new(),
         git: Some(GitReport::default()),
         graph: None,
+        worktree: None,
     }
 }
 

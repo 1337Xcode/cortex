@@ -86,9 +86,15 @@ impl Service {
         }
     }
 
-    /// The work order `event`, a prompt, gets over `graph`, and what to record of the retrieval.
-    /// A store that cannot be read gives nothing, and the error is logged.
-    pub(crate) fn prompt(&self, event: &Event, graph: Option<&Arc<Graph<NodeId>>>) -> Answer {
+    /// The work order `event`, a prompt, gets over `graph`, seeded with `uncommitted`, the file
+    /// nodes of the uncommitted diff, and what to record of the retrieval. A store that cannot be
+    /// read gives nothing, and the error is logged.
+    pub(crate) fn prompt(
+        &self,
+        event: &Event,
+        graph: Option<&Arc<Graph<NodeId>>>,
+        uncommitted: &[NodeId],
+    ) -> Answer {
         let Some((graph, prompt)) = graph.zip(event.prompt_text.as_deref()) else {
             return Answer::default();
         };
@@ -101,6 +107,7 @@ impl Service {
             let request = Request {
                 prompt,
                 session: Some(&event.session_id),
+                uncommitted,
                 mode,
                 settings: &self.settings,
                 max_file_bytes: self.max_file_bytes,
@@ -172,13 +179,14 @@ impl Service {
         })
     }
 
-    /// What the engine finds for `question` without the gate, at most `limit` files, over `graph`,
-    /// as text; none before the graph or the first index, or when it finds nothing to show.
+    /// What the engine finds for `question` without the gate, at most `limit` files, over `graph`
+    /// and seeded with `uncommitted`, as text; none before the graph or the first index, or when it
+    /// finds nothing to show.
     pub(crate) fn locate(
         &self,
         question: &str,
         limit: usize,
-        graph: Option<&Arc<Graph<NodeId>>>,
+        (graph, uncommitted): (Option<&Arc<Graph<NodeId>>>, &[NodeId]),
     ) -> Option<String> {
         let graph = graph?;
         let located = self.with_reader(|queries| {
@@ -188,6 +196,7 @@ impl Service {
             let request = Request {
                 prompt: question,
                 session: None,
+                uncommitted,
                 mode,
                 settings: &self.settings,
                 max_file_bytes: self.max_file_bytes,

@@ -109,6 +109,11 @@ pub struct Response {
 /// What a response says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a response is built once for its request and moved once into its frame; boxing the \
+              status would add an allocation and change every match on it for nothing"
+)]
 pub enum ResponseBody {
     /// The handshake succeeded.
     Welcome(Welcome),
@@ -201,6 +206,10 @@ pub struct StatusReport {
     /// first rebuild ended, or from a daemon that does not say.
     #[serde(default)]
     pub graph: Option<GraphReport>,
+    /// What the daemon read of the work tree's uncommitted changes; none before its first look
+    /// ended, or from a daemon that does not say (protocol 2.2 added it).
+    #[serde(default)]
+    pub worktree: Option<WorktreeReport>,
 }
 
 /// What a daemon's graph holds, as last built, and how its rebuilds went, for its status. With no
@@ -220,6 +229,53 @@ pub struct GraphReport {
     /// How many rebuilds failed since the daemon started; each was tried again.
     #[serde(default)]
     pub failed_builds: u64,
+}
+
+/// What a daemon read of its work tree's uncommitted changes, and how its looks went, for its
+/// status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeReport {
+    /// Whether the latest look read the changes, or why they are not known.
+    #[serde(deserialize_with = "worktree_state_or_other")]
+    pub state: WorktreeState,
+    /// The files of the uncommitted diff kept to seed retrievals, as of the latest look: at most
+    /// 10, those the index saw change last.
+    pub uncommitted_files: u64,
+    /// The files git listed as uncommitted at the latest look, whether they seed or not; 0 when
+    /// the latest look listed too many to count.
+    pub listed_files: u64,
+    /// How many looks ended since the daemon started, the failed ones not among them.
+    pub looks: u64,
+    /// How many looks failed; each was tried again.
+    pub failed_looks: u64,
+}
+
+named_kind! {
+    /// Whether a daemon's latest look at its work tree read the uncommitted changes, or why they
+    /// are not known.
+    WorktreeState {
+        /// It read them.
+        Read => "read",
+        /// No git program is on the `PATH`.
+        NoGit => "no_git",
+        /// The repository's root folder holds no git repository.
+        NoRepository => "no_repository",
+        /// The repository's own git configuration names a filter, whose command a look would run,
+        /// so the work tree is not looked at.
+        Refused => "refused",
+        /// The repository is a partial clone and git is older than 2.45, which cannot be told not
+        /// to fetch what the clone left out, so the work tree is not looked at.
+        WouldFetch => "would_fetch",
+        /// More files changed than a look takes in: a mass change, of which none seeds.
+        TooMany => "too_many",
+        /// HEAD moved since the latest look, so what it read may no longer hold; another look
+        /// follows.
+        HeadMoved => "head_moved",
+        /// The latest look failed; another follows.
+        Failed => "failed",
+        /// A state this version does not know.
+        Other => "other",
+    }
 }
 
 /// What a daemon's co-change miner is doing, for its status. A daemon's miner starts out
@@ -265,8 +321,26 @@ impl Default for GitState {
 fn git_state_or_other<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<GitState, D::Error> {
+    named_or(deserializer, GitState::from_name, GitState::Other)
+}
+
+/// A work tree's state from its name, or [`WorktreeState::Other`] for a name this version does not
+/// know, so that a newer daemon's status still reads.
+fn worktree_state_or_other<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<WorktreeState, D::Error> {
+    named_or(deserializer, WorktreeState::from_name, WorktreeState::Other)
+}
+
+/// The value `from_name` gives for the name `deserializer` reads, or `other` for a name it does not
+/// know.
+fn named_or<'de, D: serde::Deserializer<'de>, K>(
+    deserializer: D,
+    from_name: fn(&str) -> Option<K>,
+    other: K,
+) -> Result<K, D::Error> {
     let name = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
-    Ok(GitState::from_name(&name).unwrap_or(GitState::Other))
+    Ok(from_name(&name).unwrap_or(other))
 }
 
 /// How long a daemon took to handle one hook's latest requests, each from the first byte of the

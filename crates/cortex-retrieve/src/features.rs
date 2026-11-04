@@ -56,7 +56,9 @@ pub fn features_of<Id: Ord + Copy>(
         .collect::<BTreeSet<Evidence>>()
         .len();
     let is_continuing = kinds.iter().any(|(file, kinds)| {
-        found.seeds.session.edited_files.contains(file) && kinds.contains(&Evidence::Lexical)
+        let is_under_way = found.seeds.session.edited_files.contains(file)
+            || found.seeds.uncommitted.files.contains(file);
+        is_under_way && kinds.contains(&Evidence::Lexical)
     });
     GateFeatures {
         top_lexical: found.seeds.lexical.top_lexical,

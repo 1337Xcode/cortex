@@ -49,7 +49,9 @@ pub struct Support<'a, Id> {
     graph: &'a Graph<Id>,
     /// What each source found.
     seeds: &'a Seeds,
-    /// The files the seeds of the sources other than exploration point at, by node.
+    /// The files the seeds of the prompt's words, the session and earlier work point at, by node:
+    /// neither the dark neighbours exploration adds nor the files of the uncommitted diff, which
+    /// the work tree holds whatever the prompt is about, so that neither stands as evidence.
     seed_files: BTreeSet<u32>,
     /// For each file a seed file's co-change links run to, by node: those seed files, each with
     /// the link's weight.

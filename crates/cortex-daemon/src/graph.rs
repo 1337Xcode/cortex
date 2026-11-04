@@ -48,6 +48,8 @@ pub(crate) struct Snapshot {
     asks: Arc<Asks>,
     /// Whether a mining is being written.
     is_mining: AtomicBool,
+    /// The work that follows the store's changes as the graph does, asked whenever it is.
+    followers: Mutex<Vec<Arc<Asks>>>,
 }
 
 /// The graph, once one is built, and how the rebuilds since the daemon started went.
@@ -84,7 +86,7 @@ impl Drop for MiningWrite<'_> {
     /// The write is over: the next rebuild takes what it left.
     fn drop(&mut self) {
         self.snapshot.is_mining.store(false, Ordering::SeqCst);
-        self.snapshot.asks.ask();
+        self.snapshot.changed();
     }
 }
 
@@ -118,9 +120,24 @@ impl Snapshot {
         })
     }
 
-    /// Notes that the store changed, so that the graph is rebuilt.
+    /// Notes that the store changed, so that the graph is rebuilt and its followers asked.
     pub(crate) fn changed(&self) {
         self.asks.ask();
+        let followers = self
+            .followers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for follower in followers.iter() {
+            follower.ask();
+        }
+    }
+
+    /// Has `asks` asked whenever the graph is: work that a change of the store may concern too.
+    pub(crate) fn follow(&self, asks: Arc<Asks>) {
+        self.followers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(asks);
     }
 
     /// Notes that a mining's write begins, until what this returns is dropped.
@@ -242,57 +259,14 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use cortex_core::ipc::GraphReport;
-    use cortex_core::{Config, EdgeType, FileFlags, RepoId, RepoPath};
-    use cortex_store::{
-        EdgeRecord, FileIndex, FileRecord, GitStateKey, NodeId, Writer, WriterOptions,
-    };
+    use cortex_core::{Config, EdgeType};
+    use cortex_store::{EdgeRecord, GitStateKey, Writer};
 
     use super::*;
-
-    /// Any failure fails the test.
-    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+    use crate::test_store::{TestResult, add_file, writer};
 
     /// How long a test waits for a rebuild it expects.
     const PATIENCE: Duration = Duration::from_secs(10);
-
-    /// The store of the repository at `root`.
-    fn writer(root: &Path) -> TestResult<Writer> {
-        Ok(Writer::open(&WriterOptions {
-            folder: &root.join(".cortex"),
-            repo_id: &RepoId::of(root),
-            mmap_bytes: 0,
-            now_ms: 1,
-        })?)
-    }
-
-    /// Stores the file at `path`, with no symbol, and returns its node.
-    fn add_file(writer: &mut Writer, path: &str) -> TestResult<NodeId> {
-        let mut transaction = writer.transaction()?;
-        transaction.replace_file(&FileIndex {
-            file: FileRecord {
-                path: RepoPath::new(path)?,
-                language: None,
-                size_bytes: 10,
-                line_count: Some(1),
-                content_hash: None,
-                mtime_ns: 1,
-                flags: FileFlags::empty(),
-                indexed_at_ms: 1,
-            },
-            symbols: Vec::new(),
-            refs: Vec::new(),
-            passes_on: Vec::new(),
-        })?;
-        let node = transaction
-            .queries()
-            .cochange_files()?
-            .into_iter()
-            .find(|file| file.path.as_str() == path)
-            .map(|file| file.node)
-            .ok_or("the file's node")?;
-        transaction.commit()?;
-        Ok(node)
-    }
 
     /// Sets or takes out the mark a complete mining leaves.
     fn mark(writer: &mut Writer, is_set: bool) -> TestResult {
@@ -310,8 +284,8 @@ mod tests {
     /// mark yet.
     fn two_files(root: &Path) -> TestResult<Writer> {
         let mut writer = writer(root)?;
-        let a = add_file(&mut writer, "a.txt")?;
-        let b = add_file(&mut writer, "b.txt")?;
+        let a = add_file(&mut writer, "a.txt", 1)?;
+        let b = add_file(&mut writer, "b.txt", 1)?;
         let mut transaction = writer.transaction()?;
         transaction.set_edges(
             EdgeType::CoChange,
@@ -382,7 +356,7 @@ mod tests {
         let mut writer = two_files(root.path())?;
         let (snapshot, _rebuilder) = rebuilding(root.path());
         let first = report_when(&snapshot, |report| report.builds > 0)?;
-        add_file(&mut writer, "c.txt")?;
+        add_file(&mut writer, "c.txt", 1)?;
         snapshot.changed();
         let second = report_when(&snapshot, |report| report.builds > first.builds)?;
         assert_eq!(second.nodes, first.nodes + 1);
@@ -442,6 +416,20 @@ mod tests {
         let first = report_when(&snapshot, |report| report.builds > 0)?;
         assert!(!first.has_cochange);
         Ok(())
+    }
+
+    /// A follower is asked whenever the graph is: at a change, and at the end of a mining's write.
+    #[test]
+    fn a_follower_is_asked_with_the_graph() {
+        let snapshot = Snapshot::default();
+        let follower = Arc::new(Asks::default());
+        snapshot.follow(Arc::clone(&follower));
+        snapshot.changed();
+        assert!(follower.take());
+        let writing = snapshot.mining_write();
+        assert!(!follower.take());
+        drop(writing);
+        assert!(follower.take());
     }
 
     /// A mining's write is under way while what `mining_write` gave is held; its end asks for a

@@ -126,7 +126,7 @@ fn a_changed_file_is_listed_by_path_alone() -> TestResult {
     };
     let rendered = render(&order, repo.root.path(), &limits(2)).ok_or("a work order")?;
     let expected = "\
-[cortex] Work order · continuing this session's work
+[cortex] Work order · continuing the work under way
 Also likely: a.py (edited earlier in this session), b.py (read earlier in this session)
 ";
     assert_eq!(rendered.text, expected);
@@ -151,7 +151,7 @@ fn code_holding_a_reminder_tag_is_not_shown() -> TestResult {
     };
     let rendered = render(&order, repo.root.path(), &limits(2)).ok_or("a work order")?;
     let expected = "\
-[cortex] Work order · continuing this session's work
+[cortex] Work order · continuing the work under way
 Start here:
   1. b.py:1-1  (read earlier in this session)
 Also likely: a.py (edited earlier in this session)
@@ -193,7 +193,7 @@ fn a_tag_the_cleaning_would_join_or_a_name_holds_is_not_given() -> TestResult {
     };
     let rendered = render(&order, repo.root.path(), &limits(2)).ok_or("a work order")?;
     let expected = "\
-[cortex] Work order · continuing this session's work
+[cortex] Work order · continuing the work under way
 Start here:
   1. c.py:1-1  (read earlier in this session)
 Also likely: a.py (edited earlier in this session)
@@ -289,7 +289,7 @@ fn an_item_that_cannot_be_shown_as_it_is_is_not_listed() -> TestResult {
     };
     let rendered = render(&order, repo.root.path(), &limits(0)).ok_or("a work order")?;
     let expected = "\
-[cortex] Work order · continuing this session's work
+[cortex] Work order · continuing the work under way
 Also likely: a.py:5-6 (edited earlier in this session)
 ";
     assert_eq!(rendered.text, expected);
@@ -338,7 +338,7 @@ fn the_cap_sheds_code_then_items() -> TestResult {
     };
     let rendered = render(&order, repo.root.path(), &roomier).ok_or("a work order")?;
     let expected = "\
-[cortex] Work order · continuing this session's work
+[cortex] Work order · continuing the work under way
 Also likely: a.py:1-2 (edited earlier in this session), b.py:1-1 (read earlier in this session)
 ";
     assert_eq!(rendered.text, expected);
@@ -361,7 +361,7 @@ Also likely: a.py:1-2 (edited earlier in this session), b.py:1-1 (read earlier i
     assert_eq!(rendered.written, [(0, vec![]), (1, vec![0])]);
     let rendered = render(&order, repo.root.path(), &tight).ok_or("a work order")?;
     let expected = "\
-[cortex] Work order · continuing this session's work
+[cortex] Work order · continuing the work under way
 Also likely: a.py:1-2 (edited earlier in this session)
 ";
     assert_eq!(rendered.text, expected);

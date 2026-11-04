@@ -35,6 +35,9 @@ mod recent_errors;
 mod retrieval;
 mod server;
 pub mod settings;
+#[cfg(test)]
+mod test_store;
+mod worktree;
 
 pub use instance::is_running;
 
@@ -59,6 +62,7 @@ use self::miner::Miner;
 use self::pending::Pending;
 use self::retrieval::{Service, Settings};
 use self::server::Server;
+use self::worktree::Worktree;
 
 /// Threads that serve connections. Requests are short; two keep one slow client from delaying
 /// another.
@@ -127,7 +131,7 @@ fn listen_and_serve(
     };
     let server = Server::new(
         Arc::clone(&shared.inbox),
-        Arc::clone(&shared.snapshot),
+        (Arc::clone(&shared.snapshot), Arc::clone(&shared.worktree)),
         Arc::clone(&shared.service),
     );
     runtime.spawn(Arc::new(server).serve(listener));
@@ -139,14 +143,16 @@ fn listen_and_serve(
     served
 }
 
-/// What the server and the writer share: the writer's inbox, the graph, and what answers with text
-/// once the first index is done.
+/// What the server and the writer share: the writer's inbox, the graph, the work tree's
+/// uncommitted diff, and what answers with text once the first index is done.
 #[derive(Debug, Default)]
 struct Shared {
     /// The writer's inbox.
     inbox: Arc<Inbox>,
     /// The graph retrieval spreads over.
     snapshot: Arc<Snapshot>,
+    /// The work tree's uncommitted diff, which seeds retrievals.
+    worktree: Arc<Worktree>,
     /// What answers with text.
     service: Arc<OnceLock<Service>>,
 }
@@ -246,12 +252,18 @@ fn index_and_serve(
         snapshot,
         store_reads((&folder, config.mmap_bytes), GraphSettings::from(&config)),
     );
+    // The work tree is looked at once the first index is done, again after every write the graph
+    // is told of, which a change of a file comes before, and whenever the miner sees HEAD move;
+    // told to stop when dropped.
+    snapshot.follow(shared.worktree.asks());
+    let looker = worktree::watch(&shared.worktree, root, (&folder, config.mmap_bytes), inbox);
     or_close(note(&ready_line(&report, host.waiting())), || host.close())?;
     // The history is mined once the files that count are stored; told to stop when dropped. A
     // miner that cannot start leaves the daemon without co-change, as its status says.
-    let miner = Miner::start(root, &config, inbox);
+    let miner = Miner::start(root, &config, inbox, &shared.worktree);
     host.serve()?;
     drop(miner);
+    drop(looker);
     drop(rebuilder);
     drop(watcher);
     Ok(())

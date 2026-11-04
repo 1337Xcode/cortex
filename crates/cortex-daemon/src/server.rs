@@ -29,6 +29,7 @@ use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
 use crate::retrieval::Service;
+use crate::worktree::Worktree;
 
 /// Most connections served at once. Hooks and commands hold a connection for one exchange, so more
 /// at once means something is flooding the daemon; a connection past this is closed at once.
@@ -47,6 +48,8 @@ pub(crate) struct Server {
     inbox: Arc<Inbox>,
     /// The graph retrieval spreads over.
     snapshot: Arc<Snapshot>,
+    /// The work tree's uncommitted diff, which seeds retrievals.
+    worktree: Arc<Worktree>,
     /// What answers with text, once the first index is done.
     service: Arc<OnceLock<Service>>,
     /// How long each hook's latest requests took to handle.
@@ -161,16 +164,18 @@ impl Broken {
 }
 
 impl Server {
-    /// A server for a daemon started now, whose writer reads `inbox`.
+    /// A server for a daemon started now, whose writer reads `inbox`, answering from the graph of
+    /// `snapshot` and the uncommitted diff of `worktree` with `service`.
     pub(crate) fn new(
         inbox: Arc<Inbox>,
-        snapshot: Arc<Snapshot>,
+        (snapshot, worktree): (Arc<Snapshot>, Arc<Worktree>),
         service: Arc<OnceLock<Service>>,
     ) -> Self {
         Self {
             started: Instant::now(),
             inbox,
             snapshot,
+            worktree,
             service,
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
@@ -407,8 +412,8 @@ impl Server {
             );
         }
         let mut answer = self
-            .with_service(move |service, graph| match asked {
-                Asked::WorkOrder => service.prompt(&event, graph),
+            .with_service(move |service, graph, uncommitted| match asked {
+                Asked::WorkOrder => service.prompt(&event, graph, uncommitted),
                 Asked::Primer => service.primer(&event, graph),
             })
             .await
@@ -438,23 +443,30 @@ impl Server {
     async fn locate(&self, query: String, limit: u8) -> ResponseBody {
         let limit = usize::from(limit.clamp(1, MAX_WHERE_FILES));
         let text = self
-            .with_service(move |service, graph| service.locate(&query, limit, graph))
+            .with_service(move |service, graph, uncommitted| {
+                service.locate(&query, limit, (graph, uncommitted))
+            })
             .await
             .flatten();
         ResponseBody::Reply { text }
     }
 
-    /// Runs `work` with the service and the graph as it stands on the blocking pool, so that no
-    /// connection's worker waits on the store; none before the service is installed, or when the
-    /// work panicked, which is kept among the recent errors.
+    /// Runs `work` with the service, the graph as it stands and the uncommitted diff's file nodes
+    /// as last read (none before the first look) on the blocking pool, so that no connection's
+    /// worker waits on the store; none before the service is installed, or when the work panicked,
+    /// which is kept among the recent errors.
     async fn with_service<T: Send + 'static>(
         &self,
-        work: impl FnOnce(&Service, Option<&Arc<Graph<NodeId>>>) -> T + Send + 'static,
+        work: impl FnOnce(&Service, Option<&Arc<Graph<NodeId>>>, &[NodeId]) -> T + Send + 'static,
     ) -> Option<T> {
         let graph = self.snapshot.graph();
+        let uncommitted = self.worktree.uncommitted();
         let service = Arc::clone(&self.service);
         let done = tokio::task::spawn_blocking(move || {
-            service.get().map(|service| work(service, graph.as_ref()))
+            let nodes = uncommitted.as_deref().map_or(&[][..], Vec::as_slice);
+            service
+                .get()
+                .map(|service| work(service, graph.as_ref(), nodes))
         })
         .await;
         match done {
@@ -496,6 +508,7 @@ impl Server {
             recent_errors: self.inbox.recent_errors(),
             git: Some(self.inbox.git()),
             graph: self.snapshot.report(),
+            worktree: self.worktree.report(),
         }
     }
 
@@ -640,7 +653,7 @@ mod tests {
     #[test]
     fn a_stop_holds_when_its_answer_cannot_be_written() -> TestResult {
         let inbox = Arc::new(Inbox::default());
-        let server = Server::new(Arc::clone(&inbox), Arc::default(), Arc::default());
+        let server = Server::new(Arc::clone(&inbox), Default::default(), Arc::default());
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let answered = runtime.block_on(async {
             let (client, mut daemon) = tokio::io::duplex(64);
@@ -769,7 +782,7 @@ mod tests {
     fn a_closed_inbox_takes_no_events() -> TestResult {
         let inbox = Arc::new(Inbox::default());
         inbox.close();
-        let server = Server::new(Arc::clone(&inbox), Arc::default(), Arc::default());
+        let server = Server::new(Arc::clone(&inbox), Default::default(), Arc::default());
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let event = Received {
             request: Request {

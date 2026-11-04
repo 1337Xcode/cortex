@@ -39,6 +39,8 @@ named_kind! {
         EditedHere => "edited_here",
         /// It holds words of the prompt.
         Matches => "matches",
+        /// The work tree holds it changed and not committed.
+        Uncommitted => "uncommitted",
         /// It changes in the same commits as another file the prompt points at.
         ChangesWith => "changes_with",
         /// Code in it refers to another file the prompt points at.

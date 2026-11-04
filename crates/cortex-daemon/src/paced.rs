@@ -1,9 +1,9 @@
 //! Work a thread of its own does again each time it is asked, paced. However often it is asked, a
 //! run starts at least a period after the one before, and at least a few times as long after it as
 //! that one took, so that the work takes a bounded share of a core. A run that fails, or panics,
-//! is handed back with why and tried again, a period later after one failure, twice as long after
-//! each further one in a row, up to a ceiling. A stop is taken at once, between runs or while
-//! waiting for the next. The graph is rebuilt this way.
+//! is handed back with why and tried again, two periods later after one failure, twice as long
+//! after each further one in a row, up to a ceiling. A stop is taken at once, between runs or while
+//! waiting for the next. The graph is rebuilt this way, and the work tree read.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Pacing {
     /// The least time between the starts of two runs, which asks that come closer together share;
-    /// also the wait after one failure.
+    /// twice it is the wait after one failure.
     pub(crate) every: Duration,
     /// How many times as long as a run took the next waits, at least, from its start.
     pub(crate) spacing: u32,
@@ -115,8 +115,8 @@ pub(crate) struct Last {
 }
 
 /// When the run after `last` may start under `pacing`: at least its period after it, at least its
-/// spacing times as long as it took, and after failures in a row a period, twice as long for each
-/// further one, at most its longest retry wait.
+/// spacing times as long as it took, and after failures in a row twice its period, twice as long
+/// for each further one, at most its longest retry wait.
 pub(crate) fn next_start(last: Last, pacing: Pacing) -> Instant {
     let paced = pacing.every.max(last.took.saturating_mul(pacing.spacing));
     let retry = match last.failures {

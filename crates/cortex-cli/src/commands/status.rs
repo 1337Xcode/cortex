@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::Context;
 use cortex_core::ipc::{
     GitReport, GitState, GraphReport, HookLatency, RecentError, RequestBody, ResponseBody,
-    StatusReport,
+    StatusReport, WorktreeReport, WorktreeState,
 };
 use cortex_core::{FileFlags, ModeSetting, UserFolder, unix_millis};
 use cortex_daemon::settings;
@@ -140,6 +140,7 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
         ),
         git_line(report.git.as_ref()),
         graph_line(report.graph.as_ref()),
+        worktree_line(report.worktree.as_ref()),
     ];
     if report.latencies.is_empty() {
         lines.push("daemon latency: no hook request handled yet".to_owned());
@@ -155,6 +156,70 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
             .map(|error| error_line(error, now_ms)),
     );
     lines
+}
+
+/// What the daemon read of the work tree's uncommitted changes, as a line: the files kept to seed
+/// retrievals, of how many git listed when fewer, and its looks; why the changes are not known; or
+/// that it has not looked yet. The failed looks follow when any failed.
+fn worktree_line(report: Option<&WorktreeReport>) -> String {
+    let Some(report) = report else {
+        return "work tree: not looked at yet".to_owned();
+    };
+    let failed = match report.failed_looks {
+        0 => String::new(),
+        failed => format!("; {} failed", counted(failed, ("look", "looks"))),
+    };
+    format!("work tree: {}{failed}", worktree_said(report))
+}
+
+/// What the work tree's line says of `report`'s state.
+fn worktree_said(report: &WorktreeReport) -> String {
+    let files = ("uncommitted file", "uncommitted files");
+    match report.state {
+        WorktreeState::Read => {
+            let kept = if report.listed_files > report.uncommitted_files {
+                format!(
+                    "{} of {}",
+                    report.uncommitted_files,
+                    counted(report.listed_files, files)
+                )
+            } else {
+                counted(report.uncommitted_files, files)
+            };
+            format!(
+                "{kept} kept to seed retrievals, as of the latest of {}",
+                counted(report.looks, ("look", "looks"))
+            )
+        }
+        WorktreeState::NoGit => "unknown, as no git program is on the PATH".to_owned(),
+        WorktreeState::NoRepository => "no repository at the root, so no change is read".to_owned(),
+        WorktreeState::Refused => {
+            "not read, as the repository's own git configuration names a filter a look would run"
+                .to_owned()
+        }
+        WorktreeState::WouldFetch => {
+            "not read, as git older than 2.45 could fetch from the network in a partial clone"
+                .to_owned()
+        }
+        WorktreeState::TooMany => {
+            let many = match report.listed_files {
+                0 => "more uncommitted files than a look reads".to_owned(),
+                listed => counted(listed, files),
+            };
+            format!("{many}, a mass change, so none seeds retrievals")
+        }
+        WorktreeState::HeadMoved => "looking again, as HEAD moved".to_owned(),
+        WorktreeState::Failed => "unknown, as the latest look failed".to_owned(),
+        WorktreeState::Other => "in a state this build does not know".to_owned(),
+    }
+}
+
+/// `count` things, named `one` when there is one and `many` otherwise.
+fn counted(count: u64, (one, many): (&str, &str)) -> String {
+    match count {
+        1 => format!("1 {one}"),
+        count => format!("{count} {many}"),
+    }
 }
 
 /// What the daemon's co-change miner is doing, as a line, or that the daemon did not say.
@@ -179,10 +244,6 @@ fn git_line(report: Option<&GitReport>) -> String {
 /// What the daemon's graph holds, as a line, with how many of its rebuilds failed when any did,
 /// or that it has built none yet.
 fn graph_line(report: Option<&GraphReport>) -> String {
-    let counted = |count: u64, (one, many): (&str, &str)| match count {
-        1 => format!("1 {one}"),
-        count => format!("{count} {many}"),
-    };
     let failed = match report.map_or(0, |report| report.failed_builds) {
         0 => String::new(),
         failed => format!("; {} failed", counted(failed, ("build", "builds"))),
@@ -337,11 +398,12 @@ mod tests {
             recent_errors: Vec::new(),
             git: Some(GitReport::default()),
             graph: None,
+            worktree: None,
         }
     }
 
     /// A daemon that handled no hook and met no error says so, its miner still waiting for the
-    /// first index and its graph not built yet.
+    /// first index, its graph not built yet and its work tree not looked at.
     #[test]
     fn a_quiet_daemon_says_so() {
         assert_eq!(
@@ -352,6 +414,7 @@ mod tests {
                  recorded, 0 checkpoints failed",
                 "git: not ready, waiting for the first index",
                 "graph: none built yet",
+                "work tree: not looked at yet",
                 "daemon latency: no hook request handled yet",
                 "errors: none",
             ]
@@ -411,7 +474,7 @@ mod tests {
             "error: second (3 min ago, 3 times)",
             "error: third (12 s ago)",
         ];
-        assert_eq!(lines.get(4..), Some(expected.map(str::to_owned).as_slice()));
+        assert_eq!(lines.get(5..), Some(expected.map(str::to_owned).as_slice()));
     }
 
     /// Ages cross from seconds to minutes at two minutes and to hours at two hours; a time ahead
@@ -470,6 +533,106 @@ mod tests {
             line(GitState::Other, None),
             "git: in a state this build does not know"
         );
+    }
+
+    /// The work tree's line, as typed out here: the files kept and the looks, one of a kind in the
+    /// singular, of how many git listed when fewer are kept, the failed looks when any failed; each
+    /// reason the changes are not known, a mass change counted or too large to count; no look yet.
+    #[test]
+    fn the_work_tree_is_reported_in_one_line() {
+        let report = WorktreeReport {
+            state: WorktreeState::Read,
+            uncommitted_files: 2,
+            listed_files: 2,
+            looks: 3,
+            failed_looks: 0,
+        };
+        let line = |report: &WorktreeReport| worktree_line(Some(report));
+        assert_eq!(
+            line(&report),
+            "work tree: 2 uncommitted files kept to seed retrievals, as of the latest of 3 looks"
+        );
+        let one = WorktreeReport {
+            uncommitted_files: 1,
+            listed_files: 1,
+            looks: 1,
+            failed_looks: 2,
+            ..report.clone()
+        };
+        assert_eq!(
+            line(&one),
+            "work tree: 1 uncommitted file kept to seed retrievals, as of the latest of 1 look; 2 \
+             looks failed"
+        );
+        let fewer = WorktreeReport {
+            uncommitted_files: 10,
+            listed_files: 37,
+            ..report.clone()
+        };
+        assert_eq!(
+            line(&fewer),
+            "work tree: 10 of 37 uncommitted files kept to seed retrievals, as of the latest of 3 \
+             looks"
+        );
+        let unknown = |state| WorktreeReport {
+            state,
+            uncommitted_files: 0,
+            listed_files: 0,
+            ..report.clone()
+        };
+        let cases = [
+            (
+                WorktreeState::NoGit,
+                "work tree: unknown, as no git program is on the PATH",
+            ),
+            (
+                WorktreeState::NoRepository,
+                "work tree: no repository at the root, so no change is read",
+            ),
+            (
+                WorktreeState::Refused,
+                "work tree: not read, as the repository's own git configuration names a filter a \
+                 look would run",
+            ),
+            (
+                WorktreeState::WouldFetch,
+                "work tree: not read, as git older than 2.45 could fetch from the network in a \
+                 partial clone",
+            ),
+            (
+                WorktreeState::TooMany,
+                "work tree: more uncommitted files than a look reads, a mass change, so none seeds \
+                 retrievals",
+            ),
+            (
+                WorktreeState::HeadMoved,
+                "work tree: looking again, as HEAD moved",
+            ),
+            (
+                WorktreeState::Other,
+                "work tree: in a state this build does not know",
+            ),
+        ];
+        for (state, expected) in cases {
+            assert_eq!(line(&unknown(state)), expected);
+        }
+        let mass = WorktreeReport {
+            listed_files: 5_001,
+            ..unknown(WorktreeState::TooMany)
+        };
+        assert_eq!(
+            line(&mass),
+            "work tree: 5001 uncommitted files, a mass change, so none seeds retrievals"
+        );
+        let failing = WorktreeReport {
+            failed_looks: 4,
+            ..unknown(WorktreeState::Failed)
+        };
+        assert_eq!(
+            line(&failing),
+            "work tree: unknown, as the latest look failed; 4 looks failed"
+        );
+        assert_eq!(worktree_line(None), "work tree: not looked at yet");
     }
 
     /// The graph's line, as typed out here: its size, one of a kind in the singular, whether it

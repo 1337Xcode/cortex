@@ -149,6 +149,7 @@ fn reason_for(
         words: matched
             .map(|matched| matched.words.clone())
             .unwrap_or_default(),
+        is_uncommitted: seeds.uncommitted.files.contains(&file),
         is_like_earlier_work: seeds.similar.seeds.contains_key(&file),
         is_read_here: seeds
             .session
@@ -157,8 +158,9 @@ fn reason_for(
             .any(|read| read.path == row.file.path),
         ..ItemEvidence::default()
     };
-    if let Some(reason @ (Reason::Named | Reason::EditedHere | Reason::Matches(_))) =
-        reason_of(&evidence)
+    if let Some(
+        reason @ (Reason::Named | Reason::EditedHere | Reason::Matches(_) | Reason::Uncommitted),
+    ) = reason_of(&evidence)
     {
         return Ok(Some(reason));
     }

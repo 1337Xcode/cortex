@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use cortex_core::{EdgeType, NodeKind, TypeWeights};
 use cortex_retrieve::{
     Activation, FileMatch, Found, Graph, LexicalMatch, LinkInput, NodeInput, ScoredFile, Seeds,
-    SessionMatch, SimilarMatch, Standing, Support, Weighing, features_of,
+    SessionMatch, SimilarMatch, Standing, Support, UncommittedMatch, Weighing, features_of,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -67,7 +67,9 @@ fn scored(file: u32, activation: f64) -> ScoredFile {
 /// though `A`'s co-change would give it a fifth kind. So three kinds agree on one file, and four
 /// kinds stand behind the top three in all. Of the 1.0 of activation kept, the folder holding 0.15, the top five files
 /// hold 0.4 + 0.3 + 0.1 + 0.05 = 0.85. The session edited `B`, which the words did not find, so it
-/// is not continuing; once the words find `B` too, it is.
+/// is not continuing; once the words find `B` too, it is. With no session edit, the work tree's
+/// uncommitted change to `C`, which the words also find, is continuing work too; one to `D`, fourth
+/// and so past the three the gate weighs, is not.
 #[test]
 fn the_features_are_worked_out_from_what_was_found() -> TestResult {
     let graph = graph()?;
@@ -130,7 +132,7 @@ fn the_features_are_worked_out_from_what_was_found() -> TestResult {
     assert!((features.similar_task - 0.4).abs() < 1e-12);
     assert_eq!(features.recent_precision, Some(0.8));
     assert!(!features.is_continuing);
-    seeds.lexical.files.insert(n(2)?, matched);
+    seeds.lexical.files.insert(n(2)?, matched.clone());
     let support = Support::new(&graph, &seeds);
     let found = Found {
         seeds: &seeds,
@@ -139,6 +141,25 @@ fn the_features_are_worked_out_from_what_was_found() -> TestResult {
         support: &support,
     };
     assert!(features_of(&found, None).is_continuing);
+    let continuing = |uncommitted: u32| -> TestResult<bool> {
+        let mut seeds = seeds.clone();
+        seeds.session = SessionMatch::default();
+        seeds.uncommitted = UncommittedMatch {
+            seeds: BTreeMap::from([(uncommitted, 0.8)]),
+            files: BTreeSet::from([uncommitted]),
+        };
+        seeds.lexical.files.insert(uncommitted, matched.clone());
+        let support = Support::new(&graph, &seeds);
+        let found = Found {
+            seeds: &seeds,
+            activation: &activation,
+            scored: &files,
+            support: &support,
+        };
+        Ok(features_of(&found, None).is_continuing)
+    };
+    assert!(continuing(n(3)?)?);
+    assert!(!continuing(n(4)?)?);
     Ok(())
 }
 

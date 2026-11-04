@@ -18,6 +18,7 @@ fn each_reason_is_written_as_typed_here() {
             ]),
             "matches order, create, total",
         ),
+        (Reason::Uncommitted, "an uncommitted change"),
         (
             Reason::ChangesWith {
                 other: "service.ts".into(),
@@ -80,6 +81,7 @@ fn the_strongest_reason_is_chosen() {
         is_named: true,
         is_edited_here: true,
         words: vec!["order".into()],
+        is_uncommitted: true,
         changes_with: Some(("a.py".into(), 2, 3)),
         refers_to: Some("b.py".into()),
         referred_to_by: Some("c.py".into()),
@@ -95,6 +97,7 @@ fn the_strongest_reason_is_chosen() {
             Reason::Named => evidence.is_named = false,
             Reason::EditedHere => evidence.is_edited_here = false,
             Reason::Matches(_) => evidence.words.clear(),
+            Reason::Uncommitted => evidence.is_uncommitted = false,
             Reason::ChangesWith { .. } => evidence.changes_with = None,
             Reason::RefersTo(_) => evidence.refers_to = None,
             Reason::ReferredToBy(_) => evidence.referred_to_by = None,
@@ -109,6 +112,7 @@ fn the_strongest_reason_is_chosen() {
             "named in the prompt",
             "edited earlier in this session",
             "matches order",
+            "an uncommitted change",
             "changes with a.py in 2 of 3 commits",
             "refers to b.py",
             "referred to by c.py",
@@ -132,6 +136,7 @@ fn each_reason_names_its_kind() {
             ReasonKind::Matches,
             "matches",
         ),
+        (Reason::Uncommitted, ReasonKind::Uncommitted, "uncommitted"),
         (
             Reason::ChangesWith {
                 other: "a.py".to_owned(),

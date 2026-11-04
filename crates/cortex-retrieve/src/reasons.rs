@@ -25,6 +25,8 @@ pub enum Reason {
     EditedHere,
     /// The prompt's words it holds, in the prompt's order.
     Matches(Vec<String>),
+    /// The work tree holds it changed and not committed.
+    Uncommitted,
     /// It changed in `together` of its `of` commits with the file named `other`.
     ChangesWith {
         /// The other file's name.
@@ -54,6 +56,7 @@ impl Reason {
             Self::Named => ReasonKind::Named,
             Self::EditedHere => ReasonKind::EditedHere,
             Self::Matches(_) => ReasonKind::Matches,
+            Self::Uncommitted => ReasonKind::Uncommitted,
             Self::ChangesWith { .. } => ReasonKind::ChangesWith,
             Self::RefersTo(_) => ReasonKind::RefersTo,
             Self::ReferredToBy(_) => ReasonKind::ReferredToBy,
@@ -79,6 +82,7 @@ impl Reason {
                     .collect();
                 format!("matches {}", named.join(", "))
             }
+            Self::Uncommitted => "an uncommitted change".to_owned(),
             Self::ChangesWith {
                 other,
                 together,
@@ -124,6 +128,8 @@ pub struct ItemEvidence {
     pub is_edited_here: bool,
     /// The prompt's words it holds, in the prompt's order.
     pub words: Vec<String>,
+    /// The work tree holds it changed and not committed.
+    pub is_uncommitted: bool,
     /// Another file the evidence points at that it changes with: its name, the commits that changed
     /// both and the commits that changed this one.
     pub changes_with: Option<(String, u32, u32)>,
@@ -151,6 +157,9 @@ pub fn reason_of(evidence: &ItemEvidence) -> Option<Reason> {
     }
     if !evidence.words.is_empty() {
         return Some(Reason::Matches(evidence.words.clone()));
+    }
+    if evidence.is_uncommitted {
+        return Some(Reason::Uncommitted);
     }
     if let Some((other, together, of)) = &evidence.changes_with {
         return Some(Reason::ChangesWith {

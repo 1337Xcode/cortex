@@ -1,8 +1,9 @@
 //! The seeds of one retrieval: what each source finds, and the one vector activation starts from.
 //!
 //! The sources are the prompt's words ([`lexical`]), what the session has been doing
-//! ([`session`]), earlier work like the prompt's ([`similar`]), and, around what those found,
-//! code agents have not worked on yet ([`exploration`]). Each weighs the nodes it finds on its own
+//! ([`session`]), what the work tree is changing and has not committed ([`uncommitted`]), earlier
+//! work like the prompt's ([`similar`]), and, around what those found, code agents have not worked
+//! on yet ([`exploration`]). Each weighs the nodes it finds on its own
 //! scale. Per node the sources' weights add, and the whole is divided by its sum, so the vector
 //! sums to 1. Where no source finds anything there is no vector: activation never starts from
 //! nothing.
@@ -18,6 +19,7 @@ use crate::lexical::{LexicalMatch, lexical};
 use crate::prompt::PromptTerms;
 use crate::session::{SessionMatch, session};
 use crate::similar::{SimilarMatch, similar};
+use crate::uncommitted::{UncommittedMatch, uncommitted};
 
 /// What a retrieval seeds from.
 #[derive(Debug, Clone, Copy)]
@@ -27,6 +29,8 @@ pub struct SeedQuery<'a> {
     /// The session the prompt comes in; none for a question asked outside one, which seeds
     /// nothing from a session.
     pub session: Option<&'a Identifier>,
+    /// The file nodes of the uncommitted diff, as the daemon last read them; empty when it has not.
+    pub uncommitted: &'a [NodeId],
 }
 
 /// What each source found, and the vector they make.
@@ -36,6 +40,8 @@ pub struct Seeds {
     pub lexical: LexicalMatch,
     /// What the session has been doing.
     pub session: SessionMatch,
+    /// What the work tree is changing and has not committed.
+    pub uncommitted: UncommittedMatch,
     /// Earlier work like the prompt's.
     pub similar: SimilarMatch,
     /// The dark neighbours of the strongest of the others.
@@ -59,13 +65,20 @@ pub fn seeds(
         Some(id) => session(queries, graph, id)?,
         None => SessionMatch::default(),
     };
+    let uncommitted = uncommitted(graph, query.uncommitted);
     let similar = similar(queries, graph, query.terms)?;
-    let found = summed(&[&lexical.seeds, &session.seeds, &similar.seeds]);
+    let found = summed(&[
+        &lexical.seeds,
+        &session.seeds,
+        &uncommitted.seeds,
+        &similar.seeds,
+    ]);
     let exploration = exploration(graph, &found);
     let vector = shares(&summed(&[&found, &exploration]));
     Ok(Seeds {
         lexical,
         session,
+        uncommitted,
         similar,
         exploration,
         vector,

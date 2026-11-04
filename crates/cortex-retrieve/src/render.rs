@@ -267,7 +267,7 @@ impl Plan {
 /// The header line for `basis`.
 fn heading(basis: &Basis) -> String {
     match basis {
-        Basis::Continuity => "[cortex] Work order · continuing this session's work".to_owned(),
+        Basis::Continuity => "[cortex] Work order · continuing the work under way".to_owned(),
         Basis::Agreement(kinds) => format!("[cortex] Work order · {}", agreed(kinds)),
         Basis::Located { kinds, verdict } => {
             let found = match kinds.as_slice() {
@@ -278,7 +278,7 @@ fn heading(basis: &Basis) -> String {
             let gate = match verdict {
                 Verdict::Inject(Rule::Agreement) => "the gate would give it",
                 Verdict::Inject(Rule::Continuity) => {
-                    "the gate would give it, the session continuing its own work"
+                    "the gate would give it, the work under way going on"
                 }
                 Verdict::Silent(Shut::TooFewKinds) => {
                     "the gate would stay silent: too few kinds of evidence agree"

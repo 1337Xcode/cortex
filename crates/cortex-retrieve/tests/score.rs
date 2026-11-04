@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use cortex_core::{EdgeType, InterestTier, NodeKind, TypeWeights};
 use cortex_retrieve::{
     Activation, Evidence, FileMatch, Graph, LexicalMatch, LinkInput, NodeInput, Seeds,
-    SessionMatch, SimilarMatch, Standing, Support, Weighing, scored_files,
+    SessionMatch, SimilarMatch, Standing, Support, UncommittedMatch, Weighing, scored_files,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -219,6 +219,7 @@ fn each_file_s_evidence_is_counted_by_kind() -> TestResult {
         },
         exploration: BTreeMap::new(),
         vector: BTreeMap::new(),
+        ..Seeds::default()
     };
     let support = Support::new(&graph, &seeds);
     let kinds = |id| -> TestResult<Vec<Evidence>> { Ok(support.of(n(id)?).into_iter().collect()) };
@@ -259,6 +260,47 @@ fn a_link_to_no_seed_file_is_no_evidence() -> TestResult {
     };
     let support = Support::new(&graph, &seeds);
     assert!(support.of(at(&graph, 1)?).is_empty());
+    Ok(())
+}
+
+/// The uncommitted diff is no evidence, since the work tree holds it whatever the prompt is about:
+/// `A` (1) calls into `B` (2) at full confidence, changes with it and was used with it to the most
+/// a link can weigh, and `A` is uncommitted, yet `B` has no evidence while no other source points
+/// at `A`; once the session edited `A`, `B` has all three kinds of link.
+#[test]
+fn the_uncommitted_diff_is_no_evidence() -> TestResult {
+    let nodes = [
+        plain(1, NodeKind::File, None),
+        plain(2, NodeKind::File, None),
+    ];
+    let links = [
+        link(1, 2, EdgeType::Structural, 1.0),
+        link(1, 2, EdgeType::CoChange, 0.9),
+        link(1, 2, EdgeType::CoAccess, 5.0),
+    ];
+    let graph = graph(&nodes, &links)?;
+    let a = at(&graph, 1)?;
+    let uncommitted = UncommittedMatch {
+        seeds: BTreeMap::from([(a, 0.8)]),
+        files: BTreeSet::from([a]),
+    };
+    let only_uncommitted = Seeds {
+        uncommitted: uncommitted.clone(),
+        ..Seeds::default()
+    };
+    assert_eq!(evidence(&graph, &only_uncommitted, 2)?, []);
+    let edited = Seeds {
+        session: SessionMatch {
+            seeds: BTreeMap::from([(a, 1.0)]),
+            ..SessionMatch::default()
+        },
+        uncommitted,
+        ..Seeds::default()
+    };
+    assert_eq!(
+        evidence(&graph, &edited, 2)?,
+        [Evidence::Structural, Evidence::CoChange, Evidence::CoAccess]
+    );
     Ok(())
 }
 

@@ -137,7 +137,11 @@ fn store_files(writer: &mut Writer, paths: &[&str]) -> TestResult<Vec<FileId>> {
 /// A miner of the repository at `root` with `config`, and its inbox.
 fn looker(root: PathBuf, config: Config) -> (Looker, Arc<Inbox>) {
     let inbox = Arc::new(Inbox::default());
-    (Looker::new(root, config, Arc::clone(&inbox)), inbox)
+    let worktree = Arc::new(Worktree::default());
+    (
+        Looker::new(root, config, Arc::clone(&inbox), worktree),
+        inbox,
+    )
 }
 
 /// Whether the writer, coming back for work, finds nothing waiting: no mining was handed over.
@@ -512,5 +516,33 @@ fn what_gix_cannot_read_the_git_program_reads() -> TestResult {
         }
     );
     assert!(looker.program.is_none());
+    Ok(())
+}
+
+/// A look that finds HEAD moved tells the work tree, which asks for a look, since a commit changes
+/// which files are uncommitted without writing a file the watcher reports. In a repository with no
+/// commit yet, the first look tells it, a look with HEAD where it was does not, and the first
+/// commit, then a second, each does.
+#[test]
+fn a_move_of_head_asks_for_a_look_at_the_work_tree() -> TestResult {
+    let repo = Repo::new()?;
+    let _store = writer(&repo.root())?;
+    let worktree = Arc::new(Worktree::default());
+    let inbox = Arc::new(Inbox::default());
+    let mut looker = Looker::new(repo.root(), Config::default(), inbox, Arc::clone(&worktree));
+    let asks = worktree.asks();
+    let (now, wall_ms) = (Instant::now(), now_ms());
+    looker.look(now, wall_ms);
+    assert!(asks.take(), "the first look, before any commit");
+    looker.look(now, wall_ms);
+    assert!(!asks.take(), "HEAD where it was");
+    repo.commit("one", &["a.py"])?;
+    looker.look(now, wall_ms);
+    assert!(asks.take(), "the first commit");
+    looker.look(now, wall_ms);
+    assert!(!asks.take(), "HEAD where it was");
+    repo.commit("two", &["a.py"])?;
+    looker.look(now, wall_ms);
+    assert!(asks.take(), "a second commit");
     Ok(())
 }

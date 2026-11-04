@@ -3,7 +3,7 @@
 
 mod common;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use common::{Repo, TestResult, event, function, record, tool};
 use cortex_core::{EdgeType, FileFlags, HookKind, Identifier, InterestTier, ToolKind};
@@ -180,9 +180,10 @@ fn the_parts_add_and_the_vector_sums_to_one() {
 
 /// One retrieval's seeds from every source, worked out by hand. The prompt's words (quokka,
 /// wombat, numbat) are in no row of the index, so they find nothing; the session edited `g`, 1.0;
-/// a cluster's first five words hold all three of the prompt's, of five between them, 3/5 = 0.6,
-/// so its file `t.py` gets 0.6 x 0.6 = 0.36; `g` calls `h`, which no task has touched, 0.05. In
-/// all 1.41: `g` 1/1.41, `t.py` 0.36/1.41, `h` 0.05/1.41.
+/// the work tree holds `u.py` changed and not committed, 0.8; a cluster's first five words hold all
+/// three of the prompt's, of five between them, 3/5 = 0.6, so its file `t.py` gets 0.6 x 0.6 =
+/// 0.36; `g` calls `h`, which no task has touched, 0.05. In all 2.21: `g` 1/2.21, `u.py` 0.8/2.21,
+/// `t.py` 0.36/2.21, `h` 0.05/2.21.
 #[test]
 fn every_source_adds_to_one_vector() -> TestResult {
     let mut repo = Repo::new()?;
@@ -191,6 +192,7 @@ fn every_source_adds_to_one_vector() -> TestResult {
     let g = repo.file("a.py", &text, &defs, FileFlags::empty())?[2];
     let h = repo.file("b.py", &text, &[function("h", 1, 3)], FileFlags::empty())?[1];
     let t = repo.file("t.py", "x = 1\n", &[], FileFlags::empty())?[0];
+    let u = repo.file("u.py", "y = 1\n", &[], FileFlags::empty())?[0];
     repo.link((g, h), EdgeType::Structural, (1.0, 1, 0))?;
     repo.clusters(&[(&["quokka", "wombat", "numbat", "dingo", "emu"], &[t], 2)])?;
     record(
@@ -208,16 +210,19 @@ fn every_source_adds_to_one_vector() -> TestResult {
     let query = SeedQuery {
         terms: &terms,
         session: Some(&session),
+        uncommitted: &[u],
     };
     let found = seeds(reader.queries(), &graph, &query)?;
     let index = |node: NodeId| graph.index_of(node).ok_or("a node of the graph");
-    let (g, h, t) = (index(g)?, index(h)?, index(t)?);
+    let (g, h, t, u) = (index(g)?, index(h)?, index(t)?, index(u)?);
     assert!(found.lexical.seeds.is_empty());
+    assert_eq!(found.uncommitted.files, BTreeSet::from([u]));
     assert_eq!(found.exploration, BTreeMap::from([(h, 0.05)]));
-    assert_eq!(found.vector.len(), 3);
-    assert!(near(found.vector.get(&g), 1.0 / 1.41));
-    assert!(near(found.vector.get(&t), 0.36 / 1.41));
-    assert!(near(found.vector.get(&h), 0.05 / 1.41));
+    assert_eq!(found.vector.len(), 4);
+    assert!(near(found.vector.get(&g), 1.0 / 2.21));
+    assert!(near(found.vector.get(&u), 0.8 / 2.21));
+    assert!(near(found.vector.get(&t), 0.36 / 2.21));
+    assert!(near(found.vector.get(&h), 0.05 / 2.21));
     Ok(())
 }
 
@@ -239,6 +244,7 @@ fn nothing_found_is_no_vector() -> TestResult {
     let query = SeedQuery {
         terms: &terms,
         session: Some(&session),
+        uncommitted: &[],
     };
     let found = seeds(reader.queries(), &graph, &query)?;
     assert!(found.vector.is_empty());

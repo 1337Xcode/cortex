@@ -34,6 +34,7 @@ mod similar;
 mod spans;
 mod support;
 mod two_stage;
+mod uncommitted;
 
 pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
@@ -61,3 +62,4 @@ pub use similar::{SIMILAR_BAR, SIMILAR_WEIGHT, SimilarMatch, similar};
 pub use spans::{MAX_SPANS_PER_FILE, Outlined, Span, is_in_context, outline_of, spans_of};
 pub use support::{COACCESS_FLOOR, Evidence, STRUCTURAL_FLOOR, Support};
 pub use two_stage::{STAGED_FILES, Staged, two_stage};
+pub use uncommitted::{UNCOMMITTED_WEIGHT, UncommittedMatch, uncommitted};

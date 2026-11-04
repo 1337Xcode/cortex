@@ -25,7 +25,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use cortex_core::ipc::ResponseBody;
-use cortex_core::ipc::{GraphReport, RequestBody, Role};
+use cortex_core::ipc::{GraphReport, RequestBody, Role, StatusReport, WorktreeReport};
 use cortex_core::{RepoId, RunFiles, UserFolder, canonical_root};
 use cortex_daemon::is_running;
 use cortex_hook::{ClientError, ask};
@@ -284,10 +284,27 @@ pub fn stop_late_daemon(files: &RunFiles) {
 ///
 /// The daemon does not answer its status.
 pub fn graph_of(root: &Path, home: &Path) -> TestResult<Option<GraphReport>> {
+    Ok(status_report(root, home)?
+        .graph
+        .filter(|graph| graph.builds > 0))
+}
+
+/// What the daemon of the repository at `root`, `home` being the home folder, read of its work
+/// tree's uncommitted changes: none before its first look ended.
+///
+/// # Errors
+///
+/// The daemon does not answer its status.
+pub fn worktree_of(root: &Path, home: &Path) -> TestResult<Option<WorktreeReport>> {
+    Ok(status_report(root, home)?.worktree)
+}
+
+/// The status of the daemon of the repository at `root`, `home` being the home folder.
+fn status_report(root: &Path, home: &Path) -> TestResult<StatusReport> {
     let files = UserFolder::in_home(home).run_files(&RepoId::of(&canonical_root(root)?));
     let deadline = Instant::now() + Duration::from_secs(10);
     match ask(&files, Role::Cli, RequestBody::Status, deadline)?.body {
-        ResponseBody::Status(report) => Ok(report.graph.filter(|graph| graph.builds > 0)),
+        ResponseBody::Status(report) => Ok(report),
         other => Err(format!("the daemon answered its status with {other:?}").into()),
     }
 }

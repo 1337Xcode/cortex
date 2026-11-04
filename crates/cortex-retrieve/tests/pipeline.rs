@@ -5,7 +5,8 @@ mod common;
 
 use common::{Def, Repo, TestResult, event, function, record, tool};
 use cortex_core::{
-    EdgeType, FileFlags, HookKind, Identifier, RetrievalConfig, ScaleMode, SymbolKind, ToolKind,
+    EdgeType, FileFlags, HookKind, Identifier, RepoPath, RetrievalConfig, ScaleMode, SymbolKind,
+    ToolKind,
 };
 use cortex_retrieve::{
     GraphSettings, Location, Outcome, Reason, Request, Rule, Shut, Silence, Verdict, locate,
@@ -107,12 +108,29 @@ fn asked_with(
     mode: ScaleMode,
     settings: &RetrievalConfig,
 ) -> TestResult<cortex_retrieve::Retrieval> {
+    asked_while_changed(repo, prompt, (mode, settings), &[])
+}
+
+/// What `prompt` in session `s1` gives in `repo`, in `mode`, with the `retrieval.*` `settings`,
+/// while the work tree holds the files `changed` changed and not committed.
+fn asked_while_changed(
+    repo: &Repo,
+    prompt: &str,
+    (mode, settings): (ScaleMode, &RetrievalConfig),
+    changed: &[&str],
+) -> TestResult<cortex_retrieve::Retrieval> {
     let reader = repo.reader()?;
     let graph = read_graph(reader.queries(), &GraphSettings::default())?;
+    let mut uncommitted = Vec::new();
+    for path in changed {
+        let node = reader.queries().file_node_at(&RepoPath::new(path)?)?;
+        uncommitted.push(node.ok_or("a stored file")?);
+    }
     let session = Identifier::new("s1")?;
     let request = Request {
         prompt,
         session: Some(&session),
+        uncommitted: &uncommitted,
         mode,
         settings,
         max_file_bytes: 1_048_576,
@@ -139,6 +157,7 @@ fn located(
     let request = Request {
         prompt: question,
         session: session.as_ref(),
+        uncommitted: &[],
         mode,
         settings: &settings,
         max_file_bytes: 1_048_576,
@@ -270,7 +289,34 @@ fn a_session_continuing_its_own_work_gets_its_work_order() -> TestResult {
     assert_eq!(*rule, Rule::Continuity);
     assert!(
         rendered.text.starts_with(
-            "[cortex] Work order · continuing this session's work\nStart here:\n  1. src/billing/tax.py:1-2  rate  (edited earlier in this session)\n"
+            "[cortex] Work order · continuing the work under way\nStart here:\n  1. src/billing/tax.py:1-2  rate  (edited earlier in this session)\n"
+        ),
+        "{}",
+        rendered.text
+    );
+    Ok(())
+}
+
+/// The same prompt, about the tax file's rate, while the work tree holds the tax file changed and
+/// not committed and the session has edited nothing: the work under way goes on, and the work order
+/// goes through on that alone, the words the reason the file is listed.
+#[test]
+fn a_prompt_about_an_uncommitted_change_gets_its_work_order() -> TestResult {
+    let repo = repository()?;
+    let settings = RetrievalConfig::default();
+    let retrieval = asked_while_changed(
+        &repo,
+        "change rate",
+        (ScaleMode::Medium, &settings),
+        &["src/billing/tax.py"],
+    )?;
+    let Outcome::WorkOrder(rule, rendered) = &retrieval.outcome else {
+        return Err(format!("{:?}", retrieval.outcome).into());
+    };
+    assert_eq!(*rule, Rule::Continuity);
+    assert!(
+        rendered.text.starts_with(
+            "[cortex] Work order · continuing the work under way\nStart here:\n  1. src/billing/tax.py:1-2  rate  (matches rate)\n"
         ),
         "{}",
         rendered.text
@@ -493,7 +539,7 @@ fn the_engine_without_the_gate_answers_in_tiny_mode() -> TestResult {
 
 /// A question asked outside any session sees nothing of one: the tax file, edited in session `s1`,
 /// is found for matching "rate", and the gate would stay shut; asked in `s1`, the file is found for
-/// its edit, and the gate would let it through as the session continuing its own work.
+/// its edit, and the gate would let it through as the work under way going on.
 #[test]
 fn a_question_outside_a_session_sees_nothing_of_one() -> TestResult {
     let mut repo = repository()?;

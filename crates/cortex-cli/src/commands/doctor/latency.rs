@@ -326,6 +326,7 @@ mod tests {
             recent_errors: Vec::new(),
             git: None,
             graph: None,
+            worktree: None,
         }
     }
 

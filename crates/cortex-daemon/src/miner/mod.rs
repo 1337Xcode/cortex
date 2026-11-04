@@ -4,7 +4,9 @@
 //! once the index has taken every change that had reached the inbox by then, so that the files a
 //! checkout wrote as HEAD moved count. What the mining found goes to the writer through the inbox,
 //! and the miner waits for the write before it looks again, so that the mark it reads next is the
-//! one written.
+//! one written. A look that finds HEAD moved also tells the work tree's reader, which lets go of
+//! the diff it read and looks again: a commit changes which files are uncommitted without writing
+//! a file the watcher would report.
 //!
 //! `gix` reads the history, opened afresh for each read ([`source`]); the `git` program reads it
 //! once `gix` cannot, and then the miner looks every [`PROGRAM_HEAD_EVERY`] while nothing is due,
@@ -35,6 +37,7 @@ use self::retry::Retry;
 use self::source::{Program, read_history};
 use crate::host::now_ms;
 use crate::inbox::Inbox;
+use crate::worktree::Worktree;
 
 /// How often the miner looks whether HEAD moved: reading HEAD's commit with `gix` takes about 2 ms,
 /// and a commit is mined within seconds of being made. One look apart is also time enough for the
@@ -55,12 +58,22 @@ pub(crate) struct Miner {
 
 impl Miner {
     /// Starts mining the history of the repository at `root` under `config`, the store read from
-    /// its `.cortex` folder and what is found handed to `inbox`. A thread that cannot be started
-    /// is logged, kept among the daemon's recent errors and reported as a failure: the daemon goes
-    /// on without co-change.
-    pub(crate) fn start(root: &Path, config: &Config, inbox: &Arc<Inbox>) -> Option<Self> {
+    /// its `.cortex` folder and what is found handed to `inbox`, telling `worktree` whenever HEAD
+    /// moves. A thread that cannot be started is logged, kept among the
+    /// daemon's recent errors and reported as a failure: the daemon goes on without co-change.
+    pub(crate) fn start(
+        root: &Path,
+        config: &Config,
+        inbox: &Arc<Inbox>,
+        worktree: &Arc<Worktree>,
+    ) -> Option<Self> {
         let (stop, stopped) = mpsc::channel();
-        let mut looker = Looker::new(root.to_path_buf(), config.clone(), Arc::clone(inbox));
+        let mut looker = Looker::new(
+            root.to_path_buf(),
+            config.clone(),
+            Arc::clone(inbox),
+            Arc::clone(worktree),
+        );
         let started = std::thread::Builder::new()
             .name("cortex-miner".to_owned())
             .spawn(move || looker.run(&stopped));
@@ -138,12 +151,16 @@ struct Looker {
     settling: Option<Settling>,
     /// The failures in a row.
     retry: Retry,
+    /// The work tree's reader, told whenever HEAD moves.
+    worktree: Arc<Worktree>,
+    /// HEAD's commit at the latest look that read it, empty when its branch has none.
+    head_seen: Option<String>,
 }
 
 impl Looker {
-    /// A miner of the repository at `root` under `config`, handing what it finds to `inbox`, that
-    /// has not looked yet.
-    fn new(root: PathBuf, config: Config, inbox: Arc<Inbox>) -> Self {
+    /// A miner of the repository at `root` under `config`, handing what it finds to `inbox` and
+    /// telling `worktree` whenever HEAD moves, that has not looked yet.
+    fn new(root: PathBuf, config: Config, inbox: Arc<Inbox>, worktree: Arc<Worktree>) -> Self {
         Self {
             root,
             config,
@@ -152,6 +169,8 @@ impl Looker {
             program: None,
             settling: None,
             retry: Retry::default(),
+            worktree,
+            head_seen: None,
         }
     }
 
@@ -227,6 +246,7 @@ impl Looker {
             return Ok(Next::Wait);
         };
         let head = head.unwrap_or_default();
+        self.see_head(&head);
         let mark = self.mark().map_err(Failure::blind)?;
         if !mine::is_due(mark.as_ref(), &head, wall_ms) {
             self.settling = None;
@@ -268,6 +288,16 @@ impl Looker {
             Some(answer) => Next::Handed(Handed { head, answer }),
             None => Next::Stop,
         })
+    }
+
+    /// Tells the work tree's reader that HEAD moved when HEAD's commit, `head`, is not the one the
+    /// latest look read, the first look's among them, since the work tree may have been read at
+    /// another HEAD before the miner began.
+    fn see_head(&mut self, head: &str) {
+        if self.head_seen.as_deref() != Some(head) {
+            self.head_seen = Some(head.to_owned());
+            self.worktree.head_moved();
+        }
     }
 
     /// Whether the index has taken the files a move of HEAD to `head` wrote, so that a mining now
