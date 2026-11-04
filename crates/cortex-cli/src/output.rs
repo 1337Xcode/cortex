@@ -8,6 +8,26 @@ use std::io::{self, Write};
 
 use anyhow::Context;
 
+/// Writes text of several lines to stdout, each line as [`line`] writes it but for its tabs, which
+/// are kept: code is indented with them, and a tab moves the cursor no further than the next tab
+/// stop.
+///
+/// # Errors
+///
+/// Fails when stdout cannot be written.
+pub(crate) fn lines(text: &str) -> anyhow::Result<()> {
+    let mut stdout = io::stdout().lock();
+    for each in text.lines() {
+        writeln!(stdout, "{}", code_printable(each)).context("writing to stdout")?;
+    }
+    Ok(())
+}
+
+/// One line of `lines`: each control character but a tab written as its escape.
+fn code_printable(line: &str) -> String {
+    escaped(line, |character| character == '\t')
+}
+
 /// Writes one line of normal output to stdout, its control characters escaped: a path or a name
 /// from a repository, or another program's answer, cannot move the cursor, change colours or add
 /// a line of its own.
@@ -61,15 +81,20 @@ pub(crate) fn error(error: &anyhow::Error) {
 /// repository, such as a configuration key in a warning or a path in an error, cannot move the
 /// cursor, change colours or split the line.
 fn printable(text: &str) -> String {
-    let mut printable = String::with_capacity(text.len());
+    escaped(text, |_| false)
+}
+
+/// `text` with each control character but those `is_kept` keeps written as its escape.
+fn escaped(text: &str, is_kept: impl Fn(char) -> bool) -> String {
+    let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
-        if character.is_control() {
-            printable.extend(character.escape_default());
+        if character.is_control() && !is_kept(character) {
+            escaped.extend(character.escape_default());
         } else {
-            printable.push(character);
+            escaped.push(character);
         }
     }
-    printable
+    escaped
 }
 
 #[cfg(test)]
@@ -84,5 +109,11 @@ mod tests {
             printable("key \u{1b}[31mred\u{1b}[0m\nnext\tcafé"),
             "key \\u{1b}[31mred\\u{1b}[0m\\nnext\\tcafé"
         );
+    }
+
+    /// Lines of code keep their tabs and nothing else: an escape sequence in one is escaped.
+    #[test]
+    fn code_keeps_its_tabs() {
+        assert_eq!(code_printable("\tif x:\u{1b}[2J"), "\tif x:\\u{1b}[2J");
     }
 }

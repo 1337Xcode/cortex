@@ -1,0 +1,165 @@
+//! `cortex where` through the binary: what the engine finds for a question, as the daemon writes
+//! it; what it says when there is nothing to show, before the daemon's graph and after; and that a
+//! question the daemon could not answer fails the command.
+
+mod common;
+
+use std::path::Path;
+use std::process::{Command, Output};
+
+use common::fake_daemon::{FakeDaemon, Script, kinds};
+use common::git::{commit, git};
+use common::{Daemon, TestResult, graph_of, isolate, wait_for};
+use cortex_core::{RepoId, canonical_root};
+use cortex_store::{Writer, WriterOptions};
+
+/// `src/orders/service.py`, its function on lines 1 to 3, its body indented with tabs, which the
+/// command prints as they are.
+const SERVICE: &str = "def create_order(cart):\n\ttotal = sum(cart)\n\treturn total\n";
+
+/// `src/orders/model.py`, its class on lines 1 to 3.
+const MODEL: &str = "class Order:\n    def __init__(self):\n        self.lines = []\n";
+
+/// A question naming `create_order`, with "orders" in both files' paths.
+const QUESTION: &str = "fix create_order in the orders service";
+
+/// A repository whose two commits change the service and the model together, pinned to medium
+/// mode; its home folder; and its daemon, once the graph holds the co-change links. When
+/// `self_check` is given, it is stored as the self-check's record, as it is, in a store made before
+/// the daemon starts.
+fn repository(
+    self_check: Option<&str>,
+) -> TestResult<(tempfile::TempDir, tempfile::TempDir, Daemon)> {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, home.path(), &["init", "-q"])?;
+    std::fs::create_dir_all(root.join("src/orders"))?;
+    for (message, suffix) in [("one", ""), ("two", "\n")] {
+        std::fs::write(
+            root.join("src/orders/service.py"),
+            format!("{SERVICE}{suffix}"),
+        )?;
+        std::fs::write(root.join("src/orders/model.py"), format!("{MODEL}{suffix}"))?;
+        commit(
+            root,
+            home.path(),
+            message,
+            &["src/orders/service.py", "src/orders/model.py"],
+        )?;
+    }
+    std::fs::create_dir_all(root.join(".cortex"))?;
+    std::fs::write(root.join(".cortex/config.toml"), "mode = \"medium\"\n")?;
+    if let Some(record) = self_check {
+        drop(Writer::open(&WriterOptions {
+            folder: &root.join(".cortex"),
+            repo_id: &RepoId::of(&canonical_root(root)?),
+            mmap_bytes: 0,
+            now_ms: 1,
+        })?);
+        let store = rusqlite::Connection::open(root.join(".cortex/cortex.db"))?;
+        store.execute(
+            "INSERT INTO meta (key, value) VALUES ('self_check', ?1)",
+            [record],
+        )?;
+    }
+    let daemon = Daemon::start(root, home.path())?;
+    daemon.first_line()?;
+    wait_for(|| Ok(graph_of(root, home.path())?.is_some_and(|graph| graph.has_cochange)))?;
+    Ok((repo, home, daemon))
+}
+
+/// Runs `cortex where` with `args` for the repository at `root`, `home` being the home folder.
+fn cortex_where(root: &Path, home: &Path, args: &[&str]) -> TestResult<Output> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command.arg("where").args(args).arg("--root").arg(root);
+    isolate(&mut command, home);
+    Ok(command.output()?)
+}
+
+/// A question naming `create_order` gets the service, its lines 1 to 3 as the file holds them, under
+/// the line saying what the evidence was and what the gate would do; at a limit of one file, the
+/// model is not named.
+#[test]
+fn a_question_gets_what_the_engine_finds() -> TestResult {
+    let (repo, home, _daemon) = repository(None)?;
+    let output = cortex_where(repo.path(), home.path(), &[QUESTION, "--limit", "1"])?;
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let printed = String::from_utf8(output.stdout)?;
+    let mut lines = printed.lines();
+    let heading = lines.next().ok_or("no heading")?;
+    assert!(heading.starts_with("[cortex] Where · "), "{printed}");
+    assert!(heading.contains(" · the gate would "), "{printed}");
+    assert!(printed.contains("src/orders/service.py:1-3"), "{printed}");
+    assert!(!printed.contains("src/orders/model.py"), "{printed}");
+    for code in SERVICE.lines() {
+        assert!(
+            printed.lines().any(|line| line.ends_with(code)),
+            "{code}: {printed}"
+        );
+    }
+    Ok(())
+}
+
+/// A question whose words name nothing the repository holds is answered with nothing, and the
+/// command says that the graph is built and nothing was found.
+#[test]
+fn a_question_that_finds_nothing_says_so() -> TestResult {
+    let (repo, home, _daemon) = repository(None)?;
+    let output = cortex_where(repo.path(), home.path(), &["zqxv wvrt"])?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        "nothing found: the question points at no file the engine can show\n"
+    );
+    Ok(())
+}
+
+/// Before the daemon's first graph a question gets no answer, and the command says the graph is
+/// not built yet, having asked the daemon its status: the fake daemon, whose first index is not
+/// done, answers the question with nothing and its status with no graph.
+#[test]
+fn before_the_graph_the_command_says_so() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    std::fs::create_dir(repo.path().join(".cortex"))?;
+    let fake = FakeDaemon::start(repo.path(), home.path(), Script::Indexing(2))?;
+    let output = cortex_where(repo.path(), home.path(), &[QUESTION])?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        "nothing yet: the daemon has not built its graph; `cortex status` says when it has\n"
+    );
+    let requests = fake.requests()?;
+    assert_eq!(kinds(&requests), ["hello", "where", "hello", "status"]);
+    Ok(())
+}
+
+/// A question the daemon could not answer fails the command with the daemon's reason: here the
+/// self-check's stored record is not one, which every retrieval reads.
+#[test]
+fn a_question_the_daemon_could_not_answer_fails() -> TestResult {
+    let (repo, home, _daemon) = repository(Some("{not a record"))?;
+    let output = cortex_where(repo.path(), home.path(), &[QUESTION])?;
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    let said = String::from_utf8(output.stderr)?;
+    assert!(
+        said.starts_with("cortex: error: the daemon could not answer: "),
+        "{said}"
+    );
+    Ok(())
+}
+
+/// A limit outside 1 to 5 is refused before anything is asked.
+#[test]
+fn a_limit_outside_one_to_five_is_refused() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    for limit in ["0", "6"] {
+        let output = cortex_where(repo.path(), home.path(), &[QUESTION, "--limit", limit])?;
+        assert_eq!(output.status.code(), Some(2), "{limit}: {output:?}");
+    }
+    Ok(())
+}

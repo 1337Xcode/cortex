@@ -10,6 +10,7 @@ mod receipts;
 mod status;
 mod uninstall;
 mod version;
+mod where_;
 
 use clap::Subcommand;
 
@@ -30,6 +31,9 @@ pub(crate) enum Command {
     Uninstall(uninstall::Args),
     /// Show what each task of recent sessions took: turns, tool calls, tokens and estimated cost.
     Receipts(receipts::Args),
+    /// Show the code the retrieval engine finds for a question, with its reasons and what the
+    /// gate would say.
+    Where(where_::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -46,5 +50,6 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Doctor(args) => doctor::run(&args),
         Command::Uninstall(args) => uninstall::run(&args),
         Command::Receipts(args) => receipts::run(&args),
+        Command::Where(args) => where_::run(&args),
     }
 }

@@ -28,8 +28,8 @@ pub enum Script {
     /// then reads the one request any version reads; stops after a stop.
     Mismatch(&'static str),
     /// Welcomes each connection as a daemon of this build whose first index is not done, answers a
-    /// status saying so, and stops after that many connections, as a daemon that dies while it
-    /// indexes.
+    /// status saying so and a question with nothing, and stops after that many connections, as a
+    /// daemon that dies while it indexes.
     Indexing(usize),
     /// Welcomes each connection as a daemon speaking this protocol, of the next of `versions` (the
     /// last for every connection past them), and takes every request; stops after a stop. Several
@@ -167,6 +167,9 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
             let is_stop = request.body == RequestBody::Shutdown;
             let body = match (&script, &request.body) {
                 (Script::Indexing(_), RequestBody::Status) => ResponseBody::Status(indexing()),
+                (Script::Indexing(_), RequestBody::Where { .. }) => {
+                    ResponseBody::Reply { text: None }
+                }
                 _ => ResponseBody::Ack,
             };
             let answer = Response {

@@ -439,16 +439,26 @@ impl Server {
         )
     }
 
-    /// What the engine finds for `query` without the gate, at most `limit` files (1 to 5).
+    /// What the engine finds for `query` without the gate, at most `limit` files (1 to 5): an
+    /// error, kept among the recent errors, when the engine could not look.
     async fn locate(&self, query: String, limit: u8) -> ResponseBody {
         let limit = usize::from(limit.clamp(1, MAX_WHERE_FILES));
-        let text = self
+        let located = self
             .with_service(move |service, graph, uncommitted| {
                 service.locate(&query, limit, (graph, uncommitted))
             })
-            .await
-            .flatten();
-        ResponseBody::Reply { text }
+            .await;
+        match located {
+            Some(Ok(text)) => ResponseBody::Reply { text },
+            None => ResponseBody::Reply { text: None },
+            Some(Err(error)) => {
+                let message = format!("{error:#}");
+                tracing::warn!(error = %message, "a question was not answered");
+                self.inbox
+                    .note_error("a question was not answered", now_ms());
+                ResponseBody::Error { message }
+            }
+        }
     }
 
     /// Runs `work` with the service, the graph as it stands and the uncommitted diff's file nodes

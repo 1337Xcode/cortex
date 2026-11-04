@@ -185,14 +185,20 @@ impl Service {
     /// What the engine finds for `question` without the gate, at most `limit` files, over `graph`
     /// and seeded with `uncommitted`, as text; none before the graph or the first index, or when it
     /// finds nothing to show.
+    ///
+    /// # Errors
+    ///
+    /// The store's errors, and a self-check record that is not one.
     pub(crate) fn locate(
         &self,
         question: &str,
         limit: usize,
         (graph, uncommitted): (Option<&Arc<Graph<NodeId>>>, &[NodeId]),
-    ) -> Option<String> {
-        let graph = graph?;
-        let located = self.with_reader(|queries| {
+    ) -> Result<Option<String>, cortex_retrieve::RetrieveError> {
+        let Some(graph) = graph else {
+            return Ok(None);
+        };
+        self.with_reader(|queries| {
             let Some(mode) = mode_of(queries)? else {
                 return Ok(None);
             };
@@ -211,10 +217,6 @@ impl Service {
             };
             let location = locate(queries, graph, &request, limit)?;
             Ok(location.rendered.map(|rendered| rendered.text))
-        });
-        located.unwrap_or_else(|error| {
-            tracing::warn!(error = %format!("{error:#}"), "a question was not answered");
-            None
         })
     }
 
