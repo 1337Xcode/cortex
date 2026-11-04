@@ -3,7 +3,8 @@
 //! [`HistorySource`] is what a source of that history gives; [`GixHistory`] reads it in-process,
 //! and [`CliHistory`] by running the `git` program, the fallback when `gix` cannot. [`cochange`]
 //! turns the commits read into which files change together, and [`mine`] decides what to read
-//! and writes what it found to the store.
+//! and writes what it found to the store. [`worktree`] reads which files the work tree holds
+//! changed and not committed.
 
 #![warn(clippy::pedantic)]
 
@@ -15,6 +16,7 @@ mod gix_history;
 mod history;
 pub mod mine;
 mod renames;
+pub mod worktree;
 
 pub use cli_history::CliHistory;
 pub use gix_history::GixHistory;

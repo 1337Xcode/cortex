@@ -1,7 +1,8 @@
 //! The `git` program as the history source runs it: the one the `PATH` names outside the
 //! repository, in the repository's top, with none of the caller's `GIT_` variables, no system or
 //! global configuration, no repository looked for above the top, nothing fetched that a partial
-//! clone left out, and a bounded time and answer.
+//! clone left out, and a bounded time and answer. The work tree's status is read the same way but
+//! with the user's own configuration, so that it lists what the user's own git lists.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -57,6 +58,16 @@ impl GitProgram {
     /// Git with `options` before its command (such as `--no-lazy-fetch`), then `args`, as the
     /// module says.
     fn command(&self, options: &[&str], args: &[&str]) -> Command {
+        let mut command = self.as_user(options, args);
+        command
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", NULL_DEVICE);
+        command
+    }
+
+    /// Git as [`GitProgram::command`] runs it, but reading the user's own and the system's
+    /// configuration, for an answer that should be the one the user's own git gives.
+    fn as_user(&self, options: &[&str], args: &[&str]) -> Command {
         let mut command = Command::new(&self.program);
         // The caller's `GIT_` variables could name another repository, object store, shallow
         // list, configuration or program; none of them applies to this one.
@@ -70,8 +81,6 @@ impl GitProgram {
             .args(options)
             .args(args)
             .current_dir(&self.root)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", NULL_DEVICE)
             // A partial clone would otherwise fetch what it left out from its remote. Git reads
             // this from version 2.45; a listing in a partial clone also gives `--no-lazy-fetch`,
             // which older git refuses.
@@ -110,19 +119,36 @@ impl GitProgram {
     ///
     /// Git does not end in time, fails, or lists more than [`MAX_LISTING_BYTES`].
     pub(crate) fn list(&self, options: &[&str], args: &[&str]) -> Result<Vec<u8>, String> {
-        let listing = run(
-            &mut self.command(options, args),
-            LIST_WITHIN,
-            MAX_LISTING_BYTES,
-        )?;
-        if !listing.status.success() {
-            return Err(format!("git ended with {}", listing.status));
-        }
-        if listing.is_cut {
-            return Err(format!("git listed more than {MAX_LISTING_BYTES} bytes"));
-        }
-        Ok(listing.stdout)
+        let mut command = self.command(options, args);
+        listed(&mut command, (LIST_WITHIN, MAX_LISTING_BYTES))
     }
+
+    /// What git lists for `args`, with `options` before its command, reading the user's own
+    /// configuration ([`GitProgram::as_user`]), in at most `within` and `max_bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Git does not end in time, fails, or lists more than `max_bytes`.
+    pub(crate) fn list_as_user(
+        &self,
+        options: &[&str],
+        args: &[&str],
+        bounds: (Duration, u64),
+    ) -> Result<Vec<u8>, String> {
+        listed(&mut self.as_user(options, args), bounds)
+    }
+}
+
+/// What `command`, a git listing, printed in at most `within` and `max_bytes`.
+fn listed(command: &mut Command, (within, max_bytes): (Duration, u64)) -> Result<Vec<u8>, String> {
+    let listing = run(command, within, max_bytes)?;
+    if !listing.status.success() {
+        return Err(format!("git ended with {}", listing.status));
+    }
+    if listing.is_cut {
+        return Err(format!("git listed more than {max_bytes} bytes"));
+    }
+    Ok(listing.stdout)
 }
 
 /// What `command` printed, run for at most `within` and `max_bytes` of output; why not, as text.
