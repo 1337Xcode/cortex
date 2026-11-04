@@ -1,6 +1,7 @@
 //! `cortex receipts`: what each task of the repository's recent sessions took, in turns, tool
-//! calls, tokens and estimated cost, and how far the tasks held out are from being enough to
-//! compare with the rest. The store is only read. The user's price table is written from the one
+//! calls, tokens and estimated cost, and the tokens Cortex added to it; how precise the work orders
+//! Cortex gave were; and how far the tasks held out are from being enough to compare with the
+//! rest. The store is only read. The user's price table is written from the one
 //! this build ships the first time it is needed, and read from then on, so that edits to it win.
 
 mod text;
@@ -11,7 +12,8 @@ use std::time::SystemTime;
 use anyhow::{Context, bail};
 use cortex_core::{Identifier, Ulid, UserFolder, create_private_folder, unix_millis};
 use cortex_meter::{
-    Activity, Arms, MIN_TASKS_PER_ARM, PriceTable, SessionReceipt, load_or_write, receipt,
+    Activity, Arms, MIN_TASKS_PER_ARM, Precision, PriceTable, SessionReceipt, load_or_write,
+    receipt,
 };
 use cortex_store::{Queries, Reader, SessionRow, StoreError};
 use serde::Serialize;
@@ -73,12 +75,14 @@ enum Prices {
     },
 }
 
-/// What the store holds: the arms of the held-out tasks and the receipts of the sessions asked
-/// for.
+/// What the store holds: the arms of the held-out tasks, how precise the work orders given were,
+/// and the receipts of the sessions asked for.
 #[derive(Debug, Serialize)]
 struct Recorded {
     /// How many of the repository's tasks were held out and how many were not.
     holdout: Holdout,
+    /// Of the repository's work orders that reached the agent, how many were labelled and used.
+    precision: Precision,
     /// Each session's receipt, by start.
     sessions: Vec<SessionReceipt>,
 }
@@ -176,6 +180,9 @@ fn recorded(
     let (held_out, treated) = queries
         .holdout_arms()
         .context("counting the held-out tasks")?;
+    let (labelled, used) = queries
+        .delivered_precision()
+        .context("counting the labelled work orders given")?;
     let sessions = sessions(queries, args)?
         .into_iter()
         .map(|session| Ok(receipt(&activity(queries, session)?, prices)))
@@ -185,6 +192,7 @@ fn recorded(
             arms: Arms { held_out, treated },
             needed_per_arm: MIN_TASKS_PER_ARM,
         },
+        precision: Precision { labelled, used },
         sessions,
     }))
 }
@@ -220,8 +228,8 @@ fn sessions(queries: Queries<'_>, args: &Args) -> anyhow::Result<Vec<SessionRow>
     Ok(vec![session])
 }
 
-/// What `session` did: its tasks, its responses and its subagents', each task's tool calls, and
-/// the calls it and its subagents made while it had no task.
+/// What `session` did: its tasks, its responses and its subagents', each task's tool calls, the
+/// calls it and its subagents made while it had no task, and what Cortex gave it.
 ///
 /// # Errors
 ///
@@ -243,6 +251,12 @@ fn activity(queries: Queries<'_>, session: SessionRow) -> anyhow::Result<Activit
     let tool_calls = queries
         .tool_calls_of_tasks(&task_ids)
         .with_context(reading)?;
+    let injections = queries
+        .injections_of_session(id)
+        .with_context(reading)?
+        .into_iter()
+        .map(|row| row.record)
+        .collect();
     Ok(Activity {
         subagents: u64::try_from(subagents.len()).context("counting subagents")?,
         session,
@@ -250,5 +264,6 @@ fn activity(queries: Queries<'_>, session: SessionRow) -> anyhow::Result<Activit
         usage,
         tool_calls,
         outside_tool_calls,
+        injections,
     })
 }

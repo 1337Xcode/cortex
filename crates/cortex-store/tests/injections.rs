@@ -378,7 +378,7 @@ fn only_a_text_the_agent_got_was_delivered() -> TestResult {
 /// first, as `InjectionRecord::was_delivered` tells one: of a delivered work order labelled 1, one
 /// the gate kept back, one held out and one whose text was not written in time, each labelled 1,
 /// a delivered one not labelled yet and a delivered one labelled 0, recorded in that order, the
-/// labels are 0 then 1 and the count is 2.
+/// labels are 0 then 1 and the count is 2; of those 2, 1 was used.
 #[test]
 fn only_labelled_deliveries_count() -> TestResult {
     let scratch = Scratch::new()?;
@@ -442,6 +442,7 @@ fn only_labelled_deliveries_count() -> TestResult {
     assert_eq!(queries.delivered_labels(10)?, [false, true]);
     assert_eq!(queries.delivered_labels(1)?, [false]);
     assert_eq!(queries.delivered_labelled()?, 2);
+    assert_eq!(queries.delivered_precision()?, (2, 1));
     assert_eq!(counted, 2, "the store's count agrees with was_delivered");
     Ok(())
 }

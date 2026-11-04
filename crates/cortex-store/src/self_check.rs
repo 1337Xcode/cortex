@@ -74,6 +74,25 @@ impl Queries<'_> {
             .map_err(sqlite("counting the labelled delivered injections"))?;
         Ok(u64::try_from(count).unwrap_or(0))
     }
+
+    /// How many injections that reached the agent are labelled, and how many of them were used:
+    /// the precision of everything Cortex gave that the end of its task judged.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn delivered_precision(self) -> Result<(u64, u64), StoreError> {
+        let (labelled, used): (i64, i64) = self
+            .connection()
+            .query_row(schema::DELIVERED_PRECISION, [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(sqlite("counting the labelled delivered injections used"))?;
+        Ok((
+            u64::try_from(labelled).unwrap_or(0),
+            u64::try_from(used).unwrap_or(0),
+        ))
+    }
 }
 
 /// Keeps `record` as what the self-check last found.

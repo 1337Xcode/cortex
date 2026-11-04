@@ -1,10 +1,11 @@
 //! The receipts as lines of text: what the costs were estimated from, what the counts leave out,
-//! whether there is enough to compare held-out tasks with the rest, then each session with its
-//! tasks, the work outside any task, and its total.
+//! whether there is enough to compare held-out tasks with the rest, how precise the work orders
+//! given were, then each session with its primers, its tasks, the work outside any task, and its
+//! total.
 
 use std::path::Path;
 
-use cortex_meter::{Estimate, SessionReceipt, Tally, TaskReceipt, Unpriced, utc_text};
+use cortex_meter::{Estimate, Precision, SessionReceipt, Tally, TaskReceipt, Unpriced, utc_text};
 
 use super::{Holdout, Prices, Report};
 
@@ -27,6 +28,7 @@ pub(super) fn lines(report: &Report, root: &Path, days: Option<u32>) -> Vec<Stri
         report.uncounted
     ));
     lines.push(holdout_line(&recorded.holdout));
+    lines.push(precision_line(recorded.precision));
     if recorded.sessions.is_empty() {
         lines.push(match days {
             Some(days) => format!(
@@ -79,6 +81,18 @@ fn holdout_line(holdout: &Holdout) -> String {
     )
 }
 
+/// The line saying how precise the work orders given were.
+fn precision_line(precision: Precision) -> String {
+    match precision.share() {
+        None => "injection precision: no work order given is labelled yet".to_owned(),
+        Some(share) => format!(
+            "injection precision: {share:.2}, {} of {} given and labelled were used",
+            grouped(precision.used),
+            counted(precision.labelled, "work order", "work orders")
+        ),
+    }
+}
+
 /// What a session of an agent whose transcripts Cortex does not read shows for its usage.
 const NOT_METERED: &str = "usage not read, as Cortex reads no transcript of this agent";
 
@@ -100,6 +114,12 @@ fn session_lines(session: &SessionReceipt) -> Vec<String> {
         when(session.started_at_ms),
         counted(session.subagents, "subagent", "subagents")
     )];
+    if session.primer_tokens > 0 {
+        lines.push(format!(
+            "  primer: {} injected by Cortex",
+            counted(session.primer_tokens, "token", "tokens")
+        ));
+    }
     lines.extend(
         session
             .tasks
@@ -114,9 +134,10 @@ fn session_lines(session: &SessionReceipt) -> Vec<String> {
         ));
     }
     lines.push(format!(
-        "  total: {}; {}",
+        "  total: {}; {}; {} injected by Cortex",
         usage(&session.total),
-        counted(session.tool_calls, "tool call", "tool calls")
+        counted(session.tool_calls, "tool call", "tool calls"),
+        counted(session.injected_tokens, "token", "tokens")
     ));
     lines
 }
@@ -242,7 +263,7 @@ mod tests {
     use std::path::Path;
 
     use cortex_core::{Identifier, Ulid};
-    use cortex_meter::{Arms, Estimate, SessionReceipt, Tally, TaskReceipt, Unpriced};
+    use cortex_meter::{Arms, Estimate, Precision, SessionReceipt, Tally, TaskReceipt, Unpriced};
 
     use super::super::{Holdout, Prices, Recorded, Report, UNCOUNTED};
     use super::{amount, grouped, lines, session_lines, usage, when};
@@ -305,7 +326,8 @@ mod tests {
         );
     }
 
-    /// A store with no session in the window says so after what the costs come from and the arms.
+    /// A store with no session in the window says so after what the costs come from, the arms
+    /// and the precision: 52 used of 73 labelled is 0.7123, shown as 0.71.
     #[test]
     fn a_window_without_sessions_says_so() {
         let report = Report {
@@ -321,6 +343,10 @@ mod tests {
                     },
                     needed_per_arm: 30,
                 },
+                precision: Precision {
+                    labelled: 73,
+                    used: 52,
+                },
                 sessions: Vec::new(),
             }),
         };
@@ -332,10 +358,11 @@ mod tests {
                  as compaction, are not counted",
                 "holdout comparison: the repository has 31 tasks held out and 1,200 not; this \
                  version does not compare them",
+                "injection precision: 0.71, 52 of 73 work orders given and labelled were used",
                 "no session started in the last 2 days",
             ]
         );
-        assert_eq!(lines(&report, Path::new("repo"), None)[3], "no session");
+        assert_eq!(lines(&report, Path::new("repo"), None)[4], "no session");
     }
 
     /// A session of an agent whose transcripts Cortex does not read says its usage was not read,
@@ -377,6 +404,8 @@ mod tests {
             outside_tasks: nothing.clone(),
             outside_tool_calls: 0,
             total: nothing,
+            primer_tokens: 0,
+            injected_tokens: 0,
         };
         assert_eq!(
             session_lines(&codex),
@@ -384,7 +413,8 @@ mod tests {
                 "session s1 (codex, ended), started 1970-01-01 00:00 UTC, 0 subagents",
                 "  task 1 (ended), started 1970-01-01 00:01 UTC: usage not read, as Cortex reads \
                  no transcript of this agent; 2 tool calls; 0 tokens injected by Cortex",
-                "  total: usage not read, as Cortex reads no transcript of this agent; 2 tool calls",
+                "  total: usage not read, as Cortex reads no transcript of this agent; 2 tool \
+                 calls; 0 tokens injected by Cortex",
             ]
         );
         let claude = SessionReceipt {
@@ -395,7 +425,7 @@ mod tests {
         let said = session_lines(&claude);
         assert_eq!(
             said.get(2).map(String::as_str),
-            Some("  total: no usage recorded; 2 tool calls")
+            Some("  total: no usage recorded; 2 tool calls; 0 tokens injected by Cortex")
         );
         Ok(())
     }

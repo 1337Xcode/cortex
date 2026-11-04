@@ -8,7 +8,7 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::hook_call::send;
-use common::{Daemon, TestResult, payloads, receipts, wait_for};
+use common::{Daemon, TestResult, graph_of, payloads, receipts, wait_for};
 use cortex_core::Identifier;
 use cortex_meter::{SHIPPED_PRICES, utc_text};
 use cortex_store::{Reader, TaskRow};
@@ -19,6 +19,12 @@ const CAPTURED: &str = "2.1.316";
 
 /// The session of the captured payloads.
 const S1: &str = "00000000-0000-4000-8000-000000000001";
+
+/// The tokens of the primer the session's start is given, the repository being tiny: its two
+/// lines, "[cortex] Project map · tiny mode · about 1 source file, 1 line" (65 bytes with its line
+/// break, each middle dot two) and "Cortex records what agents do here; with this little code it
+/// adds nothing to prompts." (86 bytes with its), 151 bytes at four bytes a token, rounded up.
+const PRIMER_TOKENS: u64 = 38;
 
 /// The subagent the captured payloads start, as a session of its own.
 const SUBAGENT: &str = "00000000-0000-4000-8000-000000000001/fixtureagent0001";
@@ -92,6 +98,8 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     let daemon = Daemon::start(&repo, home.path())?;
     let line = daemon.first_line()?;
     assert!(line.starts_with("cortex: daemon ready"), "{line}");
+    // The primer needs the graph: once it is built, the session's start is given its primer.
+    wait_for(|| Ok(graph_of(&repo, home.path())?.is_some()))?;
     for name in ["session-start-startup.json", "user-prompt-submit.json"] {
         send(
             &payloads::as_session(CAPTURED, name, &repo, (S1, &main))?,
@@ -172,6 +180,10 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         recorded.get("holdout"),
         Some(&json!({"held_out": 0, "treated": 1, "needed_per_arm": 30}))
     );
+    assert_eq!(
+        recorded.get("precision"),
+        Some(&json!({"labelled": 0, "used": 0}))
+    );
     let sessions = recorded
         .get("sessions")
         .and_then(Value::as_array)
@@ -187,7 +199,9 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             "status",
             "subagents",
             "tool_calls",
-            "outside_tool_calls"
+            "outside_tool_calls",
+            "primer_tokens",
+            "injected_tokens"
         ]
         .map(|name| field(session, name)),
         [
@@ -197,7 +211,9 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             json!("live"),
             json!(1),
             json!(2),
-            json!(0)
+            json!(0),
+            json!(PRIMER_TOKENS),
+            json!(PRIMER_TOKENS)
         ]
     );
     let task = session
@@ -241,9 +257,9 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     assert!(printed.status.success(), "{printed:?}");
     let text = String::from_utf8(printed.stdout)?;
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 7, "{text}");
+    assert_eq!(lines.len(), 9, "{text}");
     assert_eq!(
-        lines[..3],
+        lines[..4],
         [
             format!(
                 "prices: as of 2026-11-03, read from \
@@ -256,15 +272,20 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
              compaction, are not counted",
             "holdout comparison: not enough data yet (the repository has 0 tasks held out and 1 \
              not; 30 of each are needed)",
+            "injection precision: no work order given is labelled yet",
         ]
     );
-    let session_line = lines[3];
+    let session_line = lines[4];
     assert!(
         session_line.starts_with(&format!("session {S1} (claude, live), started ")),
         "{session_line}"
     );
     assert!(session_line.ends_with(" UTC, 1 subagent"), "{session_line}");
-    let task_line = lines[4];
+    assert_eq!(
+        lines[5],
+        format!("  primer: {PRIMER_TOKENS} tokens injected by Cortex")
+    );
+    let task_line = lines[6];
     assert!(
         task_line.starts_with("  task 1 (unknown), started "),
         "{task_line}"
@@ -278,12 +299,16 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         "{task_line}"
     );
     assert_eq!(
-        lines[5..],
+        lines[7..],
         [
             "  outside any task: 1 turn, 33,499 input tokens (3,702 uncached, 0 read from the \
-             cache, 29,797 written to it), 100 output tokens, about $0.1276; 0 tool calls",
-            "  total: 6 turns, 186,781 input tokens (6,426 uncached, 120,021 read from the cache, \
-             60,334 written to it), 927 output tokens, about $0.2368; 2 tool calls",
+             cache, 29,797 written to it), 100 output tokens, about $0.1276; 0 tool calls"
+                .to_owned(),
+            format!(
+                "  total: 6 turns, 186,781 input tokens (6,426 uncached, 120,021 read from the \
+                 cache, 60,334 written to it), 927 output tokens, about $0.2368; 2 tool calls; \
+                 {PRIMER_TOKENS} tokens injected by Cortex"
+            ),
         ]
     );
 

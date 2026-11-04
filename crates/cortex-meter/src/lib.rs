@@ -30,7 +30,8 @@ pub use pricing::{
     Billed, Cost, ModelPrices, PriceTable, PricingError, Rates, SHIPPED_PRICES, Unpriced,
 };
 pub use receipts::{
-    Activity, Arms, Estimate, MIN_TASKS_PER_ARM, SessionReceipt, Tally, TaskReceipt, receipt,
+    Activity, Arms, Estimate, MIN_TASKS_PER_ARM, Precision, SessionReceipt, Tally, TaskReceipt,
+    receipt,
 };
 pub use response::{Response, SYNTHETIC_MODEL, Service, Usage};
 pub use tail::{MAX_LINE_BYTES, MAX_RECENT_RESPONSES, Tail, Turn};

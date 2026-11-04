@@ -4,11 +4,11 @@
 
 use std::collections::BTreeMap;
 
-use cortex_core::{Agent, Identifier, SessionStatus, TaskOutcome, Ulid};
+use cortex_core::{Agent, ContentHash, HookKind, Identifier, SessionStatus, TaskOutcome, Ulid};
 use cortex_meter::{
-    Activity, Arms, Estimate, PriceTable, SHIPPED_PRICES, Tally, Unpriced, receipt,
+    Activity, Arms, Estimate, Precision, PriceTable, SHIPPED_PRICES, Tally, Unpriced, receipt,
 };
-use cortex_store::{SessionRecord, SessionRow, TaskRecord, TaskRow, UsageRow};
+use cortex_store::{InjectionRecord, SessionRecord, SessionRow, TaskRecord, TaskRow, UsageRow};
 
 /// Result type for these tests: any failure fails the test.
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -171,6 +171,7 @@ fn responses_add_up_by_task() -> TestResult {
         ],
         tool_calls: BTreeMap::from([(first.record.task_id, 4)]),
         outside_tool_calls: 2,
+        injections: Vec::new(),
     };
     let receipt = receipt(&activity, Some(&prices));
     let tasks: Vec<_> = receipt
@@ -256,6 +257,7 @@ fn without_prices_or_tasks_counts_stand_alone() -> TestResult {
         ],
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
+        injections: Vec::new(),
     };
     let receipt = receipt(&activity, None);
     let counts = tally([2, 2_102, 102, 1_000, 1_000, 15], None);
@@ -278,6 +280,7 @@ fn an_agent_whose_transcripts_are_not_read_is_not_metered() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
+        injections: Vec::new(),
     };
     let receipt = receipt(&activity, None);
     assert_eq!((receipt.agent, receipt.is_metered), ("codex", false));
@@ -306,6 +309,7 @@ fn arms_are_shown_and_counted_as_decided() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
+        injections: Vec::new(),
     };
     let shown: Vec<Option<bool>> = receipt(&activity, None)
         .tasks
@@ -318,4 +322,79 @@ fn arms_are_shown_and_counted_as_decided() -> TestResult {
     assert!(!arms(30, 29).is_enough());
     assert!(!arms(29, 30).is_enough());
     Ok(())
+}
+
+/// What Cortex injected counts only what reached the agent. Of a primer of 120 tokens given, a work
+/// order of 300 given in task 1 and one of 90 there whose text was late, one of 200 the gate kept
+/// back in task 2 and one of 150 held out there: task 1 was given 300, task 2 nothing, the
+/// session's primers 120, and the session 120 + 300 = 420.
+#[test]
+fn only_what_reached_the_agent_counts_as_injected() -> TestResult {
+    let (first, second) = (task(1, 1_000, Some(2_000))?, task(2, 3_000, None)?);
+    let session_id = Identifier::new("s1")?;
+    let given = |task_id: Option<Ulid>, hook: HookKind, tokens: u32| InjectionRecord {
+        task_id,
+        session_id: session_id.clone(),
+        hook,
+        at_ms: 1_000,
+        files: Vec::new(),
+        tokens,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"the text given")),
+        features: None,
+    };
+    let (one, two) = (first.record.task_id, second.record.task_id);
+    let injections = vec![
+        given(None, HookKind::SessionStart, 120),
+        given(Some(one), HookKind::Prompt, 300),
+        InjectionRecord {
+            text_hash: None,
+            ..given(Some(one), HookKind::Prompt, 90)
+        },
+        InjectionRecord {
+            is_gated_out: true,
+            text_hash: None,
+            ..given(Some(two), HookKind::Prompt, 200)
+        },
+        InjectionRecord {
+            is_holdout: true,
+            ..given(Some(two), HookKind::Prompt, 150)
+        },
+    ];
+    let activity = Activity {
+        session: session()?,
+        subagents: 0,
+        tasks: vec![first, second],
+        usage: Vec::new(),
+        tool_calls: BTreeMap::new(),
+        outside_tool_calls: 0,
+        injections,
+    };
+    let receipt = receipt(&activity, None);
+    let by_task: Vec<(u64, u64)> = receipt
+        .tasks
+        .iter()
+        .map(|task| (task.seq, task.injected_tokens))
+        .collect();
+    assert_eq!(by_task, [(1, 300), (2, 0)]);
+    assert_eq!((receipt.primer_tokens, receipt.injected_tokens), (120, 420));
+    Ok(())
+}
+
+/// The precision is the share of the labelled work orders that were used: 3 of 4 is 0.75; with
+/// none labelled there is none.
+#[test]
+fn precision_is_the_share_used() {
+    let precision = Precision {
+        labelled: 4,
+        used: 3,
+    };
+    assert_eq!(precision.share(), Some(0.75));
+    let none = Precision {
+        labelled: 0,
+        used: 0,
+    };
+    assert_eq!(none.share(), None);
 }

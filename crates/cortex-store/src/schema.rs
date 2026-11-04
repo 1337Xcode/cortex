@@ -554,6 +554,12 @@ pub(crate) const DELIVERED_LABELS: &str = "SELECT label FROM injections \
 pub(crate) const COUNT_DELIVERED_LABELLED: &str = "SELECT count(*) FROM injections \
     WHERE gated_out = 0 AND holdout = 0 AND rendered_hash IS NOT NULL AND label IS NOT NULL";
 
+/// How many injections that reached the agent are labelled, and how many of them are labelled
+/// used, told as [`DELIVERED_LABELS`] tells them.
+pub(crate) const DELIVERED_PRECISION: &str = "SELECT count(*), coalesce(sum(label), 0) \
+    FROM injections \
+    WHERE gated_out = 0 AND holdout = 0 AND rendered_hash IS NOT NULL AND label IS NOT NULL";
+
 /// Sets what the end of its task found of one injection: its used count and its label.
 pub(crate) const INJECTION_LABEL: &str =
     "UPDATE injections SET used_count = ?2, label = ?3 WHERE injection_id = ?1";

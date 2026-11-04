@@ -9,11 +9,14 @@
 //! fresh, written to the cache or read from it; uncached input is the part read fresh and not
 //! written to the cache. A cost is summed over the responses the price table can price, and the
 //! rest are counted with the reason they have no price, never priced at a guess.
+//!
+//! What Cortex itself added to the context is counted from what reached the agent: a work order or
+//! a primer the gate kept back, held out, or not written in time added nothing.
 
 use std::collections::BTreeMap;
 
-use cortex_core::{Identifier, TaskOutcome, Ulid};
-use cortex_store::{SessionRow, TaskRow, UsageRow};
+use cortex_core::{HookKind, Identifier, TaskOutcome, Ulid};
+use cortex_store::{InjectionRecord, SessionRow, TaskRow, UsageRow};
 use serde::Serialize;
 
 use crate::format::format_of;
@@ -40,8 +43,31 @@ impl Arms {
     }
 }
 
+/// How precise what Cortex gave was: of the work orders that reached the agent and whose tasks
+/// ended, how many were labelled, and how many of those were used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Precision {
+    /// The work orders given and labelled.
+    pub labelled: u64,
+    /// Those of them that were used.
+    pub used: u64,
+}
+
+impl Precision {
+    /// The share of the labelled work orders that were used; none before any was labelled.
+    #[must_use]
+    pub fn share(self) -> Option<f64> {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "counts of work orders stay far below the 2^52 a float holds exactly"
+        )]
+        let (used, labelled) = (self.used as f64, self.labelled as f64);
+        (self.labelled > 0).then(|| used / labelled)
+    }
+}
+
 /// One session's activity, as receipts read it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Activity {
     /// The session.
     pub session: SessionRow,
@@ -55,6 +81,9 @@ pub struct Activity {
     pub tool_calls: BTreeMap<Ulid, u64>,
     /// How many tool calls the session and its subagents made while it had no task.
     pub outside_tool_calls: u64,
+    /// What Cortex gave the session's agent or weighed for it: its primers and its prompts' work
+    /// orders, whether they reached the agent or not.
+    pub injections: Vec<InjectionRecord>,
 }
 
 /// What one session took, task by task.
@@ -85,6 +114,11 @@ pub struct SessionReceipt {
     pub outside_tool_calls: u64,
     /// Every response of the session and its subagents.
     pub total: Tally,
+    /// The tokens of the primers that reached the agent at the session's starts.
+    pub primer_tokens: u64,
+    /// Every token Cortex added to the session's context: its primers and its tasks' work orders
+    /// that reached the agent.
+    pub injected_tokens: u64,
 }
 
 /// What one task took.
@@ -105,7 +139,8 @@ pub struct TaskReceipt {
     pub held_out: Option<bool>,
     /// The tool calls it made, its subagents' among them.
     pub tool_calls: u64,
-    /// The tokens Cortex added to its context. This version adds none to any task.
+    /// The tokens Cortex added to its context: its work orders that reached the agent, none when
+    /// the task was held out.
     pub injected_tokens: u64,
     /// Its responses.
     pub usage: Tally,
@@ -156,10 +191,11 @@ pub fn receipt(activity: &Activity, prices: Option<&PriceTable>) -> SessionRecei
         tally.add(row, prices);
         total.add(row, prices);
     }
+    let delivered = Delivered::of(&activity.injections);
     let tasks: Vec<TaskReceipt> = tasks
         .iter()
         .zip(tallies)
-        .map(|(task, usage)| task_receipt(task, usage, &activity.tool_calls))
+        .map(|(task, usage)| task_receipt(task, usage, &activity.tool_calls, &delivered))
         .collect();
     let session = &activity.session;
     SessionReceipt {
@@ -178,11 +214,55 @@ pub fn receipt(activity: &Activity, prices: Option<&PriceTable>) -> SessionRecei
         outside_tasks,
         outside_tool_calls: activity.outside_tool_calls,
         total,
+        primer_tokens: delivered.primers,
+        injected_tokens: delivered.all,
     }
 }
 
-/// The receipt of `task`, whose responses add up to `usage`, with its count in `tool_calls`.
-fn task_receipt(task: &TaskRow, usage: Tally, tool_calls: &BTreeMap<Ulid, u64>) -> TaskReceipt {
+/// The tokens of the injections that reached the agent.
+struct Delivered {
+    /// Each task's, its work orders'.
+    by_task: BTreeMap<Ulid, u64>,
+    /// The primers'.
+    primers: u64,
+    /// Everything's.
+    all: u64,
+}
+
+impl Delivered {
+    /// The tokens of those of `injections` that reached the agent.
+    fn of(injections: &[InjectionRecord]) -> Self {
+        let mut delivered = Self {
+            by_task: BTreeMap::new(),
+            primers: 0,
+            all: 0,
+        };
+        for injection in injections
+            .iter()
+            .filter(|injection| injection.was_delivered())
+        {
+            let tokens = u64::from(injection.tokens);
+            delivered.all = delivered.all.saturating_add(tokens);
+            if injection.hook == HookKind::SessionStart {
+                delivered.primers = delivered.primers.saturating_add(tokens);
+            }
+            if let Some(task) = injection.task_id {
+                let of_task = delivered.by_task.entry(task).or_insert(0);
+                *of_task = of_task.saturating_add(tokens);
+            }
+        }
+        delivered
+    }
+}
+
+/// The receipt of `task`, whose responses add up to `usage`, with its count in `tool_calls` and
+/// the tokens it was given in `delivered`.
+fn task_receipt(
+    task: &TaskRow,
+    usage: Tally,
+    tool_calls: &BTreeMap<Ulid, u64>,
+    delivered: &Delivered,
+) -> TaskReceipt {
     TaskReceipt {
         task_id: task.record.task_id,
         seq: task.seq,
@@ -191,7 +271,11 @@ fn task_receipt(task: &TaskRow, usage: Tally, tool_calls: &BTreeMap<Ulid, u64>) 
         outcome: task.outcome.map(TaskOutcome::name),
         held_out: task.record.holdout,
         tool_calls: tool_calls.get(&task.record.task_id).copied().unwrap_or(0),
-        injected_tokens: 0,
+        injected_tokens: delivered
+            .by_task
+            .get(&task.record.task_id)
+            .copied()
+            .unwrap_or(0),
         usage,
     }
 }
