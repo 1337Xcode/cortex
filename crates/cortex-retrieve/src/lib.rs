@@ -4,18 +4,20 @@
 //! silent unless the signals agree, and the work order and the session's primer, rendered from the
 //! files as they are on disk.
 //!
-//! So far it holds the graph activation spreads over ([`Graph`]), the spreading itself
-//! ([`spread`]), the gate's rule ([`decide`]) and the reading of a file that lends lines only when
-//! it is the file the index read ([`CheckedFile`]).
+//! So far it holds what a prompt points at ([`PromptTerms`]), the graph activation spreads over
+//! ([`Graph`]), the spreading itself ([`spread`]), the gate's rule ([`decide`]) and the reading of
+//! a file that lends lines only when it is the file the index read ([`CheckedFile`]).
 
 #![warn(clippy::pedantic)]
 
 mod disk;
 mod gate;
 mod graph;
+mod prompt;
 mod push;
 
 pub use disk::{CheckedFile, Unchecked};
 pub use gate::{AGREEING_KINDS, Features, LEXICAL_BAR, Rule, Shut, Verdict, decide};
 pub use graph::{Graph, GraphError, LinkInput, NodeInput, Weighing};
+pub use prompt::{Mention, PromptTerms};
 pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, SPREAD_THRESHOLD, spread};
