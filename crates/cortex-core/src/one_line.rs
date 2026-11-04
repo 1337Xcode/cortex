@@ -25,7 +25,8 @@ pub fn one_line(text: &str, max_chars: usize) -> String {
 /// (U+200B to U+200D, U+2060), the invisible operators (U+2061 to U+2064), the line and paragraph
 /// separators (U+2028, U+2029), the byte order mark (U+FEFF) and the tag characters (U+E0000 to
 /// U+E007F), which can spell text no one sees.
-fn is_hidden(character: char) -> bool {
+#[must_use]
+pub fn is_hidden(character: char) -> bool {
     matches!(
         character,
         '\u{00AD}'

@@ -62,7 +62,7 @@ pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
 pub use kinds::{EdgeType, FileFlags, InterestTier, NodeKind, RefKind, Resolution, SymbolKind};
 pub use language::{Language, Tier};
 pub use log_rotation::rotate_log;
-pub use one_line::one_line;
+pub use one_line::{is_hidden, one_line};
 pub use path::{PathError, RepoPath};
 pub use private::{
     append_private_file, create_new_private_file, create_private_folder, open_private_file,
