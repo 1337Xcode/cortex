@@ -22,6 +22,7 @@ use crate::archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
 use crate::decay::decayed;
 use crate::episode::episode_of;
 use crate::interest::{add_interest, interest_of};
+use crate::labels::label_injections;
 use crate::links::{EarnedLinks, Linking, add_links, links_of};
 use crate::outcome::{FileNow, judge, reverted_after};
 use crate::task_state::TaskState;
@@ -77,7 +78,8 @@ impl Learner {
 
     /// Learns from `state`, a task that has just ended and whose row says so, in `transaction`,
     /// with the settings of `config`: judges it and stores the judgement, adds the interest its
-    /// work earned, changes the links between what it used, and writes its record. When the task
+    /// work earned, changes the links between what it used, labels the injections its prompt got,
+    /// and writes its record. When the task
     /// before it in the same session, kept by [`Learner::keep`], now shows as put back, that task
     /// is judged reverted, the links lose what its end gave them and the links between the files it
     /// edited are weakened, and its record says so. `None` when the store holds no ended row for
@@ -118,6 +120,7 @@ impl Learner {
         let linking = linking(config, row.seq, judgement.outcome);
         let links = links_of(transaction.queries(), state, &linking)?;
         let linked = add_links(transaction, &linking, &links)?;
+        label_injections(transaction, state)?;
         let record = episode_of(
             transaction.queries(),
             state,

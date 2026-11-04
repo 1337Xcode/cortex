@@ -185,13 +185,81 @@ fn weight_of(role: Role) -> f64 {
 
 /// What a node was to the task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Role {
+pub(crate) enum Role {
     /// Only read.
     ReadOnly,
     /// Read, and named by a file the task edited.
     ReadAndUsed,
     /// Edited.
     Edited,
+}
+
+impl Role {
+    /// Whether the task read the node or edited it.
+    pub(crate) fn is_read_or_edited(self) -> bool {
+        match self {
+            Self::ReadOnly | Self::ReadAndUsed | Self::Edited => true,
+        }
+    }
+
+    /// Whether the task used the node: edited it, or read it and edited a node that names it.
+    pub(crate) fn is_used(self) -> bool {
+        match self {
+            Self::ReadAndUsed | Self::Edited => true,
+            Self::ReadOnly => false,
+        }
+    }
+}
+
+/// What each file `state` shows the task touched was to it, as its working set gives it before
+/// the set's cap, read with `queries` for the files an edited file names: edited, read and named
+/// by a file it edited, or only read.
+///
+/// # Errors
+///
+/// The store's errors.
+pub(crate) fn file_roles(
+    queries: Queries<'_>,
+    state: &TaskState,
+) -> Result<BTreeMap<NodeId, Role>, StoreError> {
+    let mut files = BTreeMap::new();
+    for (file, _, role) in touched(state) {
+        if let Some(node) = file.node {
+            raise(&mut files, node, role);
+        }
+    }
+    mark_used(queries, &mut files)?;
+    Ok(files)
+}
+
+/// Each file a step of `state` read or edited, with the lines the step gives and what it did.
+fn touched(state: &TaskState) -> impl Iterator<Item = (&FileNode, Option<LineRange>, Role)> {
+    state.steps().iter().filter_map(|step| match step {
+        Step::Edit { file, range, .. } => Some((file, *range, Role::Edited)),
+        Step::Read { file, range, .. } => Some((file, *range, Role::ReadOnly)),
+        Step::Search { .. } | Step::Run { .. } => None,
+    })
+}
+
+/// Raises every node of `level`, one level of a working set, that the task only read to read and
+/// used when a node of the level it edited names it: the index's structural edges run from the
+/// file or symbol that names another to the one it names.
+fn mark_used(queries: Queries<'_>, level: &mut BTreeMap<NodeId, Role>) -> Result<(), StoreError> {
+    let nodes: Vec<NodeId> = level.keys().copied().collect();
+    let named: Vec<NodeId> = queries
+        .edges_among(&nodes, EdgeType::Structural)?
+        .into_iter()
+        .filter(|row| level.get(&row.src) == Some(&Role::Edited))
+        .map(|row| row.edge.dst)
+        .collect();
+    for node in named {
+        if let Some(role) = level.get_mut(&node)
+            && *role == Role::ReadOnly
+        {
+            *role = Role::ReadAndUsed;
+        }
+    }
+    Ok(())
 }
 
 /// The nodes a task used, by level, each with what it was to the task.
@@ -212,15 +280,12 @@ impl WorkingSet {
             files: BTreeMap::new(),
             symbols: BTreeMap::new(),
         };
-        for step in state.steps() {
-            let (file, range, role) = match step {
-                Step::Edit { file, range, .. } => (file, *range, Role::Edited),
-                Step::Read { file, range, .. } => (file, *range, Role::ReadOnly),
-                Step::Search { .. } | Step::Run { .. } => continue,
-            };
+        for (file, range, role) in touched(state) {
             set.touch(&mut places, (file, range), role)?;
         }
-        set.find_used(queries)?;
+        for level in [&mut set.files, &mut set.symbols] {
+            mark_used(queries, level)?;
+        }
         Ok(set)
     }
 
@@ -237,29 +302,6 @@ impl WorkingSet {
         if let Some(range) = range {
             for symbol in places.covering(&file.path, range)? {
                 raise(&mut self.symbols, symbol, role);
-            }
-        }
-        Ok(())
-    }
-
-    /// Raises every node the task only read to read and used when a node it edited, of the same
-    /// level, names it: the index's structural edges run from the file or symbol that names
-    /// another to the one it names.
-    fn find_used(&mut self, queries: Queries<'_>) -> Result<(), StoreError> {
-        for level in [&mut self.files, &mut self.symbols] {
-            let nodes: Vec<NodeId> = level.keys().copied().collect();
-            let named: Vec<NodeId> = queries
-                .edges_among(&nodes, EdgeType::Structural)?
-                .into_iter()
-                .filter(|row| level.get(&row.src) == Some(&Role::Edited))
-                .map(|row| row.edge.dst)
-                .collect();
-            for node in named {
-                if let Some(role) = level.get_mut(&node)
-                    && *role == Role::ReadOnly
-                {
-                    *role = Role::ReadAndUsed;
-                }
             }
         }
         Ok(())

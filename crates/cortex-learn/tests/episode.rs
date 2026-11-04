@@ -3,35 +3,13 @@
 
 mod common;
 
-use common::{Store, TestResult, event, prompt, start, succeeded, target, tool};
+use common::{Store, TestResult, asked_task, edit, read, succeeded, target, tool};
 use cortex_core::{
-    CommandKind, Event, HookKind, Identifier, ShellCommand, StartSource, TaskOutcome, ToolKind,
-    ToolResult, ToolTarget,
+    CommandKind, Event, HookKind, Identifier, ShellCommand, TaskOutcome, ToolKind, ToolResult,
+    ToolTarget,
 };
-use cortex_learn::{Commands, Recorder, TaskState, episode_of};
+use cortex_learn::{Commands, Recorder, episode_of};
 use cortex_store::{EpisodeRecord, MAX_EPISODE_BYTES, NodeId};
-
-/// A read by `session` at `ts_ms` of `path`, the lines `range`, or of the whole file for none.
-fn read(session: &str, ts_ms: i64, path: &str, range: &[(u32, u32)]) -> TestResult<Event> {
-    tool(
-        HookKind::PostTool,
-        (session, ts_ms),
-        (
-            ToolKind::Read,
-            target(path, range)?,
-            succeeded(None, Some(80)),
-        ),
-    )
-}
-
-/// An edit by `session` at `ts_ms` of `path`, of the lines `range`, that went through.
-fn edit(session: &str, ts_ms: i64, path: &str, range: &[(u32, u32)]) -> TestResult<Event> {
-    tool(
-        HookKind::PostTool,
-        (session, ts_ms),
-        (ToolKind::Edit, target(path, range)?, succeeded(None, None)),
-    )
-}
 
 /// The shell command `line` run by `session` at `ts_ms`, which exited `exit_code`, in a repository
 /// whose root is absolute on every platform so that the paths a restore names resolve.
@@ -56,26 +34,6 @@ fn shell(session: &str, ts_ms: i64, line: &str, exit_code: i32) -> TestResult<Ev
             (ToolKind::Shell, target, result),
         )?
     })
-}
-
-/// The state of one task: a session started at `at_ms`, a prompt of `text`, then `steps`, then the
-/// end of the answer.
-fn answered_task(
-    (store, recorder): (&mut Store, &mut Recorder),
-    (session, at_ms): (&str, i64),
-    text: &str,
-    steps: &[Event],
-) -> TestResult<TaskState> {
-    let mut events = vec![
-        start(session, at_ms, StartSource::Startup)?,
-        prompt(session, at_ms + 1, text)?,
-    ];
-    events.extend(steps.iter().cloned());
-    events.push(event(HookKind::Stop, session, at_ms + 1_000)?);
-    let mut ended = store.record(recorder, &events)?.into_iter();
-    let state = ended.next().ok_or("no task ended")?;
-    assert!(ended.next().is_none(), "more than one task ended");
-    Ok(state)
 }
 
 /// A name.
@@ -161,7 +119,7 @@ fn a_record_says_what_one_task_did() -> TestResult {
         is_interrupted: true,
         output_bytes: None,
     });
-    let state = answered_task(
+    let state = asked_task(
         (&mut store, &mut recorder),
         ("s1", 1_000),
         "fix the divide",
@@ -229,7 +187,7 @@ fn a_stretch_read_over_and_over_is_a_pitfall() -> TestResult {
     for at in 0..3 {
         steps.push(read("s1", 1_200 + at, "a.py", &[(1, 2)])?);
     }
-    let state = answered_task(
+    let state = asked_task(
         (&mut store, &mut recorder),
         ("s1", 1_000),
         "read it again",
@@ -277,7 +235,7 @@ fn a_record_of_a_large_task_is_trimmed_to_fit() -> TestResult {
     for at in 0..30 {
         steps.push(shell("s1", 3_000 + at, "cargo test", 0)?);
     }
-    let state = answered_task(
+    let state = asked_task(
         (&mut store, &mut recorder),
         ("s1", 1_000),
         "change everything",
@@ -321,7 +279,7 @@ fn a_record_holds_no_text_of_the_work() -> TestResult {
         pattern: Some("patternmarker".to_owned()),
         ..target("a.py", &[])?
     };
-    let state = answered_task(
+    let state = asked_task(
         (&mut store, &mut recorder),
         ("s1", 1_000),
         "promptmarker",

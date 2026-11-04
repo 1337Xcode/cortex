@@ -124,6 +124,21 @@ pub(crate) fn record(
     Ok(InjectionId(id))
 }
 
+/// Sets what the end of its task found of injection `id`: `used_count`, how many of its files the
+/// task read or edited, and `label`, whether one of its first three was used. Whether the store
+/// holds the injection.
+pub(crate) fn label(
+    connection: &Connection,
+    id: InjectionId,
+    (used_count, label): (u32, bool),
+) -> Result<bool, StoreError> {
+    let changed = connection
+        .prepare_cached(schema::INJECTION_LABEL)
+        .and_then(|mut statement| statement.execute((id.get(), used_count, label)))
+        .map_err(sqlite("labelling an injection"))?;
+    Ok(changed == 1)
+}
+
 impl Queries<'_> {
     /// The injections of task `task_id`, in the order they were recorded.
     ///

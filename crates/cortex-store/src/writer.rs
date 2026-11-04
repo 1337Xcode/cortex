@@ -398,6 +398,22 @@ impl WriteTx<'_> {
         self.atomically(|connection| injections::record(connection, record))
     }
 
+    /// Sets what the end of its task found of injection `id`: `used_count`, how many of its files
+    /// the task read or edited, and `label`, whether one of its first three was used. Labelling it
+    /// again replaces both. Whether the store holds the injection.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn label_injection(
+        &mut self,
+        id: InjectionId,
+        used_count: u32,
+        label: bool,
+    ) -> Result<bool, StoreError> {
+        self.atomically(|connection| injections::label(connection, id, (used_count, label)))
+    }
+
     /// Adds `files` and `pairs` to the stored counts, storing those not stored yet: counts and
     /// weights summed, the newest shared commit kept.
     ///

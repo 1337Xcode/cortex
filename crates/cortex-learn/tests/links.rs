@@ -6,8 +6,8 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::{Store, TestResult, event, prompt, start, succeeded, target, tool};
-use cortex_core::{EdgeType, Event, HookKind, StartSource, TaskOutcome, ToolKind};
+use common::{Store, TestResult, answered_task, edit, read};
+use cortex_core::{EdgeType, TaskOutcome};
 use cortex_learn::{Commands, EarnedLinks, Linking, Recorder, TaskState, add_links, links_of};
 use cortex_store::NodeId;
 use proptest::prelude::*;
@@ -22,47 +22,6 @@ fn linking(seq: u64, outcome: TaskOutcome) -> Linking {
         link_decay: 0.995,
         interest_decay: 0.98,
     }
-}
-
-/// A read by `session` at `ts_ms` of `path`, the lines `range`, or of the whole file for none.
-fn read(session: &str, ts_ms: i64, path: &str, range: &[(u32, u32)]) -> TestResult<Event> {
-    tool(
-        HookKind::PostTool,
-        (session, ts_ms),
-        (
-            ToolKind::Read,
-            target(path, range)?,
-            succeeded(None, Some(80)),
-        ),
-    )
-}
-
-/// An edit by `session` at `ts_ms` of `path`, of the lines `range`, that went through.
-fn edit(session: &str, ts_ms: i64, path: &str, range: &[(u32, u32)]) -> TestResult<Event> {
-    tool(
-        HookKind::PostTool,
-        (session, ts_ms),
-        (ToolKind::Edit, target(path, range)?, succeeded(None, None)),
-    )
-}
-
-/// The state of one task: a session started at `at_ms`, a prompt, then `steps`, then the end of
-/// the answer.
-fn answered_task(
-    (store, recorder): (&mut Store, &mut Recorder),
-    (session, at_ms): (&str, i64),
-    steps: &[Event],
-) -> TestResult<TaskState> {
-    let mut events = vec![
-        start(session, at_ms, StartSource::Startup)?,
-        prompt(session, at_ms + 1, "fix it")?,
-    ];
-    events.extend(steps.iter().cloned());
-    events.push(event(HookKind::Stop, session, at_ms + 1_000)?);
-    let mut ended = store.record(recorder, &events)?.into_iter();
-    let state = ended.next().ok_or("no task ended")?;
-    assert!(ended.next().is_none(), "more than one task ended");
-    Ok(state)
 }
 
 /// What `links` holds for each pair, rounded to the nearest ten-thousandth so that products of

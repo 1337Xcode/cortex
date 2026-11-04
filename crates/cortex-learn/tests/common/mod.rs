@@ -452,3 +452,55 @@ pub fn task_of(event: &Event) -> TestResult<Ulid> {
         event.event_id.to_string().as_bytes(),
     ))
 }
+
+/// A read by `session` at `ts_ms` of `path`, the lines `range`, or of the whole file for none.
+pub fn read(session: &str, ts_ms: i64, path: &str, range: &[(u32, u32)]) -> TestResult<Event> {
+    tool(
+        HookKind::PostTool,
+        (session, ts_ms),
+        (
+            ToolKind::Read,
+            target(path, range)?,
+            succeeded(None, Some(80)),
+        ),
+    )
+}
+
+/// An edit by `session` at `ts_ms` of `path`, of the lines `range`, that went through.
+pub fn edit(session: &str, ts_ms: i64, path: &str, range: &[(u32, u32)]) -> TestResult<Event> {
+    tool(
+        HookKind::PostTool,
+        (session, ts_ms),
+        (ToolKind::Edit, target(path, range)?, succeeded(None, None)),
+    )
+}
+
+/// The state of one task: a session started at `at_ms`, a prompt, then `steps`, then the end of
+/// the answer.
+pub fn answered_task(
+    (store, recorder): (&mut Store, &mut Recorder),
+    (session, at_ms): (&str, i64),
+    steps: &[Event],
+) -> TestResult<TaskState> {
+    asked_task((store, recorder), (session, at_ms), "fix it", steps)
+}
+
+/// The state of one task: a session started at `at_ms`, a prompt of `text`, then `steps`, then the
+/// end of the answer.
+pub fn asked_task(
+    (store, recorder): (&mut Store, &mut Recorder),
+    (session, at_ms): (&str, i64),
+    text: &str,
+    steps: &[Event],
+) -> TestResult<TaskState> {
+    let mut events = vec![
+        start(session, at_ms, StartSource::Startup)?,
+        prompt(session, at_ms + 1, text)?,
+    ];
+    events.extend(steps.iter().cloned());
+    events.push(event(HookKind::Stop, session, at_ms + 1_000)?);
+    let mut ended = store.record(recorder, &events)?.into_iter();
+    let state = ended.next().ok_or("no task ended")?;
+    assert!(ended.next().is_none(), "more than one task ended");
+    Ok(state)
+}

@@ -276,3 +276,61 @@ fn an_injection_needs_its_task() -> TestResult {
     assert!(writer.queries().injections_of_session(&session)?.is_empty());
     Ok(())
 }
+
+/// What a task's end found is kept with its injection: labelled with two files used and one of
+/// the first three among them, then labelled again with none, which replaces both. A row the
+/// store does not hold is said to be missing, and nothing is written.
+#[test]
+fn a_label_is_kept_with_its_injection() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let [service] = nodes(&mut writer, &["src/service.py"])?[..] else {
+        return Err("one node".into());
+    };
+    let session = Identifier::new("s1")?;
+    let task = Ulid::parse("01JC0000000000000000000000")?;
+    session_with(&mut writer, &session, &[task])?;
+    let order = InjectionRecord {
+        task_id: Some(task),
+        session_id: session,
+        hook: HookKind::Prompt,
+        at_ms: 2_000,
+        files: vec![InjectedFile {
+            node: service,
+            spans: vec![(1, 4)],
+            reason: Some(ReasonKind::Named),
+        }],
+        tokens: 60,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"the work order")),
+        features: Some(features()),
+    };
+    let mut transaction = writer.transaction()?;
+    let id = transaction.record_injection(&order)?;
+    assert!(transaction.label_injection(id, 2, true)?);
+    transaction.commit()?;
+    let labelled = |writer: &Writer| -> TestResult<(Option<u32>, Option<bool>)> {
+        let rows = writer.queries().injections_of_task(task)?;
+        let [row] = &rows[..] else {
+            return Err(format!("{rows:?}").into());
+        };
+        assert_eq!(row.record, order);
+        Ok((row.used_count, row.label))
+    };
+    assert_eq!(labelled(&writer)?, (Some(2), Some(true)));
+    let mut transaction = writer.transaction()?;
+    assert!(transaction.label_injection(id, 0, false)?);
+    transaction.commit()?;
+    assert_eq!(labelled(&writer)?, (Some(0), Some(false)));
+    // An injection recorded in a transaction that is let go is not held.
+    let mut transaction = writer.transaction()?;
+    let missing = transaction.record_injection(&order)?;
+    drop(transaction);
+    let mut transaction = writer.transaction()?;
+    assert!(!transaction.label_injection(missing, 1, true)?);
+    transaction.commit()?;
+    assert_eq!(labelled(&writer)?, (Some(0), Some(false)));
+    Ok(())
+}

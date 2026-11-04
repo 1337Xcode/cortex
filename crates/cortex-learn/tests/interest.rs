@@ -5,37 +5,12 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::{Store, TestResult, event, prompt, start, succeeded, target, tool};
+use common::{Store, TestResult, answered_task, edit, read, succeeded, tool};
 use cortex_core::{
-    Event, HookKind, InterestTier, RepoPath, ShellCommand, StartSource, ToolKind, ToolResult,
-    ToolTarget,
+    Event, HookKind, InterestTier, RepoPath, ShellCommand, ToolKind, ToolResult, ToolTarget,
 };
-use cortex_learn::{
-    Commands, EarnedInterest, Recorder, TaskState, add_interest, interest_of, tier_now,
-};
+use cortex_learn::{Commands, EarnedInterest, Recorder, add_interest, interest_of, tier_now};
 use cortex_store::{InterestRow, NodeId};
-
-/// A read by `session` at `ts_ms` of `path`, the lines `range`, or of the whole file for none.
-fn read(session: &str, ts_ms: i64, path: &str, range: &[(u32, u32)]) -> TestResult<Event> {
-    tool(
-        HookKind::PostTool,
-        (session, ts_ms),
-        (
-            ToolKind::Read,
-            target(path, range)?,
-            succeeded(None, Some(80)),
-        ),
-    )
-}
-
-/// An edit by `session` at `ts_ms` of `path`, of the lines `range`, that went through.
-fn edit(session: &str, ts_ms: i64, path: &str, range: &[(u32, u32)]) -> TestResult<Event> {
-    tool(
-        HookKind::PostTool,
-        (session, ts_ms),
-        (ToolKind::Edit, target(path, range)?, succeeded(None, None)),
-    )
-}
 
 /// A search by `session` at `ts_ms` of the whole repository that found `hits`.
 fn search(session: &str, ts_ms: i64, hits: &[&str]) -> TestResult<Event> {
@@ -72,25 +47,6 @@ fn shell(session: &str, ts_ms: i64, line: &str, exit_code: i32) -> TestResult<Ev
         (session, ts_ms),
         (ToolKind::Shell, target, result),
     )
-}
-
-/// The state of one task: a session started at `at_ms`, a prompt, then `steps`, then the end of
-/// the answer.
-fn answered_task(
-    (store, recorder): (&mut Store, &mut Recorder),
-    (session, at_ms): (&str, i64),
-    steps: &[Event],
-) -> TestResult<TaskState> {
-    let mut events = vec![
-        start(session, at_ms, StartSource::Startup)?,
-        prompt(session, at_ms + 1, "fix it")?,
-    ];
-    events.extend(steps.iter().cloned());
-    events.push(event(HookKind::Stop, session, at_ms + 1_000)?);
-    let mut ended = store.record(recorder, &events)?.into_iter();
-    let state = ended.next().ok_or("no task ended")?;
-    assert!(ended.next().is_none(), "more than one task ended");
-    Ok(state)
 }
 
 /// What `earned` holds for `nodes`, in that order, 0 for a node it holds nothing for, rounded to

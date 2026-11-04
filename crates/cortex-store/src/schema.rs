@@ -542,6 +542,10 @@ pub(crate) const INJECTION_INSERT: &str = "INSERT INTO injections \
     (task_id, session_id, hook, ts, items, tokens_est, confidence, gated_out, holdout, \
     rendered_hash, features) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
 
+/// Sets what the end of its task found of one injection: its used count and its label.
+pub(crate) const INJECTION_LABEL: &str =
+    "UPDATE injections SET used_count = ?2, label = ?3 WHERE injection_id = ?1";
+
 /// The injections of one task, in the order they were recorded, read back as
 /// [`crate::injections`] reads them.
 pub(crate) const INJECTIONS_OF_TASK: &str = "SELECT injection_id, task_id, session_id, hook, ts, \
