@@ -207,7 +207,7 @@ fn every_source_adds_to_one_vector() -> TestResult {
     let session = Identifier::new("s1")?;
     let query = SeedQuery {
         terms: &terms,
-        session: &session,
+        session: Some(&session),
     };
     let found = seeds(reader.queries(), &graph, &query)?;
     let index = |node: NodeId| graph.index_of(node).ok_or("a node of the graph");
@@ -238,7 +238,7 @@ fn nothing_found_is_no_vector() -> TestResult {
     let session = Identifier::new("s1")?;
     let query = SeedQuery {
         terms: &terms,
-        session: &session,
+        session: Some(&session),
     };
     let found = seeds(reader.queries(), &graph, &query)?;
     assert!(found.vector.is_empty());

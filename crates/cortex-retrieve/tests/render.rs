@@ -225,6 +225,25 @@ Also likely: a.py:5-6 (edited earlier in this session)
     Ok(())
 }
 
+/// A work order none of whose items can be shown as it is, its one file's path holding a zero-width
+/// space, is not given at all: a header alone names nothing.
+#[test]
+fn a_work_order_with_nothing_it_can_show_is_not_given() -> TestResult {
+    let mut repo = Repo::new()?;
+    repo.file("b\u{200b}.py", B, &[], FileFlags::empty())?;
+    let order = WorkOrder {
+        basis: Basis::Continuity,
+        items: vec![item(
+            ("b\u{200b}.py", B),
+            &[(1, 1)],
+            None,
+            Reason::ReadHere,
+        )?],
+    };
+    assert_eq!(render(&order, repo.root.path(), &limits(1)), None);
+    Ok(())
+}
+
 /// Past the token cap, code goes first, then the items after the first. With room for 40 tokens,
 /// shedding both bodies is enough: the two items, 150 bytes or 38 tokens, are listed by their
 /// lines. With room for 30, `b.py` goes too and `a.py` is listed alone. With room for 5, not even

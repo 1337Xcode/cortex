@@ -18,7 +18,9 @@ mod exploration;
 mod features;
 mod gate;
 mod graph;
+mod items;
 mod lexical;
+mod pipeline;
 mod primer;
 mod prompt;
 mod push;
@@ -38,7 +40,11 @@ pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
 pub use features::{Found, GATED_FILES, MASSED_FILES, features_of};
 pub use gate::{AGREEING_KINDS, Features, LEXICAL_BAR, Rule, Shut, Verdict, decide};
 pub use graph::{Graph, GraphError, LinkInput, NodeInput, Standing, Weighing};
+pub use items::{LOOKED_AT_PER_LISTED, Listed, Listing, listed};
 pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};
+pub use pipeline::{
+    Location, Outcome, Request, Retrieval, SMALL_MODE_MAX_TOKENS, Silence, locate, retrieve,
+};
 pub use primer::{MAX_PRIMER_LANDMARKS, MAX_PRIMER_TOKENS, primer};
 pub use prompt::{Mention, PromptTerms};
 pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, SPREAD_THRESHOLD, spread};

@@ -96,8 +96,8 @@ pub struct Rendered {
     pub written: Vec<(usize, Vec<usize>)>,
 }
 
-/// `order` written for the repository at `root`, held to `limits`; `None` when not even its first
-/// item fits.
+/// `order` written for the repository at `root`, held to `limits`; `None` when it has no item that
+/// can be shown as it is, or not even its first fits.
 #[must_use]
 pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendered> {
     let files: Vec<Option<CheckedFile>> = order
@@ -112,6 +112,11 @@ pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendere
         })
         .collect();
     let mut plan = Plan::of(order, &files, limits);
+    // INVARIANT: silent-when-unsure (a work order with no item to show is not given: a header
+    // alone would say the evidence agrees on nothing it names)
+    if plan.kept.is_empty() {
+        return None;
+    }
     let max_tokens = limits.max_tokens.min(MAX_WORK_ORDER_TOKENS);
     loop {
         let text = plan.write(order, &files);

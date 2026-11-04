@@ -249,6 +249,46 @@ impl Repo {
         Ok(())
     }
 
+    /// Records, as the git miner counts them, the commits each of `commits` changed in, by path,
+    /// and the commits that changed both files of each of `pairs`. Each count is added once, as
+    /// the store adds counts to those it holds.
+    pub fn cochange(
+        &mut self,
+        commits: &[(&str, u32)],
+        pairs: &[((&str, &str), u32)],
+    ) -> TestResult {
+        let mut transaction = self.writer.transaction()?;
+        let id = |path: &str| -> TestResult<cortex_store::FileId> {
+            Ok(transaction
+                .queries()
+                .file(&RepoPath::new(path)?)?
+                .ok_or("a stored file")?
+                .id)
+        };
+        let mut files = Vec::new();
+        for (path, count) in commits {
+            files.push(cortex_store::FileCommitsRow {
+                file: id(path)?,
+                count: *count,
+                weighted: f64::from(*count),
+            });
+        }
+        let mut together = Vec::new();
+        for ((a, b), count) in pairs {
+            let (a, b) = (id(a)?, id(b)?);
+            together.push(cortex_store::PairRow {
+                file_a: a.min(b),
+                file_b: a.max(b),
+                count: *count,
+                weighted: f64::from(*count),
+                last_commit_seq: 1,
+            });
+        }
+        transaction.add_cochange(&files, &together)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// A reader of the store.
     pub fn reader(&self) -> TestResult<Reader> {
         Ok(Reader::open(&self.root.path().join(".cortex"), 0)?)

@@ -12,7 +12,7 @@
 //! looked at never reaches. A co-change link counts as the miner wrote it, either way round.
 //! Exploration's seeds are not evidence: they are where nothing points yet.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::EdgeType;
 use cortex_learn::MAX_LINK_WEIGHT;
@@ -51,8 +51,9 @@ pub struct Support<'a, Id> {
     seeds: &'a Seeds,
     /// The files the seeds of the sources other than exploration point at, by node.
     seed_files: BTreeSet<u32>,
-    /// The files a seed file's co-change links run to, by node.
-    changed_with_seeds: BTreeSet<u32>,
+    /// For each file a seed file's co-change links run to, by node: those seed files, each with
+    /// the link's weight.
+    changed_with_seeds: BTreeMap<u32, Vec<(u32, f64)>>,
     /// The least weight one structural link of the graph carries to count, as the graph keeps it.
     structural_floor: f64,
     /// The least weight one co-access link of the graph carries to count, as the graph keeps it.
@@ -72,12 +73,17 @@ impl<'a, Id: Ord + Copy> Support<'a, Id> {
             .chain(seeds.similar.seeds.keys())
             .filter_map(|node| graph.file_of(*node))
             .collect();
-        let changed_with_seeds = seed_files
-            .iter()
-            .flat_map(|file| graph.links(*file, EdgeType::CoChange))
-            .filter(|(_, weight)| *weight > 0.0)
-            .map(|(target, _)| target)
-            .collect();
+        let mut changed_with_seeds: BTreeMap<u32, Vec<(u32, f64)>> = BTreeMap::new();
+        for file in &seed_files {
+            for (target, peak) in graph.peak_links(*file, EdgeType::CoChange) {
+                if peak > 0.0 {
+                    changed_with_seeds
+                        .entry(target)
+                        .or_default()
+                        .push((*file, peak));
+                }
+            }
+        }
         let type_weights = graph.type_weights();
         // A floor is narrowed as the graph narrows a link's weight, so a link at the floor exactly
         // is not lost to rounding.
@@ -103,40 +109,55 @@ impl<'a, Id: Ord + Copy> Support<'a, Id> {
             found.insert(Evidence::Similar);
         }
         let kinds = [
-            (
-                EdgeType::Structural,
-                Evidence::Structural,
-                self.structural_floor,
-            ),
-            (EdgeType::CoChange, Evidence::CoChange, f64::MIN_POSITIVE),
-            (EdgeType::CoAccess, Evidence::CoAccess, self.coaccess_floor),
+            (EdgeType::Structural, Evidence::Structural),
+            (EdgeType::CoChange, Evidence::CoChange),
+            (EdgeType::CoAccess, Evidence::CoAccess),
         ];
-        for (kind, evidence, floor) in kinds {
-            if self.is_joined(file, (kind, floor)) {
+        for (kind, evidence) in kinds {
+            if !self.partners(file, kind).is_empty() {
                 found.insert(evidence);
             }
-        }
-        // A co-change link runs one way, as its confidence does; either way says the two change
-        // together.
-        if self.changed_with_seeds.contains(&file) {
-            found.insert(Evidence::CoChange);
         }
         found
     }
 
-    /// Whether one link of `kind`, weighing at least `floor` on its own, runs from file `file` or
-    /// one of its symbols to a node of a seed file other than `file`.
-    fn is_joined(&self, file: u32, (kind, floor): (EdgeType, f64)) -> bool {
-        std::iter::once(file)
-            .chain(self.graph.symbols_of(file).iter().copied())
-            .any(|node| {
-                self.graph.peak_links(node, kind).any(|(target, peak)| {
-                    peak >= floor
-                        && self
-                            .graph
-                            .file_of(target)
-                            .is_some_and(|other| other != file && self.seed_files.contains(&other))
-                })
-            })
+    /// The other seed files one link of `kind`, weighing at least its floor on its own, joins file
+    /// `file` or one of its symbols to, or one of their symbols, each with the heaviest such link:
+    /// the heaviest first, then by file. A co-change link counts whichever way it runs.
+    #[must_use]
+    pub fn partners(&self, file: u32, kind: EdgeType) -> Vec<(u32, f64)> {
+        let floor = match kind {
+            EdgeType::Structural => self.structural_floor,
+            EdgeType::CoAccess => self.coaccess_floor,
+            // The miner keeps a co-change link only at its own least confidence, so any weight
+            // above none counts.
+            EdgeType::CoChange => f64::MIN_POSITIVE,
+            // A symbol's place in its file and a fact's anchor say nothing of two files' work.
+            EdgeType::Containment | EdgeType::About => return Vec::new(),
+        };
+        let mut found: BTreeMap<u32, f64> = BTreeMap::new();
+        let mut add = |other: u32, peak: f64| {
+            if other != file && peak >= floor && self.seed_files.contains(&other) {
+                let held = found.entry(other).or_insert(0.0);
+                *held = held.max(peak);
+            }
+        };
+        for node in std::iter::once(file).chain(self.graph.symbols_of(file).iter().copied()) {
+            for (target, peak) in self.graph.peak_links(node, kind) {
+                if let Some(other) = self.graph.file_of(target) {
+                    add(other, peak);
+                }
+            }
+        }
+        // A co-change link runs one way, as its confidence does; either way says the two change
+        // together.
+        if kind == EdgeType::CoChange {
+            for (other, peak) in self.changed_with_seeds.get(&file).into_iter().flatten() {
+                add(*other, *peak);
+            }
+        }
+        let mut partners: Vec<(u32, f64)> = found.into_iter().collect();
+        partners.sort_by(|left, right| right.1.total_cmp(&left.1).then(left.0.cmp(&right.0)));
+        partners
     }
 }

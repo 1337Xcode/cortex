@@ -24,8 +24,9 @@ use crate::similar::{SimilarMatch, similar};
 pub struct SeedQuery<'a> {
     /// What the prompt points at.
     pub terms: &'a PromptTerms,
-    /// The session the prompt comes in.
-    pub session: &'a Identifier,
+    /// The session the prompt comes in; none for a question asked outside one, which seeds
+    /// nothing from a session.
+    pub session: Option<&'a Identifier>,
 }
 
 /// What each source found, and the vector they make.
@@ -54,7 +55,10 @@ pub fn seeds(
     query: &SeedQuery<'_>,
 ) -> Result<Seeds, StoreError> {
     let lexical = lexical(queries, graph, query.terms)?;
-    let session = session(queries, graph, query.session)?;
+    let session = match query.session {
+        Some(id) => session(queries, graph, id)?,
+        None => SessionMatch::default(),
+    };
     let similar = similar(queries, graph, query.terms)?;
     let found = summed(&[&lexical.seeds, &session.seeds, &similar.seeds]);
     let exploration = exploration(graph, &found);
