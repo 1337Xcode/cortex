@@ -273,6 +273,50 @@ fn a_spreading_out_of_time_gives_nothing() -> TestResult {
     Ok(())
 }
 
+/// The engine asked directly names no file when its spreading runs out of time, in either mode:
+/// which files it had reached by then is the clock's doing. Its answer says only that, and what the
+/// gate would have said is that it ran out of time. With no deadline the same question names files.
+#[test]
+fn a_question_out_of_time_names_no_file() -> TestResult {
+    let repo = repository()?;
+    let reader = repo.reader()?;
+    let graph = read_graph(reader.queries(), &GraphSettings::default())?;
+    let settings = RetrievalConfig::default();
+    for mode in [ScaleMode::Medium, ScaleMode::Huge] {
+        let mut request = Request {
+            prompt: "fix create_order in the orders service",
+            session: None,
+            uncommitted: &[],
+            mode,
+            settings: &settings,
+            max_file_bytes: 1_048_576,
+            raise: 0.0,
+            recent_precision: None,
+            deadline: None,
+            root: repo.root.path(),
+        };
+        let in_time = locate(reader.queries(), &graph, &request, 5)?;
+        assert!(!in_time.listed.is_empty(), "{mode:?}");
+        request.deadline = Some(std::time::Instant::now());
+        let location = locate(reader.queries(), &graph, &request, 5)?;
+        assert!(location.listed.is_empty(), "{mode:?}");
+        assert_eq!(
+            location.judged.map(|(_, verdict)| verdict),
+            Some(Verdict::Silent(Shut::OutOfTime)),
+            "{mode:?}"
+        );
+        assert_eq!(
+            location.rendered.map(|rendered| rendered.text).as_deref(),
+            Some(
+                "[cortex] Where · the gate would stay silent: the spreading ran out of time, so no \
+                 file is named\n"
+            ),
+            "{mode:?}"
+        );
+    }
+    Ok(())
+}
+
 /// A prompt whose words find one file, with nothing else to back it, stays below the gate: the word
 /// "rate" matches the tax file's function, but the file has no second kind of evidence.
 #[test]

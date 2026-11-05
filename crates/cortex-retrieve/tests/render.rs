@@ -6,7 +6,7 @@ mod common;
 use common::{Repo, TestResult};
 use cortex_core::{ContentHash, FileFlags, Identifier, LineRange, RepoPath, estimate_tokens};
 use cortex_retrieve::{
-    Basis, Item, ItemSpan, Limits, MAX_WORK_ORDER_CHARS, Reason, WorkOrder, render,
+    Basis, Item, ItemSpan, Limits, MAX_WORK_ORDER_CHARS, Reason, Shut, Verdict, WorkOrder, render,
 };
 use proptest::prelude::*;
 
@@ -183,6 +183,57 @@ fn unreadable(path: &std::path::Path) -> TestResult<Option<std::fs::File>> {
         "the file can still be opened"
     );
     Ok(None)
+}
+
+/// The engine's answer when its spreading ran out of time is its header alone: of what it had
+/// found, neither the files nor the kinds of evidence behind them are said, since which it had
+/// reached by then is the clock's doing. The same answer under another verdict is written whole.
+#[test]
+fn an_answer_out_of_time_names_no_file() -> TestResult {
+    let mut repo = Repo::new()?;
+    repo.file("a.py", A, &[], FileFlags::empty())?;
+    let items = vec![item(
+        ("a.py", A),
+        &[(1, 2)],
+        Some("f"),
+        Reason::Matches(vec!["f".to_owned()]),
+    )?];
+    let kinds = vec!["the prompt's words", "the commit history"];
+    let out_of_time = WorkOrder {
+        basis: Basis::Located {
+            kinds: kinds.clone(),
+            verdict: Verdict::Silent(Shut::OutOfTime),
+        },
+        items: items.clone(),
+    };
+    let rendered = render(&out_of_time, repo.root.path(), &limits(1)).ok_or("an answer")?;
+    let expected = "[cortex] Where · the gate would stay silent: the spreading ran out of time, so \
+                    no file is named\n";
+    assert_eq!(rendered.text, expected);
+    assert!(rendered.written.is_empty());
+    assert_eq!(
+        usize::try_from(rendered.tokens)?,
+        expected.len().div_ceil(4)
+    );
+    let weak = WorkOrder {
+        basis: Basis::Located {
+            kinds,
+            verdict: Verdict::Silent(Shut::WeakMatch),
+        },
+        items,
+    };
+    let rendered = render(&weak, repo.root.path(), &limits(1)).ok_or("an answer")?;
+    let expected = "\
+[cortex] Where · the prompt's words and the commit history agree · the gate would stay silent: the words match no file strongly
+Start here:
+  1. a.py:1-2  f  (matches f)
+Current code:
+  a.py:1-2
+  1 | def f():
+  2 |     return 1
+";
+    assert_eq!(rendered.text, expected);
+    Ok(())
 }
 
 /// A work order typed out by hand: the header names what agreed; `a.py`, whose code is shown, is

@@ -98,11 +98,12 @@ pub struct Retrieval {
 pub struct Location {
     /// The gate's features and what the gate would have said; none when nothing was found.
     pub judged: Option<(GateFeatures, Verdict)>,
-    /// The files found, the best first, each with the spans its answer writes and its reason.
+    /// The files found, the best first, each with the spans its answer writes and its reason; none
+    /// when the spreading ran out of time.
     pub listed: Vec<Listed>,
     /// The answer as text: the files, their reasons and code as they are on disk, under a header
-    /// saying what found them and what the gate would have said; none when nothing was found or
-    /// nothing could be shown.
+    /// saying what found them and what the gate would have said; the header alone, naming no file,
+    /// when the spreading ran out of time; none when nothing was found or nothing could be shown.
     pub rendered: Option<Rendered>,
 }
 

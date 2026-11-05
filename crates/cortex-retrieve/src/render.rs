@@ -112,9 +112,25 @@ pub struct Rendered {
 }
 
 /// `order` written for the repository at `root`, held to `limits`; `None` when it has no item that
-/// can be shown as it is, or not even its first fits.
+/// can be shown as it is, or not even its first fits. The engine's answer to a question whose
+/// spreading ran out of time is its header alone, whatever its items.
 #[must_use]
 pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendered> {
+    // INVARIANT: deterministic (which files a spreading the clock cut short had reached is the
+    // clock's doing: an answer out of time names no file, and says only that)
+    if let Basis::Located {
+        verdict: Verdict::Silent(Shut::OutOfTime),
+        ..
+    } = order.basis
+    {
+        let text = format!("{}\n", heading(&order.basis));
+        let tokens = u32::try_from(estimate_tokens(&text)).unwrap_or(u32::MAX);
+        return Some(Rendered {
+            text,
+            tokens,
+            written: Vec::new(),
+        });
+    }
     let files: Vec<OnDisk> = order
         .items
         .iter()
@@ -318,11 +334,6 @@ fn heading(basis: &Basis) -> String {
         Basis::Continuity => "[cortex] Work order · continuing the work under way".to_owned(),
         Basis::Agreement(kinds) => format!("[cortex] Work order · {}", agreed(kinds)),
         Basis::Located { kinds, verdict } => {
-            let found = match kinds.as_slice() {
-                [] => "no kind of evidence points here".to_owned(),
-                [only] => format!("{only} alone"),
-                more => agreed(more),
-            };
             let gate = match verdict {
                 Verdict::Inject(Rule::Agreement) => "the gate would give it",
                 Verdict::Inject(Rule::Continuity) => {
@@ -335,8 +346,16 @@ fn heading(basis: &Basis) -> String {
                     "the gate would stay silent: the words match no file strongly"
                 }
                 Verdict::Silent(Shut::OutOfTime) => {
-                    "the gate would stay silent: the spreading ran out of time"
+                    // What a spreading cut short had found is the clock's doing: none of it is said.
+                    return "[cortex] Where · the gate would stay silent: the spreading ran out of \
+                            time, so no file is named"
+                        .to_owned();
                 }
+            };
+            let found = match kinds.as_slice() {
+                [] => "no kind of evidence points here".to_owned(),
+                [only] => format!("{only} alone"),
+                more => agreed(more),
             };
             format!("[cortex] Where · {found} · {gate}")
         }
