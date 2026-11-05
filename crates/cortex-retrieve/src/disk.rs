@@ -30,6 +30,14 @@ pub enum Unchecked {
     Unreadable,
 }
 
+/// Whether the file at `path` in the repository at `root` is a regular file that opens for
+/// reading, as [`CheckedFile::read`] opens it: a link, a folder, a special file, a file that is
+/// gone and a file that cannot be opened are not.
+#[must_use]
+pub(crate) fn is_readable(root: &Path, path: &RepoPath) -> bool {
+    open_regular(&path.to_native(root)).is_ok()
+}
+
 /// A file as it is on disk, its bytes those the index read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedFile {

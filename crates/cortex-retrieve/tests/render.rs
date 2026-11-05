@@ -99,6 +99,92 @@ Current code:
     Ok(())
 }
 
+/// A file that cannot be opened is not listed either, whether the index read it or holds no
+/// content for it. Of five items, `locked.py` (indexed) and `bare.py` (nothing indexed) cannot be
+/// opened, `deleted.py` (nothing indexed) is not there and `folder.py` (nothing indexed) is a
+/// folder; only `a.py` is written, its code shown. Without `a.py` there is no work order.
+#[test]
+fn a_file_that_cannot_be_read_is_not_listed() -> TestResult {
+    let mut repo = Repo::new()?;
+    repo.file("a.py", A, &[], FileFlags::empty())?;
+    repo.file("locked.py", B, &[], FileFlags::empty())?;
+    std::fs::write(repo.root.path().join("bare.py"), B)?;
+    std::fs::create_dir(repo.root.path().join("folder.py"))?;
+    let _locked = unreadable(&repo.root.path().join("locked.py"))?;
+    let _bare = unreadable(&repo.root.path().join("bare.py"))?;
+    let unindexed = |path: &str| -> TestResult<Item> {
+        Ok(Item {
+            content: None,
+            ..item((path, ""), &[], None, Reason::LikeEarlierWork)?
+        })
+    };
+    let not_there = vec![
+        item(("locked.py", B), &[(1, 1)], None, Reason::LikeEarlierWork)?,
+        unindexed("bare.py")?,
+        unindexed("deleted.py")?,
+        unindexed("folder.py")?,
+    ];
+    let mut items = not_there.clone();
+    items.push(item(
+        ("a.py", A),
+        &[(1, 2)],
+        Some("f"),
+        Reason::Matches(vec!["f".to_owned()]),
+    )?);
+    let basis = Basis::Agreement(vec!["the prompt's words", "the commit history"]);
+    let order = WorkOrder {
+        basis: basis.clone(),
+        items,
+    };
+    let rendered = render(&order, repo.root.path(), &limits(1)).ok_or("a work order")?;
+    let expected = "\
+[cortex] Work order · the prompt's words and the commit history agree
+Start here:
+  1. a.py:1-2  f  (matches f)
+Current code:
+  a.py:1-2
+  1 | def f():
+  2 |     return 1
+";
+    assert_eq!(rendered.text, expected);
+    let alone = WorkOrder {
+        basis,
+        items: not_there,
+    };
+    assert!(render(&alone, repo.root.path(), &limits(1)).is_none());
+    Ok(())
+}
+
+/// Makes the file at `path` impossible to open for reading while what this returns is kept: a
+/// handle that shares nothing with other openers.
+#[cfg(windows)]
+fn unreadable(path: &std::path::Path) -> TestResult<Option<std::fs::File>> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(path)?;
+    assert!(
+        std::fs::File::open(path).is_err(),
+        "the held file can still be opened"
+    );
+    Ok(Some(held))
+}
+
+/// Takes every permission off the file at `path`, so that it cannot be opened for reading; nothing
+/// needs keeping. A user whom file permissions do not bind, such as root, fails the test here
+/// rather than passing it without checking anything.
+#[cfg(unix)]
+fn unreadable(path: &std::path::Path) -> TestResult<Option<std::fs::File>> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000))?;
+    assert!(
+        std::fs::File::open(path).is_err(),
+        "the file can still be opened"
+    );
+    Ok(None)
+}
+
 /// A work order typed out by hand: the header names what agreed; `a.py`, whose code is shown, is
 /// where to start, with its symbol and reason; `b.py` with its lines and `c.py`, which the index
 /// holds no contents for, by path alone, are also likely; the code shown is `a.py`'s lines 1 and

@@ -27,7 +27,7 @@ use cortex_core::{
     holds_reminder_tag,
 };
 
-use crate::disk::{CheckedFile, Unchecked};
+use crate::disk::{CheckedFile, Unchecked, is_readable};
 use crate::gate::{Rule, Shut, Verdict};
 use crate::plain::{is_plain, is_taken_out};
 use crate::reasons::Reason;
@@ -172,17 +172,16 @@ enum OnDisk {
 impl OnDisk {
     /// What the repository at `root` holds of `item`'s file, read up to `max_bytes`.
     fn of(item: &Item, root: &Path, max_bytes: u64) -> Self {
+        // INVARIANT: true-at-render (an item's lines come from its file as it is now, and only
+        // while that is the file the index read; an item whose file is gone or cannot be read is
+        // not listed)
         let Some(content) = item.content else {
-            let is_there = std::fs::symlink_metadata(item.path.to_native(root))
-                .is_ok_and(|metadata| metadata.is_file());
-            return if is_there {
+            return if is_readable(root, &item.path) {
                 Self::Unchecked
             } else {
                 Self::Gone
             };
         };
-        // INVARIANT: true-at-render (an item's lines come from its file as it is now, and only
-        // while that is the file the index read; an item whose file is gone is not listed)
         match CheckedFile::read(root, &item.path, &content, max_bytes) {
             Ok(file) => Self::Checked(file),
             Err(Unchecked::Unreadable) => Self::Gone,
