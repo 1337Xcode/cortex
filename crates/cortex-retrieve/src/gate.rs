@@ -46,7 +46,10 @@ pub enum Shut {
 }
 
 /// Whether to hand over what `features` describe, the cold-start rule's lexical bar raised by
-/// `raise` (the self-check's). A raise only ever lifts the bar: one below zero counts as none.
+/// `raise` (the self-check's). A raise only ever lifts the bar: one below zero counts as none. The
+/// continuity rule needs no lexical bar while there is no raise; once the self-check raises one,
+/// the prompt's best match must reach the raise there too, so work orders for continuing work that
+/// go unused are held back like the others.
 #[must_use]
 pub fn decide(features: &GateFeatures, raise: f64) -> Verdict {
     let is_agreed = features.agreeing_kinds >= AGREEING_KINDS;
@@ -54,7 +57,7 @@ pub fn decide(features: &GateFeatures, raise: f64) -> Verdict {
     if is_agreed && is_strong {
         return Verdict::Inject(Rule::Agreement);
     }
-    if features.is_continuing {
+    if features.is_continuing && features.top_lexical >= raise.max(0.0) {
         return Verdict::Inject(Rule::Continuity);
     }
     // INVARIANT: silent-when-unsure (no rule cleared, so nothing is injected: there is no
@@ -87,13 +90,20 @@ mod tests {
     /// the bar or above clears; one kind, or a match below the bar, does not, whatever else is
     /// strong; a continuing session clears alone; nothing clears nothing. A raise of 0.1 lifts the
     /// bar to 0.6, so a match of 0.55 that cleared no longer does; a raise below zero lowers
-    /// nothing, so a match of 0 or 0.499 still does not clear.
+    /// nothing, so a match of 0 or 0.499 still does not clear. A continuing session with no match
+    /// clears with no raise and with one below zero, but not under a raise of 0.1; with a match of
+    /// 0.1 it clears under that raise, with 0.05 it does not.
     #[test]
     fn the_cold_start_rule_decides_case_by_case() {
         let agreed = |top_lexical| GateFeatures {
             top_lexical,
             agreeing_kinds: 2,
             supporting_kinds: 3,
+            ..none()
+        };
+        let continuing = |top_lexical| GateFeatures {
+            top_lexical,
+            is_continuing: true,
             ..none()
         };
         let cases = [
@@ -125,6 +135,10 @@ mod tests {
                 0.0,
                 Verdict::Inject(Rule::Continuity),
             ),
+            (continuing(0.0), -0.5, Verdict::Inject(Rule::Continuity)),
+            (continuing(0.0), 0.1, Verdict::Silent(Shut::TooFewKinds)),
+            (continuing(0.1), 0.1, Verdict::Inject(Rule::Continuity)),
+            (continuing(0.05), 0.1, Verdict::Silent(Shut::TooFewKinds)),
             (none(), 0.0, Verdict::Silent(Shut::TooFewKinds)),
         ];
         for (features, raise, expected) in cases {

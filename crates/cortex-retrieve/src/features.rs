@@ -4,7 +4,8 @@
 //!
 //! The evidence counted is that behind the top three files; the activation's mass is the top five
 //! files' share of all the activation kept. The session continues its own work when one of the top
-//! three files was edited earlier in it and the prompt's words also found that file.
+//! three files was edited earlier in it or holds an uncommitted change, and the prompt's words also
+//! found that file.
 
 use std::collections::BTreeSet;
 
