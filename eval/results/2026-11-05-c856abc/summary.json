@@ -1,0 +1,25 @@
+{
+  "runs": 48,
+  "incomplete": [],
+  "success": {
+    "value": 0.9791666666666666,
+    "low": 0.9375,
+    "high": 1.0
+  },
+  "delivered": 32,
+  "labelled": 32,
+  "used": 29,
+  "precision": {
+    "value": 0.90625,
+    "low": 0.7,
+    "high": 1.0
+  },
+  "median_cumulative_input": 153967.5,
+  "median_turns": 8.5,
+  "median_tool_calls": 7.5,
+  "cost_usd": 8.778347899999996,
+  "agents": [
+    "2.1.318 claude-sonnet-5-5 via none"
+  ],
+  "failed_sessions": 0
+}

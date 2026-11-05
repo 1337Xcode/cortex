@@ -1,0 +1,7 @@
+runs: 48 completed, 0 could not complete; sessions that ended in an error: 0
+success: 0.98 (95% interval 0.94 to 1.00, resampling tasks)
+work orders to the measured sessions: 32 delivered, 32 labelled, 29 used
+precision: 0.91 (95% interval 0.70 to 1.00, resampling tasks)
+measured sessions, medians: 153967.5 cumulative input tokens, 8.5 turns, 7.5 tool calls
+cost of every session, as the agent reported it: $8.78
+agents: 2.1.318 claude-sonnet-5-5 via none
