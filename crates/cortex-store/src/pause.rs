@@ -164,19 +164,29 @@ mod tests {
         Ok(())
     }
 
-    /// While a message is late, the caller is let in every period: a message 600 ms late lets it in
-    /// at least twice, at about 250 and 500 ms. A sender that goes without a word ends the wait
-    /// with nothing.
+    /// While a message is late, the caller is let in every period. The sender answers only once
+    /// the caller has been let in twice, so the premise holds however slowly the machine runs; a
+    /// wait that never let the caller in would get its answer only after the sender gave up, 10 s
+    /// later, with no call made. A sender that goes without a word ends the wait with nothing.
     #[test]
     fn a_late_message_lets_the_caller_in() -> Result<(), Box<dyn Error>> {
         let folder = tempfile::tempdir()?;
         let mut writer = writer(&folder)?;
         let calls = Cell::new(0);
-        let count = |_: &mut Writer| calls.set(calls.get() + 1);
+        let (let_in, lets) = mpsc::channel();
+        let count = |_: &mut Writer| {
+            calls.set(calls.get() + 1);
+            // The sender may have stopped listening: nothing is left to tell.
+            let _ = let_in.send(());
+        };
         let mut pacer = Pacer::new(Some(Pause::new(&count, PAUSE_EVERY)));
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
-            thread::sleep(Duration::from_millis(600));
+            for _ in 0..2 {
+                if lets.recv_timeout(Duration::from_secs(10)).is_err() {
+                    break;
+                }
+            }
             // The test may have stopped waiting: nothing is left to tell.
             let _ = sender.send(7);
         });
