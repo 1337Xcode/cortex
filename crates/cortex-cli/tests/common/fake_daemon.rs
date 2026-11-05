@@ -6,7 +6,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cortex_core::ipc::{
     CORTEX_VERSION, GitReport, Mismatch, Protocol, Request, RequestBody, Response, ResponseBody,
@@ -51,20 +51,22 @@ impl FakeDaemon {
     /// `home`, its run folder and process-id file made as the real one makes them, serving by
     /// `script`.
     pub fn start(root: &Path, home: &Path, script: Script) -> TestResult<Self> {
+        // Each step names itself in its error, so a failure on one platform says which it was.
+        let step = |what: &'static str| move |error: std::io::Error| format!("{what}: {error}");
         let user = UserFolder::in_home(home);
-        std::fs::create_dir_all(user.run_folder())?;
+        std::fs::create_dir_all(user.run_folder()).map_err(step("making the run folder"))?;
         let files = user.run_files(&RepoId::of(&canonical_root(root)?));
-        std::fs::write(files.pid_path(), format!("{}\n", std::process::id()))?;
+        std::fs::write(files.pid_path(), format!("{}\n", std::process::id()))
+            .map_err(step("writing the process-id file"))?;
         let lock = if matches!(script, Script::Silent(_)) {
             None
         } else {
-            let file = File::create(files.lock_path())?;
-            file.try_lock()?;
+            let file = File::create(files.lock_path()).map_err(step("making the lock file"))?;
+            file.try_lock()
+                .map_err(|error| format!("taking the lock: {error}"))?;
             Some(file)
         };
-        let listener: Listener = ListenerOptions::new()
-            .name(endpoint_name(&files)?)
-            .create_sync()?;
+        let listener = listen(&files)?;
         let thread = thread::spawn(move || {
             let served = serve(&listener, script);
             drop(listener);
@@ -86,6 +88,31 @@ impl FakeDaemon {
             .thread
             .join()
             .map_err(|_| "the fake daemon panicked")??)
+    }
+}
+
+/// How long a fake daemon waits for its endpoint's name to be free.
+const ENDPOINT_FREED_WITHIN: Duration = Duration::from_secs(1);
+
+/// Listens at the endpoint of `files`. On Windows a pipe's name stays taken for a few
+/// milliseconds after its last handle is closed (10 ms seen on a loaded machine), and a listener
+/// that must be the name's first instance is refused ("Access is denied") meanwhile; the fake
+/// daemon before this one, under the same name, may have just let go of it. So a refusal is
+/// tried again until the name is free, for at most [`ENDPOINT_FREED_WITHIN`].
+fn listen(files: &RunFiles) -> TestResult<Listener> {
+    let until = Instant::now() + ENDPOINT_FREED_WITHIN;
+    loop {
+        let name = endpoint_name(files).map_err(|error| format!("naming the endpoint: {error}"))?;
+        match ListenerOptions::new().name(name).create_sync() {
+            Ok(listener) => return Ok(listener),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    && Instant::now() < until =>
+            {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(format!("listening at the endpoint: {error}").into()),
+        }
     }
 }
 
