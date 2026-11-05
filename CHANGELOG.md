@@ -56,3 +56,9 @@ All notable changes to this project are documented in this file. The format is b
 - `cargo xtask verify` runs formatting, the crate dependency-direction rules, the shared lint
   settings in every crate, the invariant tags, clippy, the tests and the dependency licence and
   advisory checks; `--full` also runs the benchmarks against their budgets.
+
+### Changed
+
+- Cortex is licensed under the Apache License, Version 2.0, alone (see `LICENSE` and `NOTICE`).
+  Commits before this change were offered under the MIT license or Apache-2.0, at the user's
+  option, and stay available under those terms.

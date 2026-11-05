@@ -98,6 +98,11 @@ type(scope): imperative summary
 
 Example: `feat(cli): print the version with cortex version`.
 
+## License
+
+Cortex is licensed under the Apache License, Version 2.0. By sending a change you agree to
+license it under the same terms.
+
 ## Security issues
 
 Do not open a public issue for a vulnerability. See [SECURITY.md](SECURITY.md).
