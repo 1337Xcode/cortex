@@ -19,7 +19,7 @@ use anyhow::{Context, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::report::Incomplete;
-use crate::run::{Settings, TaskRun, run_task};
+use crate::run::{Settings, TaskRun, run_task, taken_folders};
 use crate::task::Task;
 use crate::testbed::Testbed;
 
@@ -178,6 +178,16 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
             Arm::HeldOut => 1.0,
         },
     };
+    let ids: Vec<&str> = chosen.iter().map(|task| task.id.as_str()).collect();
+    let taken = taken_folders(&args.base, &ids, args.runs);
+    if let Some(first) = taken.first() {
+        bail!(
+            "{} run folders exist already under {}, {} the first: each evaluation needs a fresh --base",
+            taken.len(),
+            args.base.display(),
+            first.display()
+        );
+    }
     std::fs::create_dir_all(&args.out).with_context(|| format!("making {}", args.out.display()))?;
     let mut runs: Vec<TaskRun> = Vec::new();
     let mut incomplete: Vec<Incomplete> = Vec::new();

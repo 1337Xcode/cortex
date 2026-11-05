@@ -27,7 +27,7 @@ cargo run -p cortex-eval -- run --arm treated --cortex target/release/cortex \
 ```
 
 Each run clones its testbed at the pinned commit, or copies a folder holding it
-(`--from serena=<folder>`), writes the arm's holdout share (0 for `treated`, 1 for `held-out`),
+(`--from serena=<folder>`, leaving `.git/` and `.cortex/` behind), writes the arm's holdout share (0 for `treated`, 1 for `held-out`),
 runs `cortex init --yes`, and waits until the index and graph are ready. Each session is
 `claude -p` with the repository's own settings only (`--setting-sources project,local`), no MCP
 server but the repository's, edits accepted and the task's tools allowed, and `ANTHROPIC_API_KEY`
@@ -41,8 +41,9 @@ Every command the runner waits for writes its output to a file in the run's fold
 its time. The logs stay with the run, and a file, unlike a pipe, does not depend on what the
 processes a command leaves running have inherited.
 
-A run that cannot complete (a copy, the install, a session or the store failing) does not stop the
-others: the runner prints why, and the summary lists it by task and run number, with the completed
+Each run works in its own folder under `--base`, and the runner refuses to start when any of them
+exists already: an evaluation needs a fresh base. A run that cannot complete (a copy, the install,
+a session or the store failing) does not stop the others: the runner prints why, and the summary lists it by task and run number, with the completed
 runs counted apart.
 
 Precision is the share of the measured sessions' work orders that reached the agent, were labelled

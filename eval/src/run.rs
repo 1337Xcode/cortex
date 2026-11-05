@@ -91,7 +91,7 @@ pub(crate) fn run_task(
     settings: &Settings,
     run: u32,
 ) -> anyhow::Result<TaskRun> {
-    let folder = settings.base.join(format!("{}-{run}", task.id));
+    let folder = run_folder(&settings.base, &task.id, run);
     let (repo, home) = (folder.join("repo"), folder.join("home"));
     std::fs::create_dir_all(&home).with_context(|| format!("making {}", home.display()))?;
     testbed.prepare(from, &repo)?;
@@ -119,6 +119,21 @@ pub(crate) fn run_task(
         is_success,
         given,
     })
+}
+
+/// The folder run number `run` of task `task` works in, under `base`.
+pub(crate) fn run_folder(base: &Path, task: &str, run: u32) -> PathBuf {
+    base.join(format!("{task}-{run}"))
+}
+
+/// The run folders of `tasks`, each run `runs` times, that exist under `base` already: a run never
+/// works in a folder an earlier one left, whose copy, store and home are not fresh.
+pub(crate) fn taken_folders(base: &Path, tasks: &[&str], runs: u32) -> Vec<PathBuf> {
+    tasks
+        .iter()
+        .flat_map(|task| (1..=runs).map(move |run| run_folder(base, task, run)))
+        .filter(|folder| folder.exists())
+        .collect()
 }
 
 /// The `cortex` command, run in `repo` with `home` as the home folder.
@@ -295,4 +310,22 @@ fn uninstall(
         bail!("cortex uninstall failed:\n{}", tail_of(&log));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Of the runs planned, the folders an earlier evaluation left are found, and only those: run 2
+    /// of `fix-tax` is taken; run 1 is not, nor is another task's folder counted.
+    #[test]
+    fn a_run_folder_left_by_an_earlier_evaluation_is_found() -> std::io::Result<()> {
+        let base = tempfile::tempdir()?;
+        std::fs::create_dir(base.path().join("fix-tax-2"))?;
+        std::fs::create_dir(base.path().join("other-1"))?;
+        let taken = taken_folders(base.path(), &["fix-tax"], 2);
+        assert_eq!(taken, [base.path().join("fix-tax-2")]);
+        assert!(taken_folders(base.path(), &["fix-tax"], 1).is_empty());
+        Ok(())
+    }
 }

@@ -102,8 +102,12 @@ fn git(folder: &Path, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Copies the files under `from` to `to`, folders made as needed, a `.git` folder left behind and
-/// symbolic links not followed.
+/// The folders a copy leaves behind: git's own, and Cortex's, whose index and history would make
+/// the copy anything but fresh.
+const LEFT_BEHIND: [&str; 2] = [".git", ".cortex"];
+
+/// Copies the files under `from` to `to`, folders made as needed, the folders in [`LEFT_BEHIND`]
+/// left behind and symbolic links not followed.
 ///
 /// # Errors
 ///
@@ -114,7 +118,8 @@ fn copy_folder(from: &Path, to: &Path) -> std::io::Result<()> {
         let entry = entry?;
         let kind = entry.file_type()?;
         let target = to.join(entry.file_name());
-        if entry.file_name() == ".git" || kind.is_symlink() {
+        let is_left = LEFT_BEHIND.iter().any(|name| entry.file_name() == *name);
+        if is_left || kind.is_symlink() {
             continue;
         }
         if kind.is_dir() {
@@ -141,7 +146,8 @@ mod tests {
         Ok(())
     }
 
-    /// A copy takes every file and folder but `.git`, and becomes a repository of one commit.
+    /// A copy takes every file and folder but `.git` and `.cortex`, and becomes a repository of one
+    /// commit.
     #[test]
     fn a_copy_leaves_git_behind_and_is_committed() -> anyhow::Result<()> {
         let from = tempfile::tempdir()?;
@@ -149,6 +155,8 @@ mod tests {
         std::fs::create_dir_all(from.path().join(".git"))?;
         std::fs::write(from.path().join("src/deep/a.py"), "a = 1\n")?;
         std::fs::write(from.path().join(".git/HEAD"), "not ours\n")?;
+        std::fs::create_dir_all(from.path().join(".cortex"))?;
+        std::fs::write(from.path().join(".cortex/cortex.db"), "an old index\n")?;
         let to = tempfile::tempdir()?;
         let bed = Testbed {
             name: "t".to_owned(),
@@ -161,6 +169,7 @@ mod tests {
             std::fs::read_to_string(to.path().join("src/deep/a.py"))?,
             "a = 1\n"
         );
+        assert!(!to.path().join(".cortex").exists());
         let head = std::fs::read_to_string(to.path().join(".git/HEAD"))?;
         assert_ne!(head, "not ours\n");
         let log = Command::new("git")
