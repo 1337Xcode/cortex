@@ -30,7 +30,8 @@ fn watched(root: &Path) -> TestResult<(Watcher, Receiver<Change>)> {
     Ok((watcher, receiver))
 }
 
-/// The changes `receiver` brings until `is_done` holds for them all, or the time runs out.
+/// The changes `receiver` brings until `is_done` holds for them all, or the time runs out, when the
+/// error names every change that did arrive.
 fn changes_until(
     receiver: &Receiver<Change>,
     is_done: impl Fn(&[Change]) -> bool,
@@ -39,7 +40,15 @@ fn changes_until(
     let mut changes = Vec::new();
     while !is_done(&changes) {
         let left = deadline.saturating_duration_since(Instant::now());
-        changes.push(receiver.recv_timeout(left)?);
+        match receiver.recv_timeout(left) {
+            Ok(change) => changes.push(change),
+            Err(error) => {
+                return Err(format!(
+                    "{error} after {PATIENCE:?}; the changes that came: {changes:?}"
+                )
+                .into());
+            }
+        }
     }
     Ok(changes)
 }
