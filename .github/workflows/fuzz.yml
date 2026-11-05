@@ -1,0 +1,79 @@
+# Fuzzes the two parsers that read bytes Cortex does not control: an agent's hook payload and the
+# daemon's frames. A change to the targets or the crates they reach gets a short run with a fixed
+# seed, so the same commit always runs the same inputs; every night a longer run explores. A crash
+# keeps its input as an artifact, and `cargo +nightly fuzz run <target> <file>` replays it.
+name: Fuzz
+
+on:
+  pull_request:
+    paths:
+      - "fuzz/**"
+      - "crates/cortex-core/**"
+      - "crates/cortex-hook/**"
+      - ".github/workflows/fuzz.yml"
+  push:
+    branches: [main]
+    paths:
+      - "fuzz/**"
+      - "crates/cortex-core/**"
+      - "crates/cortex-hook/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # cargo-fuzz needs nightly; a dated one keeps a run reproducible until it is moved on purpose.
+  NIGHTLY: nightly-2026-10-29
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [hook_stdin, frame_decode]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$NIGHTLY" --profile minimal
+      - run: cargo install --locked cargo-fuzz@0.13.2
+      # The fuzz workspace keeps its own lockfile; this fails when it no longer matches the
+      # manifests, instead of resolving new versions on the runner.
+      - working-directory: fuzz
+        run: cargo "+$NIGHTLY" fetch --locked
+      - working-directory: fuzz
+        run: cargo "+$NIGHTLY" fuzz build "$TARGET"
+        env:
+          TARGET: ${{ matrix.target }}
+      - working-directory: fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+          SCHEDULED: ${{ github.event_name == 'schedule' }}
+        run: |
+          mkdir -p "corpus/$TARGET"
+          seeds=()
+          [ "$TARGET" = hook_stdin ] && seeds=(../tests/fixtures/claude/*/)
+          if [ "$SCHEDULED" = true ]; then
+            limit=(-max_total_time=1500)
+          else
+            limit=(-runs=200000 -seed=1)
+          fi
+          cargo "+$NIGHTLY" fuzz run "$TARGET" "corpus/$TARGET" "${seeds[@]}" -- "${limit[@]}"
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
