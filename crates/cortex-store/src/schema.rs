@@ -59,10 +59,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 11,
         sql: include_str!("../migrations/0011_injections.sql"),
     },
+    Migration {
+        version: 12,
+        sql: include_str!("../migrations/0012_cochange_partner_index.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 11;
+pub(crate) const SCHEMA_VERSION: u32 = 12;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -232,16 +236,19 @@ pub(crate) const SYMBOLS_IN_FILE: &str = concat!(
     "WHERE file_id = ?1 ORDER BY start_byte, symbol_id"
 );
 /// The node and lines of each symbol in a file, in the order they appear.
+// A `CROSS JOIN` keeps SQLite from starting at the nodes: by their kind alone that is every symbol
+// node of the repository, where the file's or the name's own index finds a handful.
 pub(crate) const SYMBOL_SPANS_IN_FILE: &str = "SELECT n.node_id, s.start_line, s.end_line, \
      s.symbol_id, s.parent_id, s.kind, s.name \
-     FROM symbols AS s JOIN nodes AS n ON n.kind = 'symbol' AND n.ref_id = s.symbol_id \
+     FROM symbols AS s CROSS JOIN nodes AS n ON n.kind = 'symbol' AND n.ref_id = s.symbol_id \
      WHERE s.file_id = ?1 ORDER BY s.start_byte, s.symbol_id";
 /// The files the file nodes in a JSON array stand for, by node; the columns are those of
 /// [`FILE_BY_PATH`] and then the node.
 pub(crate) const FILES_OF_NODES: &str = "SELECT f.file_id, f.path, f.lang, f.bytes, f.loc, \
-     f.content_hash, f.mtime_ns, f.flags, f.indexed_at, n.node_id FROM nodes AS n \
-     JOIN files AS f ON f.file_id = n.ref_id \
-     WHERE n.node_id IN (SELECT value FROM json_each(?1)) AND n.kind = 'file' ORDER BY n.node_id";
+     f.content_hash, f.mtime_ns, f.flags, f.indexed_at, n.node_id \
+     FROM (SELECT DISTINCT value FROM json_each(?1)) AS j \
+     CROSS JOIN nodes AS n ON n.node_id = j.value CROSS JOIN files AS f ON f.file_id = n.ref_id \
+     WHERE n.kind = 'file' ORDER BY n.node_id";
 
 /// The symbols with a name, oldest first.
 pub(crate) const SYMBOLS_NAMED: &str =
@@ -390,7 +397,8 @@ pub(crate) const FILE_COMMITS_OF: &str = "SELECT file_id, count, weighted FROM f
 /// The co-change counts of every pair holding a file whose id is in a JSON array, by pair.
 pub(crate) const COCHANGE_STATS_OF: &str = "SELECT file_a, file_b, count, weighted, \
      last_commit_seq FROM cochange_stats WHERE file_a IN (SELECT value FROM json_each(?1)) \
-     OR file_b IN (SELECT value FROM json_each(?1)) ORDER BY file_a, file_b";
+     UNION SELECT file_a, file_b, count, weighted, last_commit_seq FROM cochange_stats \
+     WHERE file_b IN (SELECT value FROM json_each(?1)) ORDER BY file_a, file_b";
 /// A value of the co-change miner's state.
 pub(crate) const GIT_STATE_GET: &str = "SELECT value FROM git_state WHERE key = ?1";
 /// Sets a value of the co-change miner's state.
@@ -441,7 +449,7 @@ pub(crate) const FILES_NAMED: &str = "SELECT f.path, f.file_id, n.node_id FROM f
      WHERE f.path = ?1 OR f.path LIKE ?2 ESCAPE '\\' ORDER BY f.path";
 /// The nodes of the symbols named ?1, by node, at most ?2.
 pub(crate) const SYMBOL_NODES_NAMED: &str = "SELECT n.node_id FROM symbols AS s \
-     JOIN nodes AS n ON n.kind = 'symbol' AND n.ref_id = s.symbol_id \
+     CROSS JOIN nodes AS n ON n.kind = 'symbol' AND n.ref_id = s.symbol_id \
      WHERE s.name = ?1 ORDER BY n.node_id LIMIT ?2";
 
 /// Deletes a node's outgoing edges of one type.
@@ -927,7 +935,10 @@ mod tests {
             ),
             (
                 "cochange_stats",
-                index_list(&[(&["file_a", "file_b"], true, false)]),
+                index_list(&[
+                    (&["file_a", "file_b"], true, false),
+                    (&["file_b"], false, false),
+                ]),
             ),
             ("git_state", index_list(&[(&["key"], true, false)])),
             ("episodes", index_list(&[(&["task_id"], true, false)])),
@@ -993,6 +1004,66 @@ mod tests {
             "{steps:?}"
         );
         assert_eq!(cortex_core::Resolution::ImportPath.name(), "import_path");
+        Ok(())
+    }
+
+    /// The queries a prompt's retrieval makes for each file it lists start from the rows they ask
+    /// for, as their plans show, never from every node of a kind or every co-change pair: on a
+    /// repository of 10,000 files those walks took most of a retrieval's time.
+    #[test]
+    fn a_retrieval_s_queries_start_where_their_index_does() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let connection = Connection::open_in_memory()?;
+        for migration in MIGRATIONS {
+            connection.execute_batch(migration.sql)?;
+        }
+        let plan = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> rusqlite::Result<Vec<String>> {
+            let mut statement = connection.prepare(&["EXPLAIN QUERY PLAN ", sql].concat())?;
+            statement
+                .query_map(params, |row| row.get(3))?
+                .collect::<rusqlite::Result<_>>()
+        };
+        let cases: [(&str, Vec<String>, &str); 4] = [
+            (
+                "symbols named",
+                plan(SYMBOL_NODES_NAMED, &[&"run", &4])?,
+                "SEARCH s USING COVERING INDEX symbols_name (name=?)",
+            ),
+            (
+                "a file's symbols",
+                plan(SYMBOL_SPANS_IN_FILE, &[&1])?,
+                "SEARCH s USING INDEX symbols_file_id (file_id=?)",
+            ),
+            (
+                "the files of nodes",
+                plan(FILES_OF_NODES, &[&"[1]"])?,
+                "CO-ROUTINE j",
+            ),
+            (
+                "a file's pairs",
+                plan(COCHANGE_STATS_OF, &[&"[1]"])?,
+                "MERGE (UNION)",
+            ),
+        ];
+        for (what, steps, first) in cases {
+            assert!(
+                steps.first().is_some_and(|step| step.starts_with(first)),
+                "{what}: {steps:?}"
+            );
+            assert!(
+                !steps
+                    .iter()
+                    .any(|step| step.contains("(kind=?)") || step == "SCAN cochange_stats"),
+                "{what}: {steps:?}"
+            );
+        }
+        let pairs = plan(COCHANGE_STATS_OF, &[&"[1]"])?;
+        assert!(
+            pairs
+                .iter()
+                .any(|step| step.contains("USING INDEX cochange_stats_file_b")),
+            "{pairs:?}"
+        );
         Ok(())
     }
 

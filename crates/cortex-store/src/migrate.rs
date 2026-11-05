@@ -529,6 +529,34 @@ mod tests {
         Ok(())
     }
 
+    /// The twelfth schema adds an index of the co-change pairs by their second file, and keeps the
+    /// pairs an eleventh-schema store holds.
+    #[test]
+    fn the_twelfth_schema_indexes_pairs_by_their_second_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let eleventh = MIGRATIONS.get(..11).ok_or("fewer than eleven migrations")?;
+        migrate(&mut connection, eleventh, &backups)?;
+        // The pair's files are not what is under test: their rows are left out.
+        connection.execute_batch(
+            "PRAGMA foreign_keys = OFF; \
+             INSERT INTO cochange_stats (file_a, file_b, count, weighted, last_commit_seq) \
+             VALUES (1, 2, 3, 2.5, 7); \
+             PRAGMA foreign_keys = ON;",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 12);
+        assert!(objects(&connection)?.contains(&"cochange_stats_file_b".to_owned()));
+        let kept: (i64, i64, i64) = connection.query_row(
+            "SELECT file_a, file_b, count FROM cochange_stats",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(kept, (1, 2, 3));
+        Ok(())
+    }
+
     /// The eleventh schema adds the injections table and its two indexes, and keeps the rows a
     /// tenth-schema store holds.
     #[test]
@@ -541,7 +569,8 @@ mod tests {
             "INSERT INTO sessions (session_id, agent, started_at, status) \
              VALUES ('s1', 'claude', 5, 'live');",
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let eleventh = MIGRATIONS.get(..11).ok_or("fewer than eleven migrations")?;
+        migrate(&mut connection, eleventh, &backups)?;
         assert_eq!(schema_version(&connection)?, 11);
         let objects = objects(&connection)?;
         for object in ["injections", "injections_task", "injections_session"] {

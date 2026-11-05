@@ -68,6 +68,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- A prompt's retrieval no longer walks every symbol node of the repository: the store's lookups of
+  a named symbol, of a listed file's symbols and of the files of nodes start from their own index,
+  and the co-change pairs of a file are found by either of its sides through an index (a schema
+  migration adds it). On a 10,000-file test repository a retrieval in the daemon went from 136.9 ms
+  to 33.3 ms at the 95th percentile on Windows.
 - While a large index runs on a busy machine, hook events reach the store within a second again:
   the index writes references and edges in transactions cut every quarter second rather than every
   4,096 rows, reads the whole repository's names in steps, and walks the repository on a thread of
