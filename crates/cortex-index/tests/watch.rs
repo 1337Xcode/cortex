@@ -14,9 +14,18 @@ use cortex_index::{Change, DiscoverOptions, Watcher, watch};
 /// How long a test waits for the changes it expects.
 const PATIENCE: Duration = Duration::from_secs(20);
 
+/// The most marker files [`settle`] writes before it gives up.
+const MAX_MARKERS: usize = 10;
+
 /// Watches the repository at `root` with the default options, its changes arriving on the
-/// returned receiver.
+/// returned receiver, once everything written there before has been reported (see [`settle`]).
 fn watched(root: &Path) -> TestResult<(Watcher, Receiver<Change>)> {
+    settle(root)?;
+    watching(root)
+}
+
+/// Starts watching the repository at `root` with the default options.
+fn watching(root: &Path) -> TestResult<(Watcher, Receiver<Change>)> {
     let options = DiscoverOptions {
         max_file_bytes: 1_048_576,
         extra_ignores: &[],
@@ -28,6 +37,30 @@ fn watched(root: &Path) -> TestResult<(Watcher, Receiver<Change>)> {
         let _ = sender.send(change);
     })?;
     Ok((watcher, receiver))
+}
+
+/// Waits until the file system has reported every write made in `root` so far, so that a watch
+/// started next sees none of a test's setup: macOS reports changes made moments before a watch
+/// starts, and a rules file among them is a change to everything. A first watch is told of a new
+/// marker file; a change to everything may have stood for the marker, so then another is written,
+/// until one is reported by name. Its report comes after every earlier write's. The markers stay
+/// unchanged, so no later change names them.
+fn settle(root: &Path) -> TestResult {
+    let (_watcher, receiver) = watching(root)?;
+    for number in 0..MAX_MARKERS {
+        let marker = format!("settled-{number}.txt");
+        write(root, &marker, b"")?;
+        loop {
+            match receiver.recv_timeout(PATIENCE)? {
+                Change::Paths(paths) if paths.iter().any(|path| path.as_str() == marker) => {
+                    return Ok(());
+                }
+                Change::Everything => break,
+                Change::Paths(_) => {}
+            }
+        }
+    }
+    Err(format!("no marker of {MAX_MARKERS} was reported by name").into())
 }
 
 /// The changes `receiver` brings until `is_done` holds for them all, or the time runs out, when the
