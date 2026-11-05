@@ -41,6 +41,10 @@ impl Repo {
         // Files are stored as the tests write them on every platform, and nothing signs.
         repo.git(&["config", "core.autocrlf", "false"])?;
         repo.git(&["config", "commit.gpgsign", "false"])?;
+        // The store a test opens lives in `.cortex/`, as Cortex's own does, and git leaves it out as
+        // it would with the `.gitignore` lines `cortex init` writes: a commit never reads the
+        // store's files while they are open (on Windows SQLite's `-shm` file cannot be read then).
+        std::fs::write(repo.root().join(".git/info/exclude"), ".cortex/\n")?;
         Ok(repo)
     }
 
