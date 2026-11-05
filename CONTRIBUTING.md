@@ -98,6 +98,21 @@ type(scope): imperative summary
 
 Example: `feat(cli): print the version with cortex version`.
 
+## Continuous integration
+
+Every pull request and every push to `main` runs `cargo xtask verify`, the same command as above,
+on Linux (x86_64 and arm64), macOS (arm64 and x86_64) and Windows (x86_64) at once. A pull request
+that changes only prose (Markdown outside `tests/` folders, the licence files, `docs/`) skips the
+build. The one check a pull request needs is `Check`, which passes when every other job passed or
+was skipped on purpose; it includes a lint of the workflows themselves (actionlint and zizmor) and
+the tests of the pull request guard below (`node --test .github/scripts/*.test.mjs`).
+
+Beside it, CodeQL's security queries scan the Rust code and the workflows, and a change to `fuzz/`,
+`cortex-core` or `cortex-hook` gets a short fuzzing run of each target with a fixed seed (a longer
+one runs every night). No step uses a paid service or an AI reviewer, and no workflow runs a pull
+request's code with a secret or a token that can write. Dependabot proposes dependency updates at
+most once a month, grouped, a week after their release.
+
 ## Sending a pull request
 
 Fill in the template's sections. **Verification** carries the proof: the last lines of
