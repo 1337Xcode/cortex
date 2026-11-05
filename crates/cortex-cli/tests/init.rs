@@ -524,9 +524,12 @@ fn init_starts_the_daemon_and_runs_doctor() -> TestResult {
         "{}",
         done.stdout
     );
+    // One line per hook probed, each with its 95th percentile. On a loaded machine doctor may add
+    // a line of its own when a probe did not arrive in time, which is doctor's finding to make,
+    // not init's.
     let probed = lines
         .iter()
-        .filter(|line| line.contains("latency: "))
+        .filter(|line| line.contains("latency: ") && line.contains(": p95 "))
         .count();
     assert_eq!(probed, 5, "{}", done.stdout);
     Ok(())
