@@ -37,6 +37,15 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
+          # The code that ships. Tests and fixtures never run on a user's machine, and their names
+          # set off false alarms (an assertion printing the score of a file named billing.py read
+          # as logging billing data).
+          config: |
+            paths-ignore:
+              - "tests/**"
+              - "crates/*/tests/**"
+              - "crates/*/benches/**"
+              - "eval/results/**"
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: /language:${{ matrix.language }}
