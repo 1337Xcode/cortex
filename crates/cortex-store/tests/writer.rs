@@ -15,7 +15,7 @@ use cortex_store::{
 };
 
 /// The version the workspace manifest declares; a version bump updates this literal on purpose.
-const CORTEX_VERSION: &str = "2.0.0-dev";
+const CORTEX_VERSION: &str = "0.1.0-beta.1";
 
 /// The first version of `src/parser.py`: a class with a method, two functions, an import at the
 /// top and a call from the method to `helper` on line 5.

@@ -87,7 +87,7 @@ fn a_command_replaces_an_older_daemon() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     std::fs::write(repo.path().join("app.py"), "def app():\n    pass\n")?;
-    let older = FakeDaemon::start(repo.path(), home.path(), Script::Welcome(&["1.0.0"]))?;
+    let older = FakeDaemon::start(repo.path(), home.path(), Script::Welcome(&["0.0.1"]))?;
     let mut status = Command::new(env!("CARGO_BIN_EXE_cortex"));
     status.args(["status", "--root"]).arg(repo.path());
     isolate(&mut status, home.path());
@@ -103,7 +103,7 @@ fn a_command_replaces_an_older_daemon() -> TestResult {
     let mut lines = stdout.lines();
     assert_eq!(
         lines.next(),
-        Some("daemon: replaced a daemon of Cortex 1.0.0"),
+        Some("daemon: replaced a daemon of Cortex 0.0.1"),
         "{stdout}"
     );
     let running = lines.next().unwrap_or_default();

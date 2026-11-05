@@ -228,14 +228,23 @@ mod tests {
         Ok(())
     }
 
-    /// This build (2.0.0-dev) is newer than 1.9.9 and than 2.0.0-alpha, which sorts before `dev`;
-    /// not than itself, 2.0.0, 2.0.0-rc.1 or 9.0.0; and ranks nothing that is not a version.
+    /// This build (0.1.0-beta.1) is newer than 0.0.9, than 0.1.0-alpha.1, since `alpha` sorts
+    /// before `beta`, and than 0.1.0-beta, which has fewer identifiers; not than itself,
+    /// 0.1.0-beta.2, 0.1.0-rc.1, 0.1.0 or 9.0.0; and ranks nothing that is not a version.
     #[test]
     fn only_an_older_version_is_replaced() {
-        for older in ["1.9.9", "2.0.0-alpha", "0.1.0"] {
+        for older in ["0.0.9", "0.1.0-alpha.1", "0.1.0-beta"] {
             assert!(is_older_than_this_build(older), "{older}");
         }
-        for other in [CORTEX_VERSION, "2.0.0", "2.0.0-rc.1", "9.0.0", "", "two"] {
+        for other in [
+            CORTEX_VERSION,
+            "0.1.0-beta.2",
+            "0.1.0-rc.1",
+            "0.1.0",
+            "9.0.0",
+            "",
+            "two",
+        ] {
             assert!(!is_older_than_this_build(other), "{other}");
         }
     }

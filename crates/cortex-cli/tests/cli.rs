@@ -4,7 +4,7 @@ use std::error::Error;
 use std::process::{Command, ExitStatus};
 
 /// The version the workspace manifest declares; a version bump updates this literal on purpose.
-const EXPECTED_VERSION_LINE: &str = "cortex 2.0.0-dev\n";
+const EXPECTED_VERSION_LINE: &str = "cortex 0.1.0-beta.1\n";
 
 /// The usage line clap prints; the binary is named `cortex` whatever its file is called.
 const EXPECTED_USAGE_LINE: &str = "Usage: cortex <COMMAND>";

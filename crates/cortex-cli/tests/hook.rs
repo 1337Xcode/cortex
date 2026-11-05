@@ -312,14 +312,14 @@ fn an_older_daemon_is_told_to_stop_and_a_newer_one_is_not() -> TestResult {
             home.path(),
         )
     };
-    let older = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["1.0.0"]))?;
+    let older = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["0.0.1"]))?;
     let done = call(edit()?)?;
     assert!(done.is_silent_success(), "{:?}", done.output);
     assert_eq!(
         kinds(&older.requests()?),
         ["hello", "event", "hello", "shutdown"]
     );
-    let older_protocol = FakeDaemon::start(&repo, home.path(), Script::Mismatch("1.0.0"))?;
+    let older_protocol = FakeDaemon::start(&repo, home.path(), Script::Mismatch("0.0.1"))?;
     let done = call(edit()?)?;
     assert!(done.is_silent_success(), "{:?}", done.output);
     assert_eq!(
@@ -332,7 +332,7 @@ fn an_older_daemon_is_told_to_stop_and_a_newer_one_is_not() -> TestResult {
     assert_eq!(kinds(&newer.requests()?), ["hello", "event"]);
     // An older daemon that a newer one replaced between the hook's two connections: the hook reads
     // the handshake of the second before it asks anything, and leaves the newer daemon running.
-    let replaced = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["1.0.0", "99.0.0"]))?;
+    let replaced = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["0.0.1", "99.0.0"]))?;
     let done = call(edit()?)?;
     assert!(done.is_silent_success(), "{:?}", done.output);
     assert_eq!(kinds(&replaced.requests()?), ["hello", "event", "hello"]);
@@ -359,7 +359,7 @@ fn a_probe_stops_and_starts_no_daemon() -> TestResult {
             home.path(),
         )
     };
-    let older = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["1.0.0"]))?;
+    let older = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["0.0.1"]))?;
     let done = call(probe()?)?;
     assert!(done.is_silent_success(), "{:?}", done.output);
     assert_eq!(kinds(&older.requests()?), ["hello", "event"]);

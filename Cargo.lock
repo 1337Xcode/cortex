@@ -298,7 +298,7 @@ checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "cortex-cli"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-core"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "blake3",
  "proptest",
@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-daemon"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "cortex-core",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-eval"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -371,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-git"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -383,7 +383,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-hook"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "CreateProcessW",
  "cortex-core",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-index"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-learn"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -453,7 +453,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-meter"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-retrieve"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "cortex-core",
  "cortex-index",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-store"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "cortex-core",
  "rusqlite",
@@ -495,7 +495,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-tests"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "serde_json",
 ]
@@ -3068,7 +3068,7 @@ checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 
 [[package]]
 name = "xtask"
-version = "2.0.0-dev"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "proc-macro2",
