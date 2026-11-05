@@ -1,16 +1,23 @@
-# Keeps the pinned action commits and the Cargo dependencies current. Each week at most one pull
-# request per ecosystem, every update grouped into it, so the review is one diff a week, and every
-# such pull request runs the same CI as any other.
+# Keeps the pinned action commits and the Cargo dependencies current without a stream of pull
+# requests: once a month at most one pull request per ecosystem, every update grouped into it, and
+# a release only once it is a week old, so a broken or malicious version is usually caught before it
+# reaches here. Major versions, which can break the build, are left out and taken by hand. Every
+# such pull request runs the same CI as any other, and only the owner can merge it.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
+    open-pull-requests-limit: 1
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: ci
       include: scope
@@ -19,11 +26,16 @@ updates:
       - /
       - /fuzz
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
+    open-pull-requests-limit: 1
+    cooldown:
+      default-days: 7
     groups:
       cargo:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: build
       include: scope
