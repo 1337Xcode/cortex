@@ -11,11 +11,7 @@ use cortex_core::{EdgeType, RepoPath, Resolution};
 use cortex_store::{EdgeRecord, NodeId, StoreError, Writer};
 
 use crate::node_lookup::NodeLookup;
-use cortex_store::Pacer;
-
-/// How many importers have their edges written in one transaction: a commit costs little next to
-/// this many files' edges, and the transaction stays short.
-const IMPORTERS_PER_TRANSACTION: usize = 4096;
+use cortex_store::{Pacer, in_turns};
 
 /// The files one file's imports name, each with how many of its imports name it.
 pub(crate) type ImportCounts = BTreeMap<RepoPath, u32>;
@@ -69,13 +65,9 @@ pub(crate) fn write_import_edges(
     }
     // The lookup reads through the writer, which writes next.
     drop(nodes);
-    for batch in sources.chunks(IMPORTERS_PER_TRANSACTION) {
-        let mut transaction = writer.transaction()?;
-        for (src, edges) in batch {
-            transaction.replace_edges(*src, EdgeType::Structural, edges)?;
-        }
-        transaction.commit()?;
-        pacer.offer(writer);
-    }
+    in_turns(writer, pacer, &sources, |transaction, (src, edges)| {
+        transaction.replace_edges(*src, EdgeType::Structural, edges)
+    })?;
+    pacer.offer(writer);
     Ok(())
 }

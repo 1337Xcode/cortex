@@ -781,6 +781,36 @@ fn pauses_change_nothing_stored() -> TestResult {
     Ok(())
 }
 
+/// The caller is let in while the references are tied, not only around that pass: with a pause due
+/// at every chance, the caller finds the 300 calls between `parts/` files tied in part, at many
+/// counts between none and all, since each tie written is a transaction of its own. Written in
+/// fixed batches of thousands of rows, as before, the caller saw none tied and then all.
+#[test]
+fn the_caller_comes_in_while_references_are_tied() -> TestResult {
+    let seen = std::cell::RefCell::new(Vec::new());
+    let look = |writer: &mut Writer| {
+        if let Ok(counts) = writer.queries().counts() {
+            seen.borrow_mut().push(counts.resolved_refs);
+        }
+    };
+    let repo = tempfile::tempdir()?;
+    write_many(repo.path())?;
+    let limits = (4, GENEROUS, DEFAULT_LIMIT);
+    let pause = Some(Pause::new(&look, Duration::ZERO));
+    index_with_pause(repo.path(), limits, ModeSetting::Auto, pause)?;
+    let reader = Reader::open(&repo.path().join(".cortex"), 0)?;
+    let tied = reader.queries().counts()?.resolved_refs;
+    assert!(tied >= 300, "{tied} references tied");
+    let partly: std::collections::BTreeSet<u64> = seen
+        .borrow()
+        .iter()
+        .copied()
+        .filter(|count| (1..tied).contains(count))
+        .collect();
+    assert!(partly.len() >= 100, "{} partial counts seen", partly.len());
+    Ok(())
+}
+
 /// A file that takes longer to parse than allowed is reported. A new one is written as read,
 /// defining nothing, and is not tried again until it changes; one stored as parsed keeps its rows
 /// and ids. The file after it is still written. With no time at all, parsing stops at its first

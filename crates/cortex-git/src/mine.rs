@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use cortex_core::{Config, EdgeType, RepoPath};
 use cortex_store::{
     CountedFile, EdgeRecord, FileCommitsRow, FileId, GitStateKey, NodeId, Pacer, PairRow, Pause,
-    Queries, StoreError, WriteTx, Writer,
+    Queries, StoreError, Writer, in_turns,
 };
 
 use crate::cochange::{
@@ -329,26 +329,6 @@ fn finish(
     }
     transaction.set_git_state(GitStateKey::LastSeq, &harvest.last_seq.to_string())?;
     transaction.set_git_state(GitStateKey::LastCommit, &harvest.head)?;
-    transaction.commit()
-}
-
-/// Writes each of `items` with `write_one`, in transactions `pacer` cuts whenever the caller's turn
-/// is due. The items are written in the same order however the cuts fall.
-fn in_turns<T>(
-    writer: &mut Writer,
-    pacer: &mut Pacer<'_>,
-    items: &[T],
-    mut write_one: impl FnMut(&mut WriteTx<'_>, &T) -> Result<(), StoreError>,
-) -> Result<(), StoreError> {
-    let mut transaction = writer.transaction()?;
-    for item in items {
-        if pacer.is_due() {
-            transaction.commit()?;
-            pacer.offer(writer);
-            transaction = writer.transaction()?;
-        }
-        write_one(&mut transaction, item)?;
-    }
     transaction.commit()
 }
 

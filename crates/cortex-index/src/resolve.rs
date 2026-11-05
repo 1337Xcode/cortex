@@ -30,10 +30,7 @@ use cortex_store::{
 
 use crate::bindings::{Bindings, Lookup, Reach};
 use crate::name_changes::{NameChanges, may_find_otherwise};
-use cortex_store::Pacer;
-
-/// How many references are written per transaction.
-const RESOLUTIONS_PER_TRANSACTION: usize = 4096;
+use cortex_store::{Pacer, in_turns};
 
 /// What a name finds among some definitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,8 +433,8 @@ struct Scope {
 }
 
 /// Ties every stored reference to the definition its file's imports or its name settle, or marks
-/// it unresolved, and writes the references whose target changed, in transactions of
-/// [`RESOLUTIONS_PER_TRANSACTION`]. `bindings` holds what the imports of each file this index
+/// it unresolved, and writes the references whose target changed, in transactions the pacer cuts
+/// at each of the caller's turns. `bindings` holds what the imports of each file this index
 /// wrote bring in, by path, with a lookup for each of its references in the order they were
 /// written. A reference `scip` ties, from the repository's SCIP index, is tied as it says, before
 /// any rule here. Returns what it tied: each tied reference that sits in a definition, and the
@@ -452,12 +449,21 @@ pub(crate) fn resolve_names(
     scip: &BTreeMap<RefId, SymbolId>,
     pacer: &mut Pacer<'_>,
 ) -> Result<NamePass, StoreError> {
-    let queries = writer.queries();
+    // Each of these reads every row of a table, a long stretch on a large repository: the caller
+    // may come in between them, as it writes none of these tables.
+    let files = writer.queries().file_ids()?;
+    pacer.offer(writer);
+    let symbols = writer.queries().symbol_names()?;
+    pacer.offer(writer);
+    let refs = writer.queries().ref_names()?;
+    pacer.offer(writer);
+    let stored = writer.queries().every_passes_on()?;
+    pacer.offer(writer);
     let scope = Scope {
-        files: queries.file_ids()?,
-        symbols: queries.symbol_names()?,
-        refs: queries.ref_names()?,
-        stored: queries.every_passes_on()?,
+        files,
+        symbols,
+        refs,
+        stored,
         stale_scip: BTreeSet::new(),
     };
     resolve(writer, (&scope, bindings), Some(scip), pacer)
@@ -683,6 +689,7 @@ fn resolve(
     pacer: &mut Pacer<'_>,
 ) -> Result<NamePass, StoreError> {
     let written = Written::new(&scope.files, bindings, &scope.stored);
+    pacer.offer(writer);
     let definitions = Definitions::of(&scope.symbols);
     let mut memo = Memo::default();
     // A file's references come back in the order they were written, which is its lookups' order.
@@ -723,12 +730,10 @@ fn resolve(
             });
         }
     }
-    for batch in changed.chunks(RESOLUTIONS_PER_TRANSACTION) {
-        let mut transaction = writer.transaction()?;
-        transaction.set_resolutions(batch)?;
-        transaction.commit()?;
-        pacer.offer(writer);
-    }
+    in_turns(writer, pacer, &changed, |transaction, resolved| {
+        transaction.set_resolutions(std::slice::from_ref(resolved))
+    })?;
+    pacer.offer(writer);
     Ok(NamePass {
         ties,
         changed_sources,

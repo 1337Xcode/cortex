@@ -62,3 +62,10 @@ All notable changes to this project are documented in this file. The format is b
 - Cortex is licensed under the Apache License, Version 2.0, alone (see `LICENSE` and `NOTICE`).
   Commits before this change were offered under the MIT license or Apache-2.0, at the user's
   option, and stay available under those terms.
+
+### Fixed
+
+- While a large index runs on a busy machine, hook events reach the store within a second again:
+  the index writes references and edges in transactions cut every quarter second rather than every
+  4,096 rows, reads the whole repository's names in steps, and walks the repository on a thread of
+  its own while it records the events waiting.

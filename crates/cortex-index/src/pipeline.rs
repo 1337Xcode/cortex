@@ -274,7 +274,7 @@ pub fn index_repository(
     options: &IndexOptions<'_>,
 ) -> Result<IndexReport, IndexError> {
     let mut pacer = Pacer::new(options.pause);
-    let discovery = discover(root, &options.discover)?;
+    let discovery = discovered(root, options, (writer, &mut pacer))?;
     pacer.let_in(writer);
     let known = incremental::known_files(writer.queries())?;
     incremental::mark_started(writer)?;
@@ -722,6 +722,27 @@ fn hides_files(kind: ProblemKind) -> bool {
 /// Whether `path`, or a folder above it, is in `unseen`.
 fn is_unseen(path: &RepoPath, unseen: &BTreeSet<&RepoPath>) -> bool {
     std::iter::successors(Some(path.clone()), RepoPath::parent).any(|at| unseen.contains(&at))
+}
+
+/// The repository's files as the walk finds them, the walk run on a thread of its own while the
+/// caller is let in every period: a walk of a large tree on a slow disk takes seconds, and the
+/// hook events waiting meanwhile must still reach the store within a second.
+///
+/// # Errors
+///
+/// The walk's error. A panic in the walk's thread is resumed on this one, as for the workers that
+/// read files.
+fn discovered(
+    root: &Path,
+    options: &IndexOptions<'_>,
+    (writer, pacer): (&mut Writer, &mut Pacer<'_>),
+) -> Result<Discovery, IndexError> {
+    let walk = &options.discover;
+    thread::scope(|scope| {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        scope.spawn(move || drop(sender.send(discover(root, walk))));
+        Ok(wait_for(&receiver, pacer, writer).ok_or(IndexError::WorkerPanicked)??)
+    })
 }
 
 /// Prepares the files in batches and writes each batch in one transaction while the next one is

@@ -59,7 +59,7 @@ pub use injections::{InjectedFile, InjectionRecord, InjectionRow};
 pub use interest::InterestRow;
 pub use lock::is_writer_running;
 pub use meta::MetaKey;
-pub use pause::{PAUSE_EVERY, Pacer, Pause, wait_for};
+pub use pause::{PAUSE_EVERY, Pacer, Pause, in_turns, wait_for};
 pub use queries::Queries;
 pub use reader::Reader;
 pub use records::{

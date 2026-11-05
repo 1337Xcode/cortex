@@ -13,11 +13,7 @@ use cortex_core::EdgeType;
 use cortex_store::{EdgeRecord, NodeId, StoreError, SymbolId, Target, Writer};
 
 use crate::node_lookup::NodeLookup;
-use cortex_store::Pacer;
-
-/// How many definitions have their edges written in one transaction: a commit costs little next to
-/// this many definitions' edges, and the transaction stays short.
-const SOURCES_PER_TRANSACTION: usize = 4096;
+use cortex_store::{Pacer, in_turns};
 
 /// Replaces the structural edges of every definition, or of those in `only`, with edges to the
 /// definitions `ties`, each a reference's definition and target, point to; such a definition that
@@ -87,13 +83,9 @@ pub(crate) fn write_symbol_edges(
         .into_iter()
         .map(|(src, targets)| (src, targets.into_values().collect()))
         .collect();
-    for batch in sources.chunks(SOURCES_PER_TRANSACTION) {
-        let mut transaction = writer.transaction()?;
-        for (src, records) in batch {
-            transaction.replace_edges(*src, EdgeType::Structural, records)?;
-        }
-        transaction.commit()?;
-        pacer.offer(writer);
-    }
+    in_turns(writer, pacer, &sources, |transaction, (src, records)| {
+        transaction.replace_edges(*src, EdgeType::Structural, records)
+    })?;
+    pacer.offer(writer);
     Ok(())
 }

@@ -6,10 +6,10 @@ use std::fmt;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
-use crate::Writer;
+use crate::{StoreError, WriteTx, Writer};
 
 /// How often the daemon's pause comes: a quarter of the second of hook events a hard kill may
-/// lose. Fixed by that bound, as the batch size is by the work in a batch, rather than tuned.
+/// lose. Fixed by that bound rather than tuned; a long write's transactions are cut by it too.
 pub const PAUSE_EVERY: Duration = Duration::from_millis(250);
 
 /// The shortest wait between two looks for a message that is not ready: a pause that comes every
@@ -98,6 +98,31 @@ impl<'a> Pacer<'a> {
     }
 }
 
+/// Writes each of `items` with `write_one`, in transactions `pacer` cuts whenever the caller's turn
+/// is due, the caller let in between two of them: a long write's transactions last a period, not a
+/// count of rows, however slow the machine.
+///
+/// # Errors
+///
+/// Store errors; the transactions committed before stay written.
+pub fn in_turns<T>(
+    writer: &mut Writer,
+    pacer: &mut Pacer<'_>,
+    items: &[T],
+    mut write_one: impl FnMut(&mut WriteTx<'_>, &T) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    let mut transaction = writer.transaction()?;
+    for item in items {
+        if pacer.is_due() {
+            transaction.commit()?;
+            pacer.offer(writer);
+            transaction = writer.transaction()?;
+        }
+        write_one(&mut transaction, item)?;
+    }
+    transaction.commit()
+}
+
 /// Waits for the one message `receiver` will get, offering the caller a turn every period
 /// meanwhile. `None` when its sender went without a word.
 pub fn wait_for<T>(
@@ -121,7 +146,7 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use cortex_core::RepoId;
+    use cortex_core::{RepoId, RepoPath};
 
     use crate::WriterOptions;
 
@@ -135,6 +160,48 @@ mod tests {
             mmap_bytes: 0,
             now_ms: 1,
         })?)
+    }
+
+    /// A write in turns whose turn is always due (a period of zero) commits each row before the
+    /// caller comes in: three folders, three turns, the caller finding 0, then 1, then 2 of them
+    /// stored, and all three after. A turn never due (an hour) writes them in one transaction and
+    /// lets the caller in never.
+    #[test]
+    fn a_write_in_turns_commits_before_each_turn() -> Result<(), Box<dyn Error>> {
+        let folder = tempfile::tempdir()?;
+        let mut stepped = writer(&folder)?;
+        let folders = ["a", "b", "c"]
+            .map(RepoPath::new)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        let seen = std::cell::RefCell::new(Vec::new());
+        let look = |writer: &mut Writer| {
+            let stored = writer
+                .queries()
+                .folder_nodes()
+                .map_or(usize::MAX, |rows| rows.len());
+            seen.borrow_mut().push(stored);
+        };
+        let mut pacer = Pacer::new(Some(Pause::new(&look, Duration::ZERO)));
+        in_turns(
+            &mut stepped,
+            &mut pacer,
+            &folders[..],
+            |transaction, path| transaction.folder_node(path).map(drop),
+        )?;
+        assert_eq!(*seen.borrow(), [0, 1, 2]);
+        assert_eq!(stepped.queries().folder_nodes()?.len(), 3);
+
+        let other = tempfile::tempdir()?;
+        let mut whole = writer(&other)?;
+        seen.borrow_mut().clear();
+        let mut pacer = Pacer::new(Some(Pause::new(&look, Duration::from_secs(3600))));
+        in_turns(&mut whole, &mut pacer, &folders[..], |transaction, path| {
+            transaction.folder_node(path).map(drop)
+        })?;
+        assert!(seen.borrow().is_empty());
+        assert_eq!(whole.queries().folder_nodes()?.len(), 3);
+        Ok(())
     }
 
     /// A pacer lets the caller in once [`PAUSE_EVERY`] has passed since it last did, and then
