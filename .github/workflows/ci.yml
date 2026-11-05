@@ -1,0 +1,107 @@
+# Every push to main and every pull request runs the command a contributor runs, `cargo xtask
+# verify`, on each platform Cortex supports at once. Branch protection requires only the job named
+# `Check`, which passes when every other job passed or was skipped on purpose, so jobs can be added
+# or renamed without touching the branch rules.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  # A newer push to the same pull request replaces the run; runs on main always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental artefacts and debug info only cost time and disk on a machine used once.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.paths.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # A pull request that changes only prose skips the build. A push to main, a diff that cannot
+      # be read, any other file, or any file under a `tests/` folder (Markdown there is test input)
+      # runs everything.
+      - id: paths
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          prose='\.md$|^LICENSE$|^NOTICE$|^docs/|^\.github/ISSUE_TEMPLATE/'
+          code=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && files=$(git diff --name-only "$BASE"...HEAD); then
+            if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE "$prose" \
+              && ! printf '%s\n' "$files" | grep -qE '(^|/)tests/'; then
+              code=false
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Verify (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+          - name: Linux arm64
+            os: ubuntu-24.04-arm
+          - name: macOS arm64
+            os: macos-15
+          - name: macOS x86_64
+            os: macos-15-intel
+          - name: Windows x86_64
+            os: windows-2025
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The toolchain comes from rust-toolchain.toml; rustup installs it on the first cargo call.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo xtask verify
+
+  check:
+    name: Check
+    if: always()
+    needs: [changes, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
+          VERIFY: ${{ needs.verify.result }}
+        run: |
+          [ "$CHANGES" = success ] || { echo "changes: $CHANGES"; exit 1; }
+          case "$VERIFY" in
+            success) ;;
+            skipped) [ "$CODE" = false ] || { echo "verify was skipped on a code change"; exit 1; } ;;
+            *) echo "verify: $VERIFY"; exit 1 ;;
+          esac
+          echo "every job passed or was skipped on purpose"
