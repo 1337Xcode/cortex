@@ -4,7 +4,7 @@
 use cortex_core::{Identifier, Ulid};
 use cortex_meter::{
     Compared, Interval, MIN_TASKS_PER_ARM, SessionReceipt, Tally, TaskReceipt, Weighed, compare,
-    mean_interval, weighed,
+    mean_interval, ratio_interval, weighed,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -221,5 +221,47 @@ fn a_mean_has_its_interval() -> TestResult {
     );
     assert_eq!(mean_interval(&labels), Some(precision));
     assert_eq!(mean_interval(&[]), None);
+    Ok(())
+}
+
+/// A ratio's interval resamples whole groups. Groups of one ratio, 1/2, 2/4 and 3/6, give 0.5 in
+/// every resample, so the value and both ends are 0.5; a group with nothing in it changes no ratio
+/// and a resample of it alone has none, so 0/0 beside 1/2 gives 0.5 throughout. Two groups, 4 of 4
+/// and 0 of 4, give 0.5; a resample draws two groups: both the first (one time in four) gives 1,
+/// both the second (one in four) gives 0, one of each gives 0.5. Of 2,000 resamples about 500 are
+/// 0 and 500 are 1, so the 2.5th percentile (the 50th lowest) is 0 and the 97.5th is 1. The same
+/// eight outcomes taken one by one reach 1 only when all eight draws are ones, one time in 256,
+/// about 8 of 2,000, short of the 50 the top end needs, and 0 as rarely: their interval lies
+/// strictly inside 0 to 1. No whole, or no group, gives none.
+#[test]
+fn a_ratio_resamples_whole_groups() -> TestResult {
+    let alike = ratio_interval(&[(1.0, 2.0), (2.0, 4.0), (3.0, 6.0)]).ok_or("an interval")?;
+    let half = Interval {
+        value: 0.5,
+        low: 0.5,
+        high: 0.5,
+    };
+    assert_eq!(alike, half);
+    assert_eq!(ratio_interval(&[(0.0, 0.0), (1.0, 2.0)]), Some(half));
+    let split = [(4.0, 4.0), (0.0, 4.0)];
+    let grouped = ratio_interval(&split).ok_or("an interval")?;
+    assert_eq!(
+        grouped,
+        Interval {
+            value: 0.5,
+            low: 0.0,
+            high: 1.0
+        }
+    );
+    let one_by_one =
+        mean_interval(&[1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]).ok_or("an interval")?;
+    assert!(near(one_by_one.value, 0.5), "{one_by_one:?}");
+    assert!(
+        one_by_one.low > 0.0 && one_by_one.high < 1.0,
+        "{one_by_one:?}"
+    );
+    assert_eq!(ratio_interval(&split), Some(grouped));
+    assert_eq!(ratio_interval(&[(0.0, 0.0)]), None);
+    assert_eq!(ratio_interval(&[]), None);
     Ok(())
 }

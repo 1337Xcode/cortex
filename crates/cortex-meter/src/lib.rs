@@ -27,7 +27,8 @@ pub use claude::Claude;
 pub use error::MeterError;
 pub use format::{TranscriptFormat, format_of};
 pub use holdout::{
-    BOOTSTRAP_RESAMPLES, Compared, Comparison, Interval, Weighed, compare, mean_interval, weighed,
+    BOOTSTRAP_RESAMPLES, Compared, Comparison, Interval, Weighed, compare, mean_interval,
+    ratio_interval, weighed,
 };
 pub use price_file::{MAX_PRICE_FILE_BYTES, load_or_write};
 pub use pricing::{

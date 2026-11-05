@@ -1,11 +1,12 @@
 //! What an evaluation's runs add up to: how often the tasks succeeded, how precise Cortex's work
 //! orders to the measured sessions were, with how many there were, what the measured sessions
-//! took, and which runs could not complete; each share with its 95% bootstrap interval. It is
-//! written as JSON and as text, and holds counts only, never what a session said.
+//! took, and which runs could not complete. Each share has a 95% bootstrap interval that resamples
+//! whole tasks, since the runs of one task share its prompt and code and are not independent. It
+//! is written as JSON and as text, and holds counts only, never what a session said.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_meter::{Interval, mean_interval};
+use cortex_meter::{Interval, ratio_interval};
 use serde::Serialize;
 
 use crate::run::TaskRun;
@@ -54,13 +55,7 @@ pub(crate) struct Summary {
 /// What the completed `runs` add up to, with the runs that could not complete, `incomplete`.
 #[must_use]
 pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
-    let shares = |ones: u64, all: u64| -> Vec<f64> {
-        (0..all)
-            .map(|at| if at < ones { 1.0 } else { 0.0 })
-            .collect()
-    };
     let count = |of: &dyn Fn(&TaskRun) -> u64| runs.iter().map(of).sum::<u64>();
-    let successes = count(&|run| u64::from(run.is_success));
     let total = u64::try_from(runs.len()).unwrap_or(u64::MAX);
     let (labelled, used) = (
         count(&|run| run.given.labelled),
@@ -97,11 +92,11 @@ pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
     Summary {
         runs: total,
         incomplete: incomplete.to_vec(),
-        success: mean_interval(&shares(successes, total)),
+        success: ratio_interval(&by_task(runs, &|run| (u64::from(run.is_success), 1))),
         delivered: count(&|run| run.given.delivered),
         labelled,
         used,
-        precision: mean_interval(&shares(used, labelled)),
+        precision: ratio_interval(&by_task(runs, &|run| (run.given.used, run.given.labelled))),
         median_cumulative_input: median_of(&|session| session.cumulative_input),
         median_turns: median_of(&|session| session.turns),
         median_tool_calls: median_of(&|session| session.tool_calls),
@@ -110,6 +105,25 @@ pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
         failed_sessions: u64::try_from(sessions.filter(|session| session.is_error).count())
             .unwrap_or(u64::MAX),
     }
+}
+
+/// Each task's `(part, whole)` summed over its runs, such as its used and labelled work orders, in
+/// the order of the tasks' names.
+fn by_task(runs: &[TaskRun], of: &dyn Fn(&TaskRun) -> (u64, u64)) -> Vec<(f64, f64)> {
+    let mut tasks: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
+    for run in runs {
+        let (part, whole) = of(run);
+        let sums = tasks.entry(run.task.as_str()).or_default();
+        *sums = (sums.0 + part, sums.1 + whole);
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "run and work order counts stay below 2^52"
+    )]
+    tasks
+        .into_values()
+        .map(|(part, whole)| (part as f64, whole as f64))
+        .collect()
 }
 
 /// The median of `values`, none for none.
@@ -135,7 +149,7 @@ pub(crate) fn lines(summary: &Summary) -> Vec<String> {
             || "none".to_owned(),
             |interval| {
                 format!(
-                    "{:.2} (95% interval {:.2} to {:.2})",
+                    "{:.2} (95% interval {:.2} to {:.2}, resampling tasks)",
                     interval.value, interval.low, interval.high
                 )
             },
@@ -253,6 +267,40 @@ mod tests {
         assert_eq!(summary.median_tool_calls, Some(5.0));
         assert!((summary.cost_usd - 4.0).abs() < 1e-9);
         assert_eq!(summary.agents, ["2.1.318 m via none"]);
+    }
+
+    /// The intervals resample whole tasks. Task a's four runs pass and use their work order, task
+    /// b's four fail and do not: success and precision are 4/8 = 0.5. A resample draws two tasks:
+    /// a twice gives 1, b twice 0, one of each 0.5, so of 2,000 resamples about 500 are 0 and 500
+    /// are 1, and the interval runs from 0 to 1. Taken run by run, eight draws would all be ones
+    /// only one time in 256, too rarely to reach either end.
+    #[test]
+    fn intervals_resample_whole_tasks() {
+        let used = |used| Given {
+            delivered: 1,
+            labelled: 1,
+            used,
+        };
+        let of = |task: &str, is_success, given| TaskRun {
+            task: task.to_owned(),
+            ..run(is_success, (1, 1, 1), given)
+        };
+        let runs: Vec<TaskRun> = (0..4)
+            .flat_map(|_| [of("a", true, used(1)), of("b", false, used(0))])
+            .collect();
+        let summary = summary(&runs, &[]);
+        let half = Some(Interval {
+            value: 0.5,
+            low: 0.0,
+            high: 1.0,
+        });
+        assert_eq!(summary.success, half);
+        assert_eq!(summary.precision, half);
+        assert!(
+            lines(&summary).contains(
+                &"precision: 0.50 (95% interval 0.00 to 1.00, resampling tasks)".to_owned()
+            )
+        );
     }
 
     /// With no work order labelled there is no precision, said as none.

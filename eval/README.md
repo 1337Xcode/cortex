@@ -48,8 +48,10 @@ runs counted apart.
 
 Precision is the share of the measured sessions' work orders that reached the agent, were labelled
 when their task ended, and were labelled used (the task edited one of the work order's first three
-files, or read one and edited a file that refers to it). Every share comes with a 95% percentile
-bootstrap interval.
+files, or read one and edited a file that names it). Every share comes with a 95% percentile
+bootstrap interval that resamples whole tasks: the runs of one task share its prompt and its code,
+so they are not independent, and an interval that drew runs or work orders one by one would be
+too narrow.
 
 ## Testing
 

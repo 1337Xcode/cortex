@@ -181,6 +181,34 @@ pub fn mean_interval(values: &[f64]) -> Option<Interval> {
     })
 }
 
+/// The ratio of sums over `groups`, each a `(part, whole)` pair such as one task's used and
+/// labelled work orders, with its 95% percentile bootstrap interval from resampling whole groups:
+/// outcomes that come together, such as the runs of one task, are drawn together, so they do not
+/// pass for independent ones. A resample whose wholes sum to zero has no ratio and is left out.
+/// None when the wholes sum to zero or no resample has a ratio.
+#[must_use]
+pub fn ratio_interval(groups: &[(f64, f64)]) -> Option<Interval> {
+    let ratio = |drawn: &[(f64, f64)]| {
+        let whole: f64 = drawn.iter().map(|group| group.1).sum();
+        (whole > 0.0).then(|| drawn.iter().map(|group| group.0).sum::<f64>() / whole)
+    };
+    let value = ratio(groups)?;
+    let (parts, wholes): (Vec<f64>, Vec<f64>) = groups.iter().copied().unzip();
+    let mut sequence = Sequence::seeded(&parts, &wholes);
+    let mut ratios: Vec<f64> = (0..BOOTSTRAP_RESAMPLES)
+        .filter_map(|_| ratio(&sequence.resample(groups)))
+        .collect();
+    if ratios.is_empty() {
+        return None;
+    }
+    ratios.sort_by(f64::total_cmp);
+    Some(Interval {
+        value,
+        low: percentile(&ratios, TAIL),
+        high: percentile(&ratios, 1.0 - TAIL),
+    })
+}
+
 /// The mean of `values`, 0 for none.
 #[expect(
     clippy::cast_precision_loss,
@@ -251,7 +279,7 @@ impl Sequence {
     }
 
     /// `values` drawn with replacement, as many as there are.
-    fn resample(&mut self, values: &[f64]) -> Vec<f64> {
+    fn resample<T: Copy>(&mut self, values: &[T]) -> Vec<T> {
         (0..values.len())
             .filter_map(|_| values.get(self.below(values.len())).copied())
             .collect()
