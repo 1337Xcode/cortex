@@ -12,7 +12,7 @@ the agent's version and model, and where its credentials came from.
 | `testbeds.toml` | Each testbed: a git repository at a pinned commit |
 | `tasks/<id>.toml` | One task: its testbed, its kind, the prompts of its warm-up sessions, the prompt of its measured session, the success check, the files a correct solution touches, and the tools the agent may use |
 | `checks/<id>.py` | Each task's success check, run from the repository's root after the sessions; exit code 0 is success |
-| `results/<date>/` | A run's `runs.json` (each run's counts), `summary.json` and `summary.txt` |
+| `results/<date>-<commit>/` | An evaluation's `runs.json` (each run's counts), `summary.json` and `summary.txt`, named for the day it ran and the commit it measured |
 
 A task's warm-up sessions work in the same area first, as earlier days of work would. The last
 session is a new one in that area, and it is the one measured: only the work orders it gets count
@@ -23,7 +23,7 @@ for precision.
 ```sh
 cargo run -p cortex-eval -- check
 cargo run -p cortex-eval -- run --arm treated --cortex target/release/cortex \
-  --base <a folder outside any repository> --out eval/results/<date>
+  --base <a folder outside any repository> --out eval/results/<date>-<commit>
 ```
 
 Each run clones its testbed at the pinned commit, or copies a folder holding it
