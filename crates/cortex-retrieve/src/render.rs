@@ -5,7 +5,8 @@
 //! lines, the symbol they are for and why it is listed; "Also likely" the rest, by path and lines;
 //! "Current code" holds the shown spans' lines, numbered. A part with nothing in it is left out.
 //! Before an item's lines are written its file is read and hashed: a file that is not the one the
-//! index read lends no lines, and its item is listed by path alone. Control characters (but tabs)
+//! index read lends no lines, and its item is listed by path alone; an item whose file is gone
+//! (deleted, no longer a regular file, unreadable) is not listed. Control characters (but tabs)
 //! and the characters that reorder or hide text are taken out of the code shown; an item whose
 //! path, symbol or reason holds one is not listed at all, since it could only be shown as a name
 //! that is not the file's. An agent's reminder tag (`cortex_core::REMINDER_TAGS`) is never
@@ -26,7 +27,7 @@ use cortex_core::{
     holds_reminder_tag,
 };
 
-use crate::disk::CheckedFile;
+use crate::disk::{CheckedFile, Unchecked};
 use crate::gate::{Rule, Shut, Verdict};
 use crate::plain::{is_plain, is_taken_out};
 use crate::reasons::Reason;
@@ -114,16 +115,11 @@ pub struct Rendered {
 /// can be shown as it is, or not even its first fits.
 #[must_use]
 pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendered> {
-    let files: Vec<Option<CheckedFile>> = order
+    let files: Vec<OnDisk> = order
         .items
         .iter()
         .take(limits.max_files)
-        .map(|item| {
-            // INVARIANT: true-at-render (an item's lines come from its file as it is now, and only
-            // while that is the file the index read)
-            let content = item.content?;
-            CheckedFile::read(root, &item.path, &content, limits.max_file_bytes).ok()
-        })
+        .map(|item| OnDisk::of(item, root, limits.max_file_bytes))
         .collect();
     let mut plan = Plan::of(order, &files, limits);
     // INVARIANT: silent-when-unsure (a work order with no item to show is not given: a header
@@ -161,19 +157,68 @@ struct Plan {
     shown: Vec<(usize, usize)>,
 }
 
+/// What an item's file was when the work order was written.
+enum OnDisk {
+    /// The file the index read: its lines can be shown.
+    Checked(CheckedFile),
+    /// A file that is there but lends no lines: changed since the index read it, past the size
+    /// cap, or with nothing indexed to check it against. Its item is listed by path alone.
+    Unchecked,
+    /// No regular file that can be read: deleted, replaced by a link or a folder, or unreadable.
+    /// Its item is not listed: a work order names only files that are there.
+    Gone,
+}
+
+impl OnDisk {
+    /// What the repository at `root` holds of `item`'s file, read up to `max_bytes`.
+    fn of(item: &Item, root: &Path, max_bytes: u64) -> Self {
+        let Some(content) = item.content else {
+            let is_there = std::fs::symlink_metadata(item.path.to_native(root))
+                .is_ok_and(|metadata| metadata.is_file());
+            return if is_there {
+                Self::Unchecked
+            } else {
+                Self::Gone
+            };
+        };
+        // INVARIANT: true-at-render (an item's lines come from its file as it is now, and only
+        // while that is the file the index read; an item whose file is gone is not listed)
+        match CheckedFile::read(root, &item.path, &content, max_bytes) {
+            Ok(file) => Self::Checked(file),
+            Err(Unchecked::Unreadable) => Self::Gone,
+            Err(Unchecked::Changed | Unchecked::TooLarge) => Self::Unchecked,
+        }
+    }
+
+    /// The checked file, when its lines can be shown.
+    fn checked(&self) -> Option<&CheckedFile> {
+        match self {
+            Self::Checked(file) => Some(file),
+            Self::Unchecked | Self::Gone => None,
+        }
+    }
+
+    /// Whether no file is there to name.
+    fn is_gone(&self) -> bool {
+        matches!(self, Self::Gone)
+    }
+}
+
 impl Plan {
     /// The first items of `order` that can be shown as they are, each with the first spans its
     /// checked file holds whole and the caps of `limits` allow, and the first `max_code_spans` of
     /// those spans, round by round over the items, with their code shown.
-    fn of(order: &WorkOrder, files: &[Option<CheckedFile>], limits: &Limits) -> Self {
+    fn of(order: &WorkOrder, files: &[OnDisk], limits: &Limits) -> Self {
         let kept: Vec<(usize, Vec<usize>)> = order
             .items
             .iter()
             .enumerate()
             .take(limits.max_files)
-            .filter(|(_, item)| is_shown_as_it_is(item))
+            .filter(|(at, item)| {
+                is_shown_as_it_is(item) && !files.get(*at).is_some_and(OnDisk::is_gone)
+            })
             .map(|(at, item)| {
-                let spans = match files.get(at).and_then(Option::as_ref) {
+                let spans = match files.get(at).and_then(OnDisk::checked) {
                     Some(file) => (0..item.spans.len())
                         .filter(|span| {
                             item.spans.get(*span).is_some_and(|span| {
@@ -225,7 +270,7 @@ impl Plan {
     }
 
     /// The text this plan writes of `order`, its code from `files`.
-    fn write(&self, order: &WorkOrder, files: &[Option<CheckedFile>]) -> String {
+    fn write(&self, order: &WorkOrder, files: &[OnDisk]) -> String {
         let mut text = String::new();
         let _ = writeln!(text, "{}", heading(&order.basis));
         let is_shown = |at: usize| self.shown.iter().any(|(item, _)| *item == at);
@@ -252,7 +297,10 @@ impl Plan {
         if !self.shown.is_empty() {
             text.push_str("Current code:\n");
             for (at, span) in &self.shown {
-                let (Some(item), Some(Some(file))) = (order.items.get(*at), files.get(*at)) else {
+                let (Some(item), Some(file)) = (
+                    order.items.get(*at),
+                    files.get(*at).and_then(OnDisk::checked),
+                ) else {
                     continue;
                 };
                 let Some(span) = item.spans.get(*span) else {

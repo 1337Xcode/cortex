@@ -54,6 +54,51 @@ const A: &str = "def f():\n    return 1\n\n\ndef g():\n    return 2\n";
 /// `b.py`'s text.
 const B: &str = "x = 1\n";
 
+/// A work order lists only files that are there. Of three items, `gone.py` was indexed and then
+/// deleted, `link.py` is a folder where the file was, and `a.py` is as indexed: only `a.py` is
+/// written, its code shown. With the deleted file alone there is nothing to list and no work order.
+#[test]
+fn a_file_that_is_gone_is_not_listed() -> TestResult {
+    let mut repo = Repo::new()?;
+    repo.file("a.py", A, &[], FileFlags::empty())?;
+    repo.file("gone.py", B, &[], FileFlags::empty())?;
+    repo.file("link.py", B, &[], FileFlags::empty())?;
+    std::fs::remove_file(repo.root.path().join("gone.py"))?;
+    std::fs::remove_file(repo.root.path().join("link.py"))?;
+    std::fs::create_dir(repo.root.path().join("link.py"))?;
+    let gone = item(("gone.py", B), &[(1, 1)], None, Reason::LikeEarlierWork)?;
+    let order = WorkOrder {
+        basis: Basis::Agreement(vec!["the prompt's words", "the commit history"]),
+        items: vec![
+            gone.clone(),
+            item(("link.py", B), &[(1, 1)], None, Reason::LikeEarlierWork)?,
+            item(
+                ("a.py", A),
+                &[(1, 2)],
+                Some("f"),
+                Reason::Matches(vec!["f".to_owned()]),
+            )?,
+        ],
+    };
+    let rendered = render(&order, repo.root.path(), &limits(1)).ok_or("a work order")?;
+    let expected = "\
+[cortex] Work order · the prompt's words and the commit history agree
+Start here:
+  1. a.py:1-2  f  (matches f)
+Current code:
+  a.py:1-2
+  1 | def f():
+  2 |     return 1
+";
+    assert_eq!(rendered.text, expected);
+    let alone = WorkOrder {
+        basis: Basis::Agreement(vec!["the prompt's words", "the commit history"]),
+        items: vec![gone],
+    };
+    assert!(render(&alone, repo.root.path(), &limits(1)).is_none());
+    Ok(())
+}
+
 /// A work order typed out by hand: the header names what agreed; `a.py`, whose code is shown, is
 /// where to start, with its symbol and reason; `b.py` with its lines and `c.py`, which the index
 /// holds no contents for, by path alone, are also likely; the code shown is `a.py`'s lines 1 and
@@ -63,6 +108,7 @@ fn a_work_order_is_written_as_typed_here() -> TestResult {
     let mut repo = Repo::new()?;
     repo.file("a.py", A, &[], FileFlags::empty())?;
     repo.file("b.py", B, &[], FileFlags::empty())?;
+    std::fs::write(repo.root.path().join("c.py"), "")?;
     let order = WorkOrder {
         basis: Basis::Agreement(vec!["the prompt's words", "the commit history"]),
         items: vec![
