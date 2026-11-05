@@ -8,12 +8,11 @@
 
 use std::fmt::Write as _;
 
-use cortex_core::{
-    FileFlags, InterestTier, NodeKind, ScaleMode, estimate_tokens, holds_reminder_tag,
-};
+use cortex_core::{FileFlags, InterestTier, NodeKind, ScaleMode, estimate_tokens};
 use cortex_store::{MetaKey, NodeId, Queries, StoreError};
 
 use crate::graph::Graph;
+use crate::plain::is_plain;
 
 /// Most landmarks the primer names, the most interesting first.
 pub const MAX_PRIMER_LANDMARKS: usize = 8;
@@ -58,7 +57,8 @@ pub fn primer(queries: Queries<'_>, graph: &Graph<NodeId>) -> Result<Option<Stri
 }
 
 /// The paths of the landmark files, at most [`MAX_PRIMER_LANDMARKS`] of the most interesting, by
-/// path; a path holding an agent's reminder tag is not named, as the agent would get it altered.
+/// path; a path that is not plain (a line break, a control or hidden character, an agent's reminder
+/// tag) is not named, since the agent would read more than a name, or a name that is not the file's.
 fn landmarks(queries: Queries<'_>, graph: &Graph<NodeId>) -> Result<Vec<String>, StoreError> {
     let mut chosen: Vec<(u32, f64)> = (0..graph.len())
         .filter_map(|at| u32::try_from(at).ok())
@@ -78,8 +78,9 @@ fn landmarks(queries: Queries<'_>, graph: &Graph<NodeId>) -> Result<Vec<String>,
         .files_of_nodes(&ids)?
         .into_iter()
         .map(|(_, row)| row.file.path.as_str().to_owned())
-        // INVARIANT: true-at-render. A path the agent would get altered is not named.
-        .filter(|path| !holds_reminder_tag(path))
+        // INVARIANT: true-at-render. A path that is not plain is not named: a crafted file name
+        // cannot add a line, a hidden character or a tag to every session's start.
+        .filter(|path| is_plain(path))
         .collect();
     paths.sort();
     Ok(paths)

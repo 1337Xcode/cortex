@@ -23,11 +23,12 @@ use std::path::Path;
 
 use cortex_core::{
     ContentHash, Identifier, LineRange, MAX_WORK_ORDER_TOKENS, RepoPath, estimate_tokens,
-    holds_reminder_tag, is_hidden,
+    holds_reminder_tag,
 };
 
 use crate::disk::CheckedFile;
 use crate::gate::{Rule, Shut, Verdict};
+use crate::plain::{is_plain, is_taken_out};
 use crate::reasons::Reason;
 use crate::spans::MAX_SPANS_PER_FILE;
 
@@ -305,9 +306,6 @@ fn agreed(kinds: &[&str]) -> String {
 /// character the work order would have to take out, so what it names is the file and the symbol
 /// themselves, and none of an agent's reminder tags.
 fn is_shown_as_it_is(item: &Item) -> bool {
-    let is_plain = |text: &str| {
-        text.chars().all(|character| !is_taken_out(character)) && !holds_reminder_tag(text)
-    };
     is_plain(item.path.as_str())
         && is_plain(&item.reason.text())
         && item
@@ -390,10 +388,4 @@ fn clean(text: &str) -> String {
     text.chars()
         .filter(|character| !is_taken_out(*character))
         .collect()
-}
-
-/// Whether `character` is taken out of what the work order writes: a control character other than a
-/// tab, or one that reorders or hides text (`cortex_core::is_hidden`).
-fn is_taken_out(character: char) -> bool {
-    character != '\t' && (character.is_control() || is_hidden(character))
 }

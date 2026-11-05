@@ -23,6 +23,7 @@ mod items;
 mod lexical;
 mod node_hash;
 mod pipeline;
+mod plain;
 mod primer;
 mod prompt;
 mod push;
