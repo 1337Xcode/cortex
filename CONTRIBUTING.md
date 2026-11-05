@@ -22,18 +22,23 @@
 
 | Path | Holds |
 | --- | --- |
-| `crates/cortex-cli` | The `cortex` binary: commands and the entry points agents call |
+| `crates/cortex-cli` | The `cortex` binary: every user command and the entry points agents call |
 | `crates/cortex-core` | Shared types: repository paths, ids, hashes, languages, stored names, record kinds and settings; finding and running another program, bounded in time and output |
-| `crates/cortex-git` | Reading a repository's git history: the commits on the first-parent line from HEAD and the files each one changed |
+| `crates/cortex-daemon` | The daemon: one process per repository that keeps its index current, records what agents do, holds the graph and answers retrievals; the only writer of the database |
+| `crates/cortex-git` | Reading a repository's git history and work tree: the commits on the first-parent line, the files each one changed, and the uncommitted files |
+| `crates/cortex-hook` | What runs when an agent calls `cortex hook`: the agent adapters, the fail-open client of the daemon, and starting the daemon when none runs |
 | `crates/cortex-index` | The indexer: discovering a repository's files, flagging secrets, binaries, generated and vendored code, and reading what each file defines, uses and imports |
-| `crates/cortex-retrieve` | Retrieval: the graph of the repository's code, history and past work that activation spreads over |
+| `crates/cortex-learn` | Learning from agents' work: sessions, tasks and events, what became of each task, interest, links between code used together, and the labels of work orders |
+| `crates/cortex-meter` | What agents' work costs in tokens, read from their transcripts, and the comparison of held-out tasks with the rest |
+| `crates/cortex-retrieve` | Retrieval: seeds from a prompt and a session, spreading activation over the graph, the gate, and the work order and primer it renders |
 | `crates/cortex-store` | The SQLite database in `.cortex/`: migrations, the single writer and readers |
+| `eval` | The evaluation suite: tasks, testbeds, checks and the runner that has real agents work through them |
+| `fuzz` | Fuzz targets for the parsers that read input Cortex does not control: hook input and the daemon's frames |
 | `xtask` | The repository checks behind `cargo xtask verify` |
 | `tests` | Cross-crate tests and the recorded agent hook payloads they read, in `fixtures/<agent>/<version>/` |
 
-Further crates join as their code lands. Each crate has a place in a layered order, listed in
-`xtask/src/architecture.rs`, and may depend only on crates below it; `cargo xtask verify` refuses a
-dependency that points the other way.
+Each crate has a place in a layered order, listed in `xtask/src/architecture.rs`, and may depend
+only on crates below it; `cargo xtask verify` refuses a dependency that points the other way.
 
 ## Adding a command
 
@@ -55,6 +60,18 @@ and the output you expect from it, written by hand, under
 `crates/cortex-index/tests/languages/<language>/`, and a test for it in
 `crates/cortex-index/tests/extract.rs`.
 
+## Adding an agent
+
+An agent reaches Cortex through its hooks. On the hook side, an agent is one adapter: a module in
+`crates/cortex-hook/src/` (Claude Code's is `claude/`) implementing the `Adapter` trait in
+`crates/cortex-hook/src/adapter.rs` (the hooks Cortex registers, the agent versions it knows, how a
+payload becomes a normalized event, and how text is printed for the agent), and one line in that
+file's `ADAPTERS` list. Its tests read real payloads recorded from the agent, scrubbed, under
+`tests/fixtures/<agent>/<version>/`.
+
+Writing the hooks into the agent's own settings is `cortex init`'s job, which today knows Claude
+Code only (`crates/cortex-cli/src/commands/init/hooks.rs`).
+
 ## Code and tests
 
 - Every module, type and function has a doc comment. Comments inside a function explain what a
@@ -75,8 +92,8 @@ type(scope): imperative summary
 
 - `type` is one of `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `build`, `ci`, `chore`,
   `revert`.
-- `scope` is a crate without its `cortex-` prefix (`cli`), or one of `xtask`, `tests`, `docs`,
-  `deps`, `repo`.
+- `scope` is a crate without its `cortex-` prefix (`cli`), or one of `ui`, `eval`, `tests`,
+  `fuzz`, `bench`, `xtask`, `ci`, `docs`, `release`, `deps`, `repo`.
 - At most 72 characters, lower case after the colon, no full stop.
 
 Example: `feat(cli): print the version with cortex version`.
