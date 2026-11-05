@@ -12,8 +12,8 @@ use std::time::SystemTime;
 use anyhow::{Context, bail};
 use cortex_core::{Identifier, Ulid, UserFolder, create_private_folder, unix_millis};
 use cortex_meter::{
-    Activity, Arms, MIN_TASKS_PER_ARM, Precision, PriceTable, SessionReceipt, load_or_write,
-    receipt,
+    Activity, Arms, Comparison, MIN_TASKS_PER_ARM, Precision, PriceTable, SessionReceipt, compare,
+    load_or_write, receipt, weighed,
 };
 use cortex_store::{Queries, Reader, SessionRow, StoreError};
 use serde::Serialize;
@@ -95,6 +95,8 @@ struct Holdout {
     arms: Arms,
     /// How many each arm needs before they are compared.
     needed_per_arm: u64,
+    /// The comparison, once each arm has enough tasks that ended.
+    comparison: Option<Comparison>,
 }
 
 /// Prints the receipts of the sessions `args` selects, as text or as JSON.
@@ -183,18 +185,45 @@ fn recorded(
     let (labelled, used) = queries
         .delivered_precision()
         .context("counting the labelled work orders given")?;
+    let arms = Arms { held_out, treated };
+    let comparison = if arms.is_enough() {
+        compared(queries)?
+    } else {
+        None
+    };
     let sessions = sessions(queries, args)?
         .into_iter()
         .map(|session| Ok(receipt(&activity(queries, session)?, prices)))
         .collect::<anyhow::Result<_>>()?;
     Ok(Some(Recorded {
         holdout: Holdout {
-            arms: Arms { held_out, treated },
+            arms,
             needed_per_arm: MIN_TASKS_PER_ARM,
+            comparison,
         },
         precision: Precision { labelled, used },
         sessions,
     }))
+}
+
+/// The holdout comparison over every session the store holds, a subagent's work counted in its
+/// parent's, each task's usage placed as its receipt places it; none until each arm has enough tasks
+/// that ended.
+///
+/// # Errors
+///
+/// The store cannot be read.
+fn compared(queries: Queries<'_>) -> anyhow::Result<Option<Comparison>> {
+    let sessions = queries
+        .sessions_started_since(i64::MIN)
+        .context("reading the sessions to compare")?;
+    let receipts: Vec<SessionReceipt> = sessions
+        .into_iter()
+        .filter(|session| session.record.parent_session_id.is_none())
+        .map(|session| Ok(receipt(&activity(queries, session)?, None)))
+        .collect::<anyhow::Result<_>>()?;
+    let (treated, held_out) = weighed(&receipts);
+    Ok(compare(&treated, &held_out))
 }
 
 /// The sessions `args` selects: the one it names, or each that started in the days it gives. A

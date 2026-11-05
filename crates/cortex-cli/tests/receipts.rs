@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 
 use common::hook_call::send;
 use common::{Daemon, TestResult, graph_of, payloads, receipts, wait_for};
-use cortex_core::Identifier;
+use cortex_core::{Agent, Identifier, RepoId, TaskOutcome, Ulid, canonical_root};
 use cortex_meter::{SHIPPED_PRICES, utc_text};
-use cortex_store::{Reader, TaskRow};
+use cortex_store::{Reader, SessionRecord, TaskRecord, TaskRow, UsageRow, Writer, WriterOptions};
 use serde_json::{Value, json};
 
 /// The Claude Code version whose captured payloads and transcripts these tests use.
@@ -178,7 +178,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     let recorded = report.get("recorded").ok_or("recorded")?;
     assert_eq!(
         recorded.get("holdout"),
-        Some(&json!({"held_out": 0, "treated": 1, "needed_per_arm": 30}))
+        Some(&json!({"held_out": 0, "treated": 1, "needed_per_arm": 30, "comparison": null}))
     );
     assert_eq!(
         recorded.get("precision"),
@@ -361,5 +361,117 @@ fn a_repository_without_a_store_has_nothing_recorded() -> TestResult {
     let error = String::from_utf8(asked.stderr)?;
     assert!(error.contains(&format!("no session {S1}: ")), "{error}");
     assert!(error.contains(" has no store yet"), "{error}");
+    Ok(())
+}
+
+/// The holdout comparison through the binary, on a store written by hand: one session of Claude
+/// Code with 60 tasks that all succeeded, the odd ones held out, each with one response of `input`
+/// fresh input tokens, nothing cached, and no tool call. The 30 treated took 100, 200, ...,
+/// 3,000: the median of 30 is the mean of the 15th and 16th, (1,500 + 1,600) / 2 = 1,550. The 30
+/// held out took 4,000, 5,000, ..., 33,000: (18,000 + 19,000) / 2 = 18,500, a difference of
+/// -16,950. Both arms succeed every time and take one turn and no tool call, so those differ by
+/// nothing, interval and all.
+#[test]
+fn receipts_compare_the_arms_once_each_has_thirty_ended_tasks() -> TestResult {
+    let (home, repo) = repository()?;
+    let mut writer = Writer::open(&WriterOptions {
+        folder: &repo.join(".cortex"),
+        repo_id: &RepoId::of(&canonical_root(&repo)?),
+        mmap_bytes: 0,
+        now_ms: 1,
+    })?;
+    let session = Identifier::new("compared")?;
+    let mut transaction = writer.transaction()?;
+    transaction.record_session(&SessionRecord {
+        session_id: session.clone(),
+        agent: Agent::Claude,
+        agent_version: None,
+        model: None,
+        parent_session_id: None,
+        cwd: None,
+        transcript_path: None,
+        started_at_ms: 1_000,
+    })?;
+    let mut responses = Vec::new();
+    for at in 0..60_u32 {
+        let task_id = Ulid::from_seed(u64::from(at), b"compared");
+        let started_at_ms = 10_000 + i64::from(at) * 10_000;
+        let is_held_out = at % 2 == 1;
+        transaction.start_task(&TaskRecord {
+            task_id,
+            session_id: session.clone(),
+            started_at_ms,
+            prompt_hash: None,
+            prompt_excerpt: None,
+            holdout: Some(is_held_out),
+        })?;
+        transaction.end_task(task_id, started_at_ms + 5_000, TaskOutcome::Success)?;
+        let rank = u64::from(at / 2 + 1);
+        responses.push(UsageRow {
+            session_id: session.clone(),
+            turn: at + 1,
+            at_ms: started_at_ms + 1_000,
+            model: None,
+            input: if is_held_out {
+                3_000 + rank * 1_000
+            } else {
+                rank * 100
+            },
+            cache_write: 0,
+            cache_write_1h: None,
+            cache_read: 0,
+            output: 1,
+            reasoning: None,
+            service_tier: None,
+            speed: None,
+            inference_geo: None,
+            response: None,
+        });
+    }
+    transaction.replace_usage(&responses)?;
+    transaction.commit()?;
+    drop(writer);
+    let printed = receipts::run(&repo, home.path(), &[])?;
+    assert!(printed.status.success(), "{printed:?}");
+    let text = String::from_utf8(printed.stdout)?;
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.starts_with("holdout comparison: "))
+        .ok_or("no comparison")?;
+    assert_eq!(
+        lines.get(at..at + 6).ok_or("the comparison's lines")?[..2],
+        [
+            "holdout comparison: 30 tasks ended with Cortex and 30 held out; each difference is \
+             with Cortex minus held out, its 95% bootstrap interval in brackets",
+            "  success rate: 1.00 with Cortex, 1.00 held out, 0.00 (0.00 to 0.00)",
+        ]
+    );
+    for (line, (what, treated, held_out, difference)) in lines[at + 2..at + 6].iter().zip([
+        ("median input tokens", "1,550", "18,500", "-16,950"),
+        ("median uncached input tokens", "1,550", "18,500", "-16,950"),
+        ("median turns", "1", "1", "0 (0 to 0)"),
+        ("median tool calls", "0", "0", "0 (0 to 0)"),
+    ]) {
+        let expected = format!(
+            "  {what} per successful task: {treated} with Cortex, {held_out} held out, {difference}"
+        );
+        assert!(line.starts_with(&expected), "{line}");
+    }
+    let report: Value =
+        serde_json::from_slice(&receipts::run(&repo, home.path(), &["--json"])?.stdout)?;
+    let input = report
+        .pointer("/recorded/holdout/comparison/per_success/0")
+        .ok_or("the input's comparison")?;
+    let number = |name: &str| input.get(name).and_then(Value::as_f64).unwrap_or(f64::NAN);
+    assert_eq!(
+        (number("treated"), number("held_out"), number("difference")),
+        (1_550.0, 18_500.0, -16_950.0)
+    );
+    // Every treated input is below every held-out one, so every resampled difference of medians
+    // lies within 100 - 33,000 = -32,900 and 3,000 - 4,000 = -1,000, below zero.
+    let (low, high) = (number("low"), number("high"));
+    assert!(low >= -32_900.0 && high <= -1_000.0, "{input}");
+    assert!(low <= -16_950.0 && -16_950.0 <= high, "{input}");
     Ok(())
 }

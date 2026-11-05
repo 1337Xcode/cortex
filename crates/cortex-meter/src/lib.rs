@@ -15,6 +15,7 @@
 mod claude;
 mod error;
 mod format;
+mod holdout;
 mod price_file;
 mod pricing;
 mod receipts;
@@ -25,6 +26,7 @@ mod timestamp;
 pub use claude::Claude;
 pub use error::MeterError;
 pub use format::{TranscriptFormat, format_of};
+pub use holdout::{BOOTSTRAP_RESAMPLES, Compared, Comparison, Weighed, compare, weighed};
 pub use price_file::{MAX_PRICE_FILE_BYTES, load_or_write};
 pub use pricing::{
     Billed, Cost, ModelPrices, PriceTable, PricingError, Rates, SHIPPED_PRICES, Unpriced,

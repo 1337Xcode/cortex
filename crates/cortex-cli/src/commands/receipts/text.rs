@@ -5,7 +5,9 @@
 
 use std::path::Path;
 
-use cortex_meter::{Estimate, Precision, SessionReceipt, Tally, TaskReceipt, Unpriced, utc_text};
+use cortex_meter::{
+    Compared, Estimate, Precision, SessionReceipt, Tally, TaskReceipt, Unpriced, utc_text,
+};
 
 use super::{Holdout, Prices, Report};
 
@@ -27,7 +29,7 @@ pub(super) fn lines(report: &Report, root: &Path, days: Option<u32>) -> Vec<Stri
         "usage: as each transcript records it; {}, are not counted",
         report.uncounted
     ));
-    lines.push(holdout_line(&recorded.holdout));
+    lines.extend(holdout_lines(&recorded.holdout));
     lines.push(precision_line(recorded.precision));
     if recorded.sessions.is_empty() {
         lines.push(match days {
@@ -66,19 +68,93 @@ fn prices_line(prices: &Prices) -> String {
 }
 
 /// The line saying whether held-out tasks can be compared with the rest yet.
-fn holdout_line(holdout: &Holdout) -> String {
+fn holdout_lines(holdout: &Holdout) -> Vec<String> {
     let counts = format!(
         "the repository has {} held out and {} not",
         counted(holdout.arms.held_out, "task", "tasks"),
         grouped(holdout.arms.treated)
     );
-    if holdout.arms.is_enough() {
-        return format!("holdout comparison: {counts}; this version does not compare them");
+    if !holdout.arms.is_enough() {
+        return vec![format!(
+            "holdout comparison: not enough data yet ({counts}; {} of each are needed)",
+            holdout.needed_per_arm
+        )];
     }
+    let Some(comparison) = &holdout.comparison else {
+        return vec![format!(
+            "holdout comparison: not enough data yet ({counts}, but fewer than {} of each have \
+             ended)",
+            holdout.needed_per_arm
+        )];
+    };
+    let [treated, held_out] = comparison.tasks;
+    let mut lines = vec![format!(
+        "holdout comparison: {} ended with Cortex and {} held out; each difference is with Cortex \
+         minus held out, its 95% bootstrap interval in brackets",
+        counted(treated, "task", "tasks"),
+        grouped(held_out)
+    )];
+    lines.push(compared_line(
+        "success rate",
+        &comparison.success_rate,
+        rate,
+    ));
+    match &comparison.per_success {
+        Some([input, uncached, turns, calls]) => {
+            for (what, compared) in [
+                ("median input tokens per successful task", input),
+                ("median uncached input tokens per successful task", uncached),
+                ("median turns per successful task", turns),
+                ("median tool calls per successful task", calls),
+            ] {
+                lines.push(compared_line(what, compared, quantity));
+            }
+        }
+        None => lines.push(
+            "  per successful task: nothing to compare, as an arm has no successful task whose \
+             usage was read"
+                .to_owned(),
+        ),
+    }
+    lines
+}
+
+/// One measure of the comparison as a line: each arm's value, the difference and its interval,
+/// each written by `number`.
+fn compared_line(what: &str, compared: &Compared, number: fn(f64) -> String) -> String {
+    let signed = |value: f64| {
+        let text = number(value);
+        if value > 0.0 {
+            format!("+{text}")
+        } else {
+            text
+        }
+    };
     format!(
-        "holdout comparison: not enough data yet ({counts}; {} of each are needed)",
-        holdout.needed_per_arm
+        "  {what}: {} with Cortex, {} held out, {} ({} to {})",
+        number(compared.treated),
+        number(compared.held_out),
+        signed(compared.difference),
+        signed(compared.low),
+        signed(compared.high)
     )
+}
+
+/// A share as a decimal of two places.
+fn rate(value: f64) -> String {
+    format!("{value:.2}")
+}
+
+/// A median or a difference of medians, grouped in threes, with its tenths when it has any (a
+/// median of an even count of whole numbers can end in a half).
+fn quantity(value: f64) -> String {
+    let sign = if value < 0.0 { "-" } else { "" };
+    let tenths = (value.abs() * 10.0).round() as u64;
+    let whole = grouped(tenths / 10);
+    match tenths % 10 {
+        0 => format!("{sign}{whole}"),
+        tenth => format!("{sign}{whole}.{tenth}"),
+    }
 }
 
 /// The line saying how precise the work orders given were.
@@ -263,10 +339,13 @@ mod tests {
     use std::path::Path;
 
     use cortex_core::{Identifier, Ulid};
-    use cortex_meter::{Arms, Estimate, Precision, SessionReceipt, Tally, TaskReceipt, Unpriced};
+    use cortex_meter::{
+        Arms, Compared, Comparison, Estimate, Precision, SessionReceipt, Tally, TaskReceipt,
+        Unpriced,
+    };
 
     use super::super::{Holdout, Prices, Recorded, Report, UNCOUNTED};
-    use super::{amount, grouped, lines, session_lines, usage, when};
+    use super::{amount, grouped, holdout_lines, lines, session_lines, usage, when};
 
     /// Digits grouped by hand.
     #[test]
@@ -342,6 +421,7 @@ mod tests {
                         treated: 1_200,
                     },
                     needed_per_arm: 30,
+                    comparison: None,
                 },
                 precision: Precision {
                     labelled: 73,
@@ -356,8 +436,8 @@ mod tests {
                 "prices: none, so no cost is estimated (no home folder)",
                 "usage: as each transcript records it; calls a transcript does not record, such \
                  as compaction, are not counted",
-                "holdout comparison: the repository has 31 tasks held out and 1,200 not; this \
-                 version does not compare them",
+                "holdout comparison: not enough data yet (the repository has 31 tasks held out \
+                 and 1,200 not, but fewer than 30 of each have ended)",
                 "injection precision: 0.71, 52 of 73 work orders given and labelled were used",
                 "no session started in the last 2 days",
             ]
@@ -428,6 +508,52 @@ mod tests {
             Some("  total: no usage recorded; 2 tool calls; 0 tokens injected by Cortex")
         );
         Ok(())
+    }
+
+    /// A comparison as lines, its numbers chosen here: rates to two places with a sign on each
+    /// difference and interval end above zero (1/6 is +0.17, -1/12 is -0.08, 1/3 is 0.33),
+    /// medians grouped in threes with a tenth when they have one (12.5, -7.5, +0.5), a zero
+    /// unsigned.
+    #[test]
+    fn a_comparison_reads_as_one_line_a_measure() {
+        let measure = |treated, held_out, difference, low, high| Compared {
+            treated,
+            held_out,
+            difference,
+            low,
+            high,
+        };
+        let holdout = Holdout {
+            arms: Arms {
+                held_out: 31,
+                treated: 40,
+            },
+            needed_per_arm: 30,
+            comparison: Some(Comparison {
+                tasks: [40, 31],
+                success_rate: measure(0.5, 1.0 / 3.0, 1.0 / 6.0, -1.0 / 12.0, 0.4),
+                per_success: Some([
+                    measure(800.0, 6_500.0, -5_700.0, -9_000.0, -2_100.0),
+                    measure(12.5, 20.0, -7.5, -15.0, 0.0),
+                    measure(3.0, 4.0, -1.0, -2.0, 0.5),
+                    measure(0.0, 0.0, 0.0, 0.0, 0.0),
+                ]),
+            }),
+        };
+        assert_eq!(
+            holdout_lines(&holdout),
+            [
+                "holdout comparison: 40 tasks ended with Cortex and 31 held out; each difference \
+                 is with Cortex minus held out, its 95% bootstrap interval in brackets",
+                "  success rate: 0.50 with Cortex, 0.33 held out, +0.17 (-0.08 to +0.40)",
+                "  median input tokens per successful task: 800 with Cortex, 6,500 held out, \
+                 -5,700 (-9,000 to -2,100)",
+                "  median uncached input tokens per successful task: 12.5 with Cortex, 20 held \
+                 out, -7.5 (-15 to 0)",
+                "  median turns per successful task: 3 with Cortex, 4 held out, -1 (-2 to +0.5)",
+                "  median tool calls per successful task: 0 with Cortex, 0 held out, 0 (0 to 0)",
+            ]
+        );
     }
 
     /// Times by hand: 2000-03-01 is 11,017 days after 1970-01-01, and 3,723,004 ms is 01:02.
