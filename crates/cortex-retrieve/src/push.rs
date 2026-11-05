@@ -86,6 +86,9 @@ pub struct Activation {
     pub left: f64,
     /// Whether it stopped at [`MAX_PUSHES`] or the deadline with something still to push.
     pub is_cut_short: bool,
+    /// Whether the deadline stopped it with something still to push: what it kept then hangs on
+    /// how fast the machine was, unlike a stop at [`MAX_PUSHES`], which the inputs decide.
+    pub is_out_of_time: bool,
 }
 
 impl Activation {
@@ -217,6 +220,7 @@ pub fn spread<N: Network>(
         spreading.give(node, share);
     }
     let mut is_cut_short = false;
+    let mut is_out_of_time = false;
     loop {
         while let Some(node) = spreading.queue.pop_front() {
             let is_late = spreading.pushes.is_multiple_of(PUSHES_PER_CLOCK_READ)
@@ -225,6 +229,7 @@ pub fn spread<N: Network>(
             // hook keeps its latency budget whatever the graph around the seeds)
             if spreading.pushes >= MAX_PUSHES || is_late {
                 is_cut_short = true;
+                is_out_of_time = is_late;
                 break;
             }
             spreading.push(node);
@@ -247,5 +252,6 @@ pub fn spread<N: Network>(
         pushes: spreading.pushes,
         left,
         is_cut_short,
+        is_out_of_time,
     }
 }

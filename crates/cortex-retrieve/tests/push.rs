@@ -161,6 +161,7 @@ fn spreading_stops_at_its_cap_and_its_deadline() {
     let activation = spread(&graph, &seeds, TELEPORT, None);
     assert_eq!(activation.pushes, MAX_PUSHES);
     assert!(activation.is_cut_short);
+    assert!(!activation.is_out_of_time);
     let truth = exact(&graph, &seeds, TELEPORT);
     let found = kept(&activation, graph.len());
     let short: f64 = truth.iter().zip(&found).map(|(t, f)| t - f).sum();
@@ -174,6 +175,7 @@ fn spreading_stops_at_its_cap_and_its_deadline() {
     let late = spread(&graph, &seeds, TELEPORT, Some(passed));
     assert_eq!(late.pushes, 0);
     assert!(late.is_cut_short);
+    assert!(late.is_out_of_time);
 }
 
 /// Worked by hand: a file with co-change links to 200 others, which link to nothing (co-change

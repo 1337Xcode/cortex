@@ -108,6 +108,7 @@ fn the_features_are_worked_out_from_what_was_found() -> TestResult {
         pushes: 0,
         left: 0.0,
         is_cut_short: false,
+        is_out_of_time: false,
     };
     let files = [
         scored(n(1)?, 0.4),
@@ -173,6 +174,7 @@ fn nothing_found_has_no_features() -> TestResult {
         pushes: 0,
         left: 0.0,
         is_cut_short: false,
+        is_out_of_time: false,
     };
     let support = Support::new(&graph, &seeds);
     let found = Found {

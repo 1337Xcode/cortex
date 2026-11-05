@@ -238,6 +238,41 @@ fn a_vague_prompt_gets_nothing() -> TestResult {
     Ok(())
 }
 
+/// A spreading the deadline cut short gives nothing, since what it ranked would hang on how fast the
+/// machine was. The prompt that gets its work order above, asked with a deadline already passed,
+/// stops before its first push, in medium mode and in huge mode's two stages alike: the gate stays
+/// shut for that reason, and its features are kept for the record.
+#[test]
+fn a_spreading_out_of_time_gives_nothing() -> TestResult {
+    let repo = repository()?;
+    let reader = repo.reader()?;
+    let graph = read_graph(reader.queries(), &GraphSettings::default())?;
+    let session = Identifier::new("s1")?;
+    let settings = RetrievalConfig::default();
+    for mode in [ScaleMode::Medium, ScaleMode::Huge] {
+        let request = Request {
+            prompt: "fix create_order in the orders service",
+            session: Some(&session),
+            uncommitted: &[],
+            mode,
+            settings: &settings,
+            max_file_bytes: 1_048_576,
+            raise: 0.0,
+            recent_precision: None,
+            deadline: Some(std::time::Instant::now()),
+            root: repo.root.path(),
+        };
+        let retrieval = retrieve(reader.queries(), &graph, &request)?;
+        assert_eq!(
+            retrieval.outcome,
+            Outcome::Silent(Silence::Gate(Shut::OutOfTime)),
+            "{mode:?}"
+        );
+        assert!(retrieval.features.is_some(), "{mode:?}");
+    }
+    Ok(())
+}
+
 /// A prompt whose words find one file, with nothing else to back it, stays below the gate: the word
 /// "rate" matches the tax file's function, but the file has no second kind of evidence.
 #[test]

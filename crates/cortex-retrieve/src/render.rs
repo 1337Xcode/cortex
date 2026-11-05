@@ -287,6 +287,9 @@ fn heading(basis: &Basis) -> String {
                 Verdict::Silent(Shut::WeakMatch) => {
                     "the gate would stay silent: the words match no file strongly"
                 }
+                Verdict::Silent(Shut::OutOfTime) => {
+                    "the gate would stay silent: the spreading ran out of time"
+                }
             };
             format!("[cortex] Where · {found} · {gate}")
         }

@@ -140,6 +140,7 @@ fn files_score_their_nodes_activation_times_their_priors() -> TestResult {
         pushes: 0,
         left: 0.0,
         is_cut_short: false,
+        is_out_of_time: false,
     };
     let scored = scored_files(&graph, &activation);
     let files: Vec<u32> = scored.iter().map(|file| file.file).collect();
@@ -424,6 +425,7 @@ fn ties_are_broken_by_node() -> TestResult {
         pushes: 0,
         left: 0.0,
         is_cut_short: false,
+        is_out_of_time: false,
     };
     let kept = vec![(n(1)?, 0.25), (n(2)?, 0.125), (n(3)?, 0.125), (n(4)?, 0.5)];
     let scored = scored_files(&graph, &activation(kept));

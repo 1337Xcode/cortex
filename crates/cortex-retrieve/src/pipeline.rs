@@ -238,6 +238,8 @@ struct Reached {
     activation: Activation,
     /// The files it reached, the best first.
     scored: Vec<ScoredFile>,
+    /// Whether the deadline stopped the spreading, or either of huge mode's two stages.
+    is_out_of_time: bool,
 }
 
 impl Reached {
@@ -265,7 +267,13 @@ impl Reached {
             support: &support,
         };
         let features = features_of(&found, request.recent_precision);
-        let verdict = decide(&features, request.raise);
+        // INVARIANT: deterministic (a spreading the deadline cut short hangs on how fast the machine
+        // was, so what it ranked is never shown: the gate stays shut and says why)
+        let verdict = if self.is_out_of_time {
+            Verdict::Silent(Shut::OutOfTime)
+        } else {
+            decide(&features, request.raise)
+        };
         (support, features, verdict)
     }
 }
@@ -297,20 +305,25 @@ fn reached(
         .collect();
     let (teleport, deadline) = (request.settings.teleport, request.deadline);
     // Huge repositories spread over files first, then over the symbols of the best files.
-    let (activation, scored) = if request.mode == ScaleMode::Huge {
+    let (activation, scored, is_out_of_time) = if request.mode == ScaleMode::Huge {
         let Staged {
-            activation, scored, ..
+            activation,
+            scored,
+            within,
         } = two_stage(graph, &start, teleport, deadline)?;
-        (activation, scored)
+        let is_out_of_time = activation.is_out_of_time || within.is_out_of_time;
+        (activation, scored, is_out_of_time)
     } else {
         let activation = spread(graph, &start, teleport, deadline);
         let scored = scored_files(graph, &activation);
-        (activation, scored)
+        let is_out_of_time = activation.is_out_of_time;
+        (activation, scored, is_out_of_time)
     };
     Ok(Some(Reached {
         seeds,
         activation,
         scored,
+        is_out_of_time,
     }))
 }
 

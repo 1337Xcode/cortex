@@ -40,6 +40,9 @@ pub enum Shut {
     TooFewKinds,
     /// The prompt's words matched no file strongly enough.
     WeakMatch,
+    /// The spreading ran out of its time before it finished: what it ranked would hang on how fast
+    /// the machine was, so it is not shown.
+    OutOfTime,
 }
 
 /// Whether to hand over what `features` describe, the cold-start rule's lexical bar raised by
