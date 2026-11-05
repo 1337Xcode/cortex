@@ -86,10 +86,38 @@ jobs:
           tool: cargo-deny@0.20.2
       - run: cargo xtask verify
 
+  # The workflows themselves: actionlint, zizmor's security audits, and the guard's tests.
+  workflows:
+    name: Workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # actionlint from its release, checked against the checksum the release publishes.
+      - env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint"
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        with:
+          tool: zizmor@1.32.0
+      - run: zizmor --persona=auditor .github/workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: node --test .github/scripts/*.test.mjs
+
   check:
     name: Check
     if: always()
-    needs: [changes, verify]
+    needs: [changes, verify, workflows]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -97,8 +125,10 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           CODE: ${{ needs.changes.outputs.code }}
           VERIFY: ${{ needs.verify.result }}
+          WORKFLOWS: ${{ needs.workflows.result }}
         run: |
           [ "$CHANGES" = success ] || { echo "changes: $CHANGES"; exit 1; }
+          [ "$WORKFLOWS" = success ] || { echo "workflows: $WORKFLOWS"; exit 1; }
           case "$VERIFY" in
             success) ;;
             skipped) [ "$CODE" = false ] || { echo "verify was skipped on a code change"; exit 1; } ;;
