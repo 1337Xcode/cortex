@@ -1,0 +1,8 @@
+id = "shell-timeout-param"
+testbed = "serena"
+kind = "add a parameter end to end"
+warmups = ["Trace what happens when serena's `execute_shell_command` tool is called, from the tool class through the API layer to the helper that starts the process, and explain how the working directory is resolved. Do not change any files."]
+prompt = "I want the agent to be able to put a time limit on shell commands it runs through serena. Add an optional float parameter `timeout_seconds` (default None, meaning no limit) to the shell command tool and pass it through every layer down to where the process is actually run; when the limit is exceeded the process has to be killed. Document the new parameter in the tool and API docstrings like the existing ones."
+check = ["python", "{checks}/shell-timeout-param.py"]
+touches = ["src/serena/tools/cmd_tools.py", "src/serena/repl/api/shell_api.py", "src/serena/util/shell.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

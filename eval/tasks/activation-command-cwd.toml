@@ -1,0 +1,8 @@
+id = "activation-command-cwd"
+testbed = "serena"
+kind = "add a field end to end"
+warmups = ["Explain how a project's `activation_command` is run when a project is activated: which function does it, how trust and the timeout are handled, and where the setting is read from project.yml. Do not change any files.", "Look at how `ProjectConfig._from_dict` validates `activation_command_timeout` and summarise the validation rules in a few lines. Do not change any files."]
+prompt = "Let a project choose where its activation command runs. Add a project setting `activation_command_cwd`: a path relative to the project root, unset (None) by default, which keeps today's behaviour of running in the project root. It must be read from project.yml like the other activation settings, documented in the project template next to them (as an empty key), and used as the working directory when the activation command is started."
+check = ["python", "{checks}/activation-command-cwd.py"]
+touches = ["src/serena/config/serena_config.py", "src/serena/agent.py", "src/serena/resources/project.template.yml"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

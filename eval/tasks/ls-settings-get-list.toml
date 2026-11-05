@@ -1,0 +1,8 @@
+id = "ls-settings-get-list"
+testbed = "serena"
+kind = "add a method following conventions"
+warmups = ["Explain how `create_launch_command` in serena's solidlsp dependency provider combines `ls_path`, `ls_base_cmd`, `ls_args` and `ls_extra_args`. As a small related edit, add a sentence to the docstring of `CustomLSSettings.get` saying that it returns the stored value as is, without checking its type."]
+prompt = "`SolidLSPSettings.CustomLSSettings` only has a generic `get`, and the dependency provider code that builds language server launch commands repeats the same 'is it a list, otherwise warn and ignore' check for `ls_base_cmd`, `ls_args` and `ls_extra_args`. Add a `get_list(key)` method to `CustomLSSettings` that returns the list, or None when the setting is missing, and, if the value is not a list, logs a warning naming the key and returns None. Then use it in the launch command code instead of the hand-written checks."
+check = ["python", "{checks}/ls-settings-get-list.py"]
+touches = ["src/solidlsp/settings.py", "src/solidlsp/dependency_provider.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

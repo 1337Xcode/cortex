@@ -1,0 +1,8 @@
+id = "task-cancel-pending"
+testbed = "serena"
+kind = "add a method following conventions"
+warmups = ["Explain the lifecycle of a task in `TaskExecutor` (src/serena/task_executor.py): from `issue_task` through `_process_task_queue` to completion, including what happens on a timeout. Do not change any files."]
+prompt = "Add a method `cancel_pending_tasks()` to `TaskExecutor` (src/serena/task_executor.py) that cancels every task that is queued but has not started and returns how many were cancelled. The task currently running must not be touched, and the method has to be safe to call from other threads while tasks are being issued and processed. Give it a docstring."
+check = ["python", "{checks}/task-cancel-pending.py"]
+touches = ["src/serena/task_executor.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

@@ -28,7 +28,7 @@ const LAYERS: &[(&str, u8)] = &[
 ];
 
 /// Workspace packages that are tooling rather than product, exempt from layering.
-const TOOLING_CRATES: &[&str] = &["xtask", "cortex-tests"];
+const TOOLING_CRATES: &[&str] = &["xtask", "cortex-tests", "cortex-eval"];
 
 /// The crate that links the top layer into the `cortex` binary.
 const BINARY_CRATE: &str = "cortex-cli";

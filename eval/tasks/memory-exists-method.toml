@@ -1,0 +1,8 @@
+id = "memory-exists-method"
+testbed = "serena"
+kind = "add a method following conventions"
+warmups = ["Explain how `MemoryManager` turns a memory name into a file path: sanitising, global versus project memories, and the ignored and read-only patterns. Do not change any files."]
+prompt = "Add a public method `memory_exists(name: str) -> bool` to `MemoryManager` (src/serena/memories/memory_manager.py) that says whether a memory with that name exists, global or project. Handle the name the way the other accessors such as `load_memory` do: sanitise it first (mem: prefix, .md suffix), then refuse memories that match the ignored patterns, and use the existing path resolution. Give it a short docstring."
+check = ["python", "{checks}/memory-exists-method.py"]
+touches = ["src/serena/memories/memory_manager.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

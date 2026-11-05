@@ -150,6 +150,37 @@ fn compared(treated: &[f64], held_out: &[f64], statistic: fn(&[f64]) -> f64) -> 
     }
 }
 
+/// A mean of one sample and its 95% bootstrap interval.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Interval {
+    /// The mean.
+    pub value: f64,
+    /// The interval's low end.
+    pub low: f64,
+    /// Its high end.
+    pub high: f64,
+}
+
+/// The mean of `values` with its 95% percentile bootstrap interval, resampled as the comparison
+/// resamples an arm, from a generator seeded by a hash of the values; none for no value. A share,
+/// such as a precision, is the mean of ones and zeros.
+#[must_use]
+pub fn mean_interval(values: &[f64]) -> Option<Interval> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut sequence = Sequence::seeded(values, &[]);
+    let mut means: Vec<f64> = (0..BOOTSTRAP_RESAMPLES)
+        .map(|_| mean(&sequence.resample(values)))
+        .collect();
+    means.sort_by(f64::total_cmp);
+    Some(Interval {
+        value: mean(values),
+        low: percentile(&means, TAIL),
+        high: percentile(&means, 1.0 - TAIL),
+    })
+}
+
 /// The mean of `values`, 0 for none.
 #[expect(
     clippy::cast_precision_loss,

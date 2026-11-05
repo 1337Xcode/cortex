@@ -3,7 +3,8 @@
 
 use cortex_core::{Identifier, Ulid};
 use cortex_meter::{
-    Compared, MIN_TASKS_PER_ARM, SessionReceipt, Tally, TaskReceipt, Weighed, compare, weighed,
+    Compared, Interval, MIN_TASKS_PER_ARM, SessionReceipt, Tally, TaskReceipt, Weighed, compare,
+    mean_interval, weighed,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -190,5 +191,35 @@ fn only_ended_decided_tasks_are_weighed() -> TestResult {
             }
         ]
     );
+    Ok(())
+}
+
+/// A mean's interval: of ten values all 0.5, the mean and both ends are 0.5; of seven ones and
+/// three zeros, the mean is 0.7, held by the interval, which lies within 0 and 1 and is the same
+/// every time; of no value there is none.
+#[test]
+fn a_mean_has_its_interval() -> TestResult {
+    let constant = mean_interval(&[0.5; 10]).ok_or("an interval")?;
+    assert_eq!(
+        constant,
+        Interval {
+            value: 0.5,
+            low: 0.5,
+            high: 0.5
+        }
+    );
+    let labels = [1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0];
+    let precision = mean_interval(&labels).ok_or("an interval")?;
+    assert!(near(precision.value, 0.7), "{precision:?}");
+    assert!(
+        precision.low >= 0.0 && precision.high <= 1.0,
+        "{precision:?}"
+    );
+    assert!(
+        precision.low <= 0.7 && 0.7 <= precision.high,
+        "{precision:?}"
+    );
+    assert_eq!(mean_interval(&labels), Some(precision));
+    assert_eq!(mean_interval(&[]), None);
     Ok(())
 }

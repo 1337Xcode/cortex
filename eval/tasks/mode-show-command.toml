@@ -1,0 +1,8 @@
+id = "mode-show-command"
+testbed = "serena"
+kind = "add a method following conventions"
+warmups = ["Read the `edit` and `delete` subcommands of the `mode` group in serena's command line interface and explain how they find the mode file and how the group registers its commands. Do not change any files."]
+prompt = "Add a `show` subcommand to the `serena mode` command group that prints the YAML file of a mode (built-in or user-defined) to stdout, so people can look at a mode without hunting for the file. It takes the mode name as its argument; for an unknown name it should fail with a click usage error that lists the registered modes. Follow how the neighbouring mode subcommands are declared."
+check = ["python", "{checks}/mode-show-command.py"]
+touches = ["src/serena/cli.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

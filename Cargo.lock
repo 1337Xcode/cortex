@@ -349,6 +349,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-eval"
+version = "2.0.0-dev"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cortex-core",
+ "cortex-meter",
+ "cortex-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "cortex-git"
 version = "2.0.0-dev"
 dependencies = [

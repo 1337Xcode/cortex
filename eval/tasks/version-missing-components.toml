@@ -1,0 +1,8 @@
+id = "version-missing-components"
+testbed = "serena"
+kind = "fix a bug"
+warmups = ["Read src/serena/util/version.py and explain how `Version` turns a string like '1.2.3rc1' into components and how `is_at_least` compares them. As a small related edit, add a one-line comment above `_get_version_components` saying that parsing stops at the first part without leading digits."]
+prompt = "In `src/serena/util/version.py`, `Version('1.2').is_at_least(1, 2, 3)` raises an IndexError because the version has fewer components than are being compared. Change `is_at_least`, `is_at_most` and `is_equal` so that components missing from the version count as 0 (so 1.2 behaves like 1.2.0), without changing results for versions that have enough components, and update the docstrings that say otherwise."
+check = ["python", "{checks}/version-missing-components.py"]
+touches = ["src/serena/util/version.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

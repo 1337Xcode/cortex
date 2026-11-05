@@ -1,0 +1,8 @@
+id = "usage-stats-no-create"
+testbed = "serena"
+kind = "fix a bug"
+warmups = ["Explain how `ToolUsageStats` in serena's analytics module records a tool call and where the dashboard reads the statistics from. Do not change any files."]
+prompt = "Asking for the usage statistics of a tool that was never called has a side effect: the tool afterwards shows up (with zero counts) in the full statistics that feed the dashboard. Reading statistics must not register anything. A never-called tool should still yield an all-zero entry, and recording a call for it later must keep working."
+check = ["python", "{checks}/usage-stats-no-create.py"]
+touches = ["src/serena/analytics.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

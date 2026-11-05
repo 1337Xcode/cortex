@@ -1,0 +1,8 @@
+id = "answer-chars-default"
+testbed = "serena"
+kind = "change a default"
+warmups = ["Find where `default_max_tool_answer_chars` is read when a tool is called with `max_answer_chars=-1` and explain how the effective limit is computed. Do not change any files."]
+prompt = "Lower the default for `default_max_tool_answer_chars` from 150000 to 100000. It is defined on `SerenaConfig` and repeated in the global configuration template file shipped with serena, and the two must stay in agreement."
+check = ["python", "{checks}/answer-chars-default.py"]
+touches = ["src/serena/config/serena_config.py", "src/serena/resources/serena_config.template.yml"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

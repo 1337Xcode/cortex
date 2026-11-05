@@ -11,6 +11,7 @@ members = [
     "crates/cortex-meter",
     "crates/cortex-retrieve",
     "crates/cortex-store",
+    "eval",
     "tests",
     "xtask",
 ]

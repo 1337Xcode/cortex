@@ -1,0 +1,8 @@
+id = "content-around-line-rename"
+testbed = "serena"
+kind = "change a signature and its call sites"
+warmups = ["Explain what `MatchedConsecutiveLines.from_file_contents` does and how `Project.retrieve_content_around_line` uses it. Do not change any files."]
+prompt = "`Project.retrieve_content_around_line` calls its path parameter `relative_file_path`, while the other `Project` methods call theirs `relative_path`. Rename the parameter to `relative_path` and update everything that calls it with the old keyword."
+check = ["python", "{checks}/content-around-line-rename.py"]
+touches = ["src/serena/project.py", "src/serena/repl/api/jb_api.py", "src/serena/repl/api/lsp_api.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

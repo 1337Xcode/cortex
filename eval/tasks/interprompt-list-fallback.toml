@@ -1,0 +1,8 @@
+id = "interprompt-list-fallback"
+testbed = "serena"
+kind = "fix a bug"
+warmups = ["Read the prompt collection class in serena's interprompt package (src/interprompt/multilang_prompt.py) and explain in a few sentences how `get_prompt_template` picks a template when the requested language has none. Do not change any files."]
+prompt = "Prompt lists don't respect the fallback mode of a prompt collection. When the collection is set to fall back to the default language, asking for a prompt template in a language that has no entry works, but asking for a prompt list in that same language still raises a KeyError. Make prompt lists use the collection's fallback mode the same way templates do. Only change what is needed."
+check = ["python", "{checks}/interprompt-list-fallback.py"]
+touches = ["src/interprompt/multilang_prompt.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

@@ -1,0 +1,8 @@
+id = "hook-deny-interval-default"
+testbed = "serena"
+kind = "change a default"
+warmups = ["Explain how the symbolic-tools reminder hook decides when to deny a call: which counters it keeps, their thresholds, and how the minimum interval between denies works. Do not change any files."]
+prompt = "The reminder that nudges the agent towards symbolic tools is too chatty. After it has denied a call, make it stay silent for five minutes instead of two. Update the setting and the documentation that quotes the old interval."
+check = ["python", "{checks}/hook-deny-interval-default.py"]
+touches = ["src/serena/hooks.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

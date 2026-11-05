@@ -1,0 +1,8 @@
+# The repositories the evaluation's tasks run in, each at a pinned commit. A run clones one, or
+# copies a folder holding that commit (`cortex-eval run --from name=folder`).
+
+[[testbed]]
+name = "serena"
+url = "https://github.com/oraios/serena"
+commit = "ede329aaf0c824bea75455a2926f01420d7aa620"
+description = "A Python toolkit of language-server tools for coding agents, about 300 Python files"
