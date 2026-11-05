@@ -6,7 +6,7 @@
 //! symbols'. A generated or vendored file, which the index holds at file level only, is never
 //! where an agent should start, and is left out.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{InterestTier, NodeKind};
 
@@ -72,6 +72,20 @@ pub fn scored_files<Id: Ord + Copy>(graph: &Graph<Id>, activation: &Activation) 
             .then(left.file.cmp(&right.file))
     });
     ranked
+}
+
+/// `scored` with the files of `named` first, in the order they were, then the others as they
+/// were. A file the prompt names, by its path or by a rare symbol in it, is where its author means
+/// to work, whatever the words and links around it weigh: a neighbour whose many names each hold a
+/// word of the prompt, or a hub every file imports, would otherwise come first, and the named file,
+/// listed below the cap for code, would come with none.
+#[must_use]
+pub fn named_first(scored: Vec<ScoredFile>, named: &BTreeSet<u32>) -> Vec<ScoredFile> {
+    let (mut first, rest): (Vec<ScoredFile>, Vec<ScoredFile>) = scored
+        .into_iter()
+        .partition(|file| named.contains(&file.file));
+    first.extend(rest);
+    first
 }
 
 /// `scored` with the symbols of its first `staged` files scored from `activation` instead: each

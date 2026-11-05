@@ -9,6 +9,7 @@
 //! best files the gate weighed, is not given. The caller decides whether a work order is injected,
 //! and a held-out task gets none however strong.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Instant;
 
@@ -23,7 +24,7 @@ use crate::items::{Listed, Listing, listed};
 use crate::prompt::PromptTerms;
 use crate::push::{Activation, spread};
 use crate::render::{Basis, Item, Limits, Rendered, WorkOrder, render};
-use crate::score::{ScoredFile, scored_files};
+use crate::score::{ScoredFile, named_first, scored_files};
 use crate::seeds::{SeedQuery, Seeds, seeds};
 use crate::support::{Evidence, Support};
 use crate::two_stage::{Staged, two_stage};
@@ -320,6 +321,14 @@ fn reached(
         let is_out_of_time = activation.is_out_of_time;
         (activation, scored, is_out_of_time)
     };
+    let named: BTreeSet<u32> = seeds
+        .lexical
+        .files
+        .iter()
+        .filter(|(_, matched)| matched.is_named)
+        .map(|(file, _)| *file)
+        .collect();
+    let scored = named_first(scored, &named);
     Ok(Some(Reached {
         seeds,
         activation,

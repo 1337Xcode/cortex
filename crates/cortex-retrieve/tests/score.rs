@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{EdgeType, InterestTier, NodeKind, TypeWeights};
 use cortex_retrieve::{
-    Activation, Evidence, FileMatch, Graph, LexicalMatch, LinkInput, NodeInput, Seeds,
-    SessionMatch, SimilarMatch, Standing, Support, UncommittedMatch, Weighing, scored_files,
+    Activation, Evidence, FileMatch, Graph, LexicalMatch, LinkInput, NodeInput, ScoredFile, Seeds,
+    SessionMatch, SimilarMatch, Standing, Support, UncommittedMatch, Weighing, named_first,
+    scored_files,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -441,4 +442,30 @@ fn ties_are_broken_by_node() -> TestResult {
     assert_eq!(symbols, [n(2)?, n(3)?]);
     assert!(scored_files(&graph, &activation(Vec::new())).is_empty());
     Ok(())
+}
+
+/// The files the prompt names come first, in the order the scores gave them, and the others keep
+/// theirs: of five files ranked 1, 2, 3, 4, 5 by score, the named 4 and 2 make the order 2, 4, 1,
+/// 3, 5. With nothing named the order stands.
+#[test]
+fn named_files_come_first() {
+    let ranked: Vec<ScoredFile> = [1_u32, 2, 3, 4, 5]
+        .into_iter()
+        .zip([0.5, 0.4, 0.3, 0.2, 0.1])
+        .map(|(file, score)| ScoredFile {
+            file,
+            score,
+            activation: score,
+            symbols: Vec::new(),
+        })
+        .collect();
+    let order = |named: &[u32]| -> Vec<u32> {
+        named_first(ranked.clone(), &named.iter().copied().collect())
+            .into_iter()
+            .map(|file| file.file)
+            .collect()
+    };
+    assert_eq!(order(&[4, 2]), [2, 4, 1, 3, 5]);
+    assert_eq!(order(&[]), [1, 2, 3, 4, 5]);
+    assert_eq!(order(&[9]), [1, 2, 3, 4, 5]);
 }

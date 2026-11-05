@@ -127,10 +127,10 @@ fn one_word_alone_matches_at_most_half() -> TestResult {
 
 /// A file and a symbol the prompt names exactly are seeds of weight 1, and the file matches fully.
 /// The other files match by the words they hold, worked by hand: the prompt's words weigh
-/// `create` 1.280934, `user` 1.791759, `shop` (4 rows) ln 2 = 0.693147 and `users` 1.791759,
-/// 5.557599 in all, `py` being the extension of the path named, no word; `orders.py` holds `shop`
-/// and (through `create_order`) `create`: 1.974081 / 5.557599 = 0.355204; `billing.py` holds
-/// `shop`: 0.693147 / 5.557599 = 0.124721.
+/// `create` 1.280934, `user` 1.791759 and `users` 1.791759, 4.864452 in all, `shop` being the
+/// folder and `py` the extension of the path named, no words; `orders.py` holds (through
+/// `create_order`) `create`: 1.280934 / 4.864452 = 0.263325; `billing.py` holds none of them and
+/// does not match, where the folder's word would have matched every file beside the named one.
 #[test]
 fn what_a_prompt_names_exactly_matches_fully() -> TestResult {
     let shop = Shop::new()?;
@@ -149,19 +149,11 @@ fn what_a_prompt_names_exactly_matches_fully() -> TestResult {
         .get(&at(&graph, shop.orders[0])?)
         .ok_or("orders.py")?;
     assert!(
-        (orders.coverage - 0.355_203_9).abs() < 1e-6,
+        (orders.coverage - 0.263_325_4).abs() < 1e-6,
         "{}",
         orders.coverage
     );
-    let billing = found
-        .files
-        .get(&at(&graph, shop.billing[0])?)
-        .ok_or("billing.py")?;
-    assert!(
-        (billing.coverage - 0.124_720_6).abs() < 1e-6,
-        "{}",
-        billing.coverage
-    );
+    assert!(!found.files.contains_key(&at(&graph, shop.billing[0])?));
     Ok(())
 }
 

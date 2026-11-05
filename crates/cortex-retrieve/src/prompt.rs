@@ -5,9 +5,11 @@
 //! `createOrder`, `create_order` and "create order" look up the same rows. Words that say what to do
 //! or join a sentence rather than where (`fix`, `the`, `make`, `better`) are left out, as are digits
 //! alone and single letters: they name no place, and a prompt made only of them looks nothing up.
-//! So is the extension of a path the prompt names with a folder in it (`py` of `calc/ops.py`): it
-//! says what language the file is in, not where it is, and as a word it would match every file of
-//! that language. The path itself is a mention, looked up exactly.
+//! So are the folders of a path the prompt names (`src` and `flask` of `src/flask/helpers.py`) and
+//! its extension when it has a folder (`py` of `calc/ops.py`): the path itself is a mention, looked
+//! up exactly, and as words its folders would match every file beside it and its extension every
+//! file of that language, outranking the file the prompt names. A word the prompt also writes
+//! outside the path stays.
 //!
 //! A mention is one word that may name a file or a symbol exactly. A word with a folder separator
 //! is a path, with the line after it when the prompt gives one (`src/app.ts:12`, a stack frame's
@@ -245,17 +247,27 @@ impl PromptTerms {
     #[must_use]
     pub fn of(prompt: &str) -> Self {
         let mut terms = Self::default();
-        for token in identifier_tokens(prompt) {
-            if is_place_word(&token) && !terms.words.contains(&token) {
-                terms.words.push(token);
-            }
-        }
         let chunks: Vec<&str> = prompt.split_whitespace().collect();
+        // The prompt's text with each path written with a folder cut to its file's name, so that
+        // the folders give no words.
+        let mut worded = Vec::with_capacity(chunks.len());
         for (at, chunk) in chunks.iter().enumerate() {
-            if let Some(mention) = mention_of(chunk, chunks.get(at + 1..).unwrap_or_default())
+            let mention = mention_of(chunk, chunks.get(at + 1..).unwrap_or_default());
+            let file_name = mention
+                .as_ref()
+                .and_then(|mention| mention.path.as_deref())
+                .and_then(|path| path.rsplit_once('/'))
+                .map(|(_, file)| file.to_owned());
+            worded.push(file_name.unwrap_or_else(|| (*chunk).to_owned()));
+            if let Some(mention) = mention
                 && !terms.mentions.contains(&mention)
             {
                 terms.mentions.push(mention);
+            }
+        }
+        for token in identifier_tokens(&worded.join(" ")) {
+            if is_place_word(&token) && !terms.words.contains(&token) {
+                terms.words.push(token);
             }
         }
         let extensions: Vec<String> = terms
@@ -439,18 +451,16 @@ mod tests {
     }
 
     /// The words and mentions of each prompt, read off it by hand. Words are its identifier tokens
-    /// less the stop words, digits alone, single letters and the extension of a path named with a
-    /// folder (`py` of `calc/ops.py`), each once; a path keeps its line; a backticked word is a
+    /// less the stop words, digits alone, single letters, and the folders and the extension of a
+    /// path named with a folder (`calc` and `py` of `calc/ops.py`), each once; a path keeps its
+    /// line; a backticked word is a
     /// name, and so is one with a capital inside, a run of capitals before a small letter, an
     /// underscore or digits among letters.
     #[test]
     fn prompts_are_read_as_worked_out() {
         let terms =
             PromptTerms::of("Fix the divide-by-zero in calc/ops.py:12 where `divide` returns None");
-        assert_eq!(
-            terms.words,
-            ["divide", "zero", "calc", "ops", "returns", "none"]
-        );
+        assert_eq!(terms.words, ["divide", "zero", "ops", "returns", "none"]);
         assert_eq!(
             terms.mentions,
             [path("calc/ops.py", Some(12)), name("divide")]
@@ -476,20 +486,29 @@ mod tests {
         );
     }
 
-    /// A path named with a folder gives no word for its extension, whatever its case, while a
-    /// file with no folder keeps it, being perhaps a name joined by a dot, as does a folder's file
-    /// with no extension: `lib/Util.RS` gives `lib` and `util`, `notes.md` gives `notes` and `md`,
-    /// `src/Makefile` gives `src` and `makefile`.
+    /// A path named with a folder gives no word for its folders, nor for its extension whatever
+    /// its case, while a file with no folder keeps its extension, being perhaps a name joined by a
+    /// dot: `lib/Util.RS` gives `util`, `notes.md` gives `notes` and `md`, `src/Makefile` gives
+    /// `makefile`. A folder's word the prompt also writes outside the path stays: the second `flask`
+    /// of the last prompt.
     #[test]
-    fn a_named_path_gives_no_word_for_its_extension() {
+    fn a_named_path_gives_no_word_for_its_folders_or_extension() {
         assert_eq!(
             PromptTerms::of("rename helper in lib/Util.RS").words,
-            ["rename", "helper", "lib", "util"]
+            ["rename", "helper", "util"]
         );
         assert_eq!(PromptTerms::of("see notes.md").words, ["notes", "md"]);
         assert_eq!(
             PromptTerms::of("why does src/Makefile fail").words,
-            ["src", "makefile", "fail"]
+            ["makefile", "fail"]
+        );
+        let flask = PromptTerms::of(
+            "In src/flask/helpers.py, make get_debug_flag read 'yes' as flask does",
+        );
+        assert_eq!(flask.words, ["helpers", "debug", "flag", "read", "flask"]);
+        assert_eq!(
+            flask.mentions,
+            [path("src/flask/helpers.py", None), name("get_debug_flag")]
         );
     }
 

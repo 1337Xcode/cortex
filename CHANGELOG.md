@@ -59,6 +59,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
+- A file the prompt names, by its path or by a rare name defined in it, now leads the work order
+  with its code, and the folders of a path the prompt names are no longer search words: a prompt
+  naming `src/app/helpers.py` no longer ranks every file under `src/app` above the one it names.
 - Cortex is licensed under the Apache License, Version 2.0, alone (see `LICENSE` and `NOTICE`).
   Commits before this change were offered under the MIT license or Apache-2.0, at the user's
   option, and stay available under those terms.

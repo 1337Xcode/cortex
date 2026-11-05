@@ -58,7 +58,9 @@ pub use reasons::{ItemEvidence, MAX_REASON_CHARS, Reason, reason_of};
 pub use render::{
     Basis, Item, ItemSpan, Limits, MAX_WORK_ORDER_CHARS, Rendered, WorkOrder, render,
 };
-pub use score::{INTERESTING_PRIOR, LANDMARK_PRIOR, ScoredFile, scored_files, with_symbols};
+pub use score::{
+    INTERESTING_PRIOR, LANDMARK_PRIOR, ScoredFile, named_first, scored_files, with_symbols,
+};
 pub use seeds::{SeedQuery, Seeds, seeds, shares, summed};
 pub use session::{EDITED_WEIGHT, READ_WEIGHT, ReadSpan, SEEDED_READS, SessionMatch, session};
 pub use similar::{SIMILAR_BAR, SIMILAR_WEIGHT, SimilarMatch, similar};
