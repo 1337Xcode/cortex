@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cortex_core::{ModeSetting, RepoId};
+use cortex_core::{ModeSetting, RepoId, canonical_root};
 use cortex_index::{DiscoverOptions, Grammars, IndexOptions, index_repository};
 use cortex_store::{SelfCheckRecord, Writer, WriterOptions};
 
@@ -84,7 +84,7 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
         none.stdout,
         format!(
             "daemon: not running\nno index in {}; `cortex daemon` builds one\n",
-            root.display()
+            canonical_root(root)?.display()
         )
     );
     std::fs::write(root.join("a.py"), "def a():\n    pass\n")?;

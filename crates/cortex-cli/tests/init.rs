@@ -18,9 +18,11 @@ use cortex_core::ipc::CORTEX_VERSION;
 use cortex_core::{ContentHash, canonical_root};
 use serde_json::Value;
 
-/// The backup folders `cortex init` made in `repo`.
+/// The backup folders `cortex init` made in `repo`, spelled as init prints them: under the
+/// repository's canonical path, which differs from a temporary folder's spelling on macOS
+/// (`/var` is a link to `/private/var`) and on Windows (a short `RUNNER~1` name in `TEMP`).
 fn backup_folders(repo: &Path) -> TestResult<Vec<PathBuf>> {
-    let backups = repo.join(".cortex").join("backups");
+    let backups = canonical_root(repo)?.join(".cortex").join("backups");
     if !backups.exists() {
         return Ok(Vec::new());
     }
@@ -190,10 +192,14 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         *backed_up,
         format!("backup and manifest in {}", folder.display())
     );
+    // Init writes in folders it has resolved, so it names the home folder's backups canonically.
     assert!(
         users_backed_up.starts_with(&format!(
             "backup and manifest in {}",
-            home.path().join(".cortex").join("backups").display()
+            canonical_root(home.path())?
+                .join(".cortex")
+                .join("backups")
+                .display()
         )),
         "{users_backed_up}"
     );

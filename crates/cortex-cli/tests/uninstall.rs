@@ -36,9 +36,11 @@ fn names(folder: &Path) -> TestResult<Vec<String>> {
     Ok(names)
 }
 
-/// The one run folder init made in `repo`'s `.cortex/backups/`.
+/// The one run folder init made in `repo`'s `.cortex/backups/`, under the repository's canonical
+/// path, as uninstall names it.
 fn only_run(repo: &Path) -> TestResult<PathBuf> {
-    let mut runs = std::fs::read_dir(repo.join(".cortex").join("backups"))?
+    let backups = canonical_root(repo)?.join(".cortex").join("backups");
+    let mut runs = std::fs::read_dir(backups)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()?;
     runs.retain(|path| path.is_dir());
