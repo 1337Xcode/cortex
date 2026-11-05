@@ -127,10 +127,10 @@ fn one_word_alone_matches_at_most_half() -> TestResult {
 
 /// A file and a symbol the prompt names exactly are seeds of weight 1, and the file matches fully.
 /// The other files match by the words they hold, worked by hand: the prompt's words weigh
-/// `create` 1.280934, `user` 1.791759, `shop` (4 rows) ln 2 = 0.693147, `users` 1.791759, `py`
-/// (3 rows) ln(1 + 5.5 / 3.5) = 0.944462, 6.502062 in all; `orders.py` holds `shop`, `py` and
-/// (through `create_order`) `create`: 2.918543 / 6.502062 = 0.448864; `billing.py` holds `shop`
-/// and `py`: 1.637609 / 6.502062 = 0.251860.
+/// `create` 1.280934, `user` 1.791759, `shop` (4 rows) ln 2 = 0.693147 and `users` 1.791759,
+/// 5.557599 in all, `py` being the extension of the path named, no word; `orders.py` holds `shop`
+/// and (through `create_order`) `create`: 1.974081 / 5.557599 = 0.355204; `billing.py` holds
+/// `shop`: 0.693147 / 5.557599 = 0.124721.
 #[test]
 fn what_a_prompt_names_exactly_matches_fully() -> TestResult {
     let shop = Shop::new()?;
@@ -149,7 +149,7 @@ fn what_a_prompt_names_exactly_matches_fully() -> TestResult {
         .get(&at(&graph, shop.orders[0])?)
         .ok_or("orders.py")?;
     assert!(
-        (orders.coverage - 0.448_864_2).abs() < 1e-6,
+        (orders.coverage - 0.355_203_9).abs() < 1e-6,
         "{}",
         orders.coverage
     );
@@ -158,7 +158,7 @@ fn what_a_prompt_names_exactly_matches_fully() -> TestResult {
         .get(&at(&graph, shop.billing[0])?)
         .ok_or("billing.py")?;
     assert!(
-        (billing.coverage - 0.251_859_9).abs() < 1e-6,
+        (billing.coverage - 0.124_720_6).abs() < 1e-6,
         "{}",
         billing.coverage
     );

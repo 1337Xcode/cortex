@@ -5,6 +5,9 @@
 //! `createOrder`, `create_order` and "create order" look up the same rows. Words that say what to do
 //! or join a sentence rather than where (`fix`, `the`, `make`, `better`) are left out, as are digits
 //! alone and single letters: they name no place, and a prompt made only of them looks nothing up.
+//! So is the extension of a path the prompt names with a folder in it (`py` of `calc/ops.py`): it
+//! says what language the file is in, not where it is, and as a word it would match every file of
+//! that language. The path itself is a mention, looked up exactly.
 //!
 //! A mention is one word that may name a file or a symbol exactly. A word with a folder separator
 //! is a path, with the line after it when the prompt gives one (`src/app.ts:12`, a stack frame's
@@ -255,6 +258,13 @@ impl PromptTerms {
                 terms.mentions.push(mention);
             }
         }
+        let extensions: Vec<String> = terms
+            .mentions
+            .iter()
+            .filter_map(|mention| mention.path.as_deref())
+            .filter_map(folder_path_extension)
+            .collect();
+        terms.words.retain(|word| !extensions.contains(word));
         terms
     }
 
@@ -263,6 +273,15 @@ impl PromptTerms {
     pub fn is_empty(&self) -> bool {
         self.words.is_empty() && self.mentions.is_empty()
     }
+}
+
+/// The extension of `path`, lower case, when it names a folder and a file with one: `py` of
+/// `calc/ops.py`, none of `ops.py` or `src/Makefile`. A path with no folder could be a name joined
+/// by a dot (`Config.load`), whose last part is a word.
+fn folder_path_extension(path: &str) -> Option<String> {
+    let (_, file) = path.rsplit_once('/')?;
+    let (stem, extension) = file.rsplit_once('.')?;
+    (!stem.is_empty() && !extension.is_empty()).then(|| extension.to_ascii_lowercase())
 }
 
 /// Whether `token`, a lower-case identifier token, can name a place: not a stop word, not digits
@@ -420,16 +439,17 @@ mod tests {
     }
 
     /// The words and mentions of each prompt, read off it by hand. Words are its identifier tokens
-    /// less the stop words, digits alone and single letters, each once; a path keeps its line; a
-    /// backticked word is a name, and so is one with a capital inside, a run of capitals before a
-    /// small letter, an underscore or digits among letters.
+    /// less the stop words, digits alone, single letters and the extension of a path named with a
+    /// folder (`py` of `calc/ops.py`), each once; a path keeps its line; a backticked word is a
+    /// name, and so is one with a capital inside, a run of capitals before a small letter, an
+    /// underscore or digits among letters.
     #[test]
     fn prompts_are_read_as_worked_out() {
         let terms =
             PromptTerms::of("Fix the divide-by-zero in calc/ops.py:12 where `divide` returns None");
         assert_eq!(
             terms.words,
-            ["divide", "zero", "calc", "ops", "py", "returns", "none"]
+            ["divide", "zero", "calc", "ops", "returns", "none"]
         );
         assert_eq!(
             terms.mentions,
@@ -453,6 +473,23 @@ mod tests {
                 name("placeOrder"),
                 name("HTTPRequest")
             ]
+        );
+    }
+
+    /// A path named with a folder gives no word for its extension, whatever its case, while a
+    /// file with no folder keeps it, being perhaps a name joined by a dot, as does a folder's file
+    /// with no extension: `lib/Util.RS` gives `lib` and `util`, `notes.md` gives `notes` and `md`,
+    /// `src/Makefile` gives `src` and `makefile`.
+    #[test]
+    fn a_named_path_gives_no_word_for_its_extension() {
+        assert_eq!(
+            PromptTerms::of("rename helper in lib/Util.RS").words,
+            ["rename", "helper", "lib", "util"]
+        );
+        assert_eq!(PromptTerms::of("see notes.md").words, ["notes", "md"]);
+        assert_eq!(
+            PromptTerms::of("why does src/Makefile fail").words,
+            ["src", "makefile", "fail"]
         );
     }
 
