@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::report::Incomplete;
 use crate::run::{Settings, TaskRun, run_task};
 use crate::task::Task;
 use crate::testbed::Testbed;
@@ -138,8 +139,8 @@ fn suite(folder: &Path) -> anyhow::Result<(Vec<Testbed>, BTreeMap<String, Task>)
 ///
 /// # Errors
 ///
-/// The suite cannot be read, a task named is not in it, a run fails, or a result cannot be
-/// written.
+/// The suite cannot be read, a task named is not in it, or a result cannot be written. A run
+/// that cannot complete is not an error: it is printed with why, and counted in the summary.
 fn run(args: &RunArgs) -> anyhow::Result<()> {
     let (testbeds, tasks) = suite(Path::new(SUITE))?;
     let chosen: Vec<&Task> = if args.tasks.is_empty() {
@@ -179,19 +180,34 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
     };
     std::fs::create_dir_all(&args.out).with_context(|| format!("making {}", args.out.display()))?;
     let mut runs: Vec<TaskRun> = Vec::new();
+    let mut incomplete: Vec<Incomplete> = Vec::new();
     for task in chosen {
         let testbed = testbeds
             .iter()
             .find(|bed| bed.name == task.testbed)
             .with_context(|| format!("no testbed {}", task.testbed))?;
         for number in 1..=args.runs {
-            let ran = run_task(
+            let ran = match run_task(
                 (task, testbed),
                 from.get(testbed.name.as_str()).copied(),
                 &settings,
                 number,
-            )
-            .with_context(|| format!("running {} (run {number})", task.id))?;
+            ) {
+                Ok(ran) => ran,
+                Err(error) => {
+                    // The error names local paths: it is printed, and the results keep only which
+                    // run it was.
+                    say(&[format!(
+                        "{} run {number}: could not complete: {error:#}",
+                        task.id
+                    )]);
+                    incomplete.push(Incomplete {
+                        task: task.id.clone(),
+                        run: number,
+                    });
+                    continue;
+                }
+            };
             say(&[format!(
                 "{} run {number}: {}, {} work orders delivered, {} labelled used",
                 task.id,
@@ -203,7 +219,7 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
             write_json(&args.out.join("runs.json"), &runs)?;
         }
     }
-    let summary = report::summary(&runs);
+    let summary = report::summary(&runs, &incomplete);
     write_json(&args.out.join("summary.json"), &summary)?;
     let text = report::lines(&summary);
     std::fs::write(

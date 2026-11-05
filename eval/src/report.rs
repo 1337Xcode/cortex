@@ -1,7 +1,7 @@
 //! What an evaluation's runs add up to: how often the tasks succeeded, how precise Cortex's work
-//! orders to the measured sessions were, with how many there were, and what the measured sessions
-//! took; each share with its 95% bootstrap interval. It is written as JSON and as text, and holds
-//! counts only, never what a session said.
+//! orders to the measured sessions were, with how many there were, what the measured sessions
+//! took, and which runs could not complete; each share with its 95% bootstrap interval. It is
+//! written as JSON and as text, and holds counts only, never what a session said.
 
 use std::collections::BTreeSet;
 
@@ -10,11 +10,23 @@ use serde::Serialize;
 
 use crate::run::TaskRun;
 
+/// A run that could not complete: its task and number. Why is in the runner's output, which names
+/// local paths and stays out of the results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Incomplete {
+    /// The task.
+    pub(crate) task: String,
+    /// The run's number, from 1.
+    pub(crate) run: u32,
+}
+
 /// What the runs add up to.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct Summary {
-    /// How many runs.
+    /// How many runs completed; only they are counted below.
     pub(crate) runs: u64,
+    /// The runs that could not complete.
+    pub(crate) incomplete: Vec<Incomplete>,
     /// The share of runs whose check passed.
     pub(crate) success: Option<Interval>,
     /// Work orders that reached the measured sessions, and of those labelled and used.
@@ -39,9 +51,9 @@ pub(crate) struct Summary {
     pub(crate) failed_sessions: u64,
 }
 
-/// What `runs` add up to.
+/// What the completed `runs` add up to, with the runs that could not complete, `incomplete`.
 #[must_use]
-pub(crate) fn summary(runs: &[TaskRun]) -> Summary {
+pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
     let shares = |ones: u64, all: u64| -> Vec<f64> {
         (0..all)
             .map(|at| if at < ones { 1.0 } else { 0.0 })
@@ -84,6 +96,7 @@ pub(crate) fn summary(runs: &[TaskRun]) -> Summary {
         .collect();
     Summary {
         runs: total,
+        incomplete: incomplete.to_vec(),
         success: mean_interval(&shares(successes, total)),
         delivered: count(&|run| run.given.delivered),
         labelled,
@@ -132,8 +145,10 @@ pub(crate) fn lines(summary: &Summary) -> Vec<String> {
         |value: Option<f64>| value.map_or_else(|| "none".to_owned(), |value| format!("{value:.1}"));
     vec![
         format!(
-            "runs: {}; sessions that ended in an error: {}",
-            summary.runs, summary.failed_sessions
+            "runs: {} completed, {} could not complete; sessions that ended in an error: {}",
+            summary.runs,
+            summary.incomplete.len(),
+            summary.failed_sessions
         ),
         format!("success: {}", share(summary.success)),
         format!(
@@ -206,8 +221,19 @@ mod tests {
             run(false, (200, 2, 5), one(0)),
             run(true, (400, 4, 5), Given::default()),
         ];
-        let summary = summary(&runs);
+        let missed = [Incomplete {
+            task: "t".to_owned(),
+            run: 5,
+        }];
+        let summary = summary(&runs, &missed);
         assert_eq!(summary.runs, 4);
+        assert_eq!(summary.incomplete, missed);
+        assert!(
+            lines(&summary).contains(
+                &"runs: 4 completed, 1 could not complete; sessions that ended in an error: 0"
+                    .to_owned()
+            )
+        );
         assert!(
             summary
                 .success
@@ -232,7 +258,7 @@ mod tests {
     /// With no work order labelled there is no precision, said as none.
     #[test]
     fn no_label_means_no_precision() {
-        let summary = summary(&[run(true, (1, 1, 1), Given::default())]);
+        let summary = summary(&[run(true, (1, 1, 1), Given::default())], &[]);
         assert_eq!(summary.precision, None);
         assert!(lines(&summary).contains(&"precision: none".to_owned()));
     }

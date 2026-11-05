@@ -41,6 +41,10 @@ Every command the runner waits for writes its output to a file in the run's fold
 its time. The logs stay with the run, and a file, unlike a pipe, does not depend on what the
 processes a command leaves running have inherited.
 
+A run that cannot complete (a copy, the install, a session or the store failing) does not stop the
+others: the runner prints why, and the summary lists it by task and run number, with the completed
+runs counted apart.
+
 Precision is the share of the measured sessions' work orders that reached the agent, were labelled
 when their task ended, and were labelled used (the task edited one of the work order's first three
 files, or read one and edited a file that refers to it). Every share comes with a 95% percentile
