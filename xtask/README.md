@@ -29,10 +29,11 @@ cargo xtask verify --full   # adds the benchmark budget checks
    count. The scan never follows symbolic links and leaves out `.git`,
    `node_modules`, `ui/dist`, a package's own `target` folder and `tests/fixtures`.
 5. `cargo clippy --workspace --all-targets --locked -- -D warnings`
-6. `cargo test --workspace --locked`, doc tests included
+6. `cargo test --workspace --locked --no-fail-fast`, doc tests included: every test binary runs
+   even after one fails, so a single run reports every failing test
 7. `cargo deny check`: licences, advisories, bans and sources (`deny.toml`)
 
-`verify --full` then runs the slow tests (`cargo test --workspace --locked -- --ignored`) and the
+`verify --full` then runs the slow tests (the same test command with `-- --ignored`) and the
 benchmarks (`cortex-index`'s `index`, `cortex-retrieve`'s `spread`, `cortex-cli`'s `hooks`), and
 checks the 95th percentile of each benchmark's single runs against its budget (`src/budgets.rs`).
 The first index of 10,000 files must take 60 s at most and an index after one change 30 ms,

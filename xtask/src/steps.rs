@@ -55,14 +55,26 @@ pub(crate) fn verify(full: bool) -> anyhow::Result<()> {
             "warnings",
         ],
     )?;
-    run_cargo(&root, "tests", &["test", "--workspace", "--locked"])?;
+    // Every test binary runs even after one fails, so one run reports every failing test.
+    run_cargo(
+        &root,
+        "tests",
+        &["test", "--workspace", "--locked", "--no-fail-fast"],
+    )?;
     run_cargo(&root, "cargo deny", &["deny", "check"])?;
     if full {
         // The tests marked ignored are the slow ones, minutes each; every other run skips them.
         run_cargo(
             &root,
             "slow tests",
-            &["test", "--workspace", "--locked", "--", "--ignored"],
+            &[
+                "test",
+                "--workspace",
+                "--locked",
+                "--no-fail-fast",
+                "--",
+                "--ignored",
+            ],
         )?;
         budgets::check(&root)?;
     }
