@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ideas and questions
+    url: https://github.com/1337Xcode/cortex/discussions
+    about: Suggest a feature, ask how something works, or share how Cortex went for you.
+  - name: Report a security vulnerability
+    url: https://github.com/1337Xcode/cortex/security/advisories/new
+    about: Report it privately. Never put the details in a public issue.

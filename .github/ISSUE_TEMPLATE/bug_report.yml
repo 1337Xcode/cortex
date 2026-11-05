@@ -1,0 +1,72 @@
+name: Bug report
+description: Cortex did something wrong, or did not do what its docs say.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Before you paste anything, check it holds no code, paths or
+        names you would not publish: the commands below print file paths of the repository they
+        run in.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what Cortex did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of commands that shows it, on a repository others can get if possible.
+      placeholder: |
+        1. cortex init --yes
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options:
+        - Claude Code
+        - Codex
+        - Another agent (say which below)
+        - None, a cortex command on its own
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system
+      placeholder: Windows 11, macOS 15 arm64, Ubuntu 24.04 x86_64, ...
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Output of `cortex version`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `cortex status`
+      description: Run in the repository where it happened.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `cortex doctor`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: The agent's version, the hook log lines from around the time, what you already tried.
