@@ -15,23 +15,23 @@ use interprocess::local_socket::tokio::Listener;
 ///
 /// # Errors
 ///
-/// The endpoint cannot be named or bound, and on Windows the current user cannot be found.
+/// The endpoint cannot be named, bound or made the user's alone, and on Windows the current user
+/// cannot be found.
 #[cfg(unix)]
 pub(crate) fn bind(files: &RunFiles) -> io::Result<Listener> {
+    use std::os::unix::fs::PermissionsExt;
+
     use interprocess::local_socket::{GenericFilePath, ToFsName};
-    use interprocess::os::unix::local_socket::ListenerOptionsExt;
     let path = files.socket_path();
-    let options = || -> io::Result<ListenerOptions<'static>> {
-        Ok(ListenerOptions::new()
-            .name(path.clone().to_fs_name::<GenericFilePath>()?)
-            .try_overwrite(true))
-    };
-    match options()?.mode(0o600).create_tokio() {
-        // Some systems cannot set a socket's mode before binding it. The run folder, the user's
-        // alone, already keeps other users from reaching the socket.
-        Err(error) if error.kind() == io::ErrorKind::Unsupported => options()?.create_tokio(),
-        bound => bound,
-    }
+    let listener = ListenerOptions::new()
+        .name(path.clone().to_fs_name::<GenericFilePath>()?)
+        .try_overwrite(true)
+        .create_tokio()?;
+    // The mode is set on the bound file, not asked for before binding: macOS accepts a mode for an
+    // unbound socket and ignores it, leaving the socket as the umask made it. Until this runs the
+    // run folder, the user's alone, already keeps other users from reaching the socket.
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
 }
 
 /// Listens at the endpoint of `files`. Called inside the daemon's tokio runtime.
