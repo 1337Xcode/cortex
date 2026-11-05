@@ -329,9 +329,11 @@ fn a_path_no_file_can_have_is_left_out() -> TestResult {
 }
 
 /// A path that is not UTF-8 is left out of a commit's changes and the commit's other files stay;
-/// a rename from such a path is a change of the new path alone. Unix only: Windows file names are
-/// UTF-16, and git on Windows cannot make a name that is not UTF-8.
-#[cfg(unix)]
+/// a rename from such a path is a change of the new path alone. Linux and the other Unix systems
+/// only: Windows file names are UTF-16 and git on Windows cannot make a name that is not UTF-8, and
+/// macOS file systems refuse such a name ("Illegal byte sequence"). History is read from git's
+/// objects the same way on every system.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn a_path_that_is_not_utf8_is_left_out() -> TestResult {
     use std::ffi::OsStr;

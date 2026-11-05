@@ -489,15 +489,13 @@ fn bad_inputs_are_refused() -> TestResult {
 }
 
 /// Unix only: names that are not valid UTF-8 or hold a backslash, unreadable folders, symbolic
-/// links and named pipes can only be made there. Bad names and the unreadable folder are
-/// reported. Links are never followed, so a link loop does not trap the walk; a `.gitignore` that
+/// links and named pipes can only be made there (macOS refuses a name that is not UTF-8, so there
+/// the backslash name alone is made). Bad names and the unreadable folder are reported. Links are never followed, so a link loop does not trap the walk; a `.gitignore` that
 /// links outside the repository and a `.cortexignore` that is a pipe are reported, never read,
 /// and do not block the walk.
 #[cfg(unix)]
 #[test]
 fn unix_only_problems_are_reported() -> TestResult {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::{PermissionsExt, symlink};
     let repo = tempfile::tempdir()?;
     let root = repo.path();
@@ -505,7 +503,14 @@ fn unix_only_problems_are_reported() -> TestResult {
     fs::write(elsewhere.path().join("ignore"), b"src/\n")?;
     write(root, "src/main.rs", b"fn main() {}\n")?;
     write(root, "bad\\name.rs", b"x\n")?;
-    fs::write(root.join(OsStr::from_bytes(b"caf\xe9.rs")), b"x\n")?;
+    // macOS file systems refuse a name that is not UTF-8 ("Illegal byte sequence").
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        fs::write(root.join(OsStr::from_bytes(b"caf\xe9.rs")), b"x\n")?;
+    }
+    let bad_names = if cfg!(target_os = "macos") { 1 } else { 2 };
     write(root, "locked/a.rs", b"x\n")?;
     fs::set_permissions(root.join("locked"), fs::Permissions::from_mode(0o000))?;
     symlink(root.join("src/main.rs"), root.join("link.rs"))?;
@@ -523,16 +528,13 @@ fn unix_only_problems_are_reported() -> TestResult {
         path: None,
         kind: ProblemKind::UnstorableName,
     };
-    assert_eq!(
-        discovery.problems,
-        [
-            unstorable.clone(),
-            unstorable,
-            problem(".cortexignore", ProblemKind::SkippedRulesFile)?,
-            problem(".gitignore", ProblemKind::SkippedRulesFile)?,
-            problem("locked", ProblemKind::Unreadable)?,
-        ]
-    );
+    let mut expected = vec![unstorable; bad_names];
+    expected.extend([
+        problem(".cortexignore", ProblemKind::SkippedRulesFile)?,
+        problem(".gitignore", ProblemKind::SkippedRulesFile)?,
+        problem("locked", ProblemKind::Unreadable)?,
+    ]);
+    assert_eq!(discovery.problems, expected);
     // link.rs, loop, .gitignore and .cortexignore.
     assert_eq!(discovery.skipped_entries, 4);
     Ok(())
