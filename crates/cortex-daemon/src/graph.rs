@@ -282,9 +282,13 @@ mod tests {
     const PATIENCE: Duration = Duration::from_secs(10);
 
     /// How long the first build takes in the stop's case. The next may start only four times as
-    /// long after its start, four seconds, far longer than a loaded machine keeps the test's own
-    /// thread waiting.
-    const SLOW_BUILD: Duration = Duration::from_secs(1);
+    /// long after its start, eight seconds, so a stop that waited for it would wait about six:
+    /// three times [`STOP_TAKEN_WITHIN`], which a loaded machine's own delays stay far below.
+    const SLOW_BUILD: Duration = Duration::from_secs(2);
+
+    /// How soon a stop must be taken for it not to have waited for the next rebuild. Shorter
+    /// bounds measured the machine: a shared CI runner took 816 ms to wake and join the thread.
+    const STOP_TAKEN_WITHIN: Duration = Duration::from_secs(2);
 
     /// Sets or takes out the mark a complete mining leaves.
     fn mark(writer: &mut Writer, is_set: bool) -> TestResult {
@@ -529,8 +533,8 @@ mod tests {
     }
 
     /// A stop is taken at once while the thread waits for the next rebuild: a first build that
-    /// took a second spaces the next four seconds from its start; a tenth of a second after a
-    /// change, the stop does not wait for the rest, and no second build starts.
+    /// took two seconds spaces the next eight seconds from its start; a tenth of a second after a
+    /// change, the stop does not wait the six seconds left, and no second build starts.
     #[test]
     fn a_stop_does_not_wait_for_the_next_rebuild() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -552,7 +556,7 @@ mod tests {
         drop(rebuilder);
         let waited = stopping.elapsed();
         assert_eq!(reads.load(Ordering::SeqCst), 1);
-        assert!(waited < PACING.every / 2, "{waited:?}");
+        assert!(waited < STOP_TAKEN_WITHIN, "{waited:?}");
         Ok(())
     }
 
