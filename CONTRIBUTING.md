@@ -98,6 +98,27 @@ type(scope): imperative summary
 
 Example: `feat(cli): print the version with cortex version`.
 
+## Sending a pull request
+
+Fill in the template's sections. **Verification** carries the proof: the last lines of
+`cargo xtask verify` from your machine and what you ran by hand, such as a `cortex` command on a
+repository of your own, with what it printed. One problem per pull request; for a new feature,
+start a discussion first so the idea is agreed before you spend time on it.
+
+A workflow reads each new pull request and may add labels:
+
+| Label | When |
+| --- | --- |
+| `new-account` | The account was less than 30 days old when the pull request was opened, and it is the author's first here |
+| `fresh-fork` | The pull request came within 24 hours of its fork, from an author with nothing merged here yet |
+| `needs-proof` | The Verification section is empty |
+
+It also leaves one comment saying what a maintainer will look for, and edits that comment when
+the labels change. It never closes a pull request, never requests changes and never runs the pull
+request's code. A maintainer can clear the labels at any time with `maintainer-ok`. Once you have
+work merged, a maintainer can add your login to `.github/VOUCHED`; the workflow reads that file
+from `main` and leaves your pull requests unlabelled.
+
 ## License
 
 Cortex is licensed under the Apache License, Version 2.0. By sending a change you agree to

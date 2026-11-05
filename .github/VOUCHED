@@ -1,0 +1,3 @@
+# Contributors whose pull requests the guard leaves unlabelled: one GitHub login per line.
+# Maintainers add a login here once its owner has had work merged. The guard reads this file
+# from the default branch only, so a pull request cannot add its own author.
