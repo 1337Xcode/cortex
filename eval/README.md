@@ -24,7 +24,13 @@ for precision.
 cargo run -p cortex-eval -- check
 cargo run -p cortex-eval -- run --arm treated --cortex target/release/cortex \
   --base <a folder outside any repository> --out eval/results/<date>-<commit>
+cargo run -p cortex-eval -- report eval/results/<date>-<commit>
 ```
+
+`report` rebuilds a results folder's `summary.json` and `summary.txt` from its `runs.json`, so a
+change to how runs add up reaches results already made without running their sessions again. It
+keeps the runs that could not complete from the summary written when the evaluation ran, and
+refuses when that summary is missing.
 
 Each run clones its testbed at the pinned commit, or copies a folder holding it
 (`--from serena=<folder>`, leaving `.git/` and `.cortex/` behind), writes the arm's holdout share (0 for `treated`, 1 for `held-out`),

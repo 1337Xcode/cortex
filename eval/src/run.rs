@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, bail};
 use cortex_core::Identifier;
 use cortex_store::{InjectionRow, Reader};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::agent::{self, Session};
 use crate::process::{run_logged, tail_of};
@@ -50,7 +50,7 @@ pub(crate) struct Settings {
 }
 
 /// What Cortex gave the measured session, as its store holds it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Given {
     /// Work orders that reached the agent.
     pub(crate) delivered: u64,
@@ -61,7 +61,7 @@ pub(crate) struct Given {
 }
 
 /// One run of one task.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct TaskRun {
     /// The task.
     pub(crate) task: String,

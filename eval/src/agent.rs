@@ -40,7 +40,7 @@ pub(crate) fn command(
 }
 
 /// What a session's stream says it took.
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Session {
     /// Its id, which reads the store and stays out of the results: an id names a real session.
     #[serde(skip)]

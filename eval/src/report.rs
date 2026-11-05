@@ -7,13 +7,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_meter::{Interval, ratio_interval};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::run::TaskRun;
 
 /// A run that could not complete: its task and number. Why is in the runner's output, which names
 /// local paths and stays out of the results.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Incomplete {
     /// The task.
     pub(crate) task: String,

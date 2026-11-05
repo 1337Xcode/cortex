@@ -1,6 +1,7 @@
 //! `cortex-eval`: Cortex's evaluation suite. `cortex-eval check` reads every task and testbed and
 //! says what is wrong with them; `cortex-eval run` runs tasks with a real agent in fresh copies of
-//! their testbeds and writes what the runs took to a results folder, as counts only.
+//! their testbeds and writes what the runs took to a results folder, as counts only;
+//! `cortex-eval report` rebuilds a results folder's summary from its runs.
 //!
 //! The suite's files are this crate's own: `testbeds.toml`, `tasks/<id>.toml` and the checks in
 //! `checks/`.
@@ -8,6 +9,7 @@
 mod agent;
 mod process;
 mod report;
+mod results;
 mod run;
 mod task;
 mod testbed;
@@ -42,6 +44,12 @@ enum Command {
     Check,
     /// Run tasks with Claude Code and write what the runs took.
     Run(Box<RunArgs>),
+    /// Rebuild a results folder's summary from its runs, keeping the runs that could not complete
+    /// from the summary written when the evaluation ran.
+    Report {
+        /// The results folder, holding `runs.json` and `summary.json`.
+        folder: PathBuf,
+    },
 }
 
 /// Which arm of the evaluation a run is in.
@@ -97,6 +105,10 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Run(args) => run(&args),
+        Command::Report { folder } => {
+            say(&results::rebuild(&folder)?);
+            Ok(())
+        }
     }
 }
 
@@ -226,29 +238,11 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
                 ran.given.used
             )]);
             runs.push(ran);
-            write_json(&args.out.join("runs.json"), &runs)?;
+            results::write_runs(&args.out, &runs)?;
         }
     }
-    let summary = report::summary(&runs, &incomplete);
-    write_json(&args.out.join("summary.json"), &summary)?;
-    let text = report::lines(&summary);
-    std::fs::write(
-        args.out.join("summary.txt"),
-        format!("{}\n", text.join("\n")),
-    )
-    .context("writing the summary")?;
-    say(&text);
+    say(&results::write_summary(&args.out, &runs, &incomplete)?);
     Ok(())
-}
-
-/// Writes `value` to `path` as pretty JSON.
-///
-/// # Errors
-///
-/// The file cannot be written.
-fn write_json(path: &Path, value: &impl serde::Serialize) -> anyhow::Result<()> {
-    let text = serde_json::to_string_pretty(value).context("writing JSON")?;
-    std::fs::write(path, format!("{text}\n")).with_context(|| format!("writing {}", path.display()))
 }
 
 /// Prints `lines` to stdout.
