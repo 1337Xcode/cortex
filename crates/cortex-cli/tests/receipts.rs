@@ -458,6 +458,10 @@ fn receipts_compare_the_arms_once_each_has_thirty_ended_tasks() -> TestResult {
         );
         assert!(line.starts_with(&expected), "{line}");
     }
+    assert_eq!(
+        lines.get(at + 6).copied(),
+        Some("  medians from 30 successful tasks with Cortex and 30 held out whose usage was read")
+    );
     let report: Value =
         serde_json::from_slice(&receipts::run(&repo, home.path(), &["--json"])?.stdout)?;
     let input = report

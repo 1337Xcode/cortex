@@ -55,8 +55,11 @@ pub struct Comparison {
     pub tasks: [u64; 2],
     /// The share of tasks that succeeded.
     pub success_rate: Compared,
-    /// Per successful task, the medians, when both arms have a successful task whose usage was
-    /// read: cumulative input, uncached input, turns and tool calls.
+    /// How many successful tasks whose usage was read each arm holds: the medians below rest on
+    /// them.
+    pub per_success_tasks: [u64; 2],
+    /// Per successful task, the medians, when each arm holds [`MIN_TASKS_PER_ARM`] successful tasks
+    /// whose usage was read: cumulative input, uncached input, turns and tool calls.
     pub per_success: Option<[Compared; 4]>,
 }
 
@@ -118,17 +121,30 @@ pub fn compare(treated: &[Weighed], held_out: &[Weighed]) -> Option<Comparison> 
             .filter_map(|task| task.costs.and_then(|costs| costs.get(at).copied()))
             .collect()
     };
-    let per_success = (0..4)
-        .map(|at| {
-            let (on, off) = (measure(treated, at), measure(held_out, at));
-            (!on.is_empty() && !off.is_empty()).then(|| compared(&on, &off, median))
+    let metered = |arm: &[Weighed]| {
+        let count = arm
+            .iter()
+            .filter(|task| task.is_success && task.costs.is_some())
+            .count();
+        u64::try_from(count).unwrap_or(u64::MAX)
+    };
+    let per_success_tasks = [metered(treated), metered(held_out)];
+    // INVARIANT: measured-claims (a median per successful task is compared only from as many
+    // successful tasks with their usage read as the comparison itself needs, in each arm)
+    let per_success = per_success_tasks
+        .iter()
+        .all(|count| *count >= MIN_TASKS_PER_ARM)
+        .then(|| {
+            (0..4)
+                .map(|at| compared(&measure(treated, at), &measure(held_out, at), median))
+                .collect::<Vec<Compared>>()
         })
-        .collect::<Option<Vec<Compared>>>()
         .and_then(|all| <[Compared; 4]>::try_from(all).ok());
     Some(Comparison {
         tasks: [treated.len(), held_out.len()]
             .map(|count| u64::try_from(count).unwrap_or(u64::MAX)),
         success_rate,
+        per_success_tasks,
         per_success,
     })
 }

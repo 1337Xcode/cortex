@@ -88,7 +88,7 @@ struct Recorded {
 }
 
 /// The tasks held out from Cortex and the rest, which receipts compare once both are enough.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct Holdout {
     /// How many of the repository's tasks each arm holds, whenever they ran.
     #[serde(flatten)]

@@ -42,33 +42,37 @@ fn a_comparison_needs_thirty_tasks_in_each_arm() {
     assert!(compare(&thirty, &thirty).is_some());
 }
 
-/// Rates and medians by hand. Cortex on: 30 tasks, the first 15 successful, their cumulative input
-/// 100, 200, ..., 1,500; the median of 15 is the 8th, 800. Held out: 30 tasks, 10 successful, input
-/// 2,000, 3,000, ..., 11,000; the median of 10 is the mean of the 5th and 6th, (6,000 + 7,000) / 2
-/// = 6,500. Success rates 15/30 = 0.5 and 10/30 = 1/3, a difference of 1/6. Every treated input is
-/// below every held-out one, so every resampled median difference is too: the interval lies within
-/// 100 - 11,000 = -10,900 and 1,500 - 2,000 = -500, below zero.
+/// Rates and medians by hand. Cortex on: 40 tasks, the first 30 successful, their cumulative input
+/// 100, 200, ..., 3,000; the median of 30 is the mean of the 15th and 16th, (1,500 + 1,600) / 2 =
+/// 1,550. Held out: 36 tasks, 30 successful, input 4,000, 5,000, ..., 33,000; the median is
+/// (18,000 + 19,000) / 2 = 18,500. Success rates 30/40 = 0.75 and 30/36 = 5/6, a difference of
+/// -1/12. Every treated input is below every held-out one, so every resampled median difference is
+/// too: the interval lies within 100 - 33,000 = -32,900 and 3,000 - 4,000 = -1,000, below zero.
 #[test]
 fn rates_and_medians_are_the_arms_own() -> TestResult {
-    let treated_inputs: Vec<f64> = (1..=15).map(|at| f64::from(at) * 100.0).collect();
-    let held_inputs: Vec<f64> = (2..=11).map(|at| f64::from(at) * 1_000.0).collect();
-    let treated = arm(30, 15, &treated_inputs);
-    let held_out = arm(30, 10, &held_inputs);
+    let treated_inputs: Vec<f64> = (1..=30).map(|at| f64::from(at) * 100.0).collect();
+    let held_inputs: Vec<f64> = (4..=33).map(|at| f64::from(at) * 1_000.0).collect();
+    let treated = arm(40, 30, &treated_inputs);
+    let held_out = arm(36, 30, &held_inputs);
     let comparison = compare(&treated, &held_out).ok_or("a comparison")?;
-    assert_eq!(comparison.tasks, [30, 30]);
+    assert_eq!(comparison.tasks, [40, 36]);
+    assert_eq!(comparison.per_success_tasks, [30, 30]);
     let rate = comparison.success_rate;
     assert!(
-        near(rate.treated, 0.5) && near(rate.held_out, 1.0 / 3.0),
+        near(rate.treated, 0.75) && near(rate.held_out, 5.0 / 6.0),
         "{rate:?}"
     );
-    assert!(near(rate.difference, 1.0 / 6.0), "{rate:?}");
+    assert!(near(rate.difference, -1.0 / 12.0), "{rate:?}");
     let [input, uncached, turns, calls] = comparison.per_success.ok_or("medians")?;
     assert!(
-        near(input.treated, 800.0) && near(input.held_out, 6_500.0),
+        near(input.treated, 1_550.0) && near(input.held_out, 18_500.0),
         "{input:?}"
     );
-    assert!(near(input.difference, -5_700.0), "{input:?}");
-    assert!(input.low >= -10_900.0 && input.high <= -500.0, "{input:?}");
+    assert!(near(input.difference, -16_950.0), "{input:?}");
+    assert!(
+        input.low >= -32_900.0 && input.high <= -1_000.0,
+        "{input:?}"
+    );
     assert!(
         input.low <= input.difference && input.difference <= input.high,
         "{input:?}"
@@ -105,12 +109,29 @@ fn the_same_arms_differ_by_nothing_and_always_alike() -> TestResult {
     Ok(())
 }
 
-/// With no successful task in an arm there are no medians to compare, but the rates still are.
+/// The medians per successful task need 30 successful tasks with their usage read in each arm, as
+/// the comparison needs 30 tasks; the rates compare all the same, and the counts are kept. No
+/// success against 3: no medians, counts 0 and 3, rates 0 and 0.1. 29 successes against 30: no
+/// medians. 30 against 30: medians. 30 successes of which one's usage was not read count 29: no
+/// medians.
 #[test]
-fn without_a_success_in_an_arm_only_the_rates_compare() -> TestResult {
+fn medians_need_thirty_successful_tasks_in_each_arm() -> TestResult {
     let comparison = compare(&arm(30, 0, &[5.0]), &arm(30, 3, &[5.0])).ok_or("a comparison")?;
     assert_eq!(comparison.per_success, None);
+    assert_eq!(comparison.per_success_tasks, [0, 3]);
     assert!(near(comparison.success_rate.difference, -0.1));
+    let twenty_nine = compare(&arm(40, 29, &[5.0]), &arm(40, 30, &[5.0])).ok_or("a comparison")?;
+    assert_eq!(twenty_nine.per_success, None);
+    assert_eq!(twenty_nine.per_success_tasks, [29, 30]);
+    let thirty = compare(&arm(40, 30, &[5.0]), &arm(40, 30, &[5.0])).ok_or("a comparison")?;
+    assert!(thirty.per_success.is_some());
+    let mut unread = arm(40, 30, &[5.0]);
+    if let Some(first) = unread.first_mut() {
+        first.costs = None;
+    }
+    let unmetered = compare(&unread, &arm(40, 30, &[5.0])).ok_or("a comparison")?;
+    assert_eq!(unmetered.per_success, None);
+    assert_eq!(unmetered.per_success_tasks, [29, 30]);
     Ok(())
 }
 

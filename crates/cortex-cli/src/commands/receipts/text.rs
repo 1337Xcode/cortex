@@ -99,6 +99,7 @@ fn holdout_lines(holdout: &Holdout) -> Vec<String> {
         &comparison.success_rate,
         rate,
     ));
+    let [treated_succeeded, held_out_succeeded] = comparison.per_success_tasks;
     match &comparison.per_success {
         Some([input, uncached, turns, calls]) => {
             for (what, compared) in [
@@ -109,12 +110,19 @@ fn holdout_lines(holdout: &Holdout) -> Vec<String> {
             ] {
                 lines.push(compared_line(what, compared, quantity));
             }
+            lines.push(format!(
+                "  medians from {} with Cortex and {} held out whose usage was read",
+                counted(treated_succeeded, "successful task", "successful tasks"),
+                grouped(held_out_succeeded)
+            ));
         }
-        None => lines.push(
-            "  per successful task: nothing to compare, as an arm has no successful task whose \
-             usage was read"
-                .to_owned(),
-        ),
+        None => lines.push(format!(
+            "  per successful task: not enough data yet ({} with Cortex and {} held out whose \
+             usage was read; {} of each are needed)",
+            counted(treated_succeeded, "successful task", "successful tasks"),
+            grouped(held_out_succeeded),
+            holdout.needed_per_arm
+        )),
     }
     lines
 }
@@ -532,6 +540,7 @@ mod tests {
             comparison: Some(Comparison {
                 tasks: [40, 31],
                 success_rate: measure(0.5, 1.0 / 3.0, 1.0 / 6.0, -1.0 / 12.0, 0.4),
+                per_success_tasks: [30, 30],
                 per_success: Some([
                     measure(800.0, 6_500.0, -5_700.0, -9_000.0, -2_100.0),
                     measure(12.5, 20.0, -7.5, -15.0, 0.0),
@@ -552,7 +561,21 @@ mod tests {
                  out, -7.5 (-15 to 0)",
                 "  median turns per successful task: 3 with Cortex, 4 held out, -1 (-2 to +0.5)",
                 "  median tool calls per successful task: 0 with Cortex, 0 held out, 0 (0 to 0)",
+                "  medians from 30 successful tasks with Cortex and 30 held out whose usage was \
+                 read",
             ]
+        );
+        let mut thin = holdout.clone();
+        if let Some(comparison) = thin.comparison.as_mut() {
+            comparison.per_success_tasks = [12, 30];
+            comparison.per_success = None;
+        }
+        assert_eq!(
+            holdout_lines(&thin).last().map(String::as_str),
+            Some(
+                "  per successful task: not enough data yet (12 successful tasks with Cortex and \
+                 30 held out whose usage was read; 30 of each are needed)"
+            )
         );
     }
 
