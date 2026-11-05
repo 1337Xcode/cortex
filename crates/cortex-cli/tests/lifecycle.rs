@@ -3,12 +3,11 @@
 
 mod common;
 
-use std::fs::File;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 use common::fake_daemon::{FakeDaemon, Script, kinds};
-use common::{Daemon, POLL_EVERY, TestResult, isolate, wait_for};
+use common::{Daemon, POLL_EVERY, TestResult, isolate, printed, wait_for};
 use cortex_core::ipc::{CORTEX_VERSION, RequestBody, ResponseBody, Role};
 use cortex_core::{RepoId, UserFolder, canonical_root};
 use cortex_daemon::is_running;
@@ -92,20 +91,11 @@ fn a_command_replaces_an_older_daemon() -> TestResult {
     let mut status = Command::new(env!("CARGO_BIN_EXE_cortex"));
     status.args(["status", "--root"]).arg(repo.path());
     isolate(&mut status, home.path());
-    // The command writes to a file, not a pipe: on Windows the daemon it starts takes the
-    // command's own handles with it, and a pipe would stay open until the daemon stops.
-    let printed = home.path().join("status.txt");
-    let complained = home.path().join("status-errors.txt");
-    status
-        .stdout(File::create(&printed)?)
-        .stderr(File::create(&complained)?);
-    let ended = status.status()?;
-    let stdout = std::fs::read_to_string(&printed)?;
-    assert!(
-        ended.success(),
-        "{ended}: {stdout}{}",
-        std::fs::read_to_string(&complained)?
-    );
+    // Read through pipes, as a script reads the command: they end with the command, while the
+    // daemon it started goes on.
+    let ran = printed(&mut status, b"")?;
+    let stdout = ran.stdout;
+    assert!(ran.is_success, "{stdout}{}", ran.stderr);
     assert_eq!(
         kinds(&older.requests()?),
         ["hello", "status", "hello", "shutdown"]

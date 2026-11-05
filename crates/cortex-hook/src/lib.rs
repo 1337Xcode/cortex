@@ -11,6 +11,7 @@ mod claude;
 mod client;
 mod fail_open;
 mod log;
+mod relaunch;
 mod root;
 mod run;
 mod spawn;
@@ -19,6 +20,9 @@ mod stop;
 
 pub use adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, Versions, adapter};
 pub use client::{Answer, ClientError, ask};
+pub use relaunch::RELAUNCH_FLAG;
+#[cfg(windows)]
+pub use relaunch::relaunch_daemon;
 pub use root::locate;
 pub use run::run;
 pub use spawn::{Started, start_daemon, start_daemon_now};

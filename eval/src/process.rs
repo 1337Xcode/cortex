@@ -1,11 +1,10 @@
 //! Running a program the runner waits for, its output written to a file and never read through a
 //! pipe, and stopped when it outlasts its time.
 //!
-//! A pipe is the wrong place for the output of `cortex init` or of an agent whose hooks run
-//! `cortex hook`: either may start the daemon, which outlives them and inherits the handles they
-//! were given. On Windows a child inherits every inheritable handle, so a daemon would keep the
-//! pipe's write end open and a reader waiting for its end would wait as long as the daemon runs.
-//! A file has no end to wait for.
+//! The output stays in the run's folder for whoever looks into a run later. A file also has no end
+//! to wait for: a pipe ends only when every process holding it lets go, and the commands the runner
+//! starts leave processes running (the daemon `cortex init` starts, whatever an agent's tools
+//! start), so a pipe would tie the runner to what they inherit.
 
 use std::fs::File;
 use std::path::Path;

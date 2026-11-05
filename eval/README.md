@@ -38,9 +38,8 @@ the check, reads the measured session's injections from the repository's store, 
 
 Every command the runner waits for writes its output to a file in the run's folder (`init.log`,
 `session-<n>.jsonl`, `check.log` and the others), never to a pipe, and is stopped if it runs past
-its time. The daemon that `cortex init` or a hook starts outlives the command, and on Windows it
-would keep a pipe it inherited open, so a reader waiting for the pipe to end would wait as long as
-the daemon runs.
+its time. The logs stay with the run, and a file, unlike a pipe, does not depend on what the
+processes a command leaves running have inherited.
 
 Precision is the share of the measured sessions' work orders that reached the agent, were labelled
 when their task ended, and were labelled used (the task edited one of the work order's first three

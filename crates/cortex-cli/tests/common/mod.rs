@@ -17,7 +17,6 @@ pub mod receipts;
 
 use std::error::Error;
 use std::ffi::OsString;
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -182,28 +181,56 @@ pub struct Printed {
     pub stderr: String,
 }
 
-/// Runs `command`, its stdin an empty pipe, which is no terminal, and its output written to files in
-/// `folder` rather than pipes: on Windows a daemon the command starts holds the command's own
-/// handles, and a pipe would stay open until that daemon stops.
+/// How long a command's output may go on after the command has ended. Its pipes end when the
+/// last process holding them lets go: the command at once, and a daemon it started never, if the
+/// daemon took the pipes with it, as an agent reading a hook's output would then find.
+pub const OUTPUT_ENDS_WITHIN: Duration = Duration::from_secs(20);
+
+/// Runs `command` with `input` on its stdin, a pipe and no terminal, and reads what it printed
+/// through pipes, as an agent reads a hook and a script reads a command.
 ///
 /// # Errors
 ///
-/// The files cannot be made or read, or the command cannot run.
-pub fn printed_to_files(command: &mut Command, folder: &Path) -> TestResult<Printed> {
-    let stdout = folder.join("printed-stdout.txt");
-    let stderr = folder.join("printed-stderr.txt");
+/// The command cannot run, or its output has not ended [`OUTPUT_ENDS_WITHIN`] after it did: a
+/// process it started holds its pipes.
+pub fn printed(command: &mut Command, input: &[u8]) -> TestResult<Printed> {
     command
         .stdin(Stdio::piped())
-        .stdout(File::create(&stdout)?)
-        .stderr(File::create(&stderr)?);
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = command.spawn()?;
-    drop(child.stdin.take());
+    let stdout = read_to_end_apart(child.stdout.take().ok_or("stdout is not piped")?);
+    let stderr = read_to_end_apart(child.stderr.take().ok_or("stderr is not piped")?);
+    let mut stdin = child.stdin.take().ok_or("stdin is not piped")?;
+    // A command may have given up its input already, as a hook that refuses a payload does.
+    let _ = std::io::Write::write_all(&mut stdin, input);
+    drop(stdin);
     let status = child.wait()?;
+    let ended = |output: mpsc::Receiver<std::io::Result<Vec<u8>>>, name: &str| {
+        let bytes = output.recv_timeout(OUTPUT_ENDS_WITHIN).map_err(|_| {
+            format!("the command's {name} did not end after it did: a process it started holds it")
+        })??;
+        TestResult::Ok(String::from_utf8_lossy(&bytes).into_owned())
+    };
     Ok(Printed {
         is_success: status.success(),
-        stdout: std::fs::read_to_string(&stdout)?,
-        stderr: std::fs::read_to_string(&stderr)?,
+        stdout: ended(stdout, "stdout")?,
+        stderr: ended(stderr, "stderr")?,
     })
+}
+
+/// Reads `pipe` to its end on a thread of its own, and sends what it read.
+fn read_to_end_apart(
+    mut pipe: impl std::io::Read + Send + 'static,
+) -> mpsc::Receiver<std::io::Result<Vec<u8>>> {
+    let (send, receive) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let read = pipe.read_to_end(&mut bytes).map(|_| bytes);
+        // The test may have given up waiting and dropped the receiver: nothing is lost.
+        let _ = send.send(read);
+    });
+    receive
 }
 
 /// Stops, when dropped, the daemon a command started detached for the repository at `root`, the

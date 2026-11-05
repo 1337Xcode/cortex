@@ -5,12 +5,13 @@
 mod common;
 
 use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use common::{POLL_EVERY, READY_WITHIN, TestResult, isolate, payloads, stop_late_daemon, wait_for};
+use common::{
+    POLL_EVERY, READY_WITHIN, TestResult, isolate, payloads, printed, stop_late_daemon, wait_for,
+};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
 use cortex_core::{
     RepoId, RepoPath, RunFiles, UserFolder, canonical_root, create_private_folder,
@@ -29,13 +30,20 @@ struct Scene {
     home: Option<tempfile::TempDir>,
     /// Where the repository's daemon listens.
     files: RunFiles,
+    /// The repository's folder in the home folder.
+    folder: &'static str,
 }
 
 impl Scene {
     /// A home folder holding a repository marked for Cortex with one Python file.
     fn new() -> TestResult<Self> {
+        Self::in_folder("repo")
+    }
+
+    /// A home folder holding, in `folder`, a repository marked for Cortex with one Python file.
+    fn in_folder(folder: &'static str) -> TestResult<Self> {
         let home = tempfile::tempdir()?;
-        let repo = home.path().join("repo");
+        let repo = home.path().join(folder);
         std::fs::create_dir_all(repo.join(".cortex"))?;
         std::fs::write(repo.join("app.py"), "def kept():\n    pass\n")?;
         let files =
@@ -43,6 +51,7 @@ impl Scene {
         Ok(Self {
             home: Some(home),
             files,
+            folder,
         })
     }
 
@@ -53,7 +62,7 @@ impl Scene {
 
     /// The repository, canonical.
     fn repo(&self) -> TestResult<PathBuf> {
-        Ok(canonical_root(&self.home()?.join("repo"))?)
+        Ok(canonical_root(&self.home()?.join(self.folder))?)
     }
 }
 
@@ -61,8 +70,9 @@ impl Drop for Scene {
     fn drop(&mut self) {
         // A daemon a hook started may still be starting when the test ends, early or not.
         stop_late_daemon(&self.files);
-        // On Windows the daemon holds handles it inherited from the hook until its process ends,
-        // a moment after its process-id file goes: the folder is removed once they are released.
+        // On Windows the files a daemon has open in the folder (its log, its database) keep it
+        // from being removed until its process ends, a moment after its process-id file goes: the
+        // folder is removed once they are released.
         if let Some(home) = self.home.take() {
             let path = home.keep();
             let _ = wait_for(|| Ok(std::fs::remove_dir_all(&path).is_ok()));
@@ -71,30 +81,17 @@ impl Drop for Scene {
 }
 
 /// Runs `cortex hook --agent claude --event <event>` with `payload` on stdin and `home` as the home
-/// folder: whether it ended silently with exit code 0, and how long it took. Its output goes to
-/// files: on Windows the daemon it starts inherits the hook's handles, so a pipe would stay open
-/// until the daemon exits.
+/// folder, its output read through pipes as an agent reads it: whether it ended silently with exit
+/// code 0, and how long it took. The pipes must end with the hook, however long the daemon it
+/// started runs: an agent that waits for them would otherwise wait for the daemon.
 fn hook(event: &str, payload: &[u8], home: &Path) -> TestResult<(bool, Duration)> {
-    let (out, err) = (home.join("hook.out"), home.join("hook.err"));
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command
-        .args(["hook", "--agent", "claude", "--event", event])
-        .stdin(Stdio::piped())
-        .stdout(File::create(&out)?)
-        .stderr(File::create(&err)?);
+    command.args(["hook", "--agent", "claude", "--event", event]);
     isolate(&mut command, home);
     let started = Instant::now();
-    let mut child = command.spawn()?;
-    child
-        .stdin
-        .take()
-        .ok_or("stdin is not piped")?
-        .write_all(payload)?;
-    let status = child.wait()?;
+    let printed = printed(&mut command, payload)?;
     let took = started.elapsed();
-    let is_silent = status.code() == Some(0)
-        && std::fs::read(&out)?.is_empty()
-        && std::fs::read(&err)?.is_empty();
+    let is_silent = printed.is_success && printed.stdout.is_empty() && printed.stderr.is_empty();
     Ok((is_silent, took))
 }
 
@@ -218,6 +215,50 @@ fn a_hook_starts_the_daemon_and_does_not_wait() -> TestResult {
             since.elapsed() < READY_WITHIN,
             "no daemon answered with the file indexed"
         );
+        std::thread::sleep(POLL_EVERY);
+    }
+    Ok(())
+}
+
+/// On Windows an agent that leaves its own handles inheritable passes them to its hooks, and a hook
+/// to the daemon it starts: Codex does, and then waits at its exit for a pipe the daemon holds.
+/// Here `cmd /C` runs the hook with the hook's own output sent to NUL, so the pipe the test reads
+/// reaches the hook only as a handle it inherited from `cmd`, as Codex's own handles reach its
+/// hooks. The pipe must end with `cmd` and the hook while the daemon they started answers. The
+/// repository's folder holds a space, which the daemon's new start must quote.
+#[cfg(windows)]
+#[test]
+fn a_daemon_holds_no_handle_an_agent_left_inheritable() -> TestResult {
+    use std::os::windows::process::CommandExt;
+
+    let scene = Scene::in_folder("a repo")?;
+    let (home, repo) = (scene.home()?, scene.repo()?);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "session_id": "s1",
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "cwd": repo,
+    }))?;
+    warm_up()?;
+    let mut command = Command::new("cmd");
+    command.raw_arg(format!(
+        r#"/D /S /C ""{}" hook --agent claude --event SessionStart >NUL 2>NUL""#,
+        env!("CARGO_BIN_EXE_cortex")
+    ));
+    isolate(&mut command, home);
+    let ran = printed(&mut command, &payload)?;
+    assert!(ran.is_success, "{}{}", ran.stdout, ran.stderr);
+    assert_eq!((ran.stdout.as_str(), ran.stderr.as_str()), ("", ""));
+    let answers = || -> TestResult<bool> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        Ok(matches!(
+            ask(&scene.files, Role::Cli, RequestBody::Status, deadline),
+            Ok(answer) if matches!(answer.body, ResponseBody::Status(_))
+        ))
+    };
+    let since = Instant::now();
+    while !answers()? {
+        assert!(since.elapsed() < READY_WITHIN, "no daemon answered");
         std::thread::sleep(POLL_EVERY);
     }
     Ok(())

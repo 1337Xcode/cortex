@@ -1,11 +1,11 @@
 //! Running `cortex init`, and other commands, the way the CLI's tests do: an empty home folder of
 //! the test's own, a PATH of its own holding git and a stand-in for Claude Code, git looking for no
-//! repository above the system's temporary folder, and the output in files.
+//! repository above the system's temporary folder, and the output read through pipes.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{Printed, TestResult, isolate, printed_to_files, stand_in_claude, test_path};
+use super::{Printed, TestResult, isolate, printed, stand_in_claude, test_path};
 
 /// The stand-in for Claude Code [`init`] puts in `home`'s `bin` folder when the test put none.
 pub fn claude_in(home: &Path) -> PathBuf {
@@ -50,7 +50,7 @@ pub fn run(command: &mut Command, home: &Path, programs: &[&str]) -> TestResult<
     command
         .env("PATH", test_path(home, programs)?)
         .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
-    printed_to_files(command, home)
+    printed(command, b"")
 }
 
 /// Runs git with `args` in `folder`, with `home` as the home folder.

@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use common::{StopsDaemon, TestResult, isolate, printed_to_files, stand_in_claude, test_path};
+use common::{StopsDaemon, TestResult, isolate, printed, stand_in_claude, test_path};
 use cortex_core::ipc::{CORTEX_VERSION, RequestBody, ResponseBody, Role};
 use cortex_core::{RepoId, UserFolder, canonical_root};
 use cortex_hook::ask;
@@ -30,7 +30,7 @@ fn cortex(args: &[&str], repo: &Path, home: &Path) -> TestResult<Run> {
     process.args(args).arg("--root").arg(repo);
     isolate(&mut process, home);
     process.env("PATH", test_path(home, &[])?);
-    let printed = printed_to_files(&mut process, home)?;
+    let printed = printed(&mut process, b"")?;
     Ok(Run {
         is_success: printed.is_success,
         lines: printed.stdout.lines().map(str::to_owned).collect(),

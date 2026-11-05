@@ -51,7 +51,9 @@ pub fn start_daemon(
 
 /// Starts `cortex daemon --root <root>` as [`start_daemon`] does, whenever a start was made: for a
 /// command the user runs, which is no storm of hooks, and finds no daemon. The start is marked all
-/// the same, so that hooks keep their gap after it.
+/// the same, so that hooks keep their gap after it. On Windows the process started is
+/// `cortex daemon --relaunch`, which starts the daemon anew holding none of this process's handles
+/// (see [`crate::relaunch`]).
 ///
 /// # Errors
 ///
@@ -78,6 +80,8 @@ pub fn start_daemon_now(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(windows)]
+    command.arg(crate::relaunch::RELAUNCH_FLAG);
     // The child is not waited for: it outlives the hook by design, and dropping the handle neither
     // stops nor waits for it.
     detach(&mut command).map(drop)

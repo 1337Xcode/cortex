@@ -49,9 +49,10 @@ in time, and prints the fix for each failure.
 
 One daemon serves a repository, from its `.cortex` folder. It listens on a socket (a named pipe on
 Windows) only its user can open, and stops after a while with nothing to do; a hook starts it again
-when Claude Code next needs it. On Windows the daemon holds the output handles of whatever started
-it (`cortex init`, a `cortex status` that replaced a daemon of an older Cortex, or a hook), so a
-pipe reading that command's output stays open until the daemon stops; a terminal does not wait.
+when Claude Code next needs it. On Windows the daemon is started in two steps so that it holds none
+of the handles of whatever started it (`cortex init`, `cortex status` or a hook, or the agent that
+ran the hook): a script or an agent reading that command's output through a pipe sees it end with
+the command, not with the daemon.
 
 ## What has been measured
 
