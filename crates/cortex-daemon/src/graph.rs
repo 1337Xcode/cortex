@@ -268,6 +268,7 @@ fn read_whole(reader: &Reader, settings: &GraphSettings) -> Result<Read, Retriev
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::sync::atomic::AtomicU32;
     use std::time::{Duration, Instant};
 
     use cortex_core::ipc::GraphReport;
@@ -279,6 +280,11 @@ mod tests {
 
     /// How long a test waits for a rebuild it expects.
     const PATIENCE: Duration = Duration::from_secs(10);
+
+    /// How long the first build takes in the stop's case. The next may start only four times as
+    /// long after its start, four seconds, far longer than a loaded machine keeps the test's own
+    /// thread waiting.
+    const SLOW_BUILD: Duration = Duration::from_secs(1);
 
     /// Sets or takes out the mark a complete mining leaves.
     fn mark(writer: &mut Writer, is_set: bool) -> TestResult {
@@ -522,20 +528,30 @@ mod tests {
         Ok(())
     }
 
-    /// A stop is taken at once while the thread waits for the next rebuild: a change right after a
-    /// build waits half a second from that build's start; a tenth of a second into that wait, the
-    /// stop does not wait for the rest.
+    /// A stop is taken at once while the thread waits for the next rebuild: a first build that
+    /// took a second spaces the next four seconds from its start; a tenth of a second after a
+    /// change, the stop does not wait for the rest, and no second build starts.
     #[test]
     fn a_stop_does_not_wait_for_the_next_rebuild() -> TestResult {
         let root = tempfile::tempdir()?;
         let _writer = two_files(root.path())?;
-        let (snapshot, rebuilder) = rebuilding(root.path());
+        let reads = Arc::new(AtomicU32::new(0));
+        let counted = Arc::clone(&reads);
+        let mut store = reads_of(root.path());
+        let snapshot = Arc::new(Snapshot::default());
+        let rebuilder = rebuild(&snapshot, move || {
+            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                std::thread::sleep(SLOW_BUILD);
+            }
+            store()
+        });
         report_when(&snapshot, |report| report.builds > 0)?;
         snapshot.changed();
         std::thread::sleep(PACING.every / 5);
         let stopping = Instant::now();
         drop(rebuilder);
         let waited = stopping.elapsed();
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
         assert!(waited < PACING.every / 2, "{waited:?}");
         Ok(())
     }
