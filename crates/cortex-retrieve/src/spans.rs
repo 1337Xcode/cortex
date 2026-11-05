@@ -51,8 +51,9 @@ pub struct Outlined {
     pub strength: f64,
 }
 
-/// The spans to point at in a file of `line_count` lines whose symbols are `outline`, in the order
-/// they start, each at most `cap` lines, the strongest first.
+/// The spans to point at in a file of `line_count` lines whose symbols are `outline` (listed in the
+/// order they start): at most [`MAX_SPANS_PER_FILE`], each at most `cap` lines, the strongest
+/// first; a span beside one already chosen is joined to it.
 #[must_use]
 pub fn spans_of(outline: &[Outlined], line_count: u32, cap: u32) -> Vec<Span> {
     if outline.is_empty() {
