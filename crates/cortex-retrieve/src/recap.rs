@@ -4,17 +4,14 @@
 //! the user's settings kept its start. Lines past the cap go from the end, the prompt first. It
 //! names no line of a file: an edit's lines are not kept as the file was after it, so they could
 //! not be checked against the file as it is now.
-//!
-//! The task's latest [`MAX_TASK_ROWS`] rows are read. When it has more, a warning's follow-up may
-//! lie among those not read, so no warning is named: the recap says only what it can tell.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use cortex_core::{EventKind, Identifier, RepoPath, WarningKind, estimate_tokens};
-use cortex_learn::{MAX_TASK_ROWS, resolves};
-use cortex_store::{EventRow, NodeId, Queries, StoreError, WarningRow};
+use cortex_store::{EventRow, NodeId, Queries, StoreError, WarningRecord};
 
+use crate::open_warnings::{plain_path, so_far};
 use crate::plain::{is_plain, is_taken_out};
 
 /// The most tokens a recap takes, as estimated.
@@ -39,14 +36,10 @@ pub fn recap(queries: Queries<'_>, session: &Identifier) -> Result<Option<String
     let Some(task) = queries.open_task(session)? else {
         return Ok(None);
     };
-    let task_id = task.record.task_id;
-    let events = queries.latest_events_of_task(task_id, MAX_TASK_ROWS)?;
+    let so_far = so_far(queries, task.record.task_id)?;
     let mut lines: Vec<String> = Vec::new();
-    lines.extend(edited_line(&edited_files(&events)));
-    if events.len() < MAX_TASK_ROWS {
-        let warnings = queries.warnings_of_task(task_id)?;
-        lines.extend(open_warnings(queries, &warnings, &events)?);
-    }
+    lines.extend(edited_line(&edited_files(&so_far.events)));
+    lines.extend(warned_lines(queries, &so_far.open)?);
     let excerpt = task.record.prompt_excerpt.as_ref();
     if let Some(prompt) = excerpt.and_then(|excerpt| one_line(excerpt.as_str())) {
         lines.push(format!("- began with the prompt \"{prompt}\""));
@@ -100,39 +93,25 @@ fn edited_line(files: &[&RepoPath]) -> Option<String> {
         .find(|line| estimate_tokens(&format!("{HEADER}{line}\n")) <= MAX_RECAP_TOKENS)
 }
 
-/// A line for each of `warnings` whose file the task's `events`, the latest first, did not read or
-/// edit after it, the latest warning first, each file once, at most [`MAX_RECAPPED_WARNINGS`].
-fn open_warnings(
-    queries: Queries<'_>,
-    warnings: &[WarningRow],
-    events: &[EventRow],
-) -> Result<Vec<String>, StoreError> {
+/// A line for each file `open`, the task's open warnings, the latest first, named: the latest
+/// warning's, each file once, at most [`MAX_RECAPPED_WARNINGS`]; one whose file or reason cannot be
+/// named is left out.
+fn warned_lines(queries: Queries<'_>, open: &[WarningRecord]) -> Result<Vec<String>, StoreError> {
     let mut named: BTreeSet<NodeId> = BTreeSet::new();
     let mut lines = Vec::new();
-    for row in warnings.iter().rev() {
-        let warning = &row.record;
-        let is_followed_up = events.iter().any(|event| {
-            let event = &event.record;
-            let is_done = event.meta.is_success != Some(false);
-            matches!(event.kind, EventKind::Read | EventKind::Edit)
-                && is_done
-                && resolves(warning, event.node_id, event.ts_ms)
-        });
-        if is_followed_up || !named.insert(warning.target) {
-            continue;
-        }
-        let Some((_, target)) = queries.node_file(warning.target)? else {
+    for warning in open.iter().filter(|warning| named.insert(warning.target)) {
+        let Some(target) = plain_path(queries, warning.target)? else {
             continue;
         };
         let why = match warning.kind {
             WarningKind::CallSite => Some("which calls a signature this task changed".to_owned()),
-            WarningKind::CoChange => source_path(queries, warning.source)?
+            WarningKind::CoChange => plain_path(queries, warning.source)?
                 .map(|source| format!("which usually changes with {source}")),
             WarningKind::Test => {
-                source_path(queries, warning.source)?.map(|source| format!("the tests of {source}"))
+                plain_path(queries, warning.source)?.map(|source| format!("the tests of {source}"))
             }
         };
-        let Some(why) = why.filter(|_| is_plain(target.as_str())) else {
+        let Some(why) = why else {
             continue;
         };
         lines.push(format!(
@@ -143,14 +122,6 @@ fn open_warnings(
         }
     }
     Ok(lines)
-}
-
-/// The path of the file node `node`, when it is one and its path is plain.
-fn source_path(queries: Queries<'_>, node: NodeId) -> Result<Option<RepoPath>, StoreError> {
-    Ok(queries
-        .node_file(node)?
-        .map(|(_, path)| path)
-        .filter(|path| is_plain(path.as_str())))
 }
 
 /// `text` on one line: each run of line breaks and other spaces one space, what [`is_taken_out`]

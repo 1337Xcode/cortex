@@ -399,6 +399,31 @@ fn an_edit_s_request_reads_back_as_written() -> TestResult {
     Ok(())
 }
 
+/// A stop's request for its reason, as the hook writes it when the agent stops: its type, its event
+/// and until when the hook reads the answer, read back as written.
+#[test]
+fn a_stop_s_request_reads_back_as_written() -> TestResult {
+    let stop = Request {
+        request_id: 3,
+        body: RequestBody::StopReason {
+            event: Box::new(event_of(HookKind::Stop)?),
+            answer_by_ms: Some(1_700_000_000_060),
+        },
+    };
+    let frame = encode(&stop)?;
+    let json = std::str::from_utf8(frame.get(LENGTH_PREFIX_BYTES..).ok_or("a body")?)?;
+    assert!(
+        json.starts_with(r#"{"request_id":3,"body":{"type":"stop_reason","event":{"#),
+        "{json}"
+    );
+    assert!(
+        json.ends_with(r#","answer_by_ms":1700000000060}}"#),
+        "{json}"
+    );
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, stop);
+    Ok(())
+}
+
 /// A read's request for its hint, as the hook writes it before a read: its type, its event and until
 /// when the hook reads the answer, read back as written.
 #[test]

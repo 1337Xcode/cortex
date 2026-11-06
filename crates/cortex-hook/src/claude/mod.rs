@@ -83,7 +83,7 @@ const HOOKS: &[HookEntry] = &[
         matcher: None,
         hook: HookKind::Stop,
         hard_timeout: OTHER_HARD_TIMEOUT,
-        gives_context: false,
+        gives_context: true,
     },
     HookEntry {
         event_name: "SubagentStart",
@@ -143,11 +143,11 @@ impl Adapter for Claude {
 mod tests {
     use super::*;
 
-    /// Cortex gives Claude Code text at a session's start, at a prompt, before a read (its hint)
-    /// and after a tool succeeded (an edit's warnings), and at no other hook: not after a tool
-    /// failed.
+    /// Cortex gives Claude Code text at a session's start, at a prompt, before a read (its hint),
+    /// after a tool succeeded (an edit's warnings) and at a stop (strict mode's reason), and at no
+    /// other hook: not after a tool failed.
     #[test]
-    fn a_session_start_a_prompt_a_read_and_a_tool_s_success_give_context() {
+    fn a_session_start_a_prompt_a_read_a_tool_s_success_and_a_stop_give_context() {
         let giving: Vec<&str> = HOOKS
             .iter()
             .filter(|entry| entry.gives_context)
@@ -159,7 +159,8 @@ mod tests {
                 "SessionStart",
                 "UserPromptSubmit",
                 "PreToolUse",
-                "PostToolUse"
+                "PostToolUse",
+                "Stop"
             ]
         );
     }

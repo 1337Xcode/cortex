@@ -292,8 +292,8 @@ fn a_silent_or_foreign_daemon_is_left_silently() -> TestResult {
     )?;
     assert!(call.is_silent_success(), "{:?}", call.output);
     // A daemon of a newer Cortex is left alone: the hook sends nothing after its handshake and
-    // event.
-    assert_eq!(kinds(&foreign.requests()?), ["hello", "event"]);
+    // its request, at a stop strict mode's reason.
+    assert_eq!(kinds(&foreign.requests()?), ["hello", "stop_reason"]);
     Ok(())
 }
 

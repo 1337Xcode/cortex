@@ -1,6 +1,7 @@
 //! The daemon's answers that are text: the work order a prompt gets, the primer a session's start
 //! gets, or the recap when its context was compacted, the warnings an edit gets, the hint a read
-//! gets, and what the engine finds for a question asked of it directly.
+//! gets, strict mode's reason at a stop, and what the engine finds for a question asked of it
+//! directly.
 //! Each is worked out with a reader of the store and the graph as it stands, never waiting for the
 //! writer; what a prompt's retrieval gave or weighed, the primer or recap given and the warnings
 //! given are returned for the writer to record after the event they answer.
@@ -13,6 +14,7 @@
 
 mod hints;
 mod recap;
+mod stop;
 mod warnings;
 
 use std::path::PathBuf;
@@ -83,6 +85,9 @@ pub(crate) struct EditSettings {
     pub(crate) warnings: WarningsConfig,
     /// `learning.link_decay`: what a co-access link keeps of its weight for each task.
     pub(crate) link_decay: f64,
+    /// `strict_mode`: whether a stop is given a reason to go on while call sites of a signature
+    /// the task changed are still unread.
+    pub(crate) is_strict_mode: bool,
 }
 
 /// Where a service's settings come from.

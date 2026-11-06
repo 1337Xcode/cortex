@@ -6,6 +6,8 @@
     reason = "each test file uses the helpers it needs, and the others are unused there"
 )]
 
+pub mod task;
+
 use cortex_core::{
     Agent, ContentHash, EdgeType, Event, FileFlags, HookKind, Identifier, InterestTier, Language,
     LineRange, RepoId, RepoPath, ScaleMode, ShortHash, SymbolKind, ToolKind, ToolResult,

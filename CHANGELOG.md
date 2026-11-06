@@ -63,8 +63,7 @@ All notable changes to this project are documented in this file. The format is b
 - Before Claude Code reads a file, it is told when the session already read those lines since its
   context was last compacted and the file has not changed since, or, in a file over 600 lines,
   which parts of it the task's work order pointed at, each line checked against the file on disk,
-  within 120 tokens. A tiny repository gets no hint. The hook and the daemon now speak protocol
-  4.0: a hook and a daemon of different Cortex versions are replaced as before.
+  within 120 tokens. A tiny repository gets no hint.
 - When a task ends, each warning its edits got is marked resolved if the agent then read or edited
   the file it named. `cortex status` and `cortex receipts` show the share of warnings followed up
   this way.
@@ -72,6 +71,10 @@ All notable changes to this project are documented in this file. The format is b
   progress was doing: the files it edited, the files it was warned of and has not read or edited
   since, and the start of its prompt when `privacy.store_prompt_excerpt` kept it, within 500
   tokens, once for each compaction.
+- `strict_mode = true` gives Claude Code a reason to go on when it stops while files calling a
+  signature its task changed were not read or edited since the warning, once a task. Off by
+  default, when a stop is given nothing. The hook and the daemon now speak protocol 5.0: a hook and
+  a daemon of different Cortex versions are replaced as before.
 - `cargo xtask verify` runs formatting, the crate dependency-direction rules, the shared lint
   settings in every crate, the invariant tags, clippy, the tests and the dependency licence and
   advisory checks; `--full` also runs the benchmarks against their budgets.

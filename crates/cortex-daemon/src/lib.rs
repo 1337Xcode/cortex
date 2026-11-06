@@ -38,6 +38,7 @@ mod retrieval;
 mod server;
 pub mod settings;
 mod signatures;
+mod stopped;
 #[cfg(test)]
 mod test_store;
 mod told;
@@ -267,6 +268,7 @@ fn index_and_serve(
             parse_timeout: Duration::from_millis(config.parse_timeout_ms),
             warnings: config.warnings,
             link_decay: config.link_decay,
+            is_strict_mode: config.is_strict_mode,
         },
     })));
     // The graph is built once the first index is done, before which a retrieval would find

@@ -210,14 +210,14 @@ fn text_absent_unasked_or_unfit_writes_nothing() -> TestResult {
         matches!(&request.body, RequestBody::Primer { event, .. } if event.is_probe),
         "{request:?}"
     );
-    let (written, request, log) = exchange("Stop", reply("[cortex] text\n"), false)?;
+    let (written, request, log) = exchange("SessionEnd", reply("[cortex] text\n"), false)?;
     assert_eq!(written, "");
     assert!(
-        matches!(&request.body, RequestBody::Event { event } if event.hook == HookKind::Stop),
+        matches!(&request.body, RequestBody::Event { event } if event.hook == HookKind::SessionEnd),
         "{request:?}"
     );
     assert!(
-        log.contains("claude Stop: the daemon did not take the event"),
+        log.contains("claude SessionEnd: the daemon did not take the event"),
         "{log}"
     );
     Ok(())

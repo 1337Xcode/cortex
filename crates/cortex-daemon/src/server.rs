@@ -32,6 +32,7 @@ use crate::latency::Latencies;
 use crate::recapped::Recapped;
 use crate::retrieval::Service;
 use crate::signatures::Signatures;
+use crate::stopped::Stopped;
 use crate::worktree::Worktree;
 
 /// Most connections served at once. Hooks and commands hold a connection for one exchange, so more
@@ -57,6 +58,8 @@ pub(crate) struct Server {
     signatures: Arc<Signatures>,
     /// The compactions each recent session's agent reported, and those recapped.
     recapped: Arc<Recapped>,
+    /// The tasks strict mode gave a reason to go on.
+    stopped: Arc<Stopped>,
     /// What answers with text, once the first index is done.
     service: Arc<OnceLock<Service>>,
     /// How long each hook's latest requests took to handle.
@@ -95,6 +98,8 @@ enum Asked {
     Warnings,
     /// The hint a read gets, before it runs.
     ReadHint,
+    /// The reason strict mode gives a stop to go on.
+    StopReason,
 }
 
 /// A request as read, with when the first byte of its frame arrived.
@@ -162,6 +167,7 @@ impl Server {
             worktree,
             signatures,
             recapped: Arc::default(),
+            stopped: Arc::default(),
             service,
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
@@ -325,6 +331,15 @@ impl Server {
                 let (body, hook, _) = self.answer_with_text(*event, asked).await;
                 (body, hook)
             }
+            RequestBody::StopReason {
+                event,
+                answer_by_ms,
+            } => {
+                reads_until_ms = answer_by_ms;
+                let asked = (Asked::StopReason, answer_by_ms);
+                let (body, hook, _) = self.answer_with_text(*event, asked).await;
+                (body, hook)
+            }
             RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
             RequestBody::Event { event } => {
                 let hook = event.hook;
@@ -407,6 +422,7 @@ impl Server {
             Asked::Primer => HookKind::SessionStart,
             Asked::Warnings => HookKind::PostTool,
             Asked::ReadHint => HookKind::PreTool,
+            Asked::StopReason => HookKind::Stop,
         };
         if hook != expected {
             return (
@@ -415,24 +431,30 @@ impl Server {
                 None,
             );
         }
+        // The moment before a tool runs is answered, not recorded, as for an event request. A stop
+        // is recorded once its answer is known: one given a reason to go on did not happen, and
+        // its task goes on; and the reason is worked out before the stop could end the task.
+        let is_stop = hook == HookKind::Stop;
         if is_probe {
             self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
-        } else if hook != HookKind::PreTool && !self.inbox.push_event(event.clone()) {
-            // The moment before a tool runs is answered, not recorded, as for an event request.
+        } else if hook != HookKind::PreTool && !is_stop && !self.inbox.push_event(event.clone()) {
             return (
                 error("the daemon is stopping and records no more events"),
                 Some(hook),
                 None,
             );
         }
+        let stop = (is_stop && !is_probe).then(|| event.clone());
         let signatures = Arc::clone(&self.signatures);
         let recapped = Arc::clone(&self.recapped);
+        let stopped = Arc::clone(&self.stopped);
         let mut answer = self
             .with_service(move |service, graph, uncommitted| match asked {
                 Asked::WorkOrder => service.prompt(&event, graph, uncommitted),
                 Asked::Primer => service.primer(&event, graph, &recapped),
                 Asked::Warnings => service.post_edit(&event, &signatures),
                 Asked::ReadHint => service.read_hint(&event),
+                Asked::StopReason => service.stop_reason(&event, &stopped),
             })
             .await
             .unwrap_or_default();
@@ -450,6 +472,15 @@ impl Server {
                     now_ms(),
                 );
             }
+        }
+        if let Some(stop) = stop.filter(|_| answer.text.is_none())
+            && !self.inbox.push_event(stop)
+        {
+            return (
+                error("the daemon is stopping and records no more events"),
+                Some(hook),
+                None,
+            );
         }
         let given = answer.given.filter(|_| !is_probe);
         (ResponseBody::Reply { text: answer.text }, Some(hook), given)
