@@ -8,10 +8,12 @@
 //! setting meant.
 
 mod retrieval;
+mod warnings;
 
 use thiserror::Error;
 
 pub use self::retrieval::{MAX_WORK_ORDER_TOKENS, RetrievalConfig, TypeWeights};
+pub use self::warnings::WarningsConfig;
 use crate::ScaleMode;
 
 /// The default for `index.max_file_bytes`: one mebibyte. Larger files are almost always data or
@@ -141,6 +143,11 @@ pub struct Config {
     pub test_extra_patterns: Vec<String>,
     /// The `retrieval.*` keys: how much a work order holds and how activation spreads.
     pub retrieval: RetrievalConfig,
+    /// The `warnings.*` keys: how many warnings an edit brings and when a co-change partner counts.
+    pub warnings: WarningsConfig,
+    /// `strict_mode`: when a task's agent stops while call sites of a signature it changed are still
+    /// unchanged, ask it once to go on. Default `false`: Cortex never holds a stop.
+    pub is_strict_mode: bool,
 }
 
 impl Default for Config {
@@ -166,6 +173,8 @@ impl Default for Config {
             git_half_life_commits: DEFAULT_GIT_HALF_LIFE_COMMITS,
             test_extra_patterns: Vec::new(),
             retrieval: RetrievalConfig::default(),
+            warnings: WarningsConfig::default(),
+            is_strict_mode: false,
         }
     }
 }
@@ -366,12 +375,19 @@ impl Config {
                 self.git_half_life_commits =
                     positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
             }
+            "strict_mode" => {
+                self.is_strict_mode = value.as_bool().ok_or_else(|| refuse("true or false"))?;
+            }
             "tests.extra_patterns" => {
                 self.test_extra_patterns = string_list(value)
                     .filter(|patterns| patterns.iter().all(|pattern| is_regex(pattern)))
                     .ok_or_else(|| refuse("a list of regular expressions"))?;
             }
-            _ => match self.retrieval.apply(key, value) {
+            _ => match self
+                .retrieval
+                .apply(key, value)
+                .or_else(|| self.warnings.apply(key, value))
+            {
                 Some(set) => set.map_err(refuse)?,
                 None => return Ok(false),
             },
@@ -514,6 +530,12 @@ mod tests {
                         containment: 0.1,
                     },
                 },
+                warnings: WarningsConfig {
+                    max_per_edit: 3,
+                    cochange_min_confidence: 0.5,
+                    cochange_min_count: 3,
+                },
+                is_strict_mode: false,
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -525,7 +547,7 @@ mod tests {
     fn later_layers_override_earlier_ones() -> Result<(), ConfigError> {
         let user = layer(
             "user",
-            "mode = \"small\"\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n\
+            "mode = \"small\"\nstrict_mode = true\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n\
              [upkeep.llm]\nenabled = true\n",
         );
         let repository = repository_layer(
@@ -539,7 +561,9 @@ mod tests {
              [retrieval]\nmax_tokens = 1200\nmax_files = 20\nmax_code_spans = 0\n\
              span_max_lines = 1\nteleport = 1\n\
              [retrieval.type_weights]\nstructural = 0\ncochange = 1\ncoaccess = 0.25\nabout = 0.5\n\
-             containment = 0.05\n",
+             containment = 0.05\n\
+             [warnings]\nmax_per_edit = 0\ncochange_min_confidence = 1\n\
+             cochange_min_count = 7\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -577,6 +601,12 @@ mod tests {
                         containment: 0.05,
                     },
                 },
+                warnings: WarningsConfig {
+                    max_per_edit: 0,
+                    cochange_min_confidence: 1.0,
+                    cochange_min_count: 7,
+                },
+                is_strict_mode: true,
             }
         );
         Ok(())
@@ -902,6 +932,41 @@ mod tests {
             ["f: unknown key `retrieval.type_weights.semantic` is ignored"]
         );
         Ok(())
+    }
+
+    /// The warning keys and `strict_mode` refuse what the rules cannot use, naming the file, the key
+    /// and what it accepts: more warnings an edit than fit their shared cap, a count below zero, a
+    /// confidence outside 0 to 1, a co-change count of 0, a word where true or false belongs.
+    #[test]
+    fn bad_warning_values_are_refused() {
+        assert_refused(&[
+            (
+                "warnings.max_per_edit = 11",
+                "warnings.max_per_edit",
+                "a whole number from 0 to 10",
+            ),
+            (
+                "warnings.max_per_edit = -1",
+                "warnings.max_per_edit",
+                "a whole number from 0 to 10",
+            ),
+            (
+                "warnings.cochange_min_confidence = 1.5",
+                "warnings.cochange_min_confidence",
+                "a number from 0 to 1",
+            ),
+            (
+                "warnings.cochange_min_count = 0",
+                "warnings.cochange_min_count",
+                "a whole number above 0",
+            ),
+            (
+                "warnings.cochange_min_count = 4294967296",
+                "warnings.cochange_min_count",
+                "a whole number above 0",
+            ),
+            ("strict_mode = \"yes\"", "strict_mode", "true or false"),
+        ]);
     }
 
     /// Checks that each file text in `cases` is refused for its key with what the key accepts.

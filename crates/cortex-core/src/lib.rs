@@ -51,7 +51,7 @@ pub use config::{
     Config, ConfigError, ConfigLayer, DEFAULT_HOLDOUT_SHARE, DEFAULT_IDLE_SHUTDOWN_MINUTES,
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, LoadedConfig,
     MAX_MMAP_BYTES, MAX_WORK_ORDER_TOKENS, ModeSetting, RetrievalConfig, TypeWeights,
-    keys_set as config_keys_set, load as load_config,
+    WarningsConfig, keys_set as config_keys_set, load as load_config,
 };
 pub use estimate::estimate_tokens;
 pub use event::{
