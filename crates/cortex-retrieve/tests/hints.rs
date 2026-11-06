@@ -94,6 +94,34 @@ fn read(
     Ok(())
 }
 
+/// Records that the session read the whole of the file of `node` at `path`, which then held
+/// `content`, and that the agent's tool cut the read after line `last`.
+fn read_cut(
+    repo: &mut Repo,
+    (path, node): (&str, NodeId),
+    (content, last): (&str, u32),
+) -> TestResult {
+    let mut transaction = repo.writer.transaction()?;
+    transaction.append_event(&EventRecord {
+        task_id: None,
+        session_id: Some(Identifier::new(SESSION)?),
+        ts_ms: 4,
+        kind: EventKind::Read,
+        node_id: Some(node),
+        path: Some(RepoPath::new(path)?),
+        range: None,
+        meta: EventMeta {
+            tool: Some(ToolKind::Read),
+            is_success: Some(true),
+            content: Some(ContentHash::of(content.as_bytes()).short()),
+            cut_after: Some(last),
+            ..EventMeta::default()
+        },
+    })?;
+    transaction.commit()?;
+    Ok(())
+}
+
 /// Records that the session's context was compacted.
 fn compacted(repo: &mut Repo) -> TestResult {
     let mut transaction = repo.writer.transaction()?;
@@ -160,6 +188,27 @@ fn a_long_file_is_told_the_parts_the_task_was_given() -> TestResult {
     );
     // Outside the task, or with no task, the parts are not named.
     assert_eq!(hint(&repo, "src/long.py", None, None)?, None);
+    Ok(())
+}
+
+/// A read of the whole file that the agent's tool cut after line 300 holds lines 1 to 300 only: a
+/// read of 100 to 200 is told those lines were read, as lines 1-300; a read of 400 to 450, past the
+/// cut, is told nothing.
+#[test]
+fn a_read_cut_short_holds_only_the_lines_it_returned() -> TestResult {
+    let mut repo = Repo::new()?;
+    let (node, text, task) = long_file(&mut repo, "src/long.py")?;
+    read_cut(&mut repo, ("src/long.py", node), (&text, 300))?;
+    assert_eq!(
+        hint(&repo, "src/long.py", Some((100, 200)), Some(task))?.as_deref(),
+        Some(
+            "[cortex] You read lines 1-300 of this file earlier in this session; unchanged since.\n"
+        )
+    );
+    assert_eq!(
+        hint(&repo, "src/long.py", Some((400, 450)), Some(task))?,
+        None
+    );
     Ok(())
 }
 

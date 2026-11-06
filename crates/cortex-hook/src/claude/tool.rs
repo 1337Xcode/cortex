@@ -53,8 +53,8 @@ pub(super) fn kind(name: &str) -> ToolKind {
 
 /// What a call of `tool` at `hook` aimed at. Before a read runs its lines are the ones asked for;
 /// after, the ones it returned, when it asked for a start or a limit: one that asked for neither
-/// asked for the whole file, however much of it Claude Code returned. A search without a path
-/// searched the working folder.
+/// asked for the whole file, however much of it Claude Code returned, and keeps the last line
+/// returned when Claude Code cut it short. A search without a path searched the working folder.
 pub(super) fn aim(tool: ToolKind, hook: HookKind, payload: &Payload<'_>, located: &Located) -> Aim {
     let Some(input) = payload.tool_input.as_ref() else {
         return Aim::Nothing;
@@ -75,6 +75,14 @@ pub(super) fn aim(tool: ToolKind, hook: HookKind, payload: &Payload<'_>, located
                         .map(lines_read)
                         .unwrap_or_default(),
                     _ => lines_asked(input),
+                },
+                cut_after: match hook {
+                    HookKind::PostTool if input.offset.is_none() && input.limit.is_none() => {
+                        response
+                            .and_then(|response| response.file.as_ref())
+                            .and_then(|file| lines_read(file).first().map(|lines| lines.end_line()))
+                    }
+                    _ => None,
                 },
                 ..ToolTarget::default()
             },

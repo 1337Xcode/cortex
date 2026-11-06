@@ -106,11 +106,15 @@ fn read_before(
     Ok(since_compacted.find_map(|row| {
         let event = &row.record;
         let is_same = event.meta.is_success != Some(false) && event.meta.content == Some(hash);
-        // A read of the whole file is kept with no range: it holds every line.
-        let holds = event.range.is_none_or(|range| {
+        // A read of the whole file is kept with no range: it holds every line, or those up to the
+        // last one returned when the agent's tool cut it short.
+        let read = event
+            .range
+            .or_else(|| LineRange::new(1, event.meta.cut_after?).ok());
+        let holds = read.is_none_or(|range| {
             range.start_line() <= wanted.start_line() && wanted.end_line() <= range.end_line()
         });
-        (is_same && holds).then(|| event.range.unwrap_or(wanted))
+        (is_same && holds).then(|| read.unwrap_or(wanted))
     }))
 }
 

@@ -970,7 +970,8 @@ fn edits_record_the_lines_they_changed() -> TestResult {
 /// After it ran, a read that asked for some lines records the lines it returned: from line 2 for 4
 /// lines of the 14 is 2..5, and from line 2 with no limit, where Claude Code returned 5 lines,
 /// 2..6. A read that asked for neither a start nor a limit read the whole file, however much of it
-/// Claude Code returned: the first 5 lines of the 14 are no lines. Before it runs, an offset
+/// Claude Code returned: the first 5 lines of the 14 are no lines, and the read keeps that it was
+/// cut after line 5; all 14 of 14 are no lines and no cut. Before it runs, an offset
 /// without a limit asks for no lines Cortex can know. A read that failed returned no lines.
 #[test]
 fn reads_record_the_lines_they_returned() -> TestResult {
@@ -996,7 +997,13 @@ fn reads_record_the_lines_they_returned() -> TestResult {
     let first_five = edited("post-tool-use-read.json", "PostToolUse", &locate, |value| {
         value["tool_response"]["file"]["numLines"] = 5.into();
     })?;
-    assert_eq!(first_five.tool_target, file("calc/ops.py", &[])?);
+    let cut = file("calc/ops.py", &[])?.map(|target| ToolTarget {
+        cut_after: Some(5),
+        ..target
+    });
+    assert_eq!(first_five.tool_target, cut);
+    let whole = edited("post-tool-use-read.json", "PostToolUse", &locate, |_| {})?;
+    assert_eq!(whole.tool_target, file("calc/ops.py", &[])?);
     let open_ended = edited(
         "pre-tool-use-read-range.json",
         "PreToolUse",

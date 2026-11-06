@@ -141,9 +141,11 @@ fn in_context(reads: &[EventRow]) -> Vec<ReadSpan> {
         .take_while(|row| row.record.kind == EventKind::Read)
         .filter(|row| is_done(row))
         .filter_map(|row| {
+            // A whole-file read cut short holds the lines up to the last one returned.
+            let cut = row.record.meta.cut_after;
             Some(ReadSpan {
                 path: row.record.path.clone()?,
-                range: row.record.range,
+                range: row.record.range.or_else(|| LineRange::new(1, cut?).ok()),
                 content: row.record.meta.content,
             })
         })

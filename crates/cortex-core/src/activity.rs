@@ -139,6 +139,9 @@ pub struct EventMeta {
     /// while the file still holds that, the agent holds what it read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<ShortHash>,
+    /// For a read of the whole file that the agent's tool cut short, the last line it returned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut_after: Option<u32>,
 }
 
 /// The start of a prompt, kept only when the user asks: at most [`PROMPT_EXCERPT_CHARS`]

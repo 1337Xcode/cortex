@@ -146,6 +146,11 @@ pub struct ToolTarget {
     /// The lines read, or the lines each edited hunk covers after the edit.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ranges: Vec<LineRange>,
+    /// For a read that asked for the whole file and was cut short by the agent's tool, the last
+    /// line it returned: the read is still the whole file's, which it has no ranges for, and the
+    /// agent holds its lines up to this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut_after: Option<u32>,
     /// The search pattern, for a search.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
@@ -355,6 +360,7 @@ impl fmt::Debug for ToolTarget {
             .debug_struct("ToolTarget")
             .field("path", &self.path)
             .field("ranges", &self.ranges)
+            .field("cut_after", &self.cut_after)
             .field("pattern", &self.pattern.as_deref().map(Withheld::of))
             .field("command", &self.command)
             .field("hits", &self.hits)

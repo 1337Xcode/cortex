@@ -118,6 +118,35 @@ fn a_stretch_counts_for_the_symbols_it_meets() -> TestResult {
     Ok(())
 }
 
+/// A read of the whole file that the agent's tool cut after line 9 is recorded as the whole
+/// file's read, and holds lines 1 to 9 in the session's context, not the whole file.
+#[test]
+fn a_read_cut_short_holds_the_lines_it_returned() -> TestResult {
+    let mut repo = Repo::new()?;
+    let text = "line\n".repeat(15);
+    let a = repo.file(
+        "a.py",
+        &text,
+        &[function("f", 1, 4), function("g", 6, 14)],
+        FileFlags::empty(),
+    )?;
+    let mut cut = tool(("s1", 2_100), ToolKind::Read, ("a.py", &[]))?;
+    if let Some(target) = cut.tool_target.as_mut() {
+        target.cut_after = Some(9);
+    }
+    record(
+        &mut repo,
+        &[
+            event("s1", 1_000, HookKind::SessionStart)?,
+            event("s1", 2_000, HookKind::Prompt)?,
+            cut,
+        ],
+    )?;
+    let (found, _) = shown(&repo, &[a[1], a[2]])?;
+    assert_eq!(found.in_context, [read_of_a((1, 9), &text)?]);
+    Ok(())
+}
+
 /// What was read before the last compaction is no longer in the session's context, though it is
 /// still among its latest reads and seeds what it touched (`g`); what was read after it (`f`) is
 /// in the context too. A subagent's read is in its own context, not the session's, and seeds

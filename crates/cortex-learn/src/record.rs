@@ -518,6 +518,10 @@ fn meta_of(event: &Event, told: &Told) -> EventMeta {
         runner: check.and_then(|Check { runner, .. }| Identifier::new(runner).ok()),
         check: check.map(|check| check.kind),
         content: None,
+        cut_after: event
+            .tool_target
+            .as_ref()
+            .and_then(|target| target.cut_after),
     }
 }
 

@@ -907,6 +907,7 @@ mod tests {
             tool_target: Some(ToolTarget {
                 path: Some(RepoPath::new("a.py")?),
                 ranges: vec![LineRange::new(1, 1)?],
+                cut_after: None,
                 pattern: None,
                 command: None,
                 hits: Vec::new(),
