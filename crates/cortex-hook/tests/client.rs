@@ -13,6 +13,15 @@ use cortex_core::ipc::{
 };
 use cortex_core::{Agent, Event, HookKind, Identifier, Ulid};
 use cortex_hook::{ClientError, ask};
+#[cfg(windows)]
+use {
+    cortex_core::{Endpoint, RunFiles},
+    interprocess::ConnectWaitMode,
+    interprocess::local_socket::traits::Listener as _,
+    interprocess::local_socket::{ConnectOptions, GenericNamespaced, Stream, ToNsName},
+    std::io::{Read, Write},
+    std::thread::JoinHandle,
+};
 
 /// A deadline `millis` from now.
 fn in_millis(millis: u64) -> Instant {
@@ -194,6 +203,11 @@ fn a_request_too_long_is_never_sent() -> TestResult {
 /// On Windows, a pipe of the daemon's name held by a process the run folder does not name as the
 /// daemon (another user could create one while no daemon runs) is told nothing: the client hangs
 /// up before writing a byte.
+///
+/// The impostor here hears every connection to its pipe until the test's own last one, which
+/// says so and waits to be heard. Waiting for the client's connection alone would hang whenever the
+/// client hung up before the impostor's thread began to listen: Windows then drops that connection
+/// unseen and the listener waits for another, which never comes.
 #[cfg(windows)]
 #[test]
 fn a_pipe_held_by_another_process_is_told_nothing() -> TestResult {
@@ -204,13 +218,74 @@ fn a_pipe_held_by_another_process_is_told_nothing() -> TestResult {
         "4294967295
 ",
     )?;
-    let daemon = serve(&files, Script::Answer(Vec::new()))?;
+    let impostor = impostor(&files)?;
     let result = ask(&files, Role::Hook, RequestBody::Status, in_millis(5_000));
     assert!(
         matches!(result, Err(ClientError::NotTheDaemon)),
         "{result:?}"
     );
-    let served = daemon.join().map_err(|_| "the daemon thread panicked")?;
-    assert!(served.is_err(), "the impostor read {served:?}");
+    let mut last = connect_within(&files, Duration::from_secs(5))?;
+    last.write_all(LAST_CONNECTION)?;
+    let mut heard_back = [0_u8; 1];
+    last.read_exact(&mut heard_back)?;
+    let heard = impostor
+        .join()
+        .map_err(|_| "the impostor's thread panicked")??;
+    assert!(
+        heard.iter().all(Vec::is_empty),
+        "the impostor read {heard:?}"
+    );
     Ok(())
+}
+
+/// What the test's own last connection to the impostor writes.
+#[cfg(windows)]
+const LAST_CONNECTION: &[u8] = b"the test is done";
+
+/// A pipe server at the endpoint of `files` that is not the daemon, on a thread: it reads each
+/// connection until its client hangs up, and returns what each one sent once a connection sends
+/// [`LAST_CONNECTION`], which it answers with one byte.
+#[cfg(windows)]
+fn impostor(files: &RunFiles) -> TestResult<JoinHandle<Result<Vec<Vec<u8>>, String>>> {
+    let listener = common::listen(files)?;
+    Ok(std::thread::spawn(move || {
+        let mut heard = Vec::new();
+        loop {
+            let mut stream = listener.accept().map_err(|error| error.to_string())?;
+            let bytes = read_until_hung_up(&mut stream, LAST_CONNECTION.len())?;
+            if bytes == LAST_CONNECTION {
+                stream.write_all(b"!").map_err(|error| error.to_string())?;
+                return Ok(heard);
+            }
+            heard.push(bytes);
+        }
+    }))
+}
+
+/// What `stream` sends until its client hangs up, or until it has sent `enough` bytes.
+#[cfg(windows)]
+fn read_until_hung_up(stream: &mut impl Read, enough: usize) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 64];
+    while bytes.len() < enough {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => bytes.extend(chunk.iter().take(read)),
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => break,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(bytes)
+}
+
+/// A connection to the endpoint of `files`, waiting at most `within` for the pipe to be free.
+#[cfg(windows)]
+fn connect_within(files: &RunFiles, within: Duration) -> TestResult<Stream> {
+    let Endpoint::Pipe(pipe) = files.endpoint() else {
+        return Err("a named pipe".into());
+    };
+    Ok(ConnectOptions::new()
+        .name(pipe.to_ns_name::<GenericNamespaced>()?)
+        .wait_mode(ConnectWaitMode::Timeout(within))
+        .connect_sync()?)
 }
