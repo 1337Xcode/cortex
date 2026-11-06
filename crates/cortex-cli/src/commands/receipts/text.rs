@@ -31,6 +31,7 @@ pub(super) fn lines(report: &Report, root: &Path, days: Option<u32>) -> Vec<Stri
     ));
     lines.extend(holdout_lines(&recorded.holdout));
     lines.push(precision_line(recorded.precision));
+    lines.push(warning_line(recorded.warnings));
     if recorded.sessions.is_empty() {
         lines.push(match days {
             Some(days) => format!(
@@ -173,6 +174,19 @@ fn precision_line(precision: Precision) -> String {
             "injection precision: {share:.2}, {} of {} given and labelled were used",
             grouped(precision.used),
             counted(precision.labelled, "work order", "work orders")
+        ),
+    }
+}
+
+/// The line saying how often the files warnings named were then read or edited.
+fn warning_line(precision: Precision) -> String {
+    match precision.share() {
+        None => "warning precision: no warning is marked yet".to_owned(),
+        Some(share) => format!(
+            "warning precision: {share:.2}, {} of {} warnings named and marked were then read or \
+             edited",
+            grouped(precision.used),
+            counted(precision.labelled, "file", "files")
         ),
     }
 }
@@ -414,7 +428,8 @@ mod tests {
     }
 
     /// A store with no session in the window says so after what the costs come from, the arms
-    /// and the precision: 52 used of 73 labelled is 0.7123, shown as 0.71.
+    /// and the precisions: 52 used of 73 labelled is 0.7123, shown as 0.71; 5 of 9 files warnings
+    /// named followed up is 0.5556, shown as 0.56.
     #[test]
     fn a_window_without_sessions_says_so() {
         let report = Report {
@@ -435,6 +450,10 @@ mod tests {
                     labelled: 73,
                     used: 52,
                 },
+                warnings: Precision {
+                    labelled: 9,
+                    used: 5,
+                },
                 sessions: Vec::new(),
             }),
         };
@@ -447,10 +466,12 @@ mod tests {
                 "holdout comparison: not enough data yet (the repository has 31 tasks held out \
                  and 1,200 not, but fewer than 30 of each have ended)",
                 "injection precision: 0.71, 52 of 73 work orders given and labelled were used",
+                "warning precision: 0.56, 5 of 9 files warnings named and marked were then read \
+                 or edited",
                 "no session started in the last 2 days",
             ]
         );
-        assert_eq!(lines(&report, Path::new("repo"), None)[4], "no session");
+        assert_eq!(lines(&report, Path::new("repo"), None)[5], "no session");
     }
 
     /// A session of an agent whose transcripts Cortex does not read says its usage was not read,

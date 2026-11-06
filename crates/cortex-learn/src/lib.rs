@@ -28,6 +28,7 @@ mod record;
 mod self_check;
 mod task_end;
 mod task_state;
+mod warnings;
 mod watcher_edits;
 
 pub use archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
@@ -48,4 +49,5 @@ pub use task_state::{
     FileNode, MAX_TASK_HIT_BYTES, MAX_TASK_ROWS, MAX_TASK_STATES, RunCheck, Step, TaskEnd,
     TaskState,
 };
+pub use warnings::resolve_warnings;
 pub use watcher_edits::{ATTRIBUTION_WINDOW_MS, HOLD_MS, HeldEdit, WatcherEdit};

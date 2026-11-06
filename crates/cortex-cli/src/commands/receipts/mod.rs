@@ -75,14 +75,17 @@ enum Prices {
     },
 }
 
-/// What the store holds: the arms of the held-out tasks, how precise the work orders given were,
-/// and the receipts of the sessions asked for.
+/// What the store holds: the arms of the held-out tasks, how precise the work orders given and the
+/// warnings were, and the receipts of the sessions asked for.
 #[derive(Debug, Serialize)]
 struct Recorded {
     /// How many of the repository's tasks were held out and how many were not.
     holdout: Holdout,
     /// Of the repository's work orders that reached the agent, how many were labelled and used.
     precision: Precision,
+    /// Of the files the repository's warnings named, how many were marked at their task's end, and
+    /// how many of those were then read or edited.
+    warnings: Precision,
     /// Each session's receipt, by start.
     sessions: Vec<SessionReceipt>,
 }
@@ -185,6 +188,9 @@ fn recorded(
     let (labelled, used) = queries
         .delivered_precision()
         .context("counting the labelled work orders given")?;
+    let warned = queries
+        .warning_counts()
+        .context("counting the warnings given")?;
     let arms = Arms { held_out, treated };
     let comparison = if arms.is_enough() {
         compared(queries)?
@@ -202,6 +208,10 @@ fn recorded(
             comparison,
         },
         precision: Precision { labelled, used },
+        warnings: Precision {
+            labelled: warned.labelled,
+            used: warned.resolved,
+        },
         sessions,
     }))
 }

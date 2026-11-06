@@ -6,7 +6,8 @@ mod common;
 use common::{Scratch, TestResult, index};
 use cortex_core::{Agent, Identifier, Ulid, WarningKind};
 use cortex_store::{
-    NodeId, SessionRecord, StoreError, TaskRecord, WarningId, WarningRecord, WarningRow, Writer,
+    NodeId, SessionRecord, StoreError, TaskRecord, WarningCounts, WarningId, WarningRecord,
+    WarningRow, Writer,
 };
 
 /// The first task's id.
@@ -204,5 +205,45 @@ fn a_damaged_warning_row_is_reported() -> TestResult {
             "{read:?}"
         );
     }
+    Ok(())
+}
+
+/// The counts: three files named, two of them marked, one of those resolved; with none stored,
+/// all three counts are 0.
+#[test]
+fn warnings_are_counted() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    assert_eq!(writer.queries().warning_counts()?, WarningCounts::default());
+    let first = Ulid::parse(FIRST)?;
+    let [orders, schema, test] = store_with(
+        &mut writer,
+        &["src/orders.py", "src/schema.py", "tests/test_orders.py"],
+        &[first],
+    )?[..] else {
+        return Err("three nodes".into());
+    };
+    let warned = |target| WarningRecord {
+        task_id: first,
+        at_ms: 2_000,
+        kind: WarningKind::CoChange,
+        source: orders,
+        target,
+        strength: 0.5,
+    };
+    let ids = record_all(&mut writer, &[warned(schema), warned(test), warned(orders)])?;
+    let mut transaction = writer.transaction()?;
+    for (id, is_resolved) in ids.iter().zip([true, false]) {
+        transaction.resolve_warning(*id, is_resolved)?;
+    }
+    transaction.commit()?;
+    assert_eq!(
+        writer.queries().warning_counts()?,
+        WarningCounts {
+            given: 3,
+            labelled: 2,
+            resolved: 1,
+        }
+    );
     Ok(())
 }

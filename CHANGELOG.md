@@ -62,6 +62,9 @@ All notable changes to this project are documented in this file. The format is b
   `warnings.cochange_min_confidence` and `warnings.cochange_min_count` set the limits. The hook and
   the daemon now speak protocol 3.0: a hook and a daemon of different Cortex versions are
   replaced as before.
+- When a task ends, each warning its edits got is marked resolved if the agent then read or edited
+  the file it named. `cortex status` and `cortex receipts` show the share of warnings followed up
+  this way.
 - `cargo xtask verify` runs formatting, the crate dependency-direction rules, the shared lint
   settings in every crate, the invariant tags, clippy, the tests and the dependency licence and
   advisory checks; `--full` also runs the benchmarks against their budgets.

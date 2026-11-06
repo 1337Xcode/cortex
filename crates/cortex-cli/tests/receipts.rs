@@ -184,6 +184,10 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         recorded.get("precision"),
         Some(&json!({"labelled": 0, "used": 0}))
     );
+    assert_eq!(
+        recorded.get("warnings"),
+        Some(&json!({"labelled": 0, "used": 0}))
+    );
     let sessions = recorded
         .get("sessions")
         .and_then(Value::as_array)
@@ -257,9 +261,9 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     assert!(printed.status.success(), "{printed:?}");
     let text = String::from_utf8(printed.stdout)?;
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 9, "{text}");
+    assert_eq!(lines.len(), 10, "{text}");
     assert_eq!(
-        lines[..4],
+        lines[..5],
         [
             format!(
                 "prices: as of 2026-11-03, read from \
@@ -273,19 +277,20 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             "holdout comparison: not enough data yet (the repository has 0 tasks held out and 1 \
              not; 30 of each are needed)",
             "injection precision: no work order given is labelled yet",
+            "warning precision: no warning is marked yet",
         ]
     );
-    let session_line = lines[4];
+    let session_line = lines[5];
     assert!(
         session_line.starts_with(&format!("session {S1} (claude, live), started ")),
         "{session_line}"
     );
     assert!(session_line.ends_with(" UTC, 1 subagent"), "{session_line}");
     assert_eq!(
-        lines[5],
+        lines[6],
         format!("  primer: {PRIMER_TOKENS} tokens injected by Cortex")
     );
-    let task_line = lines[6];
+    let task_line = lines[7];
     assert!(
         task_line.starts_with("  task 1 (unknown), started "),
         "{task_line}"
@@ -299,7 +304,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         "{task_line}"
     );
     assert_eq!(
-        lines[7..],
+        lines[8..],
         [
             "  outside any task: 1 turn, 33,499 input tokens (3,702 uncached, 0 read from the \
              cache, 29,797 written to it), 100 output tokens, about $0.1276; 0 tool calls"

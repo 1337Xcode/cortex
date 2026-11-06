@@ -607,6 +607,11 @@ pub(crate) const WARNING_INSERT: &str = "INSERT INTO warnings \
 /// Sets whether one warning was resolved.
 pub(crate) const WARNING_RESOLVE: &str = "UPDATE warnings SET resolved = ?2 WHERE warning_id = ?1";
 
+/// How many warnings were given, how many of them are marked, and how many of those resolved: each
+/// row one file a warning named.
+pub(crate) const WARNING_COUNTS: &str =
+    "SELECT count(*), count(resolved), coalesce(sum(resolved), 0) FROM warnings";
+
 /// The warnings of one task, in the order they were recorded, read back as [`crate::warnings`]
 /// reads them.
 pub(crate) const WARNINGS_OF_TASK: &str = "SELECT warning_id, task_id, ts, kind, src_node, \

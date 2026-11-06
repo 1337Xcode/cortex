@@ -71,5 +71,5 @@ pub use records::{
 pub use rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow, SymbolSpan};
 pub use self_check::SelfCheckRecord;
 pub use usage::UsageRow;
-pub use warnings::{WarningRecord, WarningRow};
+pub use warnings::{WarningCounts, WarningRecord, WarningRow};
 pub use writer::{WriteTx, Writer, WriterOptions};

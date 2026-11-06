@@ -9,7 +9,7 @@ use rusqlite::{Connection, Row};
 use crate::error::{StoreError, sqlite};
 use crate::ids::{NodeId, WarningId};
 use crate::queries::Queries;
-use crate::schema;
+use crate::{schema, values};
 
 /// One file a warning named, as it is recorded with what the warning was about.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,6 +37,17 @@ pub struct WarningRow {
     pub record: WarningRecord,
     /// Whether its target was read or edited after it, once its task ended.
     pub resolved: Option<bool>,
+}
+
+/// How many warnings the store holds, each row one file a warning named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WarningCounts {
+    /// The files warnings named.
+    pub given: u64,
+    /// Those marked at their task's end.
+    pub labelled: u64,
+    /// Those of them read or edited after the warning.
+    pub resolved: u64,
 }
 
 /// Records `record`, returning its row.
@@ -74,6 +85,27 @@ pub(crate) fn resolve(
 }
 
 impl Queries<'_> {
+    /// How many warnings the store holds, marked and resolved.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and counts that cannot be read back.
+    pub fn warning_counts(self) -> Result<WarningCounts, StoreError> {
+        let (given, labelled, resolved): (i64, i64, i64) = self
+            .connection()
+            .prepare_cached(schema::WARNING_COUNTS)
+            .and_then(|mut statement| {
+                statement.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            })
+            .map_err(sqlite("counting warnings"))?;
+        // Only a sum over resolutions damaged outside Cortex can be below zero.
+        Ok(WarningCounts {
+            given: values::number(given, "warnings", 0)?,
+            labelled: values::number(labelled, "warnings.resolved", 0)?,
+            resolved: values::number(resolved, "warnings.resolved", 0)?,
+        })
+    }
+
     /// The warnings of task `task_id`, in the order they were recorded.
     ///
     /// # Errors

@@ -19,7 +19,9 @@ use cortex_hook::{Answer, ClientError};
 use cortex_index::waits_to_be_parsed;
 use cortex_learn::{MAX_RAISE_STEPS, raise_of, recent_precision};
 use cortex_retrieve::{AGREEING_KINDS, LEXICAL_BAR};
-use cortex_store::{MetaKey, Queries, Reader, SelfCheckRecord, StoreError, is_writer_running};
+use cortex_store::{
+    MetaKey, Queries, Reader, SelfCheckRecord, StoreError, WarningCounts, is_writer_running,
+};
 
 use crate::{output, repository, upgrade};
 
@@ -365,7 +367,30 @@ fn status_lines(
         }
         Err(error) => return Err(error.into()),
     }
+    lines.push(warnings_line(queries.warning_counts()?));
     Ok(lines)
+}
+
+/// How many files warnings named, and how many of those marked at their task's end were then read
+/// or edited.
+fn warnings_line(counts: WarningCounts) -> String {
+    let named = counted(counts.given, ("file named", "files named"));
+    match (counts.given, counts.labelled) {
+        (0, _) => "warnings: none given yet".to_owned(),
+        (_, 0) => format!("warnings: {named}, none marked yet"),
+        (_, labelled) => {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "counts of warnings stay far below the 2^52 a float holds exactly"
+            )]
+            let share = counts.resolved as f64 / labelled as f64;
+            let verb = if counts.resolved == 1 { "was" } else { "were" };
+            format!(
+                "warnings: {named}; {} of {labelled} marked {verb} then read or edited ({share:.2})",
+                counts.resolved
+            )
+        }
+    }
 }
 
 /// What the gate asks before it hands a work order over, its bar for the prompt's words raised as
@@ -732,6 +757,29 @@ mod tests {
             "graph: 1 node, 1 link, without co-change links; built once, the latest in 45 ms"
         );
         assert_eq!(graph_line(None), "graph: none built yet");
+    }
+
+    /// The warnings read as one line: none given; given and none marked; 7 of 10 marked resolved,
+    /// 0.70; and one of one, in the singular.
+    #[test]
+    fn the_warnings_read_as_one_line() {
+        let line = |given, labelled, resolved| {
+            warnings_line(WarningCounts {
+                given,
+                labelled,
+                resolved,
+            })
+        };
+        assert_eq!(line(0, 0, 0), "warnings: none given yet");
+        assert_eq!(line(3, 0, 0), "warnings: 3 files named, none marked yet");
+        assert_eq!(
+            line(12, 10, 7),
+            "warnings: 12 files named; 7 of 10 marked were then read or edited (0.70)"
+        );
+        assert_eq!(
+            line(1, 1, 1),
+            "warnings: 1 file named; 1 of 1 marked was then read or edited (1.00)"
+        );
     }
 
     /// The co-change line says nothing was mined before a mark exists, that there is nothing to
