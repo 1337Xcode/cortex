@@ -283,3 +283,36 @@ fn a_held_out_task_gets_nothing_but_its_injection_is_recorded() -> TestResult {
     assert!(!injection.record.was_delivered());
     Ok(())
 }
+
+/// A slash command naming the file the familiar prompt names, and "ok", ask for no work order:
+/// each prints nothing and starts a task of its own, which holds no injection, since the daemon
+/// was sent the prompt's event alone and retrieved nothing for it. The familiar prompt, asked the
+/// same way, gets one.
+#[test]
+fn a_command_or_a_word_starts_a_task_and_asks_for_nothing() -> TestResult {
+    let (home, repo, _daemon) = started("0")?;
+    for (words, count) in [("/review calc/ops.py divide", 1), ("ok", 2)] {
+        assert_eq!(given(&later(&repo, words, LATER)?, home.path())?, None);
+        wait_for(|| Ok(tasks(&repo, LATER)?.len() == count))?;
+    }
+    let asked = given(&later(&repo, FAMILIAR, LATER)?, home.path())?;
+    assert!(asked.is_some(), "the familiar prompt got nothing");
+    let all = tasks(&repo, LATER)?;
+    let [command, word, familiar] = &all[..] else {
+        return Err(format!("{} tasks", all.len()).into());
+    };
+    wait_for(|| {
+        read(&repo, |queries| {
+            Ok(!queries
+                .injections_of_task(familiar.record.task_id)?
+                .is_empty())
+        })
+    })?;
+    for task in [command, word] {
+        let recorded = read(&repo, |queries| {
+            Ok(queries.injections_of_task(task.record.task_id)?)
+        })?;
+        assert!(recorded.is_empty(), "{recorded:?}");
+    }
+    Ok(())
+}

@@ -46,7 +46,7 @@ const BENCHES: [(&str, &str); 3] = [
 ];
 
 /// Every budget a benchmark checks. The limits are the product's latency budgets.
-const BUDGETS: [Budget; 19] = [
+const BUDGETS: [Budget; 20] = [
     Budget {
         group: "index",
         function: "initial_10k",
@@ -79,6 +79,13 @@ const BUDGETS: [Budget; 19] = [
         group: "hooks",
         function: "user_prompt_submit",
         what: "UserPromptSubmit hook, start to exit",
+        limit: Duration::from_millis(150),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks",
+        function: "user_prompt_submit_word",
+        what: "UserPromptSubmit hook on a one-word prompt, which asks for no work order",
         limit: Duration::from_millis(150),
         platforms: Platforms::Reference,
     },
@@ -334,6 +341,7 @@ mod tests {
                 ("session_start", 120),
                 ("session_start_compact", 120),
                 ("user_prompt_submit", 150),
+                ("user_prompt_submit_word", 150),
                 ("pre_tool_use_read", 40),
                 ("post_tool_use_edit", 80),
                 ("stop", 60),

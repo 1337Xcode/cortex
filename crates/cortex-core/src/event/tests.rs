@@ -218,6 +218,41 @@ fn only_a_successful_edit_names_its_file() -> TestResult {
 
 /// The file a read is about to read: the moment before a read names `calc/ops.py`; the read's
 /// result, an edit about to run and a read naming no file inside the repository name none.
+/// A prompt asks for code unless it is a slash command, a shell escape (each after any spaces) or
+/// fewer than four characters other than spaces; any other event asks for none.
+#[test]
+fn a_prompt_asks_for_code_unless_it_is_a_command_or_a_word() -> TestResult {
+    let asking = |text: &str| -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let event = Event {
+            hook: HookKind::Prompt,
+            prompt_text: Some(text.to_owned()),
+            ..full_event()?
+        };
+        Ok(event.prompt_for_work().map(str::to_owned))
+    };
+    for text in ["fix the login bug", "a.py", "  x y z w  ", "why?"] {
+        assert_eq!(asking(text)?.as_deref(), Some(text), "{text:?}");
+    }
+    for text in [
+        "/review src/a.py",
+        "  /commit",
+        "!ls -la",
+        "ok",
+        " y e s ",
+        "go",
+        "",
+    ] {
+        assert_eq!(asking(text)?, None, "{text:?}");
+    }
+    let stop = Event {
+        hook: HookKind::Stop,
+        prompt_text: Some("fix the login bug".to_owned()),
+        ..full_event()?
+    };
+    assert_eq!(stop.prompt_for_work(), None);
+    Ok(())
+}
+
 #[test]
 fn only_the_moment_before_a_read_names_its_file() -> TestResult {
     let before = Event {

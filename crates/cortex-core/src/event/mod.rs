@@ -33,6 +33,10 @@ pub const MAX_HITS: usize = 50;
 /// frame and in the daemon's queue of events.
 pub const MAX_HITS_BYTES: usize = 4 * 1024;
 
+/// The fewest characters other than spaces a prompt holds to ask for code: four, so that "ok",
+/// "yes" and "go" ask for nothing while a file's name alone, `a.py`, still may.
+pub const MIN_WORK_PROMPT_CHARS: usize = 4;
+
 /// One hook call, normalized.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
@@ -114,6 +118,22 @@ impl Event {
             return None;
         }
         self.tool_target.as_ref()?.path.as_ref()
+    }
+
+    /// The prompt this event submits when it may ask for code: none for an event that is no
+    /// prompt, a slash command (`/` first), a shell escape (`!` first), or a prompt of fewer than
+    /// [`MIN_WORK_PROMPT_CHARS`] characters other than spaces, such as "ok" or "yes", which names
+    /// nothing to look for. Such a prompt is still recorded: it starts a task.
+    #[must_use]
+    pub fn prompt_for_work(&self) -> Option<&str> {
+        if self.hook != HookKind::Prompt {
+            return None;
+        }
+        let prompt = self.prompt_text.as_deref()?;
+        let start = prompt.trim_start();
+        let is_command = start.starts_with('/') || start.starts_with('!');
+        let chars = prompt.chars().filter(|c| !c.is_whitespace()).count();
+        (!is_command && chars >= MIN_WORK_PROMPT_CHARS).then_some(prompt)
     }
 }
 

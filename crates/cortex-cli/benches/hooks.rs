@@ -5,7 +5,8 @@
 //! an edit that changes a function's signature its warnings, and a read of the file the session
 //! read whole already its hint, as checked before they are measured (every measured edit does the
 //! same work; its warnings, told once a task, are new only the first time); the start after a
-//! compaction its recap, each start after a compaction of its own; the cold start, a hook given no input, which ends before
+//! compaction its recap, each start after a compaction of its own; a prompt of one word, which
+//! asks for no work order, as checked; the cold start, a hook given no input, which ends before
 //! it asks the daemon anything; and each event again from a repository whose daemon is down, so
 //! that the hook tries it, starts one and exits. Then retrieval alone: the prompt's work order
 //! asked of the running daemon directly, with no hook process to start, each from a session of its
@@ -168,6 +169,22 @@ fn payload(fixture: &str, repo: &Path) -> Vec<u8> {
             "lines": [format!("-{old}"), format!("+{new}")],
         }]);
     }
+    #[allow(clippy::expect_used)]
+    serde_json::to_vec(&value).expect("the payload as JSON")
+}
+
+/// The recorded prompt's payload, its paths moved to `repo`, with the one word "ok" for prompt.
+#[allow(
+    clippy::indexing_slicing,
+    reason = "the payload edited here is a JSON object, where indexing a missing key adds it"
+)]
+fn word_payload(repo: &Path) -> Vec<u8> {
+    // A benchmark without its payload has nothing to measure.
+    #[allow(clippy::expect_used)]
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&payload("user-prompt-submit.json", repo))
+            .expect("a recorded payload is JSON");
+    value["prompt"] = "ok".into();
     #[allow(clippy::expect_used)]
     serde_json::to_vec(&value).expect("the payload as JSON")
 }
@@ -508,6 +525,17 @@ fn hooks(criterion: &mut Criterion) {
             });
         });
     }
+    // The other way a prompt goes: one word, sent as the event alone, gets nothing.
+    let word = word_payload(repo);
+    let said = printed(repo, home, "UserPromptSubmit", &word);
+    assert!(said.is_empty(), "the one-word prompt was told: {said}");
+    group.bench_function("user_prompt_submit_word", |bencher| {
+        bencher.iter_custom(|runs| {
+            (0..runs)
+                .map(|_| run_hook(repo, home, "UserPromptSubmit", &word))
+                .sum()
+        });
+    });
     group.bench_function("cold_start", |bencher| {
         bencher.iter_custom(|runs| {
             (0..runs)

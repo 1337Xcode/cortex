@@ -288,10 +288,12 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
             event,
             answer_by_ms,
         },
-        HookKind::Prompt if entry.gives_context => RequestBody::Retrieve {
-            event,
-            answer_by_ms,
-        },
+        HookKind::Prompt if entry.gives_context && event.prompt_for_work().is_some() => {
+            RequestBody::Retrieve {
+                event,
+                answer_by_ms,
+            }
+        }
         HookKind::PreTool if entry.gives_context && event.file_to_read().is_some() => {
             RequestBody::ReadHint {
                 event,
@@ -545,6 +547,44 @@ mod tests {
                 answer_by_ms: Some(1_285),
             }
         );
+        Ok(())
+    }
+
+    /// A prompt asks for its work order, by 985 ms after the event's 1,000 (its hard timeout of a
+    /// second less the 15 ms the hook keeps); a slash command, a shell escape and "ok" are sent as
+    /// the event alone, which the daemon records and answers with no retrieval.
+    #[test]
+    fn a_command_or_a_word_asks_for_no_work_order() -> Result<(), Box<dyn std::error::Error>> {
+        let (_, entry) = hook_of(&args(&["--agent", "claude", "--event", "UserPromptSubmit"]))
+            .map_err(|failure| failure.to_string())?;
+        let prompt = |text: &str| -> Result<Event, Box<dyn std::error::Error>> {
+            Ok(Event {
+                hook: HookKind::Prompt,
+                tool: None,
+                tool_target: None,
+                tool_result: None,
+                prompt_text: Some(text.to_owned()),
+                ..tool_result(cortex_core::ToolKind::Read, true)?
+            })
+        };
+        let asked = prompt("fix the login bug")?;
+        assert_eq!(
+            request_of(entry, asked.clone()),
+            RequestBody::Retrieve {
+                event: Box::new(asked),
+                answer_by_ms: Some(1_985),
+            }
+        );
+        for text in ["/review", "!ls", "ok"] {
+            let said = prompt(text)?;
+            assert_eq!(
+                request_of(entry, said.clone()),
+                RequestBody::Event {
+                    event: Box::new(said)
+                },
+                "{text}"
+            );
+        }
         Ok(())
     }
 
