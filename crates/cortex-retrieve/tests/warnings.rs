@@ -245,6 +245,44 @@ fn a_partner_that_changes_with_everything_is_not_named() -> TestResult {
     Ok(())
 }
 
+/// A count that cannot be true is not told: `prisma/schema.prisma` said to have changed with the
+/// edited file 12 times when the edited file changed 11 times is not named; at 11 of 11 it is.
+#[test]
+fn a_partner_counted_past_the_edited_file_s_commits_is_not_named() -> TestResult {
+    let (_repo, named) = files()?;
+    let mut facts = facts(&named)?;
+    facts.drifts.clear();
+    facts.tests.clear();
+    facts.linked.clear();
+    let warn = |facts: &EditFacts| {
+        warnings_after_edit(
+            facts,
+            &TaskSoFar::default(),
+            &WarningsConfig::default(),
+            ScaleMode::Medium,
+        )
+    };
+    let schema = |co_changes| -> TestResult<Vec<Partner>> {
+        Ok(vec![Partner {
+            file: file(&named, 1)?,
+            co_changes,
+            confidence: 1.0,
+            reverse_confidence: 1.0,
+        }])
+    };
+    facts.partners = schema(12)?;
+    assert_eq!(warn(&facts), Warned::default());
+    facts.partners = schema(11)?;
+    assert_eq!(
+        lines(&warn(&facts)),
+        [
+            "[cortex] Edits to src/orders/service.ts usually come with prisma/schema.prisma (11 \
+          of 11 changes); not touched yet."
+        ]
+    );
+    Ok(())
+}
+
 /// A partner is named once a task, whichever edited file it is a partner of: the task was warned of
 /// `prisma/schema.prisma` after an edit of `src/util.ts`, so the edit of `src/orders/service.ts`
 /// does not name it again.

@@ -43,6 +43,9 @@ pub(super) fn warnings(
             partner.confidence >= config.cochange_min_confidence
                 && partner.reverse_confidence >= config.cochange_min_confidence
                 && partner.co_changes >= config.cochange_min_count
+                // "N of M changes" is told only when it can be true: the store's counts disagree
+                // when a pair counts more changes than the edited file has.
+                && partner.co_changes <= facts.commits
                 && is_open(&partner.file)
         })
         .map(|partner| {
