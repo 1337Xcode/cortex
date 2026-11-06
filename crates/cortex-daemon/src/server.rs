@@ -29,6 +29,7 @@ use crate::graph::Snapshot;
 use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
+use crate::recapped::Recapped;
 use crate::retrieval::Service;
 use crate::signatures::Signatures;
 use crate::worktree::Worktree;
@@ -54,6 +55,8 @@ pub(crate) struct Server {
     worktree: Arc<Worktree>,
     /// The signature changes the writer's indexes found lately, for an edit's warnings.
     signatures: Arc<Signatures>,
+    /// The compactions each recent session's agent reported, and those recapped.
+    recapped: Arc<Recapped>,
     /// What answers with text, once the first index is done.
     service: Arc<OnceLock<Service>>,
     /// How long each hook's latest requests took to handle.
@@ -158,6 +161,7 @@ impl Server {
             snapshot,
             worktree,
             signatures,
+            recapped: Arc::default(),
             service,
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
@@ -332,6 +336,11 @@ impl Server {
                     self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
                     true
                 } else {
+                    // A compaction is heard of as it is reported, before the writer records it:
+                    // the start that follows may come first.
+                    if hook == HookKind::Compact {
+                        self.recapped.compacted(&event.session_id);
+                    }
                     hook == HookKind::PreTool || self.inbox.push_event(*event)
                 };
                 // A daemon that is stopping records nothing more, and says so rather than take an
@@ -417,10 +426,11 @@ impl Server {
             );
         }
         let signatures = Arc::clone(&self.signatures);
+        let recapped = Arc::clone(&self.recapped);
         let mut answer = self
             .with_service(move |service, graph, uncommitted| match asked {
                 Asked::WorkOrder => service.prompt(&event, graph, uncommitted),
-                Asked::Primer => service.primer(&event, graph),
+                Asked::Primer => service.primer(&event, graph, &recapped),
                 Asked::Warnings => service.post_edit(&event, &signatures),
                 Asked::ReadHint => service.read_hint(&event),
             })

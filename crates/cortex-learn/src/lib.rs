@@ -49,5 +49,5 @@ pub use task_state::{
     FileNode, MAX_TASK_HIT_BYTES, MAX_TASK_ROWS, MAX_TASK_STATES, RunCheck, Step, TaskEnd,
     TaskState,
 };
-pub use warnings::resolve_warnings;
+pub use warnings::{resolve_warnings, resolves};
 pub use watcher_edits::{ATTRIBUTION_WINDOW_MS, HOLD_MS, HeldEdit, WatcherEdit};

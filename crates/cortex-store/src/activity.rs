@@ -319,6 +319,20 @@ impl Queries<'_> {
         self.event_rows(schema::EVENTS_OF_TASK, (task_id.to_string(), limit))
     }
 
+    /// The latest events of the task, the last stored first, at most `limit` of them.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn latest_events_of_task(
+        self,
+        task_id: Ulid,
+        limit: usize,
+    ) -> Result<Vec<EventRow>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.event_rows(schema::LATEST_EVENTS_OF_TASK, (task_id.to_string(), limit))
+    }
+
     /// The events the session reported, by time, then in the order they were stored.
     ///
     /// # Errors

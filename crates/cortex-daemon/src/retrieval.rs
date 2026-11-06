@@ -1,15 +1,18 @@
 //! The daemon's answers that are text: the work order a prompt gets, the primer a session's start
-//! gets, the warnings an edit gets, and what the engine finds for a question asked of it directly.
+//! gets, or the recap when its context was compacted, the warnings an edit gets, the hint a read
+//! gets, and what the engine finds for a question asked of it directly.
 //! Each is worked out with a reader of the store and the graph as it stands, never waiting for the
-//! writer; what a prompt's retrieval gave or weighed, the primer given and the warnings given are
-//! returned for the writer to record after the event they answer.
+//! writer; what a prompt's retrieval gave or weighed, the primer or recap given and the warnings
+//! given are returned for the writer to record after the event they answer.
 //!
 //! A prompt of a held-out task is retrieved for in full and gets nothing; what would have been
 //! given is recorded all the same. Every retrieval takes the gate's bar as the self-check last
-//! raised it, and the recent precision it last found, from the store. Before the graph is built, and while the store has no mode (its
-//! first index not done), every answer is silent.
+//! raised it, and the recent precision it last found, from the store. Before the graph is built,
+//! and while the store has no mode (its first index not done), every answer but the recap is
+//! silent: the recap recalls what the session did, which needs no index.
 
 mod hints;
+mod recap;
 mod warnings;
 
 use std::path::PathBuf;
@@ -26,6 +29,7 @@ use cortex_retrieve::{Graph, Outcome, Request, Retrieval, locate, primer, retrie
 use cortex_store::{InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError};
 
 use crate::given::Given;
+use crate::recapped::Recapped;
 use crate::told::Told;
 
 /// How long a prompt's spreading may run before it stops where it is: well inside the
@@ -177,14 +181,20 @@ impl Service {
     }
 
     /// The primer `event`, a session's start, gets over `graph`, and what to record of it. A
-    /// start after a compaction gets none: what follows a compaction is its own.
-    pub(crate) fn primer(&self, event: &Event, graph: Option<&Arc<Graph<NodeId>>>) -> Answer {
+    /// start after a compaction gets the recap of what its task was doing instead, once for each
+    /// compaction `recapped` heard of.
+    pub(crate) fn primer(
+        &self,
+        event: &Event,
+        graph: Option<&Arc<Graph<NodeId>>>,
+        recapped: &Recapped,
+    ) -> Answer {
+        if event.source == Some(StartSource::Compact) {
+            return self.recap(event, recapped);
+        }
         let Some(graph) = graph else {
             return Answer::default();
         };
-        if event.source == Some(StartSource::Compact) {
-            return Answer::default();
-        }
         let answered = self.with_reader(|queries| {
             let Some(text) = primer(queries, graph)? else {
                 return Ok(Answer::default());

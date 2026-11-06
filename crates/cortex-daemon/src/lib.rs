@@ -32,6 +32,7 @@ mod meter;
 mod miner;
 mod paced;
 mod pending;
+mod recapped;
 mod recent_errors;
 mod retrieval;
 mod server;

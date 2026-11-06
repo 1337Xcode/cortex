@@ -68,6 +68,10 @@ All notable changes to this project are documented in this file. The format is b
 - When a task ends, each warning its edits got is marked resolved if the agent then read or edited
   the file it named. `cortex status` and `cortex receipts` show the share of warnings followed up
   this way.
+- After Claude Code compacts a session's context, the start that follows is told what the task in
+  progress was doing: the files it edited, the files it was warned of and has not read or edited
+  since, and the start of its prompt when `privacy.store_prompt_excerpt` kept it, within 500
+  tokens, once for each compaction.
 - `cargo xtask verify` runs formatting, the crate dependency-direction rules, the shared lint
   settings in every crate, the invariant tags, clippy, the tests and the dependency licence and
   advisory checks; `--full` also runs the benchmarks against their budgets.

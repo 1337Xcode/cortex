@@ -5,7 +5,7 @@
 //! A read that failed touched nothing, and a step before the warning, or at its very moment (the
 //! edit it answered), does not resolve it.
 
-use cortex_store::{StoreError, WarningRow, WriteTx};
+use cortex_store::{NodeId, StoreError, WarningRecord, WarningRow, WriteTx};
 
 use crate::task_state::{Step, TaskState};
 
@@ -30,8 +30,15 @@ pub fn resolve_warnings(
 fn is_resolved(row: &WarningRow, steps: &[Step]) -> bool {
     steps.iter().any(|step| match step {
         Step::Read { at_ms, file, .. } | Step::Edit { at_ms, file, .. } => {
-            file.node == Some(row.record.target) && *at_ms > row.record.at_ms
+            resolves(&row.record, file.node, *at_ms)
         }
         _ => false,
     })
+}
+
+/// Whether a read or an edit that did not fail, of the file whose node is `file`, at `at_ms`,
+/// follows up `warning`: it is of the file the warning named, and came after it.
+#[must_use]
+pub fn resolves(warning: &WarningRecord, file: Option<NodeId>, at_ms: i64) -> bool {
+    file == Some(warning.target) && at_ms > warning.at_ms
 }

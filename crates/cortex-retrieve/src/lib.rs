@@ -30,6 +30,7 @@ mod prompt;
 mod push;
 mod read;
 mod reasons;
+mod recap;
 mod render;
 mod score;
 mod seeds;
@@ -58,6 +59,7 @@ pub use prompt::{Mention, PromptTerms};
 pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, Network, SPREAD_THRESHOLD, spread};
 pub use read::{GraphSettings, read_graph};
 pub use reasons::{ItemEvidence, MAX_REASON_CHARS, Reason, reason_of};
+pub use recap::{MAX_RECAP_TOKENS, MAX_RECAPPED_FILES, MAX_RECAPPED_WARNINGS, recap};
 pub use render::{
     Basis, Item, ItemSpan, Limits, MAX_WORK_ORDER_CHARS, Rendered, WorkOrder, render,
 };

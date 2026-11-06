@@ -4,7 +4,8 @@
 //! once its graph is built, so that a session's start gets the primer and the prompt a work order,
 //! an edit that changes a function's signature its warnings, and a read of the file the session
 //! read whole already its hint, as checked before they are measured (every measured edit does the
-//! same work; its warnings, told once a task, are new only the first time); the cold start, a hook given no input, which ends before
+//! same work; its warnings, told once a task, are new only the first time); the start after a
+//! compaction its recap, each start after a compaction of its own; the cold start, a hook given no input, which ends before
 //! it asks the daemon anything; and each event again from a repository whose daemon is down, so
 //! that the hook tries it, starts one and exits. Then retrieval alone: the prompt's work order
 //! asked of the running daemon directly, with no hook process to start, each from a session of its
@@ -206,8 +207,15 @@ fn hook_command(repo: &Path, home: &Path, event: &str) -> Command {
 
 /// What the hook for `event` prints on `payload`, run as [`run_hook`] runs it.
 fn printed(repo: &Path, home: &Path, event: &str, payload: &[u8]) -> String {
+    printed_in(repo, home, event, payload).1
+}
+
+/// How long the hook for `event` took on `payload` from its start to its exit, run as
+/// [`run_hook`] runs it but with its output read, and what it printed.
+fn printed_in(repo: &Path, home: &Path, event: &str, payload: &[u8]) -> (Duration, String) {
     let mut command = hook_command(repo, home, event);
     command.stdout(Stdio::piped());
+    let start = Instant::now();
     // A hook that cannot be started or fed has nothing to show.
     #[allow(clippy::expect_used)]
     let mut child = command.spawn().expect("starting the hook");
@@ -217,7 +225,21 @@ fn printed(repo: &Path, home: &Path, event: &str, payload: &[u8]) -> String {
     }
     #[allow(clippy::expect_used)]
     let output = child.wait_with_output().expect("waiting for the hook");
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    let took = start.elapsed();
+    assert!(output.status.success(), "the hook for {event} failed");
+    (took, String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// How long the start after a compaction took on `start`, a compaction reported first with
+/// `compaction`, as an agent reports one, so that the start is told its recap, as checked.
+fn recapped(repo: &Path, home: &Path, (compaction, start): (&[u8], &[u8])) -> Duration {
+    printed(repo, home, "PreCompact", compaction);
+    let (took, said) = printed_in(repo, home, "SessionStart", start);
+    assert!(
+        said.contains("Before the compaction"),
+        "the start after the compaction was told: {said}"
+    );
+    took
 }
 
 /// The content hash the store under `repo` holds for `calc/ops.py`, if it holds the file.
@@ -466,6 +488,16 @@ fn hooks(criterion: &mut Criterion) {
         .expect("the read told it was read already");
     let mut group = criterion.benchmark_group("hooks");
     single_runs(&mut group);
+    // Before the prompts measured below open tasks of their own: the task with the edit is open.
+    let compaction = payload("pre-compact-manual.json", repo);
+    let start = payload("session-start-compact.json", repo);
+    group.bench_function("session_start_compact", |bencher| {
+        bencher.iter_custom(|runs| {
+            (0..runs)
+                .map(|_| recapped(repo, home, (&compaction, &start)))
+                .sum()
+        });
+    });
     for (function, event, fixture) in EVENTS {
         let payload = payload(fixture, repo);
         group.bench_function(function, |bencher| {

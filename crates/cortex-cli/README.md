@@ -51,7 +51,9 @@ on an edit and Stop, each on a recorded Claude Code payload against a daemon on 
 repository of 10,000 generated source files committed to git, once its graph is built, and a hook
 given no input, which ends before it asks the daemon anything. Before measuring, it checks that the
 session's start prints its primer and the prompt, which names a function and a class the files
-import, prints a work order. Then it times the prompt's retrieval alone, asked of the daemon
+import, prints a work order; that an edit changing a function's header is told of its callers; and
+that a read of the file the session read whole is told so. It also times the session's start after
+a compaction, each sample after a compaction of its own, checked to print its recap. Then it times the prompt's retrieval alone, asked of the daemon
 directly with no hook process to start, each request from a session of its own and checked to get
 a work order. Then it runs the five events again from a repository whose daemon is down and cannot
 come up (the benchmark holds its run lock, as a daemon still starting does), so that each sample is

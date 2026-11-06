@@ -46,7 +46,7 @@ const BENCHES: [(&str, &str); 3] = [
 ];
 
 /// Every budget a benchmark checks. The limits are the product's latency budgets.
-const BUDGETS: [Budget; 18] = [
+const BUDGETS: [Budget; 19] = [
     Budget {
         group: "index",
         function: "initial_10k",
@@ -65,6 +65,13 @@ const BUDGETS: [Budget; 18] = [
         group: "hooks",
         function: "session_start",
         what: "SessionStart hook, start to exit",
+        limit: Duration::from_millis(120),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks",
+        function: "session_start_compact",
+        what: "SessionStart hook after a compaction, with its recap, start to exit",
         limit: Duration::from_millis(120),
         platforms: Platforms::Reference,
     },
@@ -325,6 +332,7 @@ mod tests {
             hooks,
             [
                 ("session_start", 120),
+                ("session_start_compact", 120),
                 ("user_prompt_submit", 150),
                 ("pre_tool_use_read", 40),
                 ("post_tool_use_edit", 80),

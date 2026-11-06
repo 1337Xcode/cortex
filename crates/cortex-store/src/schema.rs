@@ -163,6 +163,12 @@ pub(crate) const READS_IN_SESSION: &str = "SELECT seq, task_id, session_id, ts, 
      AND ((kind = 'read' AND node_id = ?2) OR kind = 'compact') \
      ORDER BY ts DESC, seq DESC LIMIT ?3";
 
+/// A task's latest events, the last stored first, at most ?2 of them; the columns are those of
+/// [`EVENTS_OF_TASK`].
+pub(crate) const LATEST_EVENTS_OF_TASK: &str = "SELECT seq, task_id, session_id, ts, kind, \
+     node_id, path, range_start, range_end, meta FROM events WHERE task_id = ?1 \
+     ORDER BY seq DESC LIMIT ?2";
+
 /// The edits of the tasks of session ?1, its subagents' edits included, newest first by time and
 /// then by number, at most ?2 of them; the columns are those of [`EVENTS_OF_TASK`]. Only the edit
 /// rows of the session's tasks are read (the index of edits), and only those are sorted.

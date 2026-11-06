@@ -39,13 +39,13 @@ checks the 95th percentile of each benchmark's single runs against its budget (`
 The first index of 10,000 files must take 60 s at most and an index after one change 30 ms,
 everywhere. Spreading over generated graphs of 10,000, 100,000 and 1,000,000 nodes, two-stage
 spreading over the largest, and a prompt's retrieval in the daemon on a repository of 10,000 files
-must each take 120 ms at most, everywhere. Each hook, from its
-process's start to its exit, must take 120 ms for SessionStart, 150 ms for UserPromptSubmit, 40 ms
-for PreToolUse on a read, 80 ms for PostToolUse on an edit, 60 ms for Stop and 10 ms with no input,
-on macOS and Linux, where hook latency is specified. The first five hold too when the daemon is
-down and the hook starts one. On Windows starting a process alone takes
-most of those 10 ms, so the hooks' percentiles are printed there and not checked. Every budget's
-line says what was measured.
+must each take 120 ms at most, everywhere. Each hook, from its process's start to its exit, must
+take 120 ms for SessionStart (after a compaction too, with its recap), 150 ms for UserPromptSubmit,
+40 ms for PreToolUse on a read, 80 ms for PostToolUse on an edit, 60 ms for Stop and 10 ms with no
+input, on macOS and Linux, where hook latency is specified. The first five hold too when the daemon
+is down and the hook starts one. On Windows starting a process alone takes most of those 10 ms,
+so the hooks' percentiles are printed there and not checked. Every budget's line says what was
+measured.
 
 ## Tests
 
