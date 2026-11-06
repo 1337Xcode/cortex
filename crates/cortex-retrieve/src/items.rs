@@ -41,6 +41,8 @@ pub struct Listed {
     pub spans: Vec<Span>,
     /// What the work order writes of it.
     pub item: Item,
+    /// Its spans whose code the work order wrote, once it is written; none before.
+    pub shown: Vec<Span>,
 }
 
 /// The files to list from `scored`, the best first, at most `max_files`, each span at most
@@ -97,8 +99,12 @@ fn listed_file(
     let kept: Vec<Span> = spans
         .iter()
         .filter(|span| {
+            // A span the agent read, or a work order of the session showed, unchanged since
+            // the latest compaction is in its context: it is not shown again.
             !held.is_some_and(|content| {
-                is_in_context(span, (path, content), &listing.seeds.session.in_context)
+                let session = &listing.seeds.session;
+                is_in_context(span, (path, content), &session.in_context)
+                    || is_in_context(span, (path, content), &session.shown)
             })
         })
         .copied()
@@ -119,6 +125,7 @@ fn listed_file(
         file: file.file,
         spans: kept,
         item,
+        shown: Vec::new(),
     }))
 }
 

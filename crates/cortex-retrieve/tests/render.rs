@@ -284,6 +284,8 @@ Current code:
 ";
     assert_eq!(rendered.text, expected);
     assert_eq!(rendered.written, [(0, vec![0]), (1, vec![0]), (2, vec![])]);
+    // The code shown: a.py's one span, the first item's first; b.py's lines are named, not shown.
+    assert_eq!(rendered.shown, [(0, 0)]);
     assert_eq!(
         usize::try_from(rendered.tokens)?,
         expected.len().div_ceil(4)

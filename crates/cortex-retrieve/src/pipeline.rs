@@ -162,7 +162,7 @@ pub fn retrieve(
     let Some(rendered) = render(&order, request.root, &limits_of(request)) else {
         return Ok(silent(Silence::NothingToShow, Some(features), &weighed));
     };
-    let listed = written_of(&listed, &rendered.written);
+    let listed = written_of(&listed, &rendered);
     // INVARIANT: silent-when-unsure (the gate weighed the three best files: a work order showing
     // none of them shows what the gate never weighed)
     if !shows_gated(&reached.scored, &listed) {
@@ -223,7 +223,7 @@ pub fn locate(
     let rendered = render(&answer, request.root, &limits);
     let listed = rendered
         .as_ref()
-        .map(|rendered| written_of(&listed, &rendered.written))
+        .map(|rendered| written_of(&listed, rendered))
         .unwrap_or_default();
     Ok(Location {
         judged: Some((features, verdict)),
@@ -337,10 +337,11 @@ fn reached(
     }))
 }
 
-/// The entries of `listed` the work order wrote, each with only the spans whose lines it wrote, as
-/// `written` gives them by position.
-fn written_of(listed: &[Listed], written: &[(usize, Vec<usize>)]) -> Vec<Listed> {
-    written
+/// The entries of `listed` the work order `rendered` wrote, each with only the spans whose lines it
+/// wrote, and those whose code it wrote, as `rendered` gives them by position.
+fn written_of(listed: &[Listed], rendered: &Rendered) -> Vec<Listed> {
+    rendered
+        .written
         .iter()
         .filter_map(|(at, spans)| {
             let entry = listed.get(*at)?;
@@ -357,6 +358,12 @@ fn written_of(listed: &[Listed], written: &[(usize, Vec<usize>)]) -> Vec<Listed>
                         .collect(),
                     ..entry.item.clone()
                 },
+                shown: rendered
+                    .shown
+                    .iter()
+                    .filter(|(item, _)| item == at)
+                    .filter_map(|(_, span)| entry.spans.get(*span).copied())
+                    .collect(),
             })
         })
         .collect()
@@ -464,6 +471,7 @@ mod tests {
                     .collect(),
                 reason: Reason::ReadHere,
             },
+            shown: Vec::new(),
         })
     }
 
@@ -489,10 +497,17 @@ mod tests {
 
     /// Only what the work order wrote is listed: of three entries, the third and then the first
     /// written, the third with its second span alone, the first with both; the second, shed, is not.
+    /// The code shown: the first entry's second span alone (lines 4 to 5); none of the third.
     #[test]
     fn only_what_was_written_is_listed() -> Result<(), Box<dyn std::error::Error>> {
         let listed = [entry(1, "a.py")?, entry(2, "b.py")?, entry(3, "c.py")?];
-        let written = written_of(&listed, &[(2, vec![1]), (0, vec![0, 1])]);
+        let rendered = Rendered {
+            text: String::new(),
+            tokens: 0,
+            written: vec![(2, vec![1]), (0, vec![0, 1])],
+            shown: vec![(0, 1)],
+        };
+        let written = written_of(&listed, &rendered);
         let files: Vec<u32> = written.iter().map(|entry| entry.file).collect();
         assert_eq!(files, [3, 1]);
         let lines: Vec<Vec<(u32, u32)>> = written
@@ -509,6 +524,17 @@ mod tests {
         assert_eq!(lines, [vec![(4, 5)], vec![(1, 2), (4, 5)]]);
         let spans: Vec<usize> = written.iter().map(|entry| entry.spans.len()).collect();
         assert_eq!(spans, [1, 2]);
+        let shown: Vec<Vec<(u32, u32)>> = written
+            .iter()
+            .map(|entry| {
+                entry
+                    .shown
+                    .iter()
+                    .map(|span| (span.lines.start_line(), span.lines.end_line()))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(shown, [vec![], vec![(4, 5)]]);
         Ok(())
     }
 }

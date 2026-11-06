@@ -75,6 +75,8 @@ All notable changes to this project are documented in this file. The format is b
   signature its task changed were not read or edited since the warning, once a task. Off by
   default, when a stop is given nothing. The hook and the daemon now speak protocol 5.0: a hook and
   a daemon of different Cortex versions are replaced as before.
+- A work order no longer shows code the session's agent was shown by an earlier work order, or
+  read, since its context was last compacted, while the file is unchanged.
 - A slash command, a shell escape (`!`) or a prompt of fewer than four characters such as "ok" asks
   for no work order: the hook sends the prompt to be recorded, and the daemon retrieves nothing.
 - Every text Cortex gives a task is recorded with its tokens and counted in `cortex receipts`: work

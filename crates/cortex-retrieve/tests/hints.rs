@@ -82,6 +82,8 @@ fn given(
             node,
             spans: spans.to_vec(),
             reason: None,
+            shown: Vec::new(),
+            content: None,
         }],
         tokens: if is_kept_back { 0 } else { 300 },
         confidence: None,

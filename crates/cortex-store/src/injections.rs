@@ -5,7 +5,7 @@
 //! hash of the text, never a prompt's words, a file's name or code: what a reason said in words is
 //! not kept, only what kind of reason it was.
 
-use cortex_core::{ContentHash, GateFeatures, HookKind, Identifier, ReasonKind, Ulid};
+use cortex_core::{ContentHash, GateFeatures, HookKind, Identifier, ReasonKind, ShortHash, Ulid};
 use rusqlite::{Connection, Row};
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +24,13 @@ pub struct InjectedFile {
     pub spans: Vec<(u32, u32)>,
     /// The kind of reason it was listed for; none for a file only weighed.
     pub reason: Option<ReasonKind>,
+    /// The first and last lines of each of its spans whose code the text showed, from the file
+    /// whose short hash is `content`; none from a record that kept no such spans.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shown: Vec<(u32, u32)>,
+    /// The short hash of what the file held when its code was shown; none when none was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<ShortHash>,
 }
 
 /// A node id as the number it is stored as.
@@ -168,6 +175,31 @@ impl Queries<'_> {
         session_id: &Identifier,
     ) -> Result<Vec<InjectionRow>, StoreError> {
         self.injections(schema::INJECTIONS_OF_SESSION, session_id.as_str())
+    }
+
+    /// The work orders that reached session `session_id`'s agent after `after_ms`, the latest
+    /// first, at most `limit` of them: prompts' injections, neither kept back nor held out, with
+    /// the hash of a text written. They are found by the session's index of injections.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn work_orders_since(
+        self,
+        session_id: &Identifier,
+        after_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<InjectionRow>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = self
+            .connection()
+            .prepare_cached(schema::WORK_ORDERS_SINCE)
+            .map_err(sqlite("reading work orders"))?;
+        let rows = statement
+            .query_map((session_id.as_str(), after_ms, limit), read)
+            .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
+            .map_err(sqlite("reading work orders"))?;
+        rows.into_iter().map(RawInjection::check).collect()
     }
 
     /// The injections `sql` selects for `key`.

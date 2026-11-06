@@ -3,9 +3,11 @@
 mod common;
 
 use common::{Repo, TestResult, event, failed, function, of_subagent, record, tool};
-use cortex_core::{FileFlags, HookKind, Identifier, LineRange, RepoPath, ShortHash, ToolKind};
+use cortex_core::{
+    ContentHash, FileFlags, HookKind, Identifier, LineRange, RepoPath, ShortHash, ToolKind,
+};
 use cortex_retrieve::{GraphSettings, ReadSpan, SessionMatch, read_graph, session};
-use cortex_store::NodeId;
+use cortex_store::{InjectedFile, InjectionRecord, NodeId};
 
 /// What session `s1` shows of `repo`, with the graph's numbers of `nodes`.
 fn shown(repo: &Repo, nodes: &[NodeId]) -> TestResult<(SessionMatch, Vec<u32>)> {
@@ -209,5 +211,101 @@ fn a_new_session_shows_nothing() -> TestResult {
     repo.file("a.py", "x = 1\n", &[], FileFlags::empty())?;
     let (found, _) = shown(&repo, &[])?;
     assert_eq!(found, SessionMatch::default());
+    Ok(())
+}
+
+/// Spans as their first and last lines.
+type Lines<'a> = &'a [(u32, u32)];
+
+/// Records in `repo` a work order given in task `task` of session `s1` at `at_ms`, showing the code
+/// of `shown` and naming the other lines of `listed` of the file of `node`, which held `text`; kept
+/// back by the gate when `is_gated_out`.
+fn work_order(
+    repo: &mut Repo,
+    (task, at_ms): (cortex_core::Ulid, i64),
+    (node, text): (NodeId, &str),
+    (listed, shown, is_gated_out): (Lines<'_>, Lines<'_>, bool),
+) -> TestResult {
+    let mut transaction = repo.writer.transaction()?;
+    transaction.record_injection(&InjectionRecord {
+        task_id: Some(task),
+        session_id: Identifier::new("s1")?,
+        hook: HookKind::Prompt,
+        at_ms,
+        files: vec![InjectedFile {
+            node,
+            spans: listed.to_vec(),
+            reason: None,
+            shown: shown.to_vec(),
+            content: Some(ShortHash::of(text.as_bytes())),
+        }],
+        tokens: 100,
+        confidence: None,
+        is_gated_out,
+        is_holdout: false,
+        text_hash: (!is_gated_out).then(|| ContentHash::of(b"a work order")),
+        features: None,
+    })?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// The code a work order of the session showed is held until the session's next compaction, with
+/// what its file held then: a work order showing `f` (lines 1 to 4) and naming `g` (6 to 9), and
+/// one the gate kept back that would have shown `g`, leave `f` alone held. After a compaction
+/// nothing is, until a later work order shows `g`. None of it is a read: the context the agent
+/// read is not touched.
+#[test]
+fn a_work_order_s_code_is_held_until_a_compaction() -> TestResult {
+    let mut repo = Repo::new()?;
+    let text = "line\n".repeat(10);
+    let a = repo.file(
+        "a.py",
+        &text,
+        &[function("f", 1, 4), function("g", 6, 9)],
+        FileFlags::empty(),
+    )?;
+    let file = *a.first().ok_or("a file node")?;
+    record(
+        &mut repo,
+        &[
+            event("s1", 1_000, HookKind::SessionStart)?,
+            event("s1", 2_000, HookKind::Prompt)?,
+        ],
+    )?;
+    let task = repo
+        .reader()?
+        .queries()
+        .open_task(&Identifier::new("s1")?)?
+        .ok_or("the task")?
+        .record
+        .task_id;
+    work_order(
+        &mut repo,
+        (task, 2_050),
+        (file, &text),
+        (&[(1, 4), (6, 9)], &[(1, 4)], false),
+    )?;
+    work_order(
+        &mut repo,
+        (task, 2_060),
+        (file, &text),
+        (&[(6, 9)], &[(6, 9)], true),
+    )?;
+    let (found, _) = shown(&repo, &[])?;
+    assert_eq!(found.shown, [read_of_a((1, 4), &text)?]);
+    assert!(found.in_context.is_empty());
+
+    record(&mut repo, &[event("s1", 2_200, HookKind::Compact)?])?;
+    let (found, _) = shown(&repo, &[])?;
+    assert!(found.shown.is_empty());
+    work_order(
+        &mut repo,
+        (task, 2_300),
+        (file, &text),
+        (&[(6, 9)], &[(6, 9)], false),
+    )?;
+    let (found, _) = shown(&repo, &[])?;
+    assert_eq!(found.shown, [read_of_a((6, 9), &text)?]);
     Ok(())
 }

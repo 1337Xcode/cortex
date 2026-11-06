@@ -316,3 +316,38 @@ fn a_command_or_a_word_starts_a_task_and_asks_for_nothing() -> TestResult {
     }
     Ok(())
 }
+
+/// The code a work order showed is not shown again in its session until the session's context is
+/// compacted: the familiar prompt's work order shows `divide` (calc/ops.py, lines 12 to 13); the
+/// same prompt again in the same session does not show those lines; after a compaction it does.
+#[test]
+fn a_session_is_not_shown_the_same_code_twice() -> TestResult {
+    let (home, repo, _daemon) = started("0")?;
+    let divide = "  12 | def divide(a, b):\n";
+    let first = given(&later(&repo, FAMILIAR, LATER)?, home.path())?.ok_or("no work order")?;
+    assert!(first.contains(divide), "{first}");
+    injections_of_latest(&repo, LATER)?;
+    let again = given(&later(&repo, FAMILIAR, LATER)?, home.path())?;
+    assert!(
+        again.as_deref().is_none_or(|again| !again.contains(divide)),
+        "{again:?}"
+    );
+    wait_for(|| Ok(tasks(&repo, LATER)?.len() == 2))?;
+
+    given(
+        &in_session(captured("pre-compact-manual.json", &repo)?, LATER),
+        home.path(),
+    )?;
+    wait_for(|| {
+        read(&repo, |queries| {
+            let compacted = queries
+                .events_of_session(&Identifier::new(LATER)?)?
+                .iter()
+                .any(|row| row.record.kind == cortex_core::EventKind::Compact);
+            Ok(compacted)
+        })
+    })?;
+    let after = given(&later(&repo, FAMILIAR, LATER)?, home.path())?.ok_or("no work order")?;
+    assert!(after.contains(divide), "{after}");
+    Ok(())
+}

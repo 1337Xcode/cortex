@@ -213,6 +213,7 @@ fn each_file_s_evidence_is_counted_by_kind() -> TestResult {
             seeds: BTreeMap::from([(n(7)?, 1.0)]),
             edited_files: BTreeSet::from([n(7)?]),
             in_context: Vec::new(),
+            shown: Vec::new(),
         },
         similar: SimilarMatch {
             seeds: BTreeMap::from([(n(6)?, 0.3)]),

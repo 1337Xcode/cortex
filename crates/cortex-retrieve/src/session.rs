@@ -1,6 +1,7 @@
 //! What the session the prompt comes in has been doing: the code it edited, which a follow-up
-//! prompt is most likely about; the spans it read last; and every span it read since its context
-//! was last compacted, which the agent still holds and need not be shown again.
+//! prompt is most likely about; the spans it read last; every span it read since its context was
+//! last compacted; and every span whose code its work orders showed since then. The agent still
+//! holds those last two, as long as their files are unchanged, and need not be shown them again.
 //!
 //! Edits are those of the session's tasks, its subagents' included, since they changed the code the
 //! session works on; reads are the session's own, since a subagent's reads are in the subagent's
@@ -33,6 +34,10 @@ const MAX_EDITS: usize = 200;
 /// its last compaction is taken to hold only the latest of them.
 const MAX_READS: usize = 500;
 
+/// Most of the session's latest work orders whose code is taken as held: a session shown more
+/// since its last compaction is taken to hold only the latest of them.
+const MAX_WORK_ORDERS: usize = 20;
+
 /// A stretch of a file the session read and still holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadSpan {
@@ -53,6 +58,9 @@ pub struct SessionMatch {
     pub edited_files: BTreeSet<u32>,
     /// The spans it read since its last compaction, newest first.
     pub in_context: Vec<ReadSpan>,
+    /// The spans whose code its work orders showed since its last compaction, the latest work
+    /// order's first, each with what its file held then.
+    pub shown: Vec<ReadSpan>,
 }
 
 /// What session `session` has been doing, as the store `queries` reads holds it, as nodes of
@@ -78,6 +86,7 @@ pub fn session(
         seeds,
         edited_files,
         in_context: in_context(&reads),
+        shown: shown_since(queries, session, &reads)?,
     })
 }
 
@@ -139,6 +148,48 @@ fn in_context(reads: &[EventRow]) -> Vec<ReadSpan> {
             })
         })
         .collect()
+}
+
+/// The spans whose code session `session`'s work orders showed since its latest compaction, from
+/// at most [`MAX_WORK_ORDERS`] of them, the latest first, each with the short hash of what its file
+/// held when it was shown. `reads` are the session's latest reads and compactions, newest first:
+/// with no compaction among them, when they are as many as are read, only work orders after the
+/// oldest of them count, since a compaction may lie before it.
+fn shown_since(
+    queries: Queries<'_>,
+    session: &Identifier,
+    reads: &[EventRow],
+) -> Result<Vec<ReadSpan>, StoreError> {
+    let compacted = reads
+        .iter()
+        .find(|row| row.record.kind == EventKind::Compact)
+        .map(|row| row.record.ts_ms);
+    let after_ms = match compacted {
+        Some(at_ms) => at_ms,
+        None if reads.len() >= MAX_READS => reads.last().map_or(i64::MIN, |row| row.record.ts_ms),
+        None => i64::MIN,
+    };
+    let mut shown = Vec::new();
+    for order in queries.work_orders_since(session, after_ms, MAX_WORK_ORDERS)? {
+        for file in &order.record.files {
+            let Some(content) = file.content.filter(|_| !file.shown.is_empty()) else {
+                continue;
+            };
+            let Some((_, path)) = queries.node_file(file.node)? else {
+                continue;
+            };
+            for (start, end) in &file.shown {
+                if let Ok(range) = LineRange::new(*start, *end) {
+                    shown.push(ReadSpan {
+                        path: path.clone(),
+                        range: Some(range),
+                        content: Some(content),
+                    });
+                }
+            }
+        }
+    }
+    Ok(shown)
 }
 
 /// Whether `row` records work that was done: not a read or an edit that failed.

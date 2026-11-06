@@ -5,7 +5,9 @@
 mod common;
 
 use common::{Scratch, TestResult, index};
-use cortex_core::{Agent, ContentHash, GateFeatures, HookKind, Identifier, ReasonKind, Ulid};
+use cortex_core::{
+    Agent, ContentHash, GateFeatures, HookKind, Identifier, ReasonKind, ShortHash, Ulid,
+};
 use cortex_store::{InjectedFile, InjectionRecord, NodeId, SessionRecord, TaskRecord, Writer};
 
 /// Stores files at `paths` and returns their nodes, in that order.
@@ -82,11 +84,15 @@ fn injections_are_read_back_as_recorded() -> TestResult {
                 node: service,
                 spans: vec![(1, 4)],
                 reason: Some(ReasonKind::Named),
+                shown: vec![(1, 4)],
+                content: Some(ShortHash::of(b"the service")),
             },
             InjectedFile {
                 node: model,
                 spans: vec![(1, 3), (10, 12)],
                 reason: Some(ReasonKind::ChangesWith),
+                shown: Vec::new(),
+                content: None,
             },
         ],
         tokens: 182,
@@ -155,6 +161,8 @@ fn what_was_kept_back_is_recorded_too() -> TestResult {
             node: tax,
             spans: Vec::new(),
             reason: None,
+            shown: Vec::new(),
+            content: None,
         }],
         tokens: 0,
         confidence: None,
@@ -172,6 +180,8 @@ fn what_was_kept_back_is_recorded_too() -> TestResult {
             node: service,
             spans: vec![(1, 4)],
             reason: Some(ReasonKind::Named),
+            shown: Vec::new(),
+            content: None,
         }],
         tokens: 120,
         confidence: None,
@@ -219,6 +229,8 @@ fn an_injection_holds_no_words() -> TestResult {
             node: service,
             spans: vec![(1, 4)],
             reason: Some(ReasonKind::Matches),
+            shown: Vec::new(),
+            content: None,
         }],
         tokens: 90,
         confidence: None,
@@ -299,6 +311,8 @@ fn a_label_is_kept_with_its_injection() -> TestResult {
             node: service,
             spans: vec![(1, 4)],
             reason: Some(ReasonKind::Named),
+            shown: Vec::new(),
+            content: None,
         }],
         tokens: 60,
         confidence: None,
@@ -444,5 +458,76 @@ fn only_labelled_deliveries_count() -> TestResult {
     assert_eq!(queries.delivered_labelled()?, 2);
     assert_eq!(queries.delivered_precision()?, (2, 1));
     assert_eq!(counted, 2, "the store's count agrees with was_delivered");
+    Ok(())
+}
+
+/// A session's work orders since a time are its prompts' injections that reached the agent, as
+/// `was_delivered` says, the latest first: of a primer at 5, work orders given at 10 and 50, one the gate kept back at 20,
+/// one held out at 30, an edit's warnings at 40, and another session's work order at 60, session
+/// s1's since 0 are those at 50 and 10, since 10 the one at 50, and the latest one alone at 50.
+#[test]
+fn a_session_s_work_orders_are_those_given() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let (s1, s2) = (Identifier::new("s1")?, Identifier::new("s2")?);
+    let (task, other) = (
+        Ulid::parse("01JC0000000000000000000000")?,
+        Ulid::parse("01JC0000000000000000000001")?,
+    );
+    session_with(&mut writer, &s1, &[task])?;
+    session_with(&mut writer, &s2, &[other])?;
+    let given = |session: &Identifier, task_id, hook, at_ms| InjectionRecord {
+        task_id,
+        session_id: session.clone(),
+        hook,
+        at_ms,
+        files: Vec::new(),
+        tokens: 10,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"a text")),
+        features: None,
+    };
+    let rows = [
+        given(&s1, None, HookKind::SessionStart, 5),
+        given(&s1, Some(task), HookKind::Prompt, 10),
+        // Kept back, though with a hash: each of the three conditions excludes a row on its own.
+        InjectionRecord {
+            is_gated_out: true,
+            ..given(&s1, Some(task), HookKind::Prompt, 20)
+        },
+        InjectionRecord {
+            is_holdout: true,
+            ..given(&s1, Some(task), HookKind::Prompt, 30)
+        },
+        given(&s1, Some(task), HookKind::PostTool, 40),
+        given(&s1, Some(task), HookKind::Prompt, 50),
+        given(&s2, Some(other), HookKind::Prompt, 60),
+    ];
+    let mut transaction = writer.transaction()?;
+    for row in &rows {
+        transaction.record_injection(row)?;
+    }
+    transaction.commit()?;
+    let queries = writer.queries();
+    let times = |after_ms, limit| -> TestResult<Vec<i64>> {
+        Ok(queries
+            .work_orders_since(&s1, after_ms, limit)?
+            .iter()
+            .map(|row| row.record.at_ms)
+            .collect())
+    };
+    assert_eq!(times(0, 10)?, [50, 10]);
+    assert_eq!(times(10, 10)?, [50]);
+    assert_eq!(times(0, 1)?, [50]);
+    Ok(())
+}
+
+/// A file of an injection recorded before it kept the code it showed reads back with none shown.
+#[test]
+fn an_older_record_shows_nothing() -> TestResult {
+    let file: InjectedFile = serde_json::from_str(r#"{"node":3,"spans":[[1,2]],"reason":null}"#)?;
+    assert_eq!((file.shown, file.content), (Vec::new(), None));
     Ok(())
 }

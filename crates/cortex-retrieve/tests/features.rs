@@ -89,6 +89,7 @@ fn the_features_are_worked_out_from_what_was_found() -> TestResult {
             seeds: BTreeMap::from([(n(2)?, 1.0)]),
             edited_files: BTreeSet::from([n(2)?]),
             in_context: Vec::new(),
+            shown: Vec::new(),
         },
         similar: SimilarMatch {
             seeds: BTreeMap::from([(n(3)?, 0.24)]),

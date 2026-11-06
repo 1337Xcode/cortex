@@ -612,6 +612,14 @@ pub(crate) const INJECTIONS_OF_SESSION: &str = "SELECT injection_id, task_id, se
     ts, items, tokens_est, confidence, gated_out, holdout, rendered_hash, used_count, label, \
     features FROM injections WHERE session_id = ?1 ORDER BY injection_id";
 
+/// The work orders that reached session ?1's agent after ?2, the latest first, at most ?3: rows of
+/// prompts neither kept back nor held out, with a text's hash; the columns are those of
+/// [`INJECTIONS_OF_SESSION`].
+pub(crate) const WORK_ORDERS_SINCE: &str = "SELECT injection_id, task_id, session_id, hook, ts, \
+    items, tokens_est, confidence, gated_out, holdout, rendered_hash, used_count, label, features \
+    FROM injections WHERE session_id = ?1 AND ts > ?2 AND hook = 'prompt' AND gated_out = 0 \
+    AND holdout = 0 AND rendered_hash IS NOT NULL ORDER BY ts DESC, injection_id DESC LIMIT ?3";
+
 /// Records one file a warning named, returning its row id.
 pub(crate) const WARNING_INSERT: &str = "INSERT INTO warnings \
     (task_id, ts, kind, src_node, dst_node, strength) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";

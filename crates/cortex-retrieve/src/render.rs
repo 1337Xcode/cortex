@@ -109,6 +109,9 @@ pub struct Rendered {
     /// The items written, by their position in the order, each with the spans whose lines were
     /// written, by position.
     pub written: Vec<(usize, Vec<usize>)>,
+    /// The spans whose code was written, each as its item's position and its own, in the order
+    /// written: each from the file its item's `content` says, checked as the text was built.
+    pub shown: Vec<(usize, usize)>,
 }
 
 /// `order` written for the repository at `root`, held to `limits`; `None` when it has no item that
@@ -129,6 +132,7 @@ pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendere
             text,
             tokens,
             written: Vec::new(),
+            shown: Vec::new(),
         });
     }
     let files: Vec<OnDisk> = order
@@ -156,6 +160,7 @@ pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendere
                 text,
                 tokens,
                 written: plan.written(),
+                shown: plan.shown.clone(),
             });
         }
         if !plan.shed() {

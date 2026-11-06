@@ -460,7 +460,12 @@ fn an_answer_worked_out_too_late_gives_nothing() -> TestResult {
         return Err("one injection".into());
     };
     assert_eq!(row.record.text_hash, Some(ContentHash::of(text.as_bytes())));
-    let late = prompt(70)?;
+    // From a session of its own: the first session holds the code its work order showed, which
+    // the same prompt there would not be shown again.
+    let late = Event {
+        session_id: Identifier::new("s2")?,
+        ..prompt(70)?
+    };
     let asked = RequestBody::Retrieve {
         event: Box::new(late.clone()),
         answer_by_ms: Some(0),

@@ -27,7 +27,7 @@ use cortex_core::{
 };
 use cortex_index::Grammars;
 use cortex_learn::{raise_of, recent_precision};
-use cortex_retrieve::{Graph, Outcome, Request, Retrieval, locate, primer, retrieve};
+use cortex_retrieve::{Graph, Outcome, Request, Retrieval, Span, locate, primer, retrieve};
 use cortex_store::{
     InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError, TaskRow,
 };
@@ -313,14 +313,22 @@ fn files_of(retrieval: &Retrieval, graph: &Graph<NodeId>) -> Vec<InjectedFile> {
             .listed
             .iter()
             .filter_map(|entry| {
-                Some(InjectedFile {
-                    node: graph.id(entry.file)?,
-                    spans: entry
-                        .spans
+                let lines = |spans: &[Span]| -> Vec<(u32, u32)> {
+                    spans
                         .iter()
                         .map(|span| (span.lines.start_line(), span.lines.end_line()))
-                        .collect(),
+                        .collect()
+                };
+                Some(InjectedFile {
+                    node: graph.id(entry.file)?,
+                    spans: lines(&entry.spans),
                     reason: Some(entry.item.reason.kind()),
+                    shown: lines(&entry.shown),
+                    content: entry
+                        .item
+                        .content
+                        .filter(|_| !entry.shown.is_empty())
+                        .map(|content| content.short()),
                 })
             })
             .collect();
@@ -332,6 +340,8 @@ fn files_of(retrieval: &Retrieval, graph: &Graph<NodeId>) -> Vec<InjectedFile> {
             node: *node,
             spans: Vec::new(),
             reason: None,
+            shown: Vec::new(),
+            content: None,
         })
         .collect()
 }

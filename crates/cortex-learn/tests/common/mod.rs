@@ -538,6 +538,8 @@ pub fn injection(
                 node: *node,
                 spans: spans.to_vec(),
                 reason: None,
+                shown: Vec::new(),
+                content: None,
             })
             .collect(),
         tokens: 50,
