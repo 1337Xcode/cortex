@@ -41,10 +41,11 @@ Write one module that implements `Adapter` (see `src/claude/`) and add one line 
 cargo test -p cortex-hook
 ```
 
-The unit tests cover the payload's size cap and time limit, the repository lookup (links, the home
-folder), the panic guard and the log's rate limit and rotation. The `cortex hook` command itself is
-tested through the binary in `cortex-cli`'s `tests/hook.rs`, `tests/answers.rs` (the primer and the
-work order as Claude Code gets them) and `tests/daemon_down.rs`.
+The unit tests cover the payload's size cap, its time limit and the end of its JSON value, the
+repository lookup (links, the home folder), the panic guard and the log's rate limit and
+rotation. The `cortex hook` command itself is tested through the binary in `cortex-cli`'s
+`tests/hook.rs`, `tests/answers.rs` (the primer and the work order as Claude Code gets them) and
+`tests/daemon_down.rs`.
 
 The client tests run a scripted daemon on a real socket or named pipe: an answer, a mismatch,
 silence until the deadline, a closed connection, broken frames, and no daemon at all. The `run`

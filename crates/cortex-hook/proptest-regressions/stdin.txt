@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 311eebce1fab56df49d1fb1db9ec2f2f50675fafe7a788918b4b423230909f17 # shrinks to value = Null, is_pretty = false, cuts = [428, 68], after = "a"
+cc 5c5901a567ea4a913bd2c4d59844c14c468bd94932e06b9e15ce0c5f570fdce2 # shrinks to value = Array [Object {"\"": Null}], is_pretty = false, cuts = [], after = " "

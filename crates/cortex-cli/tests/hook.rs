@@ -200,7 +200,7 @@ fn bad_calls_are_silent() -> TestResult {
     assert!(!log.contains("MARKER0PAYLOAD"), "{log}");
 
     let stop = stop_payload(&repo)?;
-    // Five seconds late: the hook, which waits 50 ms for its payload, has exited by then and
+    // Five seconds late: the hook, which waits 100 ms for a stop's payload, has exited by then and
     // closed its end, so the payload cannot be written.
     let slow = hook(&flags, stop.clone(), Duration::from_secs(5), home.path())?;
     assert!(slow.is_silent_success(), "{:?}", slow.output);

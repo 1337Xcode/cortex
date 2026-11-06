@@ -326,3 +326,72 @@ fn a_note_is_written_before_the_hook_returns() -> TestResult {
     );
     Ok(())
 }
+
+/// A payload the agent writes after `delay`, then ends: as Codex can, writing a hook's input from
+/// a task of its own once it started the hook, on a busy machine.
+struct Late {
+    /// The payload.
+    payload: Cursor<Vec<u8>>,
+    /// How long the agent takes to write it; nothing once it has waited.
+    delay: Option<Duration>,
+}
+
+impl io::Read for Late {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if let Some(delay) = self.delay.take() {
+            std::thread::sleep(delay);
+        }
+        self.payload.read(buffer)
+    }
+}
+
+/// The hook waits a third of its event's hard timeout for its payload: a session's start written
+/// 200 ms late is read within its 500 ms (a third of 1,500 ms) and gets the daemon's text, while a
+/// stop written as late is past its 100 ms (a third of 300 ms) and given up, noted in the log.
+#[test]
+fn a_payload_written_late_is_waited_for_a_third_of_the_hard_timeout() -> TestResult {
+    let late = Duration::from_millis(200);
+    let (home, repo, files) = marked_repository()?;
+    let daemon = serve(
+        &files,
+        Script::Answer(vec![
+            response(1, ResponseBody::Welcome(welcome())),
+            response(2, reply("[cortex] Project map · small mode\n")),
+        ]),
+    )?;
+    let mut written = Vec::new();
+    let input = Late {
+        payload: Cursor::new(payload("SessionStart", &repo, false)?),
+        delay: Some(late),
+    };
+    cortex_hook::run(
+        &args("SessionStart"),
+        input,
+        Some(home.path()),
+        &mut written,
+    );
+    drop(std::panic::take_hook());
+    // Asserted before the scripted daemon is joined: a hook that gave up never connects to it.
+    assert!(
+        String::from_utf8(written)?.contains("[cortex] Project map · small mode"),
+        "{}",
+        hook_log(home.path())?
+    );
+    daemon.join().map_err(|_| "the daemon thread panicked")??;
+
+    let (home, repo, _) = marked_repository()?;
+    let mut written = Vec::new();
+    let input = Late {
+        payload: Cursor::new(payload("Stop", &repo, false)?),
+        delay: Some(late),
+    };
+    cortex_hook::run(&args("Stop"), input, Some(home.path()), &mut written);
+    drop(std::panic::take_hook());
+    assert!(written.is_empty());
+    let log = hook_log(home.path())?;
+    assert!(
+        log.contains("claude Stop: the payload did not arrive in time"),
+        "{log}"
+    );
+    Ok(())
+}

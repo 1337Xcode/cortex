@@ -22,8 +22,11 @@ use crate::fail_open::{self, Outcome};
 use crate::stdin::{self, StdinError};
 use crate::{log, root, spawn, stop};
 
-/// How long the hook waits for its payload to end, counted from its start.
-const STDIN_TIMEOUT: Duration = Duration::from_millis(50);
+/// The hook waits for its payload, counted from its start, its event's hard timeout divided by
+/// this: a third, 500 ms at a session's start and 100 ms at a stop. An agent may write the payload
+/// well after it started the hook (Codex writes it from a task of its own, and on a busy machine
+/// that came after a 50 ms wait had run out), and the daemon's answer keeps the other two thirds.
+const PAYLOAD_WAIT_DIVISOR: u32 = 3;
 
 /// What the hook keeps of an event's hard timeout for itself: the daemon's answer is due this long
 /// before the hard timeout, so the hook exits before the agent gives up on it.
@@ -171,7 +174,8 @@ impl Hook {
         entry: &'static HookEntry,
         input: impl Read + Send + 'static,
     ) -> Result<Option<String>, Failure> {
-        let payload = stdin::read_payload(input, self.started + STDIN_TIMEOUT)?;
+        let payload_wait = entry.hard_timeout / PAYLOAD_WAIT_DIVISOR;
+        let payload = stdin::read_payload(input, self.started + payload_wait)?;
         let home = self.home.as_deref();
         let locate = |cwd: &Path| root::locate(cwd, home);
         let Some(event) =
