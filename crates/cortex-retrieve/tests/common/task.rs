@@ -107,8 +107,8 @@ pub fn warned(
     Ok(())
 }
 
-/// Records that the task's prompt was given a work order showing `spans` of the file of `node`,
-/// or, when `is_kept_back`, one the gate kept back.
+/// Records that the task's prompt was given a work order showing `spans` of the file of `node`, as
+/// the store holds the file now, or, when `is_kept_back`, one the gate kept back.
 pub fn given(
     repo: &mut Repo,
     (task, node): (Ulid, NodeId),
@@ -116,6 +116,13 @@ pub fn given(
     is_kept_back: bool,
 ) -> TestResult {
     let mut transaction = repo.writer.transaction()?;
+    let content = {
+        let queries = transaction.queries();
+        let path = queries.node_file(node)?.map(|(_, path)| path);
+        let row = path.map(|path| queries.file(&path)).transpose()?.flatten();
+        row.and_then(|row| row.file.content_hash)
+            .map(|hash| hash.short())
+    };
     transaction.record_injection(&InjectionRecord {
         task_id: Some(task),
         session_id: Identifier::new(SESSION)?,
@@ -126,7 +133,7 @@ pub fn given(
             spans: spans.to_vec(),
             reason: None,
             shown: Vec::new(),
-            content: None,
+            content,
         }],
         tokens: if is_kept_back { 0 } else { 300 },
         confidence: None,

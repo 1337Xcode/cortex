@@ -325,11 +325,7 @@ fn files_of(retrieval: &Retrieval, graph: &Graph<NodeId>) -> Vec<InjectedFile> {
                     spans: lines(&entry.spans),
                     reason: Some(entry.item.reason.kind()),
                     shown: lines(&entry.shown),
-                    content: entry
-                        .item
-                        .content
-                        .filter(|_| !entry.shown.is_empty())
-                        .map(|content| content.short()),
+                    content: entry.item.content.map(|content| content.short()),
                 })
             })
             .collect();

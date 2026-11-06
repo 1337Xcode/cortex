@@ -163,6 +163,26 @@ fn a_long_file_is_told_the_parts_the_task_was_given() -> TestResult {
     Ok(())
 }
 
+/// A work order given from the file as it was is not told once the file changed: the task's work
+/// order named `create_order` at lines 120 to 150; fifty lines are then written above it and the
+/// file is indexed again, so its lines moved, and a read of it is told no part.
+#[test]
+fn parts_given_from_an_older_file_are_not_told() -> TestResult {
+    let mut repo = Repo::new()?;
+    let (node, text, task) = long_file(&mut repo, "src/long.py")?;
+    given(&mut repo, (task, node), &[(120, 150)], false)?;
+    assert!(hint(&repo, "src/long.py", None, Some(task))?.is_some());
+    let moved = format!("{}{text}", "# added\n".repeat(50));
+    repo.file(
+        "src/long.py",
+        &moved,
+        &[function("create_order", 170, 200)],
+        FileFlags::empty(),
+    )?;
+    assert_eq!(hint(&repo, "src/long.py", None, Some(task))?, None);
+    Ok(())
+}
+
 /// A range the session read before from the same file, unchanged, is said to be read: lines 100 to
 /// 200, read whole, hold 120 to 150; a read of the whole file holds any lines, and is told by the
 /// lines asked. Not told: a read that failed, a read of the file as it was before a change, a read

@@ -28,7 +28,9 @@ pub struct InjectedFile {
     /// whose short hash is `content`; none from a record that kept no such spans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shown: Vec<(u32, u32)>,
-    /// The short hash of what the file held when its code was shown; none when none was.
+    /// The short hash of what the file held when the text was worked out, the file its spans and
+    /// shown code are lines of; none when it was not known, and in records from before every
+    /// file's was kept, none when no code was shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<ShortHash>,
 }

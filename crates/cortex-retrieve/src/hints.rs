@@ -86,7 +86,7 @@ pub fn read_hint(
     let Some(task) = asked.task.filter(|_| whole.end_line() > HINTED_ABOVE_LINES) else {
         return Ok(None);
     };
-    let parts = parts_given(queries, (task, node, row.id), whole)?;
+    let parts = parts_given(queries, (task, node, row.id), (whole, stored.short()))?;
     Ok(relevant_parts(asked.path, &parts))
 }
 
@@ -116,11 +116,12 @@ fn read_before(
 
 /// The parts of the file of `file` (its node `node`) that task `task`'s work orders given showed or
 /// listed, the strongest first, each with the name of the symbol it spans when there is one: at
-/// most [`MAX_HINTED_PARTS`], each once, each inside `whole`.
+/// most [`MAX_HINTED_PARTS`], each once, each inside `whole`. Only a work order given from the file
+/// as it is now, its short hash `now`, counts: after an edit its lines may have moved.
 fn parts_given(
     queries: Queries<'_>,
     (task, node, file): (Ulid, NodeId, cortex_store::FileId),
-    whole: LineRange,
+    (whole, now): (LineRange, ShortHash),
 ) -> Result<Vec<(LineRange, Option<String>)>, StoreError> {
     let names: Vec<(u32, u32, String)> = queries
         .symbol_spans_in_file(file)?
@@ -142,7 +143,8 @@ fn parts_given(
             .record
             .files
             .iter()
-            .filter(|given| given.node == node)
+            // INVARIANT: true-at-render (a part is named only from the file as it is on disk)
+            .filter(|given| given.node == node && given.content == Some(now))
             .flat_map(|given| given.spans.iter().copied());
         for (start, end) in spans {
             let Ok(range) = LineRange::new(start, end) else {
