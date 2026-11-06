@@ -72,5 +72,5 @@ pub use uncommitted::{UNCOMMITTED_WEIGHT, UncommittedMatch, uncommitted};
 pub use warnings::{
     CallSite, Drift, EditFacts, EditQuery, Linked, MAX_CHECKED_CALLER_FILES, MAX_LISTED_CALL_SITES,
     MAX_LISTED_TESTS, MAX_WARNING_TOKENS, MIN_LINK_TASKS, MIN_LINK_WEIGHT, NamedFile, Partner,
-    TaskSoFar, TestFile, Warned, Warning, edit_facts, warnings_after_edit,
+    TaskSoFar, TestFile, Warned, Warning, edit_facts, task_so_far, warnings_after_edit,
 };

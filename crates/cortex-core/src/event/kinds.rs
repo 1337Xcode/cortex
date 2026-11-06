@@ -85,6 +85,17 @@ named_kind! {
     }
 }
 
+impl ToolKind {
+    /// Whether the tool changes a file: an edit, a write, several edits, or a patch.
+    #[must_use]
+    pub fn is_edit(self) -> bool {
+        matches!(
+            self,
+            Self::Edit | Self::Write | Self::MultiEdit | Self::ApplyPatch
+        )
+    }
+}
+
 named_kind! {
     /// What started a compaction.
     CompactTrigger {

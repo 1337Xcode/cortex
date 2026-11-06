@@ -263,7 +263,8 @@ fn a_silent_or_foreign_daemon_is_left_silently() -> TestResult {
     let requests = silent.requests()?;
     let sent_the_event = matches!(
         &requests[..],
-        [_, Request { body: RequestBody::Event { event }, .. }] if event.hook == HookKind::PostTool
+        [_, Request { body: RequestBody::PostEdit { event, .. }, .. }]
+            if event.hook == HookKind::PostTool
     );
     assert!(sent_the_event, "{requests:?}");
     // A prompt asks for its work order and is given up at its own deadline, 1,000 ms less the
@@ -296,10 +297,10 @@ fn a_silent_or_foreign_daemon_is_left_silently() -> TestResult {
     Ok(())
 }
 
-/// A hook that finds a daemon of an older Cortex, once the daemon has taken its event, asks it to
-/// stop, so that the next hook starts a daemon of this build; one of another, older protocol takes
-/// no event but is told to stop all the same. A daemon of a newer Cortex is left alone, so an older
-/// binary never stops a newer daemon. Every call is silent.
+/// A hook that finds a daemon of an older Cortex, once the daemon has taken its edit and answered it,
+/// asks it to stop, so that the next hook starts a daemon of this build; one of another, older
+/// protocol takes no edit but is told to stop all the same. A daemon of a newer Cortex is left
+/// alone, so an older binary never stops a newer daemon. Every call is silent.
 #[test]
 fn an_older_daemon_is_told_to_stop_and_a_newer_one_is_not() -> TestResult {
     let (home, repo) = marked_repository()?;
@@ -317,25 +318,28 @@ fn an_older_daemon_is_told_to_stop_and_a_newer_one_is_not() -> TestResult {
     assert!(done.is_silent_success(), "{:?}", done.output);
     assert_eq!(
         kinds(&older.requests()?),
-        ["hello", "event", "hello", "shutdown"]
+        ["hello", "post_edit", "hello", "shutdown"]
     );
     let older_protocol = FakeDaemon::start(&repo, home.path(), Script::Mismatch("0.0.1"))?;
     let done = call(edit()?)?;
     assert!(done.is_silent_success(), "{:?}", done.output);
     assert_eq!(
         kinds(&older_protocol.requests()?),
-        ["hello", "event", "hello", "shutdown"]
+        ["hello", "post_edit", "hello", "shutdown"]
     );
     let newer = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["99.0.0"]))?;
     let done = call(edit()?)?;
     assert!(done.is_silent_success(), "{:?}", done.output);
-    assert_eq!(kinds(&newer.requests()?), ["hello", "event"]);
+    assert_eq!(kinds(&newer.requests()?), ["hello", "post_edit"]);
     // An older daemon that a newer one replaced between the hook's two connections: the hook reads
     // the handshake of the second before it asks anything, and leaves the newer daemon running.
     let replaced = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["0.0.1", "99.0.0"]))?;
     let done = call(edit()?)?;
     assert!(done.is_silent_success(), "{:?}", done.output);
-    assert_eq!(kinds(&replaced.requests()?), ["hello", "event", "hello"]);
+    assert_eq!(
+        kinds(&replaced.requests()?),
+        ["hello", "post_edit", "hello"]
+    );
     Ok(())
 }
 
@@ -362,7 +366,7 @@ fn a_probe_stops_and_starts_no_daemon() -> TestResult {
     let older = FakeDaemon::start(&repo, home.path(), Script::Welcome(&["0.0.1"]))?;
     let done = call(probe()?)?;
     assert!(done.is_silent_success(), "{:?}", done.output);
-    assert_eq!(kinds(&older.requests()?), ["hello", "event"]);
+    assert_eq!(kinds(&older.requests()?), ["hello", "post_edit"]);
     let done = call(probe()?)?;
     assert!(done.is_silent_success(), "{:?}", done.output);
     let log_path = UserFolder::in_home(home.path())

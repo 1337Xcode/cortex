@@ -18,6 +18,7 @@
 //! Errors are `anyhow` errors with context, as a binary's are: this crate is the daemon process's
 //! top level, and its errors are reported, never matched.
 
+mod given;
 mod global_ignore;
 mod graph;
 mod host;
@@ -35,8 +36,10 @@ mod recent_errors;
 mod retrieval;
 mod server;
 pub mod settings;
+mod signatures;
 #[cfg(test)]
 mod test_store;
+mod told;
 mod worktree;
 
 pub use instance::is_running;
@@ -60,8 +63,9 @@ use self::instance::Instance;
 use self::meter::Meter;
 use self::miner::Miner;
 use self::pending::Pending;
-use self::retrieval::{Service, Settings};
+use self::retrieval::{EditSettings, Service, Settings};
 use self::server::Server;
+use self::signatures::Signatures;
 use self::worktree::Worktree;
 
 /// Threads that serve connections. Requests are short; two keep one slow client from delaying
@@ -131,7 +135,11 @@ fn listen_and_serve(
     };
     let server = Server::new(
         Arc::clone(&shared.inbox),
-        (Arc::clone(&shared.snapshot), Arc::clone(&shared.worktree)),
+        (
+            Arc::clone(&shared.snapshot),
+            Arc::clone(&shared.worktree),
+            Arc::clone(&shared.signatures),
+        ),
         Arc::clone(&shared.service),
     );
     runtime.spawn(Arc::new(server).serve(listener));
@@ -144,7 +152,8 @@ fn listen_and_serve(
 }
 
 /// What the server and the writer share: the writer's inbox, the graph, the work tree's
-/// uncommitted diff, and what answers with text once the first index is done.
+/// uncommitted diff, the signature changes the writer's indexes found lately, and what answers with
+/// text once the first index is done.
 #[derive(Debug, Default)]
 struct Shared {
     /// The writer's inbox.
@@ -153,6 +162,8 @@ struct Shared {
     snapshot: Arc<Snapshot>,
     /// The work tree's uncommitted diff, which seeds retrievals.
     worktree: Arc<Worktree>,
+    /// The signature changes the writer's indexes found lately, for an edit's warnings.
+    signatures: Arc<Signatures>,
     /// What answers with text.
     service: Arc<OnceLock<Service>>,
 }
@@ -223,9 +234,14 @@ fn index_and_serve(
     pending.wait(host::record_waiting(&mut writer, &mut recorder, inbox));
     let mut host = Host::new(
         root,
-        grammars,
+        Arc::clone(&grammars),
         (&config, discover),
-        (writer, recorder, pending, (inbox, snapshot)),
+        (
+            writer,
+            recorder,
+            pending,
+            (inbox, snapshot, &shared.signatures),
+        ),
     );
     let report = or_close(host.index(&[]), || host.close())?;
     inbox.mark_indexed();
@@ -245,6 +261,12 @@ fn index_and_serve(
         retrieval: config.retrieval,
         max_file_bytes: config.max_file_bytes,
         holdout_share: config.holdout_share,
+        edits: EditSettings {
+            grammars,
+            parse_timeout: Duration::from_millis(config.parse_timeout_ms),
+            warnings: config.warnings,
+            link_decay: config.link_decay,
+        },
     })));
     // The graph is built once the first index is done, before which a retrieval would find
     // nothing; told to stop when dropped.

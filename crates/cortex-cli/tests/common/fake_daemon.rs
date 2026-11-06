@@ -197,6 +197,8 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
                 (Script::Indexing(_), RequestBody::Where { .. }) => {
                     ResponseBody::Reply { text: None }
                 }
+                // As a daemon with nothing to say answers a request for text.
+                (_, RequestBody::PostEdit { .. }) => ResponseBody::Reply { text: None },
                 _ => ResponseBody::Ack,
             };
             let answer = Response {
@@ -235,8 +237,8 @@ fn indexing() -> StatusReport {
     }
 }
 
-/// The kind of each request, for comparing: `hello`, `event`, `retrieve`, `primer`, `where`,
-/// `status` or `shutdown`.
+/// The kind of each request, for comparing: `hello`, `event`, `retrieve`, `primer`, `post_edit`,
+/// `where`, `status` or `shutdown`.
 pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
     requests
         .iter()
@@ -245,6 +247,7 @@ pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
             RequestBody::Event { .. } => "event",
             RequestBody::Retrieve { .. } => "retrieve",
             RequestBody::Primer { .. } => "primer",
+            RequestBody::PostEdit { .. } => "post_edit",
             RequestBody::Where { .. } => "where",
             RequestBody::Status => "status",
             RequestBody::Shutdown => "shutdown",

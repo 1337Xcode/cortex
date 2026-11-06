@@ -272,7 +272,8 @@ fn probed(answer: Result<Answer, ClientError>, asks_for_text: bool) -> Result<()
 
 /// The request the hook makes of the daemon with `event` at the hook `entry`: the text Cortex
 /// gives the agent there, where it gives some (the primer at a session's start, the work order at
-/// a prompt), saying when the hook stops reading the answer; the event alone otherwise.
+/// a prompt, the warnings after an edit), saying when the hook stops reading the answer; the event
+/// alone otherwise.
 fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
     // The event's time is the clock at the hook's start, from which its deadline counts.
     let wait = entry.hard_timeout.saturating_sub(EXIT_MARGIN);
@@ -291,6 +292,12 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
             event,
             answer_by_ms,
         },
+        HookKind::PostTool if entry.gives_context && event.edited_file().is_some() => {
+            RequestBody::PostEdit {
+                event,
+                answer_by_ms,
+            }
+        }
         _ => RequestBody::Event { event },
     }
 }
@@ -426,6 +433,79 @@ mod tests {
                 "{event}"
             );
         }
+        Ok(())
+    }
+
+    /// A tool's result at 1,000 ms that `tool` gave, succeeding or not, on `calc/ops.py`.
+    fn tool_result(
+        tool: cortex_core::ToolKind,
+        is_success: bool,
+    ) -> Result<Event, Box<dyn std::error::Error>> {
+        Ok(Event {
+            event_id: Ulid::from_seed(1_000, b"tool"),
+            ts_ms: 1_000,
+            agent: cortex_core::Agent::Claude,
+            agent_version: None,
+            session_id: cortex_core::Identifier::new("s1")?,
+            parent_session_id: None,
+            cwd: PathBuf::from("/repo"),
+            repo_root: PathBuf::from("/repo"),
+            hook: HookKind::PostTool,
+            source: None,
+            tool: Some(tool),
+            tool_target: Some(cortex_core::ToolTarget {
+                path: Some(cortex_core::RepoPath::new("calc/ops.py")?),
+                ..cortex_core::ToolTarget::default()
+            }),
+            tool_result: Some(cortex_core::ToolResult {
+                exit_code: None,
+                is_success,
+                is_interrupted: false,
+                output_bytes: None,
+            }),
+            prompt_text: None,
+            transcript_path: None,
+            model: None,
+            subagent_type: None,
+            compact_trigger: None,
+            end_reason: None,
+            is_probe: false,
+        })
+    }
+
+    /// After a successful edit Claude Code's `PostToolUse` asks for the edit's warnings, to be read
+    /// by 1,485 ms (485 ms after the event's 1,000); after a read it reports the event alone, and so
+    /// does `PostToolUseFailure`, whose edit failed.
+    #[test]
+    fn an_edit_asks_for_its_warnings() -> Result<(), Box<dyn std::error::Error>> {
+        use cortex_core::ToolKind;
+        let entry = |event: &str| -> Result<&'static HookEntry, Box<dyn std::error::Error>> {
+            Ok(hook_of(&args(&["--agent", "claude", "--event", event]))
+                .map_err(|failure| failure.to_string())?
+                .1)
+        };
+        let edit = tool_result(ToolKind::Edit, true)?;
+        assert_eq!(
+            request_of(entry("PostToolUse")?, edit.clone()),
+            RequestBody::PostEdit {
+                event: Box::new(edit),
+                answer_by_ms: Some(1_485),
+            }
+        );
+        let read = tool_result(ToolKind::Read, true)?;
+        assert_eq!(
+            request_of(entry("PostToolUse")?, read.clone()),
+            RequestBody::Event {
+                event: Box::new(read)
+            }
+        );
+        let failed = tool_result(ToolKind::Edit, false)?;
+        assert_eq!(
+            request_of(entry("PostToolUseFailure")?, failed.clone()),
+            RequestBody::Event {
+                event: Box::new(failed)
+            }
+        );
         Ok(())
     }
 

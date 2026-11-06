@@ -62,7 +62,7 @@ const HOOKS: &[HookEntry] = &[
         matcher: Some(TOOL_RESULTS),
         hook: HookKind::PostTool,
         hard_timeout: Duration::from_millis(500),
-        gives_context: false,
+        gives_context: true,
     },
     HookEntry {
         event_name: "PostToolUseFailure",
@@ -143,14 +143,15 @@ impl Adapter for Claude {
 mod tests {
     use super::*;
 
-    /// Cortex gives Claude Code text at a session's start and at a prompt, and at no other hook.
+    /// Cortex gives Claude Code text at a session's start, at a prompt and after a tool succeeded
+    /// (an edit's warnings), and at no other hook: not after a tool failed.
     #[test]
-    fn only_a_session_start_and_a_prompt_give_context() {
+    fn a_session_start_a_prompt_and_a_tool_s_success_give_context() {
         let giving: Vec<&str> = HOOKS
             .iter()
             .filter(|entry| entry.gives_context)
             .map(|entry| entry.event_name)
             .collect();
-        assert_eq!(giving, ["SessionStart", "UserPromptSubmit"]);
+        assert_eq!(giving, ["SessionStart", "UserPromptSubmit", "PostToolUse"]);
     }
 }

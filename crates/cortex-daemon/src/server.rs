@@ -18,17 +18,19 @@ use cortex_core::ipc::{
 };
 use cortex_core::{Event, HookKind};
 use cortex_retrieve::Graph;
-use cortex_store::{InjectionRecord, NodeId};
+use cortex_store::NodeId;
 use interprocess::local_socket::tokio::{Listener, Stream};
 use interprocess::local_socket::traits::tokio::Listener as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
 
+use crate::given::{Given, recorded};
 use crate::graph::Snapshot;
 use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
 use crate::retrieval::Service;
+use crate::signatures::Signatures;
 use crate::worktree::Worktree;
 
 /// Most connections served at once. Hooks and commands hold a connection for one exchange, so more
@@ -50,22 +52,14 @@ pub(crate) struct Server {
     snapshot: Arc<Snapshot>,
     /// The work tree's uncommitted diff, which seeds retrievals.
     worktree: Arc<Worktree>,
+    /// The signature changes the writer's indexes found lately, for an edit's warnings.
+    signatures: Arc<Signatures>,
     /// What answers with text, once the first index is done.
     service: Arc<OnceLock<Service>>,
     /// How long each hook's latest requests took to handle.
     latencies: Mutex<Latencies>,
     /// Probes, `cortex doctor`'s, answered since the daemon started.
     probes_answered: AtomicU64,
-}
-
-/// `injection` as recorded when its answer could not be written: what would have been given, but
-/// no text that reached the agent, so no hash and no tokens.
-fn not_delivered(injection: InjectionRecord) -> InjectionRecord {
-    InjectionRecord {
-        tokens: 0,
-        text_hash: None,
-        ..injection
-    }
 }
 
 /// How long before its hook stops reading a reply holding text must be sent: the moment the reply
@@ -84,24 +78,6 @@ fn is_too_late_to_send(reads_until_ms: Option<i64>, now_ms: i64) -> bool {
     is_past(reads_until_ms, now_ms.saturating_add(SEND_MARGIN_MS))
 }
 
-/// What is recorded of `injection` once its reply was written, or could not be (`is_written`):
-/// a reply holding text (`holds_text`) that could not be written, or was written after its hook
-/// stopped reading (`is_late`), gave the agent nothing, and what it would have given is recorded
-/// as not delivered. A reply without text gave nothing either way, and its record (kept back, or
-/// held out with what it would have given) stands.
-fn recorded(
-    injection: InjectionRecord,
-    holds_text: bool,
-    is_written: bool,
-    is_late: bool,
-) -> InjectionRecord {
-    if holds_text && (!is_written || is_late) {
-        not_delivered(injection)
-    } else {
-        injection
-    }
-}
-
 /// The most files a question asked directly names.
 const MAX_WHERE_FILES: u8 = 5;
 
@@ -112,6 +88,8 @@ enum Asked {
     WorkOrder,
     /// The primer a session's start gets.
     Primer,
+    /// The warnings an edit gets.
+    Warnings,
 }
 
 /// A request as read, with when the first byte of its frame arrived.
@@ -165,10 +143,11 @@ impl Broken {
 
 impl Server {
     /// A server for a daemon started now, whose writer reads `inbox`, answering from the graph of
-    /// `snapshot` and the uncommitted diff of `worktree` with `service`.
+    /// `snapshot`, the uncommitted diff of `worktree` and the signature changes `signatures` holds
+    /// with `service`.
     pub(crate) fn new(
         inbox: Arc<Inbox>,
-        (snapshot, worktree): (Arc<Snapshot>, Arc<Worktree>),
+        (snapshot, worktree, signatures): (Arc<Snapshot>, Arc<Worktree>, Arc<Signatures>),
         service: Arc<OnceLock<Service>>,
     ) -> Self {
         Self {
@@ -176,6 +155,7 @@ impl Server {
             inbox,
             snapshot,
             worktree,
+            signatures,
             service,
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
@@ -285,7 +265,7 @@ impl Server {
     ) -> Result<bool, Broken> {
         let Received { request, began } = received;
         let is_shutdown = request.body == RequestBody::Shutdown;
-        let mut injection = None;
+        let mut given = None;
         let mut reads_until_ms = None;
         let (body, hook) = match request.body {
             RequestBody::Status => (ResponseBody::Status(self.report()), None),
@@ -306,8 +286,8 @@ impl Server {
             } => {
                 reads_until_ms = answer_by_ms;
                 let asked = (Asked::WorkOrder, answer_by_ms);
-                let (body, hook, given) = self.answer_with_text(*event, asked).await;
-                injection = given;
+                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
+                given = answered;
                 (body, hook)
             }
             RequestBody::Primer {
@@ -316,8 +296,18 @@ impl Server {
             } => {
                 reads_until_ms = answer_by_ms;
                 let asked = (Asked::Primer, answer_by_ms);
-                let (body, hook, given) = self.answer_with_text(*event, asked).await;
-                injection = given;
+                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
+                given = answered;
+                (body, hook)
+            }
+            RequestBody::PostEdit {
+                event,
+                answer_by_ms,
+            } => {
+                reads_until_ms = answer_by_ms;
+                let asked = (Asked::Warnings, answer_by_ms);
+                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
+                given = answered;
                 (body, hook)
             }
             RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
@@ -350,16 +340,17 @@ impl Server {
         let holds_text = matches!(&body, ResponseBody::Reply { text: Some(_) });
         let answered = write_response(writer, request.request_id, body).await;
         // Recorded once its answer is written, after its event, as `recorded` says.
-        if let Some(injection) = injection {
+        if let Some(given) = given {
             let is_late = is_past(reads_until_ms, now_ms());
-            let injection = recorded(injection, holds_text, answered.is_ok(), is_late);
             if holds_text && answered.is_ok() && is_late {
                 self.inbox.note_error(
                     "an answer was written after its hook stopped waiting",
                     now_ms(),
                 );
             }
-            self.inbox.push_injection(injection, now_ms());
+            if let Some(given) = recorded(given, holds_text, answered.is_ok(), is_late) {
+                self.inbox.push_given(given, now_ms());
+            }
         }
         if is_shutdown {
             // A stop holds whether or not the client stays for its acknowledgement.
@@ -389,11 +380,12 @@ impl Server {
         &self,
         event: Event,
         (asked, answer_by_ms): (Asked, Option<i64>),
-    ) -> (ResponseBody, Option<HookKind>, Option<InjectionRecord>) {
+    ) -> (ResponseBody, Option<HookKind>, Option<Given>) {
         let (hook, is_probe) = (event.hook, event.is_probe);
         let expected = match asked {
             Asked::WorkOrder => HookKind::Prompt,
             Asked::Primer => HookKind::SessionStart,
+            Asked::Warnings => HookKind::PostTool,
         };
         if hook != expected {
             return (
@@ -411,10 +403,12 @@ impl Server {
                 None,
             );
         }
+        let signatures = Arc::clone(&self.signatures);
         let mut answer = self
             .with_service(move |service, graph, uncommitted| match asked {
                 Asked::WorkOrder => service.prompt(&event, graph, uncommitted),
                 Asked::Primer => service.primer(&event, graph),
+                Asked::Warnings => service.post_edit(&event, &signatures),
             })
             .await
             .unwrap_or_default();
@@ -423,7 +417,9 @@ impl Server {
         // delivered.
         if answer.text.is_some() && is_too_late_to_send(answer_by_ms, now_ms()) {
             answer.text = None;
-            answer.injection = answer.injection.map(not_delivered);
+            answer.given = answer
+                .given
+                .and_then(|given| recorded(given, true, false, true));
             if !is_probe {
                 self.inbox.note_error(
                     "an answer was worked out after its hook stopped waiting",
@@ -431,12 +427,8 @@ impl Server {
                 );
             }
         }
-        let injection = answer.injection.filter(|_| !is_probe);
-        (
-            ResponseBody::Reply { text: answer.text },
-            Some(hook),
-            injection,
-        )
+        let given = answer.given.filter(|_| !is_probe);
+        (ResponseBody::Reply { text: answer.text }, Some(hook), given)
     }
 
     /// What the engine finds for `query` without the gate, at most `limit` files (1 to 5): an
@@ -685,69 +677,13 @@ mod tests {
         Ok(())
     }
 
-    /// An answer that could not be written is recorded as given to no one: what the retrieval
-    /// gave stays, its files and its features, but there is no text's hash and no token.
+    /// A hook that stops reading at 100 ms has not stopped at 100 ms, has at 101; one that waits
+    /// as long as it takes never has.
     #[test]
-    fn an_answer_not_written_is_not_delivered() -> TestResult {
-        let given = InjectionRecord {
-            task_id: None,
-            session_id: cortex_core::Identifier::new("s1")?,
-            hook: HookKind::Prompt,
-            at_ms: 5,
-            files: Vec::new(),
-            tokens: 120,
-            confidence: None,
-            is_gated_out: false,
-            is_holdout: false,
-            text_hash: Some(cortex_core::ContentHash::of(b"a work order")),
-            features: None,
-        };
-        let lost = not_delivered(given.clone());
-        assert_eq!((lost.tokens, lost.text_hash), (0, None));
-        assert_eq!(
-            InjectionRecord {
-                tokens: given.tokens,
-                text_hash: given.text_hash,
-                ..lost
-            },
-            given
-        );
-        Ok(())
-    }
-
-    /// A reply holding text is recorded as given only when it was written before its hook stopped
-    /// reading; one written late, or not written, as not delivered. A reply without text, a
-    /// held-out task's, keeps what it would have given whatever came of its writing. A hook
-    /// that stops reading at 100 ms has not stopped at 100 ms, has at 101; one that waits as long
-    /// as it takes never has.
-    #[test]
-    fn a_reply_holding_text_is_given_only_when_written_in_time() -> TestResult {
-        let given = InjectionRecord {
-            task_id: None,
-            session_id: cortex_core::Identifier::new("s1")?,
-            hook: HookKind::Prompt,
-            at_ms: 5,
-            files: Vec::new(),
-            tokens: 120,
-            confidence: None,
-            is_gated_out: false,
-            is_holdout: false,
-            text_hash: Some(cortex_core::ContentHash::of(b"a work order")),
-            features: None,
-        };
-        let lost = not_delivered(given.clone());
-        assert_eq!(recorded(given.clone(), true, true, false), given);
-        assert_eq!(recorded(given.clone(), true, true, true), lost);
-        assert_eq!(recorded(given.clone(), true, false, false), lost);
-        let held_out = InjectionRecord {
-            is_holdout: true,
-            ..given
-        };
-        assert_eq!(recorded(held_out.clone(), false, false, true), held_out);
+    fn a_hook_stops_reading_after_its_time() {
         assert!(!is_past(Some(100), 100));
         assert!(is_past(Some(100), 101));
         assert!(!is_past(None, i64::MAX));
-        Ok(())
     }
 
     /// Text for a hook that stops reading at 100 ms is sent when ready by 90 ms, 10 ms before, and

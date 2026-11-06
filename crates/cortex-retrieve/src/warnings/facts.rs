@@ -3,14 +3,14 @@
 //! tests. A call site is told only from a file whose bytes on disk are the ones the index read, so
 //! its line is the line the reference is on.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use cortex_core::{EdgeType, RepoPath};
-use cortex_learn::decayed;
+use cortex_core::{EdgeType, EventKind, RefKind, RepoPath, Ulid};
+use cortex_learn::{MAX_TASK_ROWS, decayed};
 use cortex_store::{FileId, NodeId, Queries, StoreError, SymbolId};
 
-use super::{CallSite, Drift, EditFacts, Linked, NamedFile, Partner, TestFile};
+use super::{CallSite, Drift, EditFacts, Linked, NamedFile, Partner, TaskSoFar, TestFile};
 use crate::disk::CheckedFile;
 
 /// The most files whose calls to one changed symbol are checked on disk; the calls in files past
@@ -129,8 +129,8 @@ fn companions(
     Ok((partners, linked))
 }
 
-/// The drift of `symbol`, one of the edited file's (`edited`): its name, and the calls to it from
-/// files whose bytes on disk are the ones the index read, by path and line, the edited file's own
+/// The drift of `symbol`, one of the edited file's (`edited`): its name, and the calls to it (not
+/// its imports) from files whose bytes on disk are the ones the index read, by path and line, the edited file's own
 /// among them for the rule to leave out; the calls in files past [`MAX_CHECKED_CALLER_FILES`]
 /// counted as not checked. None when the store no longer holds the symbol.
 fn drift(
@@ -151,11 +151,14 @@ fn drift(
         return Ok(None);
     };
     let mut by_file: BTreeMap<FileId, Vec<(u32, f64)>> = BTreeMap::new();
+    // Only calls: an import of the symbol does not break when its signature changes.
     for reference in queries.refs_tied_to(symbol)? {
-        by_file
-            .entry(reference.file)
-            .or_default()
-            .push((reference.line, reference.confidence));
+        if reference.kind == RefKind::Call {
+            by_file
+                .entry(reference.file)
+                .or_default()
+                .push((reference.line, reference.confidence));
+        }
     }
     let mut call_sites = Vec::new();
     let mut unchecked = 0_u32;
@@ -209,4 +212,48 @@ fn checked_caller(
     Ok(queries
         .file_node(file)?
         .map(|node| NamedFile { node, path }))
+}
+
+/// What task `task_id` did so far, as the store holds it and the edit being answered adds: the
+/// files it read (a read that failed touched nothing) or edited, its first [`MAX_TASK_ROWS`] rows
+/// read; `edited_now`, the file the edit being answered changed, which the store has not recorded
+/// yet; and each pair the store holds it was warned of. Pairs told and not yet recorded are the
+/// caller's to add.
+///
+/// # Errors
+///
+/// The store's errors.
+pub fn task_so_far(
+    queries: Queries<'_>,
+    task_id: Ulid,
+    edited_now: NodeId,
+) -> Result<TaskSoFar, StoreError> {
+    let mut touched = BTreeSet::from([edited_now]);
+    let mut edited = BTreeSet::from([edited_now]);
+    for row in queries.events_of_task(task_id, MAX_TASK_ROWS)? {
+        let event = &row.record;
+        let Some(node) = event.node_id else {
+            continue;
+        };
+        match event.kind {
+            EventKind::Edit => {
+                touched.insert(node);
+                edited.insert(node);
+            }
+            EventKind::Read if event.meta.is_success != Some(false) => {
+                touched.insert(node);
+            }
+            _ => {}
+        }
+    }
+    let warned = queries
+        .warnings_of_task(task_id)?
+        .iter()
+        .map(|row| (row.record.kind, row.record.source, row.record.target))
+        .collect();
+    Ok(TaskSoFar {
+        touched,
+        edited,
+        warned,
+    })
 }

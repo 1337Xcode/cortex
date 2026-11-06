@@ -20,12 +20,14 @@ use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
 };
 use cortex_learn::{Recorder, TaskState};
-use cortex_store::{InjectionRecord, PAUSE_EVERY, Pause, StoreError, Writer};
+use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, Writer};
 
+use crate::given::Given;
 use crate::graph::Snapshot;
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
 use crate::meter::Transcript;
 use crate::pending::Pending;
+use crate::signatures::Signatures;
 
 /// How often the crawler takes a batch of `index.crawl_files_per_second` files.
 const CRAWL_PERIOD: Duration = Duration::from_secs(1);
@@ -53,22 +55,25 @@ pub(crate) struct Host<'a> {
     inbox: &'a Inbox,
     /// The graph retrieval spreads over, told when a write changes what it holds.
     snapshot: &'a Snapshot,
+    /// Where the signature changes an index finds are kept a short while, for an edit's warnings.
+    signatures: &'a Signatures,
 }
 
 impl<'a> Host<'a> {
     /// A host over `writer` for the repository at `root`, with the settings in effect and the
     /// walk's options, recording events with `recorder`, learning from the tasks they end and
-    /// reading the transcripts they name with `pending`, taking its work from `inbox` and telling
-    /// `snapshot` when a write changes the graph, no file waiting yet.
+    /// reading the transcripts they name with `pending`, taking its work from `inbox`, telling
+    /// `snapshot` when a write changes the graph and keeping in `signatures` the signature changes
+    /// its indexes find, no file waiting yet.
     pub(crate) fn new(
         root: &'a Path,
         grammars: Arc<Grammars>,
         (config, discover): (&'a Config, DiscoverOptions<'a>),
-        (writer, recorder, pending, (inbox, snapshot)): (
+        (writer, recorder, pending, (inbox, snapshot, signatures)): (
             Writer,
             Recorder,
             Pending,
-            (&'a Inbox, &'a Snapshot),
+            (&'a Inbox, &'a Snapshot, &'a Signatures),
         ),
     ) -> Self {
         Self {
@@ -82,6 +87,7 @@ impl<'a> Host<'a> {
             pending,
             inbox,
             snapshot,
+            signatures,
         }
     }
 
@@ -179,9 +185,7 @@ impl<'a> Host<'a> {
                     }
                     last_activity = Instant::now();
                 }
-                Work::Injections(injections) => {
-                    record_injections(&mut self.writer, inbox, &injections);
-                }
+                Work::Given(given) => record_given(&mut self.writer, inbox, &given),
                 Work::Changed(changed) => {
                     match changed {
                         Changed::Everything(touched) => drop(self.index(&touched)?),
@@ -283,12 +287,18 @@ impl<'a> Host<'a> {
     /// Runs `index` with the options of an index on `threads` threads, timed now, and the pause
     /// of [`Host::with_pause`], the recorder told while it runs so that a hook's edit recorded in a
     /// pause takes nothing from a row the index wrote as what its file held before. However it
-    /// went, the graph is rebuilt from what it wrote.
-    fn indexing<T>(
+    /// went, the graph is rebuilt from what it wrote; an index that succeeded leaves the signature
+    /// changes it found with the signatures kept for an edit's warnings.
+    fn indexing<E>(
         &mut self,
         threads: NonZeroUsize,
-        index: impl FnOnce(&Path, &Arc<Grammars>, &mut Writer, &IndexOptions<'_>) -> T,
-    ) -> T {
+        index: impl FnOnce(
+            &Path,
+            &Arc<Grammars>,
+            &mut Writer,
+            &IndexOptions<'_>,
+        ) -> Result<IndexReport, E>,
+    ) -> Result<IndexReport, E> {
         let options = self.options(threads);
         let (root, grammars) = (self.root, Arc::clone(&self.grammars));
         self.recorder.index_started(options.now_ms);
@@ -301,6 +311,14 @@ impl<'a> Host<'a> {
         });
         self.recorder.index_done();
         self.snapshot.changed();
+        if let Ok(report) = &indexed {
+            let changed = report
+                .changed_symbols
+                .iter()
+                .filter(|change| change.kind == ChangeKind::Signature)
+                .map(|change| change.symbol);
+            self.signatures.note(changed, now_ms());
+        }
         indexed
     }
 
@@ -400,7 +418,7 @@ pub(crate) fn record_waiting(
     recorder: &mut Recorder,
     inbox: &Inbox,
 ) -> Recorded {
-    let (events, injections) = inbox.take_waiting();
+    let (events, given) = inbox.take_waiting();
     let recorded = if events.is_empty() {
         Recorded::default()
     } else {
@@ -409,27 +427,40 @@ pub(crate) fn record_waiting(
             Recorded::default()
         })
     };
-    // After the events: an injection's prompt, its task and its session are recorded by now.
-    record_injections(writer, inbox, &injections);
+    // After the events: what was given answered an event recorded by now, with its task and its
+    // session.
+    record_given(writer, inbox, &given);
     recorded
 }
 
-/// Records `injections` with `writer`, in one transaction; one the store refuses (its prompt's
-/// batch not recorded, so its task missing) is counted, with its error, and the rest kept.
-fn record_injections(writer: &mut Writer, inbox: &Inbox, injections: &[InjectionRecord]) {
-    if injections.is_empty() {
+/// Records `given`, what agents were given, with `writer`, in one transaction; a row the store
+/// refuses (its event's batch not recorded, so its task missing) is counted, with its error, and
+/// the rest kept.
+fn record_given(writer: &mut Writer, inbox: &Inbox, given: &[Given]) {
+    if given.is_empty() {
         return;
     }
     let recorded = writer.transaction().and_then(|mut transaction| {
-        for injection in injections {
-            if let Err(error) = transaction.record_injection(injection) {
-                count_failed(inbox, "an injection", &error);
+        for record in given {
+            match record {
+                Given::Injection(injection) => {
+                    if let Err(error) = transaction.record_injection(injection) {
+                        count_failed(inbox, "an injection", &error);
+                    }
+                }
+                Given::Warnings(rows) => {
+                    for row in rows {
+                        if let Err(error) = transaction.record_warning(row) {
+                            count_failed(inbox, "a warning", &error);
+                        }
+                    }
+                }
             }
         }
         transaction.commit()
     });
     if let Err(error) = recorded {
-        count_failed(inbox, "injections", &error);
+        count_failed(inbox, "what was given", &error);
     }
 }
 
@@ -534,6 +565,9 @@ mod tests {
     use super::*;
     use crate::meter::Meter;
 
+    /// The signature changes the hosts of these tests keep: none of the tests reads them.
+    static SIGNATURES: Signatures = Signatures::new();
+
     /// Result type for these tests: any failure fails the test.
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -612,7 +646,7 @@ mod tests {
             writer(root.path())?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            (&inbox, &snapshot),
+            (&inbox, &snapshot, &SIGNATURES),
         );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         inbox.push_event(event(HookKind::SessionStart, 5, b"start")?);
@@ -644,7 +678,7 @@ mod tests {
             writer(root.path())?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            (&inbox, &snapshot),
+            (&inbox, &snapshot, &SIGNATURES),
         );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         let prompt = Event {
@@ -698,7 +732,7 @@ mod tests {
             writer(root.path())?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            (&inbox, &snapshot),
+            (&inbox, &snapshot, &SIGNATURES),
         );
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
         let prompt = event(HookKind::Prompt, 10, b"same")?;
@@ -729,7 +763,7 @@ mod tests {
             writer(root)?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            (inbox, snapshot),
+            (inbox, snapshot, &SIGNATURES),
         );
         let grammars = Arc::new(Grammars::load()?);
         let mut host = Host::new(root, grammars, (config, discover(config)), parts);
@@ -796,7 +830,7 @@ mod tests {
             writer(root)?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            (inbox, snapshot),
+            (inbox, snapshot, &SIGNATURES),
         );
         let grammars = Arc::new(Grammars::load()?);
         let mut host = Host::new(root, grammars, (config, discover(config)), parts);
@@ -1146,7 +1180,7 @@ mod tests {
             writer(root.path())?,
             Recorder::new(false, 0.0, Commands::default()),
             pending(),
-            (&inbox, &snapshot),
+            (&inbox, &snapshot, &SIGNATURES),
         );
         let grammars = Arc::new(Grammars::load()?);
         let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);

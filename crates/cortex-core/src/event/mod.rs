@@ -93,6 +93,20 @@ pub struct Event {
     pub is_probe: bool,
 }
 
+impl Event {
+    /// The file this event says a tool changed: a tool's result, successful, of a tool that edits,
+    /// naming a file inside the repository.
+    #[must_use]
+    pub fn edited_file(&self) -> Option<&RepoPath> {
+        let is_edit = self.tool.is_some_and(ToolKind::is_edit);
+        let is_success = self.tool_result.is_some_and(|result| result.is_success);
+        if self.hook != HookKind::PostTool || !is_edit || !is_success {
+            return None;
+        }
+        self.tool_target.as_ref()?.path.as_ref()
+    }
+}
+
 /// What a tool call aimed at.
 #[derive(Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ToolTarget {

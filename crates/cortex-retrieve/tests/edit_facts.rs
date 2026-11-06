@@ -18,12 +18,12 @@ use cortex_store::{FileIndex, FileRecord, NodeId, RefRecord, Resolved, SymbolId,
 /// below exist.
 const CALLER: &str = "import orders\n\norders.create_order(1)\n\norders.create_order(2)\n";
 
-/// Stores the file at `path` holding `text`, written to disk, with a call to `create_order` on each
-/// of `lines`, each tied to `target` as `resolution` ties it; returns the file's node.
-fn caller(
+/// Stores the file at `path` holding `text`, written to disk, with a use of `kind` of `create_order`
+/// on each of `lines`, each tied to `target` as `resolution` ties it; returns the file's node.
+fn user(
     repo: &mut Repo,
     (path, text): (&str, &str),
-    lines: &[u32],
+    (lines, kind): (&[u32], RefKind),
     (target, resolution): (SymbolId, Resolution),
 ) -> TestResult<NodeId> {
     let node = *repo
@@ -36,7 +36,7 @@ fn caller(
             Ok(RefRecord {
                 symbol: None,
                 dst_name: Identifier::new("create_order")?,
-                kind: RefKind::Call,
+                kind,
                 line: *line,
             })
         })
@@ -74,6 +74,16 @@ fn caller(
     Ok(node)
 }
 
+/// Stores the file at `path` as [`user`] does, with a call on each of `lines`.
+fn caller(
+    repo: &mut Repo,
+    file: (&str, &str),
+    lines: &[u32],
+    target: (SymbolId, Resolution),
+) -> TestResult<NodeId> {
+    user(repo, file, (lines, RefKind::Call), target)
+}
+
 /// A named file.
 fn named(node: NodeId, path: &str) -> TestResult<NamedFile> {
     Ok(NamedFile {
@@ -88,7 +98,8 @@ fn named(node: NodeId, path: &str) -> TestResult<NamedFile> {
 ///   latest task is 5, and at a decay of 0.5 a task it holds 2.0 x 0.5^4 = 0.125.
 /// - Calls: `api/routes.py` lines 3 and 5 (tied by import path, 0.8), `lib/old.py` line 3 (by name
 ///   only, 0.3), and `api/admin.py` line 3, whose file changed on disk since it was indexed, so it
-///   is not told. In path order: routes 3, routes 5, old 3.
+///   is not told. In path order: routes 3, routes 5, old 3. `api/imports.py` only imports it, on
+///   line 1: no call.
 /// - `tests/test_orders.py` holds a test and an import edge into it of weight 0.8.
 #[test]
 fn an_edit_s_facts_are_read_from_the_store_and_the_disk() -> TestResult {
@@ -139,6 +150,12 @@ fn an_edit_s_facts_are_read_from_the_store_and_the_disk() -> TestResult {
     let tied = (create_order, Resolution::ImportPath);
     let routes = caller(&mut repo, ("api/routes.py", CALLER), &[3, 5], tied)?;
     let admin = caller(&mut repo, ("api/admin.py", CALLER), &[3], tied)?;
+    user(
+        &mut repo,
+        ("api/imports.py", CALLER),
+        (&[1], RefKind::Import),
+        tied,
+    )?;
     std::fs::write(
         repo.root.path().join("api").join("admin.py"),
         "changed since\n",

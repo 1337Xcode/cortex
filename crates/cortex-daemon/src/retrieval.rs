@@ -1,25 +1,31 @@
 //! The daemon's answers that are text: the work order a prompt gets, the primer a session's start
-//! gets, and what the engine finds for a question asked of it directly. Each is worked out with a
-//! reader of the store and the graph as it stands, never waiting for the writer; what a prompt's
-//! retrieval gave or weighed, and the primer given, are returned for the writer to record after the
-//! event they answer.
+//! gets, the warnings an edit gets, and what the engine finds for a question asked of it directly.
+//! Each is worked out with a reader of the store and the graph as it stands, never waiting for the
+//! writer; what a prompt's retrieval gave or weighed, the primer given and the warnings given are
+//! returned for the writer to record after the event they answer.
 //!
 //! A prompt of a held-out task is retrieved for in full and gets nothing; what would have been
 //! given is recorded all the same. Every retrieval takes the gate's bar as the self-check last
 //! raised it, and the recent precision it last found, from the store. Before the graph is built, and while the store has no mode (its
 //! first index not done), every answer is silent.
 
+mod warnings;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use cortex_core::{
-    ContentHash, Event, HookKind, RetrievalConfig, ScaleMode, StartSource, estimate_tokens,
-    is_held_out, task_id_of_prompt,
+    ContentHash, Event, HookKind, RetrievalConfig, ScaleMode, StartSource, WarningsConfig,
+    estimate_tokens, is_held_out, task_id_of_prompt,
 };
+use cortex_index::Grammars;
 use cortex_learn::{raise_of, recent_precision};
 use cortex_retrieve::{Graph, Outcome, Request, Retrieval, locate, primer, retrieve};
 use cortex_store::{InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError};
+
+use crate::given::Given;
+use crate::told::Told;
 
 /// How long a prompt's spreading may run before it stops where it is: well inside the
 /// `UserPromptSubmit` hook's hard timeout of 1 s, with room for the listing and the rendering.
@@ -44,6 +50,10 @@ pub(crate) struct Service {
     max_file_bytes: u64,
     /// `holdout.share`.
     holdout_share: f64,
+    /// What an edit's warnings are worked out with.
+    edits: EditSettings,
+    /// The pairs each recent task was warned of.
+    told: Told,
     /// Readers not in use.
     readers: Mutex<Vec<Reader>>,
 }
@@ -54,7 +64,20 @@ pub(crate) struct Answer {
     /// The text the agent gets.
     pub(crate) text: Option<String>,
     /// What the writer records of it.
-    pub(crate) injection: Option<InjectionRecord>,
+    pub(crate) given: Option<Given>,
+}
+
+/// What an edit's warnings are worked out with.
+#[derive(Debug, Clone)]
+pub(crate) struct EditSettings {
+    /// Every language's grammar, to read the edited file's definitions again.
+    pub(crate) grammars: Arc<Grammars>,
+    /// `index.parse_timeout_ms`: how long reading one file's definitions may take.
+    pub(crate) parse_timeout: Duration,
+    /// The `warnings.*` settings.
+    pub(crate) warnings: WarningsConfig,
+    /// `learning.link_decay`: what a co-access link keeps of its weight for each task.
+    pub(crate) link_decay: f64,
 }
 
 /// Where a service's settings come from.
@@ -72,6 +95,8 @@ pub(crate) struct Settings {
     pub(crate) max_file_bytes: u64,
     /// `holdout.share`.
     pub(crate) holdout_share: f64,
+    /// What an edit's warnings are worked out with.
+    pub(crate) edits: EditSettings,
 }
 
 impl Service {
@@ -84,6 +109,8 @@ impl Service {
             settings: settings.retrieval,
             max_file_bytes: settings.max_file_bytes,
             holdout_share: settings.holdout_share,
+            edits: settings.edits,
+            told: Told::default(),
             readers: Mutex::new(Vec::new()),
         }
     }
@@ -137,7 +164,10 @@ impl Service {
             let text = rendered(&retrieval)
                 .filter(|_| !is_holdout)
                 .map(|(text, _)| text.to_owned());
-            Ok(Answer { text, injection })
+            Ok(Answer {
+                text,
+                given: injection.map(Given::Injection),
+            })
         });
         answered.unwrap_or_else(|error| {
             tracing::warn!(error = %format!("{error:#}"), "a prompt's retrieval failed");
@@ -173,7 +203,7 @@ impl Service {
             };
             Ok(Answer {
                 text: Some(text),
-                injection: Some(injection),
+                given: Some(Given::Injection(injection)),
             })
         });
         answered.unwrap_or_else(|error| {

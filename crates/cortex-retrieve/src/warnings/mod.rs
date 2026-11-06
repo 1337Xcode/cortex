@@ -14,12 +14,12 @@ mod test_companion;
 
 use std::collections::BTreeSet;
 
-use cortex_core::{RepoPath, ScaleMode, WarningKind, WarningsConfig, estimate_tokens};
-use cortex_store::NodeId;
+use cortex_core::{RepoPath, ScaleMode, Ulid, WarningKind, WarningsConfig, estimate_tokens};
+use cortex_store::{NodeId, WarningRecord};
 
 pub use call_site::MAX_LISTED_CALL_SITES;
 pub use cochange::{MIN_LINK_TASKS, MIN_LINK_WEIGHT};
-pub use facts::{EditQuery, MAX_CHECKED_CALLER_FILES, edit_facts};
+pub use facts::{EditQuery, MAX_CHECKED_CALLER_FILES, edit_facts, task_so_far};
 pub use test_companion::MAX_LISTED_TESTS;
 
 /// The most tokens the warnings of one edit take together, as estimated.
@@ -179,6 +179,27 @@ pub struct Warned {
     pub given: Vec<Warning>,
     /// Their text, one line each; none when no warning is given.
     pub text: Option<String>,
+}
+
+impl Warned {
+    /// The rows the store keeps of the warnings given in task `task_id` at `at_ms`, in UTC
+    /// milliseconds: one for each file each warning named, in the order given.
+    #[must_use]
+    pub fn records(&self, task_id: Ulid, at_ms: i64) -> Vec<WarningRecord> {
+        self.given
+            .iter()
+            .flat_map(|warning| {
+                warning.targets.iter().map(move |target| WarningRecord {
+                    task_id,
+                    at_ms,
+                    kind: warning.kind,
+                    source: warning.source,
+                    target: *target,
+                    strength: warning.strength,
+                })
+            })
+            .collect()
+    }
 }
 
 /// The warnings the edit `facts` describes gets in the task `task`: every rule's that runs in

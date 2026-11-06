@@ -53,6 +53,15 @@ All notable changes to this project are documented in this file. The format is b
   interval that resamples whole tasks; `cortex-eval report` rebuilds a results folder's summary
   from its runs. The first measured results are in `eval/results/2026-11-05-c856abc/`.
 - `cortex version` prints the binary's name and version.
+- After Claude Code edits a file, it is told what the edit seems to leave undone: when a
+  function's signature changed, the calls to it in other files the task has not edited (how many,
+  and five listed by path and line, each line checked against the file on disk); the file's tests,
+  once a task; and a file that usually changes with it in the repository's history or in earlier
+  tasks, when the task has not touched it. At most three warnings an edit, strongest first, each
+  file named at most once a task, within 250 tokens; `warnings.max_per_edit`,
+  `warnings.cochange_min_confidence` and `warnings.cochange_min_count` set the limits. The hook and
+  the daemon now speak protocol 3.0: a hook and a daemon of different Cortex versions are
+  replaced as before.
 - `cargo xtask verify` runs formatting, the crate dependency-direction rules, the shared lint
   settings in every crate, the invariant tags, clippy, the tests and the dependency licence and
   advisory checks; `--full` also runs the benchmarks against their budgets.

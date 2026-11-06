@@ -373,3 +373,28 @@ fn a_request_for_text_says_until_when_it_is_read() -> TestResult {
     assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, untimed);
     Ok(())
 }
+
+/// An edit's request, as the hook writes it after an edit: its type, its event and until when the
+/// hook reads the answer, read back as written.
+#[test]
+fn an_edit_s_request_reads_back_as_written() -> TestResult {
+    let edit = Request {
+        request_id: 2,
+        body: RequestBody::PostEdit {
+            event: Box::new(event_of(HookKind::PostTool)?),
+            answer_by_ms: Some(1_700_000_000_080),
+        },
+    };
+    let frame = encode(&edit)?;
+    let json = std::str::from_utf8(frame.get(LENGTH_PREFIX_BYTES..).ok_or("a body")?)?;
+    assert!(
+        json.starts_with(r#"{"request_id":2,"body":{"type":"post_edit","event":{"#),
+        "{json}"
+    );
+    assert!(
+        json.ends_with(r#","answer_by_ms":1700000000080}}"#),
+        "{json}"
+    );
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, edit);
+    Ok(())
+}

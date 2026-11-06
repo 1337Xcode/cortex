@@ -2,7 +2,9 @@
 //! its exit, for each event the budgets name, on recorded Claude Code payloads, against a daemon
 //! running on a medium repository (the index benchmark's 10,000 synthetic files, committed to git)
 //! once its graph is built, so that a session's start gets the primer and the prompt a work order,
-//! as checked before they are measured; the cold start, a hook given no input, which ends before
+//! and an edit that changes a function's signature its warnings, as checked before they are
+//! measured (every measured edit does the same work; its warnings, told once a task, are new only
+//! the first time); the cold start, a hook given no input, which ends before
 //! it asks the daemon anything; and each event again from a repository whose daemon is down, so
 //! that the hook tries it, starts one and exits. Then retrieval alone: the prompt's work order
 //! asked of the running daemon directly, with no hook process to start, each from a session of its
@@ -54,6 +56,16 @@ const GRAPH_WITHIN: Duration = Duration::from_secs(300);
 const OPS_PY: &str = "\"\"\"Arithmetic helpers.\"\"\"\n\n\ndef add(a, b):\n    return a + b\n\n\n\
     def mul(a, b):\n    return a * b\n\n\ndef divide(a, b):\n    return a // b\n";
 
+/// The header of `add` before the measured edit, and after: the edit changes its signature.
+const ADD_HEADERS: (&str, &str) = ("def add(a, b):", "def add(a, b, c=0):");
+
+/// `main.py`, which calls `add` on line 3.
+const MAIN_PY: &str = "from calc.ops import add\n\nprint(add(1, 2))\n";
+
+/// `tests/test_ops.py`, which imports `calc/ops.py` and calls `add` on line 7.
+const TEST_OPS_PY: &str = "import unittest\n\nfrom calc.ops import add\n\n\n\
+    class OpsTest(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n";
+
 /// Each benchmark: its name, the event the hook is run for, and the recorded payload it reads.
 const EVENTS: [(&str, &str, &str); 5] = [
     (
@@ -75,16 +87,27 @@ const EVENTS: [(&str, &str, &str); 5] = [
     ("stop", "Stop", "stop.json"),
 ];
 
-/// A repository holding the recorded payloads' file, in a temporary folder.
+/// A repository holding the recorded payloads' file, a caller of it and its tests, in a temporary
+/// folder.
 fn repository() -> tempfile::TempDir {
     // A benchmark without its repository has nothing to measure.
     #[allow(clippy::expect_used)]
     let repo = tempfile::tempdir().expect("a repository folder");
-    let calc = repo.path().join("calc");
-    #[allow(clippy::expect_used)]
-    std::fs::create_dir_all(&calc).expect("the calc folder");
-    #[allow(clippy::expect_used)]
-    std::fs::write(calc.join("ops.py"), OPS_PY).expect("calc/ops.py");
+    for (path, text) in [
+        ("calc/__init__.py", ""),
+        ("calc/ops.py", OPS_PY),
+        ("main.py", MAIN_PY),
+        ("tests/__init__.py", ""),
+        ("tests/test_ops.py", TEST_OPS_PY),
+    ] {
+        let path = repo.path().join(path);
+        if let Some(folder) = path.parent() {
+            #[allow(clippy::expect_used)]
+            std::fs::create_dir_all(folder).expect("a folder of the repository");
+        }
+        #[allow(clippy::expect_used)]
+        std::fs::write(&path, text).expect("a file of the repository");
+    }
     repo
 }
 
@@ -109,8 +132,12 @@ fn medium_repository(home: &Path) -> tempfile::TempDir {
     repo
 }
 
-/// The recorded payload `fixture`, its paths under the recorded root moved to `repo`, and the
-/// prompt [`PROMPT`] for a prompt's.
+/// The recorded payload `fixture`, its paths under the recorded root moved to `repo`, the prompt
+/// [`PROMPT`] for a prompt's, and for the edit's, the edit of `add`'s header ([`ADD_HEADERS`]).
+#[allow(
+    clippy::indexing_slicing,
+    reason = "the payload edited here is a JSON object, where indexing a missing key adds it"
+)]
 fn payload(fixture: &str, repo: &Path) -> Vec<u8> {
     // A benchmark without its payload has nothing to measure.
     #[allow(clippy::expect_used)]
@@ -122,6 +149,22 @@ fn payload(fixture: &str, repo: &Path) -> Vec<u8> {
         serde_json::from_slice(&recorded).expect("a recorded payload is JSON");
     if let Some(prompt) = value.get_mut("prompt") {
         *prompt = PROMPT.into();
+    }
+    if fixture == "post-tool-use-edit.json" {
+        let (old, new) = ADD_HEADERS;
+        value["tool_input"]["old_string"] = old.into();
+        value["tool_input"]["new_string"] = new.into();
+        let response = &mut value["tool_response"];
+        response["oldString"] = old.into();
+        response["newString"] = new.into();
+        response["originalFile"] = OPS_PY.into();
+        response["structuredPatch"] = serde_json::json!([{
+            "oldStart": 4,
+            "oldLines": 1,
+            "newStart": 4,
+            "newLines": 1,
+            "lines": [format!("-{old}"), format!("+{new}")],
+        }]);
     }
     #[allow(clippy::expect_used)]
     serde_json::to_vec(&value).expect("the payload as JSON")
@@ -385,6 +428,20 @@ fn hooks(criterion: &mut Criterion) {
             "the hook for {event} printed nothing"
         );
     }
+    // The edit, made once the prompt's task is open, is told of `add`'s callers.
+    let (old, new) = ADD_HEADERS;
+    #[allow(clippy::expect_used)]
+    std::fs::write(repo.join("calc/ops.py"), OPS_PY.replace(old, new)).expect("the edit");
+    let said = printed(
+        repo,
+        home,
+        "PostToolUse",
+        &payload("post-tool-use-edit.json", repo),
+    );
+    assert!(
+        said.contains("add's signature changed"),
+        "the edit was told: {said}"
+    );
     let mut group = criterion.benchmark_group("hooks");
     single_runs(&mut group);
     for (function, event, fixture) in EVENTS {

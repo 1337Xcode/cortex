@@ -13,7 +13,9 @@ use cortex_core::ipc::{GitReport, RecentError};
 use cortex_core::{Event, HookKind, RepoPath, ToolKind};
 use cortex_git::mine::Mining;
 use cortex_index::Change;
-use cortex_store::{CheckpointFailures, InjectionRecord};
+use cortex_store::CheckpointFailures;
+
+use crate::given::Given;
 
 use crate::recent_errors::RecentErrors;
 
@@ -23,9 +25,10 @@ use crate::recent_errors::RecentErrors;
 /// Every drop is counted.
 pub(crate) const MAX_EVENTS: usize = 10_000;
 
-/// How many injections may wait for the writer, each a primer or a prompt's retrieval to record:
-/// when full, the oldest gives way, counted. A writer that records events keeps up with these.
-pub(crate) const MAX_INJECTIONS: usize = 1_000;
+/// How many records of what was given may wait for the writer, each a primer's or a prompt's
+/// injection or an edit's warnings: when full, the oldest gives way, counted. A writer that records
+/// events keeps up with these.
+pub(crate) const MAX_GIVEN: usize = 1_000;
 
 /// How many changes may wait for the writer. A change that finds the inbox full is dropped and an
 /// overflow marked, so that the changes drained next are indexed as a change to everything, the
@@ -50,7 +53,7 @@ struct State {
     events_dropped: u64,
     /// What was given to agents, or would have been, oldest first, each recorded after the events
     /// that came before it.
-    injections: VecDeque<InjectionRecord>,
+    given: VecDeque<Given>,
     /// Batches of events the writer could not record, since the daemon started.
     failed_batches: u64,
     /// The writer's count of the checkpoints that failed.
@@ -91,8 +94,8 @@ pub(crate) enum Work {
     Stop,
     /// Record these events, oldest first.
     Events(Vec<Event>),
-    /// Record these injections, oldest first: the events before them are recorded.
-    Injections(Vec<InjectionRecord>),
+    /// Record what was given, oldest first: the events before it are recorded.
+    Given(Vec<Given>),
     /// Index what changed.
     Changed(Changed),
     /// Write what the miner found, and tell it how that went.
@@ -175,36 +178,35 @@ impl Inbox {
         true
     }
 
-    /// Puts `injection` in to be recorded after the events waiting; `false` once the writer has
-    /// stopped. When [`MAX_INJECTIONS`] wait, the oldest gives way, kept among the latest errors
-    /// with `at_ms`, the time in UTC milliseconds.
-    pub(crate) fn push_injection(&self, injection: InjectionRecord, at_ms: i64) -> bool {
+    /// Puts `given` in to be recorded after the events waiting; `false` once the writer has
+    /// stopped. When [`MAX_GIVEN`] wait, the oldest gives way, kept among the latest errors with
+    /// `at_ms`, the time in UTC milliseconds.
+    pub(crate) fn push_given(&self, given: Given, at_ms: i64) -> bool {
         let mut state = self.lock();
         if state.is_closed {
             return false;
         }
-        if state.injections.len() >= MAX_INJECTIONS {
-            drop(state.injections.pop_front());
-            state
-                .errors
-                .note("an injection was not recorded: too many waited", at_ms);
-            tracing::warn!("too many injections waiting to be recorded: the oldest dropped");
+        if state.given.len() >= MAX_GIVEN
+            && let Some(oldest) = state.given.pop_front()
+        {
+            state.errors.note(oldest.dropped_message(), at_ms);
+            tracing::warn!("too many records of what was given waiting: the oldest dropped");
         }
-        state.injections.push_back(injection);
+        state.given.push_back(given);
         drop(state);
         self.arrived.notify_one();
         true
     }
 
-    /// Takes every event and every injection waiting, together, without waiting for either: what
-    /// the writer records between the transactions of an index, and whenever it is between tasks.
-    /// An injection comes in after its event, so the events taken with it hold its event, or it was
-    /// taken before.
-    pub(crate) fn take_waiting(&self) -> (Vec<Event>, Vec<InjectionRecord>) {
+    /// Takes every event and every record of what was given waiting, together, without waiting
+    /// for either: what the writer records between the transactions of an index, and whenever it is
+    /// between tasks. What was given comes in after its event, so the events taken with it hold its
+    /// event, or it was taken before.
+    pub(crate) fn take_waiting(&self) -> (Vec<Event>, Vec<Given>) {
         let mut state = self.lock();
         let events = state.events.drain(..).collect();
-        let injections = state.injections.drain(..).collect();
-        (events, injections)
+        let given = state.given.drain(..).collect();
+        (events, given)
     }
 
     /// Counts a batch the writer could not record, and keeps why, `message`, as an error met at
@@ -343,8 +345,8 @@ impl Inbox {
             if !state.events.is_empty() {
                 return Work::Events(state.events.drain(..).collect());
             }
-            if !state.injections.is_empty() {
-                return Work::Injections(state.injections.drain(..).collect());
+            if !state.given.is_empty() {
+                return Work::Given(state.given.drain(..).collect());
             }
             if !state.changes.is_empty() || state.is_overflowed {
                 return Work::Changed(drain(&mut state));
@@ -671,8 +673,8 @@ mod tests {
     }
 
     /// An injection of a prompt at `at_ms`, as typed here.
-    fn injection(at_ms: i64) -> Result<InjectionRecord, Box<dyn std::error::Error>> {
-        Ok(InjectionRecord {
+    fn injection(at_ms: i64) -> Result<Given, Box<dyn std::error::Error>> {
+        Ok(Given::Injection(cortex_store::InjectionRecord {
             task_id: None,
             session_id: cortex_core::Identifier::new("s1")?,
             hook: HookKind::Prompt,
@@ -684,7 +686,15 @@ mod tests {
             is_holdout: false,
             text_hash: None,
             features: None,
-        })
+        }))
+    }
+
+    /// When `given` holds an injection, its time.
+    fn injected_at(given: &Given) -> Option<i64> {
+        match given {
+            Given::Injection(injection) => Some(injection.at_ms),
+            Given::Warnings(_) => None,
+        }
     }
 
     /// The events and injections waiting are taken together, so that an injection is never taken
@@ -693,23 +703,20 @@ mod tests {
     fn injections_come_out_after_their_events() -> Result<(), Box<dyn std::error::Error>> {
         let inbox = Inbox::default();
         inbox.push_event(event(HookKind::Prompt, None, 10)?);
-        inbox.push_injection(injection(10)?, 11);
-        let (events, injections) = inbox.take_waiting();
+        inbox.push_given(injection(10)?, 11);
+        let (events, given) = inbox.take_waiting();
         let event_times: Vec<i64> = events.iter().map(|event| event.ts_ms).collect();
-        let injection_times: Vec<i64> = injections.iter().map(|record| record.at_ms).collect();
-        assert_eq!((event_times, injection_times), (vec![10], vec![10]));
+        let injection_times: Vec<Option<i64>> = given.iter().map(injected_at).collect();
+        assert_eq!((event_times, injection_times), (vec![10], vec![Some(10)]));
         inbox.push_event(event(HookKind::Prompt, None, 20)?);
-        inbox.push_injection(injection(20)?, 21);
+        inbox.push_given(injection(20)?, 21);
         assert_eq!(times(inbox.wait(None)), [20]);
-        let Work::Injections(injections) = inbox.wait(None) else {
+        let Work::Given(given) = inbox.wait(None) else {
             return Err("the injection after its event".into());
         };
         assert_eq!(
-            injections
-                .iter()
-                .map(|record| record.at_ms)
-                .collect::<Vec<_>>(),
-            [20]
+            given.iter().map(injected_at).collect::<Vec<_>>(),
+            [Some(20)]
         );
         Ok(())
     }
@@ -719,12 +726,12 @@ mod tests {
     #[test]
     fn the_oldest_injection_gives_way() -> Result<(), Box<dyn std::error::Error>> {
         let inbox = Inbox::default();
-        for at_ms in 0..=i64::try_from(MAX_INJECTIONS)? {
-            assert!(inbox.push_injection(injection(at_ms)?, 500));
+        for at_ms in 0..=i64::try_from(MAX_GIVEN)? {
+            assert!(inbox.push_given(injection(at_ms)?, 500));
         }
-        let (_, injections) = inbox.take_waiting();
-        assert_eq!(injections.len(), MAX_INJECTIONS);
-        assert_eq!(injections.first().map(|record| record.at_ms), Some(1));
+        let (_, given) = inbox.take_waiting();
+        assert_eq!(given.len(), MAX_GIVEN);
+        assert_eq!(given.first().and_then(injected_at), Some(1));
         let errors: Vec<String> = inbox
             .recent_errors()
             .into_iter()
@@ -732,7 +739,7 @@ mod tests {
             .collect();
         assert_eq!(errors, ["an injection was not recorded: too many waited"]);
         inbox.close();
-        assert!(!inbox.push_injection(injection(0)?, 600));
+        assert!(!inbox.push_given(injection(0)?, 600));
         Ok(())
     }
 }

@@ -167,3 +167,51 @@ fn ranges_overlap_when_they_share_a_line() -> Result<(), LineRangeError> {
     }
     Ok(())
 }
+
+/// The file an event says a tool changed: an edit's successful result names `calc/ops.py`; a failed
+/// one, a read's, the moment before the edit runs, and one naming no file inside the repository
+/// name none. Every editing tool edits; reading, searching and running a command do not.
+#[test]
+fn only_a_successful_edit_names_its_file() -> TestResult {
+    let failed = full_event()?;
+    assert_eq!(failed.edited_file(), None);
+    let succeeded = |event: Event| Event {
+        tool_result: Some(ToolResult {
+            is_success: true,
+            ..event.tool_result.unwrap_or(ToolResult {
+                exit_code: None,
+                is_success: true,
+                is_interrupted: false,
+                output_bytes: None,
+            })
+        }),
+        ..event
+    };
+    let edit = succeeded(full_event()?);
+    assert_eq!(
+        edit.edited_file().map(RepoPath::as_str),
+        Some("calc/ops.py")
+    );
+    let read = Event {
+        tool: Some(ToolKind::Read),
+        ..edit.clone()
+    };
+    assert_eq!(read.edited_file(), None);
+    let before = Event {
+        hook: HookKind::PreTool,
+        ..edit.clone()
+    };
+    assert_eq!(before.edited_file(), None);
+    let outside = Event {
+        tool_target: Some(ToolTarget::default()),
+        ..edit
+    };
+    assert_eq!(outside.edited_file(), None);
+    let edits: Vec<&str> = ToolKind::ALL
+        .iter()
+        .filter(|tool| tool.is_edit())
+        .map(|tool| tool.name())
+        .collect();
+    assert_eq!(edits, ["edit", "write", "multi_edit", "apply_patch"]);
+    Ok(())
+}
