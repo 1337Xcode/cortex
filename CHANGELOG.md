@@ -55,11 +55,12 @@ All notable changes to this project are documented in this file. The format is b
 - `cortex version` prints the binary's name and version.
 - After Claude Code edits a file, it is told what the edit seems to leave undone: when a
   function's signature changed, the calls to it in other files the task has not edited (how many,
-  and five listed by path and line, each line checked against the file on disk); the file's tests,
-  once a task; and a file that usually changes with it in the repository's history or in earlier
-  tasks, when the task has not touched it. At most three warnings an edit, strongest first, each
-  file named at most once a task, within 250 tokens; `warnings.max_per_edit`,
-  `warnings.cochange_min_confidence` and `warnings.cochange_min_count` set the limits.
+  and five listed by path and line, each line checked against the file on disk); the file's own
+  tests (those named after it), once a task; and a file that usually changes with it, and seldom
+  without it, in the repository's history or in earlier tasks, when the task has not touched it,
+  each such file once a task. At most three warnings an edit, strongest first, within 250 tokens;
+  `warnings.max_per_edit`, `warnings.cochange_min_confidence` and `warnings.cochange_min_count` set
+  the limits.
 - Before Claude Code reads a file, it is told when the session already read those lines since its
   context was last compacted and the file has not changed since, or, in a file over 600 lines,
   which parts of it the task's work order pointed at, each line checked against the file on disk,

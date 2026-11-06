@@ -66,6 +66,7 @@ fn facts(named: &[NamedFile]) -> TestResult<EditFacts> {
             file: file(named, at)?,
             co_changes,
             confidence,
+            reverse_confidence: confidence,
         })
     };
     let site = |at, line, confidence| -> TestResult<CallSite> {
@@ -193,6 +194,7 @@ fn past_work_names_a_companion() -> TestResult {
         file: file(&named, 4)?,
         co_changes: 3,
         confidence: 0.5,
+        reverse_confidence: 0.5,
     }];
     assert_eq!(
         lines(&warn(&facts)),
@@ -200,6 +202,100 @@ fn past_work_names_a_companion() -> TestResult {
             "[cortex] Edits to src/orders/service.ts usually come with src/billing.ts (3 of 11 \
           changes); not touched yet."
         ]
+    );
+    Ok(())
+}
+
+/// A history partner must hold from both sides. `prisma/schema.prisma` changed in 8 of the edited
+/// file's 11 commits (0.73), but if it changed in 40 commits of its own, only 8 / 40 = 0.2 of them
+/// changed the edited file: it changes with everything, and is not named. At 8 / 16 = 0.5 it is.
+#[test]
+fn a_partner_that_changes_with_everything_is_not_named() -> TestResult {
+    let (_repo, named) = files()?;
+    let mut facts = facts(&named)?;
+    facts.drifts.clear();
+    facts.tests.clear();
+    facts.linked.clear();
+    let warn = |facts: &EditFacts| {
+        warnings_after_edit(
+            facts,
+            &TaskSoFar::default(),
+            &WarningsConfig::default(),
+            ScaleMode::Medium,
+        )
+    };
+    let schema = |reverse_confidence| -> TestResult<Vec<Partner>> {
+        Ok(vec![Partner {
+            file: file(&named, 1)?,
+            co_changes: 8,
+            confidence: 0.73,
+            reverse_confidence,
+        }])
+    };
+    facts.partners = schema(8.0 / 40.0)?;
+    assert_eq!(warn(&facts), Warned::default());
+    facts.partners = schema(8.0 / 16.0)?;
+    assert_eq!(
+        lines(&warn(&facts)),
+        [
+            "[cortex] Edits to src/orders/service.ts usually come with prisma/schema.prisma (8 \
+          of 11 changes); not touched yet."
+        ]
+    );
+    Ok(())
+}
+
+/// A partner is named once a task, whichever edited file it is a partner of: the task was warned of
+/// `prisma/schema.prisma` after an edit of `src/util.ts`, so the edit of `src/orders/service.ts`
+/// does not name it again.
+#[test]
+fn a_partner_is_named_once_a_task() -> TestResult {
+    let (_repo, named) = files()?;
+    let mut facts = facts(&named)?;
+    facts.drifts.clear();
+    facts.tests.clear();
+    facts.linked.clear();
+    let mut task = TaskSoFar::default();
+    task.warned.insert((
+        WarningKind::CoChange,
+        file(&named, 2)?.node,
+        file(&named, 1)?.node,
+    ));
+    let warned = warnings_after_edit(&facts, &task, &WarningsConfig::default(), ScaleMode::Medium);
+    assert_eq!(warned, Warned::default());
+    Ok(())
+}
+
+/// Only the edited file's own tests are named. `api/admin.ts` stands here for a test file that
+/// imports `src/orders/service.ts` without being named after it: with it alone there is no
+/// warning; beside `src/orders/service.test.ts`, only the latter is named.
+#[test]
+fn only_the_edited_file_s_own_tests_are_named() -> TestResult {
+    let (_repo, named) = files()?;
+    let mut facts = facts(&named)?;
+    facts.drifts.clear();
+    facts.partners.clear();
+    facts.linked.clear();
+    let test = |at| -> TestResult<TestFile> {
+        Ok(TestFile {
+            file: file(&named, at)?,
+            confidence: 0.8,
+        })
+    };
+    let warn = |facts: &EditFacts| {
+        warnings_after_edit(
+            facts,
+            &TaskSoFar::default(),
+            &WarningsConfig::default(),
+            ScaleMode::Medium,
+        )
+    };
+    facts.tests = vec![test(5)?];
+    assert_eq!(warn(&facts), Warned::default());
+    facts.tests = vec![test(5)?, test(8)?];
+    assert_eq!(
+        lines(&warn(&facts)),
+        ["[cortex] Tests for src/orders/service.ts: src/orders/service.test.ts"]
     );
     Ok(())
 }
@@ -378,6 +474,7 @@ fn the_weakest_warning_goes_when_the_text_is_too_long() -> TestResult {
             file: stored(format!("p{at}/{}.ts", "y".repeat(150)))?,
             co_changes: 3,
             confidence,
+            reverse_confidence: confidence,
         });
     }
     let facts = EditFacts {
@@ -461,7 +558,12 @@ proptest! {
             tests: Vec::new(),
         };
         for (at, co_changes, confidence) in partners {
-            facts.partners.push(Partner { file: pick(at)?, co_changes, confidence });
+            facts.partners.push(Partner {
+                file: pick(at)?,
+                co_changes,
+                confidence,
+                reverse_confidence: confidence,
+            });
         }
         for (at, weight, tasks) in linked {
             facts.linked.push(Linked { file: pick(at)?, weight, tasks });

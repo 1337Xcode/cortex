@@ -43,6 +43,9 @@ pub struct Partner {
     pub co_changes: u32,
     /// The share of the edited file's commits, by weight, that also changed this one, from 0 to 1.
     pub confidence: f64,
+    /// The share of this file's own commits that also changed the edited one, from 0 to 1: low for
+    /// a file that changes with everything, such as a changelog or a build script.
+    pub reverse_confidence: f64,
 }
 
 /// A file agents worked on together with the edited one.
@@ -124,6 +127,13 @@ impl TaskSoFar {
     /// that pair yet.
     fn is_new(&self, kind: WarningKind, source: NodeId, target: NodeId) -> bool {
         !self.warned.contains(&(kind, source, target))
+    }
+
+    /// Whether a warning of `kind` named `target` in the task already, about any file.
+    fn has_named(&self, kind: WarningKind, target: NodeId) -> bool {
+        self.warned
+            .iter()
+            .any(|(warned, _, named)| *warned == kind && *named == target)
     }
 }
 

@@ -15,7 +15,9 @@ pub const MIN_LINK_WEIGHT: f64 = 1.0;
 pub const MIN_LINK_TASKS: u32 = 3;
 
 /// A warning for each partner of the edited file strong enough in history or past work and not
-/// touched in the task, each partner once: by history when both say so.
+/// touched in the task, each partner once a task, whichever file it was named for: by history when
+/// both say so. A partner by history must hold from both sides: a file that changes with everything
+/// (a changelog, a build script) changes with the edited one often, but seldom only with it.
 pub(super) fn warnings(
     facts: &EditFacts,
     task: &TaskSoFar,
@@ -25,7 +27,7 @@ pub(super) fn warnings(
     let is_open = |file: &NamedFile| {
         file.node != edited.node
             && !task.touched.contains(&file.node)
-            && task.is_new(WarningKind::CoChange, edited.node, file.node)
+            && !task.has_named(WarningKind::CoChange, file.node)
             && is_plain(file.path.as_str())
     };
     let by_history = facts
@@ -33,6 +35,7 @@ pub(super) fn warnings(
         .iter()
         .filter(|partner| {
             partner.confidence >= config.cochange_min_confidence
+                && partner.reverse_confidence >= config.cochange_min_confidence
                 && partner.co_changes >= config.cochange_min_count
                 && is_open(&partner.file)
         })

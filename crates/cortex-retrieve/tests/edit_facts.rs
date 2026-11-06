@@ -93,7 +93,8 @@ fn named(node: NodeId, path: &str) -> TestResult<NamedFile> {
 }
 
 /// The edit of `src/orders.py`, whose `create_order` changed its signature. By hand:
-/// - 11 commits changed it; a co-change link to `prisma/schema.prisma` of confidence 0.73 from 8.
+/// - 11 commits changed it; a co-change link to `prisma/schema.prisma` of confidence 0.73 from 8,
+///   of the 10 commits that changed the schema: 8 / 10 = 0.8 seen from the schema.
 /// - A co-access link to `src/billing.py` of weight 2.0 drawn by 4 tasks, last at task 1; the
 ///   latest task is 5, and at a decay of 0.5 a task it holds 2.0 x 0.5^4 = 0.125.
 /// - Calls: `api/routes.py` lines 3 and 5 (tied by import path, 0.8), `lib/old.py` line 3 (by name
@@ -176,7 +177,7 @@ fn an_edit_s_facts_are_read_from_the_store_and_the_disk() -> TestResult {
     repo.link((test, orders_node), EdgeType::Structural, (0.8, 1, 0))?;
     repo.link((orders_node, schema), EdgeType::CoChange, (0.73, 8, 0))?;
     repo.link((orders_node, billing), EdgeType::CoAccess, (2.0, 4, 1))?;
-    repo.cochange(&[("src/orders.py", 11)], &[])?;
+    repo.cochange(&[("src/orders.py", 11), ("prisma/schema.prisma", 10)], &[])?;
     repo.tasks(5)?;
     let _ = admin;
     let edited = RepoPath::new("src/orders.py")?;
@@ -205,6 +206,7 @@ fn an_edit_s_facts_are_read_from_the_store_and_the_disk() -> TestResult {
                 file: named(schema, "prisma/schema.prisma")?,
                 co_changes: 8,
                 confidence: 0.73,
+                reverse_confidence: 0.8,
             }],
             linked: vec![Linked {
                 file: named(billing, "src/billing.py")?,

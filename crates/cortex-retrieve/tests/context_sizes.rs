@@ -146,6 +146,7 @@ fn fullest_warnings() -> TestResult<String> {
             file: partner,
             co_changes: 8,
             confidence: 8.0 / 11.0,
+            reverse_confidence: 0.8,
         }],
         linked: Vec::new(),
         drifts: vec![Drift {

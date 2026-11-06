@@ -96,15 +96,24 @@ fn companions(
         .collect();
     let targets: Vec<NodeId> = edges.iter().map(|row| row.edge.dst).collect();
     // Only file nodes come back: a co-access link between symbols names no file.
-    let paths: BTreeMap<NodeId, RepoPath> = queries
-        .files_of_nodes(&targets)?
+    let files = queries.files_of_nodes(&targets)?;
+    let ids: Vec<FileId> = files.iter().map(|(_, file)| file.id).collect();
+    let commits_of: BTreeMap<FileId, u32> = queries
+        .file_commits_of(&ids)?
         .into_iter()
-        .map(|(target, file)| (target, file.file.path))
+        .map(|counted| (counted.file, counted.count))
+        .collect();
+    let paths: BTreeMap<NodeId, (RepoPath, u32)> = files
+        .into_iter()
+        .map(|(target, file)| {
+            let commits = commits_of.get(&file.id).copied().unwrap_or(0);
+            (target, (file.file.path, commits))
+        })
         .collect();
     let latest_seq = queries.latest_task_seq()?;
     let (mut partners, mut linked) = (Vec::new(), Vec::new());
     for row in edges {
-        let Some(path) = paths.get(&row.edge.dst) else {
+        let Some((path, partner_commits)) = paths.get(&row.edge.dst) else {
             continue;
         };
         let file = NamedFile {
@@ -112,10 +121,14 @@ fn companions(
             path: path.clone(),
         };
         if row.edge_type == EdgeType::CoChange {
+            // A partner changed at least as often as it changed with the edited file, whatever its
+            // own count says.
+            let partner_commits = (*partner_commits).max(row.edge.count).max(1);
             partners.push(Partner {
                 file,
                 co_changes: row.edge.count,
                 confidence: row.edge.weight,
+                reverse_confidence: f64::from(row.edge.count) / f64::from(partner_commits),
             });
         } else {
             let last_seq = u64::try_from(row.edge.last_seq).unwrap_or(0);
