@@ -38,6 +38,7 @@ fn item(
             } else {
                 None
             },
+            scope: None,
         });
     }
     Ok(Item {
@@ -285,7 +286,7 @@ Current code:
     assert_eq!(rendered.text, expected);
     assert_eq!(rendered.written, [(0, vec![0]), (1, vec![0]), (2, vec![])]);
     // The code shown: a.py's one span, the first item's first; b.py's lines are named, not shown.
-    assert_eq!(rendered.shown, [(0, 0)]);
+    assert_eq!(rendered.shown, [(0, 0, LineRange::new(1, 2)?)]);
     assert_eq!(
         usize::try_from(rendered.tokens)?,
         expected.len().div_ceil(4)
@@ -417,9 +418,44 @@ fn hidden_and_control_characters_are_taken_out() -> TestResult {
     Ok(())
 }
 
+/// A method is shown under the first line of its class, with a line marking the lines between: the
+/// span of lines 3 to 4, `total`, starts inside `Order`, whose first line is line 1.
+#[test]
+fn a_method_is_shown_under_its_class() -> TestResult {
+    let mut repo = Repo::new()?;
+    let text = "class Order:\n    \"\"\"An order.\"\"\"\n    def total(self):\n        return 1\n";
+    repo.file("a.py", text, &[], FileFlags::empty())?;
+    let mut method = item(("a.py", text), &[(3, 4)], Some("total"), Reason::ReadHere)?;
+    if let Some(span) = method.spans.first_mut() {
+        span.scope = Some(1);
+    }
+    let order = WorkOrder {
+        basis: Basis::Continuity,
+        items: vec![method],
+    };
+    let rendered = render(&order, repo.root.path(), &limits(1)).ok_or("a work order")?;
+    let expected = "\
+[cortex] Work order · continuing the work under way
+Start here:
+  1. a.py:3-4  total  (read earlier in this session)
+Current code:
+  a.py:3-4
+  1 | class Order:
+    | ...
+  3 |     def total(self):
+  4 |         return 1
+";
+    assert_eq!(rendered.text, expected);
+    assert_eq!(rendered.shown, [(0, 0, LineRange::new(3, 4)?)]);
+    Ok(())
+}
+
 /// The hard cap holds whatever the caller asks for: a span of 120 lines of 50 bytes, 6,000 bytes
 /// or 1,500 tokens of code, fits a cap of 2,000 tokens but not the hard cap of 1,200, so its code is
-/// shed and the file is listed by its lines.
+/// cut to its first half. By hand: the header (53), "Start here:" (12), the item's line (5 + 42 +
+/// 1: 48), "Current code:" (14) and the code's heading (13) make 140 bytes; 120 numbered lines of
+/// 58 bytes (2 + 3 + 3 + 49 + 1) would be 7,100 bytes in all, over 4,800; 60 of them (3,480) and the
+/// line saying lines 61 to 120 are not shown (29) make 3,649 bytes, 913 tokens.
 #[test]
 fn the_hard_cap_holds_above_the_caller_s_cap() -> TestResult {
     let mut repo = Repo::new()?;
@@ -435,17 +471,23 @@ fn the_hard_cap_holds_above_the_caller_s_cap() -> TestResult {
         ..limits(1)
     };
     let rendered = render(&order, repo.root.path(), &generous).ok_or("a work order")?;
-    assert!(rendered.tokens <= 1_200);
+    assert_eq!((rendered.text.len(), rendered.tokens), (3_649, 913));
     assert!(
-        !rendered.text.contains("Current code:"),
+        rendered
+            .text
+            .contains("  1. a.py:1-120  (read earlier in this session)\n"),
         "{}",
         rendered.text
     );
     assert!(
-        rendered
-            .text
-            .contains("a.py:1-120 (read earlier in this session)")
+        rendered.text.ends_with(&format!(
+            " 60 | {}\n  ... lines 61-120 not shown\n",
+            "x".repeat(49)
+        )),
+        "{}",
+        rendered.text
     );
+    assert_eq!(rendered.shown, [(0, 0, LineRange::new(1, 60)?)]);
     Ok(())
 }
 

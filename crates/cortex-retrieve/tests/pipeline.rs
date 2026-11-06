@@ -583,6 +583,64 @@ fn the_engine_without_the_gate_answers_what_the_gate_would_not() -> TestResult {
     Ok(())
 }
 
+/// A span inside a class carries the class's first line, which the work order shows above it: in
+/// `cart.py`, `Cart` runs from line 1 to line 72, longer than a span may be (60 lines), and its
+/// method `subtotal` from line 70 to line 72; whatever the span the question about `subtotal`
+/// finds, it ends at 72, starts after line 1 and carries line 1 as its scope, written above its
+/// code with a line marking the lines between.
+#[test]
+fn a_span_inside_a_class_carries_the_class_s_line() -> TestResult {
+    let mut repo = Repo::new()?;
+    let mut text = String::from("class Cart:\n");
+    for line in 2..70 {
+        text.push_str(&format!("    x_{line} = {line}\n"));
+    }
+    text.push_str(
+        "    def subtotal(self):\n        total = sum(self.lines)\n        return total\n",
+    );
+    repo.file(
+        "cart.py",
+        &text,
+        &[
+            Def {
+                name: "Cart",
+                kind: SymbolKind::Class,
+                start: 1,
+                end: 72,
+                parent: None,
+            },
+            Def {
+                name: "subtotal",
+                kind: SymbolKind::Method,
+                start: 70,
+                end: 72,
+                parent: Some(0),
+            },
+        ],
+        FileFlags::empty(),
+    )?;
+    repo.mode(ScaleMode::Medium)?;
+    let location = located(&repo, "fix subtotal", (ScaleMode::Medium, None), 5)?;
+    let entry = location.listed.first().ok_or("one file found")?;
+    let span = entry.item.spans.first().ok_or("a span")?;
+    assert!(
+        span.lines.start_line() > 1 && span.lines.end_line() == 72,
+        "{span:?}"
+    );
+    assert_eq!(span.scope, Some(1));
+    let text = location
+        .rendered
+        .as_ref()
+        .map(|rendered| rendered.text.as_str())
+        .ok_or("a rendered answer")?;
+    assert!(
+        text.contains("   1 | class Cart:\n     | ...\n")
+            && text.contains("  70 |     def subtotal"),
+        "{text}"
+    );
+    Ok(())
+}
+
 /// The engine without the gate finds at most the files asked for, the best first, and says that
 /// the gate would have let this one through on agreement.
 #[test]

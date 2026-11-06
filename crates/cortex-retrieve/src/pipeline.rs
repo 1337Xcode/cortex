@@ -26,6 +26,7 @@ use crate::push::{Activation, spread};
 use crate::render::{Basis, Item, Limits, Rendered, WorkOrder, render};
 use crate::score::{ScoredFile, named_first, scored_files};
 use crate::seeds::{SeedQuery, Seeds, seeds};
+use crate::spans::Span;
 use crate::support::{Evidence, Support};
 use crate::two_stage::{Staged, two_stage};
 
@@ -361,8 +362,14 @@ fn written_of(listed: &[Listed], rendered: &Rendered) -> Vec<Listed> {
                 shown: rendered
                     .shown
                     .iter()
-                    .filter(|(item, _)| item == at)
-                    .filter_map(|(_, span)| entry.spans.get(*span).copied())
+                    .filter(|(item, _, _)| item == at)
+                    .filter_map(|(_, span, lines)| {
+                        let held = entry.spans.get(*span)?;
+                        Some(Span {
+                            lines: *lines,
+                            symbol: held.symbol,
+                        })
+                    })
                     .collect(),
             })
         })
@@ -435,7 +442,6 @@ mod tests {
     use super::*;
     use crate::reasons::Reason;
     use crate::render::ItemSpan;
-    use crate::spans::Span;
 
     /// A file scored at `score`, by node.
     fn scored(file: u32, score: f64) -> ScoredFile {
@@ -467,6 +473,7 @@ mod tests {
                     .map(|lines| ItemSpan {
                         lines: *lines,
                         name: None,
+                        scope: None,
                     })
                     .collect(),
                 reason: Reason::ReadHere,
@@ -505,7 +512,7 @@ mod tests {
             text: String::new(),
             tokens: 0,
             written: vec![(2, vec![1]), (0, vec![0, 1])],
-            shown: vec![(0, 1)],
+            shown: vec![(0, 1, LineRange::new(4, 5)?)],
         };
         let written = written_of(&listed, &rendered);
         let files: Vec<u32> = written.iter().map(|entry| entry.file).collect();

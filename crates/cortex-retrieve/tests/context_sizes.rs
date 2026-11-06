@@ -21,11 +21,15 @@ use cortex_retrieve::{
 ///
 /// Counted by hand when recorded: the primer is its header (71 bytes, "about 8 source files, 320
 /// lines", each `·` two bytes), the landmark line (11 + 8 paths of 32 + 7 separators of 2, and its
-/// line break: 282) and its closing line (91): 444 bytes, 111 tokens. The work order is its header
-/// (71) and one "Also likely" line (13 + 5 items of 68 + 4 separators of 2, and its line break:
-/// 362): 433 bytes, 109 tokens. At the default caps two 60-line spans of 60-byte lines leave no
-/// room for code, so every file is listed by path and lines alone.
-const RECORD: &[(&str, usize, usize)] = &[(PRIMER, 444, 111), (WORK_ORDER, 433, 109)];
+/// line break: 282) and its closing line (91): 444 bytes, 111 tokens. The work order, at the default
+/// caps (900 tokens, 3,600 bytes; two code spans), is cut until it fits: two whole 60-line spans,
+/// then the second cut to 30, 15 and 8 lines, are too long; with the second taken out and the first
+/// cut to 30 lines it fits. It is its header (71), "Start here:" (12) and the first item's line (5 +
+/// 69 + 1: 75), one "Also likely" line (13 + 4 items of 68 + 3 separators of 2, and its line break:
+/// 292), "Current code:" (14), the code's heading (40), 30 numbered lines (2 + 2 + 3 + 60 + 1: 68
+/// each, 2,040) and the line saying lines 31 to 60 are not shown (28): 2,572 bytes, 643 tokens.
+/// (Before code was cut rather than taken out whole, no code fitted: 433 bytes, 109 tokens.)
+const RECORD: &[(&str, usize, usize)] = &[(PRIMER, 444, 111), (WORK_ORDER, 2_572, 643)];
 
 /// The record's name for the primer.
 const PRIMER: &str = "primer with eight landmarks";
@@ -33,7 +37,7 @@ const PRIMER: &str = "primer with eight landmarks";
 /// The record's name for the work order.
 const WORK_ORDER: &str = "work order at every default cap";
 
-/// A line of code of the length real code often has: 60 bytes with its line break.
+/// A line of code of the length real code often has: 60 characters and its line break.
 const LINE: &str = "    total = compute_total(order.items, order.discounts, tax)\n";
 
 /// The size of each text, in the record's order.
@@ -87,10 +91,12 @@ fn fullest_work_order() -> TestResult<cortex_retrieve::Rendered> {
                 ItemSpan {
                     lines: LineRange::new(1, span_lines)?,
                     name: None,
+                    scope: None,
                 },
                 ItemSpan {
                     lines: LineRange::new(span_lines + 1, span_lines * 2)?,
                     name: None,
+                    scope: None,
                 },
             ],
             reason: Reason::Matches(vec!["orders".to_owned(), "total".to_owned()]),

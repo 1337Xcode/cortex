@@ -129,16 +129,20 @@ fn listed_file(
     }))
 }
 
-/// `span` as the work order writes it: its lines and the name of the symbol it is for.
+/// `span` as the work order writes it: its lines, the name of the symbol it is for, and the first
+/// line of the definition around that symbol when it starts before the span.
 fn item_span(span: &Span, outline: &[Outlined]) -> ItemSpan {
+    let symbol = span
+        .symbol
+        .and_then(|node| outline.iter().find(|symbol| symbol.node == node));
     ItemSpan {
         lines: span.lines,
-        name: span.symbol.and_then(|node| {
-            outline
-                .iter()
-                .find(|symbol| symbol.node == node)
-                .map(|symbol| symbol.name.clone())
-        }),
+        name: symbol.map(|symbol| symbol.name.clone()),
+        scope: symbol
+            .and_then(|symbol| symbol.parent)
+            .and_then(|parent| outline.get(parent))
+            .map(|parent| parent.lines.start_line())
+            .filter(|line| *line < span.lines.start_line()),
     }
 }
 

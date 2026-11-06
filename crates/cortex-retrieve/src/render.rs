@@ -16,8 +16,13 @@
 //!
 //! The text is held to its caps where it is built: at most the files, spans a file and lines a span
 //! the caller gives, the token cap the caller gives, never above the hard cap of 1,200 tokens,
-//! and 8,000 characters. Past a cap, code is shed first (the last body, then the next), then the
-//! items from the last; a work order that cannot fit with one item is not rendered at all.
+//! and 8,000 characters. Past a cap, code is shed first, the last body shown first: it is cut to
+//! its first half, again and again down to [`MIN_SHOWN_LINES`], with a line saying which lines are
+//! not shown, and only then taken out; then the items from the last. A work order that cannot fit
+//! with one item is not rendered at all.
+//!
+//! A span that starts inside a definition, a method in its class, is shown under that definition's
+//! first line, so the agent sees where the code lives without reading the file for it.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -53,6 +58,10 @@ pub enum Basis {
     },
 }
 
+/// The fewest lines of a span a work order cuts it to before it takes its code out: a header
+/// and the first lines of a body.
+pub const MIN_SHOWN_LINES: u32 = 8;
+
 /// A stretch of an item's file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemSpan {
@@ -60,6 +69,8 @@ pub struct ItemSpan {
     pub lines: LineRange,
     /// The symbol it is for, when it is for one.
     pub name: Option<Identifier>,
+    /// The first line of the definition it starts inside, a method's class, when there is one.
+    pub scope: Option<u32>,
 }
 
 /// One file the work order lists.
@@ -109,9 +120,10 @@ pub struct Rendered {
     /// The items written, by their position in the order, each with the spans whose lines were
     /// written, by position.
     pub written: Vec<(usize, Vec<usize>)>,
-    /// The spans whose code was written, each as its item's position and its own, in the order
-    /// written: each from the file its item's `content` says, checked as the text was built.
-    pub shown: Vec<(usize, usize)>,
+    /// The spans whose code was written, each as its item's position, its own, and the lines of it
+    /// written (all of them, or its first ones when it was cut), in the order written: each from
+    /// the file its item's `content` says, checked as the text was built.
+    pub shown: Vec<(usize, usize, LineRange)>,
 }
 
 /// `order` written for the repository at `root`, held to `limits`; `None` when it has no item that
@@ -160,7 +172,11 @@ pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendere
                 text,
                 tokens,
                 written: plan.written(),
-                shown: plan.shown.clone(),
+                shown: plan
+                    .shown
+                    .iter()
+                    .map(|shown| (shown.item, shown.span, shown.lines))
+                    .collect(),
             });
         }
         if !plan.shed() {
@@ -174,8 +190,19 @@ pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendere
 struct Plan {
     /// For each item kept, by position: the spans whose lines may be written, by position.
     kept: Vec<(usize, Vec<usize>)>,
-    /// The spans whose code is shown, as (item, span), in the order they are shown.
-    shown: Vec<(usize, usize)>,
+    /// The spans whose code is shown, in the order they are shown.
+    shown: Vec<Shown>,
+}
+
+/// One span whose code is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Shown {
+    /// Its item, by position.
+    item: usize,
+    /// The span, by position among its item's.
+    span: usize,
+    /// The lines of it shown: all of them, or its first ones once it is cut.
+    lines: LineRange,
 }
 
 /// What an item's file was when the work order was written.
@@ -263,18 +290,43 @@ impl Plan {
                 if shown.len() >= max_code_spans {
                     break 'rounds;
                 }
-                if let Some(span) = spans.get(round) {
-                    shown.push((*at, *span));
+                let Some(span) = spans.get(round) else {
+                    continue;
+                };
+                if let Some(lines) = order
+                    .items
+                    .get(*at)
+                    .and_then(|item| item.spans.get(*span))
+                    .map(|item_span| item_span.lines)
+                {
+                    shown.push(Shown {
+                        item: *at,
+                        span: *span,
+                        lines,
+                    });
                 }
             }
         }
         Self { kept, shown }
     }
 
-    /// Takes one thing out to make the text shorter: the last code shown, else the last item not
-    /// shown, else the last item after the first; `false` when there is nothing left to take.
+    /// Takes one thing out to make the text shorter: half of the last code shown, while it is more
+    /// than [`MIN_SHOWN_LINES`] lines, else that code, else the last item not shown, else the last
+    /// item after the first; `false` when there is nothing left to take.
     fn shed(&mut self) -> bool {
-        if self.shown.pop().is_some() {
+        if let Some(last) = self.shown.last_mut() {
+            let (start, count) = (
+                last.lines.start_line(),
+                last.lines.end_line() - last.lines.start_line() + 1,
+            );
+            let kept = (count / 2).max(MIN_SHOWN_LINES);
+            if kept < count
+                && let Ok(cut) = LineRange::new(start, start + kept - 1)
+            {
+                last.lines = cut;
+                return true;
+            }
+            self.shown.pop();
             return true;
         }
         if self.kept.len() > 1 {
@@ -293,7 +345,7 @@ impl Plan {
     fn write(&self, order: &WorkOrder, files: &[OnDisk]) -> String {
         let mut text = String::new();
         let _ = writeln!(text, "{}", heading(&order.basis));
-        let is_shown = |at: usize| self.shown.iter().any(|(item, _)| *item == at);
+        let is_shown = |at: usize| self.shown.iter().any(|shown| shown.item == at);
         let start: Vec<&(usize, Vec<usize>)> =
             self.kept.iter().filter(|(at, _)| is_shown(*at)).collect();
         let also: Vec<&(usize, Vec<usize>)> =
@@ -316,17 +368,17 @@ impl Plan {
         }
         if !self.shown.is_empty() {
             text.push_str("Current code:\n");
-            for (at, span) in &self.shown {
+            for shown in &self.shown {
                 let (Some(item), Some(file)) = (
-                    order.items.get(*at),
-                    files.get(*at).and_then(OnDisk::checked),
+                    order.items.get(shown.item),
+                    files.get(shown.item).and_then(OnDisk::checked),
                 ) else {
                     continue;
                 };
-                let Some(span) = item.spans.get(*span) else {
+                let Some(span) = item.spans.get(shown.span) else {
                     continue;
                 };
-                write_code(&mut text, (item, span), file);
+                write_code(&mut text, (item, span, shown.lines), file);
             }
         }
         text
@@ -427,9 +479,16 @@ fn item_text(item: &Item, spans: &[usize], is_head: bool) -> String {
     text
 }
 
-/// Writes `span` of `item`'s file, its lines as `file` holds them now, each numbered.
-fn write_code(text: &mut String, (item, span): (&Item, &ItemSpan), file: &CheckedFile) {
-    let Some(lines) = file.lines(span.lines) else {
+/// Writes `span` of `item`'s file, of which the lines `shown`, as `file` holds them now, each
+/// numbered: under the first line of the definition it starts inside, when it has one that can be
+/// shown, with a line marking the lines between; and, when it was cut, a line saying which of its
+/// lines are not shown.
+fn write_code(
+    text: &mut String,
+    (item, span, shown): (&Item, &ItemSpan, LineRange),
+    file: &CheckedFile,
+) {
+    let Some(lines) = file.lines(shown) else {
         return;
     };
     let _ = writeln!(
@@ -440,8 +499,28 @@ fn write_code(text: &mut String, (item, span): (&Item, &ItemSpan), file: &Checke
         span.lines.end_line()
     );
     let width = span.lines.end_line().to_string().len();
+    let scope = span
+        .scope
+        .filter(|line| *line < span.lines.start_line())
+        .and_then(|line| LineRange::new(line, line).ok())
+        .filter(|line| !is_reminder(file, *line))
+        .and_then(|line| file.lines(line));
+    if let Some((number, line)) = scope.as_deref().and_then(<[(u32, &str)]>::first) {
+        let _ = writeln!(text, "  {number:>width$} | {}", clean(line));
+        if number + 1 < span.lines.start_line() {
+            let _ = writeln!(text, "  {:>width$} | ...", "");
+        }
+    }
     for (number, line) in lines {
         let _ = writeln!(text, "  {number:>width$} | {}", clean(line));
+    }
+    if shown.end_line() < span.lines.end_line() {
+        let _ = writeln!(
+            text,
+            "  ... lines {}-{} not shown",
+            shown.end_line() + 1,
+            span.lines.end_line()
+        );
     }
 }
 

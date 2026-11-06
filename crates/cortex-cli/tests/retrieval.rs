@@ -159,6 +159,11 @@ fn shown_code(work_order: &str) -> TestResult<Vec<(String, usize, String)>> {
             break;
         };
         if let Some((number, text)) = line.split_once(" | ") {
+            // The line marking the lines between a class's first line and a method shown under
+            // it holds no number and no code.
+            if number.trim().is_empty() && text == "..." {
+                continue;
+            }
             let number: usize = number.trim().parse()?;
             shown.push((
                 file.clone().ok_or("code before its file")?,
