@@ -42,6 +42,7 @@ mod search;
 mod self_check;
 mod usage;
 mod values;
+mod warnings;
 mod writer;
 
 pub use activity::{EventRecord, EventRow, SessionRecord, SessionRow, TaskRecord, TaskRow};
@@ -54,7 +55,7 @@ pub use episode::{
 };
 pub use error::StoreError;
 pub use graph::GraphNodeRow;
-pub use ids::{FileId, InjectionId, NodeId, RefId, SymbolId};
+pub use ids::{FileId, InjectionId, NodeId, RefId, SymbolId, WarningId};
 pub use injections::{InjectedFile, InjectionRecord, InjectionRow};
 pub use interest::InterestRow;
 pub use lock::is_writer_running;
@@ -69,4 +70,5 @@ pub use records::{
 pub use rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow, SymbolSpan};
 pub use self_check::SelfCheckRecord;
 pub use usage::UsageRow;
+pub use warnings::{WarningRecord, WarningRow};
 pub use writer::{WriteTx, Writer, WriterOptions};

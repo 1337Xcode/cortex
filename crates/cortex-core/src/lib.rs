@@ -40,6 +40,7 @@ mod tokens;
 mod ulid;
 mod unix_time;
 mod user_folder;
+mod warning;
 
 pub use activity::{
     CommandKind, EventKind, EventMeta, EventSource, PROMPT_EXCERPT_CHARS, PromptExcerpt,
@@ -81,3 +82,4 @@ pub use tokens::identifier_tokens;
 pub use ulid::{Ulid, UlidError};
 pub use unix_time::unix_millis;
 pub use user_folder::{Endpoint, RunFiles, UserFolder};
+pub use warning::WarningKind;

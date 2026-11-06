@@ -43,3 +43,8 @@ row_id! {
     /// A row of `injections`.
     InjectionId
 }
+
+row_id! {
+    /// A row of `warnings`.
+    WarningId
+}

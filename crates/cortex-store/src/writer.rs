@@ -13,7 +13,7 @@ use crate::connection::{self, Access};
 use crate::episode::{self, EpisodeRecord};
 use crate::error::{StoreError, io, sqlite};
 use crate::folders;
-use crate::ids::{InjectionId, NodeId};
+use crate::ids::{InjectionId, NodeId, WarningId};
 use crate::injections::{self, InjectionRecord};
 use crate::interest::{self, InterestRow};
 use crate::layout;
@@ -27,6 +27,7 @@ use crate::replace;
 use crate::schema;
 use crate::self_check::{self, SelfCheckRecord};
 use crate::usage::{self, UsageRow};
+use crate::warnings::{self, WarningRecord};
 
 /// What [`Writer::open`] needs.
 #[derive(Debug, Clone, Copy)]
@@ -422,6 +423,29 @@ impl WriteTx<'_> {
         label: bool,
     ) -> Result<bool, StoreError> {
         self.atomically(|connection| injections::label(connection, id, (used_count, label)))
+    }
+
+    /// Records `record`, one file a warning named, returning its row.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors, among them a task the store does not hold.
+    pub fn record_warning(&mut self, record: &WarningRecord) -> Result<WarningId, StoreError> {
+        self.atomically(|connection| warnings::record(connection, record))
+    }
+
+    /// Sets whether warning `id` was resolved: its file read or edited after it in its task.
+    /// Resolving it again replaces the value. Whether the store holds the warning.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn resolve_warning(
+        &mut self,
+        id: WarningId,
+        is_resolved: bool,
+    ) -> Result<bool, StoreError> {
+        self.atomically(|connection| warnings::resolve(connection, id, is_resolved))
     }
 
     /// Adds `files` and `pairs` to the stored counts, storing those not stored yet: counts and

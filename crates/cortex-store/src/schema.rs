@@ -63,10 +63,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 12,
         sql: include_str!("../migrations/0012_cochange_partner_index.sql"),
     },
+    Migration {
+        version: 13,
+        sql: include_str!("../migrations/0013_warnings.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 12;
+pub(crate) const SCHEMA_VERSION: u32 = 13;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -584,6 +588,18 @@ pub(crate) const INJECTIONS_OF_SESSION: &str = "SELECT injection_id, task_id, se
     ts, items, tokens_est, confidence, gated_out, holdout, rendered_hash, used_count, label, \
     features FROM injections WHERE session_id = ?1 ORDER BY injection_id";
 
+/// Records one file a warning named, returning its row id.
+pub(crate) const WARNING_INSERT: &str = "INSERT INTO warnings \
+    (task_id, ts, kind, src_node, dst_node, strength) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+
+/// Sets whether one warning was resolved.
+pub(crate) const WARNING_RESOLVE: &str = "UPDATE warnings SET resolved = ?2 WHERE warning_id = ?1";
+
+/// The warnings of one task, in the order they were recorded, read back as [`crate::warnings`]
+/// reads them.
+pub(crate) const WARNINGS_OF_TASK: &str = "SELECT warning_id, task_id, ts, kind, src_node, \
+    dst_node, strength, resolved FROM warnings WHERE task_id = ?1 ORDER BY warning_id";
+
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
@@ -873,7 +889,7 @@ mod tests {
     /// references through imports by name, `nodes.path`, the uniqueness of folder paths and the
     /// names passed on as others, the second and the last two partial. Each entry: columns, unique,
     /// partial.
-    fn expected_indexes() -> [(&'static str, Vec<Index>); 15] {
+    fn expected_indexes() -> [(&'static str, Vec<Index>); 16] {
         [
             ("meta", index_list(&[(&["key"], true, false)])),
             (
@@ -956,30 +972,46 @@ mod tests {
                     (&["session_id", "ts"], false, false),
                 ]),
             ),
+            ("warnings", index_list(&[(&["task_id"], false, false)])),
         ]
     }
 
-    /// The injections table, column by column.
-    fn expected_injection_columns() -> [(&'static str, Vec<Column>); 1] {
-        [(
-            "injections",
-            column_list(&[
-                ("injection_id", "INTEGER", 1),
-                ("task_id", "TEXT", 0),
-                ("session_id", "TEXT", 0),
-                ("hook", "TEXT", 0),
-                ("ts", "INTEGER", 0),
-                ("items", "TEXT", 0),
-                ("tokens_est", "INTEGER", 0),
-                ("confidence", "REAL", 0),
-                ("gated_out", "INTEGER", 0),
-                ("holdout", "INTEGER", 0),
-                ("rendered_hash", "BLOB", 0),
-                ("used_count", "INTEGER", 0),
-                ("label", "INTEGER", 0),
-                ("features", "TEXT", 0),
-            ]),
-        )]
+    /// The injections and warnings tables, column by column.
+    fn expected_injection_columns() -> [(&'static str, Vec<Column>); 2] {
+        [
+            (
+                "injections",
+                column_list(&[
+                    ("injection_id", "INTEGER", 1),
+                    ("task_id", "TEXT", 0),
+                    ("session_id", "TEXT", 0),
+                    ("hook", "TEXT", 0),
+                    ("ts", "INTEGER", 0),
+                    ("items", "TEXT", 0),
+                    ("tokens_est", "INTEGER", 0),
+                    ("confidence", "REAL", 0),
+                    ("gated_out", "INTEGER", 0),
+                    ("holdout", "INTEGER", 0),
+                    ("rendered_hash", "BLOB", 0),
+                    ("used_count", "INTEGER", 0),
+                    ("label", "INTEGER", 0),
+                    ("features", "TEXT", 0),
+                ]),
+            ),
+            (
+                "warnings",
+                column_list(&[
+                    ("warning_id", "INTEGER", 1),
+                    ("task_id", "TEXT", 0),
+                    ("ts", "INTEGER", 0),
+                    ("kind", "TEXT", 0),
+                    ("src_node", "INTEGER", 0),
+                    ("dst_node", "INTEGER", 0),
+                    ("strength", "REAL", 0),
+                    ("resolved", "INTEGER", 0),
+                ]),
+            ),
+        ]
     }
 
     /// Which files hold a reference of a name that goes through an import is read from the index of
@@ -1168,7 +1200,8 @@ mod tests {
     /// and primary keys as the index's tables define them. Two indexes are added, `refs.dst_name`
     /// for resolving references by name and `nodes.path` for finding the nodes under a path, and
     /// folder paths are unique; one table is added, `passes_on`, what each file passes on of its
-    /// imports, indexed by file. The injections table is indexed by task and by session and time.
+    /// imports, indexed by file. The injections table is indexed by task and by session and time,
+    /// the warnings table by task.
     #[test]
     fn schema_matches_the_table_definitions() -> Result<(), Box<dyn std::error::Error>> {
         let connection = Connection::open_in_memory()?;
@@ -1204,7 +1237,8 @@ mod tests {
                 "sessions",
                 "symbols",
                 "tasks",
-                "usage"
+                "usage",
+                "warnings"
             ]
         );
         for (table, expected) in expected_columns()
@@ -1286,6 +1320,10 @@ mod tests {
                 key("sessions", "session_id", "session_id", "NO ACTION"),
                 key("tasks", "task_id", "task_id", "NO ACTION"),
             ]
+        );
+        assert_eq!(
+            foreign_keys(&connection, "warnings")?,
+            [key("tasks", "task_id", "task_id", "NO ACTION")]
         );
         Ok(())
     }

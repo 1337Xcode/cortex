@@ -529,6 +529,39 @@ mod tests {
         Ok(())
     }
 
+    /// The thirteenth schema adds the warnings table and its index by task, and keeps the tasks a
+    /// twelfth-schema store holds, which its warnings then belong to.
+    #[test]
+    fn the_thirteenth_schema_adds_warnings() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let twelfth = MIGRATIONS.get(..12).ok_or("fewer than twelve migrations")?;
+        migrate(&mut connection, twelfth, &backups)?;
+        connection.execute_batch(
+            "INSERT INTO sessions (session_id, agent, started_at, status) \
+             VALUES ('s1', 'claude', 1, 'live'); \
+             INSERT INTO tasks (task_id, session_id, seq, started_at) VALUES ('t1', 's1', 1, 2);",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 13);
+        let objects = objects(&connection)?;
+        for object in ["warnings", "warnings_task"] {
+            assert!(objects.contains(&object.to_owned()), "{object}");
+        }
+        connection.execute(
+            "INSERT INTO warnings (task_id, ts, kind, src_node, dst_node, strength) \
+             VALUES ('t1', 3, 'test', 4, 5, 1.0)",
+            [],
+        )?;
+        let unknown_task = connection.execute(
+            "INSERT INTO warnings (task_id, ts, kind, src_node, dst_node, strength) \
+             VALUES ('t2', 3, 'test', 4, 5, 1.0)",
+            [],
+        );
+        assert!(unknown_task.is_err());
+        Ok(())
+    }
+
     /// The twelfth schema adds an index of the co-change pairs by their second file, and keeps the
     /// pairs an eleventh-schema store holds.
     #[test]
@@ -545,7 +578,8 @@ mod tests {
              VALUES (1, 2, 3, 2.5, 7); \
              PRAGMA foreign_keys = ON;",
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let twelfth = MIGRATIONS.get(..12).ok_or("fewer than twelve migrations")?;
+        migrate(&mut connection, twelfth, &backups)?;
         assert_eq!(schema_version(&connection)?, 12);
         assert!(objects(&connection)?.contains(&"cochange_stats_file_b".to_owned()));
         let kept: (i64, i64, i64) = connection.query_row(
