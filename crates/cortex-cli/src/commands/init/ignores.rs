@@ -8,6 +8,10 @@
 use std::path::Path;
 
 use anyhow::bail;
+use cortex_core::{
+    IGNORE_ALL_BUT_SHARED, IGNORE_BLOCK_HEADER as HEADER, IGNORE_CORTEX_FOLDER,
+    IGNORE_LOCAL_SETTINGS as LOCAL_SETTINGS,
+};
 
 use super::git;
 
@@ -16,12 +20,6 @@ const CORTEX_PROBE: &str = ".cortex/probe";
 
 /// A file in the folder Cortex shares with the team.
 const SHARED_PROBE: &str = ".cortex/shared/probe";
-
-/// Claude Code's local settings, where a project's Cortex hooks are.
-const LOCAL_SETTINGS: &str = ".claude/settings.local.json";
-
-/// The comment init writes before the lines it adds to a `.gitignore`.
-const HEADER: &str = "# Cortex";
 
 /// What git ignores of what Cortex writes in a repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,9 +84,9 @@ pub(super) fn needed(
     let mut lines = Vec::new();
     if !ignored.is_cortex {
         if is_sharing {
-            lines.extend([".cortex/*", "!.cortex/shared/"]);
+            lines.extend(IGNORE_ALL_BUT_SHARED);
         } else {
-            lines.push(".cortex/");
+            lines.push(IGNORE_CORTEX_FOLDER);
         }
     }
     if is_settings_made && !ignored.is_local_settings {

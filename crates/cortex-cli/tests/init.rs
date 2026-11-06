@@ -12,9 +12,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::fake_daemon::{FakeDaemon, Script, kinds};
+use common::git::commit;
 use common::init::{claude_in, git, init, init_without_yes, run};
-use common::{StopsDaemon, TestResult, stand_in_claude};
-use cortex_core::ipc::CORTEX_VERSION;
+use common::{StopsDaemon, TestResult, stand_in_claude, wait_for, worktree_of};
+use cortex_core::ipc::{CORTEX_VERSION, WorktreeState};
 use cortex_core::{ContentHash, canonical_root};
 use serde_json::Value;
 
@@ -1073,5 +1074,36 @@ fn init_leaves_a_link_to_nothing() -> TestResult {
             .file_type()
             .is_symlink()
     );
+    Ok(())
+}
+
+/// The lines init adds to a committed `.gitignore` are no uncommitted change: once init is done,
+/// the daemon's look at the work tree finds no file changed. A line the user adds after them is
+/// one: the look then lists the `.gitignore`.
+#[test]
+fn init_s_own_ignore_lines_are_no_uncommitted_change() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"], home.path())?;
+    std::fs::write(repo.path().join("app.py"), "def app():\n    pass\n")?;
+    std::fs::write(repo.path().join(".gitignore"), "target/\n")?;
+    commit(repo.path(), home.path(), "the project", &["."])?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
+    let done = init(repo.path(), home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let ignores = "target/\n# Cortex\n.cortex/\n.claude/settings.local.json\n";
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(".gitignore"))?,
+        ignores
+    );
+    let listed = || -> TestResult<Option<u64>> {
+        Ok(worktree_of(repo.path(), home.path())?
+            .filter(|report| report.state == WorktreeState::Read)
+            .map(|report| report.listed_files))
+    };
+    wait_for(|| Ok(listed()?.is_some()))?;
+    assert_eq!(listed()?, Some(0));
+    std::fs::write(repo.path().join(".gitignore"), format!("{ignores}*.log\n"))?;
+    wait_for(|| Ok(listed()? == Some(1)))?;
     Ok(())
 }

@@ -90,6 +90,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- The lines `cortex init` adds to a `.gitignore` no longer count as uncommitted work: a
+  prompt right after install is not taken to continue a change of the `.gitignore`.
 - A prompt's retrieval no longer walks every symbol node of the repository: the store's lookups of
   a named symbol, of a listed file's symbols and of the files of nodes start from their own index,
   and the co-change pairs of a file are found by either of its sides through an index (a schema

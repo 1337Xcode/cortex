@@ -234,3 +234,54 @@ fn a_look_leaves_the_index_as_it_was() -> TestResult {
     assert_ne!(std::fs::read(&index)?, before, "git's own status writes it");
     Ok(())
 }
+
+/// A `.gitignore` whose only change since HEAD is the block `cortex init` adds at its end is
+/// Cortex's own work and is not held, whether HEAD held the file, with or without a line break at
+/// its end, or init made it; once the user changes it too, as when a line goes before the block or
+/// after it, it is held, and so is a block line the user commits and then removes.
+#[test]
+fn init_s_own_ignore_lines_are_no_change() -> TestResult {
+    let repo = Repo::new()?;
+    repo.write("a.py", "a = 1\n")?;
+    repo.write(".gitignore", "target/")?;
+    repo.commit(1)?;
+    repo.write(
+        ".gitignore",
+        "target/\n# Cortex\n.cortex/\n.claude/settings.local.json\n",
+    )?;
+    assert!(uncommitted(&repo)?.is_empty());
+    repo.write(".gitignore", "target/\n*.log\n# Cortex\n.cortex/\n")?;
+    assert_eq!(uncommitted(&repo)?, [".gitignore"]);
+    repo.write(".gitignore", "target/\n# Cortex\n.cortex/\n*.log\n")?;
+    assert_eq!(uncommitted(&repo)?, [".gitignore"]);
+
+    let made = Repo::new()?;
+    made.write("a.py", "a = 1\n")?;
+    made.commit(1)?;
+    made.write(".gitignore", "# Cortex\n.cortex/\n")?;
+    assert!(uncommitted(&made)?.is_empty());
+
+    let committed = Repo::new()?;
+    committed.write(".gitignore", "target/\n# Cortex\n.cortex/\n")?;
+    committed.commit(1)?;
+    committed.write(".gitignore", "# Cortex\n.cortex/\n")?;
+    assert_eq!(uncommitted(&committed)?, [".gitignore"]);
+    Ok(())
+}
+
+/// A `.gitignore` that is a link is not read, since it may lead out of the repository: it stays
+/// held, though the file it leads to holds init's block alone. Unix only: making a link on Windows
+/// needs a privilege a test cannot count on.
+#[cfg(unix)]
+#[test]
+fn a_linked_gitignore_is_never_read() -> TestResult {
+    let outside = tempfile::tempdir()?;
+    let target = outside.path().join("ignores");
+    std::fs::write(&target, "# Cortex\n.cortex/\n")?;
+    let repo = Repo::new()?;
+    repo.write("a.py", "a = 1\n")?;
+    repo.commit(1)?;
+    std::os::unix::fs::symlink(&target, repo.root().join(".gitignore"))?;
+    assert_eq!(uncommitted(&repo)?, [".gitignore"]);
+    Ok(())
+}

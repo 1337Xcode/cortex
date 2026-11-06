@@ -12,12 +12,17 @@
 //! and a look needs; it is told not to, which git older than 2.45 cannot be, so with such a git a
 //! partial clone is not looked at. No file system monitor runs, no submodule is looked into, and
 //! the index is not written, so no hook that a write of it would start runs either.
+//!
+//! The top `.gitignore`, when its only change since HEAD is the block `cortex init` adds at its end,
+//! is Cortex's own work, not the user's, and is left out; anything that cannot tell so leaves it
+//! in.
 
 use std::collections::BTreeSet;
+use std::io::Read as _;
 use std::path::Path;
 use std::time::Duration;
 
-use cortex_core::RepoPath;
+use cortex_core::{RepoPath, without_ignore_block};
 
 use crate::git_program::{GitProgram, OwnConfig};
 use crate::history::has_repository;
@@ -28,6 +33,13 @@ const STATUS_WITHIN: Duration = Duration::from_secs(10);
 /// The most of git's listing read, 4 MiB, a hundred thousand paths of forty bytes; a listing
 /// longer than that is a mass change, not read at all.
 const MAX_STATUS_BYTES: u64 = 4 * 1024 * 1024;
+
+/// The repository's top `.gitignore`, the one `cortex init` adds its lines to.
+const GITIGNORE: &str = ".gitignore";
+
+/// The most of a `.gitignore` read to tell whether Cortex's lines are its only change, as much as
+/// git answers of a file at HEAD: a longer one is left in the set.
+const MAX_GITIGNORE_BYTES: u64 = 64 * 1024;
 
 /// Why the work tree's changes could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -69,7 +81,60 @@ pub fn uncommitted_files(root: &Path) -> Result<BTreeSet<RepoPath>, WorktreeErro
     let git = GitProgram::find(root).ok_or(WorktreeError::NoGit)?;
     let own = git.own_config().map_err(WorktreeError::Status)?;
     may_look(own, || git.can_refuse_fetching())?;
-    listed(&git, MAX_STATUS_BYTES)
+    Ok(without_own_ignores(&git, listed(&git, MAX_STATUS_BYTES)?))
+}
+
+/// `changed` without the top `.gitignore` when its only change since HEAD is the block `cortex
+/// init` adds at its end.
+fn without_own_ignores(git: &GitProgram, mut changed: BTreeSet<RepoPath>) -> BTreeSet<RepoPath> {
+    let Ok(path) = RepoPath::new(GITIGNORE) else {
+        return changed;
+    };
+    if changed.contains(&path) && is_only_init_s_block(git) {
+        changed.remove(&path);
+    }
+    changed
+}
+
+/// Whether the work tree's `.gitignore`, a file and not a link, with the block init adds at its
+/// end taken off, is the one HEAD holds, or empty where HEAD holds none, line endings at its end
+/// aside: false whenever git or the file cannot tell.
+fn is_only_init_s_block(git: &GitProgram) -> bool {
+    let Some(now) = work_tree_text(&git.root().join(GITIGNORE)) else {
+        return false;
+    };
+    let Some(before) = without_ignore_block(&now) else {
+        return false;
+    };
+    let committed = match git.ask(&["rev-parse", "--verify", "--quiet", "HEAD:.gitignore"]) {
+        Ok(None) => String::new(),
+        Ok(Some(id)) => match git.ask(&["cat-file", "blob", id.trim()]) {
+            Ok(Some(text)) => text,
+            Ok(None) | Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+    before.trim_end_matches(['\r', '\n']) == committed.trim_end_matches(['\r', '\n'])
+}
+
+/// The text of the file at `path`, read whole when it is a file of at most
+/// [`MAX_GITIGNORE_BYTES`] holding UTF-8; none for a link, which may lead out of the repository,
+/// or anything else.
+fn work_tree_text(path: &Path) -> Option<String> {
+    let kind = std::fs::symlink_metadata(path).ok()?;
+    if !kind.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(MAX_GITIGNORE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if u64::try_from(bytes.len()).ok()? > MAX_GITIGNORE_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
 }
 
 /// Whether a repository whose own configuration says `own` may be looked at, the git that would
