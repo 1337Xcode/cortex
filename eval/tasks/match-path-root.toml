@@ -1,0 +1,8 @@
+id = "match-path-root"
+testbed = "serena"
+kind = "rename a parameter its callers pass"
+warmups = ["Read `match_path` in serena's file system utilities and explain how it decides whether a path matches an ignore spec. Do not change any files."]
+prompt = "Rename the `root_path` parameter of `match_path` in `src/serena/util/file_system.py` to `root`. Do not keep the old name as an alias. Every call to it in the repository that passes `root_path` must use the new name."
+check = ["python", "{checks}/match-path-root.py"]
+touches = ["src/serena/util/file_system.py", "src/serena/project.py", "src/solidlsp/language_servers/csharp_language_server.py", "src/solidlsp/ls.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

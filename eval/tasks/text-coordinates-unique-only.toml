@@ -1,0 +1,8 @@
+id = "text-coordinates-unique-only"
+testbed = "serena"
+kind = "rename a parameter its callers pass"
+warmups = ["Read `find_text_coordinates` in serena's text utilities and explain what its parameters do and who calls it. Do not change any files."]
+prompt = "Rename the `require_unique` parameter of `find_text_coordinates` in `src/serena/util/text_utils.py` to `unique_only`. Do not keep the old name as an alias. Every call to it in the repository that passes `require_unique` must use the new name."
+check = ["python", "{checks}/text-coordinates-unique-only.py"]
+touches = ["src/serena/util/text_utils.py", "src/serena/repl/api/jb_api.py", "src/serena/repl/api/lsp_api.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

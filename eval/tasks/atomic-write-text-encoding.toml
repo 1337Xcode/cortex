@@ -1,0 +1,8 @@
+id = "atomic-write-text-encoding"
+testbed = "serena"
+kind = "rename a parameter its callers pass"
+warmups = ["Read `write_file_atomic` in serena's file system utilities and explain how it writes a file without leaving it half written. Do not change any files."]
+prompt = "Rename the `encoding` parameter of `write_file_atomic` in `src/serena/util/file_system.py` to `text_encoding`. Do not keep the old name as an alias. Every call to it in the repository that passes `encoding` must use the new name."
+check = ["python", "{checks}/atomic-write-text-encoding.py"]
+touches = ["src/serena/util/file_system.py", "src/serena/code_editor.py", "src/serena/memories/memory_manager.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]
