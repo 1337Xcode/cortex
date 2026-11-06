@@ -100,7 +100,10 @@ pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
         median_cumulative_input: median_of(&|session| session.cumulative_input),
         median_turns: median_of(&|session| session.turns),
         median_tool_calls: median_of(&|session| session.tool_calls),
-        cost_usd: sessions.clone().map(|session| session.cost_usd).sum(),
+        // A float sum of nothing is minus zero, which prints as a cost of -0.00.
+        cost_usd: sessions
+            .clone()
+            .fold(0.0, |total, session| total + session.cost_usd),
         agents: agents.into_iter().collect(),
         failed_sessions: u64::try_from(sessions.filter(|session| session.is_error).count())
             .unwrap_or(u64::MAX),
@@ -309,5 +312,16 @@ mod tests {
         let summary = summary(&[run(true, (1, 1, 1), Given::default())], &[]);
         assert_eq!(summary.precision, None);
         assert!(lines(&summary).contains(&"precision: none".to_owned()));
+    }
+
+    /// With no run completed, nothing was spent: the cost is zero and printed as $0.00.
+    #[test]
+    fn no_run_costs_nothing() {
+        let summary = summary(&[], &[]);
+        assert!(summary.cost_usd == 0.0 && summary.cost_usd.is_sign_positive());
+        assert!(
+            lines(&summary)
+                .contains(&"cost of every session, as the agent reported it: $0.00".to_owned())
+        );
     }
 }
