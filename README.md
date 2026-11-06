@@ -12,8 +12,11 @@ up, indexes it and keeps the index current as files change, records what Claude 
 and runs, mines the git history for files that change together, and learns from each finished
 task. When a prompt points at code the evidence agrees on, Cortex gives Claude Code a short work
 order: the files and line ranges to start from, each with its reason, read from the files on disk
-when the work order is written. When the evidence does not agree, it adds nothing. Codex and the
-other agents are not supported yet. This page lists a feature only once it works and has tests,
+when the work order is written. When the evidence does not agree, it adds nothing. After an
+edit it says what the edit seems to leave undone: calls to a changed signature, the file's own
+tests, a file that usually changes with it. Before a read it says when those lines were read
+already, and after the agent's context is compacted it recalls what the task was doing. Codex
+and the other agents are not supported yet. This page lists a feature only once it works and has tests,
 and a number only once it has been measured.
 
 ## Install
@@ -69,23 +72,30 @@ the command, not with the daemon.
 
 ## What has been measured
 
-One evaluation so far, with Claude Code, in `eval/`. Twelve tasks on a pinned copy of an
-open-source Python project of about 850 source files, each run four times in a fresh copy with
-Cortex installed. In each run, one or two warm-up sessions work in the same area first, as earlier
-work would, and then a new session makes the change; only the new session's work orders count. The
-copies had no git history, so Cortex worked from the code's structure, the prompt and what the
-warm-up sessions did.
+Evaluations with Claude Code, in `eval/`: tasks on pinned open-source Python projects, each run in
+a fresh copy with Cortex installed. Some tasks first run warm-up sessions in the same area, as
+earlier work would; only the last session's work orders count.
 
-- Work orders reached the measured session in 32 of 48 runs: every run of 8 tasks. In the 16 runs
-  of the other 4 tasks the evidence did not agree and Cortex added nothing.
-- 29 of the 32 were used, meaning the session edited one of the work order's first three files, or
-  read one and edited a file that names it. That is a precision of 0.91 (95% interval 0.70 to 1.00,
-  resampling tasks). All 3 unused work orders were in one task.
-- The tasks' checks passed in 47 of 48 runs.
+The latest, on 2026-11-06 (`eval/results/2026-11-06-5d28da8/`): 17 tasks, 2 runs each, on a
+project of about 850 source files (14 tasks) and one of 15 files (3 tasks), cloned with their git
+history.
 
-This measures how often Cortex points at the right code when it speaks. It does not yet measure
-whether that saves tokens, turns or time: that needs the same tasks run with Cortex holding them
-out, which has not been done. Each run's counts are in `eval/results/2026-11-05-c856abc/`.
+- Every run's check passed.
+- The measured sessions got 18 work orders; 15 were used, meaning the session edited one of the
+  work order's first three files, or read one and edited a file that names it: a precision of 0.83
+  (95% interval 0.57 to 1.00, resampling tasks).
+- Every one of the 1,300 code lines the sessions were shown was the line its file held.
+- Everything Cortex said to the agents took at most 1.71% of the sessions' input tokens; in the
+  15-file project, which gets no work orders, at most 0.20%.
+- Warnings after edits named 32 files, of which 4 were read or edited afterwards. Most edits in
+  these tasks did not need the file a warning named.
+
+Whether Cortex saves tokens, turns or time needs the same tasks run with Cortex holding them out,
+with at least 30 tasks on each side. A first pilot with 15 tasks a side
+(`eval/results/2026-11-06-e8bee2b-treated/`) showed no saving: the sessions given work orders took
+more input tokens than the held-out ones (27,378 more on average, 95% interval 428 to 54,230), and
+the same number of turns and tool calls. That is too few tasks to claim anything either way, and
+it is reported as measured.
 
 ## Build and test
 
