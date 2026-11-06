@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::run::TaskRun;
 use crate::shown::Shown;
+use crate::texts::{Texts, add_texts, share_of_input};
 
 /// A run that could not complete: its task and number. Why is in the runner's output, which names
 /// local paths and stays out of the results.
@@ -54,6 +55,11 @@ pub(crate) struct Summary {
     /// The check of the code every session was shown, over the runs that made it; none when no
     /// run did.
     pub(crate) shown: Option<Shown>,
+    /// The texts Cortex gave every session that recorded them, by the hook they answered; none
+    /// when no session did.
+    pub(crate) texts: Option<Texts>,
+    /// The most those texts can have added to those sessions' input, as a share of it.
+    pub(crate) texts_share: Option<f64>,
 }
 
 /// What the completed `runs` add up to, with the runs that could not complete, `incomplete`.
@@ -93,6 +99,17 @@ pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
             )
         })
         .collect();
+    let recorded: Vec<(&Texts, u64, u64)> = runs
+        .iter()
+        .flat_map(|run| run.sessions.iter())
+        .filter_map(|session| {
+            Some((
+                session.texts.as_ref()?,
+                session.turns,
+                session.cumulative_input,
+            ))
+        })
+        .collect();
     Summary {
         runs: total,
         incomplete: incomplete.to_vec(),
@@ -112,6 +129,13 @@ pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
         failed_sessions: u64::try_from(sessions.filter(|session| session.is_error).count())
             .unwrap_or(u64::MAX),
         shown: runs.iter().filter_map(|run| run.shown).reduce(Shown::add),
+        texts: recorded
+            .iter()
+            .map(|(texts, _, _)| *texts)
+            .fold(None, |sum: Option<Texts>, texts| {
+                Some(add_texts(sum.unwrap_or_default(), texts))
+            }),
+        texts_share: share_of_input(&recorded),
     }
 }
 
@@ -198,8 +222,31 @@ pub(crate) fn lines(summary: &Summary) -> Vec<String> {
                 )
             },
         ),
+        texts_line(summary),
         format!("agents: {}", summary.agents.join("; ")),
     ]
+}
+
+/// The line saying what Cortex's texts to the agents came to.
+fn texts_line(summary: &Summary) -> String {
+    let Some(texts) = &summary.texts else {
+        return "Cortex's texts that reached the agents: not recorded".to_owned();
+    };
+    if texts.is_empty() {
+        return "Cortex's texts that reached the agents: none".to_owned();
+    }
+    let kinds: Vec<String> = texts
+        .iter()
+        .map(|(kind, sent)| format!("{kind} {} ({} tokens)", sent.count, sent.tokens))
+        .collect();
+    let share = summary.texts_share.map_or_else(
+        || "no input to weigh them against".to_owned(),
+        |share| format!("at most {:.2}% of the sessions' input", share * 100.0),
+    );
+    format!(
+        "Cortex's texts that reached the agents, tokens as Cortex estimates them: {}; {share}",
+        kinds.join(", ")
+    )
 }
 
 #[cfg(test)]
@@ -224,6 +271,7 @@ mod tests {
             output: 0,
             cost_usd: 0.5,
             duration_ms: 0,
+            texts: None,
         };
         TaskRun {
             task: "t".to_owned(),
@@ -357,6 +405,56 @@ mod tests {
         let before = super::summary(&runs[2..], &[]);
         assert_eq!(before.shown, None);
         assert!(lines(&before).contains(&"code lines shown to the agents: not checked".to_owned()));
+    }
+
+    /// The texts add up over every session that recorded them, worked by hand: two sessions of a
+    /// run each got a primer of 50 tokens over 10 turns of 100,000 input, the measured one also a
+    /// work order of 400; primers 2 (100 tokens), work orders 1 (400 tokens); read 50 * 10 + 450 *
+    /// 10 = 5,000 times against 200,000 of input, at most 2.50%. A run from before the texts were
+    /// recorded is left out, and with none recorded the summary says so.
+    #[test]
+    fn the_texts_add_up() {
+        let sent = |count, tokens| crate::texts::Sent { count, tokens };
+        let primer = Texts::from([("session_start".to_owned(), sent(1, 50))]);
+        let both = Texts::from([
+            ("prompt".to_owned(), sent(1, 400)),
+            ("session_start".to_owned(), sent(1, 50)),
+        ]);
+        let mut recorded = run(true, (100_000, 10, 1), Given::default());
+        recorded.sessions = vec![
+            Session {
+                texts: Some(primer),
+                ..recorded.sessions[0].clone()
+            },
+            Session {
+                texts: Some(both),
+                ..recorded.sessions[1].clone()
+            },
+        ];
+        let runs = [recorded, run(true, (1, 1, 1), Given::default())];
+        let summary = summary(&runs, &[]);
+        assert_eq!(
+            summary.texts,
+            Some(Texts::from([
+                ("prompt".to_owned(), sent(1, 400)),
+                ("session_start".to_owned(), sent(2, 100)),
+            ]))
+        );
+        assert!(
+            summary
+                .texts_share
+                .is_some_and(|share| (share - 0.025).abs() < 1e-12)
+        );
+        assert!(lines(&summary).contains(
+            &"Cortex's texts that reached the agents, tokens as Cortex estimates them: prompt 1 \
+              (400 tokens), session_start 2 (100 tokens); at most 2.50% of the sessions' input"
+                .to_owned()
+        ));
+        let before = super::summary(&runs[1..], &[]);
+        assert!(
+            lines(&before)
+                .contains(&"Cortex's texts that reached the agents: not recorded".to_owned())
+        );
     }
 
     /// With no work order labelled there is no precision, said as none.

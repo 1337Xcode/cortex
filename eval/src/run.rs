@@ -23,6 +23,7 @@ use crate::shown::{self, Shown};
 use crate::snapshot::Snapshot;
 use crate::task::Task;
 use crate::testbed::Testbed;
+use crate::texts::{Texts, texts_of};
 
 /// How long a copy's first index and graph may take before the run gives up.
 const READY_WITHIN: Duration = Duration::from_secs(900);
@@ -110,8 +111,9 @@ pub(crate) fn run_task(
     for (at, prompt) in prompts.enumerate() {
         let stream = folder.join(format!("session-{at}.jsonl"));
         let before = Snapshot::take(&repo, &folder, &format!("snapshot-{at}"))?;
-        let session = session(prompt, (&repo, &home), task, settings, &stream)?;
+        let mut session = session(prompt, (&repo, &home), task, settings, &stream)?;
         settle(&repo, session.session_id.as_deref())?;
+        session.texts = texts_given(&repo, session.session_id.as_deref())?;
         let checked = check_shown(&repo, session.session_id.as_deref(), &before, &folder)?;
         shown = shown.add(checked);
         sessions.push(session);
@@ -374,6 +376,23 @@ fn check_shown(
         writeln!(log, "  {path}:{number}")?;
     }
     Ok(shown)
+}
+
+/// The texts Cortex gave the session `session` of `repo`, by the hook they answered: its
+/// primer and work orders, and every warning, hint, recap and reason. None for a session whose
+/// stream named no id.
+///
+/// # Errors
+///
+/// The store cannot be read.
+fn texts_given(repo: &Path, session: Option<&str>) -> anyhow::Result<Option<Texts>> {
+    let Some(session) = session else {
+        return Ok(None);
+    };
+    let reader = Reader::open(&repo.join(".cortex"), 0).context("opening the store")?;
+    let id = Identifier::new(session).context("reading the session id")?;
+    let rows = reader.queries().injections_of_session(&id)?;
+    Ok(Some(texts_of(rows.iter().map(|row| &row.record))))
 }
 
 /// Whether `task`'s check passes in `repo`, its `{checks}` taken to the folder `checks`, its

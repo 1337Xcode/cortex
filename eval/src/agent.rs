@@ -11,6 +11,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
+use crate::texts::Texts;
+
 /// The environment variable left out of every agent's environment.
 const API_KEY_VARIABLE: &str = "ANTHROPIC_API_KEY";
 
@@ -67,6 +69,10 @@ pub(crate) struct Session {
     pub(crate) cost_usd: f64,
     /// How long it took, in milliseconds.
     pub(crate) duration_ms: u64,
+    /// The texts Cortex gave it, as the store holds them; none in results from before the runner
+    /// recorded them.
+    #[serde(default)]
+    pub(crate) texts: Option<Texts>,
 }
 
 impl Session {
@@ -176,6 +182,7 @@ mod tests {
                 output: 700,
                 cost_usd: 0.25,
                 duration_ms: 21_944,
+                texts: None,
             }
         );
     }

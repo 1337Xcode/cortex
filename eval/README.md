@@ -59,6 +59,13 @@ every numbered code line they showed against its file as it was kept. The summar
 lines shown, those that were not their file's line, and the sessions whose transcript could not be
 read; `shown.log` in the run's folder names each line that differed by its path and number.
 
+The runner also reads from the store every text Cortex gave each session (the primer, work orders,
+warnings, read hints, the recap and strict mode's reasons), by the hook it answered, with its tokens
+as Cortex estimates them. A text stays in the agent's context from the turn it arrives, so the
+summary weighs each session's text tokens by its turns against the input the sessions report: the
+most Cortex can have added to them, since a text that arrives later in a session is read fewer
+times.
+
 Precision is the share of the measured sessions' work orders that reached the agent, were labelled
 when their task ended, and were labelled used (the task edited one of the work order's first three
 files, or read one and edited a file that names it). Every share comes with a 95% percentile

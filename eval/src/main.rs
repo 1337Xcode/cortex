@@ -15,6 +15,7 @@ mod shown;
 mod snapshot;
 mod task;
 mod testbed;
+mod texts;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
