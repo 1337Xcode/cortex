@@ -5,13 +5,14 @@
 
 mod common;
 
+use common::task::given;
 use common::{Def, Repo, TestResult, function};
 use cortex_core::{
     Agent, ContentHash, EventKind, EventMeta, FileFlags, Identifier, LineRange, RepoPath,
     SymbolKind, ToolKind, Ulid, estimate_tokens,
 };
 use cortex_retrieve::{HintQuery, MAX_HINT_TOKENS, read_hint};
-use cortex_store::{EventRecord, InjectedFile, InjectionRecord, NodeId, SessionRecord, TaskRecord};
+use cortex_store::{EventRecord, NodeId, SessionRecord, TaskRecord};
 
 /// The session of the reads.
 const SESSION: &str = "s1";
@@ -62,38 +63,6 @@ fn long_file(repo: &mut Repo, path: &str) -> TestResult<(NodeId, String, Ulid)> 
     })?;
     transaction.commit()?;
     Ok((node, text, task))
-}
-
-/// Records that the task's prompt was given a work order showing `spans` of the file of `node`,
-/// or, when `is_kept_back`, one the gate kept back.
-fn given(
-    repo: &mut Repo,
-    (task, node): (Ulid, NodeId),
-    spans: &[(u32, u32)],
-    is_kept_back: bool,
-) -> TestResult {
-    let mut transaction = repo.writer.transaction()?;
-    transaction.record_injection(&InjectionRecord {
-        task_id: Some(task),
-        session_id: Identifier::new(SESSION)?,
-        hook: cortex_core::HookKind::Prompt,
-        at_ms: 3,
-        files: vec![InjectedFile {
-            node,
-            spans: spans.to_vec(),
-            reason: None,
-            shown: Vec::new(),
-            content: None,
-        }],
-        tokens: if is_kept_back { 0 } else { 300 },
-        confidence: None,
-        is_gated_out: is_kept_back,
-        is_holdout: false,
-        text_hash: (!is_kept_back).then(|| ContentHash::of(b"a work order")),
-        features: None,
-    })?;
-    transaction.commit()?;
-    Ok(())
 }
 
 /// Records that the session read lines `range` (none for the whole file) of the file of `node` at

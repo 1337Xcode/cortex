@@ -2,10 +2,12 @@
 //! task, files of one function, its reads and edits, and its warnings.
 
 use cortex_core::{
-    Agent, EventKind, EventMeta, FileFlags, Identifier, PromptExcerpt, RepoPath, ToolKind, Ulid,
-    WarningKind,
+    Agent, ContentHash, EventKind, EventMeta, FileFlags, Identifier, PromptExcerpt, RepoPath,
+    ToolKind, Ulid, WarningKind,
 };
-use cortex_store::{EventRecord, NodeId, SessionRecord, TaskRecord, WarningRecord};
+use cortex_store::{
+    EventRecord, InjectedFile, InjectionRecord, NodeId, SessionRecord, TaskRecord, WarningRecord,
+};
 
 use super::{Repo, TestResult, function};
 
@@ -100,6 +102,38 @@ pub fn warned(
         source,
         target,
         strength: 0.8,
+    })?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Records that the task's prompt was given a work order showing `spans` of the file of `node`,
+/// or, when `is_kept_back`, one the gate kept back.
+pub fn given(
+    repo: &mut Repo,
+    (task, node): (Ulid, NodeId),
+    spans: &[(u32, u32)],
+    is_kept_back: bool,
+) -> TestResult {
+    let mut transaction = repo.writer.transaction()?;
+    transaction.record_injection(&InjectionRecord {
+        task_id: Some(task),
+        session_id: Identifier::new(SESSION)?,
+        hook: cortex_core::HookKind::Prompt,
+        at_ms: 3,
+        files: vec![InjectedFile {
+            node,
+            spans: spans.to_vec(),
+            reason: None,
+            shown: Vec::new(),
+            content: None,
+        }],
+        tokens: if is_kept_back { 0 } else { 300 },
+        confidence: None,
+        is_gated_out: is_kept_back,
+        is_holdout: false,
+        text_hash: (!is_kept_back).then(|| ContentHash::of(b"a work order")),
+        features: None,
     })?;
     transaction.commit()?;
     Ok(())
