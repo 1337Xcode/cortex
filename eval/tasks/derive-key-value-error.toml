@@ -1,0 +1,8 @@
+id = "derive-key-value-error"
+testbed = "itsdangerous"
+kind = "change an error and the tests that expect it"
+warmups = []
+prompt = "In itsdangerous, a `Signer` given an unknown `key_derivation` only fails when it first derives a key, with a bare `TypeError`. Make the `Signer` constructor refuse an unknown `key_derivation` right away with a `ValueError` whose message names the method it was given (for example `Unknown key derivation method 'md5'`), and make `derive_key` raise that same `ValueError` when `key_derivation` was set to an unknown value after construction. Update whatever relies on the old error."
+check = ["python", "{checks}/derive-key-value-error.py"]
+touches = ["src/itsdangerous/signer.py", "tests/test_itsdangerous/test_signer.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

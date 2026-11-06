@@ -1,0 +1,8 @@
+id = "timestamp-signer-clock"
+testbed = "itsdangerous"
+kind = "add an option to a class"
+warmups = []
+prompt = "Let itsdangerous's `TimestampSigner` take an optional `clock` argument: a function returning the current time in seconds since the epoch, `time.time` when it is not given. `get_timestamp` should use it, so that signing and the age check in `unsign` both follow the clock. The signer's other arguments must keep working as before, and a `TimedSerializer` given `clock` in its `signer_kwargs` should pass it on to its signers."
+check = ["python", "{checks}/timestamp-signer-clock.py"]
+touches = ["src/itsdangerous/timed.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

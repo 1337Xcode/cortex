@@ -1,0 +1,8 @@
+id = "want-bytes-keyword-only"
+testbed = "itsdangerous"
+kind = "change a signature its callers use"
+warmups = []
+prompt = "In itsdangerous's `encoding` module, make `want_bytes` take `encoding` and `errors` only as keyword arguments, so that a positional call such as `want_bytes(value, \"ascii\")` is refused with a `TypeError`. Every existing caller in the package must keep working."
+check = ["python", "{checks}/want-bytes-keyword-only.py"]
+touches = ["src/itsdangerous/encoding.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

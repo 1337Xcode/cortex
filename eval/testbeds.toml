@@ -6,3 +6,9 @@ name = "serena"
 url = "https://github.com/oraios/serena"
 commit = "ede329aaf0c824bea75455a2926f01420d7aa620"
 description = "A Python toolkit of language-server tools for coding agents, about 300 Python files"
+
+[[testbed]]
+name = "itsdangerous"
+url = "https://github.com/pallets/itsdangerous"
+commit = "672971d66a2ef9f85151e53283113f33d642dabd"
+description = "A Python library that signs data, 15 Python files and about 1,700 lines: a tiny repository"
