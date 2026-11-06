@@ -52,6 +52,13 @@ exists already: an evaluation needs a fresh base. A run that cannot complete (a 
 a session or the store failing) does not stop the others: the runner prints why, and the summary lists it by task and run number, with the completed
 runs counted apart.
 
+Before each session the runner keeps the copy's files as they are, through git and an index of
+its own, so that the copy's own index and history stay as the agent left them. After the session
+it reads the work orders back from the session's transcript, which the store names, and checks
+every numbered code line they showed against its file as it was kept. The summary counts the code
+lines shown, those that were not their file's line, and the sessions whose transcript could not be
+read; `shown.log` in the run's folder names each line that differed by its path and number.
+
 Precision is the share of the measured sessions' work orders that reached the agent, were labelled
 when their task ended, and were labelled used (the task edited one of the work order's first three
 files, or read one and edited a file that names it). Every share comes with a 95% percentile

@@ -1,11 +1,13 @@
 //! One run of one task: a fresh copy of its testbed with Cortex installed for the arm, the agent's
-//! sessions in turn, the success check, and what Cortex gave the measured session and what its
-//! end made of it, read from the copy's store.
+//! sessions in turn, the success check, what Cortex gave the measured session and what its end
+//! made of it, read from the copy's store, and whether every code line a session was shown was the
+//! line its file held when the session began.
 //!
 //! Each run has its own folder under the base folder: the repository, a home folder for Cortex's
 //! user files and daemon, each session's stream, and the log of every command the run waits for.
 //! They stay there and never reach the results.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -17,6 +19,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::{self, Session};
 use crate::process::{run_logged, tail_of};
+use crate::shown::{self, Shown};
+use crate::snapshot::Snapshot;
 use crate::task::Task;
 use crate::testbed::Testbed;
 
@@ -77,6 +81,10 @@ pub(crate) struct TaskRun {
     pub(crate) is_success: bool,
     /// What Cortex gave the measured session.
     pub(crate) given: Given,
+    /// The check of the code every session was shown; none in results from before the runner
+    /// checked it.
+    #[serde(default)]
+    pub(crate) shown: Option<Shown>,
 }
 
 /// Runs `task` in a copy of `testbed`, from `from` when given, as run number `run`.
@@ -97,11 +105,15 @@ pub(crate) fn run_task(
     testbed.prepare(from, &repo)?;
     install((&repo, &home), &folder, settings)?;
     let mut sessions = Vec::new();
+    let mut shown = Shown::default();
     let prompts = task.warmups.iter().chain(std::iter::once(&task.prompt));
     for (at, prompt) in prompts.enumerate() {
         let stream = folder.join(format!("session-{at}.jsonl"));
+        let before = Snapshot::take(&repo, &folder, &format!("snapshot-{at}"))?;
         let session = session(prompt, (&repo, &home), task, settings, &stream)?;
         settle(&repo, session.session_id.as_deref())?;
+        let checked = check_shown(&repo, session.session_id.as_deref(), &before, &folder)?;
+        shown = shown.add(checked);
         sessions.push(session);
     }
     let is_success = check(task, &repo, &settings.checks, &folder.join("check.log"))?;
@@ -118,6 +130,7 @@ pub(crate) fn run_task(
         sessions,
         is_success,
         given,
+        shown: Some(shown),
     })
 }
 
@@ -302,6 +315,65 @@ fn given_of(rows: &[Labelled<'_>]) -> Given {
         labelled: count(&|label| label.is_some()),
         used: count(&|label| label == Some(true)),
     }
+}
+
+/// The check of the code the session `session` of `repo` was shown, against `before`, the copy's
+/// files when the session began. The work orders are read from the session's transcript, found
+/// through the store; the path and number of each line that differs, and why a session could not be
+/// checked, go to `shown.log` in `folder`.
+///
+/// # Errors
+///
+/// The store cannot be read, or the snapshot's git fails.
+fn check_shown(
+    repo: &Path,
+    session: Option<&str>,
+    before: &Snapshot,
+    folder: &Path,
+) -> anyhow::Result<Shown> {
+    let log_path = folder.join("shown.log");
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("opening {}", log_path.display()))?;
+    let unread = |log: &mut std::fs::File, why: &str| -> anyhow::Result<Shown> {
+        writeln!(
+            log,
+            "session {}: not checked, {why}",
+            session.unwrap_or("unknown")
+        )?;
+        Ok(Shown {
+            unread_sessions: 1,
+            ..Shown::default()
+        })
+    };
+    let Some(session) = session else {
+        return unread(&mut log, "its stream named no session");
+    };
+    let reader = Reader::open(&repo.join(".cortex"), 0).context("opening the store")?;
+    let id = Identifier::new(session).context("reading the session id")?;
+    let transcript = reader
+        .queries()
+        .session(&id)?
+        .and_then(|row| row.record.transcript_path);
+    let Some(transcript) = transcript else {
+        return unread(&mut log, "the store holds no transcript for it");
+    };
+    let Ok(text) = std::fs::read(&transcript) else {
+        return unread(&mut log, "its transcript could not be read");
+    };
+    let lines = shown::shown_lines(&String::from_utf8_lossy(&text));
+    let (shown, differing) = shown::check(&lines, |path| before.file(path))?;
+    writeln!(
+        log,
+        "session {session}: {} lines, {} differ",
+        shown.lines, shown.differ
+    )?;
+    for (path, number) in differing {
+        writeln!(log, "  {path}:{number}")?;
+    }
+    Ok(shown)
 }
 
 /// Whether `task`'s check passes in `repo`, its `{checks}` taken to the folder `checks`, its

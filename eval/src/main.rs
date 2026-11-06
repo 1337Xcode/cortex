@@ -11,6 +11,8 @@ mod process;
 mod report;
 mod results;
 mod run;
+mod shown;
+mod snapshot;
 mod task;
 mod testbed;
 

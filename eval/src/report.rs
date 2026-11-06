@@ -10,6 +10,7 @@ use cortex_meter::{Interval, ratio_interval};
 use serde::{Deserialize, Serialize};
 
 use crate::run::TaskRun;
+use crate::shown::Shown;
 
 /// A run that could not complete: its task and number. Why is in the runner's output, which names
 /// local paths and stays out of the results.
@@ -50,6 +51,9 @@ pub(crate) struct Summary {
     pub(crate) agents: Vec<String>,
     /// Sessions that ended in an error.
     pub(crate) failed_sessions: u64,
+    /// The check of the code every session was shown, over the runs that made it; none when no
+    /// run did.
+    pub(crate) shown: Option<Shown>,
 }
 
 /// What the completed `runs` add up to, with the runs that could not complete, `incomplete`.
@@ -107,6 +111,7 @@ pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
         agents: agents.into_iter().collect(),
         failed_sessions: u64::try_from(sessions.filter(|session| session.is_error).count())
             .unwrap_or(u64::MAX),
+        shown: runs.iter().filter_map(|run| run.shown).reduce(Shown::add),
     }
 }
 
@@ -183,6 +188,16 @@ pub(crate) fn lines(summary: &Summary) -> Vec<String> {
             "cost of every session, as the agent reported it: ${:.2}",
             summary.cost_usd
         ),
+        summary.shown.map_or_else(
+            || "code lines shown to the agents: not checked".to_owned(),
+            |shown| {
+                format!(
+                    "code lines shown to the agents: {}, of which {} were not their file's line when \
+                     shown; sessions not checked: {}",
+                    shown.lines, shown.differ, shown.unread_sessions
+                )
+            },
+        ),
         format!("agents: {}", summary.agents.join("; ")),
     ]
 }
@@ -218,6 +233,7 @@ mod tests {
             sessions: vec![session.clone(), session],
             is_success,
             given,
+            shown: None,
         }
     }
 
@@ -304,6 +320,43 @@ mod tests {
                 &"precision: 0.50 (95% interval 0.00 to 1.00, resampling tasks)".to_owned()
             )
         );
+    }
+
+    /// The check of the code shown adds up over the runs that made it, worked by hand: 10 + 5 = 15
+    /// lines, 1 + 0 = 1 differing, 0 + 1 = 1 session not checked; a run from before the check is
+    /// left out. With no run that made it, the summary says it was not checked.
+    #[test]
+    fn the_code_shown_adds_up() {
+        let checked = |lines, differ, unread_sessions| TaskRun {
+            shown: Some(Shown {
+                lines,
+                differ,
+                unread_sessions,
+            }),
+            ..run(true, (1, 1, 1), Given::default())
+        };
+        let runs = [
+            checked(10, 1, 0),
+            checked(5, 0, 1),
+            run(true, (1, 1, 1), Given::default()),
+        ];
+        let summary = summary(&runs, &[]);
+        assert_eq!(
+            summary.shown,
+            Some(Shown {
+                lines: 15,
+                differ: 1,
+                unread_sessions: 1
+            })
+        );
+        assert!(lines(&summary).contains(
+            &"code lines shown to the agents: 15, of which 1 were not their file's line when shown; \
+              sessions not checked: 1"
+                .to_owned()
+        ));
+        let before = super::summary(&runs[2..], &[]);
+        assert_eq!(before.shown, None);
+        assert!(lines(&before).contains(&"code lines shown to the agents: not checked".to_owned()));
     }
 
     /// With no work order labelled there is no precision, said as none.

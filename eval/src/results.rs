@@ -118,6 +118,7 @@ mod tests {
                 labelled: 1,
                 used,
             },
+            shown: None,
         }
     }
 
