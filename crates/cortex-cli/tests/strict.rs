@@ -29,6 +29,9 @@ use serde_json::Value;
 const REASON: &str = "[cortex] Strict mode: these files call a signature this task changed and \
     were not read or edited since the warning: tests/test_ops.py, main.py.\n";
 
+/// The configuration with strict mode on, in medium mode, no task held out.
+const STRICT: &str = "mode = \"medium\"\nstrict_mode = true\n[holdout]\nshare = 0\n";
+
 /// Runs `cortex hook` on `payload` as Claude Code does, and returns what it gave the agent.
 fn given(payload: &Value, home: &Path) -> TestResult<Option<String>> {
     let event = payload["hook_event_name"]
@@ -101,7 +104,7 @@ fn stops(home: &Path) -> TestResult<(usize, bool)> {
 /// the same task, gets nothing, and is the one stop recorded, which ends the task.
 #[test]
 fn strict_mode_gives_a_stop_its_reason_once() -> TestResult {
-    let (stop, home, _daemon) = edited_task("mode = \"medium\"\nstrict_mode = true\n")?;
+    let (stop, home, _daemon) = edited_task(STRICT)?;
     assert_eq!(given(&stop, home.path())?.as_deref(), Some(REASON));
     assert_eq!(given(&stop, home.path())?, None);
     wait_for(|| Ok(!stops(home.path())?.1))?;
@@ -112,7 +115,7 @@ fn strict_mode_gives_a_stop_its_reason_once() -> TestResult {
 /// With strict mode off, the same stop is given nothing, and ends the task.
 #[test]
 fn without_strict_mode_a_stop_is_given_nothing() -> TestResult {
-    let (stop, home, _daemon) = edited_task("mode = \"medium\"\n")?;
+    let (stop, home, _daemon) = edited_task("mode = \"medium\"\n[holdout]\nshare = 0\n")?;
     assert_eq!(given(&stop, home.path())?, None);
     wait_for(|| Ok(!stops(home.path())?.1))?;
     assert_eq!(stops(home.path())?, (1, false));
@@ -156,7 +159,7 @@ fn stop_request(root: &Path, hook: HookKind, answer_by_ms: Option<i64>) -> TestR
 /// happened, is recorded and ends the task.
 #[test]
 fn a_late_stop_is_recorded_and_a_mismatched_one_refused() -> TestResult {
-    let (_stop, home, _daemon) = edited_task("mode = \"medium\"\nstrict_mode = true\n")?;
+    let (_stop, home, _daemon) = edited_task(STRICT)?;
     let repo = home.path().join("repo");
     let files = UserFolder::in_home(home.path()).run_files(&RepoId::of(&canonical_root(&repo)?));
     let deadline = Instant::now() + Duration::from_secs(10);

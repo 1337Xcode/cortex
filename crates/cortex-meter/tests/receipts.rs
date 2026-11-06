@@ -383,6 +383,56 @@ fn only_what_reached_the_agent_counts_as_injected() -> TestResult {
     Ok(())
 }
 
+/// Every text a task was given counts as injected into it: of a primer of 120 tokens and, in task
+/// 1, a work order of 300, warnings of 40, a read's hint of 20, a recap of 50 and a stop's reason
+/// of 30, task 1 was given 300 + 40 + 20 + 50 + 30 = 440, the session's primers 120 (the recap,
+/// given at a session's start, is the task's, not a primer), and the session 120 + 440 = 560.
+#[test]
+fn every_text_a_task_was_given_counts() -> TestResult {
+    let first = task(1, 1_000, None)?;
+    let one = first.record.task_id;
+    let session_id = Identifier::new("s1")?;
+    let given = |task_id: Option<Ulid>, hook: HookKind, tokens: u32| InjectionRecord {
+        task_id,
+        session_id: session_id.clone(),
+        hook,
+        at_ms: 1_000,
+        files: Vec::new(),
+        tokens,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"the text given")),
+        features: None,
+    };
+    let injections = vec![
+        given(None, HookKind::SessionStart, 120),
+        given(Some(one), HookKind::Prompt, 300),
+        given(Some(one), HookKind::PostTool, 40),
+        given(Some(one), HookKind::PreTool, 20),
+        given(Some(one), HookKind::SessionStart, 50),
+        given(Some(one), HookKind::Stop, 30),
+    ];
+    let activity = Activity {
+        session: session()?,
+        subagents: 0,
+        tasks: vec![first],
+        usage: Vec::new(),
+        tool_calls: BTreeMap::new(),
+        outside_tool_calls: 0,
+        injections,
+    };
+    let receipt = receipt(&activity, None);
+    let by_task: Vec<(u64, u64)> = receipt
+        .tasks
+        .iter()
+        .map(|task| (task.seq, task.injected_tokens))
+        .collect();
+    assert_eq!(by_task, [(1, 440)]);
+    assert_eq!((receipt.primer_tokens, receipt.injected_tokens), (120, 560));
+    Ok(())
+}
+
 /// The precision is the share of the labelled work orders that were used: 3 of 4 is 0.75; with
 /// none labelled there is none.
 #[test]

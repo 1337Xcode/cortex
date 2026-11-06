@@ -17,7 +17,7 @@ use cortex_retrieve::{EditQuery, edit_facts, task_so_far, warnings_after_edit};
 use cortex_store::{FileRecord, FileRow, Queries, SymbolId};
 
 use super::{Answer, Service, mode_of};
-use crate::given::Given;
+use crate::given::{Given, text_record};
 use crate::signatures::Signatures;
 
 impl Service {
@@ -38,6 +38,10 @@ impl Service {
             let Some(task) = queries.open_task(&event.session_id)? else {
                 return Ok(Answer::default());
             };
+            // INVARIANT: silent-when-unsure (a held-out task is given nothing Cortex would say)
+            if self.is_held_out_task(&task) {
+                return Ok(Answer::default());
+            }
             let Some(row) = queries.file(path)? else {
                 return Ok(Answer::default());
             };
@@ -60,9 +64,14 @@ impl Service {
                 warnings_after_edit(&facts, &so_far, &self.edits.warnings, mode)
             });
             let rows = warned.records(task_id, event.ts_ms);
+            let given = warned
+                .text
+                .as_deref()
+                .filter(|_| !rows.is_empty())
+                .map(|text| text_record(event, Some(task_id), text));
             Ok(Answer {
                 text: warned.text,
-                given: (!rows.is_empty()).then_some(Given::Warnings(rows)),
+                given: given.map(|text| Given::Warnings(rows, text)),
             })
         });
         answered.unwrap_or_else(|error| {

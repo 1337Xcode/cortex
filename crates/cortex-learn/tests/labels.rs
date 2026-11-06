@@ -138,6 +138,65 @@ fn an_injection_is_labelled_by_what_its_task_did() -> TestResult {
     Ok(())
 }
 
+/// Of a task's texts only its prompt's work order is labelled: the warnings an edit got, a read's
+/// hint, a recap and a stop's reason, recorded as the task's with no files, stay unlabelled, so the
+/// work orders' precision never counts them. The work order: c edited, 1 used, 1.
+#[test]
+fn only_a_work_order_is_labelled() -> TestResult {
+    let mut store = Store::new()?;
+    let [_, _, c, _, _] = five(&mut store)?;
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
+    let state = given_task(
+        (&mut store, &mut recorder),
+        ("s1", 1_000),
+        (&[(c, &[(1, 2)][..])], Given::Shown),
+        &[edit("s1", 1_010, "c.py", &[(1, 2)])?],
+    )?;
+    let mut transaction = store.writer.transaction()?;
+    for (hook, at_ms) in [
+        (HookKind::PostTool, 1_010),
+        (HookKind::PreTool, 1_011),
+        (HookKind::SessionStart, 1_012),
+        (HookKind::Stop, 1_013),
+    ] {
+        transaction.record_injection(&InjectionRecord {
+            task_id: Some(state.task_id()),
+            session_id: Identifier::new("s1")?,
+            hook,
+            at_ms,
+            files: Vec::new(),
+            tokens: 30,
+            confidence: None,
+            is_gated_out: false,
+            is_holdout: false,
+            text_hash: Some(cortex_core::ContentHash::of(b"a text")),
+            features: None,
+        })?;
+    }
+    transaction.commit()?;
+    let mut transaction = store.writer.transaction()?;
+    Learner::new()
+        .learn(&mut transaction, &state, &Config::default())?
+        .ok_or("nothing learnt")?;
+    transaction.commit()?;
+    let rows = store.writer.queries().injections_of_task(state.task_id())?;
+    let labels: Vec<(HookKind, Option<u32>, Option<bool>)> = rows
+        .iter()
+        .map(|row| (row.record.hook, row.used_count, row.label))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            (HookKind::Prompt, Some(1), Some(true)),
+            (HookKind::PostTool, None, None),
+            (HookKind::PreTool, None, None),
+            (HookKind::SessionStart, None, None),
+            (HookKind::Stop, None, None),
+        ]
+    );
+    Ok(())
+}
+
 /// Only a task's injections are labelled: a session's primer, which no task got, stays unlabelled
 /// while a task's work order is labelled 1 used, 1 (c edited); and a task whose prompt got no
 /// injection is learnt from with nothing labelled.

@@ -81,8 +81,9 @@ pub struct Activity {
     pub tool_calls: BTreeMap<Ulid, u64>,
     /// How many tool calls the session and its subagents made while it had no task.
     pub outside_tool_calls: u64,
-    /// What Cortex gave the session's agent or weighed for it: its primers and its prompts' work
-    /// orders, whether they reached the agent or not.
+    /// What Cortex gave the session's agent or weighed for it: its primers, its prompts' work
+    /// orders, and the warnings, read hints, recaps and stop reasons its tasks were given, whether
+    /// they reached the agent or not.
     pub injections: Vec<InjectionRecord>,
 }
 
@@ -116,8 +117,8 @@ pub struct SessionReceipt {
     pub total: Tally,
     /// The tokens of the primers that reached the agent at the session's starts.
     pub primer_tokens: u64,
-    /// Every token Cortex added to the session's context: its primers and its tasks' work orders
-    /// that reached the agent.
+    /// Every token Cortex added to the session's context that reached the agent: its primers, and
+    /// its tasks' work orders, warnings, read hints, recaps and strict mode's reasons.
     pub injected_tokens: u64,
 }
 
@@ -139,8 +140,8 @@ pub struct TaskReceipt {
     pub held_out: Option<bool>,
     /// The tool calls it made, its subagents' among them.
     pub tool_calls: u64,
-    /// The tokens Cortex added to its context: its work orders that reached the agent, none when
-    /// the task was held out.
+    /// The tokens Cortex added to its context that reached the agent: its work orders, warnings,
+    /// read hints, recaps and strict mode's reasons; none when the task was held out.
     pub injected_tokens: u64,
     /// Its responses.
     pub usage: Tally,
@@ -243,7 +244,7 @@ impl Delivered {
         {
             let tokens = u64::from(injection.tokens);
             delivered.all = delivered.all.saturating_add(tokens);
-            if injection.hook == HookKind::SessionStart {
+            if injection.hook == HookKind::SessionStart && injection.task_id.is_none() {
                 delivered.primers = delivered.primers.saturating_add(tokens);
             }
             if let Some(task) = injection.task_id {

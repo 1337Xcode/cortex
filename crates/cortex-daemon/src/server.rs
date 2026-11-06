@@ -328,7 +328,8 @@ impl Server {
             } => {
                 reads_until_ms = answer_by_ms;
                 let asked = (Asked::ReadHint, answer_by_ms);
-                let (body, hook, _) = self.answer_with_text(*event, asked).await;
+                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
+                given = answered;
                 (body, hook)
             }
             RequestBody::StopReason {
@@ -337,7 +338,8 @@ impl Server {
             } => {
                 reads_until_ms = answer_by_ms;
                 let asked = (Asked::StopReason, answer_by_ms);
-                let (body, hook, _) = self.answer_with_text(*event, asked).await;
+                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
+                given = answered;
                 (body, hook)
             }
             RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),

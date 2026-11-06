@@ -8,8 +8,8 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use cortex_core::{EventKind, Identifier, RepoPath, WarningKind, estimate_tokens};
-use cortex_store::{EventRow, NodeId, Queries, StoreError, WarningRecord};
+use cortex_core::{EventKind, RepoPath, WarningKind, estimate_tokens};
+use cortex_store::{EventRow, NodeId, Queries, StoreError, TaskRow, WarningRecord};
 
 use crate::open_warnings::{plain_path, so_far};
 use crate::plain::{is_plain, is_taken_out};
@@ -26,16 +26,13 @@ pub const MAX_RECAPPED_WARNINGS: usize = 6;
 /// The first line of every recap.
 const HEADER: &str = "[cortex] Before the compaction, the task in progress:\n";
 
-/// The recap the session `session` gets after a compaction, as the store `queries` reads holds its
-/// open task; none without an open task, or when the task has nothing to recall.
+/// The recap a session gets after a compaction of its open task `task`, as the store `queries`
+/// reads holds it; none when the task has nothing to recall.
 ///
 /// # Errors
 ///
 /// The store's errors.
-pub fn recap(queries: Queries<'_>, session: &Identifier) -> Result<Option<String>, StoreError> {
-    let Some(task) = queries.open_task(session)? else {
-        return Ok(None);
-    };
+pub fn recap(queries: Queries<'_>, task: &TaskRow) -> Result<Option<String>, StoreError> {
     let so_far = so_far(queries, task.record.task_id)?;
     let mut lines: Vec<String> = Vec::new();
     lines.extend(edited_line(&edited_files(&so_far.events)));

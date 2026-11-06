@@ -18,7 +18,11 @@ use cortex_store::EventRecord;
 /// The recap the session gets.
 fn recapped(repo: &Repo) -> TestResult<Option<String>> {
     let reader = repo.reader()?;
-    Ok(recap(reader.queries(), &Identifier::new(SESSION)?)?)
+    let queries = reader.queries();
+    let Some(task) = queries.open_task(&Identifier::new(SESSION)?)? else {
+        return Ok(None);
+    };
+    Ok(recap(queries, &task)?)
 }
 
 /// A task that edited `main.py` at 8 and 20, `calc/ops.py` at 10 and 30, and failed to edit `x.py`

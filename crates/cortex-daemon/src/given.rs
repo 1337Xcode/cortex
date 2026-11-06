@@ -1,8 +1,11 @@
 //! What Cortex gave an agent, or would have given, as the writer records it after the event it
-//! answered: a primer's or a prompt's injection, or the warnings an edit got. What reached the agent
-//! is recorded as given; an injection that did not is recorded as not delivered, for the holdout
-//! and the labels, and warnings that did not are not recorded at all, since nobody was warned.
+//! answered: a primer's or a prompt's injection, the text of a recap, a read's hint or a stop's
+//! reason, or the warnings an edit got with their text. Every text is an injection, so that what
+//! Cortex added to an agent's context is counted whole. What reached the agent is recorded as
+//! given; an injection that did not is recorded as not delivered, for the holdout and the labels,
+//! and warnings that did not are not recorded at all, since nobody was warned.
 
+use cortex_core::{ContentHash, Event, Ulid, estimate_tokens};
 use cortex_store::{InjectionRecord, WarningRecord};
 
 /// What one answer gave, or would have given.
@@ -10,8 +13,8 @@ use cortex_store::{InjectionRecord, WarningRecord};
 pub(crate) enum Given {
     /// A primer or a prompt's retrieval.
     Injection(InjectionRecord),
-    /// The warnings an edit got: one row for each file each of them named.
-    Warnings(Vec<WarningRecord>),
+    /// The warnings an edit got: one row for each file each of them named, and their text.
+    Warnings(Vec<WarningRecord>, InjectionRecord),
 }
 
 impl Given {
@@ -19,8 +22,28 @@ impl Given {
     pub(crate) fn dropped_message(&self) -> &'static str {
         match self {
             Self::Injection(_) => "an injection was not recorded: too many waited",
-            Self::Warnings(_) => "an edit's warnings were not recorded: too many waited",
+            Self::Warnings(..) => "an edit's warnings were not recorded: too many waited",
         }
+    }
+}
+
+/// The record of `text`, given at the hook of `event` in task `task_id` (none outside a task):
+/// its hash and tokens, no files and no features, neither kept back nor held out. Only a prompt's
+/// work order is labelled at its task's end, so a text recorded so counts in what was given and
+/// never in the work orders' precision.
+pub(crate) fn text_record(event: &Event, task_id: Option<Ulid>, text: &str) -> InjectionRecord {
+    InjectionRecord {
+        task_id,
+        session_id: event.session_id.clone(),
+        hook: event.hook,
+        at_ms: event.ts_ms,
+        files: Vec::new(),
+        tokens: u32::try_from(estimate_tokens(text)).unwrap_or(u32::MAX),
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(text.as_bytes())),
+        features: None,
     }
 }
 
@@ -51,8 +74,10 @@ pub(crate) fn recorded(
             Some(Given::Injection(not_delivered(injection)))
         }
         Given::Injection(injection) => Some(Given::Injection(injection)),
-        Given::Warnings(rows) if reached && !rows.is_empty() => Some(Given::Warnings(rows)),
-        Given::Warnings(_) => None,
+        Given::Warnings(rows, text) if reached && !rows.is_empty() => {
+            Some(Given::Warnings(rows, text))
+        }
+        Given::Warnings(..) => None,
     }
 }
 
@@ -134,13 +159,18 @@ mod tests {
             target,
             strength: 0.75,
         };
-        let warned = || Given::Warnings(vec![warning]);
+        let warned = || Given::Warnings(vec![warning], given.clone());
         assert_eq!(recorded(warned(), true, true, false), Some(warned()));
         assert_eq!(recorded(warned(), true, true, true), None);
         assert_eq!(recorded(warned(), true, false, false), None);
         assert_eq!(recorded(warned(), false, true, false), None);
         assert_eq!(
-            recorded(Given::Warnings(Vec::new()), true, true, false),
+            recorded(
+                Given::Warnings(Vec::new(), given.clone()),
+                true,
+                true,
+                false
+            ),
             None
         );
         Ok(())

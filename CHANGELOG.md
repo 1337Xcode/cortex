@@ -75,6 +75,10 @@ All notable changes to this project are documented in this file. The format is b
   signature its task changed were not read or edited since the warning, once a task. Off by
   default, when a stop is given nothing. The hook and the daemon now speak protocol 5.0: a hook and
   a daemon of different Cortex versions are replaced as before.
+- Every text Cortex gives a task is recorded with its tokens and counted in `cortex receipts`: work
+  orders as before, and now an edit's warnings, a read's hint, the recap after a compaction and
+  strict mode's reason. A held-out task is given none of them, so the comparison between held-out
+  tasks and the rest holds out everything Cortex would say to a task.
 - `cargo xtask verify` runs formatting, the crate dependency-direction rules, the shared lint
   settings in every crate, the invariant tags, clippy, the tests and the dependency licence and
   advisory checks; `--full` also runs the benchmarks against their budgets.

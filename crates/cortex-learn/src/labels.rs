@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 
+use cortex_core::HookKind;
 use cortex_store::{InjectedFile, NodeId, StoreError, WriteTx};
 
 use crate::links::{Role, file_roles};
@@ -29,7 +30,14 @@ pub fn label_injections(
     transaction: &mut WriteTx<'_>,
     state: &TaskState,
 ) -> Result<usize, StoreError> {
-    let rows = transaction.queries().injections_of_task(state.task_id())?;
+    // Only a prompt's work order names files the task may use; the other texts a task is given
+    // (warnings, hints, a recap, a stop's reason) name none and are counted, never labelled.
+    let rows: Vec<_> = transaction
+        .queries()
+        .injections_of_task(state.task_id())?
+        .into_iter()
+        .filter(|row| row.record.hook == HookKind::Prompt)
+        .collect();
     if rows.is_empty() {
         return Ok(0);
     }

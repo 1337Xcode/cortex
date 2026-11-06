@@ -74,7 +74,10 @@ fn the_start_after_a_compaction_is_recapped_once() -> TestResult {
     let (home, repo) = repository()?;
     let home = home.path();
     std::fs::create_dir_all(repo.join(".cortex"))?;
-    std::fs::write(repo.join(".cortex/config.toml"), "mode = \"medium\"\n")?;
+    std::fs::write(
+        repo.join(".cortex/config.toml"),
+        "mode = \"medium\"\n[holdout]\nshare = 0\n",
+    )?;
     let daemon = Daemon::start(&repo, home)?;
     let line = daemon.first_line()?;
     assert!(line.starts_with("cortex: daemon ready"), "{line}");

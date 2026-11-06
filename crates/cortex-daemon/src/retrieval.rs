@@ -23,14 +23,16 @@ use std::time::{Duration, Instant};
 
 use cortex_core::{
     ContentHash, Event, HookKind, RetrievalConfig, ScaleMode, StartSource, WarningsConfig,
-    estimate_tokens, is_held_out, task_id_of_prompt,
+    is_held_out, task_id_of_prompt,
 };
 use cortex_index::Grammars;
 use cortex_learn::{raise_of, recent_precision};
 use cortex_retrieve::{Graph, Outcome, Request, Retrieval, locate, primer, retrieve};
-use cortex_store::{InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError};
+use cortex_store::{
+    InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError, TaskRow,
+};
 
-use crate::given::Given;
+use crate::given::{Given, text_record};
 use crate::recapped::Recapped;
 use crate::told::Told;
 
@@ -204,28 +206,25 @@ impl Service {
             let Some(text) = primer(queries, graph)? else {
                 return Ok(Answer::default());
             };
-            let injection = InjectionRecord {
-                task_id: None,
-                session_id: event.session_id.clone(),
-                hook: HookKind::SessionStart,
-                at_ms: event.ts_ms,
-                files: Vec::new(),
-                tokens: u32::try_from(estimate_tokens(&text)).unwrap_or(u32::MAX),
-                confidence: None,
-                is_gated_out: false,
-                is_holdout: false,
-                text_hash: Some(ContentHash::of(text.as_bytes())),
-                features: None,
-            };
+            let given = text_record(event, None, &text);
             Ok(Answer {
                 text: Some(text),
-                given: Some(Given::Injection(injection)),
+                given: Some(Given::Injection(given)),
             })
         });
         answered.unwrap_or_else(|error| {
             tracing::warn!(error = %format!("{error:#}"), "a session's primer failed");
             Answer::default()
         })
+    }
+
+    /// Whether `task` is held out, as its record says, or, for a task stored without that, as its
+    /// id falls against `holdout.share`: a held-out task is given nothing Cortex would say, so
+    /// that it can be compared with the rest.
+    fn is_held_out_task(&self, task: &TaskRow) -> bool {
+        task.record
+            .holdout
+            .unwrap_or_else(|| is_held_out(task.record.task_id, self.holdout_share))
     }
 
     /// What the engine finds for `question` without the gate, at most `limit` files, over `graph`

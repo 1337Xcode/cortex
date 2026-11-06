@@ -448,7 +448,10 @@ fn record_given(writer: &mut Writer, inbox: &Inbox, given: &[Given]) {
                         count_failed(inbox, "an injection", &error);
                     }
                 }
-                Given::Warnings(rows) => {
+                Given::Warnings(rows, text) => {
+                    if let Err(error) = transaction.record_injection(text) {
+                        count_failed(inbox, "an injection", &error);
+                    }
                     for row in rows {
                         if let Err(error) = transaction.record_warning(row) {
                             count_failed(inbox, "a warning", &error);
