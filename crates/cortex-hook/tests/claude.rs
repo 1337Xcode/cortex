@@ -7,19 +7,24 @@
     reason = "the payloads edited here are JSON objects, where indexing a missing key adds it"
 )]
 
+mod common;
+
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use cortex_core::ipc::{LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES, Request, RequestBody, encode};
 use cortex_core::{
-    Agent, CompactTrigger, Event, HookKind, Identifier, LineRange, RepoPath, ShellCommand,
-    StartSource, ToolKind, ToolResult, ToolTarget, Ulid,
+    Agent, CompactTrigger, Event, HookKind, LineRange, RepoPath, ShellCommand, StartSource,
+    ToolKind, ToolResult, ToolTarget,
 };
-use cortex_hook::{Located, NormalizeError, Stamp, adapter};
+use cortex_hook::{Located, NormalizeError, adapter};
 use proptest::prelude::*;
 
-/// Result type for these tests: any failure fails the test.
-type TestResult<T = ()> = Result<T, Box<dyn Error>>;
+use common::TestResult;
+use common::fixture::{
+    assert_shape, event_name, fixture_names, id, json_value, locate, native, read_fixture, root,
+    stamp,
+};
 
 /// The main session of most fixtures.
 const S1: &str = "00000000-0000-4000-8000-000000000001";
@@ -46,27 +51,12 @@ const NEWEST_ONLY: [&str; 6] = [
 
 /// The folder of the fixtures of Claude Code `version`.
 fn fixtures_of(version: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/claude")
-        .join(version)
+    common::fixture::fixtures_of("claude", version)
 }
 
 /// The folder of the fixtures the table covers.
 fn fixtures() -> PathBuf {
     fixtures_of(TABLED)
-}
-
-/// A path the fixtures write in Windows form, in this platform's form: as captured on Windows;
-/// elsewhere the home folder `C:\Users\dev` is `/home/dev`, and any other `C:\x` is `/x`.
-fn native(windows: &str) -> String {
-    if cfg!(windows) {
-        return windows.to_owned();
-    }
-    let unix = windows
-        .replace(r"C:\Users\dev", "/home/dev")
-        .replace('\\', "/");
-    unix.strip_prefix("C:")
-        .map_or_else(|| unix.clone(), str::to_owned)
 }
 
 /// The fixture `name` the table covers, its paths in this platform's form.
@@ -76,71 +66,7 @@ fn payload(name: &str) -> TestResult<Vec<u8>> {
 
 /// The fixture `name` of Claude Code `version`, its paths in this platform's form.
 fn payload_of(version: &str, name: &str) -> TestResult<Vec<u8>> {
-    let text = std::fs::read(fixtures_of(version).join(name))?;
-    if cfg!(windows) {
-        return Ok(text);
-    }
-    let mut value: serde_json::Value = serde_json::from_slice(&text)?;
-    let rewrite = |field: Option<&mut serde_json::Value>| {
-        if let Some(serde_json::Value::String(path)) = field {
-            *path = native(path);
-        }
-    };
-    for key in ["cwd", "transcript_path", "agent_transcript_path"] {
-        rewrite(value.get_mut(key));
-    }
-    if let Some(input) = value.get_mut("tool_input") {
-        rewrite(input.get_mut("file_path"));
-        rewrite(input.get_mut("path"));
-    }
-    // A search names the files it found relative to the working folder, with backslashes on
-    // Windows; the captured matches' text holds none, so Grep's output is rewritten whole.
-    if let Some(response) = value.get_mut("tool_response") {
-        if let Some(serde_json::Value::Array(files)) = response.get_mut("filenames") {
-            for file in files {
-                rewrite(Some(file));
-            }
-        }
-        rewrite(response.get_mut("content"));
-    }
-    Ok(serde_json::to_vec(&value)?)
-}
-
-/// The fixture's event name, as the installer passes it to `cortex hook --event`.
-fn event_name(payload: &[u8]) -> TestResult<String> {
-    let value: serde_json::Value = serde_json::from_slice(payload)?;
-    Ok(value
-        .get("hook_event_name")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("no event name")?
-        .to_owned())
-}
-
-/// The repository folder, already canonical, which every fixture runs in.
-fn root() -> PathBuf {
-    PathBuf::from(native(r"C:\repo"))
-}
-
-/// Finds every fixture's working folder in the repository.
-fn locate(_: &Path) -> Option<Located> {
-    Some(Located {
-        cwd: root(),
-        root: root(),
-        agent_root: root(),
-    })
-}
-
-/// The id and time every event in these tests gets.
-fn stamp() -> Stamp {
-    Stamp {
-        event_id: Ulid::from_seed(1_700_000_000_000, b"fixture"),
-        ts_ms: 1_700_000_000_000,
-    }
-}
-
-/// A name.
-fn id(text: &str) -> TestResult<Identifier> {
-    Ok(Identifier::new(text)?)
+    read_fixture("claude", version, name)
 }
 
 /// The event of `hook` from session `session`, with only what every event has.
@@ -660,16 +586,6 @@ fn fill(value: &serde_json::Value, prefix: &str, filled: &mut Vec<String>) {
     }
 }
 
-/// The names of the captured payloads in `folder`, sorted.
-fn fixture_names(folder: &Path) -> TestResult<Vec<String>> {
-    let mut names: Vec<String> = std::fs::read_dir(folder)?
-        .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
-        .collect::<std::io::Result<_>>()?;
-    names.retain(|name| name.ends_with(".json"));
-    names.sort_unstable();
-    Ok(names)
-}
-
 /// The registered hooks are the ten the decisions name, with their matchers and timeouts.
 #[test]
 fn the_hooks_are_the_ones_cortex_registers() -> TestResult {
@@ -701,7 +617,6 @@ fn the_hooks_are_the_ones_cortex_registers() -> TestResult {
             ("SessionEnd", None, 300),
         ]
     );
-    assert!(adapter("codex").is_none());
     Ok(())
 }
 
@@ -1305,78 +1220,11 @@ const STEERING_TEXTS: &[&str] = &[
     "",
 ];
 
-/// Any JSON value a few levels deep, its object keys drawn from [`FIELD_NAMES`].
-fn json_value() -> impl Strategy<Value = serde_json::Value> {
-    let leaf = prop_oneof![
-        Just(serde_json::Value::Null),
-        any::<bool>().prop_map(serde_json::Value::from),
-        any::<i64>().prop_map(serde_json::Value::from),
-        prop::num::f64::NORMAL.prop_map(serde_json::Value::from),
-        prop::sample::select(STEERING_TEXTS).prop_map(serde_json::Value::from),
-        ".{0,40}".prop_map(serde_json::Value::from),
-    ];
-    leaf.prop_recursive(3, 32, 6, |inner| {
-        prop_oneof![
-            prop::collection::vec(inner.clone(), 0..6).prop_map(serde_json::Value::from),
-            prop::collection::btree_map(prop::sample::select(FIELD_NAMES), inner, 0..8).prop_map(
-                |fields| {
-                    serde_json::Value::Object(
-                        fields
-                            .into_iter()
-                            .map(|(key, value)| (key.to_owned(), value))
-                            .collect(),
-                    )
-                }
-            ),
-        ]
-    })
-}
-
-/// What every event of `hook` keeps to its own fields: a tool's only on tool events, a prompt only
-/// on a prompt, a search's hits only once it ran, every cut within its cap.
-fn assert_shape(hook: HookKind, event: &Event) {
-    let is_tool_event = matches!(hook, HookKind::PreTool | HookKind::PostTool);
-    assert_eq!(event.hook, hook);
-    assert!(is_tool_event || event.tool.is_none() && event.tool_target.is_none());
-    assert!(hook == HookKind::PostTool || event.tool_result.is_none());
-    assert!(hook == HookKind::Prompt || event.prompt_text.is_none());
-    assert!(hook == HookKind::SessionStart || event.source.is_none());
-    assert!(
-        event
-            .prompt_text
-            .as_ref()
-            .is_none_or(|prompt| prompt.len() <= 131_072)
-    );
-    if let Some(target) = &event.tool_target {
-        assert!(
-            target
-                .pattern
-                .as_ref()
-                .is_none_or(|pattern| pattern.chars().count() <= 1_000)
-        );
-        assert!(
-            target
-                .ranges
-                .iter()
-                .all(|range| range.start_line() >= 1 && range.start_line() <= range.end_line())
-        );
-        let hits = &target.hits;
-        assert!(hook == HookKind::PostTool || hits.is_empty());
-        assert!(hits.len() <= 50);
-        assert!(hits.iter().map(|path| path.as_str().len()).sum::<usize>() <= 4_096);
-        assert!(!hits.contains(&RepoPath::root()));
-        assert_eq!(
-            hits.iter().collect::<std::collections::BTreeSet<_>>().len(),
-            hits.len()
-        );
-    }
-}
-
 proptest! {
     /// Payloads of any shape, with a session in the repository or without one, normalize to an
     /// event that keeps to its hook's fields, to none, or to an error: never a panic.
     #[test]
-    fn any_payload_is_safe(body in json_value(), has_session in any::<bool>()) {
+    fn any_payload_is_safe(body in json_value(FIELD_NAMES, STEERING_TEXTS), has_session in any::<bool>()) {
         let mut payload = match body {
             serde_json::Value::Object(fields) => fields,
             other => std::iter::once(("tool_input".to_owned(), other)).collect(),

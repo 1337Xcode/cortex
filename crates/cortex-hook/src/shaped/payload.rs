@@ -1,4 +1,4 @@
-//! Claude Code's hook payload, as much of it as Cortex reads. Every field is optional and read
+//! The hook payload Claude Code defined, as much of it as Cortex reads. Every field is optional and read
 //! leniently: a field of another type than expected reads as absent, so one odd field never costs
 //! the event. The fields Cortex does not read are skipped unread: file contents, edits' old and new
 //! text, the assistant's messages. A shell's output is measured, never kept. A response's `content`
@@ -15,150 +15,151 @@ use serde_json::value::RawValue;
 /// The fields of a payload Cortex reads, from every event, borrowing from the payload's bytes.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub(super) struct Payload<'a> {
+pub(crate) struct Payload<'a> {
     /// The session.
     #[serde(deserialize_with = "lenient")]
-    pub(super) session_id: Option<String>,
+    pub(crate) session_id: Option<String>,
     /// The session's transcript.
     #[serde(deserialize_with = "lenient")]
-    pub(super) transcript_path: Option<String>,
+    pub(crate) transcript_path: Option<String>,
     /// The agent's working folder.
     #[serde(deserialize_with = "lenient")]
-    pub(super) cwd: Option<String>,
+    pub(crate) cwd: Option<String>,
     /// Why a session started.
     #[serde(deserialize_with = "lenient")]
-    pub(super) source: Option<String>,
+    pub(crate) source: Option<String>,
     /// The model, sent at some session starts.
     #[serde(deserialize_with = "lenient")]
-    pub(super) model: Option<String>,
+    pub(crate) model: Option<String>,
     /// The prompt's text.
     #[serde(deserialize_with = "lenient")]
-    pub(super) prompt: Option<String>,
+    pub(crate) prompt: Option<String>,
     /// The tool's name.
     #[serde(deserialize_with = "lenient")]
-    pub(super) tool_name: Option<String>,
+    pub(crate) tool_name: Option<String>,
     /// What the tool was given.
     #[serde(deserialize_with = "lenient")]
-    pub(super) tool_input: Option<ToolInput>,
+    pub(crate) tool_input: Option<ToolInput>,
     /// What the tool gave back.
-    #[serde(borrow, deserialize_with = "lenient")]
-    pub(super) tool_response: Option<ToolResponse<'a>>,
+    #[serde(borrow, deserialize_with = "response")]
+    pub(crate) tool_response: Option<ToolResponse<'a>>,
     /// A failed tool's message; a shell's begins `Exit code N`.
     #[serde(deserialize_with = "lenient")]
-    pub(super) error: Option<String>,
+    pub(crate) error: Option<String>,
     /// Whether the user interrupted the failed tool.
     #[serde(deserialize_with = "lenient")]
-    pub(super) is_interrupt: Option<bool>,
+    pub(crate) is_interrupt: Option<bool>,
     /// What started a compaction.
     #[serde(deserialize_with = "lenient")]
-    pub(super) trigger: Option<String>,
+    pub(crate) trigger: Option<String>,
     /// The subagent the event comes from, if any.
     #[serde(deserialize_with = "lenient")]
-    pub(super) agent_id: Option<String>,
+    pub(crate) agent_id: Option<String>,
     /// That subagent's type; empty for Claude Code's own agents.
     #[serde(deserialize_with = "lenient")]
-    pub(super) agent_type: Option<String>,
+    pub(crate) agent_type: Option<String>,
     /// That subagent's own transcript.
     #[serde(deserialize_with = "lenient")]
-    pub(super) agent_transcript_path: Option<String>,
+    pub(crate) agent_transcript_path: Option<String>,
     /// Why the session ended.
     #[serde(deserialize_with = "lenient")]
-    pub(super) reason: Option<String>,
+    pub(crate) reason: Option<String>,
     /// Whether the call is `cortex doctor`'s probe rather than the agent's.
     #[serde(deserialize_with = "lenient")]
-    pub(super) cortex_probe: Option<bool>,
+    pub(crate) cortex_probe: Option<bool>,
 }
 
 /// What a tool was given.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub(super) struct ToolInput {
+pub(crate) struct ToolInput {
     /// The file read, edited or written.
     #[serde(deserialize_with = "lenient")]
-    pub(super) file_path: Option<String>,
+    pub(crate) file_path: Option<String>,
     /// The file or folder searched.
     #[serde(deserialize_with = "lenient")]
-    pub(super) path: Option<String>,
+    pub(crate) path: Option<String>,
     /// The search pattern.
     #[serde(deserialize_with = "lenient")]
-    pub(super) pattern: Option<String>,
+    pub(crate) pattern: Option<String>,
     /// The first line to read, counted from 1.
     #[serde(deserialize_with = "lenient")]
-    pub(super) offset: Option<i64>,
+    pub(crate) offset: Option<i64>,
     /// How many lines to read.
     #[serde(deserialize_with = "lenient")]
-    pub(super) limit: Option<i64>,
+    pub(crate) limit: Option<i64>,
     /// The shell command.
     #[serde(deserialize_with = "lenient")]
-    pub(super) command: Option<String>,
+    pub(crate) command: Option<String>,
     /// Whether the shell runs in the background: its result then comes before it has finished.
     #[serde(deserialize_with = "lenient")]
-    pub(super) run_in_background: Option<bool>,
+    pub(crate) run_in_background: Option<bool>,
 }
 
 /// What a tool gave back.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub(super) struct ToolResponse<'a> {
+pub(crate) struct ToolResponse<'a> {
     /// For a read, which lines of the file came back.
     #[serde(deserialize_with = "lenient")]
-    pub(super) file: Option<ReadFile>,
+    pub(crate) file: Option<ReadFile>,
     /// For an edit or a write, the stretches of lines it changed.
     #[serde(rename = "structuredPatch", deserialize_with = "lenient")]
-    pub(super) structured_patch: Option<Vec<Hunk>>,
+    pub(crate) structured_patch: Option<Vec<Hunk>>,
     /// The size of a shell's standard output.
     #[serde(deserialize_with = "lenient")]
-    pub(super) stdout: Option<TextLength>,
+    pub(crate) stdout: Option<TextLength>,
     /// The size of a shell's standard error.
     #[serde(deserialize_with = "lenient")]
-    pub(super) stderr: Option<TextLength>,
+    pub(crate) stderr: Option<TextLength>,
     /// Whether the user interrupted the shell.
     #[serde(deserialize_with = "lenient")]
-    pub(super) interrupted: Option<bool>,
+    pub(crate) interrupted: Option<bool>,
     /// The files a search found: what Glob lists, and Grep in its files mode.
     #[serde(deserialize_with = "lenient")]
-    pub(super) filenames: Option<Vec<String>>,
-    /// Grep's output in its content and count modes, or a written file's text: the payload's bytes,
+    pub(crate) filenames: Option<Vec<String>>,
+    /// Grep's output in its content and count modes, a written file's text, or the whole response
+    /// of an agent that gives a tool's output as one text, as Codex does: the payload's bytes,
     /// unread.
     #[serde(borrow, deserialize_with = "lenient")]
-    pub(super) content: Option<&'a RawValue>,
+    pub(crate) content: Option<&'a RawValue>,
 }
 
 /// The lines a read returned.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-pub(super) struct ReadFile {
+pub(crate) struct ReadFile {
     /// The first line returned, counted from 1.
     #[serde(deserialize_with = "lenient")]
-    pub(super) start_line: Option<i64>,
+    pub(crate) start_line: Option<i64>,
     /// How many lines came back.
     #[serde(deserialize_with = "lenient")]
-    pub(super) num_lines: Option<i64>,
+    pub(crate) num_lines: Option<i64>,
     /// How many lines the file has.
     #[serde(deserialize_with = "lenient")]
-    pub(super) total_lines: Option<i64>,
+    pub(crate) total_lines: Option<i64>,
 }
 
 /// One stretch of an edit's diff, in the file as it is after the edit: the changed lines and up to
 /// three unchanged ones on each side.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-pub(super) struct Hunk {
+pub(crate) struct Hunk {
     /// The stretch's first line.
     #[serde(deserialize_with = "lenient")]
-    pub(super) new_start: Option<i64>,
+    pub(crate) new_start: Option<i64>,
     /// How many lines it has.
     #[serde(deserialize_with = "lenient")]
-    pub(super) new_lines: Option<i64>,
+    pub(crate) new_lines: Option<i64>,
     /// What each line of the diff does, read from its first character only.
     #[serde(deserialize_with = "lenient")]
-    pub(super) lines: Option<Vec<LineMark>>,
+    pub(crate) lines: Option<Vec<LineMark>>,
 }
 
 /// What one line of a diff does, as its first character says. The rest of the line, the code, is
 /// never kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum LineMark {
+pub(crate) enum LineMark {
     /// ` `: a line the edit left as it was.
     Unchanged,
     /// `+`: a line the edit added.
@@ -214,9 +215,29 @@ where
     Ok(serde_json::from_str(raw.get()).ok())
 }
 
+/// Reads a tool's response: an object as [`ToolResponse`]; a string, a tool's whole output as one
+/// text, as its `content`; anything else as absent.
+///
+/// # Errors
+///
+/// Only when the payload is not JSON at all.
+fn response<'de, D>(deserializer: D) -> Result<Option<ToolResponse<'de>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = <&RawValue>::deserialize(deserializer)?;
+    if raw.get().starts_with('"') {
+        return Ok(Some(ToolResponse {
+            content: Some(raw),
+            ..ToolResponse::default()
+        }));
+    }
+    Ok(serde_json::from_str(raw.get()).ok())
+}
+
 /// The size of a text in bytes, read without keeping the text.
 #[derive(Debug, Default, Clone, Copy)]
-pub(super) struct TextLength(pub(super) u64);
+pub(crate) struct TextLength(pub(crate) u64);
 
 impl<'de> Deserialize<'de> for TextLength {
     /// The length of a string; anything else is not a text.
@@ -244,7 +265,7 @@ impl Visitor<'_> for LengthVisitor {
 
 /// The paths Grep's output `content` names, at most [`MAX_HITS`], each once, in order; none when
 /// it is not text. The text it matched is dropped as it is read.
-pub(super) fn content_paths(content: &RawValue) -> Vec<String> {
+pub(crate) fn content_paths(content: &RawValue) -> Vec<String> {
     serde_json::from_str::<ContentPaths>(content.get()).map_or_else(|_| Vec::new(), |paths| paths.0)
 }
 
@@ -341,6 +362,28 @@ mod tests {
             content_paths(&raw(serde_json::json!(42))?),
             Vec::<String>::new()
         );
+        Ok(())
+    }
+
+    /// A response given as one text is held as its `content`, unread, and read for the paths it
+    /// names; an object is read field by field; any other value is no response.
+    #[test]
+    fn a_response_given_as_text_is_its_content() -> Result<(), serde_json::Error> {
+        let read = |response: &str| -> Result<Option<Vec<String>>, serde_json::Error> {
+            let text = format!(r#"{{"tool_response":{response}}}"#);
+            let payload: Payload<'_> = serde_json::from_str(&text)?;
+            Ok(payload
+                .tool_response
+                .map(|response| response.content.map(content_paths).unwrap_or_default()))
+        };
+        assert_eq!(
+            read(r#""calc/ops.py:4:def add(a, b):\nmain.py:3:print(add(1, 2))\n""#)?,
+            Some(vec!["calc/ops.py".to_owned(), "main.py".to_owned()])
+        );
+        assert_eq!(read(r#""""#)?, Some(Vec::new()));
+        assert_eq!(read(r#"{"filenames":["a.py"]}"#)?, Some(Vec::new()));
+        assert_eq!(read("42")?, None);
+        assert_eq!(read("null")?, None);
         Ok(())
     }
 

@@ -1,6 +1,6 @@
-//! Hook payloads captured from Claude Code, as the tests send them: read from the fixtures of one
-//! Claude Code version, every path the capture names under its repository (`C:\repo`) moved into
-//! the test's own.
+//! Hook payloads captured from the agents, as the tests send them: read from the fixtures of one
+//! agent's version, every path the capture names under its repository (`C:\repo`) moved into the
+//! test's own.
 
 use std::path::{Path, PathBuf};
 
@@ -11,25 +11,39 @@ use super::TestResult;
 /// The repository root the captured payloads name.
 const CAPTURED_ROOT: &str = r"C:\repo";
 
+/// The folder of the payloads captured from `agent` at `version`.
+pub fn fixtures_of(agent: &str, version: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures")
+        .join(agent)
+        .join(version)
+}
+
 /// The folder of the payloads captured from Claude Code `version`.
 pub fn fixtures(version: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/claude")
-        .join(version)
+    fixtures_of("claude", version)
 }
 
 /// The payload `name` captured from Claude Code `version`, with every path under the captured
 /// repository moved under `root`, and the files a search found in this platform's form.
 pub fn payload(version: &str, name: &str, root: &Path) -> TestResult<Vec<u8>> {
-    let mut value: Value = serde_json::from_slice(&std::fs::read(fixtures(version).join(name))?)?;
+    payload_of("claude", version, name, root)
+}
+
+/// The payload `name` captured from `agent` at `version`, with every path under the captured
+/// repository moved under `root`, and the files a search found in this platform's form.
+pub fn payload_of(agent: &str, version: &str, name: &str, root: &Path) -> TestResult<Vec<u8>> {
+    let path = fixtures_of(agent, version).join(name);
+    let mut value: Value = serde_json::from_slice(&std::fs::read(path)?)?;
     move_paths(&mut value, root);
     native_search_paths(&mut value);
     Ok(serde_json::to_vec(&value)?)
 }
 
-/// Writes the files a search found in this platform's form. Claude Code names them relative to the
+/// Writes the files a search found in this platform's form. The agents name them relative to the
 /// working folder, with backslashes on Windows, where the payloads were captured; elsewhere they
-/// take `/`. The captured matches' text holds no backslash, so Grep's output is rewritten whole.
+/// take `/`. The captured matches' text holds no backslash, so Grep's output, and a response
+/// given as one text (Codex's), are rewritten whole.
 fn native_search_paths(value: &mut Value) {
     if cfg!(windows) {
         return;
@@ -37,6 +51,10 @@ fn native_search_paths(value: &mut Value) {
     let Some(response) = value.get_mut("tool_response") else {
         return;
     };
+    if let Value::String(text) = response {
+        *text = text.replace('\\', "/");
+        return;
+    }
     if let Some(Value::Array(files)) = response.get_mut("filenames") {
         for file in files {
             if let Value::String(path) = file {

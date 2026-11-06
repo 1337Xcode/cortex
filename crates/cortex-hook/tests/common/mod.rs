@@ -12,6 +12,8 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
+pub mod fixture;
+
 use cortex_core::ipc::{
     Protocol, Request, Response, ResponseBody, Welcome, read_frame, write_frame,
 };

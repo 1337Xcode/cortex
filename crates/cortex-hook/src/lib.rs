@@ -9,11 +9,13 @@
 mod adapter;
 mod claude;
 mod client;
+mod codex;
 mod fail_open;
 mod log;
 mod relaunch;
 mod root;
 mod run;
+mod shaped;
 mod spawn;
 mod stdin;
 mod stop;

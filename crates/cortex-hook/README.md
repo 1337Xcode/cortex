@@ -24,16 +24,18 @@ CLI uses as well.
 | `relaunch_daemon`, `RELAUNCH_FLAG` | Windows: starts `cortex daemon --root <root>` from a given binary through `CreateProcessW` with inheritance off, quoting the command line as Windows reads it, and returns without waiting; a failure is also written to the hook log of the home folder given, since the caller's own error output goes nowhere. `cortex daemon --relaunch` calls it |
 | `ClientError` | `NotRunning` (nothing listens), `TimedOut`, `Mismatch` (the daemon speaks another protocol, with its versions), `TooLarge` (the request does not fit a frame; refused before connecting), `NotTheDaemon` (on Windows, a pipe of the daemon's name held by a process other than the one the user's run folder names: it is told nothing), `Protocol` (an answer broke the protocol) and `Io` |
 | `locate` | The repository a folder belongs to: the nearest folder at or above it that holds `.cortex`, never the home folder or one above it; its canonical root and the root as the caller spelled it. The hook finds a payload's repository with it, and the CLI a command's |
-| `adapter` | The adapter for the agent named on the command line (`claude`), or `None` |
-| `Adapter` | What an agent's adapter knows: the agent, the hooks Cortex registers with it (`hooks`), the versions of the agent Cortex knows (`versions`, a `Versions`: the oldest its hooks work with and the newest its tests hold), `normalize`, which turns one hook payload into a normalized event, or into no event when Cortex does not record that hook or the working folder is in no repository it serves, and `context_output`, which writes text as the hook prints it for the agent to add to its context (for Claude Code, `{"hookSpecificOutput":{"hookEventName":...,"additionalContext":...}}`), or nothing when the agent would not take the text as it is (for Claude Code, past 10,000 characters, or holding a `system-reminder` tag, which it rewrites). A payload marked `"cortex_probe": true` makes an event marked as a probe, which a daemon answers and does not record |
+| `adapter` | The adapter for the agent named on the command line (`claude`, `codex`), or `None` |
+| `Adapter` | What an agent's adapter knows: the agent, the hooks Cortex registers with it (`hooks`), the versions of the agent Cortex knows (`versions`, a `Versions`: the oldest its hooks work with and the newest its tests hold), `normalize`, which turns one hook payload into a normalized event, or into no event when Cortex does not record that hook or the working folder is in no repository it serves, and `context_output`, which writes text as the hook prints it for the agent to add to its context (for Claude Code, `{"hookSpecificOutput":{"hookEventName":...,"additionalContext":...}}`), or nothing when the agent would not take the text as it is (for Claude Code, past 10,000 characters, or holding a `system-reminder` tag, which it rewrites; for Codex, past 10,000 bytes). A payload marked `"cortex_probe": true` makes an event marked as a probe, which a daemon answers and does not record |
 | `HookEntry` | One registered hook: the agent's event name, the tools it matches, the hook kind, its hard timeout, and whether Cortex gives the agent text there (for Claude Code, at `SessionStart`, `UserPromptSubmit`, `PreToolUse` on a read, for its hint, `PostToolUse` and `Stop`, for strict mode's reason, which Claude Code takes as a reason to go on; at `PostToolUse` only a successful edit asks for text, any other tool's result is the event alone) |
 | `Located`, `Stamp` | What `normalize` is given: where the working folder's repository is (its canonical root, and the root as the agent spells it), and the event's id and time |
 | `NormalizeError` | `Json` (the payload is not the agent's JSON) and `NoSession` (it names no usable session) |
 
 ## Adding an agent
 
-Write one module that implements `Adapter` (see `src/claude/`) and add one line to `ADAPTERS` in
-`src/adapter.rs`.
+Write one module that implements `Adapter` and add one line to `ADAPTERS` in `src/adapter.rs`. An
+agent whose hooks speak the JSON Claude Code defined uses `src/shaped/`: its module holds its
+hooks table and a `Tools` reader (its tool names, what a call aimed at, how it ended), as
+`src/claude/` and `src/codex/` do.
 
 ## Tests
 
@@ -65,3 +67,10 @@ repository or past the first 200 named, and for its caps at 50 files and 4 KiB o
 Property tests feed payloads of any shape, captured payloads with a byte changed, and search
 responses of any length and shape, and check that nothing panics, that each event keeps to its
 hook's fields, and that a search's files stay within their caps.
+
+The Codex tests normalize every payload under `tests/fixtures/codex/` against events written out
+by hand, and test how a shell command is read: the programs that read a file or search, the
+lines a read names (`head`, `sed -n`, `-TotalCount`, a read piped to them), the commands that
+are only shell commands (a file's last lines, several files, a filter), a list's first command,
+quotes; the files a patch's headers name and the exit code its response opens with; and any
+payload and any command for panics.

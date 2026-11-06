@@ -1,4 +1,4 @@
-//! Claude Code's payloads turned into normalized events.
+//! A shaped agent's payloads turned into normalized events.
 //!
 //! Only paths, line ranges, sizes, exit codes and the prompt travel on: the prompt is cut so that
 //! any event fits a frame, a search pattern and a command are cut to 1,000 characters, and an
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use cortex_core::{Agent, CompactTrigger, Event, HookKind, Identifier, StartSource};
 
 use super::payload::Payload;
-use super::tool::{self, Aim};
+use super::{Aim, Tools};
 use crate::adapter::{HookEntry, Located, NormalizeError, Stamp};
 
 /// Most bytes of a prompt an event carries. JSON writes each byte in at most six, so an event with
@@ -18,10 +18,11 @@ use crate::adapter::{HookEntry, Located, NormalizeError, Stamp};
 /// than a hundred thousand words is cut.
 pub(crate) const MAX_PROMPT_BYTES: usize = 131_072;
 
-/// The event `payload` makes for the hook `entry`, or `None` when its working folder is in no
-/// repository Cortex serves or its tool aimed at a file or folder outside the repository.
-pub(super) fn event(
-    entry: &HookEntry,
+/// The event `payload` makes for the hook `entry` of `agent`, whose tools read as `tools` says, or
+/// `None` when its working folder is in no repository Cortex serves or its tool aimed at a file or
+/// folder outside the repository.
+pub(crate) fn event(
+    (agent, tools, entry): (Agent, &dyn Tools, &HookEntry),
     payload: &[u8],
     locate: &dyn Fn(&Path) -> Option<Located>,
     stamp: Stamp,
@@ -39,9 +40,9 @@ pub(super) fn event(
     let tool = payload
         .tool_name
         .as_deref()
-        .map(tool::kind)
+        .map(|name| tools.kind(name, &payload))
         .filter(|_| is_tool_event);
-    let tool_target = match tool.map(|tool| tool::aim(tool, entry.hook, &payload, &located)) {
+    let tool_target = match tool.map(|tool| tools.aim(tool, entry.hook, &payload, &located)) {
         Some(Aim::Outside) => return Ok(None),
         Some(Aim::Target(target)) => Some(target),
         Some(Aim::Nothing) | None => None,
@@ -49,7 +50,7 @@ pub(super) fn event(
     Ok(Some(Event {
         event_id: stamp.event_id,
         ts_ms: stamp.ts_ms,
-        agent: Agent::Claude,
+        agent,
         agent_version: None,
         session_id: session.id,
         parent_session_id: session.parent,
@@ -65,7 +66,7 @@ pub(super) fn event(
         tool_target,
         tool_result: tool
             .filter(|_| entry.hook == HookKind::PostTool)
-            .map(|tool| tool::result(tool, entry.event_name, &payload)),
+            .and_then(|tool| tools.result(tool, entry.event_name, &payload)),
         prompt_text: payload
             .prompt
             .as_deref()

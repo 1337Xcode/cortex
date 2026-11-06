@@ -1,4 +1,4 @@
-//! `cortex hook` end to end: captured Claude Code payloads through the real binary to a real
+//! `cortex hook` end to end: captured Claude Code and Codex payloads through the real binary to a real
 //! daemon, and every way a call can go wrong. Each call ends with exit code 0 and nothing on
 //! stderr, as an agent requires of a hook, and nothing on stdout but the primer at a session's
 //! start.
@@ -161,6 +161,81 @@ fn a_session_through_the_binary_is_recorded() -> TestResult {
     Ok(())
 }
 
+/// The Codex version whose captured payloads [`a_codex_session_through_the_binary_is_recorded`]
+/// sends.
+const CODEX: &str = "0.165.0";
+
+/// A Codex session of the captured payloads, sent in the order Codex sent them once the daemon's
+/// graph is built, is recorded as the rows the recording rules give, counted by hand: the start,
+/// the prompt, the search (`git grep -n divide`, of the top folder, so the empty path), the read of
+/// the whole file (`Get-Content -Raw calc/ops.py`, no lines), the tests failing, the patch of the
+/// file (no lines: a patch's hunks carry none), the tests passing, the stop and the end; the
+/// moments before the search and the read are not stored. The start prints the primer in the hook
+/// JSON Codex reads, and nothing else prints anything.
+#[test]
+fn a_codex_session_through_the_binary_is_recorded() -> TestResult {
+    let (home, repo) = repository()?;
+    let daemon = Daemon::start(&repo, home.path())?;
+    let line = daemon.first_line()?;
+    assert!(line.starts_with("cortex: daemon ready"), "{line}");
+    wait_for(|| Ok(graph_of(&repo, home.path())?.is_some()))?;
+    let session = [
+        "session-start-startup.json",
+        "user-prompt-submit.json",
+        "pre-tool-use-bash-grep.json",
+        "post-tool-use-bash-grep.json",
+        "pre-tool-use-bash-read.json",
+        "post-tool-use-bash-read.json",
+        "post-tool-use-bash-test-failing.json",
+        "post-tool-use-apply-patch.json",
+        "post-tool-use-bash-test-passing.json",
+        "stop.json",
+        "session-end.json",
+    ];
+    for name in session {
+        let payload = payloads::payload_of("codex", CODEX, name, &repo)?;
+        let event = payloads::event_name(&payload)?;
+        let call = hook(
+            &["--agent", "codex", "--event", &event],
+            payload,
+            Duration::ZERO,
+            home.path(),
+        )?;
+        let primer = (name == "session-start-startup.json").then(|| PRIMER.to_owned());
+        assert_eq!(call.context(&event)?, primer, "{name}");
+    }
+    let s1 = Identifier::new(S1)?;
+    let rows = || -> TestResult<Vec<Row>> {
+        let reader = Reader::open(&repo.join(".cortex"), 0)?;
+        Ok(reader
+            .queries()
+            .events_of_session(&s1)?
+            .into_iter()
+            .map(|row| {
+                let path = row.record.path.map(|path| path.as_str().to_owned());
+                (row.record.kind, path, row.record.range)
+            })
+            .collect())
+    };
+    wait_for(|| Ok(rows()?.len() >= 9))?;
+    let ops = Some("calc/ops.py".to_owned());
+    assert_eq!(
+        rows()?,
+        [
+            (EventKind::SessionStart, None, None),
+            (EventKind::Prompt, None, None),
+            (EventKind::Search, Some(String::new()), None),
+            (EventKind::Read, ops.clone(), None),
+            (EventKind::Shell, None, None),
+            (EventKind::Edit, ops, None),
+            (EventKind::Shell, None, None),
+            (EventKind::Stop, None, None),
+            (EventKind::SessionEnd, None, None),
+        ]
+    );
+    Ok(())
+}
+
 /// A repository marked for Cortex, its `.cortex` folder made by hand, with no daemon running, and
 /// an empty home folder.
 fn marked_repository() -> TestResult<(tempfile::TempDir, PathBuf)> {
@@ -186,8 +261,10 @@ fn bad_calls_are_silent() -> TestResult {
     // A JSON text that is no object: the parser's own message would quote it.
     let quoted = br#""MARKER0PAYLOAD""#.to_vec();
     for input in [quoted, b"{{{".to_vec(), too_long, Vec::new()] {
-        let call = hook(&flags, input, Duration::ZERO, home.path())?;
-        assert!(call.is_silent_success(), "{:?}", call.output);
+        for flags in [flags, ["--agent", "codex", "--event", "Stop"]] {
+            let call = hook(&flags, input.clone(), Duration::ZERO, home.path())?;
+            assert!(call.is_silent_success(), "{flags:?}: {:?}", call.output);
+        }
     }
     let log_path = UserFolder::in_home(home.path())
         .logs_folder()
@@ -212,6 +289,7 @@ fn bad_calls_are_silent() -> TestResult {
         &["--agent", "claude", "--event", "Stop", "--extra"],
         &["--agent", "nobody", "--event", "Stop"],
         &["--agent", "claude", "--event", "Notification"],
+        &["--agent", "codex", "--event", "PostCompact"],
     ] {
         let call = hook(args, stop.clone(), Duration::ZERO, home.path())?;
         assert!(call.is_silent_success(), "{args:?}: {:?}", call.output);

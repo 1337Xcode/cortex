@@ -1,17 +1,16 @@
 //! The Claude Code adapter: the hooks Cortex registers with Claude Code, its payloads turned into
 //! normalized events, and the text Cortex gives it written as its hook JSON.
 
-mod normalize;
-mod output;
-mod payload;
 mod tool;
 
 use std::path::Path;
 use std::time::Duration;
 
-use cortex_core::{Agent, Event, HookKind};
+use cortex_core::{Agent, Event, HookKind, holds_reminder_tag};
 
 use crate::adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, Versions};
+use crate::shaped::{normalize, output};
+use tool::ClaudeTools;
 
 /// The tools whose results Cortex records: reads, searches, edits and shells. Other tools run
 /// without spawning a hook.
@@ -24,6 +23,12 @@ const VERSIONS: Versions = Versions {
     oldest: "2.1.295",
     newest_tested: "2.1.316",
 };
+
+/// The most characters Claude Code takes whole as a hook's `additionalContext`. Past it, Claude
+/// Code keeps the text in a file and gives the agent the file's path and the text's first 2,000
+/// characters, which is not the text Cortex gives. Counted in UTF-16 code units, as Claude Code, a
+/// JavaScript program, measures a string; never fewer than the text's characters.
+const MAX_CONTEXT_CHARS: usize = 10_000;
 
 /// The hard timeout of the events whose budget names none: a margin over their 60 ms budget, and
 /// below the one second Claude Code's timeout setting rounds up to.
@@ -131,11 +136,21 @@ impl Adapter for Claude {
         let Some(entry) = HOOKS.iter().find(|entry| entry.event_name == event_name) else {
             return Ok(None);
         };
-        normalize::event(entry, payload, locate, stamp)
+        normalize::event((Agent::Claude, &ClaudeTools, entry), payload, locate, stamp)
     }
 
     fn context_output(&self, entry: &HookEntry, text: &str) -> Option<String> {
-        output::context(entry.event_name, text)
+        // INVARIANT: budgeted. A text past the agent's limit is not given in part.
+        if text.encode_utf16().count() > MAX_CONTEXT_CHARS {
+            return None;
+        }
+        // INVARIANT: true-at-render. A code line the agent would get altered is not given: Claude
+        // Code writes the `<` of its reminder tags as `&lt;` in a hook's text
+        // (`cortex_core::REMINDER_TAGS`).
+        if holds_reminder_tag(text) {
+            return None;
+        }
+        Some(output::context(entry.event_name, text))
     }
 }
 
@@ -162,6 +177,53 @@ mod tests {
                 "PostToolUse",
                 "Stop"
             ]
+        );
+    }
+
+    /// Claude Code takes 10,000 characters whole: a text of 10,000 is given and one of 10,001 is
+    /// not. An accented letter is two bytes and one character; a character past the basic plane
+    /// (U+1D11E) is two to Claude Code, so 5,000 of them are given and 5,001 are not.
+    #[test]
+    fn a_text_past_claude_code_s_limit_is_not_given() {
+        let entry = HOOKS[0];
+        assert!(Claude.context_output(&entry, &"x".repeat(10_000)).is_some());
+        assert_eq!(Claude.context_output(&entry, &"x".repeat(10_001)), None);
+        assert!(
+            Claude
+                .context_output(&entry, &"\u{e9}".repeat(10_000))
+                .is_some()
+        );
+        assert!(
+            Claude
+                .context_output(&entry, &"\u{1d11e}".repeat(5_000))
+                .is_some()
+        );
+        assert_eq!(
+            Claude.context_output(&entry, &"\u{1d11e}".repeat(5_001)),
+            None
+        );
+    }
+
+    /// A text holding a tag Claude Code rewrites, opening or closing, in any case, is not given;
+    /// one that only names it is.
+    #[test]
+    fn a_text_claude_code_would_rewrite_is_not_given() {
+        let entry = HOOKS[1];
+        for rewritten in [
+            "x = '<system-reminder>'\n",
+            "</system-reminder>\n",
+            "<System-Reminder data=\"1\">\n",
+        ] {
+            assert_eq!(
+                Claude.context_output(&entry, rewritten),
+                None,
+                "{rewritten}"
+            );
+        }
+        assert!(
+            Claude
+                .context_output(&entry, "a system-reminder tag\n")
+                .is_some()
         );
     }
 }
