@@ -61,10 +61,7 @@ impl FakeDaemon {
         let lock = if matches!(script, Script::Silent(_)) {
             None
         } else {
-            let file = File::create(files.lock_path()).map_err(step("making the lock file"))?;
-            file.try_lock()
-                .map_err(|error| format!("taking the lock: {error}"))?;
-            Some(file)
+            Some(lock(&files)?)
         };
         let listener = listen(&files)?;
         let thread = thread::spawn(move || {
@@ -93,6 +90,29 @@ impl FakeDaemon {
 
 /// How long a fake daemon waits for its endpoint's name to be free.
 const ENDPOINT_FREED_WITHIN: Duration = Duration::from_secs(1);
+
+/// How long a fake daemon waits for the repository's lock to be free.
+const LOCK_FREED_WITHIN: Duration = Duration::from_secs(1);
+
+/// Takes the repository's lock of `files`, as a daemon holds it. The fake daemon before this one
+/// let go of it, but while another test of this binary starts a process, that process holds a copy
+/// of every file this one has open until it runs its program, the lock among them (seen on macOS):
+/// the lock is still held for that moment. So a lock found held is tried again until it is free,
+/// for at most [`LOCK_FREED_WITHIN`].
+fn lock(files: &RunFiles) -> TestResult<File> {
+    let file = File::create(files.lock_path())
+        .map_err(|error| format!("making the lock file: {error}"))?;
+    let until = Instant::now() + LOCK_FREED_WITHIN;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) if Instant::now() < until => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(format!("taking the lock: {error}").into()),
+        }
+    }
+}
 
 /// Listens at the endpoint of `files`. On Windows a pipe's name stays taken for a few
 /// milliseconds after its last handle is closed (10 ms seen on a loaded machine), and a listener
@@ -125,12 +145,16 @@ fn endpoint_name(files: &RunFiles) -> std::io::Result<Name<'static>> {
 }
 
 /// Serves `listener` by `script` and returns the requests read: one connection when silent, else
-/// connections until one asks it to stop or the test's own connection ends the wait.
+/// connections until one asks it to stop or the test's own connection ends the wait. A failure
+/// names the step and the connection it came at, so that a test failing on a loaded machine says
+/// where.
 fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
-    let text = |error: &dyn std::fmt::Display| error.to_string();
     let mut requests = Vec::new();
     for connection in 0.. {
-        let mut stream = listener.accept().map_err(|error| text(&error))?;
+        let at = |what: &'static str| {
+            move |error: &dyn std::fmt::Display| format!("{what}, connection {connection}: {error}")
+        };
+        let mut stream = listener.accept().map_err(|error| at("accepting")(&error))?;
         // The test's own connection sends nothing.
         let Ok(hello) = read_frame::<Request>(&mut stream) else {
             return Ok(requests);
@@ -139,7 +163,8 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
         requests.push(hello);
         let version = match &script {
             Script::Silent(release) => {
-                let request: Request = read_frame(&mut stream).map_err(|error| text(&error))?;
+                let request: Request =
+                    read_frame(&mut stream).map_err(|error| at("reading the request")(&error))?;
                 requests.push(request);
                 // Released once the client has given up; one that never does meets the timeout
                 // instead, and the test fails on its time rather than hanging.
@@ -155,7 +180,7 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
                     cortex_version: (*version).to_owned(),
                 });
                 write_frame(&mut stream, &Response { request_id, body })
-                    .map_err(|error| text(&error))?;
+                    .map_err(|error| at("writing the mismatch")(&error))?;
                 if let Ok(next) = read_frame::<Request>(&mut stream) {
                     let is_stop = next.body == RequestBody::Shutdown;
                     let request_id = next.request_id;
@@ -189,7 +214,8 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
             cortex_version: (*version).to_owned(),
             pid: std::process::id(),
         });
-        write_frame(&mut stream, &Response { request_id, body }).map_err(|error| text(&error))?;
+        write_frame(&mut stream, &Response { request_id, body })
+            .map_err(|error| at("writing the welcome")(&error))?;
         while let Ok(request) = read_frame::<Request>(&mut stream) {
             let is_stop = request.body == RequestBody::Shutdown;
             let body = match (&script, &request.body) {
@@ -206,7 +232,7 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
                 body,
             };
             requests.push(request);
-            write_frame(&mut stream, &answer).map_err(|error| text(&error))?;
+            write_frame(&mut stream, &answer).map_err(|error| at("writing an answer")(&error))?;
             if is_stop {
                 return Ok(requests);
             }
