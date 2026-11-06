@@ -294,6 +294,10 @@ pub(crate) const REF_RESOLVE: &str = "UPDATE refs SET dst_symbol_id = ?2, resolu
 pub(crate) const REFS_IN_FILE: &str = "SELECT ref_id, src_file_id, src_symbol_id, dst_name, \
      dst_symbol_id, kind, line, resolution, confidence FROM refs WHERE src_file_id = ?1 \
      ORDER BY ref_id";
+/// The references tied to one symbol, by file and line, read as [`REFS_IN_FILE`] reads them.
+pub(crate) const REFS_TIED_TO: &str = "SELECT ref_id, src_file_id, src_symbol_id, dst_name, \
+     dst_symbol_id, kind, line, resolution, confidence FROM refs WHERE dst_symbol_id = ?1 \
+     ORDER BY src_file_id, line, ref_id";
 
 /// Every reference's id, file, file language, name, kind, line, target, resolution and
 /// confidence, by id.
@@ -478,6 +482,14 @@ pub(crate) const EDGE_SET: &str = "INSERT INTO edges (src, dst, type, w, n, last
 /// The nodes the edges of a type into a node start from, in order.
 pub(crate) const SOURCES_INTO: &str =
     "SELECT src FROM edges WHERE dst = ?1 AND type = ?2 ORDER BY src";
+/// The files holding a test that have a structural edge into one node, each with the edge's
+/// weight, by node. The edges into the node are found by their index; each file's tests by its
+/// symbols' index.
+pub(crate) const TEST_FILES_INTO: &str = "SELECT e.src, e.w FROM edges AS e \
+     CROSS JOIN nodes AS n ON n.node_id = e.src \
+     WHERE e.dst = ?1 AND e.type = ?2 AND n.kind = 'file' AND EXISTS \
+     (SELECT 1 FROM symbols AS s WHERE s.file_id = n.ref_id AND s.kind = 'test') \
+     ORDER BY e.src";
 /// Every node an edge of a type starts from, in order.
 pub(crate) const EDGE_SOURCES: &str = "SELECT DISTINCT src FROM edges WHERE type = ?1 ORDER BY src";
 
@@ -1039,9 +1051,10 @@ mod tests {
         Ok(())
     }
 
-    /// The queries a prompt's retrieval makes for each file it lists start from the rows they ask
-    /// for, as their plans show, never from every node of a kind or every co-change pair: on a
-    /// repository of 10,000 files those walks took most of a retrieval's time.
+    /// The queries a prompt's retrieval makes for each file it lists, and an edit's for the edited
+    /// file's tests, start from the rows they ask for, as their plans show, never from every node of
+    /// a kind or every co-change pair: on a repository of 10,000 files those walks took most of a
+    /// retrieval's time.
     #[test]
     fn a_retrieval_s_queries_start_where_their_index_does() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -1055,7 +1068,7 @@ mod tests {
                 .query_map(params, |row| row.get(3))?
                 .collect::<rusqlite::Result<_>>()
         };
-        let cases: [(&str, Vec<String>, &str); 4] = [
+        let cases: [(&str, Vec<String>, &str); 5] = [
             (
                 "symbols named",
                 plan(SYMBOL_NODES_NAMED, &[&"run", &4])?,
@@ -1075,6 +1088,11 @@ mod tests {
                 "a file's pairs",
                 plan(COCHANGE_STATS_OF, &[&"[1]"])?,
                 "MERGE (UNION)",
+            ),
+            (
+                "a file's tests",
+                plan(TEST_FILES_INTO, &[&1, &0])?,
+                "SEARCH e USING INDEX edges_dst_type (dst=? AND type=?)",
             ),
         ];
         for (what, steps, first) in cases {

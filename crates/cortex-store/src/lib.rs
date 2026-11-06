@@ -26,6 +26,7 @@ mod layout;
 mod links;
 mod listing;
 mod lock;
+mod matching;
 mod meta;
 mod migrate;
 mod nodes;

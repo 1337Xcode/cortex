@@ -133,6 +133,18 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawRef::check).collect()
     }
 
+    /// The references tied to `symbol`, wherever they are, by file and then line.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn refs_tied_to(self, symbol: SymbolId) -> Result<Vec<RefRow>, StoreError> {
+        let raw = self
+            .collect(schema::REFS_TIED_TO, symbol.get(), RawRef::read)
+            .map_err(sqlite("reading the references to a symbol"))?;
+        raw.into_iter().map(RawRef::check).collect()
+    }
+
     /// The node of `file`.
     ///
     /// # Errors
@@ -223,6 +235,30 @@ impl<'c> Queries<'c> {
             })
             .map_err(sqlite("reading edge sources"))?;
         Ok(raw.into_iter().map(NodeId).collect())
+    }
+
+    /// The files that hold a test and have a structural edge into `node`, such as tests that
+    /// import it or are named for it, each with the edge's weight, by node.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn test_files_into(self, node: NodeId) -> Result<Vec<(NodeId, f64)>, StoreError> {
+        let raw: Vec<(i64, f64)> = self
+            .connection
+            .prepare_cached(schema::TEST_FILES_INTO)
+            .and_then(|mut statement| {
+                statement
+                    .query_map((node.get(), EdgeType::Structural.number()), |row| {
+                        Ok((row.get(0)?, row.get(1)?))
+                    })?
+                    .collect()
+            })
+            .map_err(sqlite("reading the tests of a file"))?;
+        Ok(raw
+            .into_iter()
+            .map(|(src, weight)| (NodeId(src), weight))
+            .collect())
     }
 
     /// Every node an edge of `edge_type` starts from, in order.

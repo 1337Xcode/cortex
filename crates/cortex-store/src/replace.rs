@@ -5,15 +5,12 @@
 //! with the same qualified name and kind, they are matched in the order they appear. References are
 //! written afresh each time: nothing points at a reference.
 
-use std::collections::{BTreeMap, VecDeque};
-
-use cortex_core::{
-    FileFlags, Identifier, Language, NodeKind, RepoPath, Resolution, ShortHash, SymbolKind,
-};
+use cortex_core::{FileFlags, Language, NodeKind, RepoPath, Resolution};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{StoreError, sqlite};
 use crate::ids::{FileId, NodeId, RefId, SymbolId};
+use crate::matching::{StoredSymbol, change_between, pair, stored_symbols};
 use crate::nodes::{remove_node, upsert_node, write_tokens};
 use crate::queries::Queries;
 use crate::records::{
@@ -22,22 +19,6 @@ use crate::records::{
 };
 use crate::values;
 use crate::{passes_on, schema};
-
-/// A stored symbol, as far as matching needs it.
-struct StoredSymbol {
-    /// Its row.
-    id: SymbolId,
-    /// What it is.
-    kind: SymbolKind,
-    /// Its name.
-    name: Identifier,
-    /// Its qualified name.
-    qual_name: Identifier,
-    /// The hash of its declaration header.
-    sig_hash: ShortHash,
-    /// The hash of the whole definition.
-    body_hash: ShortHash,
-}
 
 /// The symbols written for a file: ids and nodes in the file's order, and what changed.
 struct WrittenSymbols {
@@ -94,19 +75,13 @@ fn write_symbols(
     path: &RepoPath,
     symbols: &[SymbolRecord],
 ) -> Result<WrittenSymbols, StoreError> {
-    let mut stored: BTreeMap<(SymbolKind, Identifier), VecDeque<StoredSymbol>> = BTreeMap::new();
-    for symbol in stored_symbols(connection, file)? {
-        stored
-            .entry((symbol.kind, symbol.qual_name.clone()))
-            .or_default()
-            .push_back(symbol);
-    }
+    let pairing = pair(stored_symbols(connection, file)?, symbols);
     let mut written = WrittenSymbols {
         ids: Vec::with_capacity(symbols.len()),
         nodes: Vec::with_capacity(symbols.len()),
         changes: Vec::new(),
     };
-    for (position, symbol) in symbols.iter().enumerate() {
+    for (position, (symbol, earlier)) in symbols.iter().zip(pairing.matched).enumerate() {
         // Only the symbols before this one have ids yet, so a parent anywhere else is refused.
         let parent = symbol_at(&written.ids, symbol.parent, |parent| StoreError::Position {
             path: path.clone(),
@@ -114,9 +89,6 @@ fn write_symbols(
             index: position,
             position: parent,
         })?;
-        let earlier = stored
-            .get_mut(&(symbol.kind, symbol.qual_name.clone()))
-            .and_then(VecDeque::pop_front);
         let (id, change) = match earlier {
             Some(old) => {
                 update_symbol(connection, old.id, parent, symbol)?;
@@ -143,9 +115,7 @@ fn write_symbols(
         written.nodes.push(node);
         written.ids.push(id);
     }
-    let mut gone: Vec<StoredSymbol> = stored.into_values().flatten().collect();
-    gone.sort_by_key(|old| old.id);
-    for old in gone {
+    for old in pairing.gone {
         written.changes.push(remove_symbol(connection, old)?);
     }
     Ok(written)
@@ -193,17 +163,6 @@ pub(crate) fn remove_file(
     Ok(Some(FileRemoval { file, removed }))
 }
 
-/// What changed between a stored symbol and the definition that matched it.
-fn change_between(old: &StoredSymbol, new: &SymbolRecord) -> Option<ChangeKind> {
-    if old.sig_hash != new.sig_hash {
-        Some(ChangeKind::Signature)
-    } else if old.body_hash != new.body_hash {
-        Some(ChangeKind::Body)
-    } else {
-        None
-    }
-}
-
 /// The id of the file at `path`.
 fn file_id(connection: &Connection, path: &RepoPath) -> Result<Option<FileId>, StoreError> {
     connection
@@ -247,40 +206,6 @@ fn upsert_file(connection: &Connection, file: &FileRecord) -> Result<(FileId, bo
             .map(|id| (FileId(id), true))
             .map_err(sqlite("adding a file")),
     }
-}
-
-/// The symbols stored for `file`, oldest first.
-fn stored_symbols(connection: &Connection, file: FileId) -> Result<Vec<StoredSymbol>, StoreError> {
-    type Raw = (i64, String, String, String, [u8; 16], [u8; 16]);
-    let raw: Vec<Raw> = connection
-        .prepare_cached(schema::SYMBOLS_TO_MATCH)
-        .and_then(|mut statement| {
-            statement
-                .query_map([file.get()], |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                })?
-                .collect()
-        })
-        .map_err(sqlite("reading symbols"))?;
-    raw.into_iter()
-        .map(|(id, kind, name, qual_name, sig_hash, body_hash)| {
-            Ok(StoredSymbol {
-                id: SymbolId(id),
-                kind: values::kind(&kind, SymbolKind::from_name, "symbols.kind", id)?,
-                name: values::identifier(&name, "symbols.name", id)?,
-                qual_name: values::identifier(&qual_name, "symbols.qual_name", id)?,
-                sig_hash: ShortHash::from_bytes(sig_hash),
-                body_hash: ShortHash::from_bytes(body_hash),
-            })
-        })
-        .collect()
 }
 
 /// Adds a symbol to `file` and returns its id.
