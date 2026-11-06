@@ -11,8 +11,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use cortex_core::Identifier;
-use cortex_store::{InjectionRow, Reader};
+use cortex_core::{HookKind, Identifier};
+use cortex_store::{InjectionRecord, InjectionRow, Reader};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{self, Session};
@@ -213,7 +213,10 @@ fn session(
     Ok(Session::of_stream(&String::from_utf8_lossy(&text)))
 }
 
-/// Waits until every task of session `session` in `repo`'s store has ended and each injection
+/// A recorded text and the label its task's end gave it, as the runner weighs them.
+type Labelled<'a> = (&'a InjectionRecord, Option<bool>);
+
+/// Waits until every task of session `session` in `repo`'s store has ended and each work order
 /// that reached the agent is labelled, as the daemon does once the session's stop is handled.
 ///
 /// # Errors
@@ -226,10 +229,7 @@ fn settle(repo: &Path, session: Option<&str>) -> anyhow::Result<()> {
     let until = Instant::now() + SETTLED_WITHIN;
     loop {
         let (tasks_ended, rows) = read_session(repo, session)?;
-        let is_labelled = rows
-            .iter()
-            .all(|row| !row.record.was_delivered() || row.label.is_some());
-        if tasks_ended && is_labelled {
+        if is_settled(tasks_ended, &labelled(&rows)) {
             return Ok(());
         }
         if Instant::now() >= until {
@@ -237,6 +237,28 @@ fn settle(repo: &Path, session: Option<&str>) -> anyhow::Result<()> {
         }
         std::thread::sleep(Duration::from_secs(1));
     }
+}
+
+/// Whether a recorded text is a work order: the text a prompt was given, and the only kind a
+/// task's end labels. An edit's warnings, a read's hint, the recap and strict mode's reason are
+/// recorded too, and never labelled.
+fn is_work_order(record: &InjectionRecord) -> bool {
+    record.hook == HookKind::Prompt
+}
+
+/// Whether a session has settled: its tasks have `tasks_ended`, and each work order of `rows` that
+/// reached the agent is labelled.
+fn is_settled(tasks_ended: bool, rows: &[Labelled<'_>]) -> bool {
+    tasks_ended
+        && rows
+            .iter()
+            .filter(|(record, _)| is_work_order(record))
+            .all(|(record, label)| !record.was_delivered() || label.is_some())
+}
+
+/// Each of `rows` with its label.
+fn labelled(rows: &[InjectionRow]) -> Vec<Labelled<'_>> {
+    rows.iter().map(|row| (&row.record, row.label)).collect()
 }
 
 /// Whether every task of `session` has ended, and the injections of its tasks.
@@ -263,14 +285,23 @@ fn read_session(repo: &Path, session: &str) -> anyhow::Result<(bool, Vec<Injecti
 /// The store cannot be read.
 fn given(repo: &Path, session: &str) -> anyhow::Result<Given> {
     let (_, rows) = read_session(repo, session)?;
-    let count = |keep: &dyn Fn(&InjectionRow) -> bool| {
-        u64::try_from(rows.iter().filter(|row| keep(row)).count()).unwrap_or(u64::MAX)
+    Ok(given_of(&labelled(&rows)))
+}
+
+/// What the work orders of `rows` come to: how many reached the agent, and of those how many were
+/// labelled and labelled used.
+fn given_of(rows: &[Labelled<'_>]) -> Given {
+    let count = |keep: &dyn Fn(Option<bool>) -> bool| {
+        let kept = rows.iter().filter(|(record, label)| {
+            is_work_order(record) && record.was_delivered() && keep(*label)
+        });
+        u64::try_from(kept.count()).unwrap_or(u64::MAX)
     };
-    Ok(Given {
-        delivered: count(&|row| row.record.was_delivered()),
-        labelled: count(&|row| row.record.was_delivered() && row.label.is_some()),
-        used: count(&|row| row.record.was_delivered() && row.label == Some(true)),
-    })
+    Given {
+        delivered: count(&|_| true),
+        labelled: count(&|label| label.is_some()),
+        used: count(&|label| label == Some(true)),
+    }
 }
 
 /// Whether `task`'s check passes in `repo`, its `{checks}` taken to the folder `checks`, its
@@ -326,6 +357,54 @@ mod tests {
         let taken = taken_folders(base.path(), &["fix-tax"], 2);
         assert_eq!(taken, [base.path().join("fix-tax-2")]);
         assert!(taken_folders(base.path(), &["fix-tax"], 1).is_empty());
+        Ok(())
+    }
+
+    /// A text of `hook` recorded for session `s`, delivered or kept back by the gate.
+    fn text(hook: HookKind, is_delivered: bool) -> anyhow::Result<InjectionRecord> {
+        Ok(InjectionRecord {
+            task_id: None,
+            session_id: Identifier::new("s")?,
+            hook,
+            at_ms: 1,
+            files: Vec::new(),
+            tokens: 10,
+            confidence: None,
+            is_gated_out: !is_delivered,
+            is_holdout: false,
+            text_hash: Some(cortex_core::ContentHash::of(b"text")),
+            features: None,
+        })
+    }
+
+    /// A session's warnings and read hints are never labelled, so they do not hold a session from
+    /// settling, nor count as work orders: with a work order delivered and labelled used, a
+    /// warning and a read hint delivered and unlabelled, and a work order the gate kept back, the
+    /// session settles once its tasks have ended, and one work order was delivered, labelled and
+    /// used. Until the work order is labelled, or while a task runs, it has not settled.
+    #[test]
+    fn only_work_orders_are_waited_for_and_counted() -> anyhow::Result<()> {
+        let order = text(HookKind::Prompt, true)?;
+        let warning = text(HookKind::PostTool, true)?;
+        let hint = text(HookKind::PreTool, true)?;
+        let kept = text(HookKind::Prompt, false)?;
+        let rows: [Labelled<'_>; 4] = [
+            (&order, Some(true)),
+            (&warning, None),
+            (&hint, None),
+            (&kept, None),
+        ];
+        assert!(is_settled(true, &rows));
+        assert!(!is_settled(false, &rows));
+        assert!(!is_settled(true, &[(&order, None), (&warning, None)]));
+        assert_eq!(
+            given_of(&rows),
+            Given {
+                delivered: 1,
+                labelled: 1,
+                used: 1
+            }
+        );
         Ok(())
     }
 }
