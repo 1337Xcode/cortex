@@ -121,7 +121,8 @@ impl Event {
     }
 
     /// The prompt this event submits when it may ask for code: none for an event that is no
-    /// prompt, a slash command (`/` first), a shell escape (`!` first), or a prompt of fewer than
+    /// prompt, a slash command (a first word of `/` and a name, such as `/review`; a path such as
+    /// `/usr/lib/x.py` is no command), a shell escape (`!` first), or a prompt of fewer than
     /// [`MIN_WORK_PROMPT_CHARS`] characters other than spaces, such as "ok" or "yes", which names
     /// nothing to look for. Such a prompt is still recorded: it starts a task.
     #[must_use]
@@ -131,7 +132,11 @@ impl Event {
         }
         let prompt = self.prompt_text.as_deref()?;
         let start = prompt.trim_start();
-        let is_command = start.starts_with('/') || start.starts_with('!');
+        let first_word = start.split_whitespace().next().unwrap_or_default();
+        let is_slash_command = first_word
+            .strip_prefix('/')
+            .is_some_and(|name| !name.contains('/'));
+        let is_command = is_slash_command || start.starts_with('!');
         let chars = prompt.chars().filter(|c| !c.is_whitespace()).count();
         (!is_command && chars >= MIN_WORK_PROMPT_CHARS).then_some(prompt)
     }

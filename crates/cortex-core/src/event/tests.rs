@@ -221,7 +221,8 @@ fn only_a_successful_edit_names_its_file() -> TestResult {
 /// The file a read is about to read: the moment before a read names `calc/ops.py`; the read's
 /// result, an edit about to run and a read naming no file inside the repository name none.
 /// A prompt asks for code unless it is a slash command, a shell escape (each after any spaces) or
-/// fewer than four characters other than spaces; any other event asks for none.
+/// fewer than four characters other than spaces; a prompt that starts with an absolute path is
+/// no slash command. Any other event asks for none.
 #[test]
 fn a_prompt_asks_for_code_unless_it_is_a_command_or_a_word() -> TestResult {
     let asking = |text: &str| -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -232,7 +233,13 @@ fn a_prompt_asks_for_code_unless_it_is_a_command_or_a_word() -> TestResult {
         };
         Ok(event.prompt_for_work().map(str::to_owned))
     };
-    for text in ["fix the login bug", "a.py", "  x y z w  ", "why?"] {
+    for text in [
+        "fix the login bug",
+        "a.py",
+        "  x y z w  ",
+        "why?",
+        "/usr/lib/app/main.py crashes on start",
+    ] {
         assert_eq!(asking(text)?.as_deref(), Some(text), "{text:?}");
     }
     for text in [
