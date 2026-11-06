@@ -44,6 +44,20 @@ const FLOOR_SHARE: f64 = 0.01;
 /// Most symbols one name may name and still be a seed: past it, the name is not one place.
 const MAX_NAMED_SYMBOLS: usize = 5;
 
+/// Most words one prompt's counts are asked for, the most written first: a pasted specification
+/// writes thousands of words, and each count is a query.
+const MAX_WORDS: usize = 256;
+
+/// Most mentions one prompt's lookups take, the most written first: a pasted specification names
+/// hundreds of things, and each lookup is a query.
+const MAX_MENTIONS: usize = 32;
+
+/// The prominence a name needs to be named, as against written in passing: a quarter of the most
+/// written mention's count. A name below it seeds what it names at its prominence, and its file is
+/// not taken as named. A path with a folder is a deliberate pointer and is named whatever its
+/// count; in a short prompt every mention is as prominent as the most.
+const NAMED_PROMINENCE: f64 = 0.25;
+
 /// How one file matches the prompt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileMatch {
@@ -78,10 +92,10 @@ pub fn lexical(
 ) -> Result<LexicalMatch, StoreError> {
     let rows = graph.len().max(1);
     let mut held: Vec<(String, u64)> = Vec::new();
-    for word in &terms.words {
+    for word in terms.frequent_words(MAX_WORDS) {
         let count = queries.term_rows(word)?;
         if count > 0 {
-            held.push((word.clone(), count));
+            held.push((word.to_owned(), count));
         }
     }
     let weight_of = |count: u64| idf(rows, count);
@@ -101,8 +115,8 @@ pub fn lexical(
         }
     }
     let named = named(queries, graph, terms)?;
-    for (node, index) in &named.nodes {
-        raise(&mut found.seeds, *index, 1.0);
+    for (node, (index, weight)) in &named.nodes {
+        raise(&mut found.seeds, *index, *weight);
         hit_nodes.insert(*node);
     }
     let listed: Vec<NodeId> = hit_nodes
@@ -189,29 +203,32 @@ fn looked_up(
 /// those nodes are in.
 #[derive(Debug, Default)]
 struct Named {
-    /// Each node named, with its number.
-    nodes: BTreeMap<NodeId, u32>,
-    /// The files named, or holding a symbol named, by number.
+    /// Each node named, with its number and its seed's weight: its mention's prominence, 1 for a
+    /// path.
+    nodes: BTreeMap<NodeId, (u32, f64)>,
+    /// The files named, or holding a symbol named, by number: those of paths and of names at
+    /// [`NAMED_PROMINENCE`] or above.
     files: BTreeSet<u32>,
 }
 
-/// What the mentions of `terms` name exactly in the store `queries` reads: a path's file and the
-/// symbol at its line, or a name's symbols when there are few of them.
+/// What the most prominent [`MAX_MENTIONS`] mentions of `terms` name exactly in the store
+/// `queries` reads: a path's file and the symbol at its line, or a name's symbols when there are
+/// few of them, each weighed by its mention's prominence.
 fn named(
     queries: Queries<'_>,
     graph: &Graph<NodeId>,
     terms: &PromptTerms,
 ) -> Result<Named, StoreError> {
     let mut named = Named::default();
-    for mention in &terms.mentions {
+    for (mention, prominence) in terms.prominent(MAX_MENTIONS) {
         if let Some(path) = &mention.path
             && let Some((file, node)) = file_named(queries, path)?
         {
-            add(&mut named, graph, node);
+            add(&mut named, graph, (node, 1.0));
             if let Some(line) = mention.line
                 && let Some(symbol) = symbol_at(queries, file, line)?
             {
-                add(&mut named, graph, symbol);
+                add(&mut named, graph, (symbol, 1.0));
             }
             continue;
         }
@@ -225,20 +242,24 @@ fn named(
         let symbols = queries.symbol_nodes_named(&name, MAX_NAMED_SYMBOLS + 1)?;
         if symbols.len() <= MAX_NAMED_SYMBOLS {
             for symbol in symbols {
-                add(&mut named, graph, symbol);
+                add(&mut named, graph, (symbol, prominence));
             }
         }
     }
     Ok(named)
 }
 
-/// Adds `node` to what is named, with its file.
-fn add(named: &mut Named, graph: &Graph<NodeId>, node: NodeId) {
+/// Adds `node` to what is named with `weight`, the larger of it and any it had, and its file to the
+/// files named when `weight` is [`NAMED_PROMINENCE`] or more.
+fn add(named: &mut Named, graph: &Graph<NodeId>, (node, weight): (NodeId, f64)) {
     let Some(index) = graph.index_of(node) else {
         return;
     };
-    named.nodes.insert(node, index);
-    if let Some(file) = graph.file_of(index) {
+    let held = named.nodes.entry(node).or_insert((index, 0.0));
+    held.1 = held.1.max(weight);
+    if weight >= NAMED_PROMINENCE
+        && let Some(file) = graph.file_of(index)
+    {
         named.files.insert(file);
     }
 }

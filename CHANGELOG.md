@@ -75,6 +75,9 @@ All notable changes to this project are documented in this file. The format is b
   signature its task changed were not read or edited since the warning, once a task. Off by
   default, when a stop is given nothing. The hook and the daemon now speak protocol 5.0: a hook and
   a daemon of different Cortex versions are replaced as before.
+- A long prompt, such as a pasted specification, is looked up by what it writes most: a name it
+  writes in passing no longer counts as naming its file, and only its 256 most written words and 32
+  most written names are looked up.
 - A work order over its token cap now cuts its last code to its first lines, saying which lines
   are not shown, rather than dropping the code whole, and shows a method under its class's first
   line.

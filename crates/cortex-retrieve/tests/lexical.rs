@@ -228,3 +228,40 @@ fn a_name_many_symbols_share_names_none() -> TestResult {
     assert!(!found.seeds.is_empty());
     Ok(())
 }
+
+/// In a long prompt a name written in passing is not taken as named, the way one the text keeps
+/// coming back to is: `create_order` written five times names `orders.py`, which matches fully;
+/// `charge` written once has a prominence of 1/5 = 0.2, under a quarter, so `billing.py` is not
+/// named and matches by its words alone. Worked by hand with 8 rows: `create` and `order` weigh
+/// 1.280934 each, `charge` 1.791759, 4.353627 in all; `billing.py` holds `charge`: 1.791759 /
+/// 4.353627 = 0.411556; `users.py` holds `create`: 1.280934 / 4.353627 = 0.294222.
+#[test]
+fn a_name_written_in_passing_is_not_named() -> TestResult {
+    let shop = Shop::new()?;
+    let (found, graph) = shop.find(
+        "`create_order` `create_order` `create_order` `create_order` `create_order` `charge`",
+    )?;
+    let file = |node: NodeId| -> TestResult<&cortex_retrieve::FileMatch> {
+        Ok(found
+            .files
+            .get(&at(&graph, node)?)
+            .ok_or("a file matched")?)
+    };
+    let orders = file(shop.orders[0])?;
+    assert!(orders.is_named);
+    assert_eq!(orders.coverage, 1.0);
+    let billing = file(shop.billing[0])?;
+    assert!(!billing.is_named);
+    assert!(
+        (billing.coverage - 0.411_556).abs() < 1e-6,
+        "{}",
+        billing.coverage
+    );
+    let users = file(shop.users[0])?;
+    assert!(
+        (users.coverage - 0.294_222).abs() < 1e-6,
+        "{}",
+        users.coverage
+    );
+    Ok(())
+}

@@ -18,6 +18,8 @@
 //! inside backticks. A word like `service.ts` or `Config.load` could be either, so it is both, and
 //! whoever looks it up keeps whichever the repository holds.
 
+use std::collections::BTreeMap;
+
 use cortex_core::identifier_tokens;
 
 /// Words that say what to do, join a sentence or judge, and name no place in a repository, sorted
@@ -240,6 +242,10 @@ pub struct PromptTerms {
     pub words: Vec<String>,
     /// The words that may name a file or a symbol exactly, each once, in the order they appear.
     pub mentions: Vec<Mention>,
+    /// How many times the prompt writes each of `mentions`, in the same order.
+    pub mention_counts: Vec<u32>,
+    /// How many times the prompt writes each of `words`.
+    pub word_counts: BTreeMap<String, u32>,
 }
 
 impl PromptTerms {
@@ -259,14 +265,23 @@ impl PromptTerms {
                 .and_then(|path| path.rsplit_once('/'))
                 .map(|(_, file)| file.to_owned());
             worded.push(file_name.unwrap_or_else(|| (*chunk).to_owned()));
-            if let Some(mention) = mention
-                && !terms.mentions.contains(&mention)
-            {
-                terms.mentions.push(mention);
+            if let Some(mention) = mention {
+                let held = terms.mentions.iter().position(|held| *held == mention);
+                if let Some(count) = held.and_then(|at| terms.mention_counts.get_mut(at)) {
+                    *count = count.saturating_add(1);
+                } else {
+                    terms.mentions.push(mention);
+                    terms.mention_counts.push(1);
+                }
             }
         }
         for token in identifier_tokens(&worded.join(" ")) {
-            if is_place_word(&token) && !terms.words.contains(&token) {
+            if !is_place_word(&token) {
+                continue;
+            }
+            let count = terms.word_counts.entry(token.clone()).or_insert(0);
+            *count = count.saturating_add(1);
+            if *count == 1 {
                 terms.words.push(token);
             }
         }
@@ -278,6 +293,47 @@ impl PromptTerms {
             .collect();
         terms.words.retain(|word| !extensions.contains(word));
         terms
+    }
+
+    /// The `max` words the prompt writes most (among those written as often, the first written),
+    /// in the order the prompt first writes them: all of them for any prompt short of `max` words,
+    /// so only a long text gives up the words it writes least.
+    #[must_use]
+    pub fn frequent_words(&self, max: usize) -> Vec<&str> {
+        let mut ranked: Vec<(usize, u32)> = self
+            .words
+            .iter()
+            .enumerate()
+            .map(|(at, word)| (at, self.word_counts.get(word).copied().unwrap_or(1)))
+            .collect();
+        ranked.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
+        ranked.truncate(max);
+        ranked.sort_unstable_by_key(|(at, _)| *at);
+        ranked
+            .into_iter()
+            .filter_map(|(at, _)| self.words.get(at).map(String::as_str))
+            .collect()
+    }
+
+    /// The mentions the prompt writes most, at most `max`, the most written first and, among those
+    /// written as often, the first written first; each with its prominence, how often it is written
+    /// against the most written one, from 0 to 1. In a short prompt, which writes each once, every
+    /// mention has a prominence of 1; in a long one, a name the text keeps coming back to stands
+    /// above one it writes in passing.
+    #[must_use]
+    pub fn prominent(&self, max: usize) -> Vec<(&Mention, f64)> {
+        let most = self.mention_counts.iter().copied().max().unwrap_or(0);
+        let mut ranked: Vec<(usize, u32)> =
+            self.mention_counts.iter().copied().enumerate().collect();
+        ranked.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
+        ranked
+            .into_iter()
+            .take(max)
+            .filter_map(|(at, count)| {
+                let mention = self.mentions.get(at)?;
+                Some((mention, f64::from(count) / f64::from(most.max(1))))
+            })
+            .collect()
     }
 
     /// Whether it points at nothing: no word and no mention.
@@ -448,6 +504,39 @@ mod tests {
             line: None,
             name: Some(name.to_owned()),
         }
+    }
+
+    /// How often a prompt writes each mention and word, counted by hand: `create_order` four times,
+    /// `charge` once, `ship` twice. The mentions by prominence: `create_order` 4/4 = 1, `ship` 2/4 =
+    /// 0.5, `charge` 1/4 = 0.25, the first two kept at most two. The words written most, at most
+    /// three, in the prompt's order: `create` and `order` (four each) and `ship` (two), `charge` (one)
+    /// left out; with room for all, every word in the prompt's order.
+    #[test]
+    fn a_long_prompt_is_read_by_what_it_writes_most() {
+        let terms = PromptTerms::of(
+            "`create_order` then `charge` then `create_order` `ship` `create_order` `ship` \
+             `create_order`",
+        );
+        assert_eq!(terms.mention_counts, [4, 1, 2]);
+        let prominent: Vec<(String, f64)> = terms
+            .prominent(3)
+            .into_iter()
+            .map(|(mention, prominence)| (mention.name.clone().unwrap_or_default(), prominence))
+            .collect();
+        assert_eq!(
+            prominent,
+            [
+                ("create_order".to_owned(), 1.0),
+                ("ship".to_owned(), 0.5),
+                ("charge".to_owned(), 0.25)
+            ]
+        );
+        assert_eq!(terms.prominent(2).len(), 2);
+        assert_eq!(terms.frequent_words(3), ["create", "order", "ship"]);
+        assert_eq!(
+            terms.frequent_words(10),
+            ["create", "order", "charge", "ship"]
+        );
     }
 
     /// The words and mentions of each prompt, read off it by hand. Words are its identifier tokens
