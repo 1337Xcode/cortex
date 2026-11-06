@@ -24,6 +24,12 @@ pub(super) fn warnings(
     config: &WarningsConfig,
 ) -> Vec<Warning> {
     let edited = &facts.edited;
+    // The edited file's path is written in every line: a name that is not plain text (a line
+    // break, a hidden character, an agent's reminder tag) would put words of its own in front of
+    // the agent.
+    if !is_plain(edited.path.as_str()) {
+        return Vec::new();
+    }
     let is_open = |file: &NamedFile| {
         file.node != edited.node
             && !task.touched.contains(&file.node)
