@@ -9,6 +9,7 @@
 
 mod call_site;
 mod cochange;
+mod facts;
 mod test_companion;
 
 use std::collections::BTreeSet;
@@ -18,6 +19,7 @@ use cortex_store::NodeId;
 
 pub use call_site::MAX_LISTED_CALL_SITES;
 pub use cochange::{MIN_LINK_TASKS, MIN_LINK_WEIGHT};
+pub use facts::{EditQuery, MAX_CHECKED_CALLER_FILES, edit_facts};
 pub use test_companion::MAX_LISTED_TESTS;
 
 /// The most tokens the warnings of one edit take together, as estimated.
@@ -74,6 +76,9 @@ pub struct Drift {
     pub name: String,
     /// The calls to it, in path and line order.
     pub call_sites: Vec<CallSite>,
+    /// How many more calls the index holds in files not checked against the disk, which the
+    /// count can only say there are at least.
+    pub unchecked: u32,
 }
 
 /// A test file of the edited file: one that imports it or is named for it.

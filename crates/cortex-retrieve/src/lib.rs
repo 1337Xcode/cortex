@@ -70,7 +70,7 @@ pub use support::{COACCESS_FLOOR, Evidence, STRUCTURAL_FLOOR, Support};
 pub use two_stage::{STAGED_FILES, Staged, two_stage};
 pub use uncommitted::{UNCOMMITTED_WEIGHT, UncommittedMatch, uncommitted};
 pub use warnings::{
-    CallSite, Drift, EditFacts, Linked, MAX_LISTED_CALL_SITES, MAX_LISTED_TESTS,
-    MAX_WARNING_TOKENS, MIN_LINK_TASKS, MIN_LINK_WEIGHT, NamedFile, Partner, TaskSoFar, TestFile,
-    Warned, Warning, warnings_after_edit,
+    CallSite, Drift, EditFacts, EditQuery, Linked, MAX_CHECKED_CALLER_FILES, MAX_LISTED_CALL_SITES,
+    MAX_LISTED_TESTS, MAX_WARNING_TOKENS, MIN_LINK_TASKS, MIN_LINK_WEIGHT, NamedFile, Partner,
+    TaskSoFar, TestFile, Warned, Warning, edit_facts, warnings_after_edit,
 };

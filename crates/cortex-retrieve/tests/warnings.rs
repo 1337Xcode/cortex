@@ -97,6 +97,7 @@ fn facts(named: &[NamedFile]) -> TestResult<EditFacts> {
                 site(7, 4, 0.6)?,
                 site(0, 50, 1.0)?,
             ],
+            unchecked: 0,
         }],
         tests: vec![TestFile {
             file: file(named, 8)?,
@@ -294,6 +295,28 @@ fn a_tiny_repository_hears_only_of_call_sites() -> TestResult {
     Ok(())
 }
 
+/// Calls in files not checked against the disk: the count says "at least" the two told.
+#[test]
+fn unchecked_calls_make_the_count_at_least() -> TestResult {
+    let (_repo, named) = files()?;
+    let mut facts = facts(&named)?;
+    facts.drifts.first_mut().ok_or("a drift")?.unchecked = 4;
+    let warned = warnings_after_edit(
+        &facts,
+        &TaskSoFar::default(),
+        &WarningsConfig::default(),
+        ScaleMode::Tiny,
+    );
+    assert_eq!(
+        lines(&warned),
+        [
+            "[cortex] createOrder's signature changed; at least 2 call sites still use the old one: \
+             api/admin.ts:12, api/orders/route.ts:31"
+        ]
+    );
+    Ok(())
+}
+
 /// Seven call sites: five are listed, the count says seven, and only the five listed files are
 /// named, so the other two can still be told of later.
 #[test]
@@ -423,6 +446,7 @@ proptest! {
         linked in prop::collection::vec((1usize..9, 0.0f64..5.0, 0u32..12), 0..6),
         sites in prop::collection::vec((0usize..9, 1u32..100_000, 0.0f64..=1.0), 0..30),
         tests in prop::collection::vec((1usize..9, 0.0f64..=1.0), 0..4),
+        unchecked in 0u32..3,
         max_per_edit in 0u32..=10,
         is_tiny in any::<bool>(),
     ) {
@@ -446,7 +470,7 @@ proptest! {
         for (at, line, confidence) in sites {
             call_sites.push(CallSite { file: pick(at)?, line, confidence });
         }
-        facts.drifts.push(Drift { symbol: pick(0)?.node, name: "a_rather_long_function_name".to_owned(), call_sites });
+        facts.drifts.push(Drift { symbol: pick(0)?.node, name: "a_rather_long_function_name".to_owned(), call_sites, unchecked });
         for (at, confidence) in tests {
             facts.tests.push(TestFile { file: pick(at)?, confidence });
         }

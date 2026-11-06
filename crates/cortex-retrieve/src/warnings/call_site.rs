@@ -53,10 +53,11 @@ fn warning(facts: &EditFacts, task: &TaskSoFar, drift: &Drift) -> Option<Warning
             targets.push(site.file.node);
         }
     }
+    let at_least = if drift.unchecked > 0 { "at least " } else { "" };
     let (count, uses) = if sites.len() == 1 {
-        ("1 call site".to_owned(), "uses")
+        (format!("{at_least}1 call site"), "uses")
     } else {
-        (format!("{} call sites", sites.len()), "use")
+        (format!("{at_least}{} call sites", sites.len()), "use")
     };
     let mut line = format!(
         "{}'s signature changed; {count} still {uses} the old one: ",
