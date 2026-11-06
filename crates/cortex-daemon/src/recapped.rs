@@ -66,6 +66,22 @@ impl Recapped {
         kept.recapped = Some(compaction);
         true
     }
+
+    /// Gives back the claim `start` of `session` made on its latest compaction: the recap never
+    /// reached the agent. A compaction heard of since is not the one claimed, and stays as it is.
+    pub(crate) fn release(&self, session: &Identifier, start: Ulid) {
+        let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(kept) = sessions.iter_mut().find(|kept| kept.id == *session) else {
+            return;
+        };
+        let compaction = match kept.heard {
+            0 => Compaction::Started(start),
+            heard => Compaction::Heard(heard),
+        };
+        if kept.recapped == Some(compaction) {
+            kept.recapped = None;
+        }
+    }
 }
 
 /// The entry of `session` among `sessions`, made when there is none, the oldest dropped to keep

@@ -32,6 +32,12 @@ impl Stopped {
         tasks.push_back(task_id);
         true
     }
+
+    /// Gives back task `task_id`'s claim: its reason never reached the agent.
+    pub(crate) fn release(&self, task_id: Ulid) {
+        let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        tasks.retain(|task| *task != task_id);
+    }
 }
 
 #[cfg(test)]

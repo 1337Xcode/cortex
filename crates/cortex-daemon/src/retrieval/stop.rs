@@ -6,6 +6,7 @@ use cortex_core::Event;
 use cortex_retrieve::stop_reason;
 
 use super::{Answer, Service};
+use crate::claim::Claim;
 use crate::given::{Given, text_record};
 use crate::stopped::Stopped;
 
@@ -34,6 +35,7 @@ impl Service {
             Ok(Answer {
                 text: Some(text),
                 given: Some(Given::Injection(given)),
+                claim: Some(Claim::Stopped(task_id)),
             })
         });
         answered.unwrap_or_else(|error| {

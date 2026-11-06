@@ -49,13 +49,33 @@ impl Told {
             return Warned::default();
         };
         let warned = decide(told);
-        for warning in &warned.given {
-            for target in &warning.targets {
-                told.insert((warning.kind, warning.source, *target));
-            }
-        }
+        told.extend(pairs_of(&warned));
         warned
     }
+
+    /// Forgets that task `task_id` was told `pairs`: its warnings never reached the agent.
+    pub(crate) fn forget(&self, task_id: Ulid, pairs: &[Pair]) {
+        let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, told)) = tasks.iter_mut().find(|(task, _)| *task == task_id) {
+            for pair in pairs {
+                told.remove(pair);
+            }
+        }
+    }
+}
+
+/// The pairs the warnings of `warned` name: one for each file each names.
+pub(crate) fn pairs_of(warned: &Warned) -> Vec<Pair> {
+    warned
+        .given
+        .iter()
+        .flat_map(|warning| {
+            warning
+                .targets
+                .iter()
+                .map(|target| (warning.kind, warning.source, *target))
+        })
+        .collect()
 }
 
 #[cfg(test)]

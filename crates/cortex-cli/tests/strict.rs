@@ -2,7 +2,9 @@
 //! captured payloads come from (pinned to medium mode): with `strict_mode` on, once the task's
 //! edit changed `add`'s signature, the stop is given the files that still call it, once a task, and
 //! is not recorded: the agent goes on, and its task with it, until the next stop ends the task. With
-//! it off, as by default, the same stop is given nothing and ends the task.
+//! it off, as by default, the same stop is given nothing and ends the task. An answer that never
+//! reaches its hook gives back what it claimed: a recap worked out too late is given to the next
+//! start of the same compaction.
 #![allow(
     clippy::indexing_slicing,
     reason = "the payloads edited here are JSON objects, where indexing a missing key adds it"
@@ -18,7 +20,8 @@ use common::hook_call::hook;
 use common::{Daemon, TestResult, graph_of, wait_for};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
 use cortex_core::{
-    Agent, Event, EventKind, HookKind, Identifier, RepoId, Ulid, UserFolder, canonical_root,
+    Agent, Event, EventKind, HookKind, Identifier, RepoId, StartSource, Ulid, UserFolder,
+    canonical_root,
 };
 use cortex_hook::ask;
 use cortex_store::Reader;
@@ -124,6 +127,14 @@ fn without_strict_mode_a_stop_is_given_nothing() -> TestResult {
 
 /// A stop's request carrying an event of the captured session at `hook`, made now.
 fn stop_request(root: &Path, hook: HookKind, answer_by_ms: Option<i64>) -> TestResult<RequestBody> {
+    Ok(RequestBody::StopReason {
+        event: Box::new(event_now(root, hook)?),
+        answer_by_ms,
+    })
+}
+
+/// An event of the captured session at `hook`, made now.
+fn event_now(root: &Path, hook: HookKind) -> TestResult<Event> {
     let root = canonical_root(root)?;
     let ts_ms = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
     let event = Event {
@@ -148,10 +159,7 @@ fn stop_request(root: &Path, hook: HookKind, answer_by_ms: Option<i64>) -> TestR
         end_reason: None,
         is_probe: false,
     };
-    Ok(RequestBody::StopReason {
-        event: Box::new(event),
-        answer_by_ms,
-    })
+    Ok(event)
 }
 
 /// A stop's request whose event is of another hook is refused and records nothing; one whose
@@ -175,5 +183,48 @@ fn a_late_stop_is_recorded_and_a_mismatched_one_refused() -> TestResult {
     );
     wait_for(|| Ok(!stops(home.path())?.1))?;
     assert_eq!(stops(home.path())?, (1, false));
+    Ok(())
+}
+
+/// The task was edited and warned; its session's context is compacted. The start that follows is
+/// answered too late, gets nothing, and gives its claim on the compaction back: the next start of
+/// the same compaction, answered in time, gets the recap; a third gets nothing, the compaction
+/// being recapped.
+#[test]
+fn a_recap_that_came_too_late_is_given_to_the_next_start() -> TestResult {
+    let (_stop, home, _daemon) = edited_task(STRICT)?;
+    let repo = home.path().join("repo");
+    let files = UserFolder::in_home(home.path()).run_files(&RepoId::of(&canonical_root(&repo)?));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let compacted = RequestBody::Event {
+        event: Box::new(event_now(&repo, HookKind::Compact)?),
+    };
+    assert_eq!(
+        ask(&files, Role::Hook, compacted, deadline)?.body,
+        ResponseBody::Ack
+    );
+    let start = |answer_by_ms| -> TestResult<RequestBody> {
+        let event = Event {
+            source: Some(StartSource::Compact),
+            ..event_now(&repo, HookKind::SessionStart)?
+        };
+        Ok(RequestBody::Primer {
+            event: Box::new(event),
+            answer_by_ms,
+        })
+    };
+    let text = |answer_by_ms| -> TestResult<Option<String>> {
+        match ask(&files, Role::Hook, start(answer_by_ms)?, deadline)?.body {
+            ResponseBody::Reply { text } => Ok(text),
+            other => Err(format!("{other:?}").into()),
+        }
+    };
+    assert_eq!(text(Some(0))?, None);
+    let recap = text(None)?.ok_or("the recap, given back")?;
+    assert!(
+        recap.starts_with("[cortex] Before the compaction, the task in progress:\n"),
+        "{recap}"
+    );
+    assert_eq!(text(None)?, None);
     Ok(())
 }

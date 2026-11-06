@@ -17,8 +17,10 @@ use cortex_retrieve::{EditQuery, edit_facts, task_so_far, warnings_after_edit};
 use cortex_store::{FileRecord, FileRow, Queries, SymbolId};
 
 use super::{Answer, Service, mode_of};
+use crate::claim::Claim;
 use crate::given::{Given, text_record};
 use crate::signatures::Signatures;
+use crate::told::{Told, pairs_of};
 
 impl Service {
     /// The warnings `event` gets, an edit's tool result, and the rows to record of them once they
@@ -27,7 +29,11 @@ impl Service {
     /// writer's indexes found lately. The warnings are decided while no other decision runs, with
     /// the pairs the task was told so far, recorded or not yet, so each is told once a task. A
     /// store that cannot be read gives nothing, and the error is logged.
-    pub(crate) fn post_edit(&self, event: &Event, signatures: &Signatures) -> Answer {
+    pub(crate) fn post_edit(
+        &self,
+        event: &Event,
+        (signatures, told): (&Signatures, &Told),
+    ) -> Answer {
         let Some(path) = event.edited_file() else {
             return Answer::default();
         };
@@ -59,7 +65,7 @@ impl Service {
                 return Ok(Answer::default());
             };
             let mut so_far = task_so_far(queries, task_id, facts.edited.node)?;
-            let warned = self.told.deciding(task_id, |told| {
+            let warned = told.deciding(task_id, |told| {
                 so_far.warned.extend(told.iter().copied());
                 warnings_after_edit(&facts, &so_far, &self.edits.warnings, mode)
             });
@@ -69,9 +75,14 @@ impl Service {
                 .as_deref()
                 .filter(|_| !rows.is_empty())
                 .map(|text| text_record(event, Some(task_id), text));
+            let claim = warned
+                .text
+                .is_some()
+                .then(|| Claim::Warned(task_id, pairs_of(&warned)));
             Ok(Answer {
                 text: warned.text,
                 given: given.map(|text| Given::Warnings(rows, text)),
+                claim,
             })
         });
         answered.unwrap_or_else(|error| {

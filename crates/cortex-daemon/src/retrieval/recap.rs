@@ -7,6 +7,7 @@ use cortex_core::Event;
 use cortex_retrieve::recap;
 
 use super::{Answer, Service};
+use crate::claim::Claim;
 use crate::given::{Given, text_record};
 use crate::recapped::Recapped;
 
@@ -35,6 +36,7 @@ impl Service {
             Ok(Answer {
                 text: Some(text),
                 given: Some(Given::Injection(given)),
+                claim: Some(Claim::Recapped(event.session_id.clone(), event.event_id)),
             })
         });
         answered.unwrap_or_else(|error| {

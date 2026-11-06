@@ -18,6 +18,7 @@
 //! Errors are `anyhow` errors with context, as a binary's are: this crate is the daemon process's
 //! top level, and its errors are reported, never matched.
 
+mod claim;
 mod given;
 mod global_ignore;
 mod graph;

@@ -24,15 +24,14 @@ use interprocess::local_socket::traits::tokio::Listener as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
 
+use crate::claim::{Claim, Claims};
 use crate::given::{Given, recorded};
 use crate::graph::Snapshot;
 use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
-use crate::recapped::Recapped;
 use crate::retrieval::Service;
 use crate::signatures::Signatures;
-use crate::stopped::Stopped;
 use crate::worktree::Worktree;
 
 /// Most connections served at once. Hooks and commands hold a connection for one exchange, so more
@@ -56,10 +55,9 @@ pub(crate) struct Server {
     worktree: Arc<Worktree>,
     /// The signature changes the writer's indexes found lately, for an edit's warnings.
     signatures: Arc<Signatures>,
-    /// The compactions each recent session's agent reported, and those recapped.
-    recapped: Arc<Recapped>,
-    /// The tasks strict mode gave a reason to go on.
-    stopped: Arc<Stopped>,
+    /// What answers claimed: the pairs each task was warned of, the compactions recapped, the
+    /// tasks given strict mode's reason.
+    claims: Claims,
     /// What answers with text, once the first index is done.
     service: Arc<OnceLock<Service>>,
     /// How long each hook's latest requests took to handle.
@@ -151,6 +149,41 @@ impl Broken {
     }
 }
 
+/// An answer with text, worked out: its reply, its hook, what to record of it, and what to undo
+/// when its text does not reach the hook.
+struct Answered {
+    /// The reply.
+    body: ResponseBody,
+    /// The hook it answers.
+    hook: Option<HookKind>,
+    /// What the writer records of it.
+    given: Option<Given>,
+    /// What to undo when its text does not reach the hook.
+    undo: Undo,
+}
+
+impl Answered {
+    /// The refusal `body` of a request from hook `hook`: nothing recorded, nothing to undo.
+    fn refused(body: ResponseBody, hook: HookKind) -> Self {
+        Self {
+            body,
+            hook: Some(hook),
+            given: None,
+            undo: Undo::default(),
+        }
+    }
+}
+
+/// What an answer whose text never reaches its hook leaves to undo: the claim working it out made,
+/// and a stop held back until its reason arrived, which happened after all.
+#[derive(Debug, Default)]
+struct Undo {
+    /// What working the answer out claimed.
+    claim: Option<Claim>,
+    /// The stop the answer held back.
+    stop: Option<Event>,
+}
+
 impl Server {
     /// A server for a daemon started now, whose writer reads `inbox`, answering from the graph of
     /// `snapshot`, the uncommitted diff of `worktree` and the signature changes `signatures` holds
@@ -166,8 +199,7 @@ impl Server {
             snapshot,
             worktree,
             signatures,
-            recapped: Arc::default(),
-            stopped: Arc::default(),
+            claims: Claims::default(),
             service,
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
@@ -278,6 +310,7 @@ impl Server {
         let Received { request, began } = received;
         let is_shutdown = request.body == RequestBody::Shutdown;
         let mut given = None;
+        let mut undo = Undo::default();
         let mut reads_until_ms = None;
         let (body, hook) = match request.body {
             RequestBody::Status => (ResponseBody::Status(self.report()), None),
@@ -298,9 +331,9 @@ impl Server {
             } => {
                 reads_until_ms = answer_by_ms;
                 let asked = (Asked::WorkOrder, answer_by_ms);
-                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
-                given = answered;
-                (body, hook)
+                let answered = self.answer_with_text(*event, asked).await;
+                (given, undo) = (answered.given, answered.undo);
+                (answered.body, answered.hook)
             }
             RequestBody::Primer {
                 event,
@@ -308,9 +341,9 @@ impl Server {
             } => {
                 reads_until_ms = answer_by_ms;
                 let asked = (Asked::Primer, answer_by_ms);
-                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
-                given = answered;
-                (body, hook)
+                let answered = self.answer_with_text(*event, asked).await;
+                (given, undo) = (answered.given, answered.undo);
+                (answered.body, answered.hook)
             }
             RequestBody::PostEdit {
                 event,
@@ -318,9 +351,9 @@ impl Server {
             } => {
                 reads_until_ms = answer_by_ms;
                 let asked = (Asked::Warnings, answer_by_ms);
-                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
-                given = answered;
-                (body, hook)
+                let answered = self.answer_with_text(*event, asked).await;
+                (given, undo) = (answered.given, answered.undo);
+                (answered.body, answered.hook)
             }
             RequestBody::ReadHint {
                 event,
@@ -328,9 +361,9 @@ impl Server {
             } => {
                 reads_until_ms = answer_by_ms;
                 let asked = (Asked::ReadHint, answer_by_ms);
-                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
-                given = answered;
-                (body, hook)
+                let answered = self.answer_with_text(*event, asked).await;
+                (given, undo) = (answered.given, answered.undo);
+                (answered.body, answered.hook)
             }
             RequestBody::StopReason {
                 event,
@@ -338,9 +371,9 @@ impl Server {
             } => {
                 reads_until_ms = answer_by_ms;
                 let asked = (Asked::StopReason, answer_by_ms);
-                let (body, hook, answered) = self.answer_with_text(*event, asked).await;
-                given = answered;
-                (body, hook)
+                let answered = self.answer_with_text(*event, asked).await;
+                (given, undo) = (answered.given, answered.undo);
+                (answered.body, answered.hook)
             }
             RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
             RequestBody::Event { event } => {
@@ -356,7 +389,7 @@ impl Server {
                     // A compaction is heard of as it is reported, before the writer records it:
                     // the start that follows may come first.
                     if hook == HookKind::Compact {
-                        self.recapped.compacted(&event.session_id);
+                        self.claims.recapped.compacted(&event.session_id);
                     }
                     hook == HookKind::PreTool || self.inbox.push_event(*event)
                 };
@@ -389,6 +422,11 @@ impl Server {
                 self.inbox.push_given(given, now_ms());
             }
         }
+        // Text that did not reach its hook gives back what it claimed, and a stop it held back is
+        // recorded: the agent stopped after all.
+        if holds_text && (answered.is_err() || is_past(reads_until_ms, now_ms())) {
+            self.undo(undo);
+        }
         if is_shutdown {
             // A stop holds whether or not the client stays for its acknowledgement.
             self.inbox.stop();
@@ -417,7 +455,7 @@ impl Server {
         &self,
         event: Event,
         (asked, answer_by_ms): (Asked, Option<i64>),
-    ) -> (ResponseBody, Option<HookKind>, Option<Given>) {
+    ) -> Answered {
         let (hook, is_probe) = (event.hook, event.is_probe);
         let expected = match asked {
             Asked::WorkOrder => HookKind::Prompt,
@@ -427,10 +465,9 @@ impl Server {
             Asked::StopReason => HookKind::Stop,
         };
         if hook != expected {
-            return (
+            return Answered::refused(
                 error("the request's event is of another hook than it asks for"),
-                Some(hook),
-                None,
+                hook,
             );
         }
         // The moment before a tool runs is answered, not recorded, as for an event request. A stop
@@ -440,23 +477,21 @@ impl Server {
         if is_probe {
             self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
         } else if hook != HookKind::PreTool && !is_stop && !self.inbox.push_event(event.clone()) {
-            return (
+            return Answered::refused(
                 error("the daemon is stopping and records no more events"),
-                Some(hook),
-                None,
+                hook,
             );
         }
         let stop = (is_stop && !is_probe).then(|| event.clone());
         let signatures = Arc::clone(&self.signatures);
-        let recapped = Arc::clone(&self.recapped);
-        let stopped = Arc::clone(&self.stopped);
+        let claims = self.claims.clone();
         let mut answer = self
             .with_service(move |service, graph, uncommitted| match asked {
                 Asked::WorkOrder => service.prompt(&event, graph, uncommitted),
-                Asked::Primer => service.primer(&event, graph, &recapped),
-                Asked::Warnings => service.post_edit(&event, &signatures),
+                Asked::Primer => service.primer(&event, graph, &claims.recapped),
+                Asked::Warnings => service.post_edit(&event, (&signatures, &claims.told)),
                 Asked::ReadHint => service.read_hint(&event),
-                Asked::StopReason => service.stop_reason(&event, &stopped),
+                Asked::StopReason => service.stop_reason(&event, &claims.stopped),
             })
             .await
             .unwrap_or_default();
@@ -474,18 +509,47 @@ impl Server {
                     now_ms(),
                 );
             }
+            if let Some(claim) = answer.claim.take() {
+                self.claims.release(&claim);
+            }
         }
-        if let Some(stop) = stop.filter(|_| answer.text.is_none())
+        // A stop given a reason is held back until the reason reaches its hook.
+        let (stop, held_stop) = if answer.text.is_none() {
+            (stop, None)
+        } else {
+            (None, stop)
+        };
+        if let Some(stop) = stop
             && !self.inbox.push_event(stop)
         {
-            return (
+            return Answered::refused(
                 error("the daemon is stopping and records no more events"),
-                Some(hook),
-                None,
+                hook,
             );
         }
         let given = answer.given.filter(|_| !is_probe);
-        (ResponseBody::Reply { text: answer.text }, Some(hook), given)
+        Answered {
+            body: ResponseBody::Reply { text: answer.text },
+            hook: Some(hook),
+            given,
+            undo: Undo {
+                claim: answer.claim.filter(|_| !is_probe),
+                stop: held_stop,
+            },
+        }
+    }
+
+    /// Undoes `undo`: gives back its claim and records the stop it held back.
+    fn undo(&self, undo: Undo) {
+        if let Some(claim) = undo.claim {
+            self.claims.release(&claim);
+        }
+        if let Some(stop) = undo.stop
+            && !self.inbox.push_event(stop)
+        {
+            self.inbox
+                .note_error("a stop was not recorded: the daemon is stopping", now_ms());
+        }
     }
 
     /// What the engine finds for `query` without the gate, at most `limit` files (1 to 5): an

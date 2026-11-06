@@ -57,7 +57,11 @@ impl Service {
             let given = text
                 .as_deref()
                 .map(|text| Given::Injection(text_record(event, task_id, text)));
-            Ok(Answer { text, given })
+            Ok(Answer {
+                text,
+                given,
+                claim: None,
+            })
         });
         answered.unwrap_or_else(|error| {
             tracing::warn!(error = %format!("{error:#}"), "a read's hint failed");

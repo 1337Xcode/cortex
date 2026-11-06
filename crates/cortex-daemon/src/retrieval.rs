@@ -32,9 +32,9 @@ use cortex_store::{
     InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError, TaskRow,
 };
 
+use crate::claim::Claim;
 use crate::given::{Given, text_record};
 use crate::recapped::Recapped;
-use crate::told::Told;
 
 /// How long a prompt's spreading may run before it stops where it is: well inside the
 /// `UserPromptSubmit` hook's hard timeout of 1 s, with room for the listing and the rendering.
@@ -61,8 +61,6 @@ pub(crate) struct Service {
     holdout_share: f64,
     /// What an edit's warnings are worked out with.
     edits: EditSettings,
-    /// The pairs each recent task was warned of.
-    told: Told,
     /// Readers not in use.
     readers: Mutex<Vec<Reader>>,
 }
@@ -74,6 +72,8 @@ pub(crate) struct Answer {
     pub(crate) text: Option<String>,
     /// What the writer records of it.
     pub(crate) given: Option<Given>,
+    /// What working it out claimed, given back when the text does not reach the agent.
+    pub(crate) claim: Option<Claim>,
 }
 
 /// What an edit's warnings are worked out with.
@@ -122,7 +122,6 @@ impl Service {
             max_file_bytes: settings.max_file_bytes,
             holdout_share: settings.holdout_share,
             edits: settings.edits,
-            told: Told::default(),
             readers: Mutex::new(Vec::new()),
         }
     }
@@ -179,6 +178,7 @@ impl Service {
             Ok(Answer {
                 text,
                 given: injection.map(Given::Injection),
+                claim: None,
             })
         });
         answered.unwrap_or_else(|error| {
@@ -210,6 +210,7 @@ impl Service {
             Ok(Answer {
                 text: Some(text),
                 given: Some(Given::Injection(given)),
+                claim: None,
             })
         });
         answered.unwrap_or_else(|error| {
