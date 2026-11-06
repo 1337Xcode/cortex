@@ -119,6 +119,7 @@ mod tests {
                 used,
             },
             shown: None,
+            warnings: None,
         }
     }
 

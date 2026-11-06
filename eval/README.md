@@ -66,6 +66,11 @@ summary weighs each session's text tokens by its turns against the input the ses
 most Cortex can have added to them, since a text that arrives later in a session is read fewer
 times.
 
+The warnings every session's edits got are counted by kind, with how many their tasks' ends
+labelled and how many were resolved: the file a warning named was read or edited after it. The
+warnings' precision is the share of the labelled ones that were resolved, with its interval
+resampling whole tasks.
+
 Precision is the share of the measured sessions' work orders that reached the agent, were labelled
 when their task ended, and were labelled used (the task edited one of the work order's first three
 files, or read one and edited a file that names it). Every share comes with a 95% percentile

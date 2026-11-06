@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::run::TaskRun;
 use crate::shown::Shown;
 use crate::texts::{Texts, add_texts, share_of_input};
+use crate::warned::{Warnings, add_warnings, all_kinds};
 
 /// A run that could not complete: its task and number. Why is in the runner's output, which names
 /// local paths and stays out of the results.
@@ -60,6 +61,10 @@ pub(crate) struct Summary {
     pub(crate) texts: Option<Texts>,
     /// The most those texts can have added to those sessions' input, as a share of it.
     pub(crate) texts_share: Option<f64>,
+    /// The warnings every run that recorded them got, by kind; none when no run did.
+    pub(crate) warnings: Option<Warnings>,
+    /// The share of the labelled warnings that were resolved, over the runs that recorded them.
+    pub(crate) warning_precision: Option<Interval>,
 }
 
 /// What the completed `runs` add up to, with the runs that could not complete, `incomplete`.
@@ -136,6 +141,16 @@ pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
                 Some(add_texts(sum.unwrap_or_default(), texts))
             }),
         texts_share: share_of_input(&recorded),
+        warnings: runs
+            .iter()
+            .filter_map(|run| run.warnings.as_ref())
+            .fold(None, |sum: Option<Warnings>, warnings| {
+                Some(add_warnings(sum.unwrap_or_default(), warnings))
+            }),
+        warning_precision: ratio_interval(&by_task(runs, &|run| {
+            let warned = run.warnings.as_ref().map(all_kinds).unwrap_or_default();
+            (warned.resolved, warned.labelled)
+        })),
     }
 }
 
@@ -223,8 +238,34 @@ pub(crate) fn lines(summary: &Summary) -> Vec<String> {
             },
         ),
         texts_line(summary),
+        warnings_line(summary, &share),
         format!("agents: {}", summary.agents.join("; ")),
     ]
+}
+
+/// The line saying what warnings the edits got and how precise they were, `share` writing the
+/// precision.
+fn warnings_line(summary: &Summary, share: &dyn Fn(Option<Interval>) -> String) -> String {
+    let Some(warnings) = &summary.warnings else {
+        return "warnings after edits: not recorded".to_owned();
+    };
+    if warnings.is_empty() {
+        return "warnings after edits: none".to_owned();
+    }
+    let kinds: Vec<String> = warnings
+        .iter()
+        .map(|(kind, warned)| {
+            format!(
+                "{kind} {} ({} labelled, {} resolved)",
+                warned.given, warned.labelled, warned.resolved
+            )
+        })
+        .collect();
+    format!(
+        "warnings after edits: {}; precision: {}",
+        kinds.join(", "),
+        share(summary.warning_precision)
+    )
 }
 
 /// The line saying what Cortex's texts to the agents came to.
@@ -282,6 +323,7 @@ mod tests {
             is_success,
             given,
             shown: None,
+            warnings: None,
         }
     }
 
@@ -455,6 +497,51 @@ mod tests {
             lines(&before)
                 .contains(&"Cortex's texts that reached the agents: not recorded".to_owned())
         );
+    }
+
+    /// The warnings add up over the runs that recorded them, worked by hand: task a's run got two
+    /// call-site warnings, both resolved; task b's run a test warning, not resolved, and a co-change
+    /// warning whose task had not ended. Call sites 2 (2 labelled, 2 resolved), co-change 1 (0
+    /// labelled), tests 1 (1 labelled, 0 resolved); precision 2 resolved of 3 labelled. A run from
+    /// before the warnings were recorded counts in no sum, and alone it says so.
+    #[test]
+    fn the_warnings_add_up() {
+        let warned = |given, labelled, resolved| crate::warned::Warned {
+            given,
+            labelled,
+            resolved,
+        };
+        let of = |task: &str, warnings: Option<Warnings>| TaskRun {
+            task: task.to_owned(),
+            warnings,
+            ..run(true, (1, 1, 1), Given::default())
+        };
+        let runs = [
+            of(
+                "a",
+                Some(Warnings::from([("call_site".to_owned(), warned(2, 2, 2))])),
+            ),
+            of(
+                "b",
+                Some(Warnings::from([
+                    ("cochange".to_owned(), warned(1, 0, 0)),
+                    ("test".to_owned(), warned(1, 1, 0)),
+                ])),
+            ),
+            of("c", None),
+        ];
+        let summary = summary(&runs, &[]);
+        assert!(
+            summary
+                .warning_precision
+                .is_some_and(|precision| (precision.value - 2.0 / 3.0).abs() < 1e-9)
+        );
+        assert!(lines(&summary).iter().any(|line| line.starts_with(
+            "warnings after edits: call_site 2 (2 labelled, 2 resolved), cochange 1 (0 labelled, 0 \
+             resolved), test 1 (1 labelled, 0 resolved); precision: 0.67"
+        )));
+        let before = super::summary(&runs[2..], &[]);
+        assert!(lines(&before).contains(&"warnings after edits: not recorded".to_owned()));
     }
 
     /// With no work order labelled there is no precision, said as none.

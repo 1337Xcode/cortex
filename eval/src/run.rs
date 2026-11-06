@@ -24,6 +24,7 @@ use crate::snapshot::Snapshot;
 use crate::task::Task;
 use crate::testbed::Testbed;
 use crate::texts::{Texts, texts_of};
+use crate::warned::{Warnings, warnings_of};
 
 /// How long a copy's first index and graph may take before the run gives up.
 const READY_WITHIN: Duration = Duration::from_secs(900);
@@ -86,6 +87,10 @@ pub(crate) struct TaskRun {
     /// checked it.
     #[serde(default)]
     pub(crate) shown: Option<Shown>,
+    /// The warnings every session's edits got, by kind, as their tasks' ends labelled them; none in
+    /// results from before the runner recorded them.
+    #[serde(default)]
+    pub(crate) warnings: Option<Warnings>,
 }
 
 /// Runs `task` in a copy of `testbed`, from `from` when given, as run number `run`.
@@ -123,6 +128,7 @@ pub(crate) fn run_task(
         Some(measured) => given(&repo, measured)?,
         None => Given::default(),
     };
+    let warnings = warnings_given(&repo, &sessions)?;
     uninstall((&repo, &home), &folder, settings)?;
     Ok(TaskRun {
         task: task.id.clone(),
@@ -133,6 +139,7 @@ pub(crate) fn run_task(
         is_success,
         given,
         shown: Some(shown),
+        warnings: Some(warnings),
     })
 }
 
@@ -393,6 +400,33 @@ fn texts_given(repo: &Path, session: Option<&str>) -> anyhow::Result<Option<Text
     let id = Identifier::new(session).context("reading the session id")?;
     let rows = reader.queries().injections_of_session(&id)?;
     Ok(Some(texts_of(rows.iter().map(|row| &row.record))))
+}
+
+/// The warnings the edits of every session of `sessions` in `repo` got, by kind, as their tasks'
+/// ends labelled them.
+///
+/// # Errors
+///
+/// The store cannot be read.
+fn warnings_given(repo: &Path, sessions: &[Session]) -> anyhow::Result<Warnings> {
+    let reader = Reader::open(&repo.join(".cortex"), 0).context("opening the store")?;
+    let queries = reader.queries();
+    let mut rows = Vec::new();
+    for session in sessions
+        .iter()
+        .filter_map(|session| session.session_id.as_deref())
+    {
+        let id = Identifier::new(session).context("reading the session id")?;
+        for task in queries.tasks_of_session(&id)? {
+            let warnings = queries.warnings_of_task(task.record.task_id)?;
+            rows.extend(
+                warnings
+                    .into_iter()
+                    .map(|row| (row.record.kind, row.resolved)),
+            );
+        }
+    }
+    Ok(warnings_of(rows))
 }
 
 /// Whether `task`'s check passes in `repo`, its `{checks}` taken to the folder `checks`, its

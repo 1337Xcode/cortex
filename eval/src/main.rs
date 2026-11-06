@@ -16,6 +16,7 @@ mod snapshot;
 mod task;
 mod testbed;
 mod texts;
+mod warned;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
