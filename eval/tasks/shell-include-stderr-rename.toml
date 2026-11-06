@@ -1,0 +1,8 @@
+id = "shell-include-stderr-rename"
+testbed = "serena"
+kind = "rename a parameter its callers pass"
+warmups = ["Read `execute_shell_command` in serena's shell utilities and explain what each of its parameters does. Do not change any files."]
+prompt = "Rename the `capture_stderr` parameter of `execute_shell_command` in `src/serena/util/shell.py` to `include_stderr`. Do not keep the old name as an alias. Every call to it in the package that passes the flag must use the new name."
+check = ["python", "{checks}/shell-include-stderr-rename.py"]
+touches = ["src/serena/util/shell.py", "src/serena/config/client_setup.py", "src/serena/repl/api/shell_api.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]

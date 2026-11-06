@@ -1,0 +1,8 @@
+id = "glob-braces-literal"
+testbed = "serena"
+kind = "change a behaviour its tests assert"
+warmups = ["Read how serena's `GlobMatcher` expands brace patterns in globs and explain what happens to a malformed one. Do not change any files."]
+prompt = "In serena's `GlobMatcher`, a glob whose braces are malformed (empty braces such as `src/{}.py`, or an unmatched brace) should no longer raise an error: `_expand_braces` should return the pattern unchanged as its only pattern, so it is matched literally. Valid brace expansion must work as before. Keep the module's tests in line with the new behaviour."
+check = ["python", "{checks}/glob-braces-literal.py"]
+touches = ["src/serena/util/text_utils.py", "test/serena/test_text_utils.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]
