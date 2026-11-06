@@ -156,6 +156,12 @@ pub(crate) const EVENTS_OF_TASK: &str = "SELECT seq, task_id, session_id, ts, ki
 /// [`EVENTS_OF_TASK`].
 pub(crate) const EVENTS_OF_SESSION: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, \
      path, range_start, range_end, meta FROM events WHERE session_id = ?1 ORDER BY ts, seq";
+/// A session's reads of one file's node and its compactions, the latest first, at most ?3 of them;
+/// the columns are those of [`EVENTS_OF_TASK`]. The session's rows are found by their index.
+pub(crate) const READS_IN_SESSION: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, \
+     path, range_start, range_end, meta FROM events WHERE session_id = ?1 \
+     AND ((kind = 'read' AND node_id = ?2) OR kind = 'compact') \
+     ORDER BY ts DESC, seq DESC LIMIT ?3";
 
 /// The edits of the tasks of session ?1, its subagents' edits included, newest first by time and
 /// then by number, at most ?2 of them; the columns are those of [`EVENTS_OF_TASK`]. Only the edit

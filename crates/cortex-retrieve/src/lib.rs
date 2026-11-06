@@ -19,6 +19,7 @@ mod exploration;
 mod features;
 mod gate;
 mod graph;
+mod hints;
 mod items;
 mod lexical;
 mod node_hash;
@@ -46,6 +47,7 @@ pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
 pub use features::{Found, GATED_FILES, MASSED_FILES, features_of};
 pub use gate::{AGREEING_KINDS, LEXICAL_BAR, Rule, Shut, Verdict, decide};
 pub use graph::{Graph, GraphError, LinkInput, NodeInput, Standing, Weighing};
+pub use hints::{HINTED_ABOVE_LINES, HintQuery, MAX_HINT_TOKENS, MAX_HINTED_PARTS, read_hint};
 pub use items::{LOOKED_AT_PER_LISTED, Listed, Listing, listed};
 pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};
 pub use pipeline::{

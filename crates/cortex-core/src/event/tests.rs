@@ -215,3 +215,34 @@ fn only_a_successful_edit_names_its_file() -> TestResult {
     assert_eq!(edits, ["edit", "write", "multi_edit", "apply_patch"]);
     Ok(())
 }
+
+/// The file a read is about to read: the moment before a read names `calc/ops.py`; the read's
+/// result, an edit about to run and a read naming no file inside the repository name none.
+#[test]
+fn only_the_moment_before_a_read_names_its_file() -> TestResult {
+    let before = Event {
+        hook: HookKind::PreTool,
+        tool: Some(ToolKind::Read),
+        ..full_event()?
+    };
+    assert_eq!(
+        before.file_to_read().map(RepoPath::as_str),
+        Some("calc/ops.py")
+    );
+    let after = Event {
+        hook: HookKind::PostTool,
+        ..before.clone()
+    };
+    assert_eq!(after.file_to_read(), None);
+    let edit = Event {
+        tool: Some(ToolKind::Edit),
+        ..before.clone()
+    };
+    assert_eq!(edit.file_to_read(), None);
+    let outside = Event {
+        tool_target: Some(ToolTarget::default()),
+        ..before
+    };
+    assert_eq!(outside.file_to_read(), None);
+    Ok(())
+}

@@ -272,8 +272,8 @@ fn probed(answer: Result<Answer, ClientError>, asks_for_text: bool) -> Result<()
 
 /// The request the hook makes of the daemon with `event` at the hook `entry`: the text Cortex
 /// gives the agent there, where it gives some (the primer at a session's start, the work order at
-/// a prompt, the warnings after an edit), saying when the hook stops reading the answer; the event
-/// alone otherwise.
+/// a prompt, the warnings after an edit, the hint before a read), saying when the hook stops
+/// reading the answer; the event alone otherwise.
 fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
     // The event's time is the clock at the hook's start, from which its deadline counts.
     let wait = entry.hard_timeout.saturating_sub(EXIT_MARGIN);
@@ -292,6 +292,12 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
             event,
             answer_by_ms,
         },
+        HookKind::PreTool if entry.gives_context && event.file_to_read().is_some() => {
+            RequestBody::ReadHint {
+                event,
+                answer_by_ms,
+            }
+        }
         HookKind::PostTool if entry.gives_context && event.edited_file().is_some() => {
             RequestBody::PostEdit {
                 event,
@@ -475,7 +481,8 @@ mod tests {
 
     /// After a successful edit Claude Code's `PostToolUse` asks for the edit's warnings, to be read
     /// by 1,485 ms (485 ms after the event's 1,000); after a read it reports the event alone, and so
-    /// does `PostToolUseFailure`, whose edit failed.
+    /// does `PostToolUseFailure`, whose edit failed. Before a read, `PreToolUse` asks for its
+    /// hint.
     #[test]
     fn an_edit_asks_for_its_warnings() -> Result<(), Box<dyn std::error::Error>> {
         use cortex_core::ToolKind;
@@ -504,6 +511,19 @@ mod tests {
             request_of(entry("PostToolUseFailure")?, failed.clone()),
             RequestBody::Event {
                 event: Box::new(failed)
+            }
+        );
+        // Before a read, by 285 ms after the event's 1,000: its hint.
+        let before = Event {
+            hook: HookKind::PreTool,
+            tool_result: None,
+            ..tool_result(ToolKind::Read, true)?
+        };
+        assert_eq!(
+            request_of(entry("PreToolUse")?, before.clone()),
+            RequestBody::ReadHint {
+                event: Box::new(before),
+                answer_by_ms: Some(1_285),
             }
         );
         Ok(())

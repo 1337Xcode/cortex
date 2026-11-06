@@ -90,6 +90,8 @@ enum Asked {
     Primer,
     /// The warnings an edit gets.
     Warnings,
+    /// The hint a read gets, before it runs.
+    ReadHint,
 }
 
 /// A request as read, with when the first byte of its frame arrived.
@@ -310,6 +312,15 @@ impl Server {
                 given = answered;
                 (body, hook)
             }
+            RequestBody::ReadHint {
+                event,
+                answer_by_ms,
+            } => {
+                reads_until_ms = answer_by_ms;
+                let asked = (Asked::ReadHint, answer_by_ms);
+                let (body, hook, _) = self.answer_with_text(*event, asked).await;
+                (body, hook)
+            }
             RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
             RequestBody::Event { event } => {
                 let hook = event.hook;
@@ -386,6 +397,7 @@ impl Server {
             Asked::WorkOrder => HookKind::Prompt,
             Asked::Primer => HookKind::SessionStart,
             Asked::Warnings => HookKind::PostTool,
+            Asked::ReadHint => HookKind::PreTool,
         };
         if hook != expected {
             return (
@@ -396,7 +408,8 @@ impl Server {
         }
         if is_probe {
             self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
-        } else if !self.inbox.push_event(event.clone()) {
+        } else if hook != HookKind::PreTool && !self.inbox.push_event(event.clone()) {
+            // The moment before a tool runs is answered, not recorded, as for an event request.
             return (
                 error("the daemon is stopping and records no more events"),
                 Some(hook),
@@ -409,6 +422,7 @@ impl Server {
                 Asked::WorkOrder => service.prompt(&event, graph, uncommitted),
                 Asked::Primer => service.primer(&event, graph),
                 Asked::Warnings => service.post_edit(&event, &signatures),
+                Asked::ReadHint => service.read_hint(&event),
             })
             .await
             .unwrap_or_default();

@@ -105,6 +105,16 @@ impl Event {
         }
         self.tool_target.as_ref()?.path.as_ref()
     }
+
+    /// The file this event says a tool is about to read: the moment before a read runs, naming a
+    /// file inside the repository.
+    #[must_use]
+    pub fn file_to_read(&self) -> Option<&RepoPath> {
+        if self.hook != HookKind::PreTool || self.tool != Some(ToolKind::Read) {
+            return None;
+        }
+        self.tool_target.as_ref()?.path.as_ref()
+    }
 }
 
 /// What a tool call aimed at.

@@ -2,9 +2,9 @@
 //! its exit, for each event the budgets name, on recorded Claude Code payloads, against a daemon
 //! running on a medium repository (the index benchmark's 10,000 synthetic files, committed to git)
 //! once its graph is built, so that a session's start gets the primer and the prompt a work order,
-//! and an edit that changes a function's signature its warnings, as checked before they are
-//! measured (every measured edit does the same work; its warnings, told once a task, are new only
-//! the first time); the cold start, a hook given no input, which ends before
+//! an edit that changes a function's signature its warnings, and a read of the file the session
+//! read whole already its hint, as checked before they are measured (every measured edit does the
+//! same work; its warnings, told once a task, are new only the first time); the cold start, a hook given no input, which ends before
 //! it asks the daemon anything; and each event again from a repository whose daemon is down, so
 //! that the hook tries it, starts one and exits. Then retrieval alone: the prompt's work order
 //! asked of the running daemon directly, with no hook process to start, each from a session of its
@@ -28,12 +28,13 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use common::git::{commit, git};
-use common::{Daemon, graph_of, isolate, payloads, stop_late_daemon};
+use common::{Daemon, TestResult, graph_of, isolate, payloads, stop_late_daemon, wait_for};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
 use cortex_core::{
-    Agent, Event, HookKind, Identifier, RepoId, RunFiles, Ulid, UserFolder, canonical_root,
-    create_private_folder, open_private_file,
+    Agent, ContentHash, Event, HookKind, Identifier, RepoId, RepoPath, RunFiles, Ulid, UserFolder,
+    canonical_root, create_private_folder, open_private_file,
 };
+use cortex_store::Reader;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion, SamplingMode, criterion_group, criterion_main};
 
@@ -217,6 +218,13 @@ fn printed(repo: &Path, home: &Path, event: &str, payload: &[u8]) -> String {
     #[allow(clippy::expect_used)]
     let output = child.wait_with_output().expect("waiting for the hook");
     String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// The content hash the store under `repo` holds for `calc/ops.py`, if it holds the file.
+fn stored_hash(repo: &Path) -> TestResult<Option<ContentHash>> {
+    let reader = Reader::open(&repo.join(".cortex"), 0)?;
+    let row = reader.queries().file(&RepoPath::new("calc/ops.py")?)?;
+    Ok(row.and_then(|row| row.file.content_hash))
 }
 
 /// A repository with a running daemon, and the user's home folder both use.
@@ -442,6 +450,20 @@ fn hooks(criterion: &mut Criterion) {
         said.contains("add's signature changed"),
         "the edit was told: {said}"
     );
+    // The read, once the session has read the edited file whole, is told it read it already.
+    let edited = ContentHash::of(OPS_PY.replace(old, new).as_bytes());
+    #[allow(clippy::expect_used)]
+    wait_for(|| Ok(stored_hash(repo)? == Some(edited))).expect("the edit indexed");
+    printed(
+        repo,
+        home,
+        "PostToolUse",
+        &payload("post-tool-use-read.json", repo),
+    );
+    let read = payload("pre-tool-use-read.json", repo);
+    #[allow(clippy::expect_used)]
+    wait_for(|| Ok(printed(repo, home, "PreToolUse", &read).contains("You read lines 1-")))
+        .expect("the read told it was read already");
     let mut group = criterion.benchmark_group("hooks");
     single_runs(&mut group);
     for (function, event, fixture) in EVENTS {

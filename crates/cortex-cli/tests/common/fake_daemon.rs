@@ -224,7 +224,9 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
                     ResponseBody::Reply { text: None }
                 }
                 // As a daemon with nothing to say answers a request for text.
-                (_, RequestBody::PostEdit { .. }) => ResponseBody::Reply { text: None },
+                (_, RequestBody::PostEdit { .. } | RequestBody::ReadHint { .. }) => {
+                    ResponseBody::Reply { text: None }
+                }
                 _ => ResponseBody::Ack,
             };
             let answer = Response {
@@ -264,7 +266,7 @@ fn indexing() -> StatusReport {
 }
 
 /// The kind of each request, for comparing: `hello`, `event`, `retrieve`, `primer`, `post_edit`,
-/// `where`, `status` or `shutdown`.
+/// `read_hint`, `where`, `status` or `shutdown`.
 pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
     requests
         .iter()
@@ -274,6 +276,7 @@ pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
             RequestBody::Retrieve { .. } => "retrieve",
             RequestBody::Primer { .. } => "primer",
             RequestBody::PostEdit { .. } => "post_edit",
+            RequestBody::ReadHint { .. } => "read_hint",
             RequestBody::Where { .. } => "where",
             RequestBody::Status => "status",
             RequestBody::Shutdown => "shutdown",

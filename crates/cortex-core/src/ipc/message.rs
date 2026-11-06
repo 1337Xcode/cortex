@@ -63,6 +63,17 @@ pub enum RequestBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answer_by_ms: Option<i64>,
     },
+    /// Answer the moment before a read with the hint the read gets, if any, recording nothing
+    /// (protocol 4.0 added it).
+    ReadHint {
+        /// The read's event: the moment before a tool reads a file.
+        event: Box<Event>,
+        /// When the hook stops reading the answer, in UTC milliseconds by the wall clock, as for
+        /// `Retrieve`: a hint that cannot reach the hook by then is not sent. None from a client
+        /// that waits as long as it takes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_by_ms: Option<i64>,
+    },
     /// Answer a question with what the engine finds for it without the gate, as `cortex where`
     /// asks: the files, their code and their reasons, and what the gate would have said.
     Where {

@@ -9,6 +9,7 @@
 //! raised it, and the recent precision it last found, from the store. Before the graph is built, and while the store has no mode (its
 //! first index not done), every answer is silent.
 
+mod hints;
 mod warnings;
 
 use std::path::PathBuf;

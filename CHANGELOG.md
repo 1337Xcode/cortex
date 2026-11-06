@@ -59,9 +59,12 @@ All notable changes to this project are documented in this file. The format is b
   once a task; and a file that usually changes with it in the repository's history or in earlier
   tasks, when the task has not touched it. At most three warnings an edit, strongest first, each
   file named at most once a task, within 250 tokens; `warnings.max_per_edit`,
-  `warnings.cochange_min_confidence` and `warnings.cochange_min_count` set the limits. The hook and
-  the daemon now speak protocol 3.0: a hook and a daemon of different Cortex versions are
-  replaced as before.
+  `warnings.cochange_min_confidence` and `warnings.cochange_min_count` set the limits.
+- Before Claude Code reads a file, it is told when the session already read those lines since its
+  context was last compacted and the file has not changed since, or, in a file over 600 lines,
+  which parts of it the task's work order pointed at, each line checked against the file on disk,
+  within 120 tokens. A tiny repository gets no hint. The hook and the daemon now speak protocol
+  4.0: a hook and a daemon of different Cortex versions are replaced as before.
 - When a task ends, each warning its edits got is marked resolved if the agent then read or edited
   the file it named. `cortex status` and `cortex receipts` show the share of warnings followed up
   this way.

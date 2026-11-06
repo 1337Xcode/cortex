@@ -398,3 +398,28 @@ fn an_edit_s_request_reads_back_as_written() -> TestResult {
     assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, edit);
     Ok(())
 }
+
+/// A read's request for its hint, as the hook writes it before a read: its type, its event and until
+/// when the hook reads the answer, read back as written.
+#[test]
+fn a_read_s_request_reads_back_as_written() -> TestResult {
+    let read = Request {
+        request_id: 2,
+        body: RequestBody::ReadHint {
+            event: Box::new(event_of(HookKind::PreTool)?),
+            answer_by_ms: Some(1_700_000_000_040),
+        },
+    };
+    let frame = encode(&read)?;
+    let json = std::str::from_utf8(frame.get(LENGTH_PREFIX_BYTES..).ok_or("a body")?)?;
+    assert!(
+        json.starts_with(r#"{"request_id":2,"body":{"type":"read_hint","event":{"#),
+        "{json}"
+    );
+    assert!(
+        json.ends_with(r#","answer_by_ms":1700000000040}}"#),
+        "{json}"
+    );
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, read);
+    Ok(())
+}

@@ -328,6 +328,26 @@ impl Queries<'_> {
         self.event_rows(schema::EVENTS_OF_SESSION, [session_id.as_str()])
     }
 
+    /// The reads of the file whose node is `node` that session `session_id` reported, its own and
+    /// not its subagents', and the session's compactions, the latest first, at most `limit` of
+    /// them: what came before a compaction is no longer in the session's context.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn reads_in_session(
+        self,
+        session_id: &Identifier,
+        node: NodeId,
+        limit: usize,
+    ) -> Result<Vec<EventRow>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.event_rows(
+            schema::READS_IN_SESSION,
+            (session_id.as_str(), node.get(), limit),
+        )
+    }
+
     /// The edits of the tasks of `session_id`, its subagents' edits included, newest first, at
     /// most `limit` of them.
     ///
