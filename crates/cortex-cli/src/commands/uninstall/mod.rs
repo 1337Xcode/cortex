@@ -26,7 +26,7 @@ use cortex_daemon::is_running;
 use cortex_hook::{ClientError, stop_any};
 
 use super::init::Scope;
-use crate::{claude_settings, output, repository, upgrade};
+use crate::{output, repository, upgrade};
 
 /// How long uninstall gives the daemon to stop, from the first request: it drains its inbox and
 /// gives its connections a second, as when a newer build replaces it.
@@ -186,7 +186,11 @@ fn users_hooks(program: &str) -> Option<String> {
         .map_err(anyhow::Error::from)
         .and_then(|text| {
             text.map_or(Ok(Vec::new()), |text| {
-                claude_settings::cortex_commands(&text, program)
+                crate::agents::settings::cortex_commands(
+                    &text,
+                    program,
+                    &crate::agents::claude::STYLE,
+                )
             })
         });
     match found {

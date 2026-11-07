@@ -1,0 +1,36 @@
+//! JetBrains Junie's command-line agent: its hooks under `hooks` in the user's `~/.junie/config.json`,
+//! Claude Code's nested shape, each a command line run through `cmd /c` on Windows and `sh -c`
+//! elsewhere, timeouts in seconds. Junie ignores a repository's hooks, so the user's file is written
+//! whatever the scope.
+
+use super::command::Shell;
+use super::settings::{Events, Handler, Style, TimeoutUnit};
+use super::{FoundBy, HooksFile, Setup};
+
+/// How Junie's config holds Cortex's hooks.
+const STYLE: Style = Style {
+    agent: "junie",
+    handler: Handler::CommandLine(if cfg!(windows) {
+        Shell::Cmd
+    } else {
+        Shell::Posix
+    }),
+    timeout: TimeoutUnit::Seconds,
+    events: Events::UnderHooks,
+};
+
+/// Junie: found by `~/.junie` or the `junie` program.
+pub(crate) const SETUP: Setup = Setup {
+    name: "junie",
+    title: "Junie",
+    found_by: FoundBy {
+        folders: &[".junie"],
+        programs: &["junie"],
+    },
+    hooks: Some(HooksFile {
+        project: None,
+        user: ".junie/config.json",
+        style: STYLE,
+    }),
+    told: &[],
+};

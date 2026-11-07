@@ -3,8 +3,8 @@
 //! Parses the command line, runs the chosen command and turns any error into a one-line message on
 //! stderr with exit code 1. Each command lives in its own module under `commands`.
 
+mod agents;
 mod backup;
-mod claude_settings;
 mod commands;
 mod output;
 mod program;

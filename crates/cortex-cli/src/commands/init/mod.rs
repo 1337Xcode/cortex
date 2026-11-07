@@ -36,8 +36,9 @@ use anyhow::{Context as _, bail};
 use cortex_core::{
     MAX_SETTINGS_BYTES, UserFolder, create_private_folder, read_text_file, unix_millis,
 };
-use cortex_hook::{Adapter, Versions};
+use cortex_hook::Versions;
 
+use crate::agents::{self, Setup};
 use crate::backup::{Backup, Kind};
 use crate::commands::doctor::{Finding, checked, claude_code_version};
 use crate::output;
@@ -59,6 +60,10 @@ pub(crate) struct Args {
     /// Take the default answer to each question not answered yet, instead of asking.
     #[arg(long)]
     yes: bool,
+    /// The agents to set up, by their names on Cortex's command line (`claude,codex`); every agent
+    /// found on this machine when left out.
+    #[arg(long, value_delimiter = ',')]
+    agents: Vec<String>,
 }
 
 /// Where Claude Code reads the hooks Cortex writes.
@@ -139,18 +144,18 @@ struct Files {
     repository_config: Found,
     /// In a git repository, what git ignores and the `.gitignore` lines are added to.
     ignores: Option<(Ignored, Found)>,
-    /// Claude Code's settings the hooks go to.
-    settings: hooks::Settings,
+    /// The settings each agent's hooks go to.
+    settings: Vec<hooks::Settings>,
 }
 
 impl Files {
-    /// The files init may change for `root` at `scope`, with the hooks of `adapter`.
+    /// The files init may change for `root` at `scope`, with the hooks of each of `setups`.
     ///
     /// # Errors
     ///
     /// A file is read-only, cannot be read, would be written outside the repository or through a
     /// link git does not read, or git cannot say what it ignores.
-    fn found(scope: Scope, root: &Root, adapter: &dyn Adapter) -> anyhow::Result<Self> {
+    fn found(scope: Scope, root: &Root, setups: &[&'static Setup]) -> anyhow::Result<Self> {
         let user = UserFolder::of_current_user().context("finding the home folder")?;
         let repository_config = place::file_in(&root.folder, Some(".cortex"), "config.toml")?;
         let ignores = match root.without_git {
@@ -165,7 +170,13 @@ impl Files {
             users_config: Found::read(place::file_beside(user.path(), "config.toml")?)?,
             repository_config: Found::read(repository_config)?,
             ignores,
-            settings: hooks::planned(scope, &root.folder, adapter)?,
+            settings: setups
+                .iter()
+                .map(|setup| hooks::planned(scope, &root.folder, setup))
+                .collect::<anyhow::Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect(),
         })
     }
 
@@ -195,17 +206,20 @@ impl Files {
     fn changes(self, kept: Kept, answers: Answers) -> anyhow::Result<Vec<Change>> {
         let mut changes = Vec::new();
         if let Some((ignored, gitignore)) = self.ignores {
-            let is_made = self.settings.is_made_in_repository();
-            let lines = ignores::needed(ignored, answers.sharing, is_made);
+            let made: Vec<&'static str> = self
+                .settings
+                .iter()
+                .filter_map(hooks::Settings::made_in_repository)
+                .collect();
+            let lines = ignores::needed(&ignored, answers.sharing, &made);
             changes.extend(ignore_change(gitignore, &lines));
         }
-        if self.settings.is_current() {
-            output::line(&format!(
-                "Claude Code: the hooks in {} are current",
-                self.settings.file.display()
-            ))?;
-        } else {
-            changes.push(self.settings.into_change());
+        for settings in self.settings {
+            if settings.is_current() {
+                output::line(&settings.current())?;
+            } else {
+                changes.push(settings.into_change());
+            }
         }
         let repository =
             consent::repository_config(self.repository_config.config(false), kept, answers)?;
@@ -252,12 +266,17 @@ struct Change {
 /// left unanswered, a file that cannot be read, is read-only or would be written outside the
 /// repository, or a backup or a write that fails.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let adapter = cortex_hook::adapter("claude").context("finding the Claude Code adapter")?;
-    let versions = adapter
-        .versions()
-        .context("the Claude Code adapter names no versions")?;
-    let root = checked_root(args, versions)?;
-    let files = Files::found(args.scope, &root, adapter)?;
+    let root = found_root(args)?;
+    let setups = selected(&args.agents, &root.folder)?;
+    let has_claude = setups.iter().any(|setup| setup.name == "claude");
+    if has_claude {
+        let adapter = cortex_hook::adapter("claude").context("finding the Claude Code adapter")?;
+        let versions = adapter
+            .versions()
+            .context("the Claude Code adapter names no versions")?;
+        check_claude_code(&root, versions)?;
+    }
+    let files = Files::found(args.scope, &root, &setups)?;
     let kept = files.kept()?;
     let stdin = io::stdin();
     let mut terminal = stdin.is_terminal().then(|| stdin.lock());
@@ -265,7 +284,12 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let changes = files.changes(kept, answers)?;
     apply(&root.folder, changes)?;
     daemon::started_and_indexed(&root.folder)?;
-    let failed = checked(root.folder)?;
+    for setup in &setups {
+        for step in setup.told {
+            output::line(&format!("{}: to do yourself: {step}", setup.title))?;
+        }
+    }
+    let failed = if has_claude { checked(root.folder)? } else { 0 };
     if failed > 0 {
         output::line(&format!(
             "note: init is done, and {failed} of doctor's checks failed; each says what to do, \
@@ -276,15 +300,50 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The agents init sets up: those `names` name, or, when it names none, Claude Code, which init
+/// has always set up and whose missing program is a note, with every other agent found on this
+/// machine (outside the repository at `root`).
+///
+/// # Errors
+///
+/// A name that is no agent Cortex sets up, or no home folder.
+fn selected(names: &[String], root: &Path) -> anyhow::Result<Vec<&'static Setup>> {
+    let known = || {
+        agents::SETUPS
+            .iter()
+            .map(|setup| setup.name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if !names.is_empty() {
+        return names
+            .iter()
+            .map(|name| {
+                agents::setup(name.trim()).with_context(|| {
+                    format!(
+                        "`{name}` is not an agent Cortex sets up; it sets up {}",
+                        known()
+                    )
+                })
+            })
+            .collect();
+    }
+    let home = std::env::home_dir().context("finding the home folder")?;
+    Ok(agents::SETUPS
+        .iter()
+        .copied()
+        .filter(|setup| setup.name == "claude" || agents::is_found(setup, &home, root))
+        .collect())
+}
+
 /// The repository init sets up from where `args` start it, said on stdout with why it is not
-/// git's top when it is not, once Claude Code, asked its version, is one the `versions` Cortex
-/// knows allow.
+/// git's top when it is not.
 ///
 /// # Errors
 ///
 /// The folder or the home folder cannot be found, the folder would be the home folder or hold it,
-/// Claude Code is older than the oldest of `versions`, or stdout cannot be written.
-fn checked_root(args: &Args, versions: Versions) -> anyhow::Result<Root> {
+/// or stdout cannot be written.
+fn found_root(args: &Args) -> anyhow::Result<Root> {
     let start = match &args.root {
         Some(root) => root.clone(),
         None => std::env::current_dir().context("reading the current folder")?,
@@ -297,12 +356,22 @@ fn checked_root(args: &Args, versions: Versions) -> anyhow::Result<Root> {
             "note: {why}; Cortex sets up this folder alone, without git history"
         ))?;
     }
+    Ok(root)
+}
+
+/// Checks that Claude Code, asked its version in `root`'s folder, is one the `versions` Cortex
+/// knows allow, and says what it found.
+///
+/// # Errors
+///
+/// Claude Code is older than the oldest of `versions`, or stdout cannot be written.
+fn check_claude_code(root: &Root, versions: Versions) -> anyhow::Result<()> {
     match claude_code_version(&root.folder, versions) {
         Finding::Fail { what, fix } => bail!("{what}; {fix}, then run `cortex init` again"),
         Finding::Pass(what) => output::line(&what)?,
         Finding::Note(what) => output::line(&format!("note: {what}"))?,
     }
-    Ok(root)
+    Ok(())
 }
 
 /// The change that adds `lines` to the `.gitignore` `found`, or none when there are none to add.

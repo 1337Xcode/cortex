@@ -10,7 +10,8 @@ use cortex_core::ipc::CORTEX_VERSION;
 
 use super::settings::{Scope, SettingsFile};
 use super::{Context, Finding};
-use crate::claude_settings::{cortex_commands, flag, merged};
+use crate::agents::claude::STYLE;
+use crate::agents::settings::{cortex_commands, flag, merged};
 
 /// The settings files a user writes, and what each holds that reads as JSON: managed ones and
 /// those that do not exist left out, and one that cannot be read or is not JSON reported in
@@ -31,7 +32,7 @@ fn readable<'a>(
                 fix: format!("make {} readable, or remove it", file.path.display()),
             }),
             Ok(None) => {}
-            Ok(Some(text)) => match cortex_commands(text, &context.program) {
+            Ok(Some(text)) => match cortex_commands(text, &context.program, &STYLE) {
                 Ok(_) => readable.push((file, text.as_str())),
                 Err(error) => findings.push(Finding::Fail {
                     what: format!(
@@ -55,7 +56,8 @@ pub(super) fn registered(context: &Context) -> Vec<Finding> {
     let holding: Vec<(&SettingsFile, &str)> = readable(context, &mut findings)
         .into_iter()
         .filter(|(_, text)| {
-            cortex_commands(text, &context.program).is_ok_and(|commands| !commands.is_empty())
+            cortex_commands(text, &context.program, &STYLE)
+                .is_ok_and(|commands| !commands.is_empty())
         })
         .collect();
     let finding = match holding.as_slice() {
@@ -66,8 +68,8 @@ pub(super) fn registered(context: &Context) -> Vec<Finding> {
         },
         [(file, text)] => {
             let adapter = cortex_hook::adapter("claude");
-            let expected =
-                adapter.map(|adapter| merged(Some(text), &context.program, adapter.hooks()));
+            let expected = adapter
+                .map(|adapter| merged(Some(text), &context.program, adapter.hooks(), &STYLE));
             if expected.is_some_and(|expected| expected.is_ok_and(|expected| expected == *text)) {
                 Finding::Pass(format!(
                     "Cortex's hooks are current in {}",
@@ -178,7 +180,7 @@ pub(super) fn binary(context: &Context) -> Vec<Finding> {
     let mut ignored = Vec::new();
     let commands: BTreeSet<String> = readable(context, &mut ignored)
         .into_iter()
-        .filter_map(|(_, text)| cortex_commands(text, &context.program).ok())
+        .filter_map(|(_, text)| cortex_commands(text, &context.program, &STYLE).ok())
         .flatten()
         .collect();
     if commands.is_empty() {
@@ -261,7 +263,7 @@ mod tests {
     /// The settings `cortex init` writes for this build, given `existing`.
     fn written(existing: &str) -> anyhow::Result<String> {
         let adapter = cortex_hook::adapter("claude").ok_or_else(|| anyhow::anyhow!("adapter"))?;
-        merged(Some(existing), PROGRAM, adapter.hooks())
+        merged(Some(existing), PROGRAM, adapter.hooks(), &STYLE)
     }
 
     /// No hook anywhere fails with `cortex init` as the fix; the hooks init writes, in one file,

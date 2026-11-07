@@ -16,8 +16,8 @@ use anyhow::{Context as _, bail};
 use cortex_core::{ContentHash, MAX_SETTINGS_BYTES, canonical_root, read_text_file};
 
 use super::runs::Run;
+use crate::agents::{claude, settings};
 use crate::backup::{BackupCopy, Changed, Kind, holds, replace_unchanged};
-use crate::claude_settings;
 use crate::commands::init::without_lines;
 
 /// Undoes `change`, a change of `run`, `program` being this binary, and says what it did; `None`
@@ -159,7 +159,7 @@ fn taken_out(
 ) -> anyhow::Result<Option<String>> {
     let (without, what) = match kind {
         Kind::ClaudeSettings => (
-            claude_settings::without_cortex_hooks(current, program).with_context(|| {
+            settings::without_cortex_hooks(current, program, &claude::STYLE).with_context(|| {
                 format!(
                     "{} changed since init and Claude Code could not read it; Cortex's hooks are \
                      left in it",
@@ -168,6 +168,18 @@ fn taken_out(
             })?,
             "hooks",
         ),
+        Kind::AgentSettings { agent } => {
+            let style = crate::agents::setup(agent)
+                .and_then(|setup| setup.hooks.as_ref())
+                .map(|hooks| hooks.style)
+                .with_context(|| format!("{} holds the hooks of an agent this Cortex does not know", path.display()))?;
+            (
+                settings::without_cortex_hooks(current, program, &style).with_context(|| {
+                    format!("{} changed since init and could not be read; Cortex's hooks are left in it", path.display())
+                })?,
+                "hooks",
+            )
+        }
         Kind::Gitignore { lines } => (without_lines(current, lines), "lines"),
         Kind::CortexConfig => {
             return Ok(Some(format!(

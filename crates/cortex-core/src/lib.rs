@@ -64,8 +64,8 @@ pub use file_content::FileContent;
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
 pub use ignore_block::{
-    IGNORE_ALL_BUT_SHARED, IGNORE_BLOCK_HEADER, IGNORE_CORTEX_FOLDER, IGNORE_LOCAL_SETTINGS,
-    without_ignore_block,
+    IGNORE_ALL_BUT_SHARED, IGNORE_BLOCK_HEADER, IGNORE_CORTEX_FOLDER, IGNORE_LOCAL_FILES,
+    IGNORE_LOCAL_SETTINGS, without_ignore_block,
 };
 pub use injection::{GateFeatures, ReasonKind};
 pub use kinds::{EdgeType, FileFlags, InterestTier, NodeKind, RefKind, Resolution, SymbolKind};

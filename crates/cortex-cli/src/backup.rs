@@ -100,6 +100,11 @@ pub(crate) enum Kind {
     },
     /// Claude Code settings, which get Cortex's hooks.
     ClaudeSettings,
+    /// Another agent's settings, which get Cortex's hooks for `agent`.
+    AgentSettings {
+        /// The agent's name on Cortex's command line.
+        agent: String,
+    },
     /// Cortex's own configuration, which gets the answers to init's questions.
     CortexConfig,
 }

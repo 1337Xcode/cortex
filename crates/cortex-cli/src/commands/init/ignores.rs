@@ -1,7 +1,7 @@
 //! What git leaves out of a repository of what Cortex writes there, and the lines its `.gitignore`
 //! gets when git does not leave it out yet: `.cortex/` (or, when the team shares facts, all of
-//! `.cortex/` but `.cortex/shared/`, which is committed), and `.claude/settings.local.json` when
-//! init makes that file. Git says what it ignores (`git check-ignore`), whichever file makes it;
+//! `.cortex/` but `.cortex/shared/`, which is committed), and an agent's local file of the
+//! repository's (Claude Code's `.claude/settings.local.json`) when init makes that file. Git says what it ignores (`git check-ignore`), whichever file makes it;
 //! lines are only ever added, at the end, after a comment naming Cortex, by which `cortex
 //! uninstall` finds them again.
 
@@ -9,8 +9,7 @@ use std::path::Path;
 
 use anyhow::bail;
 use cortex_core::{
-    IGNORE_ALL_BUT_SHARED, IGNORE_BLOCK_HEADER as HEADER, IGNORE_CORTEX_FOLDER,
-    IGNORE_LOCAL_SETTINGS as LOCAL_SETTINGS,
+    IGNORE_ALL_BUT_SHARED, IGNORE_BLOCK_HEADER as HEADER, IGNORE_CORTEX_FOLDER, IGNORE_LOCAL_FILES,
 };
 
 use super::git;
@@ -22,20 +21,20 @@ const CORTEX_PROBE: &str = ".cortex/probe";
 const SHARED_PROBE: &str = ".cortex/shared/probe";
 
 /// What git ignores of what Cortex writes in a repository.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Ignored {
     /// Whether it ignores Cortex's folder.
     pub(super) is_cortex: bool,
     /// Whether it ignores the folder shared with the team.
     pub(super) is_shared: bool,
-    /// Whether it ignores Claude Code's local settings.
-    pub(super) is_local_settings: bool,
+    /// The agents' local files of the repository's (`IGNORE_LOCAL_FILES`) it ignores.
+    pub(super) local_files: Vec<&'static str>,
 }
 
 impl Ignored {
     /// Whether the team shares facts, as the ignores tell: Cortex's folder left out but for the
     /// shared one. `None` while Cortex's folder is not left out, as before anyone answered.
-    pub(super) fn sharing(self) -> Option<bool> {
+    pub(super) fn sharing(&self) -> Option<bool> {
         self.is_cortex.then_some(!self.is_shared)
     }
 }
@@ -47,13 +46,8 @@ impl Ignored {
 ///
 /// Git did not run, or ended with an error.
 pub(super) fn read(root: &Path, bound: &Path) -> anyhow::Result<Ignored> {
-    let args = [
-        "check-ignore",
-        "--no-index",
-        CORTEX_PROBE,
-        SHARED_PROBE,
-        LOCAL_SETTINGS,
-    ];
+    let mut args = vec!["check-ignore", "--no-index", CORTEX_PROBE, SHARED_PROBE];
+    args.extend(IGNORE_LOCAL_FILES);
     let captured = git::run(&args, root, bound).map_err(anyhow::Error::msg)?;
     // check-ignore ends with 0 when it ignores any of the paths, 1 when it ignores none, and more
     // on an error.
@@ -69,17 +63,20 @@ pub(super) fn read(root: &Path, bound: &Path) -> anyhow::Result<Ignored> {
     Ok(Ignored {
         is_cortex: is_listed(CORTEX_PROBE),
         is_shared: is_listed(SHARED_PROBE),
-        is_local_settings: is_listed(LOCAL_SETTINGS),
+        local_files: IGNORE_LOCAL_FILES
+            .into_iter()
+            .filter(|file| is_listed(file))
+            .collect(),
     })
 }
 
 /// The lines `.gitignore` needs, from what git `ignored`, whether the team shares facts
-/// (`is_sharing`), and whether init makes Claude Code's local settings (`is_settings_made`);
-/// none when git ignores what it should already.
+/// (`is_sharing`), and the agents' local files init makes (`made`); none when git ignores what it
+/// should already.
 pub(super) fn needed(
-    ignored: Ignored,
+    ignored: &Ignored,
     is_sharing: bool,
-    is_settings_made: bool,
+    made: &[&'static str],
 ) -> Vec<&'static str> {
     let mut lines = Vec::new();
     if !ignored.is_cortex {
@@ -89,9 +86,10 @@ pub(super) fn needed(
             lines.push(IGNORE_CORTEX_FOLDER);
         }
     }
-    if is_settings_made && !ignored.is_local_settings {
-        lines.push(LOCAL_SETTINGS);
-    }
+    lines.extend(
+        made.iter()
+            .filter(|file| !ignored.local_files.contains(file)),
+    );
     lines
 }
 
@@ -152,31 +150,48 @@ pub(crate) fn without_lines(text: &str, lines: &[String]) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// What git ignores, its fields in order: Cortex's folder, the shared folder, the settings.
+    /// What git ignores, its fields in order: Cortex's folder, the shared folder, and whether it
+    /// ignores Claude Code's local settings.
     fn ignored(is_cortex: bool, is_shared: bool, is_local_settings: bool) -> Ignored {
         Ignored {
             is_cortex,
             is_shared,
-            is_local_settings,
+            local_files: if is_local_settings {
+                vec![".claude/settings.local.json"]
+            } else {
+                Vec::new()
+            },
         }
     }
 
-    /// Nothing ignored: Cortex's folder (all of it, or all but the shared folder) and the settings
-    /// init makes are added; the settings only when init makes them. Cortex's folder ignored: only
-    /// the settings, when not ignored already.
+    /// Nothing ignored: Cortex's folder (all of it, or all but the shared folder) and the local
+    /// files init makes are added; a local file only when init makes it and git does not ignore it
+    /// already. Cortex's folder ignored: only the local files.
     #[test]
     fn only_what_git_does_not_ignore_is_added() {
+        let claude = [".claude/settings.local.json"];
         let none = ignored(false, false, false);
         assert_eq!(
-            needed(none, false, true),
+            needed(&none, false, &claude),
             [".cortex/", ".claude/settings.local.json"]
         );
-        assert_eq!(needed(none, true, false), [".cortex/*", "!.cortex/shared/"]);
+        assert_eq!(needed(&none, true, &[]), [".cortex/*", "!.cortex/shared/"]);
         let all = ignored(true, true, false);
-        assert_eq!(needed(all, false, true), [".claude/settings.local.json"]);
         assert_eq!(
-            needed(ignored(true, true, true), false, true),
+            needed(&all, false, &claude),
+            [".claude/settings.local.json"]
+        );
+        assert_eq!(
+            needed(&ignored(true, true, true), false, &claude),
             Vec::<&str>::new()
+        );
+        assert_eq!(
+            needed(
+                &ignored(true, true, true),
+                false,
+                &[".claude/settings.local.json", ".devin/config.local.json"]
+            ),
+            [".devin/config.local.json"]
         );
         assert_eq!(all.sharing(), Some(false));
         assert_eq!(ignored(true, false, false).sharing(), Some(true));
@@ -207,7 +222,10 @@ mod tests {
     /// none, gives nothing to write.
     #[test]
     fn the_block_init_added_comes_out() {
-        let lines = [".cortex/".to_owned(), LOCAL_SETTINGS.to_owned()];
+        let lines = [
+            ".cortex/".to_owned(),
+            ".claude/settings.local.json".to_owned(),
+        ];
         let added = "target/\n# Cortex\n.cortex/\n.claude/settings.local.json\ndist/\n";
         assert_eq!(
             without_lines(added, &lines).as_deref(),
@@ -218,7 +236,7 @@ mod tests {
             without_lines(windows, &lines).as_deref(),
             Some("target/\r\n")
         );
-        let settings = [LOCAL_SETTINGS.to_owned()];
+        let settings = [".claude/settings.local.json".to_owned()];
         let team = "# Cortex\n.cortex/\n# Cortex\n.claude/settings.local.json\n";
         assert_eq!(
             without_lines(team, &settings).as_deref(),

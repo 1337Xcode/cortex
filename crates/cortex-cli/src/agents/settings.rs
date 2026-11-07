@@ -1,47 +1,86 @@
-//! Cortex's hooks in a Claude Code settings file: the entries the Claude Code adapter's event table
-//! calls for, merged into what the file holds.
+//! Cortex's hooks in an agent's JSON settings, in the nested shape Claude Code's hooks defined:
+//! `hooks` (or the whole file) maps each event to matcher groups, each with its `hooks` list of
+//! handlers. A [`Style`] says how one agent's settings differ: whether its handler runs Cortex as
+//! an argument list (Claude Code's exec form: the absolute path of this binary, and `hook --agent
+//! <agent> --event <event>` as its arguments, with `onFailure: "continue"`) or as a command line
+//! for its shell; the unit of its timeout, which is the event's hard timeout rounded up; and
+//! where its events are.
 //!
-//! Each entry is an exec-form command hook (the absolute path of this binary, and `hook --agent
-//! claude --event <event>` as its arguments, so no shell is involved), with the event's matcher, a
-//! timeout of the event's hard timeout in whole seconds, rounded up, and `onFailure: "continue"`,
-//! so that a hook that fails never holds up the agent. Cortex's own entries are found wherever they
-//! are, by arguments that begin `hook --agent claude` given to a command whose file name is
-//! `cortex` or which is this binary, taken out, and the current ones put where the first of them
-//! was; everything else, the user's hooks and keys and their order, stays as it was. Merging again
-//! gives what merging once gave. `cortex doctor` reads the same files through [`cortex_commands`]
-//! and [`flag`], and `cortex uninstall` takes Cortex's hooks out through
+//! Cortex's own entries are found wherever they are (an argument list beginning `hook --agent
+//! <agent>` given to a command whose file name is `cortex` or which is this binary; a command line
+//! running ` hook --agent <agent> --event `), taken out, and the current ones put where the first
+//! of them was; everything else, the user's hooks and keys and their order, stays as it was.
+//! Merging again gives what merging once gave. `cortex doctor` reads the same files through
+//! [`cortex_commands`] and [`flag`], and `cortex uninstall` takes Cortex's hooks out through
 //! [`without_cortex_hooks`].
 
-use anyhow::bail;
+use anyhow::{Context as _, bail};
 use cortex_hook::HookEntry;
 use serde_json::{Map, Value};
 
-/// The arguments every Cortex hook command begins with.
-const ARGS_PREFIX: [&str; 3] = ["hook", "--agent", "claude"];
+use super::command::{Shell, hook_command};
+
+/// How one agent's settings hold Cortex's hooks.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Style {
+    /// The agent's name on Cortex's command line.
+    pub(crate) agent: &'static str,
+    /// How the agent's handler runs Cortex.
+    pub(crate) handler: Handler,
+    /// The unit of the handler's `timeout`.
+    pub(crate) timeout: TimeoutUnit,
+    /// Where the events are.
+    pub(crate) events: Events,
+}
+
+/// How an agent's hook handler runs a program.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Handler {
+    /// The program and an argument list, with no shell (Claude Code's exec form).
+    Arguments,
+    /// A command line, given to the shell the agent uses on this system.
+    CommandLine(Shell),
+}
+
+/// The unit an agent's hook timeout is written in.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TimeoutUnit {
+    /// Whole seconds.
+    Seconds,
+    /// Milliseconds.
+    Milliseconds,
+}
+
+/// Where an agent's settings hold the events.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Events {
+    /// Under the top-level key `hooks`.
+    UnderHooks,
+    /// At the top of the file, which is the hooks object itself.
+    WholeFile,
+}
 
 /// The settings in `existing` (a file's text, or `None` when there is no file) with Cortex's hook
-/// for each of `entries`, run by `program`, as text: pretty JSON with a final line break.
+/// for each of `entries`, run by `program`, written in `style`, as text: pretty JSON with a final
+/// line break.
 ///
 /// # Errors
 ///
 /// The text is not JSON, is not an object, or holds a `hooks` that is not an object, or an event
-/// Cortex registers whose value is not a list: a file Claude Code itself would refuse, which is
-/// left for the user to repair rather than overwritten.
+/// Cortex registers whose value is not a list: a file the agent itself would refuse, which is left
+/// for the user to repair rather than overwritten. Or the program's path needs quoting for a shell
+/// Cortex does not know.
 pub(crate) fn merged(
     existing: Option<&str>,
     program: &str,
     entries: &[HookEntry],
+    style: &Style,
 ) -> anyhow::Result<String> {
     let mut settings = parsed(existing)?;
-    let hooks = settings
-        .entry("hooks")
-        .or_insert_with(|| Value::Object(Map::new()));
-    let Value::Object(hooks) = hooks else {
-        bail!("its `hooks` is not a JSON object");
-    };
-    let places = take_cortex_hooks(hooks, entries, program);
+    let hooks = events_in(&mut settings, style)?;
+    let places = take_cortex_hooks(hooks, entries, program, style);
     for entry in entries {
-        let group = group_of(entry, program);
+        let group = group_of(entry, program, style)?;
         match hooks.get_mut(entry.event_name) {
             Some(Value::Array(groups)) => {
                 let place = places
@@ -61,9 +100,9 @@ pub(crate) fn merged(
     Ok(text)
 }
 
-/// The settings `existing` without Cortex's hooks, `program` being this binary, as text in the form
-/// [`merged`] writes; `None` when it holds none. An event left with no group goes, and so does a
-/// `hooks` left empty; everything else stays, in its order.
+/// The settings `existing` without Cortex's hooks, `program` being this binary, written in `style`,
+/// as text in the form [`merged`] writes; `None` when it holds none. An event left with no group
+/// goes, and so does a `hooks` left empty; everything else stays, in its order.
 ///
 /// # Errors
 ///
@@ -71,20 +110,47 @@ pub(crate) fn merged(
 pub(crate) fn without_cortex_hooks(
     existing: &str,
     program: &str,
+    style: &Style,
 ) -> anyhow::Result<Option<String>> {
     let mut settings = parsed(Some(existing))?;
-    let Some(Value::Object(hooks)) = settings.get_mut("hooks") else {
-        return Ok(None);
+    let hooks = match style.events {
+        Events::UnderHooks => match settings.get_mut("hooks") {
+            Some(Value::Object(hooks)) => hooks,
+            _ => return Ok(None),
+        },
+        Events::WholeFile => &mut settings,
     };
-    if take_cortex_hooks(hooks, &[], program).is_empty() {
+    if take_cortex_hooks(hooks, &[], program, style).is_empty() {
         return Ok(None);
     }
-    if hooks.is_empty() {
+    let is_empty = hooks.is_empty();
+    if is_empty && matches!(style.events, Events::UnderHooks) {
         settings.shift_remove("hooks");
     }
     let mut text = serde_json::to_string_pretty(&Value::Object(settings))?;
     text.push('\n');
     Ok(Some(text))
+}
+
+/// The map of events in `settings`, as `style` places it, made under `hooks` when missing.
+///
+/// # Errors
+///
+/// A `hooks` that is not a JSON object.
+fn events_in<'s>(
+    settings: &'s mut Map<String, Value>,
+    style: &Style,
+) -> anyhow::Result<&'s mut Map<String, Value>> {
+    match style.events {
+        Events::WholeFile => Ok(settings),
+        Events::UnderHooks => match settings
+            .entry("hooks")
+            .or_insert_with(|| Value::Object(Map::new()))
+        {
+            Value::Object(hooks) => Ok(hooks),
+            _ => bail!("its `hooks` is not a JSON object"),
+        },
+    }
 }
 
 /// The settings object `existing` holds; an empty one for no file or a file of only white space.
@@ -118,11 +184,12 @@ fn take_cortex_hooks(
     hooks: &mut Map<String, Value>,
     entries: &[HookEntry],
     program: &str,
+    style: &Style,
 ) -> Vec<(String, usize)> {
     let mut places = Vec::new();
     for (event, groups) in hooks.iter_mut() {
         if let Value::Array(groups) = groups
-            && let Some(place) = take_cortex(groups, program)
+            && let Some(place) = take_cortex(groups, program, style)
         {
             places.push((event.clone(), place));
         }
@@ -139,7 +206,7 @@ fn take_cortex_hooks(
 /// dropping each group left with no hook whose hooks were all Cortex's, and returns where the first
 /// group holding one was, among the groups kept. A group or a list of hooks of another shape is left
 /// alone.
-fn take_cortex(groups: &mut Vec<Value>, program: &str) -> Option<usize> {
+fn take_cortex(groups: &mut Vec<Value>, program: &str, style: &Style) -> Option<usize> {
     let mut place = None;
     let mut kept = Vec::with_capacity(groups.len());
     for mut group in groups.drain(..) {
@@ -152,7 +219,7 @@ fn take_cortex(groups: &mut Vec<Value>, program: &str) -> Option<usize> {
             continue;
         };
         let before = handlers.len();
-        handlers.retain(|handler| !is_cortex(handler, program));
+        handlers.retain(|handler| !is_cortex(handler, program, style));
         if handlers.len() == before {
             kept.push(group);
             continue;
@@ -166,25 +233,30 @@ fn take_cortex(groups: &mut Vec<Value>, program: &str) -> Option<usize> {
     place
 }
 
-/// Whether `handler` is a Cortex hook: a command run with arguments beginning `hook --agent claude`
-/// whose file name is `cortex` (`cortex.exe` on Windows), whatever folder it is in, or which is
-/// `program`, this binary, whatever it is named: a binary installed under another name finds its
-/// own hooks again.
-fn is_cortex(handler: &Value, program: &str) -> bool {
+/// Whether `handler` is a Cortex hook of `style`'s agent. Run as an argument list: a command
+/// whose arguments begin `hook --agent <agent>` and whose file name is `cortex` (`cortex.exe` on
+/// Windows), whatever folder it is in, or which is `program`, this binary, whatever it is named,
+/// so that a binary installed under another name finds its own hooks again. Run as a command line:
+/// one that runs ` hook --agent <agent> --event `.
+fn is_cortex(handler: &Value, program: &str, style: &Style) -> bool {
     let Some(command) = handler.get("command").and_then(Value::as_str) else {
         return false;
     };
+    if let Handler::CommandLine(_) = style.handler {
+        return command.contains(&format!(" hook --agent {} --event ", style.agent));
+    }
     let name = command.rsplit(['/', '\\']).next().unwrap_or(command);
     let stem = name
         .rsplit_once('.')
         .filter(|(_, extension)| extension.eq_ignore_ascii_case("exe"))
         .map_or(name, |(stem, _)| stem);
+    let prefix = ["hook", "--agent", style.agent];
     let args = handler.get("args").and_then(Value::as_array);
     let begins_as_cortex = args.is_some_and(|args| {
-        args.len() >= ARGS_PREFIX.len()
+        args.len() >= prefix.len()
             && args
                 .iter()
-                .zip(ARGS_PREFIX)
+                .zip(prefix)
                 .all(|(arg, expected)| arg.as_str() == Some(expected))
     });
     (stem.eq_ignore_ascii_case("cortex") || command == program) && begins_as_cortex
@@ -196,10 +268,18 @@ fn is_cortex(handler: &Value, program: &str) -> bool {
 /// # Errors
 ///
 /// As [`merged`]: the text is not a JSON object.
-pub(crate) fn cortex_commands(existing: &str, program: &str) -> anyhow::Result<Vec<String>> {
+pub(crate) fn cortex_commands(
+    existing: &str,
+    program: &str,
+    style: &Style,
+) -> anyhow::Result<Vec<String>> {
     let settings = parsed(Some(existing))?;
-    let Some(Value::Object(hooks)) = settings.get("hooks") else {
-        return Ok(Vec::new());
+    let hooks = match style.events {
+        Events::UnderHooks => match settings.get("hooks") {
+            Some(Value::Object(hooks)) => hooks,
+            _ => return Ok(Vec::new()),
+        },
+        Events::WholeFile => &settings,
     };
     let handlers = hooks
         .values()
@@ -208,15 +288,15 @@ pub(crate) fn cortex_commands(existing: &str, program: &str) -> anyhow::Result<V
         .filter_map(|group| group.get("hooks").and_then(Value::as_array))
         .flatten();
     Ok(handlers
-        .filter(|handler| is_cortex(handler, program))
+        .filter(|handler| is_cortex(handler, program, style))
         .filter_map(|handler| handler.get("command").and_then(Value::as_str))
         .map(str::to_owned)
         .collect())
 }
 
 /// What the top-level switch `key` of the settings `existing` says, when it is set to true or
-/// false; `None` when it is not set, or set to something else, which Claude Code would not take
-/// as a switch either.
+/// false; `None` when it is not set, or set to something else, which the agent would not take as a
+/// switch either.
 ///
 /// # Errors
 ///
@@ -225,23 +305,44 @@ pub(crate) fn flag(existing: &str, key: &str) -> anyhow::Result<Option<bool>> {
     Ok(parsed(Some(existing))?.get(key).and_then(Value::as_bool))
 }
 
-/// The matcher group holding Cortex's hook for `entry`, run by `program`.
-fn group_of(entry: &HookEntry, program: &str) -> Value {
-    let timeout_s = u64::try_from(entry.hard_timeout.as_millis().div_ceil(1_000))
-        .unwrap_or(u64::MAX)
-        .max(1);
-    let args = ARGS_PREFIX
-        .iter()
-        .copied()
-        .chain(["--event", entry.event_name])
-        .map(Value::from)
-        .collect();
+/// The matcher group holding Cortex's hook for `entry`, run by `program`, written in `style`.
+///
+/// # Errors
+///
+/// The program's path needs quoting for a shell Cortex does not know.
+fn group_of(entry: &HookEntry, program: &str, style: &Style) -> anyhow::Result<Value> {
+    let millis = u64::try_from(entry.hard_timeout.as_millis()).unwrap_or(u64::MAX);
+    let timeout = match style.timeout {
+        TimeoutUnit::Seconds => millis.div_ceil(1_000).max(1),
+        TimeoutUnit::Milliseconds => millis.max(1),
+    };
     let mut handler = Map::new();
     handler.insert("type".to_owned(), "command".into());
-    handler.insert("command".to_owned(), program.into());
-    handler.insert("args".to_owned(), Value::Array(args));
-    handler.insert("timeout".to_owned(), timeout_s.into());
-    handler.insert("onFailure".to_owned(), "continue".into());
+    match style.handler {
+        Handler::Arguments => {
+            let args = ["hook", "--agent", style.agent, "--event", entry.event_name]
+                .into_iter()
+                .map(Value::from)
+                .collect();
+            handler.insert("command".to_owned(), program.into());
+            handler.insert("args".to_owned(), Value::Array(args));
+        }
+        Handler::CommandLine(shell) => {
+            let line =
+                hook_command(program, style.agent, entry.event_name, shell).with_context(|| {
+                    format!(
+                        "the path {program} needs quoting, and how {} quotes it on this system is \
+                         not documented",
+                        style.agent
+                    )
+                })?;
+            handler.insert("command".to_owned(), line.into());
+        }
+    }
+    handler.insert("timeout".to_owned(), timeout.into());
+    if let Handler::Arguments = style.handler {
+        handler.insert("onFailure".to_owned(), "continue".into());
+    }
     let mut group = Map::new();
     if let Some(matcher) = entry.matcher {
         group.insert("matcher".to_owned(), matcher.into());
@@ -250,7 +351,7 @@ fn group_of(entry: &HookEntry, program: &str) -> Value {
         "hooks".to_owned(),
         Value::Array(vec![Value::Object(handler)]),
     );
-    Value::Object(group)
+    Ok(Value::Object(group))
 }
 
 #[cfg(test)]
@@ -260,6 +361,31 @@ mod tests {
     use cortex_core::HookKind;
 
     use super::*;
+    use crate::agents::claude::STYLE;
+
+    /// [`super::merged`] in Claude Code's style.
+    fn merged(
+        existing: Option<&str>,
+        program: &str,
+        entries: &[HookEntry],
+    ) -> anyhow::Result<String> {
+        super::merged(existing, program, entries, &STYLE)
+    }
+
+    /// [`super::without_cortex_hooks`] in Claude Code's style.
+    fn without_cortex_hooks(existing: &str, program: &str) -> anyhow::Result<Option<String>> {
+        super::without_cortex_hooks(existing, program, &STYLE)
+    }
+
+    /// [`super::is_cortex`] in Claude Code's style.
+    fn is_cortex(handler: &Value, program: &str) -> bool {
+        super::is_cortex(handler, program, &STYLE)
+    }
+
+    /// [`super::cortex_commands`] in Claude Code's style.
+    fn cortex_commands(existing: &str, program: &str) -> anyhow::Result<Vec<String>> {
+        super::cortex_commands(existing, program, &STYLE)
+    }
 
     /// The binary the tests register.
     const PROGRAM: &str = "/opt/cortex/bin/cortex";
@@ -648,5 +774,54 @@ mod tests {
                 .map(|error| error.to_string());
             assert_eq!(error.as_deref(), Some(expected), "{existing}");
         }
+    }
+
+    /// A command-line style, as Codex's on a POSIX system, by hand: the events under `hooks`, each
+    /// handler a command line and a timeout in seconds; merging again changes nothing; a user's
+    /// hook stays; taking Cortex's hooks out gives the user's file back, and an older Cortex line
+    /// (another program path) is found as Cortex's. In milliseconds at the top of the file, as
+    /// Droid's and Gemini's units are, the same hook is the whole object with 300 for its timeout.
+    #[test]
+    fn a_command_line_style_merges_and_takes_out() -> anyhow::Result<()> {
+        let style = Style {
+            agent: "codex",
+            handler: Handler::CommandLine(Shell::Posix),
+            timeout: TimeoutUnit::Seconds,
+            events: Events::UnderHooks,
+        };
+        let user = r#"{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "mine.sh"}]}]}}"#;
+        let merged = super::merged(Some(user), PROGRAM, &[PRE_TOOL_USE], &style)?;
+        let value: Value = serde_json::from_str(&merged)?;
+        assert_eq!(
+            value,
+            serde_json::json!({"hooks": {"PreToolUse": [
+                {"hooks": [{"type": "command", "command": "mine.sh"}]},
+                {"matcher": "Read", "hooks": [{"type": "command",
+                    "command": "/opt/cortex/bin/cortex hook --agent codex --event PreToolUse",
+                    "timeout": 1}]}
+            ]}})
+        );
+        assert_eq!(
+            super::merged(Some(&merged), PROGRAM, &[PRE_TOOL_USE], &style)?,
+            merged
+        );
+        let older = merged.replace("/opt/cortex/bin/cortex", "/usr/old/cortex");
+        let without = super::without_cortex_hooks(&older, PROGRAM, &style)?;
+        let without: Value = serde_json::from_str(without.as_deref().unwrap_or("null"))?;
+        assert_eq!(without, serde_json::from_str::<Value>(user)?);
+        let whole = Style {
+            timeout: TimeoutUnit::Milliseconds,
+            events: Events::WholeFile,
+            ..style
+        };
+        let value: Value =
+            serde_json::from_str(&super::merged(None, PROGRAM, &[PRE_TOOL_USE], &whole)?)?;
+        assert_eq!(
+            value,
+            serde_json::json!({"PreToolUse": [{"matcher": "Read", "hooks": [{"type": "command",
+                "command": "/opt/cortex/bin/cortex hook --agent codex --event PreToolUse",
+                "timeout": 300}]}]})
+        );
+        Ok(())
     }
 }

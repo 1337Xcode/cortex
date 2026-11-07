@@ -16,6 +16,14 @@ pub const IGNORE_ALL_BUT_SHARED: [&str; 2] = [".cortex/*", "!.cortex/shared/"];
 /// The line that leaves out Claude Code's local settings, where a project's Cortex hooks are.
 pub const IGNORE_LOCAL_SETTINGS: &str = ".claude/settings.local.json";
 
+/// The lines that leave out each agent's file of a repository's that init writes hooks to: the
+/// agent reads it and git does not share it, since a hook names this machine's program.
+pub const IGNORE_LOCAL_FILES: [&str; 3] = [
+    IGNORE_LOCAL_SETTINGS,
+    ".devin/config.local.json",
+    ".augment/settings.local.json",
+];
+
 /// `line` without its line ending, `\n` or `\r\n`.
 fn bare(line: &str) -> &str {
     line.trim_end_matches(['\r', '\n'])
@@ -26,7 +34,7 @@ fn is_block_line(line: &str) -> bool {
     let line = bare(line);
     line == IGNORE_CORTEX_FOLDER
         || IGNORE_ALL_BUT_SHARED.contains(&line)
-        || line == IGNORE_LOCAL_SETTINGS
+        || IGNORE_LOCAL_FILES.contains(&line)
 }
 
 /// `text`, a `.gitignore`, without the block init adds at its end: the text before the last line
