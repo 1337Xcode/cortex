@@ -8,6 +8,9 @@ pub(crate) mod normalize;
 pub(crate) mod output;
 pub(crate) mod payload;
 pub(crate) mod place;
+pub(crate) mod table;
+
+use std::path::PathBuf;
 
 use cortex_core::{HookKind, ToolKind, ToolResult, ToolTarget};
 
@@ -24,7 +27,17 @@ pub(crate) enum Aim {
     Outside,
 }
 
-/// How one agent's tools read: the agent's names for them, what a call aimed at, and how it ended.
+/// Whose a prompt event is.
+pub(crate) enum Prompted<'p> {
+    /// The user's, with its text when the payload gives it.
+    User(Option<&'p str>),
+    /// Not the user's: an agent that also runs its prompt hook for its own sends, such as a
+    /// tool's result going back to the model. No event is made of it.
+    NotUser,
+}
+
+/// How one agent's tools read: the agent's names for them, what a call aimed at, and how it ended;
+/// and, where the agent differs from Claude Code, where it works and whose a prompt is.
 pub(crate) trait Tools: Sync {
     /// The kind of the tool the agent names `name`, called as `payload` says.
     fn kind(&self, name: &str, payload: &Payload<'_>) -> ToolKind;
@@ -36,4 +49,14 @@ pub(crate) trait Tools: Sync {
     /// agent does not tell its hooks.
     fn result(&self, tool: ToolKind, event_name: &str, payload: &Payload<'_>)
     -> Option<ToolResult>;
+
+    /// The folder the agent works in: the payload's `cwd`.
+    fn working_folder(&self, payload: &Payload<'_>) -> Option<PathBuf> {
+        payload.cwd.as_deref().map(PathBuf::from)
+    }
+
+    /// Whose the prompt event `payload` is: the user's, its text the payload's `prompt`.
+    fn prompt<'p>(&self, payload: &'p Payload<'_>) -> Prompted<'p> {
+        Prompted::User(payload.prompt.as_deref())
+    }
 }

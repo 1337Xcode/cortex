@@ -33,7 +33,8 @@ const PROGRAMS: &[&str] = if cfg!(windows) {
 /// Claude Code is a version Cortex's hooks work with: the check in doctor's table.
 pub(super) fn check(context: &Context) -> Vec<Finding> {
     cortex_hook::adapter("claude")
-        .map(|adapter| version(&context.root, adapter.versions()))
+        .and_then(|adapter| adapter.versions())
+        .map(|versions| version(&context.root, versions))
         .into_iter()
         .collect()
 }

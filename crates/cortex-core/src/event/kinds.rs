@@ -14,6 +14,12 @@ named_kind! {
         Cursor => "cursor",
         /// Gemini CLI.
         Gemini => "gemini",
+        /// Qwen Code.
+        Qwen => "qwen",
+        /// Factory's Droid.
+        Droid => "droid",
+        /// Devin's command-line agent.
+        Devin => "devin",
         /// The opencode agent.
         Opencode => "opencode",
         /// Any other agent.

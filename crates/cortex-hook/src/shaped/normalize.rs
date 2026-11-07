@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use cortex_core::{Agent, CompactTrigger, Event, HookKind, Identifier, StartSource};
 
 use super::payload::Payload;
-use super::{Aim, Tools};
+use super::{Aim, Prompted, Tools};
 use crate::adapter::{HookEntry, Located, NormalizeError, Stamp};
 
 /// Most bytes of a prompt an event carries. JSON writes each byte in at most six, so an event with
@@ -28,12 +28,13 @@ pub(crate) fn event(
     stamp: Stamp,
 ) -> Result<Option<Event>, NormalizeError> {
     let payload: Payload<'_> = serde_json::from_slice(strip_bom(payload))?;
-    let Some(located) = payload
-        .cwd
-        .as_deref()
-        .and_then(|cwd| locate(Path::new(cwd)))
-    else {
+    let Some(located) = tools.working_folder(&payload).and_then(|cwd| locate(&cwd)) else {
         return Ok(None);
+    };
+    let prompt = match tools.prompt(&payload) {
+        Prompted::NotUser if entry.hook == HookKind::Prompt => return Ok(None),
+        Prompted::User(prompt) => prompt,
+        Prompted::NotUser => None,
     };
     let session = Session::of(&payload)?;
     let is_tool_event = matches!(entry.hook, HookKind::PreTool | HookKind::PostTool);
@@ -67,9 +68,7 @@ pub(crate) fn event(
         tool_result: tool
             .filter(|_| entry.hook == HookKind::PostTool)
             .and_then(|tool| tools.result(tool, entry.event_name, &payload)),
-        prompt_text: payload
-            .prompt
-            .as_deref()
+        prompt_text: prompt
             .filter(|_| entry.hook == HookKind::Prompt)
             .map(cut_prompt),
         transcript_path: session.transcript.map(PathBuf::from),

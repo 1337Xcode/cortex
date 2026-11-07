@@ -1,0 +1,14 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\repo\\chats\\00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "C:\\repo",
+  "hook_event_name": "PreToolUse",
+  "timestamp": "2026-11-06T10:00:00.000Z",
+  "permission_mode": "default",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "tool_name": "read_file",
+  "tool_input": {
+    "file_path": "C:\\repo\\calc\\ops.py"
+  },
+  "tool_use_id": "toolu_fixture0001"
+}

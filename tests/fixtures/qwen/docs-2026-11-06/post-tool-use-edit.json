@@ -1,0 +1,18 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\repo\\chats\\00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "C:\\repo",
+  "hook_event_name": "PostToolUse",
+  "timestamp": "2026-11-06T10:00:00.000Z",
+  "permission_mode": "default",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "tool_name": "edit",
+  "tool_input": {
+    "file_path": "C:\\repo\\calc\\ops.py",
+    "old_string": "a // b",
+    "new_string": "a / b"
+  },
+  "tool_use_id": "toolu_fixture0003",
+  "tool_response": {},
+  "duration_ms": 12
+}

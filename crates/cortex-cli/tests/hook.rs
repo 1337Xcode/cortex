@@ -15,7 +15,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use common::fake_daemon::{FakeDaemon, Script, kinds};
-use common::hook_call::hook;
+use common::hook_call::{hook, hook_with};
 use common::{Daemon, TestResult, graph_of, payloads, wait_for};
 use cortex_core::ipc::{Request, RequestBody};
 use cortex_core::{EventKind, HookKind, Identifier, LineRange, UserFolder};
@@ -229,6 +229,72 @@ fn a_codex_session_through_the_binary_is_recorded() -> TestResult {
             (EventKind::Shell, None, None),
             (EventKind::Edit, ops, None),
             (EventKind::Shell, None, None),
+            (EventKind::Stop, None, None),
+            (EventKind::SessionEnd, None, None),
+        ]
+    );
+    Ok(())
+}
+
+/// A Devin session of the payloads typed from Devin's documentation, sent with the project's
+/// folder in `DEVIN_PROJECT_DIR`, as Devin runs its hooks, since its payloads name none: the
+/// start, the prompt, the failing command (Devin's response says it failed), the edit of
+/// `calc/ops.py` (a success; no lines: Devin's edits name none), the stop and the end are
+/// recorded, counted by hand. Without the variable, nothing is.
+#[test]
+fn a_devin_session_through_the_binary_is_recorded() -> TestResult {
+    let (home, repo) = repository()?;
+    let daemon = Daemon::start(&repo, home.path())?;
+    daemon.first_line()?;
+    wait_for(|| Ok(graph_of(&repo, home.path())?.is_some()))?;
+    let session = [
+        "session-start.json",
+        "user-prompt-submit.json",
+        "post-tool-use-exec.json",
+        "post-tool-use-edit.json",
+        "stop.json",
+        "session-end.json",
+    ];
+    let send = |name: &str, variables: &[(&str, &Path)]| -> TestResult<Option<String>> {
+        let payload = payloads::payload_of("devin", "docs-2026-11-06", name, &repo)?;
+        let event = payloads::event_name(&payload)?;
+        let call = hook_with(
+            &["--agent", "devin", "--event", &event],
+            payload,
+            (Duration::ZERO, home.path()),
+            variables,
+        )?;
+        call.context(&event)
+    };
+    let s1 = Identifier::new(S1)?;
+    let rows = || -> TestResult<Vec<Row>> {
+        let reader = Reader::open(&repo.join(".cortex"), 0)?;
+        Ok(reader
+            .queries()
+            .events_of_session(&s1)?
+            .into_iter()
+            .map(|row| {
+                let path = row.record.path.map(|path| path.as_str().to_owned());
+                (row.record.kind, path, row.record.range)
+            })
+            .collect())
+    };
+    for name in session {
+        assert_eq!(send(name, &[])?, None, "{name}");
+    }
+    let variables = [("DEVIN_PROJECT_DIR", repo.as_path())];
+    for name in session {
+        let primer = (name == "session-start.json").then(|| PRIMER.to_owned());
+        assert_eq!(send(name, &variables)?, primer, "{name}");
+    }
+    wait_for(|| Ok(rows()?.len() >= 6))?;
+    assert_eq!(
+        rows()?,
+        [
+            (EventKind::SessionStart, None, None),
+            (EventKind::Prompt, None, None),
+            (EventKind::Shell, None, None),
+            (EventKind::Edit, Some("calc/ops.py".to_owned()), None),
             (EventKind::Stop, None, None),
             (EventKind::SessionEnd, None, None),
         ]

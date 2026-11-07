@@ -546,7 +546,7 @@ fn every_fixture_normalizes_as_written() -> TestResult {
 #[test]
 fn the_newest_payloads_normalize_like_the_tabled_ones() -> TestResult {
     let claude = adapter("claude").ok_or("no Claude Code adapter")?;
-    let newest = claude.versions().newest_tested;
+    let newest = claude.versions().ok_or("no versions")?.newest_tested;
     assert_ne!(newest, TABLED);
     for name in fixture_names(&fixtures())? {
         let tabled = payload(&name)?;
@@ -697,7 +697,7 @@ fn long_prompts_are_cut_and_bad_names_left_out() -> TestResult {
 #[test]
 fn the_known_versions_hold() -> TestResult {
     let claude = adapter("claude").ok_or("no Claude Code adapter")?;
-    let versions = claude.versions();
+    let versions = claude.versions().ok_or("no versions")?;
     let mut expected = fixture_names(&fixtures())?;
     expected.extend(NEWEST_ONLY.iter().map(|name| (*name).to_owned()));
     expected.sort_unstable();

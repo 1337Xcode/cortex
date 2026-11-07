@@ -253,7 +253,10 @@ struct Change {
 /// repository, or a backup or a write that fails.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let adapter = cortex_hook::adapter("claude").context("finding the Claude Code adapter")?;
-    let root = checked_root(args, adapter.versions())?;
+    let versions = adapter
+        .versions()
+        .context("the Claude Code adapter names no versions")?;
+    let root = checked_root(args, versions)?;
     let files = Files::found(args.scope, &root, adapter)?;
     let kept = files.kept()?;
     let stdin = io::stdin();

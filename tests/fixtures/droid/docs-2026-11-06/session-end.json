@@ -1,0 +1,10 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "C:\\Users\\dev\\.factory\\projects\\repo\\00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "C:\\repo",
+  "permission_mode": "off",
+  "hook_event_name": "SessionEnd",
+  "reason": "other",
+  "session_duration_ms": 20000,
+  "message_count": 4
+}

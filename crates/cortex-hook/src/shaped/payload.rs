@@ -37,6 +37,10 @@ pub(crate) struct Payload<'a> {
     /// The tool's name.
     #[serde(deserialize_with = "lenient")]
     pub(crate) tool_name: Option<String>,
+    /// The prompt as the user typed it, where an agent gives it apart from `prompt`, which may
+    /// be a send of its own (Qwen Code's tool results).
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) submitted_prompt: Option<String>,
     /// The id of the tool call, which Codex's rollout names the call's result by.
     #[serde(deserialize_with = "lenient")]
     pub(crate) tool_use_id: Option<String>,
@@ -115,6 +119,9 @@ pub(crate) struct ToolResponse<'a> {
     /// The size of a shell's standard error.
     #[serde(deserialize_with = "lenient")]
     pub(crate) stderr: Option<TextLength>,
+    /// Whether the call succeeded, as Devin's responses say.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) success: Option<bool>,
     /// Whether the user interrupted the shell.
     #[serde(deserialize_with = "lenient")]
     pub(crate) interrupted: Option<bool>,

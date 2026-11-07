@@ -1,0 +1,15 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "C:\\Users\\dev\\.factory\\projects\\repo\\00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "C:\\repo",
+  "permission_mode": "off",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Create",
+  "tool_input": {
+    "file_path": "C:\\repo\\NOTES.md",
+    "content": "divide uses true division"
+  },
+  "tool_response": {
+    "success": true
+  }
+}

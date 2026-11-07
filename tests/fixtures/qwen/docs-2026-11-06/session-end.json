@@ -1,0 +1,9 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\repo\\chats\\00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "C:\\repo",
+  "hook_event_name": "SessionEnd",
+  "timestamp": "2026-11-06T10:00:00.000Z",
+  "permission_mode": "default",
+  "reason": "other"
+}

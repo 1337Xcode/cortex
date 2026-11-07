@@ -1,11 +1,15 @@
 //! The captured hook payloads and transcripts are intact, complete and scrubbed.
 //!
-//! Every fixture must parse as a JSON object whose `hook_event_name` matches its file name; every
-//! event and tool the adapters handle must have a fixture for each captured agent version, holding
-//! the fields its name promises (the table is in `src/required.rs`); every version captured with
-//! payloads must be in that table; the fixture folder may hold nothing but payloads, READMEs and,
-//! under a version's `transcripts/` folder, transcripts of one JSON object a line; and no fixture,
-//! line or README may carry a real path, id, user name or email.
+//! Every captured fixture must parse as a JSON object whose `hook_event_name` matches its file
+//! name; every event and tool the adapters handle must have a fixture for each captured agent
+//! version, holding the fields its name promises (the table is in `src/required.rs`); every version
+//! captured with payloads must be in that table; the fixture folder may hold nothing but payloads,
+//! READMEs and, under a version's `transcripts/` folder, transcripts of one JSON object a line; and
+//! no fixture, line or README may carry a real path, id, user name or email.
+//!
+//! A `docs-<date>` folder holds payloads written from an agent's documentation, not captured: they
+//! carry the agent's own event names, and its adapter's tests read each by name, so the event
+//! names and the captured versions' table do not apply to them; the scrub rules do.
 
 use std::error::Error;
 use std::fs;
@@ -47,6 +51,11 @@ fn expected_event(file_name: &str) -> Option<&'static str> {
         .map(|(_, event)| *event)
 }
 
+/// Whether the version folder `dir` holds payloads written from documentation (`docs-<date>`).
+fn is_documented(dir: &Path) -> bool {
+    file_name(dir).starts_with("docs-")
+}
+
 /// Every `fixtures/<agent>/<version>` folder, sorted.
 fn version_dirs() -> TestResult<Vec<std::path::PathBuf>> {
     let mut dirs = Vec::new();
@@ -83,11 +92,14 @@ fn fixture_relative(path: &Path) -> String {
         .join("/")
 }
 
-/// Every fixture parses as an object and names the event its file name promises.
+/// Every captured fixture parses as an object and names the event its file name promises.
 #[test]
 fn every_fixture_names_its_event() -> TestResult<()> {
     let mut checked = 0;
-    for dir in version_dirs()? {
+    for dir in version_dirs()?
+        .into_iter()
+        .filter(|dir| !is_documented(dir))
+    {
         for path in json_files(&dir)? {
             let name = file_name(&path);
             let event = expected_event(&name).ok_or(format!("{name}: no known event prefix"))?;
@@ -137,11 +149,15 @@ fn required_fixtures_exist_and_match_their_names() -> TestResult<()> {
 
 /// Every agent version captured with hook payloads has a list of required fixtures, so a new
 /// version folder of payloads cannot skip the completeness check. A version folder that holds only
-/// a transcript (Codex 0.166.0's rollout) has no payloads to require.
+/// a transcript (Codex 0.166.0's rollout) has no payloads to require, and one of payloads written
+/// from documentation is its adapter's tests' to check.
 #[test]
 fn every_version_folder_is_required() -> TestResult<()> {
     let mut with_payloads = Vec::new();
-    for dir in version_dirs()? {
+    for dir in version_dirs()?
+        .into_iter()
+        .filter(|dir| !is_documented(dir))
+    {
         if !json_files(&dir)?.is_empty() {
             with_payloads.push(dir);
         }

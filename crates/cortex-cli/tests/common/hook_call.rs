@@ -65,10 +65,22 @@ impl Call {
 /// thread of its own (a hook that stops reading may close the pipe first), with `home` as the
 /// user's home folder.
 pub fn hook(args: &[&str], input: Vec<u8>, delay: Duration, home: &Path) -> TestResult<Call> {
+    hook_with(args, input, (delay, home), &[])
+}
+
+/// [`hook`], with each of `variables` set in the hook's environment, as an agent sets some for
+/// its hooks.
+pub fn hook_with(
+    args: &[&str],
+    input: Vec<u8>,
+    (delay, home): (Duration, &Path),
+    variables: &[(&str, &Path)],
+) -> TestResult<Call> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command
         .arg("hook")
         .args(args)
+        .envs(variables.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

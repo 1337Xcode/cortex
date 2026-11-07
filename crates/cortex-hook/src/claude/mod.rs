@@ -122,8 +122,8 @@ impl Adapter for Claude {
         HOOKS
     }
 
-    fn versions(&self) -> Versions {
-        VERSIONS
+    fn versions(&self) -> Option<Versions> {
+        Some(VERSIONS)
     }
 
     fn normalize(

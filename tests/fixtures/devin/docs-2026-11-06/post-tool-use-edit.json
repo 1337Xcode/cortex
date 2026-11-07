@@ -1,0 +1,14 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "tool_name": "edit",
+  "tool_input": {
+    "file_path": "C:\\repo\\calc\\ops.py"
+  },
+  "tool_response": {
+    "success": true,
+    "output": "",
+    "error": null
+  }
+}

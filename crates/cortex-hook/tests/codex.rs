@@ -395,7 +395,7 @@ fn the_hooks_are_the_ones_cortex_registers() -> TestResult {
         ]
     );
     assert_eq!(codex.agent(), Agent::Codex);
-    let versions = codex.versions();
+    let versions = codex.versions().ok_or("no versions")?;
     assert_eq!(
         (versions.oldest, versions.newest_tested),
         (CAPTURED, CAPTURED)

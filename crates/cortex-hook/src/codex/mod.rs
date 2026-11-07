@@ -117,8 +117,8 @@ impl Adapter for Codex {
         HOOKS
     }
 
-    fn versions(&self) -> Versions {
-        VERSIONS
+    fn versions(&self) -> Option<Versions> {
+        Some(VERSIONS)
     }
 
     fn normalize(

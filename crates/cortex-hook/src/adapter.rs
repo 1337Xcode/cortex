@@ -9,9 +9,12 @@ use cortex_core::{Agent, Event, HookKind, Ulid};
 
 use crate::claude::Claude;
 use crate::codex::Codex;
+use crate::devin::Devin;
+use crate::droid::Droid;
+use crate::qwen::Qwen;
 
 /// Every agent Cortex has an adapter for.
-const ADAPTERS: &[&dyn Adapter] = &[&Claude, &Codex];
+const ADAPTERS: &[&dyn Adapter] = &[&Claude, &Codex, &Qwen, &Droid, &Devin];
 
 /// The adapter of the agent named `name` on the command line (`claude`), if there is one.
 #[must_use]
@@ -41,8 +44,9 @@ pub trait Adapter: Sync {
     /// The hooks Cortex registers with the agent, one per event name.
     fn hooks(&self) -> &'static [HookEntry];
 
-    /// The versions of the agent Cortex knows.
-    fn versions(&self) -> Versions;
+    /// The versions of the agent Cortex knows: none for an agent whose adapter is built from the
+    /// agent's documentation and not yet run live, whose payloads no test captured.
+    fn versions(&self) -> Option<Versions>;
 
     /// The event a hook call of `event_name` with `payload` becomes, or `None` when Cortex does not
     /// record that event or the payload's working folder is in no repository Cortex serves.
