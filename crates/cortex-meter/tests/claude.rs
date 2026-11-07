@@ -653,11 +653,11 @@ fn a_line_longer_than_the_longest_is_passed_over() -> TestResult {
     Ok(())
 }
 
-/// Claude Code's transcripts are read; Codex's are not yet.
+/// Claude Code's transcripts are read, and no agent's but Claude Code's and Codex's.
 #[test]
-fn claude_code_has_a_format_and_codex_none_yet() {
+fn claude_code_has_a_format_and_other_agents_none() {
     assert!(format_of(Agent::Claude).is_some());
-    assert!(format_of(Agent::Codex).is_none());
+    assert!(format_of(Agent::Gemini).is_none());
 }
 
 proptest! {

@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use cortex_core::ShortHash;
 
 use crate::error::MeterError;
-use crate::format::TranscriptFormat;
+use crate::format::{Earlier, TranscriptFormat};
 use crate::response::{Response, SYNTHETIC_MODEL, Service, Usage};
 
 /// The longest line a tail reads. A read stops after the whole lines that fit the bytes it is
@@ -63,6 +63,8 @@ pub struct Tail {
     counted: u32,
     /// The latest responses counted, the oldest first.
     recent: VecDeque<Counted>,
+    /// What the lines read so far said that a later line's response needs.
+    earlier: Earlier,
 }
 
 impl Tail {
@@ -131,7 +133,7 @@ impl Tail {
             };
             consumed += u64::try_from(piece.len()).unwrap_or(u64::MAX);
             let line = line.strip_suffix(b"\r").unwrap_or(line);
-            if let Some(response) = format.response(line) {
+            if let Some(response) = format.response(line, &mut self.earlier) {
                 self.count(response, &mut turns);
             }
         }

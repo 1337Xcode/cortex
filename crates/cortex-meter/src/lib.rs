@@ -13,6 +13,7 @@
 #![warn(clippy::pedantic)]
 
 mod claude;
+mod codex;
 mod error;
 mod format;
 mod holdout;
@@ -24,8 +25,9 @@ mod tail;
 mod timestamp;
 
 pub use claude::Claude;
+pub use codex::Codex;
 pub use error::MeterError;
-pub use format::{TranscriptFormat, format_of};
+pub use format::{Earlier, TranscriptFormat, format_of};
 pub use holdout::{
     BOOTSTRAP_RESAMPLES, Compared, Comparison, Interval, Weighed, compare, mean_interval,
     ratio_interval, weighed,

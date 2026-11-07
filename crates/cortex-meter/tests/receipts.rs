@@ -267,14 +267,14 @@ fn without_prices_or_tasks_counts_stand_alone() -> TestResult {
     Ok(())
 }
 
-/// A session of an agent whose transcripts Cortex does not read, Codex here, is not metered: its
+/// A session of an agent whose transcripts Cortex does not read, Cursor here, is not metered: its
 /// usage was never read, though its tallies hold nothing as a session with no response does.
 #[test]
 fn an_agent_whose_transcripts_are_not_read_is_not_metered() -> TestResult {
-    let mut codex = session()?;
-    codex.record.agent = Agent::Codex;
+    let mut cursor = session()?;
+    cursor.record.agent = Agent::Cursor;
     let activity = Activity {
-        session: codex,
+        session: cursor,
         subagents: 0,
         tasks: vec![task(1, 1_000, Some(2_000))?],
         usage: Vec::new(),
@@ -283,7 +283,7 @@ fn an_agent_whose_transcripts_are_not_read_is_not_metered() -> TestResult {
         injections: Vec::new(),
     };
     let receipt = receipt(&activity, None);
-    assert_eq!((receipt.agent, receipt.is_metered), ("codex", false));
+    assert_eq!((receipt.agent, receipt.is_metered), ("cursor", false));
     assert_eq!(receipt.total, tally([0, 0, 0, 0, 0, 0], None));
     Ok(())
 }

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use cortex_core::Identifier;
 use serde::Deserialize;
 
-use crate::format::TranscriptFormat;
+use crate::format::{Earlier, TranscriptFormat, contains};
 use crate::response::{Response, Service, Usage};
 use crate::timestamp::utc_millis;
 
@@ -43,7 +43,7 @@ impl TranscriptFormat for Claude {
             .collect()
     }
 
-    fn response(&self, line: &[u8]) -> Option<Response> {
+    fn response(&self, line: &[u8], _: &mut Earlier) -> Option<Response> {
         // Most lines hold no usage at all; only the few that do are parsed.
         if !contains(line, b"\"usage\"") {
             return None;
@@ -59,13 +59,6 @@ impl TranscriptFormat for Claude {
             service: usage.service(),
         })
     }
-}
-
-/// Whether `haystack` holds `needle`.
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|window| window == needle)
 }
 
 /// The fields of a transcript line a response is read from; every other field is ignored.

@@ -2,10 +2,10 @@
 //!
 //! Every fixture must parse as a JSON object whose `hook_event_name` matches its file name; every
 //! event and tool the adapters handle must have a fixture for each captured agent version, holding
-//! the fields its name promises (the table is in `src/required.rs`); every captured version must
-//! be in that table; the fixture folder may hold nothing but payloads, READMEs and, under a
-//! version's `transcripts/` folder, transcripts of one JSON object a line; and no fixture, line or
-//! README may carry a real path, id, user name or email.
+//! the fields its name promises (the table is in `src/required.rs`); every version captured with
+//! payloads must be in that table; the fixture folder may hold nothing but payloads, READMEs and,
+//! under a version's `transcripts/` folder, transcripts of one JSON object a line; and no fixture,
+//! line or README may carry a real path, id, user name or email.
 
 use std::error::Error;
 use std::fs;
@@ -135,11 +135,18 @@ fn required_fixtures_exist_and_match_their_names() -> TestResult<()> {
     Ok(())
 }
 
-/// Every captured agent version has a list of required fixtures, so a new version folder cannot
-/// skip the completeness check.
+/// Every agent version captured with hook payloads has a list of required fixtures, so a new
+/// version folder of payloads cannot skip the completeness check. A version folder that holds only
+/// a transcript (Codex 0.166.0's rollout) has no payloads to require.
 #[test]
 fn every_version_folder_is_required() -> TestResult<()> {
-    let unlisted: Vec<String> = version_dirs()?
+    let mut with_payloads = Vec::new();
+    for dir in version_dirs()? {
+        if !json_files(&dir)?.is_empty() {
+            with_payloads.push(dir);
+        }
+    }
+    let unlisted: Vec<String> = with_payloads
         .iter()
         .map(|dir| fixture_relative(dir))
         .filter(|relative| {
