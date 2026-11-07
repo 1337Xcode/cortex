@@ -33,6 +33,11 @@ pub const MAX_HITS: usize = 50;
 /// frame and in the daemon's queue of events.
 pub const MAX_HITS_BYTES: usize = 4 * 1024;
 
+/// Most files one edit names on an event, the first and the others together: a patch of more
+/// files (Codex's `apply_patch` can change any number) is recorded for its first 32, enough for
+/// any change a task makes in one step, few enough that an event stays small.
+pub const MAX_EDITED_FILES: usize = 32;
+
 /// The fewest characters other than spaces a prompt holds to ask for code: four, so that "ok",
 /// "yes" and "go" ask for nothing while a file's name alone, `a.py`, still may.
 pub const MIN_WORK_PROMPT_CHARS: usize = 4;
@@ -167,6 +172,18 @@ pub struct ToolTarget {
     /// the event and are never stored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hits: Vec<RepoPath>,
+    /// For an edit of several files, the files it changed after [`ToolTarget::path`], each once, in
+    /// the order the edit names them: at most [`MAX_EDITED_FILES`] files with the first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub more_paths: Vec<RepoPath>,
+}
+
+impl ToolTarget {
+    /// Every file the target names as changed or read: [`ToolTarget::path`], then
+    /// [`ToolTarget::more_paths`].
+    pub fn paths(&self) -> impl Iterator<Item = &RepoPath> {
+        self.path.iter().chain(&self.more_paths)
+    }
 }
 
 /// What a tool call returned: how it ended and how much it printed, never what.
@@ -369,6 +386,7 @@ impl fmt::Debug for ToolTarget {
             .field("pattern", &self.pattern.as_deref().map(Withheld::of))
             .field("command", &self.command)
             .field("hits", &self.hits)
+            .field("more_paths", &self.more_paths)
             .finish()
     }
 }

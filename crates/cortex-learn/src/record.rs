@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use cortex_core::{
     CommandKind, ContentHash, Event, EventKind, EventMeta, FileContent, HookKind, Identifier,
-    LineRange, MAX_RANGES, PromptExcerpt, TaskOutcome, ToolKind, Ulid, is_held_out,
+    LineRange, MAX_RANGES, PromptExcerpt, RepoPath, TaskOutcome, ToolKind, Ulid, is_held_out,
     task_id_of_prompt,
 };
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
@@ -168,7 +168,8 @@ impl Recorder {
         Ok(())
     }
 
-    /// Stores the rows `event`, recorded as `kind`, is kept as, in `task`: one per range it covers.
+    /// Stores the rows `event`, recorded as `kind`, is kept as, in `task`: one per range it covers,
+    /// and for an edit of several files one more for each file after the first, without lines.
     fn append_rows(
         &mut self,
         transaction: &mut WriteTx<'_>,
@@ -200,7 +201,10 @@ impl Recorder {
         let mut unkept = Unkept {
             hits: target.map(|target| target.hits.clone()).unwrap_or_default(),
             restores: restores_of(told.ran),
-            before: self.before_of(transaction, (event, kind))?,
+            before: match &path {
+                Some(path) => self.before_of(transaction, (event, kind), path)?,
+                None => None,
+            },
         };
         for range in ranges_of(event) {
             let row = EventRecord {
@@ -214,6 +218,24 @@ impl Recorder {
                 meta: meta.clone(),
             };
             self.append(transaction, &row, std::mem::take(&mut unkept))?;
+        }
+        let more = target.map_or(&[][..], |target| target.more_paths.as_slice());
+        for path in more.iter().filter(|_| kind == EventKind::Edit) {
+            let row = EventRecord {
+                task_id: task,
+                session_id: Some(event.session_id.clone()),
+                ts_ms: event.ts_ms,
+                kind,
+                node_id: transaction.queries().file_node_at(path)?,
+                path: Some(path.clone()),
+                range: None,
+                meta: meta.clone(),
+            };
+            let unkept = Unkept {
+                before: self.before_of(transaction, (event, kind), path)?,
+                ..Unkept::default()
+            };
+            self.append(transaction, &row, unkept)?;
         }
         Ok(())
     }
@@ -233,14 +255,11 @@ impl Recorder {
         &self,
         transaction: &WriteTx<'_>,
         (event, kind): (&Event, EventKind),
+        path: &RepoPath,
     ) -> Result<Option<FileContent>, StoreError> {
-        let path = event
-            .tool_target
-            .as_ref()
-            .and_then(|target| target.path.as_ref());
-        let Some(path) = path.filter(|_| kind == EventKind::Edit) else {
+        if kind != EventKind::Edit {
             return Ok(None);
-        };
+        }
         if let Some((seen_ms, before)) = self.watcher_edits.held_near(path, event.ts_ms) {
             return Ok((!self.activity.is_reported(path, seen_ms)).then_some(before));
         }

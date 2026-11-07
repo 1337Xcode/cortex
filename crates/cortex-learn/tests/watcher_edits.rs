@@ -203,6 +203,46 @@ fn a_hook_s_edit_claims_the_watcher_s() -> TestResult {
     Ok(())
 }
 
+/// A patch of several files claims the watcher's edit of each: `s1`'s patch of `d.py` and `f.py`
+/// at 30,000 is reported for both, so the watcher's edits of them at 31,000 leave no row, while
+/// `e.py`, which the patch did not name, is recorded.
+#[test]
+fn a_patch_claims_the_watcher_s_edit_of_each_file() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
+    let asked = prompt("s1", 11_000, "fix it")?;
+    let t1 = task_of(&asked)?;
+    let patch = cortex_core::ToolTarget {
+        more_paths: vec![path("f.py")?],
+        ..target("d.py", &[])?
+    };
+    let edit = tool(
+        HookKind::PostTool,
+        ("s1", 30_000),
+        (ToolKind::ApplyPatch, patch, None),
+    )?;
+    store.record(
+        &mut recorder,
+        &[start("s1", 10_000, StartSource::Startup)?, asked, edit],
+    )?;
+    for file in ["d.py", "f.py"] {
+        assert_eq!(
+            watcher_edit(&mut store, &mut recorder, (file, 31_000))?,
+            WatcherEdit::Reported,
+            "{file}"
+        );
+    }
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("e.py", 31_000))?,
+        session("s1")?
+    );
+    assert_eq!(
+        watcher_rows(&store)?,
+        [watched("e.py", 31_000, (Some("s1"), Some(t1)), None)?]
+    );
+    Ok(())
+}
+
 /// An edit that failed changed nothing, so it claims no edit the watcher saw: `s1`'s Edit of
 /// `d.py` at 30,000 fails, and the watcher's edit of `d.py` at 31,000 (a command's, say), within
 /// 2 s of it, is recorded as `s1`'s, in T1.

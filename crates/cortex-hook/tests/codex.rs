@@ -448,8 +448,9 @@ fn with_command(name: &str, event_name: &str, command: &str) -> TestResult<Optio
 }
 
 /// A read of some lines records them, before and after it ran; a read of a file outside the
-/// repository makes no event, nor does a patch of one; a patch that names no file has no target,
-/// and the first file a patch of several names is its target.
+/// repository makes no event, nor does a patch of files all outside it; a patch that names no
+/// file has no target; a patch of several files names the first as its path and the others after
+/// it, each once, leaving out those outside the repository.
 #[test]
 fn reads_and_patches_name_their_files() -> TestResult {
     let read = with_command(
@@ -501,7 +502,29 @@ fn reads_and_patches_name_their_files() -> TestResult {
         "*** Begin Patch\n*** Add File: main2.py\n+x\n*** Update File: calc/ops.py\n*** End Patch",
     )?
     .ok_or("no event")?;
-    assert_eq!(several.tool_target, file("main2.py", &[])?);
+    assert_eq!(
+        several.tool_target,
+        Some(ToolTarget {
+            more_paths: vec![RepoPath::new("calc/ops.py")?],
+            ..file("main2.py", &[])?.ok_or("a target")?
+        })
+    );
+    let mixed = with_command(
+        "post-tool-use-apply-patch.json",
+        "PostToolUse",
+        &format!(
+            "*** Begin Patch\n*** Update File: {outside}\n*** Update File: calc/ops.py\n\
+             *** Update File: main.py\n*** Update File: calc/ops.py\n*** End Patch"
+        ),
+    )?
+    .ok_or("no event")?;
+    assert_eq!(
+        mixed.tool_target,
+        Some(ToolTarget {
+            more_paths: vec![RepoPath::new("main.py")?],
+            ..file("calc/ops.py", &[])?.ok_or("a target")?
+        })
+    );
     Ok(())
 }
 

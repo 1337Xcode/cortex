@@ -56,9 +56,9 @@ pub use config::{
 };
 pub use estimate::estimate_tokens;
 pub use event::{
-    Agent, CompactTrigger, Event, HookKind, LineRange, LineRangeError, MAX_COMMAND_CHARS, MAX_HITS,
-    MAX_HITS_BYTES, MAX_RANGES, MIN_WORK_PROMPT_CHARS, ShellCommand, ShellCommandError,
-    StartSource, ToolKind, ToolResult, ToolTarget,
+    Agent, CompactTrigger, Event, HookKind, LineRange, LineRangeError, MAX_COMMAND_CHARS,
+    MAX_EDITED_FILES, MAX_HITS, MAX_HITS_BYTES, MAX_RANGES, MIN_WORK_PROMPT_CHARS, ShellCommand,
+    ShellCommandError, StartSource, ToolKind, ToolResult, ToolTarget,
 };
 pub use file_content::FileContent;
 pub use hash::{ContentHash, ShortHash};

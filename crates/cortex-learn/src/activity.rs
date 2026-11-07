@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{Event, EventKind, HookKind, Identifier, RepoPath};
+use cortex_core::{Event, EventKind, HookKind, Identifier, RepoPath, ToolTarget};
 
 use crate::watcher_edits::{ATTRIBUTION_WINDOW_MS, HOLD_MS};
 
@@ -69,16 +69,16 @@ impl Activity {
                 _ => {}
             }
         }
-        let edited = event
-            .tool_target
-            .as_ref()
-            .and_then(|target| target.path.as_ref());
+        let edited = event.tool_target.iter().flat_map(ToolTarget::paths);
         // An edit that failed changed nothing, so it claims no change the watcher sees in its file.
         let is_made = event
             .tool_result
             .as_ref()
             .is_none_or(|result| result.is_success);
-        if let Some(path) = edited.filter(|_| kind == EventKind::Edit && is_made) {
+        if kind != EventKind::Edit || !is_made {
+            return;
+        }
+        for path in edited {
             if self.reported.len() >= MAX_REMEMBERED && !self.reported.contains_key(path) {
                 self.reported
                     .retain(|_, times| times.last().is_some_and(|ts_ms| *ts_ms >= since_ms));

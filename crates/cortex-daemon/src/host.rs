@@ -911,6 +911,7 @@ mod tests {
                 pattern: None,
                 command: None,
                 hits: Vec::new(),
+                more_paths: Vec::new(),
             }),
             tool_result: Some(ToolResult {
                 exit_code: None,

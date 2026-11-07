@@ -1,13 +1,14 @@
 //! What a Codex tool call aimed at and how it ended. Codex reads and searches through its shell
 //! (tool `Bash`), whose command is read for what it does (see `command`); a search's hits are the
 //! files its output names. Edits arrive as `apply_patch`, the whole patch in `tool_input.command`:
-//! its first `*** Update File:`, `*** Add File:` or `*** Delete File:` header names the file the
-//! call aimed at, and its hunks carry no line numbers. A shell's exit code is not in the payload
+//! its `*** Update File:`, `*** Add File:`, `*** Delete File:` and `*** Move to:` headers name the
+//! files it changes, and its hunks carry no line numbers. A shell's exit code is not in the payload
 //! but at the end of the session's rollout file (see `rollout`); a patch's response opens with
 //! its own.
 
 use cortex_core::{
-    HookKind, MAX_COMMAND_CHARS, RepoPath, ShellCommand, ToolKind, ToolResult, ToolTarget,
+    HookKind, MAX_COMMAND_CHARS, MAX_EDITED_FILES, RepoPath, ShellCommand, ToolKind, ToolResult,
+    ToolTarget,
 };
 use serde_json::value::RawValue;
 
@@ -18,9 +19,14 @@ use crate::shaped::payload::Payload;
 use crate::shaped::place::{Place, hits, place};
 use crate::shaped::{Aim, Tools};
 
-/// The headers of an `apply_patch` that name a file it changes: the first of them is the file the
-/// call aimed at. A moved file's new name (`*** Move to:`) follows its own header.
-const PATCH_HEADERS: [&str; 3] = ["*** Update File: ", "*** Add File: ", "*** Delete File: "];
+/// The headers of an `apply_patch` that name a file it changes; a moved file's new name
+/// (`*** Move to:`) follows its old name's header.
+const PATCH_HEADERS: [&str; 4] = [
+    "*** Update File: ",
+    "*** Add File: ",
+    "*** Delete File: ",
+    "*** Move to: ",
+];
 
 /// How Codex's tools read.
 pub(super) struct CodexTools;
@@ -67,16 +73,7 @@ impl Tools for CodexTools {
                     ..ToolTarget::default()
                 },
             },
-            (ToolKind::ApplyPatch, _) => match first_patched(command) {
-                None => return Aim::Nothing,
-                Some(path) => match place(Some(path), cwd, located) {
-                    Place::Outside => return Aim::Outside,
-                    place => ToolTarget {
-                        path: place.path(),
-                        ..ToolTarget::default()
-                    },
-                },
-            },
+            (ToolKind::ApplyPatch, _) => return patch_aim(command, cwd, located),
             (ToolKind::Shell, _) => ToolTarget {
                 command: Some(ShellCommand::cut(command)),
                 ..ToolTarget::default()
@@ -116,16 +113,53 @@ fn command<'a>(payload: &'a Payload<'_>) -> Option<&'a str> {
     payload.tool_input.as_ref()?.command.as_deref()
 }
 
-/// The file the first header of the patch `text` names, when one names a file.
-fn first_patched(text: &str) -> Option<&str> {
-    text.lines()
-        .filter_map(|line| {
-            PATCH_HEADERS
-                .iter()
-                .find_map(|header| line.strip_prefix(header))
-        })
-        .map(str::trim)
-        .find(|path| !path.is_empty())
+/// What the patch `text` aimed at: the files its headers name inside the repository, the first
+/// as the target's path and the others after it; outside, when every file it names is outside
+/// the repository; nothing, when it names none.
+fn patch_aim(text: &str, cwd: Option<&str>, located: &Located) -> Aim {
+    let mut inside: Vec<RepoPath> = Vec::new();
+    let mut is_outside = false;
+    for named in patched_files(text) {
+        match place(Some(named), cwd, located) {
+            Place::Inside(path) if !inside.contains(&path) => inside.push(path),
+            Place::Outside => is_outside = true,
+            Place::Inside(_) | Place::Unnamed => {}
+        }
+    }
+    if inside.is_empty() {
+        return if is_outside {
+            Aim::Outside
+        } else {
+            Aim::Nothing
+        };
+    }
+    let more_paths = inside.split_off(1);
+    Aim::Target(ToolTarget {
+        path: inside.pop(),
+        more_paths,
+        ..ToolTarget::default()
+    })
+}
+
+/// The files the headers of the patch `text` name, each once, in order: at most
+/// [`MAX_EDITED_FILES`] of them, the rest of the patch not read.
+fn patched_files(text: &str) -> Vec<&str> {
+    let mut files: Vec<&str> = Vec::new();
+    let named = text.lines().filter_map(|line| {
+        PATCH_HEADERS
+            .iter()
+            .find_map(|header| line.strip_prefix(header))
+            .map(str::trim)
+    });
+    for path in named.filter(|path| !path.is_empty()) {
+        if files.len() == MAX_EDITED_FILES {
+            break;
+        }
+        if !files.contains(&path) {
+            files.push(path);
+        }
+    }
+    files
 }
 
 /// The exit code a patch's response opens with: `Exit code: N` on its first line.
@@ -143,48 +177,38 @@ fn patch_exit_code(response: &RawValue) -> Option<i32> {
 mod tests {
     use super::*;
 
-    /// A patch's target is the file its first header names, whichever kind of header it is; a
-    /// header with no name, a line that only holds a header's words, and a `Move to` line name
-    /// none.
+    /// A patch names each file its headers name once, in order, a moved file under its new name
+    /// too; a header with no name, and a line that only holds a header's words, name none.
     #[test]
-    fn a_patch_aims_at_the_file_its_first_header_names() {
-        let cases = [
-            (
-                "*** Begin Patch\n*** Update File: calc/ops.py\n@@\n-a\n+b\n*** End Patch",
-                Some("calc/ops.py"),
-            ),
-            (
-                "*** Begin Patch\n*** Add File: NOTES.md\n+x\n*** Update File: a.py\n",
-                Some("NOTES.md"),
-            ),
-            (
-                "*** Begin Patch\n*** Delete File: old.py\n*** End Patch",
-                Some("old.py"),
-            ),
-            (
-                "*** Begin Patch\n*** Update File:  \n*** Add File: b.py\n",
-                Some("b.py"),
-            ),
-            (
-                "*** Begin Patch\n@@\n- *** Add File: no.py\n*** Move to: c.py\n*** End Patch",
-                None,
-            ),
-            ("*** Begin Patch\n*** End Patch", None),
-        ];
-        for (patch, expected) in cases {
-            assert_eq!(first_patched(patch), expected, "{patch}");
-        }
+    fn a_patch_names_the_files_its_headers_name() {
+        let patch = "*** Begin Patch\n*** Update File: calc/ops.py\n@@\n-a\n+b\n\
+                     *** Add File: NOTES.md\n+x\n*** Update File:  \n*** Update File: old.py\n\
+                     *** Move to: new.py\n*** Delete File: gone.py\n\
+                     *** Update File: calc/ops.py\n@@\n- *** Add File: no.py\n*** End Patch";
+        assert_eq!(
+            patched_files(patch),
+            ["calc/ops.py", "NOTES.md", "old.py", "new.py", "gone.py"]
+        );
+        assert_eq!(
+            patched_files("*** Begin Patch\n*** End Patch"),
+            Vec::<&str>::new()
+        );
     }
 
-    /// A patch of a million bytes of headers is read for its first file at once, not every header.
+    /// A patch of a million bytes of headers is read for its first 32 files, not every header.
     #[test]
-    fn a_long_patch_costs_one_header() {
+    fn a_long_patch_is_read_for_its_first_files() {
         let headers: Vec<String> = (0..50_000)
             .map(|number| format!("*** Add File: f{number}.py\n"))
             .collect();
         let patch = format!("*** Begin Patch\n{}", headers.concat());
         let started = std::time::Instant::now();
-        assert_eq!(first_patched(&patch), Some("f0.py"));
+        let files = patched_files(&patch);
+        assert_eq!(files.len(), 32);
+        assert_eq!(
+            (files.first(), files.last()),
+            (Some(&"f0.py"), Some(&"f31.py"))
+        );
         assert!(
             started.elapsed() < std::time::Duration::from_secs(1),
             "{:?}",

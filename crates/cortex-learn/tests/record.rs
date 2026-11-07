@@ -201,6 +201,78 @@ fn a_read_keeps_the_hash_of_what_the_index_held() -> TestResult {
     Ok(())
 }
 
+/// What an edit's row says: its path, its lines, whether it names its file's node, and whether
+/// the edit succeeded.
+type EditRow = (Option<RepoPath>, Option<LineRange>, bool, Option<bool>);
+
+/// An edit of several files, as a patch makes it, is stored as one row for each file it names, in
+/// its order, each the file's own node when the index holds it: the first with the edit's lines,
+/// the others with none, as a patch's hunks carry none; all three with how the edit ended. A
+/// failed edit of several files is stored the same way, each row saying it failed.
+#[test]
+fn an_edit_of_several_files_is_stored_for_each() -> TestResult {
+    let mut store = Store::new()?;
+    let nodes = store.index(&["calc/ops.py", "calc/util.py"])?;
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
+    let patch = |ranges: &[(u32, u32)]| -> TestResult<ToolTarget> {
+        Ok(ToolTarget {
+            more_paths: vec![RepoPath::new("NOTES.md")?, RepoPath::new("calc/util.py")?],
+            ..target("calc/ops.py", ranges)?
+        })
+    };
+    let events = [
+        start("s1", 1_000, StartSource::Startup)?,
+        prompt("s1", 2_000, "fix divide and note it")?,
+        tool(
+            HookKind::PostTool,
+            ("s1", 2_100),
+            (
+                ToolKind::ApplyPatch,
+                patch(&[(12, 13)])?,
+                succeeded(Some(0), None),
+            ),
+        )?,
+        tool(
+            HookKind::PostTool,
+            ("s1", 2_200),
+            (ToolKind::ApplyPatch, patch(&[])?, failed()),
+        )?,
+    ];
+    store.record(&mut recorder, &events)?;
+    let edits: Vec<EditRow> = store
+        .events()?
+        .into_iter()
+        .filter(|row| row.kind == EventKind::Edit)
+        .map(|row| {
+            (
+                row.path,
+                row.range,
+                row.node_id.is_some(),
+                row.meta.is_success,
+            )
+        })
+        .collect();
+    let path = |text: &str| RepoPath::new(text).map(Some);
+    assert_eq!(nodes.len(), 2);
+    assert_eq!(
+        edits,
+        [
+            (
+                path("calc/ops.py")?,
+                Some(LineRange::new(12, 13)?),
+                true,
+                Some(true)
+            ),
+            (path("NOTES.md")?, None, false, Some(true)),
+            (path("calc/util.py")?, None, true, Some(true)),
+            (path("calc/ops.py")?, None, true, Some(false)),
+            (path("NOTES.md")?, None, false, Some(false)),
+            (path("calc/util.py")?, None, true, Some(false)),
+        ]
+    );
+    Ok(())
+}
+
 /// A task is held out by its id at the share the recorder was given: at a share of 1 every task
 /// it starts is held out, at 0 none is, and either way the task keeps the id its prompt names.
 #[test]
