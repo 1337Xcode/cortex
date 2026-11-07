@@ -16,6 +16,12 @@ pub(crate) fn context(event_name: &str, text: &str) -> String {
     )
 }
 
+/// `text` as a hook prints it for an agent that reads `additionalContext` at the top of the
+/// object, as OpenHands does: `{"additionalContext":...}`.
+pub(crate) fn bare(text: &str) -> String {
+    format!(r#"{{"additionalContext":{}}}"#, Value::from(text))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

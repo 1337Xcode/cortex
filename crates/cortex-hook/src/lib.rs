@@ -7,13 +7,16 @@
 #![warn(clippy::pedantic)]
 
 mod adapter;
+mod augment;
 mod claude;
 mod client;
 mod codex;
 mod devin;
 mod droid;
 mod fail_open;
+mod junie;
 mod log;
+mod openhands;
 mod qwen;
 mod relaunch;
 mod root;
@@ -22,6 +25,7 @@ mod shaped;
 mod spawn;
 mod stdin;
 mod stop;
+mod trae;
 
 pub use adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, Versions, adapter};
 pub use client::{Answer, ClientError, ask};

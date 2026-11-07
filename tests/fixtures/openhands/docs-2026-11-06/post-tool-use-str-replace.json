@@ -1,0 +1,13 @@
+{
+  "event_type": "PostToolUse",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "working_dir": "C:\\repo",
+  "tool_name": "file_editor",
+  "tool_input": {
+    "command": "str_replace",
+    "path": "C:\\repo\\calc\\ops.py",
+    "old_str": "a // b",
+    "new_str": "a / b"
+  },
+  "tool_response": {}
+}

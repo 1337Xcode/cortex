@@ -32,6 +32,8 @@ const TOOLS: ToolTable = ToolTable {
         ("grep_search", ToolKind::Grep),
         ("run_shell_command", ToolKind::Shell),
     ],
+    subcommands: &[],
+    renames: &[],
     outcome: Outcome::PostIsSuccess {
         failure_event: "PostToolUseFailure",
     },

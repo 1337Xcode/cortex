@@ -27,7 +27,8 @@ pub(crate) fn event(
     locate: &dyn Fn(&Path) -> Option<Located>,
     stamp: Stamp,
 ) -> Result<Option<Event>, NormalizeError> {
-    let payload: Payload<'_> = serde_json::from_slice(strip_bom(payload))?;
+    let renamed = tools.renamed(strip_bom(payload));
+    let payload: Payload<'_> = serde_json::from_slice(&renamed)?;
     let Some(located) = tools.working_folder(&payload).and_then(|cwd| locate(&cwd)) else {
         return Ok(None);
     };

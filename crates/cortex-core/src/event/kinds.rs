@@ -20,6 +20,14 @@ named_kind! {
         Droid => "droid",
         /// Devin's command-line agent.
         Devin => "devin",
+        /// OpenHands.
+        OpenHands => "openhands",
+        /// TRAE.
+        Trae => "trae",
+        /// JetBrains Junie's command-line agent.
+        Junie => "junie",
+        /// Augment's Auggie command-line agent.
+        Augment => "augment",
         /// The opencode agent.
         Opencode => "opencode",
         /// Any other agent.

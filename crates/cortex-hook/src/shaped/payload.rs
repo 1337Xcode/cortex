@@ -37,6 +37,9 @@ pub(crate) struct Payload<'a> {
     /// The tool's name.
     #[serde(deserialize_with = "lenient")]
     pub(crate) tool_name: Option<String>,
+    /// Whether the tool's call failed, as Augment's payloads say.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) tool_is_error: Option<bool>,
     /// The prompt as the user typed it, where an agent gives it apart from `prompt`, which may
     /// be a send of its own (Qwen Code's tool results).
     #[serde(deserialize_with = "lenient")]
@@ -101,6 +104,10 @@ pub(crate) struct ToolInput {
     /// Whether the shell runs in the background: its result then comes before it has finished.
     #[serde(deserialize_with = "lenient")]
     pub(crate) run_in_background: Option<bool>,
+    /// The lines a view names, as OpenHands' file editor takes them: a range whose counting
+    /// Cortex does not read, held only to tell that one is named.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) view_range: Option<serde_json::Value>,
 }
 
 /// What a tool gave back.
@@ -119,6 +126,9 @@ pub(crate) struct ToolResponse<'a> {
     /// The size of a shell's standard error.
     #[serde(deserialize_with = "lenient")]
     pub(crate) stderr: Option<TextLength>,
+    /// The command's exit code, as OpenHands' terminal responses say.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) exit_code: Option<i64>,
     /// Whether the call succeeded, as Devin's responses say.
     #[serde(deserialize_with = "lenient")]
     pub(crate) success: Option<bool>,

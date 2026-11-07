@@ -1,0 +1,10 @@
+{
+  "hook_event_name": "PromptSubmit",
+  "hook_type": "PromptSubmit",
+  "cwd": "C:\\repo",
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "workspace_roots": [
+    "C:\\repo"
+  ],
+  "user_prompt": "Fix divide in calc/ops.py"
+}

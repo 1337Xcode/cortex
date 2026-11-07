@@ -7,14 +7,20 @@ use std::time::Duration;
 
 use cortex_core::{Agent, Event, HookKind, Ulid};
 
+use crate::augment::Augment;
 use crate::claude::Claude;
 use crate::codex::Codex;
 use crate::devin::Devin;
 use crate::droid::Droid;
+use crate::junie::Junie;
+use crate::openhands::OpenHands;
 use crate::qwen::Qwen;
+use crate::trae::Trae;
 
 /// Every agent Cortex has an adapter for.
-const ADAPTERS: &[&dyn Adapter] = &[&Claude, &Codex, &Qwen, &Droid, &Devin];
+const ADAPTERS: &[&dyn Adapter] = &[
+    &Claude, &Codex, &Qwen, &Droid, &Devin, &OpenHands, &Trae, &Junie, &Augment,
+];
 
 /// The adapter of the agent named `name` on the command line (`claude`), if there is one.
 #[must_use]

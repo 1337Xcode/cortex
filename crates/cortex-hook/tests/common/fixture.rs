@@ -47,7 +47,12 @@ pub fn read_fixture(agent: &str, version: &str, name: &str) -> TestResult<Vec<u8
             *path = native(path);
         }
     };
-    for key in ["cwd", "transcript_path", "agent_transcript_path"] {
+    for key in [
+        "cwd",
+        "working_dir",
+        "transcript_path",
+        "agent_transcript_path",
+    ] {
         rewrite(value.get_mut(key));
     }
     if let Some(input) = value.get_mut("tool_input") {
@@ -69,11 +74,13 @@ pub fn read_fixture(agent: &str, version: &str, name: &str) -> TestResult<Vec<u8
     Ok(serde_json::to_vec(&value)?)
 }
 
-/// The fixture's event name, as the installer passes it to `cortex hook --event`.
+/// The fixture's event name, as the installer passes it to `cortex hook --event`: its
+/// `hook_event_name`, or OpenHands' `event_type`.
 pub fn event_name(payload: &[u8]) -> TestResult<String> {
     let value: Value = serde_json::from_slice(payload)?;
     Ok(value
         .get("hook_event_name")
+        .or_else(|| value.get("event_type"))
         .and_then(Value::as_str)
         .ok_or("no event name")?
         .to_owned())

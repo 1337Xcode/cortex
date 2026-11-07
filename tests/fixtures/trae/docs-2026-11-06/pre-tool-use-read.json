@@ -1,0 +1,12 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "cwd": "C:\\repo",
+  "hook_event_name": "PreToolUse",
+  "workspace_roots": [
+    "C:\\repo"
+  ],
+  "tool_use_id": "toolu_fixture0001",
+  "tool_name": "Read",
+  "llm_tool_name": "Read",
+  "tool_input": {}
+}

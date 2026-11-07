@@ -219,10 +219,174 @@ fn droid() -> TestResult<Vec<(&'static str, Option<Event>)>> {
     ])
 }
 
+/// A shell command.
+fn command(text: &str) -> Option<ToolTarget> {
+    Some(ToolTarget {
+        command: Some(ShellCommand::cut(text)),
+        ..ToolTarget::default()
+    })
+}
+
+/// The test command every documented shell payload runs.
+const TESTS: &str = "python -m pytest -q";
+
+/// TRAE's payloads and the events they make, read off the fixtures by hand: a read whose input
+/// names no file (TRAE's documentation names no field for it) aims at none; `RunCommand` a shell;
+/// a call's result unknown.
+fn trae() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(Agent::Trae, hook, None);
+    Ok(vec![
+        (
+            "post-tool-use-run-command.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), None),
+            )),
+        ),
+        (
+            "pre-tool-use-read.json",
+            Some(tool(at(HookKind::PreTool)?, (ToolKind::Read, None, None))),
+        ),
+        (
+            "session-start.json",
+            Some(Event {
+                source: Some(StartSource::Startup),
+                ..at(HookKind::SessionStart)?
+            }),
+        ),
+        ("stop.json", Some(at(HookKind::Stop)?)),
+        (
+            "user-prompt-submit.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+    ])
+}
+
+/// Junie's payloads and the events they make: its start and its prompt, which name the session
+/// and the folder; its tool and stop events, which name neither, are not registered.
+fn junie() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(Agent::Junie, hook, None);
+    Ok(vec![
+        ("pre-tool-use.json", None),
+        (
+            "session-start.json",
+            Some(Event {
+                source: Some(StartSource::Startup),
+                ..at(HookKind::SessionStart)?
+            }),
+        ),
+        ("stop.json", None),
+        (
+            "user-prompt-submit.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+    ])
+}
+
+/// Augment's payloads and the events they make: the session is `conversation_id`, the prompt
+/// `user_prompt`; an edit's file is its input's `path`, relative to the working folder; a call's
+/// result is the opposite of `tool_is_error`.
+fn augment() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(Agent::Augment, hook, None);
+    Ok(vec![
+        (
+            "post-tool-use-bash.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), ended(false)),
+            )),
+        ),
+        (
+            "post-tool-use-edit.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Edit, file("calc/ops.py")?, ended(true)),
+            )),
+        ),
+        (
+            "prompt-submit.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+        ("session-end.json", Some(at(HookKind::SessionEnd)?)),
+        ("session-start.json", Some(at(HookKind::SessionStart)?)),
+        ("stop.json", Some(at(HookKind::Stop)?)),
+    ])
+}
+
+/// OpenHands' payloads and the events they make: the folder is `working_dir`, the prompt
+/// `message`; the file editor reads at `view` (not one that names a range, whose counting is not
+/// documented) and edits at `str_replace`; a terminal command's result is its exit code.
+fn openhands() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(Agent::OpenHands, hook, None);
+    Ok(vec![
+        (
+            "post-tool-use-str-replace.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Edit, file("calc/ops.py")?, None),
+            )),
+        ),
+        (
+            "post-tool-use-terminal.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (
+                    ToolKind::Shell,
+                    command(TESTS),
+                    Some(ToolResult {
+                        exit_code: Some(1),
+                        is_success: false,
+                        is_interrupted: false,
+                        output_bytes: None,
+                    }),
+                ),
+            )),
+        ),
+        (
+            "post-tool-use-view-range.json",
+            Some(tool(at(HookKind::PostTool)?, (ToolKind::Read, None, None))),
+        ),
+        (
+            "post-tool-use-view.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, None),
+            )),
+        ),
+        ("session-end.json", Some(at(HookKind::SessionEnd)?)),
+        ("session-start.json", Some(at(HookKind::SessionStart)?)),
+        ("stop.json", Some(at(HookKind::Stop)?)),
+        (
+            "user-prompt-submit.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+    ])
+}
+
 /// Each agent's payloads make the events written for them, and its table names every fixture.
 #[test]
 fn every_documented_payload_normalizes_as_written() -> TestResult {
-    for (name, table) in [("qwen", qwen()?), ("droid", droid()?)] {
+    let tables = [
+        ("qwen", qwen()?),
+        ("droid", droid()?),
+        ("trae", trae()?),
+        ("junie", junie()?),
+        ("augment", augment()?),
+        ("openhands", openhands()?),
+    ];
+    for (name, table) in tables {
         let adapter = adapter(name).ok_or(name)?;
         for (fixture, expected) in &table {
             let payload = read_fixture(name, DOCUMENTED, fixture)?;
@@ -345,7 +509,48 @@ fn the_hooks_are_the_ones_each_documentation_supports() -> TestResult {
         giving("devin")?,
         ["SessionStart", "UserPromptSubmit", "PostToolUse"]
     );
-    for name in ["qwen", "droid", "devin"] {
+    assert_eq!(
+        registered("trae")?,
+        [
+            ("SessionStart", None, 1_500),
+            ("UserPromptSubmit", None, 1_000),
+            ("PreToolUse", Some("^Read$"), 300),
+            (
+                "PostToolUse",
+                Some("^(Read|Write|Edit|Glob|Grep|RunCommand)$"),
+                500
+            ),
+            ("Stop", None, 300),
+        ]
+    );
+    assert_eq!(
+        giving("trae")?,
+        [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse"
+        ]
+    );
+    assert_eq!(
+        registered("junie")?,
+        [
+            ("SessionStart", None, 1_500),
+            ("UserPromptSubmit", None, 1_000)
+        ]
+    );
+    assert_eq!(giving("junie")?, ["UserPromptSubmit"]);
+    assert_eq!(giving("augment")?, ["SessionStart", "PostToolUse"]);
+    assert_eq!(giving("openhands")?, ["SessionStart", "UserPromptSubmit"]);
+    for name in [
+        "qwen",
+        "droid",
+        "devin",
+        "trae",
+        "junie",
+        "augment",
+        "openhands",
+    ] {
         let adapter = adapter(name).ok_or(name)?;
         assert!(adapter.versions().is_none(), "{name}");
         assert_eq!(adapter.agent().name(), name);
@@ -373,6 +578,13 @@ const FIELD_NAMES: &[&str] = &[
     "limit",
     "command",
     "success",
+    "working_dir",
+    "message",
+    "conversation_id",
+    "user_prompt",
+    "tool_is_error",
+    "view_range",
+    "exit_code",
     "reason",
     "unknown",
 ];
@@ -387,6 +599,11 @@ const STEERING_TEXTS: &[&str] = &[
     "Create",
     "Execute",
     "exec",
+    "terminal",
+    "file_editor",
+    "view",
+    "bash",
+    "RunCommand",
     "read",
     "startup",
     "/repo/a.rs",
@@ -414,7 +631,7 @@ proptest! {
         }
         let bytes = serde_json::to_vec(&payload)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
-        for name in ["qwen", "droid", "devin"] {
+        for name in ["qwen", "droid", "devin", "trae", "junie", "augment", "openhands"] {
             let adapter = adapter(name).ok_or_else(|| TestCaseError::fail("no adapter"))?;
             for entry in adapter.hooks() {
                 if let Ok(Some(event)) = adapter.normalize(entry.event_name, &bytes, &locate, stamp()) {

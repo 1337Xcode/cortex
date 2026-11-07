@@ -1,0 +1,30 @@
+{
+  "hook_event_name": "PostToolUse",
+  "hook_type": "PostToolUse",
+  "cwd": "C:\\repo",
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "workspace_roots": [
+    "C:\\repo"
+  ],
+  "tool_name": "edit",
+  "tool_input": {
+    "path": "calc/ops.py",
+    "edits": [
+      {
+        "oldText": "a // b",
+        "newText": "a / b"
+      }
+    ]
+  },
+  "is_mcp_tool": false,
+  "tool_output": "",
+  "tool_is_error": false,
+  "file_changes": [
+    {
+      "path": "calc/ops.py",
+      "changeType": "edit",
+      "content": "",
+      "oldContent": ""
+    }
+  ]
+}

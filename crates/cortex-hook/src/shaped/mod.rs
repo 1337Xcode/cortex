@@ -10,6 +10,7 @@ pub(crate) mod payload;
 pub(crate) mod place;
 pub(crate) mod table;
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use cortex_core::{HookKind, ToolKind, ToolResult, ToolTarget};
@@ -49,6 +50,12 @@ pub(crate) trait Tools: Sync {
     /// agent does not tell its hooks.
     fn result(&self, tool: ToolKind, event_name: &str, payload: &Payload<'_>)
     -> Option<ToolResult>;
+
+    /// The payload as Claude Code's hook JSON names its fields: an agent that names some of them
+    /// otherwise renames them here.
+    fn renamed<'p>(&self, payload: &'p [u8]) -> Cow<'p, [u8]> {
+        Cow::Borrowed(payload)
+    }
 
     /// The folder the agent works in: the payload's `cwd`.
     fn working_folder(&self, payload: &Payload<'_>) -> Option<PathBuf> {

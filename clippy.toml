@@ -1,3 +1,6 @@
 # Tests may index directly: a panic there is a failing test, which is what an out-of-range index
 # should be. Product code uses `get` and handles the miss.
 allow-indexing-slicing-in-tests = true
+
+# Agents' names written as their makers write them, in docs that name the agent an adapter serves.
+doc-valid-idents = ["OpenHands", "OpenCode", "OpenClaw", "JetBrains", ".."]

@@ -1,0 +1,16 @@
+{
+  "hook_event_name": "PostToolUse",
+  "hook_type": "PostToolUse",
+  "cwd": "C:\\repo",
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "workspace_roots": [
+    "C:\\repo"
+  ],
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "python -m pytest -q"
+  },
+  "is_mcp_tool": false,
+  "tool_output": "1 failed",
+  "tool_is_error": true
+}

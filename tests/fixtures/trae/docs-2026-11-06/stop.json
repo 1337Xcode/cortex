@@ -1,0 +1,11 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "cwd": "C:\\repo",
+  "hook_event_name": "Stop",
+  "workspace_roots": [
+    "C:\\repo"
+  ],
+  "stop_hook_active": false,
+  "loop_count": 0,
+  "last_assistant_message": "Done."
+}

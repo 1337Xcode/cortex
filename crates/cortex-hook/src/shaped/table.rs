@@ -7,6 +7,7 @@
 //! hits, read from a response the documentation does not describe, are none; a shell's exit code
 //! is unknown.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use cortex_core::{
@@ -23,6 +24,12 @@ pub(crate) struct ToolTable {
     /// Each tool's name, as the agent's payloads write it, and its kind; a name not here is a
     /// tool of no kind Cortex reads.
     pub(crate) tools: &'static [(&'static str, ToolKind)],
+    /// A tool whose kind its input's `command` decides, as OpenHands' file editor's `view` and
+    /// `create`: the tool's name, the command, and the kind; looked up before `tools`.
+    pub(crate) subcommands: &'static [(&'static str, &'static str, ToolKind)],
+    /// Fields the agent names otherwise than Claude Code's hook JSON, as the agent names them and
+    /// as Claude Code does: renamed before the payload is read, unless the payload holds both.
+    pub(crate) renames: &'static [(&'static str, &'static str)],
     /// What the agent's tool events say of how a call ended.
     pub(crate) outcome: Outcome,
     /// Where the user's prompt is.
@@ -44,6 +51,10 @@ pub(crate) enum Outcome {
     },
     /// The response's `success` field says.
     ResponseSuccess,
+    /// The payload's `tool_is_error` field says.
+    ToolIsError,
+    /// The response's `exit_code` says, 0 a success; a negative code is a command not finished.
+    ResponseExitCode,
 }
 
 /// Where an agent's payload holds the user's prompt.
@@ -57,7 +68,18 @@ pub(crate) enum PromptField {
 }
 
 impl Tools for ToolTable {
-    fn kind(&self, name: &str, _: &Payload<'_>) -> ToolKind {
+    fn kind(&self, name: &str, payload: &Payload<'_>) -> ToolKind {
+        let command = payload
+            .tool_input
+            .as_ref()
+            .and_then(|input| input.command.as_deref());
+        let by_command = self
+            .subcommands
+            .iter()
+            .find(|(tool, subcommand, _)| *tool == name && Some(*subcommand) == command);
+        if let Some((_, _, kind)) = by_command {
+            return *kind;
+        }
         self.tools
             .iter()
             .find(|(named, _)| *named == name)
@@ -71,7 +93,11 @@ impl Tools for ToolTable {
         // Relative paths are the agent's working folder's, which the payload may not name.
         let cwd = located.cwd.to_str();
         let target = match tool {
-            ToolKind::Read if input.offset.is_some() || input.limit.is_some() => {
+            ToolKind::Read
+                if input.offset.is_some()
+                    || input.limit.is_some()
+                    || input.view_range.is_some() =>
+            {
                 return Aim::Nothing;
             }
             ToolKind::Read
@@ -109,17 +135,46 @@ impl Tools for ToolTable {
     }
 
     fn result(&self, _: ToolKind, event_name: &str, payload: &Payload<'_>) -> Option<ToolResult> {
+        let mut exit_code = None;
         let is_success = match self.outcome {
             Outcome::Unknown => return None,
             Outcome::PostIsSuccess { failure_event } => event_name != failure_event,
             Outcome::ResponseSuccess => payload.tool_response.as_ref()?.success?,
+            Outcome::ToolIsError => !payload.tool_is_error?,
+            Outcome::ResponseExitCode => {
+                let code = i32::try_from(payload.tool_response.as_ref()?.exit_code?).ok()?;
+                if code < 0 {
+                    return None;
+                }
+                exit_code = Some(code);
+                code == 0
+            }
         };
         Some(ToolResult {
-            exit_code: None,
+            exit_code,
             is_success,
             is_interrupted: false,
             output_bytes: None,
         })
+    }
+
+    fn renamed<'p>(&self, payload: &'p [u8]) -> Cow<'p, [u8]> {
+        if self.renames.is_empty() {
+            return Cow::Borrowed(payload);
+        }
+        // A payload that is no JSON object is read as it is, and refused there.
+        let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_slice(payload) else {
+            return Cow::Borrowed(payload);
+        };
+        for (theirs, ours) in self.renames {
+            if fields.contains_key(*ours) {
+                continue;
+            }
+            if let Some(value) = fields.remove(*theirs) {
+                fields.insert((*ours).to_owned(), value);
+            }
+        }
+        serde_json::to_vec(&fields).map_or(Cow::Borrowed(payload), Cow::Owned)
     }
 
     fn working_folder(&self, payload: &Payload<'_>) -> Option<PathBuf> {

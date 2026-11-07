@@ -1,0 +1,15 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "cwd": "C:\\repo",
+  "hook_event_name": "PostToolUse",
+  "workspace_roots": [
+    "C:\\repo"
+  ],
+  "tool_use_id": "toolu_fixture0002",
+  "tool_name": "RunCommand",
+  "llm_tool_name": "RunCommand",
+  "tool_input": {
+    "command": "python -m pytest -q"
+  },
+  "tool_response": {}
+}

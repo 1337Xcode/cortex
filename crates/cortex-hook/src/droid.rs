@@ -34,6 +34,8 @@ const TOOLS: ToolTable = ToolTable {
         ("Grep", ToolKind::Grep),
         ("Execute", ToolKind::Shell),
     ],
+    subcommands: &[],
+    renames: &[],
     outcome: Outcome::Unknown,
     prompt: PromptField::Prompt,
     folder_variable: None,

@@ -1,0 +1,10 @@
+{
+  "hook_event_name": "Stop",
+  "hook_type": "Stop",
+  "cwd": "C:\\repo",
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "workspace_roots": [
+    "C:\\repo"
+  ],
+  "agent_stop_cause": "end_turn"
+}

@@ -34,6 +34,8 @@ const TOOLS: ToolTable = ToolTable {
         ("glob", ToolKind::Glob),
         ("exec", ToolKind::Shell),
     ],
+    subcommands: &[],
+    renames: &[],
     outcome: Outcome::ResponseSuccess,
     prompt: PromptField::Prompt,
     folder_variable: Some("DEVIN_PROJECT_DIR"),
