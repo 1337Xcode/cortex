@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "pre_llm_call",
+  "tool_name": null,
+  "tool_input": null,
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "cwd": "C:\\repo",
+  "profile": "default",
+  "extra": {
+    "user_message": "Fix divide in calc/ops.py"
+  }
+}

@@ -27,9 +27,10 @@ pub(crate) struct ToolTable {
     /// A tool whose kind its input's `command` decides, as OpenHands' file editor's `view` and
     /// `create`: the tool's name, the command, and the kind; looked up before `tools`.
     pub(crate) subcommands: &'static [(&'static str, &'static str, ToolKind)],
-    /// Fields the agent names otherwise than Claude Code's hook JSON, as the agent names them and
-    /// as Claude Code does: renamed before the payload is read, the agent's field taking the place
-    /// of one the payload also holds under Claude Code's name.
+    /// Fields the agent holds elsewhere than Claude Code's hook JSON, as JSON pointers to where the
+    /// agent holds each and where Claude Code does (`/toolCall/args/CommandLine` to
+    /// `/tool_input/command`): moved, in order, before the payload is read, a moved value taking
+    /// the place of one already there.
     pub(crate) renames: &'static [(&'static str, &'static str)],
     /// What the agent's tool events say of how a call ended.
     pub(crate) outcome: Outcome,
@@ -54,6 +55,8 @@ pub(crate) enum Outcome {
     ResponseSuccess,
     /// The payload's `tool_is_error` field says.
     ToolIsError,
+    /// The payload's `error` says: a call that reports one, not empty, failed.
+    PayloadError,
     /// The response says: one with an `error` is a failure, one without a success.
     ResponseError,
     /// The response's `exit_code` says, 0 a success; a negative code is a command not finished.
@@ -68,6 +71,9 @@ pub(crate) enum PromptField {
     /// In `submitted_prompt`, which only the user's prompts carry: a prompt event without it is
     /// the agent's own send.
     Submitted,
+    /// In `prompt`, on the first model call of a turn only (`invocation_num` 0): the agent's
+    /// hook before every model call is its user's prompt only then.
+    FirstInvocation,
 }
 
 impl Tools for ToolTable {
@@ -146,6 +152,7 @@ impl Tools for ToolTable {
             Outcome::PostIsSuccess { failure_event } => event_name != failure_event,
             Outcome::ResponseSuccess => payload.tool_response.as_ref()?.success?,
             Outcome::ToolIsError => !payload.tool_is_error?,
+            Outcome::PayloadError => payload.error.as_deref().is_none_or(str::is_empty),
             Outcome::ResponseError => payload
                 .tool_response
                 .as_ref()?
@@ -174,15 +181,15 @@ impl Tools for ToolTable {
             return Cow::Borrowed(payload);
         }
         // A payload that is no JSON object is read as it is, and refused there.
-        let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_slice(payload) else {
+        let Ok(mut value @ serde_json::Value::Object(_)) = serde_json::from_slice(payload) else {
             return Cow::Borrowed(payload);
         };
         for (theirs, ours) in self.renames {
-            if let Some(value) = fields.remove(*theirs) {
-                fields.insert((*ours).to_owned(), value);
+            if let Some(moved) = take_at(&mut value, theirs) {
+                place_at(&mut value, ours, moved);
             }
         }
-        serde_json::to_vec(&fields).map_or(Cow::Borrowed(payload), Cow::Owned)
+        serde_json::to_vec(&value).map_or(Cow::Borrowed(payload), Cow::Owned)
     }
 
     fn working_folder(&self, payload: &Payload<'_>) -> Option<PathBuf> {
@@ -197,13 +204,53 @@ impl Tools for ToolTable {
 
     fn prompt<'p>(&self, payload: &'p Payload<'_>) -> Prompted<'p> {
         match self.prompt {
-            PromptField::Prompt => Prompted::User(payload.prompt.as_deref()),
+            PromptField::FirstInvocation if payload.invocation_num != Some(0) => Prompted::NotUser,
+            PromptField::Prompt | PromptField::FirstInvocation => {
+                Prompted::User(payload.prompt.as_deref())
+            }
             PromptField::Submitted => payload
                 .submitted_prompt
                 .as_deref()
                 .map_or(Prompted::NotUser, |prompt| Prompted::User(Some(prompt))),
         }
     }
+}
+
+/// Takes the value at the JSON pointer `at` out of `value`: a field leaves its object, an array's
+/// element leaves a `null` in its place, so the elements after it keep their indices.
+fn take_at(value: &mut serde_json::Value, at: &str) -> Option<serde_json::Value> {
+    let (parent, name) = at.rsplit_once('/')?;
+    match value.pointer_mut(parent)? {
+        serde_json::Value::Object(fields) => fields.remove(&unescaped(name)),
+        serde_json::Value::Array(elements) => elements
+            .get_mut(name.parse::<usize>().ok()?)
+            .map(serde_json::Value::take),
+        _ => None,
+    }
+}
+
+/// Puts `moved` at the JSON pointer `at` in `value`, making the objects on the way: a pointer
+/// through something that is no object puts nothing.
+fn place_at(value: &mut serde_json::Value, at: &str, moved: serde_json::Value) {
+    let mut here = value;
+    let mut names = at.split('/').skip(1).map(unescaped).peekable();
+    while let Some(name) = names.next() {
+        let serde_json::Value::Object(fields) = here else {
+            return;
+        };
+        if names.peek().is_none() {
+            fields.insert(name, moved);
+            return;
+        }
+        here = fields
+            .entry(name)
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    }
+}
+
+/// A JSON pointer's reference token as the field name it stands for (`~1` a `/`, `~0` a `~`).
+fn unescaped(token: &str) -> String {
+    token.replace("~1", "/").replace("~0", "~")
 }
 
 /// The file a tool's input names: its `file_path`, else its `path`.
@@ -219,7 +266,7 @@ mod tests {
     const RENAMING: ToolTable = ToolTable {
         tools: &[],
         subcommands: &[],
-        renames: &[("conversation_id", "session_id")],
+        renames: &[("/conversation_id", "/session_id")],
         outcome: Outcome::Unknown,
         prompt: PromptField::Prompt,
         folder_variable: None,
@@ -241,6 +288,60 @@ mod tests {
             serde_json::json!({"session_id": "c1"})
         );
         assert_eq!(RENAMING.renamed(b"[1]").as_ref(), b"[1]");
+        Ok(())
+    }
+
+    /// Moves between nested places, as Antigravity's: a tool call's arguments become the tool's
+    /// input, then the command among them moves to `command`, and the first workspace becomes the
+    /// working folder.
+    const NESTING: ToolTable = ToolTable {
+        renames: &[
+            ("/toolCall/args", "/tool_input"),
+            ("/tool_input/CommandLine", "/tool_input/command"),
+            ("/workspacePaths/0", "/cwd"),
+        ],
+        ..RENAMING
+    };
+
+    /// Each move takes its value out and puts it at the other pointer, making the objects on the
+    /// way; an array's element leaves a `null`, so later indices hold; a pointer through what is
+    /// no object or names nothing moves nothing. Expected values worked by hand from the moves in
+    /// order.
+    #[test]
+    fn nested_fields_move_between_pointers() -> Result<(), serde_json::Error> {
+        let read = |payload: serde_json::Value| -> Result<serde_json::Value, serde_json::Error> {
+            serde_json::from_slice(&NESTING.renamed(&serde_json::to_vec(&payload)?))
+        };
+        assert_eq!(
+            read(serde_json::json!({
+                "toolCall": {"name": "run_command", "args": {"CommandLine": "pytest", "Cwd": "x"}},
+                "workspacePaths": ["C:/repo", "C:/other"]
+            }))?,
+            serde_json::json!({
+                "toolCall": {"name": "run_command"},
+                "tool_input": {"Cwd": "x", "command": "pytest"},
+                "workspacePaths": [null, "C:/other"],
+                "cwd": "C:/repo"
+            })
+        );
+        let unmoved = serde_json::json!({"toolCall": "text", "workspacePaths": "C:/repo"});
+        assert_eq!(read(unmoved.clone())?, unmoved);
+        Ok(())
+    }
+
+    /// A pointer's escapes stand for the characters they name, in the place a value leaves and
+    /// the one it takes: `~1` a slash, `~0` a tilde.
+    #[test]
+    fn escaped_names_are_the_fields_they_name() -> Result<(), serde_json::Error> {
+        const ESCAPED: ToolTable = ToolTable {
+            renames: &[("/a~1b", "/c~0d/e~1f")],
+            ..RENAMING
+        };
+        let moved = ESCAPED.renamed(br#"{"a/b":1}"#);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&moved)?,
+            serde_json::json!({"c~d": {"e/f": 1}})
+        );
         Ok(())
     }
 }

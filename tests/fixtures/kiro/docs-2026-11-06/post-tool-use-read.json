@@ -1,0 +1,20 @@
+{
+  "hook_event_name": "PostToolUse",
+  "cwd": "C:\\repo",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "tool_name": "read",
+  "tool_input": {
+    "operations": [
+      {
+        "mode": "Line",
+        "path": "C:\\repo\\calc\\ops.py"
+      }
+    ]
+  },
+  "tool_response": {
+    "success": true,
+    "result": [
+      "def add(a, b):"
+    ]
+  }
+}

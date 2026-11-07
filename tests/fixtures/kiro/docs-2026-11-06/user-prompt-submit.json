@@ -1,0 +1,6 @@
+{
+  "hook_event_name": "UserPromptSubmit",
+  "cwd": "C:\\repo",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "prompt": "Fix divide in calc/ops.py"
+}

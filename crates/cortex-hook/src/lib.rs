@@ -7,17 +7,22 @@
 #![warn(clippy::pedantic)]
 
 mod adapter;
+mod antigravity;
 mod augment;
 mod claude;
 mod client;
+mod cline;
 mod codex;
 mod copilot;
+mod crush;
 mod cursor;
 mod devin;
 mod droid;
 mod fail_open;
 mod gemini;
+mod hermes;
 mod junie;
+mod kiro;
 mod log;
 mod openhands;
 mod qwen;

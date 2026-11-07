@@ -1,0 +1,9 @@
+{
+  "event": "PreToolUse",
+  "hook_event_name": "PreToolUse",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "cwd": "C:\\repo",
+  "tool_name": "view",
+  "tool_input": {},
+  "tool_use_id": "call_fixture0001"
+}

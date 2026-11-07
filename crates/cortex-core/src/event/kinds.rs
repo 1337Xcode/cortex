@@ -30,6 +30,16 @@ named_kind! {
         Augment => "augment",
         /// GitHub Copilot's agent: Copilot CLI and Visual Studio Code's agent mode.
         Copilot => "copilot",
+        /// Google Antigravity: its app, its `agy` command-line agent and its editor.
+        Antigravity => "antigravity",
+        /// Kiro: its editor and its `kiro-cli` command-line agent.
+        Kiro => "kiro",
+        /// Cline's Visual Studio Code extension.
+        Cline => "cline",
+        /// Charm's Crush.
+        Crush => "crush",
+        /// Nous Research's Hermes Agent.
+        Hermes => "hermes",
         /// The opencode agent.
         Opencode => "opencode",
         /// Any other agent.

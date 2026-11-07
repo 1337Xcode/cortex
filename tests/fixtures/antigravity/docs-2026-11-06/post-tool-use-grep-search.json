@@ -1,0 +1,20 @@
+{
+  "toolCall": {
+    "name": "grep_search",
+    "args": {
+      "SearchPath": "C:\\repo\\calc",
+      "Query": "def divide",
+      "IsRegex": false,
+      "CaseInsensitive": false
+    }
+  },
+  "stepIdx": 5,
+  "error": "",
+  "conversationId": "00000000-0000-4000-8000-000000000001",
+  "workspacePaths": [
+    "C:\\repo"
+  ],
+  "transcriptPath": "~/.gemini/antigravity/brain/00000000-0000-4000-8000-000000000001/.system_generated/logs/transcript.jsonl",
+  "artifactDirectoryPath": "~/.gemini/antigravity/brain/00000000-0000-4000-8000-000000000001",
+  "modelName": "gemini-3.6-flash-medium"
+}

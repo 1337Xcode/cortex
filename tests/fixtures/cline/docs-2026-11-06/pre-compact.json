@@ -1,0 +1,22 @@
+{
+  "taskId": "00000000-0000-4000-8000-000000000001",
+  "clineVersion": "3.36.0",
+  "timestamp": "1762430400000",
+  "workspaceRoots": [
+    "C:\\repo"
+  ],
+  "userId": "user_123",
+  "model": {
+    "provider": "openrouter",
+    "slug": "anthropic/claude-sonnet-4.5"
+  },
+  "hookName": "PreCompact",
+  "preCompact": {
+    "taskId": "00000000-0000-4000-8000-000000000001",
+    "ulid": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+    "contextSize": 180000,
+    "compactionStrategy": "summarize",
+    "tokensIn": 150000,
+    "tokensOut": 4000
+  }
+}

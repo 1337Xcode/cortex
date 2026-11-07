@@ -32,7 +32,7 @@ const TOOLS: ToolTable = ToolTable {
         ("Shell", ToolKind::Shell),
     ],
     subcommands: &[],
-    renames: &[("conversation_id", "session_id")],
+    renames: &[("/conversation_id", "/session_id")],
     outcome: Outcome::PostIsSuccess {
         failure_event: "postToolUseFailure",
     },

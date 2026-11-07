@@ -17,7 +17,8 @@ pub(crate) fn context(event_name: &str, text: &str) -> String {
 }
 
 /// `text` as a hook prints it for an agent that reads it from `field` at the top of the object:
-/// `additionalContext` for OpenHands and Copilot, `additional_context` for Cursor.
+/// `additionalContext` for OpenHands and Copilot, `additional_context` for Cursor, `context` for
+/// Crush and Hermes.
 pub(crate) fn top_level(field: &str, text: &str) -> String {
     format!("{{{}:{}}}", Value::from(field), Value::from(text))
 }

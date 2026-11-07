@@ -33,6 +33,11 @@ const DOCUMENTED_AGENTS: &[&str] = &[
     "gemini",
     "cursor",
     "copilot",
+    "antigravity",
+    "kiro",
+    "cline",
+    "crush",
+    "hermes",
 ];
 
 /// The session of every documented payload.
@@ -526,6 +531,282 @@ fn copilot() -> TestResult<Vec<(&'static str, Option<Event>)>> {
     ])
 }
 
+/// Antigravity's payloads and the events they make, read off the fixtures by hand: its own fields
+/// moved to Claude Code's places (the session `conversationId`, the working folder the first
+/// workspace, the model `modelName`, the tool call's name and Pascal-case arguments); the prompt
+/// on the turn's first model call only (`invocationNum` 0), a later call no event; a view naming
+/// its lines no target; a call's result a failure when its `error` is not empty; no transcript,
+/// its path being written with `~`.
+fn antigravity() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| -> TestResult<Event> {
+        Ok(Event {
+            model: Some(id("gemini-3.6-flash-medium")?),
+            ..base(Agent::Antigravity, hook, None)?
+        })
+    };
+    Ok(vec![
+        (
+            "post-tool-use-grep-search.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (
+                    ToolKind::Grep,
+                    Some(ToolTarget {
+                        path: Some(RepoPath::new("calc")?),
+                        pattern: Some("def divide".to_owned()),
+                        ..ToolTarget::default()
+                    }),
+                    ended(true),
+                ),
+            )),
+        ),
+        (
+            "post-tool-use-replace-file-content.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Edit, file("calc/ops.py")?, ended(true)),
+            )),
+        ),
+        (
+            "post-tool-use-run-command-error.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), ended(false)),
+            )),
+        ),
+        (
+            "post-tool-use-view-file-lines.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, None, ended(true)),
+            )),
+        ),
+        (
+            "post-tool-use-view-file.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, ended(true)),
+            )),
+        ),
+        (
+            "pre-invocation-first.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+        ("pre-invocation-later.json", None),
+        ("session-start.json", Some(at(HookKind::SessionStart)?)),
+        ("stop.json", Some(at(HookKind::Stop)?)),
+    ])
+}
+
+/// Kiro's payloads and the events they make, read off the fixtures by hand: the older agent's
+/// `read` of lines, its file the first operation's path; a shell whose input is not documented
+/// no command; a call's result its response's `success`.
+fn kiro() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(Agent::Kiro, hook, None);
+    Ok(vec![
+        (
+            "post-tool-use-execute-bash-failed.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, Some(ToolTarget::default()), ended(false)),
+            )),
+        ),
+        (
+            "post-tool-use-read.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, ended(true)),
+            )),
+        ),
+        ("session-end.json", Some(at(HookKind::SessionEnd)?)),
+        ("session-start.json", Some(at(HookKind::SessionStart)?)),
+        ("stop.json", Some(at(HookKind::Stop)?)),
+        (
+            "user-prompt-submit.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+    ])
+}
+
+/// Cline's payloads and the events they make, read off the fixtures by hand: the session `taskId`,
+/// the working folder the first workspace root, the model `model.slug`; each event's fields under
+/// its name; a tool's path relative to the working folder; a call's result `postToolUse.success`;
+/// a task's start and its resumption both a session's start.
+fn cline() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| -> TestResult<Event> {
+        Ok(Event {
+            model: Some(id("anthropic/claude-sonnet-4.5")?),
+            ..base(Agent::Cline, hook, None)?
+        })
+    };
+    Ok(vec![
+        (
+            "post-tool-use-execute-command.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), ended(true)),
+            )),
+        ),
+        (
+            "post-tool-use-read-file.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, ended(true)),
+            )),
+        ),
+        (
+            "post-tool-use-replace-in-file-failed.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Edit, file("calc/ops.py")?, ended(false)),
+            )),
+        ),
+        ("pre-compact.json", Some(at(HookKind::Compact)?)),
+        ("task-complete.json", Some(at(HookKind::Stop)?)),
+        ("task-resume.json", Some(at(HookKind::SessionStart)?)),
+        ("task-start.json", Some(at(HookKind::SessionStart)?)),
+        (
+            "user-prompt-submit.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+    ])
+}
+
+/// Crush's payloads and the events they make, read off the fixtures by hand: a turn's start a
+/// prompt event with no text, which Crush does not give; a file tool whose input fields are not
+/// documented no target; a call's result follows `PostToolUse` and `PostToolUseFailure`.
+fn crush() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(Agent::Crush, hook, None);
+    Ok(vec![
+        (
+            "post-tool-use-bash.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), ended(true)),
+            )),
+        ),
+        (
+            "post-tool-use-failure-edit.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Edit, None, ended(false)),
+            )),
+        ),
+        (
+            "pre-compact.json",
+            Some(Event {
+                compact_trigger: Some(cortex_core::CompactTrigger::Auto),
+                ..at(HookKind::Compact)?
+            }),
+        ),
+        (
+            "pre-tool-use-view.json",
+            Some(tool(at(HookKind::PreTool)?, (ToolKind::Read, None, None))),
+        ),
+        (
+            "session-end.json",
+            Some(Event {
+                end_reason: Some(id("exit")?),
+                ..at(HookKind::SessionEnd)?
+            }),
+        ),
+        (
+            "session-start.json",
+            Some(Event {
+                source: Some(StartSource::Startup),
+                ..at(HookKind::SessionStart)?
+            }),
+        ),
+        ("turn-end.json", Some(at(HookKind::Stop)?)),
+        ("turn-start.json", Some(at(HookKind::Prompt)?)),
+    ])
+}
+
+/// Hermes' payloads and the events they make, read off the fixtures by hand: the prompt
+/// `extra.user_message`; a call's result unknown, a shell hook not being told it.
+fn hermes() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(Agent::Hermes, hook, None);
+    Ok(vec![
+        ("on-session-end.json", Some(at(HookKind::SessionEnd)?)),
+        ("on-session-start.json", Some(at(HookKind::SessionStart)?)),
+        (
+            "post-tool-call-read-file.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, None),
+            )),
+        ),
+        (
+            "post-tool-call-terminal.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), None),
+            )),
+        ),
+        (
+            "pre-llm-call.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+    ])
+}
+
+/// The event a documented payload was written for: the one the payload names, or for
+/// Antigravity's, which name none, the one the fixture's file name begins with.
+fn event_of(agent: &str, fixture: &str, payload: &[u8]) -> TestResult<String> {
+    if agent != "antigravity" {
+        return event_name(payload);
+    }
+    let named = [
+        ("session-start", "SessionStart"),
+        ("pre-invocation", "PreInvocation"),
+        ("post-tool-use", "PostToolUse"),
+        ("stop", "Stop"),
+    ];
+    let (_, event) = named
+        .iter()
+        .find(|(prefix, _)| fixture.starts_with(prefix))
+        .ok_or("no event")?;
+    Ok((*event).to_owned())
+}
+
+/// Kiro's older agent's `read` is a read of a file only when its first operation reads lines: a
+/// read of a folder (mode `Directory`) is a tool of no kind Cortex reads. The payload is
+/// `post-tool-use-read.json` with its mode changed.
+#[test]
+fn kiro_reads_lines_only() -> TestResult {
+    let mut payload: serde_json::Value = serde_json::from_slice(&read_fixture(
+        "kiro",
+        DOCUMENTED,
+        "post-tool-use-read.json",
+    )?)?;
+    payload["tool_input"]["operations"][0]["mode"] = "Directory".into();
+    let kiro = adapter("kiro").ok_or("kiro")?;
+    let found = kiro.normalize(
+        "PostToolUse",
+        &serde_json::to_vec(&payload)?,
+        &locate,
+        stamp(),
+    )?;
+    let expected = tool(
+        base(Agent::Kiro, HookKind::PostTool, None)?,
+        (ToolKind::Other, None, ended(true)),
+    );
+    assert_eq!(found, Some(expected));
+    Ok(())
+}
+
 /// Each agent's payloads make the events written for them, and its table names every fixture.
 #[test]
 fn every_documented_payload_normalizes_as_written() -> TestResult {
@@ -539,13 +820,19 @@ fn every_documented_payload_normalizes_as_written() -> TestResult {
         ("gemini", gemini()?),
         ("cursor", cursor()?),
         ("copilot", copilot()?),
+        ("antigravity", antigravity()?),
+        ("kiro", kiro()?),
+        ("cline", cline()?),
+        ("crush", crush()?),
+        ("hermes", hermes()?),
     ];
     assert_eq!(std::env::var_os("CURSOR_PROJECT_DIR"), None);
     for (name, table) in tables {
         let adapter = adapter(name).ok_or(name)?;
         for (fixture, expected) in &table {
             let payload = read_fixture(name, DOCUMENTED, fixture)?;
-            let found = adapter.normalize(&event_name(&payload)?, &payload, &locate, stamp())?;
+            let event = event_of(name, fixture, &payload)?;
+            let found = adapter.normalize(&event, &payload, &locate, stamp())?;
             assert_eq!(&found, expected, "{name} {fixture}");
         }
         let mut named: Vec<&str> = table.iter().map(|(fixture, _)| *fixture).collect();
@@ -703,6 +990,46 @@ fn the_hooks_are_the_ones_each_documentation_supports() -> TestResult {
     );
     assert_eq!(giving("cursor")?, ["sessionStart", "postToolUse"]);
     assert_eq!(giving("copilot")?, ["SessionStart", "PostToolUse"]);
+    assert_eq!(
+        registered("antigravity")?,
+        [
+            ("SessionStart", None, 1_500),
+            ("PreInvocation", None, 1_000),
+            (
+                "PostToolUse",
+                Some(
+                    "^(view_file|write_to_file|replace_file_content|multi_replace_file_content|grep_search|find_by_name|run_command)$"
+                ),
+                500
+            ),
+            ("Stop", None, 300),
+        ]
+    );
+    assert_eq!(giving("antigravity")?, ["SessionStart", "PreInvocation"]);
+    assert_eq!(giving("kiro")?, ["SessionStart", "UserPromptSubmit"]);
+    assert_eq!(
+        giving("cline")?,
+        ["TaskStart", "TaskResume", "UserPromptSubmit", "PostToolUse"]
+    );
+    let crush_tools = Some("^(view|write|edit|multiedit|glob|grep|bash)$");
+    assert_eq!(
+        registered("crush")?,
+        [
+            ("SessionStart", None, 1_500),
+            ("TurnStart", None, 1_000),
+            ("PreToolUse", Some("^view$"), 300),
+            ("PostToolUse", crush_tools, 500),
+            ("PostToolUseFailure", crush_tools, 500),
+            ("PreCompact", None, 300),
+            ("TurnEnd", None, 300),
+            ("SessionEnd", None, 300),
+        ]
+    );
+    assert_eq!(
+        giving("crush")?,
+        ["PreToolUse", "PostToolUse", "PostToolUseFailure"]
+    );
+    assert_eq!(giving("hermes")?, ["pre_llm_call"]);
     for name in DOCUMENTED_AGENTS {
         let adapter = adapter(name).ok_or(*name)?;
         assert!(adapter.versions().is_none(), "{name}");
@@ -741,6 +1068,25 @@ const FIELD_NAMES: &[&str] = &[
     "end_line",
     "error",
     "exit_code",
+    "conversationId",
+    "workspacePaths",
+    "invocationNum",
+    "lastUserInput",
+    "toolCall",
+    "name",
+    "args",
+    "AbsolutePath",
+    "CommandLine",
+    "operations",
+    "mode",
+    "taskId",
+    "workspaceRoots",
+    "userPromptSubmit",
+    "postToolUse",
+    "toolName",
+    "parameters",
+    "extra",
+    "user_message",
     "reason",
     "unknown",
 ];
@@ -765,6 +1111,10 @@ const STEERING_TEXTS: &[&str] = &[
     "Read",
     "view",
     "read",
+    "view_file",
+    "run_command",
+    "Line",
+    "execute_command",
     "startup",
     "/repo/a.rs",
     r"C:\repo\a.rs",

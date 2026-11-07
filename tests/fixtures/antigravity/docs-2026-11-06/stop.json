@@ -1,0 +1,13 @@
+{
+  "executionNum": 1,
+  "terminationReason": "model_stop",
+  "error": "",
+  "fullyIdle": true,
+  "conversationId": "00000000-0000-4000-8000-000000000001",
+  "workspacePaths": [
+    "C:\\repo"
+  ],
+  "transcriptPath": "~/.gemini/antigravity/brain/00000000-0000-4000-8000-000000000001/.system_generated/logs/transcript.jsonl",
+  "artifactDirectoryPath": "~/.gemini/antigravity/brain/00000000-0000-4000-8000-000000000001",
+  "modelName": "gemini-3.6-flash-medium"
+}

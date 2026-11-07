@@ -36,6 +36,8 @@ pub fn native(windows: &str) -> String {
 /// working folder, the transcripts, the paths a tool was given, and the files a search found,
 /// which the response names relative to the working folder, with backslashes on Windows. The
 /// captured responses' text holds no other backslash, so a response's text is rewritten whole.
+/// Any other string that is an absolute path on `C:`, wherever an agent's own payload holds it,
+/// is rewritten too.
 pub fn read_fixture(agent: &str, version: &str, name: &str) -> TestResult<Vec<u8>> {
     let text = std::fs::read(fixtures_of(agent, version).join(name))?;
     if cfg!(windows) {
@@ -71,16 +73,28 @@ pub fn read_fixture(agent: &str, version: &str, name: &str) -> TestResult<Vec<u8
         }
         None => {}
     }
+    rewrite_absolute(&mut value);
     Ok(serde_json::to_vec(&value)?)
 }
 
+/// Rewrites every string in `value` that is an absolute path on `C:` to this platform's form.
+fn rewrite_absolute(value: &mut Value) {
+    match value {
+        Value::String(text) if text.starts_with(r"C:\") => *text = native(text),
+        Value::Array(elements) => elements.iter_mut().for_each(rewrite_absolute),
+        Value::Object(fields) => fields.values_mut().for_each(rewrite_absolute),
+        _ => {}
+    }
+}
+
 /// The fixture's event name, as the installer passes it to `cortex hook --event`: its
-/// `hook_event_name`, or OpenHands' `event_type`.
+/// `hook_event_name`, or OpenHands' `event_type`, or Cline's `hookName`.
 pub fn event_name(payload: &[u8]) -> TestResult<String> {
     let value: Value = serde_json::from_slice(payload)?;
     Ok(value
         .get("hook_event_name")
         .or_else(|| value.get("event_type"))
+        .or_else(|| value.get("hookName"))
         .and_then(Value::as_str)
         .ok_or("no event name")?
         .to_owned())

@@ -1,0 +1,23 @@
+{
+  "taskId": "00000000-0000-4000-8000-000000000001",
+  "clineVersion": "3.36.0",
+  "timestamp": "1762430400000",
+  "workspaceRoots": [
+    "C:\\repo"
+  ],
+  "userId": "user_123",
+  "model": {
+    "provider": "openrouter",
+    "slug": "anthropic/claude-sonnet-4.5"
+  },
+  "hookName": "PostToolUse",
+  "postToolUse": {
+    "toolName": "read_file",
+    "parameters": {
+      "path": "calc/ops.py"
+    },
+    "result": "def add(a, b):",
+    "success": true,
+    "executionTimeMs": 3450
+  }
+}

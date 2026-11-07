@@ -40,6 +40,10 @@ pub(crate) struct Payload<'a> {
     /// Whether the tool's call failed, as Augment's payloads say.
     #[serde(deserialize_with = "lenient")]
     pub(crate) tool_is_error: Option<bool>,
+    /// Which model call of its turn the event comes before, from 0, as Antigravity's hook before
+    /// each model call says.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) invocation_num: Option<i64>,
     /// The prompt as the user typed it, where an agent gives it apart from `prompt`, which may
     /// be a send of its own (Qwen Code's tool results).
     #[serde(deserialize_with = "lenient")]

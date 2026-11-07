@@ -37,7 +37,10 @@ const TOOLS: ToolTable = ToolTable {
         ("launch-process", ToolKind::Shell),
     ],
     subcommands: &[],
-    renames: &[("conversation_id", "session_id"), ("user_prompt", "prompt")],
+    renames: &[
+        ("/conversation_id", "/session_id"),
+        ("/user_prompt", "/prompt"),
+    ],
     outcome: Outcome::ToolIsError,
     prompt: PromptField::Prompt,
     folder_variable: Some("AUGMENT_PROJECT_DIR"),

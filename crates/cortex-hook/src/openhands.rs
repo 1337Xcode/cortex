@@ -34,9 +34,9 @@ const TOOLS: ToolTable = ToolTable {
         ("file_editor", "undo_edit", ToolKind::Edit),
     ],
     renames: &[
-        ("working_dir", "cwd"),
-        ("message", "prompt"),
-        ("event_type", "hook_event_name"),
+        ("/working_dir", "/cwd"),
+        ("/message", "/prompt"),
+        ("/event_type", "/hook_event_name"),
     ],
     outcome: Outcome::ResponseExitCode,
     prompt: PromptField::Prompt,
