@@ -34,9 +34,9 @@ use cortex_core::{
 
 use crate::disk::{CheckedFile, Unchecked, is_readable};
 use crate::gate::{Rule, Shut, Verdict};
-use crate::plain::{is_plain, is_taken_out};
 use crate::reasons::Reason;
 use crate::spans::MAX_SPANS_PER_FILE;
+use cortex_core::{is_plain, is_taken_out};
 
 /// Most characters a work order may hold, whatever its token cap.
 pub const MAX_WORK_ORDER_CHARS: usize = 8_000;

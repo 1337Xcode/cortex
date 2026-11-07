@@ -7,8 +7,8 @@ use cortex_core::{WarningKind, WarningsConfig};
 use cortex_store::NodeId;
 
 use super::{Drift, EditFacts, TaskSoFar, Warning};
-use crate::plain::is_plain;
 use crate::support::STRUCTURAL_FLOOR;
+use cortex_core::is_plain;
 
 /// The most call sites one warning lists; the count says how many there are.
 pub const MAX_LISTED_CALL_SITES: usize = 5;

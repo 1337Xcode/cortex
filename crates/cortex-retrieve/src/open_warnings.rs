@@ -9,7 +9,7 @@ use cortex_core::{EventKind, RepoPath, Ulid};
 use cortex_learn::{MAX_TASK_ROWS, resolves};
 use cortex_store::{EventRow, NodeId, Queries, StoreError, WarningRecord};
 
-use crate::plain::is_plain;
+use cortex_core::is_plain;
 
 /// A task's latest rows and the warnings it has not followed up.
 #[derive(Debug)]

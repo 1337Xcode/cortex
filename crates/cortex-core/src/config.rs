@@ -7,11 +7,13 @@
 //! out of range is an error that names the file and the key: Cortex never guesses what a broken
 //! setting meant.
 
+mod coordination;
 mod retrieval;
 mod warnings;
 
 use thiserror::Error;
 
+pub use self::coordination::CoordinationConfig;
 pub use self::retrieval::{MAX_WORK_ORDER_TOKENS, RetrievalConfig, TypeWeights};
 pub use self::warnings::WarningsConfig;
 use crate::ScaleMode;
@@ -145,6 +147,9 @@ pub struct Config {
     pub retrieval: RetrievalConfig,
     /// The `warnings.*` keys: how many warnings an edit brings and when a co-change partner counts.
     pub warnings: WarningsConfig,
+    /// The `coordination.*` keys: how long positions hold and when an edit concerns another
+    /// session.
+    pub coordination: CoordinationConfig,
     /// `strict_mode`: when a task's agent stops while call sites of a signature it changed are still
     /// unchanged, ask it once to go on. Default `false`: Cortex never holds a stop.
     pub is_strict_mode: bool,
@@ -174,6 +179,7 @@ impl Default for Config {
             test_extra_patterns: Vec::new(),
             retrieval: RetrievalConfig::default(),
             warnings: WarningsConfig::default(),
+            coordination: CoordinationConfig::default(),
             is_strict_mode: false,
         }
     }
@@ -387,6 +393,7 @@ impl Config {
                 .retrieval
                 .apply(key, value)
                 .or_else(|| self.warnings.apply(key, value))
+                .or_else(|| self.coordination.apply(key, value))
             {
                 Some(set) => set.map_err(refuse)?,
                 None => return Ok(false),
@@ -535,6 +542,18 @@ mod tests {
                     cochange_min_confidence: 0.5,
                     cochange_min_count: 3,
                 },
+                coordination: CoordinationConfig {
+                    read_minutes: 10,
+                    edit_minutes: 30,
+                    edit_after_task_minutes: 5,
+                    claim_minutes: 120,
+                    live_minutes: 15,
+                    same_file_minutes: 10,
+                    structural_min_weight: 0.8,
+                    cochange_min_confidence: 0.5,
+                    max_notices: 3,
+                    max_tokens: 200,
+                },
                 is_strict_mode: false,
             }
         );
@@ -563,7 +582,11 @@ mod tests {
              [retrieval.type_weights]\nstructural = 0\ncochange = 1\ncoaccess = 0.25\nabout = 0.5\n\
              containment = 0.05\n\
              [warnings]\nmax_per_edit = 0\ncochange_min_confidence = 1\n\
-             cochange_min_count = 7\n",
+             cochange_min_count = 7\n\
+             [coordination]\nread_minutes = 1\nedit_minutes = 2\nedit_after_task_minutes = 3\n\
+             claim_minutes = 1440\nlive_minutes = 4\nsame_file_minutes = 6\n\
+             structural_min_weight = 0.9\ncochange_min_confidence = 0\nmax_notices = 0\n\
+             max_tokens = 400\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -605,6 +628,18 @@ mod tests {
                     max_per_edit: 0,
                     cochange_min_confidence: 1.0,
                     cochange_min_count: 7,
+                },
+                coordination: CoordinationConfig {
+                    read_minutes: 1,
+                    edit_minutes: 2,
+                    edit_after_task_minutes: 3,
+                    claim_minutes: 1440,
+                    live_minutes: 4,
+                    same_file_minutes: 6,
+                    structural_min_weight: 0.9,
+                    cochange_min_confidence: 0.0,
+                    max_notices: 0,
+                    max_tokens: 400,
                 },
                 is_strict_mode: true,
             }
@@ -966,6 +1001,56 @@ mod tests {
                 "a whole number above 0",
             ),
             ("strict_mode = \"yes\"", "strict_mode", "true or false"),
+        ]);
+    }
+
+    /// The coordination keys refuse what the rules cannot use: a hold of no minutes or of more
+    /// than a day, a link weight outside 0 to 1, more notices than fit an answer, a token cap of 0
+    /// or past a third of the work order's hard cap.
+    #[test]
+    fn bad_coordination_values_are_refused() {
+        let minutes = "a whole number of minutes from 1 to 1440";
+        assert_refused(&[
+            (
+                "coordination.read_minutes = 0",
+                "coordination.read_minutes",
+                minutes,
+            ),
+            (
+                "coordination.claim_minutes = 1441",
+                "coordination.claim_minutes",
+                minutes,
+            ),
+            (
+                "coordination.live_minutes = 2.5",
+                "coordination.live_minutes",
+                minutes,
+            ),
+            (
+                "coordination.structural_min_weight = 1.2",
+                "coordination.structural_min_weight",
+                "a number from 0 to 1",
+            ),
+            (
+                "coordination.cochange_min_confidence = -0.1",
+                "coordination.cochange_min_confidence",
+                "a number from 0 to 1",
+            ),
+            (
+                "coordination.max_notices = 11",
+                "coordination.max_notices",
+                "a whole number from 0 to 10",
+            ),
+            (
+                "coordination.max_tokens = 0",
+                "coordination.max_tokens",
+                "a whole number from 1 to 400",
+            ),
+            (
+                "coordination.max_tokens = 401",
+                "coordination.max_tokens",
+                "a whole number from 1 to 400",
+            ),
         ]);
     }
 

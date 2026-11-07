@@ -9,7 +9,7 @@ use cortex_core::{EventKind, Identifier, LineRange, RepoPath, ShortHash, Ulid, e
 use cortex_store::{NodeId, Queries, StoreError};
 
 use crate::disk::CheckedFile;
-use crate::plain::is_plain;
+use cortex_core::is_plain;
 
 /// The most tokens a read hint takes, as estimated.
 pub const MAX_HINT_TOKENS: usize = 120;

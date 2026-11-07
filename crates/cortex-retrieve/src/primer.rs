@@ -12,7 +12,7 @@ use cortex_core::{FileFlags, InterestTier, NodeKind, ScaleMode, estimate_tokens}
 use cortex_store::{MetaKey, NodeId, Queries, StoreError};
 
 use crate::graph::Graph;
-use crate::plain::is_plain;
+use cortex_core::is_plain;
 
 /// Most landmarks the primer names, the most interesting first.
 pub const MAX_PRIMER_LANDMARKS: usize = 8;

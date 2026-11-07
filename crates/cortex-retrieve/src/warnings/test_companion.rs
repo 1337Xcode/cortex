@@ -9,7 +9,7 @@
 use cortex_core::{WarningKind, WarningsConfig};
 
 use super::{EditFacts, TaskSoFar, Warning};
-use crate::plain::is_plain;
+use cortex_core::is_plain;
 
 /// The most test files one warning names.
 pub const MAX_LISTED_TESTS: usize = 3;

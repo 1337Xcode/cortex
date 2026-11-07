@@ -5,7 +5,7 @@ use cortex_core::{WarningKind, WarningsConfig};
 use cortex_learn::MAX_LINK_WEIGHT;
 
 use super::{EditFacts, NamedFile, TaskSoFar, Warning};
-use crate::plain::is_plain;
+use cortex_core::is_plain;
 
 /// The least weight, after fading, a co-access link needs before an edit that leaves its other
 /// file untouched is worth a warning: about ten successful tasks that edited both files.

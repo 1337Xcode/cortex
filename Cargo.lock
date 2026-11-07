@@ -363,6 +363,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-coord"
+version = "0.1.0-beta.1"
+dependencies = [
+ "cortex-core",
+]
+
+[[package]]
 name = "cortex-core"
 version = "0.1.0-beta.1"
 dependencies = [

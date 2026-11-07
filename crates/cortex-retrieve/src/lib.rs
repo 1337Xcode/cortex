@@ -25,7 +25,6 @@ mod lexical;
 mod node_hash;
 mod open_warnings;
 mod pipeline;
-mod plain;
 mod primer;
 mod prompt;
 mod push;

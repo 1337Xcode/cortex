@@ -1,0 +1,15 @@
+[package]
+name = "cortex-coord"
+description = "Coordination across sessions and agents: positions, the notices an edit calls for, handoffs and claims."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+cortex-core = { path = "../cortex-core" }
+
+[lints]
+workspace = true

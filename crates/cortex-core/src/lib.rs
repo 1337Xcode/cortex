@@ -15,6 +15,7 @@
 mod activity;
 mod child;
 mod config;
+mod coordination;
 mod estimate;
 mod event;
 mod file_content;
@@ -29,6 +30,7 @@ mod log_rotation;
 mod named;
 mod one_line;
 mod path;
+mod plain;
 mod private;
 mod program;
 mod reminder_tag;
@@ -49,11 +51,12 @@ pub use activity::{
 };
 pub use child::{Captured, capture, time_fed};
 pub use config::{
-    Config, ConfigError, ConfigLayer, DEFAULT_HOLDOUT_SHARE, DEFAULT_IDLE_SHUTDOWN_MINUTES,
-    DEFAULT_MAX_FILE_BYTES, DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, LoadedConfig,
-    MAX_MMAP_BYTES, MAX_WORK_ORDER_TOKENS, ModeSetting, RetrievalConfig, TypeWeights,
-    WarningsConfig, keys_set as config_keys_set, load as load_config,
+    Config, ConfigError, ConfigLayer, CoordinationConfig, DEFAULT_HOLDOUT_SHARE,
+    DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES, DEFAULT_MMAP_BYTES,
+    DEFAULT_PARSE_TIMEOUT_MS, LoadedConfig, MAX_MMAP_BYTES, MAX_WORK_ORDER_TOKENS, ModeSetting,
+    RetrievalConfig, TypeWeights, WarningsConfig, keys_set as config_keys_set, load as load_config,
 };
+pub use coordination::PositionMode;
 pub use estimate::estimate_tokens;
 pub use event::{
     Agent, CompactTrigger, Event, HookKind, LineRange, LineRangeError, MAX_COMMAND_CHARS,
@@ -73,6 +76,7 @@ pub use language::{Language, Tier};
 pub use log_rotation::rotate_log;
 pub use one_line::{is_hidden, one_line};
 pub use path::{PathError, RepoPath};
+pub use plain::{is_plain, is_taken_out};
 pub use private::{
     append_private_file, create_new_private_file, create_private_folder, open_private_file,
 };

@@ -12,7 +12,7 @@ use cortex_core::{EventKind, RepoPath, WarningKind, estimate_tokens};
 use cortex_store::{EventRow, NodeId, Queries, StoreError, TaskRow, WarningRecord};
 
 use crate::open_warnings::{plain_path, so_far};
-use crate::plain::{is_plain, is_taken_out};
+use cortex_core::{is_plain, is_taken_out};
 
 /// The most tokens a recap takes, as estimated.
 pub const MAX_RECAP_TOKENS: usize = 500;
