@@ -21,6 +21,7 @@ cortex-git = { path = "../cortex-git" }
 cortex-hook = { path = "../cortex-hook" }
 cortex-index = { path = "../cortex-index" }
 cortex-learn = { path = "../cortex-learn" }
+cortex-mcp = { path = "../cortex-mcp" }
 cortex-meter = { path = "../cortex-meter" }
 cortex-retrieve = { path = "../cortex-retrieve" }
 cortex-store = { path = "../cortex-store" }

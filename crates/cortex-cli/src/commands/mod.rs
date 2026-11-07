@@ -6,6 +6,7 @@
 mod daemon;
 mod doctor;
 mod init;
+mod mcp;
 mod receipts;
 mod status;
 mod uninstall;
@@ -34,6 +35,8 @@ pub(crate) enum Command {
     /// Show the code the retrieval engine finds for a question, with its reasons and what the
     /// gate would say.
     Where(where_::Args),
+    /// Serve Cortex's MCP tools on stdio (started by the agent).
+    Mcp(mcp::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -51,5 +54,6 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Uninstall(args) => uninstall::run(&args),
         Command::Receipts(args) => receipts::run(&args),
         Command::Where(args) => where_::run(&args),
+        Command::Mcp(args) => mcp::run(&args),
     }
 }

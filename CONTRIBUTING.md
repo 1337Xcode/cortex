@@ -31,6 +31,7 @@
 | `crates/cortex-hook` | What runs when an agent calls `cortex hook`: the agent adapters, the fail-open client of the daemon, and starting the daemon when none runs |
 | `crates/cortex-index` | The indexer: discovering a repository's files, flagging secrets, binaries, generated and vendored code, and reading what each file defines, uses and imports |
 | `crates/cortex-learn` | Learning from agents' work: sessions, tasks and events, what became of each task, interest, links between code used together, and the labels of work orders |
+| `crates/cortex-mcp` | The MCP server an agent starts as `cortex mcp`: the `cortex_where` tool over stdio, answered by the daemon |
 | `crates/cortex-meter` | What agents' work costs in tokens, read from their transcripts, and the comparison of held-out tasks with the rest |
 | `crates/cortex-retrieve` | Retrieval: seeds from a prompt and a session, spreading activation over the graph, the gate, and the work order and primer it renders |
 | `crates/cortex-store` | The SQLite database in `.cortex/`: migrations, the single writer and readers |

@@ -163,3 +163,77 @@ fn a_limit_outside_one_to_five_is_refused() -> TestResult {
     }
     Ok(())
 }
+
+/// `cortex mcp` through the binary, spoken to in JSON-RPC lines as an agent does: it starts the
+/// session as `cortex`, offers `cortex_where` alone, and answers the question with the text
+/// `cortex where` prints for it; when the agent closes its input, the server exits 0 having
+/// printed nothing but the protocol, and nothing on stderr.
+#[test]
+fn the_mcp_tool_answers_as_cortex_where_prints() -> TestResult {
+    let (repo, home, _daemon) = repository(None)?;
+    let printed = cortex_where(repo.path(), home.path(), &[QUESTION])?;
+    assert!(printed.status.success(), "{printed:?}");
+    let expected = String::from_utf8(printed.stdout)?;
+    let call = serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "cortex_where", "arguments": {"query": QUESTION}}
+    });
+    let lines = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.to_owned(),
+        call.to_string(),
+    ];
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command.arg("mcp").arg("--root").arg(repo.path());
+    isolate(&mut command, home.path());
+    let output = talk(command, &lines)?;
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let replies: Vec<serde_json::Value> = String::from_utf8(output.stdout)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    let reply = |id: u64| {
+        replies
+            .iter()
+            .find(|reply| reply["id"] == id)
+            .ok_or(format!("no reply {id}: {replies:?}"))
+    };
+    assert_eq!(reply(1)?["result"]["serverInfo"]["name"], "cortex");
+    let tools = reply(2)?["result"]["tools"]
+        .as_array()
+        .ok_or("no tools")?
+        .iter()
+        .map(|tool| tool["name"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(tools, ["cortex_where"]);
+    let answer = &reply(3)?["result"];
+    assert_eq!(answer["isError"], false);
+    assert_eq!(
+        answer["content"][0]["text"].as_str(),
+        Some(expected.as_str())
+    );
+    assert_eq!(replies.len(), 3, "{replies:?}");
+    Ok(())
+}
+
+/// Runs `command`, writes `lines` to its input one by one and closes it, and returns what it
+/// printed once it exits, within 60 seconds.
+fn talk(mut command: Command, lines: &[String]) -> TestResult<Output> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut input = child.stdin.take().ok_or("no stdin")?;
+    for line in lines {
+        writeln!(input, "{line}")?;
+    }
+    drop(input);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || sender.send(child.wait_with_output()));
+    Ok(receiver.recv_timeout(std::time::Duration::from_secs(60))??)
+}

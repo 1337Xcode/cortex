@@ -8,6 +8,7 @@ members = [
     "crates/cortex-hook",
     "crates/cortex-index",
     "crates/cortex-learn",
+    "crates/cortex-mcp",
     "crates/cortex-meter",
     "crates/cortex-retrieve",
     "crates/cortex-store",
@@ -49,6 +50,7 @@ proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 # trait to read an index.
 protobuf = "=3.7.2"
 regex = "1.13.1"
+rmcp = { version = "3.9.0", default-features = false, features = ["macros", "server", "transport-io"] }
 # Default features off: they add a WebAssembly build of SQLite for wasm32 targets, which Cortex
 # does not build for.
 rusqlite = { version = "0.41.1", default-features = false, features = ["backup", "bundled", "cache"] }
