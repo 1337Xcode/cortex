@@ -24,7 +24,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use cortex_core::ipc::ResponseBody;
-use cortex_core::ipc::{GraphReport, RequestBody, Role, StatusReport, WorktreeReport};
+use cortex_core::ipc::{GitReport, GraphReport, RequestBody, Role, StatusReport, WorktreeReport};
 use cortex_core::{RepoId, RunFiles, UserFolder, canonical_root};
 use cortex_daemon::is_running;
 use cortex_hook::{ClientError, ask};
@@ -314,6 +314,16 @@ pub fn graph_of(root: &Path, home: &Path) -> TestResult<Option<GraphReport>> {
     Ok(status_report(root, home)?
         .graph
         .filter(|graph| graph.builds > 0))
+}
+
+/// Where the co-change miner of the daemon of the repository at `root`, `home` being the home
+/// folder, is: none from a daemon that does not say.
+///
+/// # Errors
+///
+/// The daemon does not answer its status.
+pub fn git_of(root: &Path, home: &Path) -> TestResult<Option<GitReport>> {
+    Ok(status_report(root, home)?.git)
 }
 
 /// What the daemon of the repository at `root`, `home` being the home folder, read of its work

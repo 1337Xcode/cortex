@@ -7,8 +7,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use common::git::{commit, git};
-use common::{Daemon, TestResult, graph_of, wait_for, worktree_of};
-use cortex_core::ipc::{RequestBody, ResponseBody, Role, WorktreeState};
+use common::{Daemon, TestResult, git_of, graph_of, wait_for, worktree_of};
+use cortex_core::ipc::{GitState, RequestBody, ResponseBody, Role, WorktreeState};
 use cortex_core::{
     Agent, Event, HookKind, Identifier, ReasonKind, RepoId, RunFiles, Ulid, UserFolder,
     canonical_root, task_id_of_prompt,
@@ -30,7 +30,10 @@ const PROMPT: &str = "fix create_order in the orders service";
 
 /// A repository whose three files were committed once, so that no history ties them, pinned to
 /// medium mode with no task held out; its home folder; and its daemon, once the graph is built and
-/// the work tree looked at.
+/// the work tree read clean. The miner reports HEAD as moved when it first reads it, which may be
+/// after the first look and after the first graph, and that asks for another look: until it ends
+/// the work tree is said to be looked at again. So the tests start once the miner has mined HEAD
+/// and, after that, the work tree says it was read.
 fn repository() -> TestResult<(tempfile::TempDir, tempfile::TempDir, Daemon)> {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
@@ -58,7 +61,11 @@ fn repository() -> TestResult<(tempfile::TempDir, tempfile::TempDir, Daemon)> {
     let daemon = Daemon::start(root, home.path())?;
     daemon.first_line()?;
     wait_for(|| Ok(graph_of(root, home.path())?.is_some()))?;
-    wait_for(|| Ok(worktree_of(root, home.path())?.is_some()))?;
+    wait_for(|| Ok(git_of(root, home.path())?.is_some_and(|git| git.state == GitState::Ready)))?;
+    wait_for(|| {
+        Ok(worktree_of(root, home.path())?
+            .is_some_and(|worktree| worktree.state == WorktreeState::Read))
+    })?;
     Ok((repo, home, daemon))
 }
 
