@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "tool.result",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "cwd": "C:\\repo",
+  "tool_name": "Read",
+  "tool_input": {
+    "path": "C:\\repo\\calc\\ops.py"
+  },
+  "tool_response": {
+    "success": true
+  }
+}

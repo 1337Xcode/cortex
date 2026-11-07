@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "after_tool_call",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "tool_name": "exec",
+  "tool_input": {},
+  "tool_response": {
+    "success": false
+  }
+}

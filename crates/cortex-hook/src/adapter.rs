@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use cortex_core::{Agent, Event, HookKind, Ulid};
 
+use crate::amp::Amp;
 use crate::antigravity::Antigravity;
 use crate::augment::Augment;
 use crate::claude::Claude;
@@ -21,7 +22,10 @@ use crate::gemini::Gemini;
 use crate::hermes::Hermes;
 use crate::junie::Junie;
 use crate::kiro::Kiro;
+use crate::openclaw::OpenClaw;
+use crate::opencode::{Kilo, Opencode};
 use crate::openhands::OpenHands;
+use crate::plugin::PluginFile;
 use crate::qwen::Qwen;
 use crate::trae::Trae;
 
@@ -44,6 +48,10 @@ const ADAPTERS: &[&dyn Adapter] = &[
     &Cline,
     &Crush,
     &Hermes,
+    &Opencode,
+    &Kilo,
+    &Amp,
+    &OpenClaw,
 ];
 
 /// The adapter of the agent named `name` on the command line (`claude`), if there is one.
@@ -77,6 +85,13 @@ pub trait Adapter: Sync {
     /// The versions of the agent Cortex knows: none for an agent whose adapter is built from the
     /// agent's documentation and not yet run live, whose payloads no test captured.
     fn versions(&self) -> Option<Versions>;
+
+    /// The files of the plugin Cortex writes for the agent, its plugin running `program`: none for
+    /// an agent whose hooks are commands, which runs `cortex hook` itself.
+    fn plugin_files(&self, program: &str) -> Vec<PluginFile> {
+        let _ = program;
+        Vec::new()
+    }
 
     /// The event a hook call of `event_name` with `payload` becomes, or `None` when Cortex does not
     /// record that event or the payload's working folder is in no repository Cortex serves.

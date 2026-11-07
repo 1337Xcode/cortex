@@ -7,6 +7,7 @@
 #![warn(clippy::pedantic)]
 
 mod adapter;
+mod amp;
 mod antigravity;
 mod augment;
 mod claude;
@@ -24,7 +25,10 @@ mod hermes;
 mod junie;
 mod kiro;
 mod log;
+mod openclaw;
+mod opencode;
 mod openhands;
+mod plugin;
 mod qwen;
 mod relaunch;
 mod root;
@@ -37,6 +41,7 @@ mod trae;
 
 pub use adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, Versions, adapter};
 pub use client::{Answer, ClientError, ask};
+pub use plugin::PluginFile;
 pub use relaunch::RELAUNCH_FLAG;
 #[cfg(windows)]
 pub use relaunch::relaunch_daemon;

@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "tool.execute.before",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "cwd": "C:\\repo",
+  "tool_name": "read",
+  "tool_input": {
+    "filePath": "C:\\repo\\calc\\ops.py"
+  }
+}

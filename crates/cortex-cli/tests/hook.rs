@@ -302,6 +302,76 @@ fn a_devin_session_through_the_binary_is_recorded() -> TestResult {
     Ok(())
 }
 
+/// An OpenClaw session of the calls Cortex's OpenClaw plugin was recorded making, sent with the
+/// agent workspace in `OPENCLAW_WORKSPACE_DIR`, as the Gateway's environment holds it, since the
+/// calls name no folder: the start (given the primer), two prompts, a read naming no file (its
+/// input fields are not documented), a failing command, the compaction, the stop and the end are
+/// recorded, counted by hand from the eight calls. Without the variable, nothing is.
+#[test]
+fn an_openclaw_session_through_the_binary_is_recorded() -> TestResult {
+    let (home, repo) = repository()?;
+    let daemon = Daemon::start(&repo, home.path())?;
+    daemon.first_line()?;
+    wait_for(|| Ok(graph_of(&repo, home.path())?.is_some()))?;
+    let calls = [
+        "01-session_start.json",
+        "02-before_prompt_build.json",
+        "03-before_prompt_build.json",
+        "04-after_tool_call.json",
+        "05-after_tool_call.json",
+        "06-before_compaction.json",
+        "07-agent_end.json",
+        "08-session_end.json",
+    ];
+    let send = |name: &str, variables: &[(&str, &Path)]| -> TestResult<Option<String>> {
+        let payload = payloads::payload_of("openclaw", "plugin-2026-11-06/calls", name, &repo)?;
+        let event = payloads::event_name(&payload)?;
+        let call = hook_with(
+            &["--agent", "openclaw", "--event", &event],
+            payload,
+            (Duration::ZERO, home.path()),
+            variables,
+        )?;
+        call.plain(&event)
+    };
+    let s1 = Identifier::new(S1)?;
+    let rows = || -> TestResult<Vec<Row>> {
+        let reader = Reader::open(&repo.join(".cortex"), 0)?;
+        Ok(reader
+            .queries()
+            .events_of_session(&s1)?
+            .into_iter()
+            .map(|row| {
+                let path = row.record.path.map(|path| path.as_str().to_owned());
+                (row.record.kind, path, row.record.range)
+            })
+            .collect())
+    };
+    for name in calls {
+        assert_eq!(send(name, &[])?, None, "{name}");
+    }
+    let variables = [("OPENCLAW_WORKSPACE_DIR", repo.as_path())];
+    for name in calls {
+        let primer = (name == "01-session_start.json").then(|| PRIMER.to_owned());
+        assert_eq!(send(name, &variables)?, primer, "{name}");
+    }
+    wait_for(|| Ok(rows()?.len() >= 8))?;
+    assert_eq!(
+        rows()?,
+        [
+            (EventKind::SessionStart, None, None),
+            (EventKind::Prompt, None, None),
+            (EventKind::Prompt, None, None),
+            (EventKind::Read, None, None),
+            (EventKind::Shell, None, None),
+            (EventKind::Compact, None, None),
+            (EventKind::Stop, None, None),
+            (EventKind::SessionEnd, None, None),
+        ]
+    );
+    Ok(())
+}
+
 /// A repository marked for Cortex, its `.cortex` folder made by hand, with no daemon running, and
 /// an empty home folder.
 fn marked_repository() -> TestResult<(tempfile::TempDir, PathBuf)> {

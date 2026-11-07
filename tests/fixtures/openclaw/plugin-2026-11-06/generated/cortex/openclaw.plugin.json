@@ -1,0 +1,6 @@
+{
+  "id": "cortex",
+  "name": "Cortex",
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false }
+}

@@ -62,6 +62,7 @@ pub(crate) fn verify(full: bool) -> anyhow::Result<()> {
         &["test", "--workspace", "--locked", "--no-fail-fast"],
     )?;
     run_cargo(&root, "cargo deny", &["deny", "check"])?;
+    check_plugins(&root)?;
     if full {
         // The tests marked ignored are the slow ones, minutes each; every other run skips them.
         run_cargo(
@@ -104,6 +105,22 @@ pub(crate) fn run_cargo(root: &Path, step: &str, args: &[&str]) -> anyhow::Resul
         .with_context(|| format!("starting cargo for {step}"))?;
     if !status.success() {
         bail!("{step} failed ({status})");
+    }
+    Ok(())
+}
+
+/// Runs the plugins Cortex writes for agents whose hooks are code under Node, with fake hosts and
+/// a fake `cortex`: where their text lands, that no failure of `cortex` reaches the agent, and that
+/// what they send is what their recorded calls hold (`tests/plugins/record.mjs --check`).
+fn check_plugins(root: &Path) -> anyhow::Result<()> {
+    println!("xtask: plugins");
+    let status = Command::new("node")
+        .args(["tests/plugins/record.mjs", "--check"])
+        .current_dir(root)
+        .status()
+        .context("starting Node for the plugin check (Node 24 or later is needed)")?;
+    if !status.success() {
+        bail!("plugins failed ({status})");
     }
     Ok(())
 }

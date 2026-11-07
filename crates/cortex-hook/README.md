@@ -42,7 +42,11 @@ hooks table and a `Tools` reader (its tool names, what a call aimed at, how it e
 `ToolTable` (`src/shaped/table.rs`: its tool names and kinds, the fields its payloads hold
 elsewhere than Claude Code's as moves between JSON pointers, what its tool events say of a
 call's end, where its prompt and working folder are), as `src/qwen.rs` and
-`src/antigravity.rs` do.
+`src/antigravity.rs` do. An agent whose hooks are a plugin's code (OpenCode, Kilo Code, Amp,
+OpenClaw) also returns its plugin's files from `plugin_files`: the JavaScript core in
+`plugins/core.js`, which runs `cortex hook` and never throws, then the agent's glue in
+`plugins/<agent>.js`, which sends each event in Claude Code's JSON and puts the text it gets
+back where the agent takes text.
 
 ## Tests
 
@@ -92,3 +96,9 @@ Cline's fields under each event's name, Hermes' `extra`), Qwen Code's own sends 
 later model calls no prompts, a read with an offset or its lines is not recorded, results
 follow what each documentation says its events mean; Devin's payloads, which name no folder,
 make events only with `DEVIN_PROJECT_DIR` set, tested through the binary.
+
+Each generated plugin is compared byte for byte with its golden copy under
+`tests/fixtures/<agent>/plugin-2026-11-06/generated/`, and the calls those copies were recorded
+making under Node (`node tests/plugins/record.mjs`, with a fake host and a fake `cortex`) are
+normalized against events written out by hand; OpenClaw's, which name no folder, make events
+only with `OPENCLAW_WORKSPACE_DIR` set, tested through the binary.

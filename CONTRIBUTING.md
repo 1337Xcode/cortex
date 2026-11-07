@@ -10,7 +10,9 @@
    cargo install --locked cargo-deny
    ```
 
-3. Run every check:
+3. Install [Node.js](https://nodejs.org) 24 or later. The checks run the JavaScript plugins
+   Cortex writes for agents whose hooks are plugins (`node tests/plugins/record.mjs --check`).
+4. Run every check:
 
    ```sh
    cargo xtask verify

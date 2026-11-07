@@ -9,7 +9,10 @@
 //!
 //! A `docs-<date>` folder holds payloads written from an agent's documentation, not captured: they
 //! carry the agent's own event names, and its adapter's tests read each by name, so the event
-//! names and the captured versions' table do not apply to them; the scrub rules do.
+//! names and the captured versions' table do not apply to them; the scrub rules do. A
+//! `plugin-<date>` folder holds what a plugin agent's generated plugin sent, one JSON call a file
+//! under `calls/`, and golden copies of the generated plugin files under `generated/`: the same
+//! scrub rules apply to both.
 
 use std::error::Error;
 use std::fs;
@@ -51,9 +54,11 @@ fn expected_event(file_name: &str) -> Option<&'static str> {
         .map(|(_, event)| *event)
 }
 
-/// Whether the version folder `dir` holds payloads written from documentation (`docs-<date>`).
-fn is_documented(dir: &Path) -> bool {
-    file_name(dir).starts_with("docs-")
+/// Whether the version folder `dir` holds payloads written from documentation (`docs-<date>`)
+/// or a plugin's recorded calls (`plugin-<date>`), rather than captured ones.
+fn is_not_captured(dir: &Path) -> bool {
+    let name = file_name(dir);
+    name.starts_with("docs-") || name.starts_with("plugin-")
 }
 
 /// Every `fixtures/<agent>/<version>` folder, sorted.
@@ -98,7 +103,7 @@ fn every_fixture_names_its_event() -> TestResult<()> {
     let mut checked = 0;
     for dir in version_dirs()?
         .into_iter()
-        .filter(|dir| !is_documented(dir))
+        .filter(|dir| !is_not_captured(dir))
     {
         for path in json_files(&dir)? {
             let name = file_name(&path);
@@ -156,7 +161,7 @@ fn every_version_folder_is_required() -> TestResult<()> {
     let mut with_payloads = Vec::new();
     for dir in version_dirs()?
         .into_iter()
-        .filter(|dir| !is_documented(dir))
+        .filter(|dir| !is_not_captured(dir))
     {
         if !json_files(&dir)?.is_empty() {
             with_payloads.push(dir);
@@ -178,9 +183,10 @@ fn every_version_folder_is_required() -> TestResult<()> {
     Ok(())
 }
 
-/// The fixture folder holds only `<agent>/<version>/` folders of JSON payloads and READMEs, and
-/// transcripts under a version's `transcripts/` folder, so nothing escapes the checks by sitting
-/// elsewhere or under another extension.
+/// The fixture folder holds only `<agent>/<version>/` folders of JSON payloads and READMEs,
+/// transcripts under a version's `transcripts/` folder, and in a `plugin-<date>` folder the calls
+/// under `calls/` and the generated plugin files (JavaScript and JSON) under `generated/`, so
+/// nothing escapes the checks by sitting elsewhere or under another extension.
 #[test]
 fn fixture_tree_holds_only_payloads_and_readmes() -> TestResult<()> {
     let unexpected: Vec<String> = files_under(&fixtures_dir())?
@@ -192,7 +198,12 @@ fn fixture_tree_holds_only_payloads_and_readmes() -> TestResult<()> {
                 if *name == "README.md" || name.ends_with(".json"));
             let is_transcript = matches!(parts.as_slice(), [_, _, "transcripts", .., name]
                 if name.ends_with(".jsonl"));
-            !is_payload && !is_transcript
+            let is_call = matches!(parts.as_slice(), [_, version, "calls", name]
+                if version.starts_with("plugin-") && name.ends_with(".json"));
+            let is_generated = matches!(parts.as_slice(), [_, version, "generated", .., name]
+                if version.starts_with("plugin-")
+                    && (name.ends_with(".js") || name.ends_with(".json")));
+            !is_payload && !is_transcript && !is_call && !is_generated
         })
         .collect();
     assert!(
@@ -213,7 +224,7 @@ fn fixtures_are_scrubbed() -> TestResult<()> {
         if bytes.contains(&b'\r') {
             found.push("CRLF line ending".to_owned());
         }
-        if file_name(&path) == "README.md" {
+        if file_name(&path) == "README.md" || file_name(&path).ends_with(".js") {
             found.extend(scrub::text_problems(&String::from_utf8(bytes)?));
         } else if file_name(&path).ends_with(".jsonl") {
             for line in String::from_utf8(bytes)?.lines() {

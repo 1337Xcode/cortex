@@ -38,6 +38,10 @@ const DOCUMENTED_AGENTS: &[&str] = &[
     "cline",
     "crush",
     "hermes",
+    "opencode",
+    "kilo",
+    "amp",
+    "openclaw",
 ];
 
 /// The session of every documented payload.
@@ -1030,11 +1034,219 @@ fn the_hooks_are_the_ones_each_documentation_supports() -> TestResult {
         ["PreToolUse", "PostToolUse", "PostToolUseFailure"]
     );
     assert_eq!(giving("hermes")?, ["pre_llm_call"]);
+    let plugin_giving = [
+        "session.start",
+        "chat.message",
+        "tool.execute.before",
+        "tool.execute.after",
+    ];
+    assert_eq!(giving("opencode")?, plugin_giving);
+    assert_eq!(giving("kilo")?, plugin_giving);
+    assert_eq!(
+        giving("amp")?,
+        ["session.start", "agent.start", "tool.call", "tool.result"]
+    );
+    assert_eq!(
+        giving("openclaw")?,
+        ["session_start", "before_prompt_build"]
+    );
     for name in DOCUMENTED_AGENTS {
         let adapter = adapter(name).ok_or(*name)?;
         assert!(adapter.versions().is_none(), "{name}");
         assert_eq!(adapter.agent().name(), *name);
     }
+    Ok(())
+}
+
+/// The folder of the calls each plugin was recorded making, by `tests/plugins/record.mjs`.
+const PLUGIN_CALLS: &str = "plugin-2026-11-06/calls";
+
+/// The folder of the golden copies of each generated plugin.
+const PLUGIN_GENERATED: &str = "plugin-2026-11-06/generated";
+
+/// The calls OpenCode's or Kilo Code's plugin was recorded making, and the events they make, read
+/// off the fixtures by hand: the session's start the plugin's own, at its first prompt; the prompt
+/// the user's text parts only; a read's file `filePath`; a call's result unknown, the plugin
+/// hooks not giving it; an edit whose input is not documented no target.
+fn opencode_plugin(agent: Agent) -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(agent, hook, None);
+    let prompt = |text: &str| -> TestResult<Option<Event>> {
+        Ok(Some(Event {
+            prompt_text: Some(text.to_owned()),
+            ..at(HookKind::Prompt)?
+        }))
+    };
+    Ok(vec![
+        ("01-session.start.json", Some(at(HookKind::SessionStart)?)),
+        ("02-chat.message.json", prompt(PROMPT)?),
+        (
+            "03-tool.execute.before.json",
+            Some(tool(
+                at(HookKind::PreTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, None),
+            )),
+        ),
+        (
+            "04-tool.execute.after.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, None),
+            )),
+        ),
+        (
+            "05-tool.execute.after.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), None),
+            )),
+        ),
+        (
+            "06-tool.execute.after.json",
+            Some(tool(at(HookKind::PostTool)?, (ToolKind::Edit, None, None))),
+        ),
+        (
+            "07-experimental.session.compacting.json",
+            Some(at(HookKind::Compact)?),
+        ),
+        ("08-chat.message.json", prompt("Thanks")?),
+    ])
+}
+
+/// The calls Amp's plugin was recorded making, and the events they make, read off the fixtures by
+/// hand: the thread the session; a read's file `path`, a shell's command `cmd`; a call's result
+/// Amp's `status`.
+fn amp_plugin() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(Agent::Amp, hook, None);
+    Ok(vec![
+        ("01-session.start.json", Some(at(HookKind::SessionStart)?)),
+        (
+            "02-agent.start.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+        (
+            "03-tool.call.json",
+            Some(tool(
+                at(HookKind::PreTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, None),
+            )),
+        ),
+        (
+            "04-tool.result.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, ended(true)),
+            )),
+        ),
+        (
+            "05-tool.result.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), ended(false)),
+            )),
+        ),
+        ("06-agent.end.json", Some(at(HookKind::Stop)?)),
+    ])
+}
+
+/// The calls each plugin was recorded making make the events written for them, and each table
+/// names every recorded call. OpenClaw's calls name no folder: with `OPENCLAW_WORKSPACE_DIR`
+/// unset, as here, none makes an event; the binary's tests send them with it set.
+#[test]
+fn every_plugin_call_normalizes_as_written() -> TestResult {
+    let tables = [
+        ("opencode", opencode_plugin(Agent::Opencode)?),
+        ("kilo", opencode_plugin(Agent::Kilo)?),
+        ("amp", amp_plugin()?),
+    ];
+    for (name, table) in tables {
+        let adapter = adapter(name).ok_or(name)?;
+        for (fixture, expected) in &table {
+            let payload = read_fixture(name, PLUGIN_CALLS, fixture)?;
+            let found = adapter.normalize(&event_name(&payload)?, &payload, &locate, stamp())?;
+            assert_eq!(&found, expected, "{name} {fixture}");
+        }
+        let mut named: Vec<&str> = table.iter().map(|(fixture, _)| *fixture).collect();
+        named.sort_unstable();
+        assert_eq!(
+            named,
+            fixture_names(&fixtures_of(name, PLUGIN_CALLS))?,
+            "{name}"
+        );
+    }
+    assert_eq!(std::env::var_os("OPENCLAW_WORKSPACE_DIR"), None);
+    let openclaw = adapter("openclaw").ok_or("openclaw")?;
+    let calls = fixture_names(&fixtures_of("openclaw", PLUGIN_CALLS))?;
+    assert_eq!(calls.len(), 8);
+    for fixture in calls {
+        let payload = read_fixture("openclaw", PLUGIN_CALLS, &fixture)?;
+        let found = openclaw.normalize(&event_name(&payload)?, &payload, &locate, stamp())?;
+        assert_eq!(found, None, "{fixture}");
+    }
+    Ok(())
+}
+
+/// Each plugin agent's generated plugin, running `cortex`, is its golden copy byte for byte, file
+/// for file: the copies `tests/plugins/record.mjs` ran. An agent whose hooks are commands has no
+/// plugin.
+#[test]
+fn each_plugin_is_its_golden_copy() -> TestResult {
+    for (name, paths) in [
+        ("opencode", &["cortex.js"][..]),
+        ("kilo", &["cortex.js"][..]),
+        ("amp", &["cortex.js"][..]),
+        (
+            "openclaw",
+            &[
+                "cortex/index.js",
+                "cortex/package.json",
+                "cortex/openclaw.plugin.json",
+            ][..],
+        ),
+    ] {
+        let files = adapter(name).ok_or(name)?.plugin_files("cortex");
+        let written: Vec<&str> = files.iter().map(|file| file.path).collect();
+        assert_eq!(written, paths, "{name}");
+        for file in &files {
+            let golden = fixtures_of(name, PLUGIN_GENERATED).join(file.path);
+            assert_eq!(
+                file.text,
+                std::fs::read_to_string(golden)?,
+                "{name} {}",
+                file.path
+            );
+        }
+    }
+    for name in ["claude", "codex", "qwen", "cline"] {
+        assert!(
+            adapter(name).ok_or(name)?.plugin_files("cortex").is_empty(),
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
+/// A plugin names its program as a JSON string, so a Windows path's backslashes and a quote in a
+/// path are escaped, not taken for the script's own text, and a path holding a placeholder's name
+/// is kept as it is. Each event's run is stopped at its own hard timeout and 100 ms, by hand from
+/// Amp's hooks: 1,500, 1,000, 300, 500 and 300 ms.
+#[test]
+fn the_program_is_a_json_string_in_the_plugin() -> TestResult {
+    let script = |program: &str| -> TestResult<String> {
+        let files = adapter("amp").ok_or("amp")?.plugin_files(program);
+        Ok(files.first().ok_or("no file")?.text.clone())
+    };
+    let quoted = script(r#"C:\Tools\cor"tex.exe"#)?;
+    assert!(quoted.contains(r#"const CORTEX = "C:\\Tools\\cor\"tex.exe";"#));
+    assert!(quoted.contains("const AGENT = \"amp\";"));
+    assert!(quoted.contains(
+        "const KILL_AFTER_MS = { \"session.start\": 1600, \"agent.start\": 1100, \
+         \"tool.call\": 400, \"tool.result\": 600, \"agent.end\": 400 };"
+    ));
+    let named = script("/opt/__AGENT__/__KILL_AFTER_MS__/cortex")?;
+    assert!(named.contains("const CORTEX = \"/opt/__AGENT__/__KILL_AFTER_MS__/cortex\";"));
     Ok(())
 }
 
@@ -1087,6 +1299,8 @@ const FIELD_NAMES: &[&str] = &[
     "parameters",
     "extra",
     "user_message",
+    "filePath",
+    "cmd",
     "reason",
     "unknown",
 ];

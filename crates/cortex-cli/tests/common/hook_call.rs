@@ -30,6 +30,20 @@ impl Call {
             && self.output.stderr.is_empty()
     }
 
+    /// What the call printed at `event` for an agent that takes a hook's plain output, as Cortex's
+    /// plugins do: none when it printed nothing. The call must have ended as an agent requires:
+    /// exit code 0 and nothing on stderr.
+    pub fn plain(&self, event: &str) -> TestResult<Option<String>> {
+        let output = &self.output;
+        if output.status.code() != Some(0) || !output.stderr.is_empty() {
+            return Err(format!("{event}: {output:?}").into());
+        }
+        if output.stdout.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(std::str::from_utf8(&output.stdout)?.to_owned()))
+    }
+
     /// What the call gave Claude Code to add to its context at `event`: none when it printed
     /// nothing. The call must have ended as an agent requires: exit code 0, nothing on stderr, and
     /// on stdout nothing, or one line holding Claude Code's hook JSON for `event` and nothing else.

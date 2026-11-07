@@ -42,6 +42,12 @@ named_kind! {
         Hermes => "hermes",
         /// The opencode agent.
         Opencode => "opencode",
+        /// Kilo Code: its command-line agent and its editor extensions.
+        Kilo => "kilo",
+        /// Sourcegraph's Amp.
+        Amp => "amp",
+        /// OpenClaw's Gateway and its agents.
+        OpenClaw => "openclaw",
         /// Any other agent.
         Other => "other",
     }
