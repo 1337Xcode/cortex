@@ -27,8 +27,12 @@ fn now_ms() -> TestResult<i64> {
 /// An edit row as compared here: its file, session, task and source.
 type Edit = (String, Option<String>, Option<Ulid>, Option<EventSource>);
 
-/// A repository of two Python files, an empty home folder, and its daemon, ready.
+/// A repository of two Python files, an empty home folder, and its daemon, ready. Fields drop in
+/// order: the daemon stops and lets go of the repository's files before the folders are removed,
+/// which Windows refuses while they are open.
 struct Repo {
+    /// The daemon, stopped when the test ends.
+    _daemon: Daemon,
     /// The repository, deleted when the test ends.
     dir: tempfile::TempDir,
     /// The home folder, deleted when the test ends.
@@ -37,8 +41,6 @@ struct Repo {
     root: PathBuf,
     /// The daemon's run files.
     files: RunFiles,
-    /// The daemon, stopped when the test ends.
-    _daemon: Daemon,
 }
 
 impl Repo {

@@ -49,12 +49,13 @@ pub fn function(name: &str, start: u32, end: u32) -> Def<'_> {
     }
 }
 
-/// A repository in a temporary folder with its store.
+/// A repository in a temporary folder with its store. Fields drop in order: the writer closes the
+/// store's files before the folder is removed, which Windows refuses while they are open.
 pub struct Repo {
-    /// The repository's root folder.
-    pub root: tempfile::TempDir,
     /// The store's writer.
     pub writer: Writer,
+    /// The repository's root folder.
+    pub root: tempfile::TempDir,
 }
 
 impl Repo {

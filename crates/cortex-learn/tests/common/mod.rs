@@ -160,12 +160,13 @@ pub fn shell(session: &str, ts_ms: i64, line: &str, exit_code: Option<i32>) -> T
     })
 }
 
-/// A store in a temporary repository.
+/// A store in a temporary repository. Fields drop in order: the writer closes the store's files
+/// before the folder is removed, which Windows refuses while they are open.
 pub struct Store {
-    /// The repository root.
-    pub root: tempfile::TempDir,
     /// The writer.
     pub writer: Writer,
+    /// The repository root.
+    pub root: tempfile::TempDir,
 }
 
 impl Store {
