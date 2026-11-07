@@ -12,6 +12,9 @@ CLI uses as well.
   unread, a shell's output is measured as it is read, never kept, and a search's output is read
   for the files it names (at most 50 and 4 KiB of paths, inside the repository), never for the
   text it matched.
+- Read more of an agent's transcript than the one value it looks for: for a Codex shell command,
+  the exit code on the command's own line among the last mebibyte of the session's rollout
+  file, a regular `rollout-*.jsonl` file under a Codex `sessions` folder.
 
 ## Entry points
 
@@ -72,5 +75,7 @@ The Codex tests normalize every payload under `tests/fixtures/codex/` against ev
 by hand, and test how a shell command is read: the programs that read a file or search, the
 lines a read names (`head`, `sed -n`, `-TotalCount`, a read piped to them), the commands that
 are only shell commands (a file's last lines, several files, a filter), a list's first command,
-quotes; the files a patch's headers name and the exit code its response opens with; and any
-payload and any command for panics.
+quotes; the files a patch's headers name and the exit code its response opens with; a shell's
+and a read's exit code from its line in a rollout under a sessions folder (not from another
+command's line, a rollout elsewhere, or past the last mebibyte); and any payload and any
+command for panics.

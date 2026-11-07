@@ -37,6 +37,9 @@ pub(crate) struct Payload<'a> {
     /// The tool's name.
     #[serde(deserialize_with = "lenient")]
     pub(crate) tool_name: Option<String>,
+    /// The id of the tool call, which Codex's rollout names the call's result by.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) tool_use_id: Option<String>,
     /// What the tool was given.
     #[serde(deserialize_with = "lenient")]
     pub(crate) tool_input: Option<ToolInput>,

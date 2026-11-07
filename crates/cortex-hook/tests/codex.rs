@@ -9,7 +9,7 @@
 
 mod common;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use common::TestResult;
 use common::fixture::{
@@ -410,7 +410,7 @@ fn the_hooks_are_the_ones_cortex_registers() -> TestResult {
 fn payloads_that_make_no_event() -> TestResult {
     let codex = adapter("codex").ok_or("no Codex adapter")?;
     let stop = payload("stop.json")?;
-    let nowhere = |_: &std::path::Path| None;
+    let nowhere = |_: &Path| None;
     assert_eq!(codex.normalize("Stop", &stop, &nowhere, stamp())?, None);
     assert_eq!(
         codex.normalize("PostCompact", &stop, &locate, stamp())?,
@@ -502,6 +502,70 @@ fn reads_and_patches_name_their_files() -> TestResult {
     )?
     .ok_or("no event")?;
     assert_eq!(several.tool_target, file("main2.py", &[])?);
+    Ok(())
+}
+
+/// The finished command `id`, exited with `code`, as a rollout line records it.
+fn finished(id: &str, code: i32) -> String {
+    format!(
+        r#"{{"type":"event_msg","payload":{{"type":"item_completed","item":{{"type":"CommandExecution","id":"{id}","status":"completed","exit_code":{code}}}}}}}"#
+    )
+}
+
+/// A shell command's result, and a read's, is the exit code its line in the session's rollout
+/// gives, the rollout in a Codex sessions folder: the failing command's 3 is no success, the
+/// read's 0 is one. A search's result stays unknown, as does a command the rollout does not
+/// hold, and one whose rollout is not where Codex keeps them.
+#[test]
+fn a_command_s_result_is_read_from_its_rollout() -> TestResult {
+    let codex = adapter("codex").ok_or("no Codex adapter")?;
+    let folder = tempfile::tempdir()?;
+    let day = folder.path().join(".codex/sessions/2026/10/29");
+    std::fs::create_dir_all(&day)?;
+    let rollout = day.join(format!("rollout-2026-10-29T06-03-56-{S1}.jsonl"));
+    let lines = [
+        finished("exec-00000000-0000-4000-8000-000000000003", 0),
+        finished("exec-00000000-0000-4000-8000-000000000004", 0),
+        finished("exec-00000000-0000-4000-8000-000000000009", 3),
+    ];
+    std::fs::write(&rollout, lines.join("\n") + "\n")?;
+    let outside = folder.path().join(format!("rollout-{S1}.jsonl"));
+    std::fs::write(&outside, lines.join("\n") + "\n")?;
+    let result = |name: &str, transcript: &Path| -> TestResult<Option<ToolResult>> {
+        let mut value: serde_json::Value = serde_json::from_slice(&payload(name)?)?;
+        value["transcript_path"] = transcript.to_string_lossy().into_owned().into();
+        let event = codex
+            .normalize(
+                "PostToolUse",
+                &serde_json::to_vec(&value)?,
+                &locate,
+                stamp(),
+            )?
+            .ok_or("no event")?;
+        Ok(event.tool_result)
+    };
+    let exited = |code: i32| {
+        Some(ToolResult {
+            exit_code: Some(code),
+            is_success: code == 0,
+            is_interrupted: false,
+            output_bytes: None,
+        })
+    };
+    assert_eq!(
+        result("post-tool-use-bash-nonzero-exit.json", &rollout)?,
+        exited(3)
+    );
+    assert_eq!(result("post-tool-use-bash-read.json", &rollout)?, exited(0));
+    assert_eq!(result("post-tool-use-bash-grep.json", &rollout)?, None);
+    assert_eq!(
+        result("post-tool-use-bash-test-failing.json", &rollout)?,
+        None
+    );
+    assert_eq!(
+        result("post-tool-use-bash-nonzero-exit.json", &outside)?,
+        None
+    );
     Ok(())
 }
 

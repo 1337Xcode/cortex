@@ -4,6 +4,7 @@
 
 mod command;
 mod flags;
+mod rollout;
 mod tool;
 mod words;
 

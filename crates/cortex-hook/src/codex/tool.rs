@@ -2,8 +2,9 @@
 //! (tool `Bash`), whose command is read for what it does (see `command`); a search's hits are the
 //! files its output names. Edits arrive as `apply_patch`, the whole patch in `tool_input.command`:
 //! its first `*** Update File:`, `*** Add File:` or `*** Delete File:` header names the file the
-//! call aimed at, and its hunks carry no line numbers. A shell's exit code is not in the payload;
-//! a patch's response opens with its own.
+//! call aimed at, and its hunks carry no line numbers. A shell's exit code is not in the payload
+//! but at the end of the session's rollout file (see `rollout`); a patch's response opens with
+//! its own.
 
 use cortex_core::{
     HookKind, MAX_COMMAND_CHARS, RepoPath, ShellCommand, ToolKind, ToolResult, ToolTarget,
@@ -11,6 +12,7 @@ use cortex_core::{
 use serde_json::value::RawValue;
 
 use super::command::{Step, step};
+use super::rollout;
 use crate::adapter::Located;
 use crate::shaped::payload::Payload;
 use crate::shaped::place::{Place, hits, place};
@@ -85,16 +87,21 @@ impl Tools for CodexTools {
     }
 
     fn result(&self, tool: ToolKind, _: &str, payload: &Payload<'_>) -> Option<ToolResult> {
-        // Codex tells its hooks no shell's exit code: that is in its rollout file. A patch's
-        // response opens with its own.
-        if tool != ToolKind::ApplyPatch {
-            return None;
-        }
-        let code = payload
-            .tool_response
-            .as_ref()?
-            .content
-            .and_then(patch_exit_code)?;
+        // A patch's response opens with its exit code. A shell's is in the rollout file only,
+        // written before the hook runs; a search's says too little (no match is exit 1), and is
+        // not read.
+        let code = match tool {
+            ToolKind::ApplyPatch => payload
+                .tool_response
+                .as_ref()?
+                .content
+                .and_then(patch_exit_code)?,
+            ToolKind::Shell | ToolKind::Read => rollout::exit_code(
+                payload.transcript_path.as_deref()?,
+                payload.tool_use_id.as_deref()?,
+            )?,
+            _ => return None,
+        };
         Some(ToolResult {
             exit_code: Some(code),
             is_success: code == 0,
