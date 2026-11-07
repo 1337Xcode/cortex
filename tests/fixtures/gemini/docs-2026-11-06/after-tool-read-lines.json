@@ -1,0 +1,17 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "C:\\Users\\dev\\.gemini\\tmp\\repo\\chats\\session-00000000-0000-4000-8000-000000000001.json",
+  "cwd": "C:\\repo",
+  "hook_event_name": "AfterTool",
+  "timestamp": "2026-11-06T10:00:00.000Z",
+  "tool_name": "read_file",
+  "tool_input": {
+    "file_path": "C:\\repo\\calc\\ops.py",
+    "start_line": 10,
+    "end_line": 20
+  },
+  "tool_response": {
+    "llmContent": "",
+    "returnDisplay": ""
+  }
+}

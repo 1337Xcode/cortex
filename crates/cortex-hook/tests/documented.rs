@@ -21,6 +21,20 @@ use proptest::prelude::*;
 /// The folder the documented payloads of every agent here are in.
 const DOCUMENTED: &str = "docs-2026-11-06";
 
+/// Every agent whose adapter is built from its documentation, by its name on the command line.
+const DOCUMENTED_AGENTS: &[&str] = &[
+    "qwen",
+    "droid",
+    "devin",
+    "trae",
+    "junie",
+    "augment",
+    "openhands",
+    "gemini",
+    "cursor",
+    "copilot",
+];
+
 /// The session of every documented payload.
 const S1: &str = "00000000-0000-4000-8000-000000000001";
 
@@ -375,6 +389,143 @@ fn openhands() -> TestResult<Vec<(&'static str, Option<Event>)>> {
     ])
 }
 
+/// Gemini CLI's payloads and the events they make, read off the fixtures by hand: its own event
+/// names (`BeforeAgent` the prompt, `AfterTool` a tool's result, `PreCompress` a compaction,
+/// `AfterAgent` the end of a turn); a read naming its lines, whose counting is not documented, no
+/// target; a call's result a failure when its response carries an `error`.
+fn gemini() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let transcript = format!(r"C:\Users\dev\.gemini\tmp\repo\chats\session-{S1}.json");
+    let at = |hook| base(Agent::Gemini, hook, Some(&transcript));
+    Ok(vec![
+        ("after-agent.json", Some(at(HookKind::Stop)?)),
+        (
+            "after-tool-read-lines.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, None, ended(true)),
+            )),
+        ),
+        (
+            "after-tool-read.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, ended(true)),
+            )),
+        ),
+        (
+            "after-tool-shell-error.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), ended(false)),
+            )),
+        ),
+        (
+            "before-agent.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+        (
+            "pre-compress.json",
+            Some(Event {
+                compact_trigger: Some(cortex_core::CompactTrigger::Auto),
+                ..at(HookKind::Compact)?
+            }),
+        ),
+        (
+            "session-end.json",
+            Some(Event {
+                end_reason: Some(id("exit")?),
+                ..at(HookKind::SessionEnd)?
+            }),
+        ),
+        (
+            "session-start.json",
+            Some(Event {
+                source: Some(StartSource::Startup),
+                ..at(HookKind::SessionStart)?
+            }),
+        ),
+    ])
+}
+
+/// Cursor's payloads and the events they make, read off the fixtures by hand: the session is
+/// `conversation_id`; only the tool events name a working folder, so with `CURSOR_PROJECT_DIR`
+/// unset, as here, the start, the prompt and the stop make none; a call's result follows
+/// `postToolUse` (a success) and `postToolUseFailure`.
+fn cursor() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| -> TestResult<Event> {
+        Ok(Event {
+            model: Some(id("cursor-model")?),
+            ..base(Agent::Cursor, hook, None)?
+        })
+    };
+    Ok(vec![
+        ("before-submit-prompt.json", None),
+        (
+            "post-tool-use-failure-read.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, file("calc/ops.py")?, ended(false)),
+            )),
+        ),
+        (
+            "post-tool-use-shell.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, command(TESTS), ended(true)),
+            )),
+        ),
+        ("session-start.json", None),
+        ("stop.json", None),
+    ])
+}
+
+/// Copilot's payloads and the events they make, read off the fixtures by hand: its tools' inputs
+/// are not documented, so a shell names no command and a view no file; a call's result follows
+/// `PostToolUse` and `PostToolUseFailure`.
+fn copilot() -> TestResult<Vec<(&'static str, Option<Event>)>> {
+    let at = |hook| base(Agent::Copilot, hook, None);
+    Ok(vec![
+        (
+            "post-tool-use-bash.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Shell, Some(ToolTarget::default()), ended(true)),
+            )),
+        ),
+        (
+            "post-tool-use-failure-view.json",
+            Some(tool(
+                at(HookKind::PostTool)?,
+                (ToolKind::Read, None, ended(false)),
+            )),
+        ),
+        (
+            "session-end.json",
+            Some(Event {
+                end_reason: Some(id("complete")?),
+                ..at(HookKind::SessionEnd)?
+            }),
+        ),
+        (
+            "session-start.json",
+            Some(Event {
+                source: Some(StartSource::Startup),
+                ..at(HookKind::SessionStart)?
+            }),
+        ),
+        (
+            "user-prompt-submit.json",
+            Some(Event {
+                prompt_text: Some(PROMPT.to_owned()),
+                ..at(HookKind::Prompt)?
+            }),
+        ),
+    ])
+}
+
 /// Each agent's payloads make the events written for them, and its table names every fixture.
 #[test]
 fn every_documented_payload_normalizes_as_written() -> TestResult {
@@ -385,7 +536,11 @@ fn every_documented_payload_normalizes_as_written() -> TestResult {
         ("junie", junie()?),
         ("augment", augment()?),
         ("openhands", openhands()?),
+        ("gemini", gemini()?),
+        ("cursor", cursor()?),
+        ("copilot", copilot()?),
     ];
+    assert_eq!(std::env::var_os("CURSOR_PROJECT_DIR"), None);
     for (name, table) in tables {
         let adapter = adapter(name).ok_or(name)?;
         for (fixture, expected) in &table {
@@ -542,18 +697,16 @@ fn the_hooks_are_the_ones_each_documentation_supports() -> TestResult {
     assert_eq!(giving("junie")?, ["UserPromptSubmit"]);
     assert_eq!(giving("augment")?, ["SessionStart", "PostToolUse"]);
     assert_eq!(giving("openhands")?, ["SessionStart", "UserPromptSubmit"]);
-    for name in [
-        "qwen",
-        "droid",
-        "devin",
-        "trae",
-        "junie",
-        "augment",
-        "openhands",
-    ] {
-        let adapter = adapter(name).ok_or(name)?;
+    assert_eq!(
+        giving("gemini")?,
+        ["SessionStart", "BeforeAgent", "AfterTool"]
+    );
+    assert_eq!(giving("cursor")?, ["sessionStart", "postToolUse"]);
+    assert_eq!(giving("copilot")?, ["SessionStart", "PostToolUse"]);
+    for name in DOCUMENTED_AGENTS {
+        let adapter = adapter(name).ok_or(*name)?;
         assert!(adapter.versions().is_none(), "{name}");
-        assert_eq!(adapter.agent().name(), name);
+        assert_eq!(adapter.agent().name(), *name);
     }
     Ok(())
 }
@@ -584,6 +737,9 @@ const FIELD_NAMES: &[&str] = &[
     "user_prompt",
     "tool_is_error",
     "view_range",
+    "start_line",
+    "end_line",
+    "error",
     "exit_code",
     "reason",
     "unknown",
@@ -604,6 +760,10 @@ const STEERING_TEXTS: &[&str] = &[
     "view",
     "bash",
     "RunCommand",
+    "AfterTool",
+    "Shell",
+    "Read",
+    "view",
     "read",
     "startup",
     "/repo/a.rs",
@@ -631,7 +791,7 @@ proptest! {
         }
         let bytes = serde_json::to_vec(&payload)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
-        for name in ["qwen", "droid", "devin", "trae", "junie", "augment", "openhands"] {
+        for name in DOCUMENTED_AGENTS {
             let adapter = adapter(name).ok_or_else(|| TestCaseError::fail("no adapter"))?;
             for entry in adapter.hooks() {
                 if let Ok(Some(event)) = adapter.normalize(entry.event_name, &bytes, &locate, stamp()) {

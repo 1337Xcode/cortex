@@ -117,6 +117,8 @@ impl Adapter for OpenHands {
         if text.encode_utf16().count() > MAX_CONTEXT_CHARS {
             return None;
         }
-        entry.gives_context.then(|| output::bare(text))
+        entry
+            .gives_context
+            .then(|| output::top_level("additionalContext", text))
     }
 }

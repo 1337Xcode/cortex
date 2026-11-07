@@ -108,6 +108,12 @@ pub(crate) struct ToolInput {
     /// Cortex does not read, held only to tell that one is named.
     #[serde(deserialize_with = "lenient")]
     pub(crate) view_range: Option<serde_json::Value>,
+    /// The first line a read names, as Gemini CLI's `read_file` takes it.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) start_line: Option<serde_json::Value>,
+    /// The last line a read names, as Gemini CLI's `read_file` takes it.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) end_line: Option<serde_json::Value>,
 }
 
 /// What a tool gave back.
@@ -126,6 +132,9 @@ pub(crate) struct ToolResponse<'a> {
     /// The size of a shell's standard error.
     #[serde(deserialize_with = "lenient")]
     pub(crate) stderr: Option<TextLength>,
+    /// The error a failed call reports, as Gemini CLI's responses carry it.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) error: Option<serde_json::Value>,
     /// The command's exit code, as OpenHands' terminal responses say.
     #[serde(deserialize_with = "lenient")]
     pub(crate) exit_code: Option<i64>,

@@ -28,7 +28,8 @@ pub(crate) struct ToolTable {
     /// `create`: the tool's name, the command, and the kind; looked up before `tools`.
     pub(crate) subcommands: &'static [(&'static str, &'static str, ToolKind)],
     /// Fields the agent names otherwise than Claude Code's hook JSON, as the agent names them and
-    /// as Claude Code does: renamed before the payload is read, unless the payload holds both.
+    /// as Claude Code does: renamed before the payload is read, the agent's field taking the place
+    /// of one the payload also holds under Claude Code's name.
     pub(crate) renames: &'static [(&'static str, &'static str)],
     /// What the agent's tool events say of how a call ended.
     pub(crate) outcome: Outcome,
@@ -53,6 +54,8 @@ pub(crate) enum Outcome {
     ResponseSuccess,
     /// The payload's `tool_is_error` field says.
     ToolIsError,
+    /// The response says: one with an `error` is a failure, one without a success.
+    ResponseError,
     /// The response's `exit_code` says, 0 a success; a negative code is a command not finished.
     ResponseExitCode,
 }
@@ -96,7 +99,9 @@ impl Tools for ToolTable {
             ToolKind::Read
                 if input.offset.is_some()
                     || input.limit.is_some()
-                    || input.view_range.is_some() =>
+                    || input.view_range.is_some()
+                    || input.start_line.is_some()
+                    || input.end_line.is_some() =>
             {
                 return Aim::Nothing;
             }
@@ -141,6 +146,12 @@ impl Tools for ToolTable {
             Outcome::PostIsSuccess { failure_event } => event_name != failure_event,
             Outcome::ResponseSuccess => payload.tool_response.as_ref()?.success?,
             Outcome::ToolIsError => !payload.tool_is_error?,
+            Outcome::ResponseError => payload
+                .tool_response
+                .as_ref()?
+                .error
+                .as_ref()
+                .is_none_or(serde_json::Value::is_null),
             Outcome::ResponseExitCode => {
                 let code = i32::try_from(payload.tool_response.as_ref()?.exit_code?).ok()?;
                 if code < 0 {
@@ -167,9 +178,6 @@ impl Tools for ToolTable {
             return Cow::Borrowed(payload);
         };
         for (theirs, ours) in self.renames {
-            if fields.contains_key(*ours) {
-                continue;
-            }
             if let Some(value) = fields.remove(*theirs) {
                 fields.insert((*ours).to_owned(), value);
             }
@@ -201,4 +209,38 @@ impl Tools for ToolTable {
 /// The file a tool's input names: its `file_path`, else its `path`.
 fn file_of(input: &ToolInput) -> Option<&str> {
     input.file_path.as_deref().or(input.path.as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A table renaming `conversation_id` to `session_id`, as Cursor's.
+    const RENAMING: ToolTable = ToolTable {
+        tools: &[],
+        subcommands: &[],
+        renames: &[("conversation_id", "session_id")],
+        outcome: Outcome::Unknown,
+        prompt: PromptField::Prompt,
+        folder_variable: None,
+    };
+
+    /// The agent's field takes the place of the one under Claude Code's name, whether or not the
+    /// payload holds both; a payload that is no object is read as it is.
+    #[test]
+    fn the_agent_s_field_takes_the_place_of_claude_code_s() -> Result<(), serde_json::Error> {
+        let read = |payload: &str| -> Result<serde_json::Value, serde_json::Error> {
+            serde_json::from_slice(&RENAMING.renamed(payload.as_bytes()))
+        };
+        assert_eq!(
+            read(r#"{"conversation_id":"c1","session_id":"s1"}"#)?,
+            serde_json::json!({"session_id": "c1"})
+        );
+        assert_eq!(
+            read(r#"{"conversation_id":"c1"}"#)?,
+            serde_json::json!({"session_id": "c1"})
+        );
+        assert_eq!(RENAMING.renamed(b"[1]").as_ref(), b"[1]");
+        Ok(())
+    }
 }

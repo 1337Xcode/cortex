@@ -1,0 +1,10 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "C:\\Users\\dev\\.gemini\\tmp\\repo\\chats\\session-00000000-0000-4000-8000-000000000001.json",
+  "cwd": "C:\\repo",
+  "hook_event_name": "AfterAgent",
+  "timestamp": "2026-11-06T10:00:00.000Z",
+  "prompt": "Fix divide in calc/ops.py",
+  "prompt_response": "Done.",
+  "stop_hook_active": false
+}

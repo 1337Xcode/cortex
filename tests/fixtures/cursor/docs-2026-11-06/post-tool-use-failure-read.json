@@ -1,0 +1,20 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "generation_id": "00000000-0000-4000-8000-000000000002",
+  "model": "cursor-model",
+  "model_id": "cursor-model",
+  "model_params": [],
+  "hook_event_name": "postToolUseFailure",
+  "cursor_version": "1.7.2",
+  "workspace_roots": [
+    "C:\\repo"
+  ],
+  "user_email": null,
+  "transcript_path": null,
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "C:\\repo\\calc\\ops.py"
+  },
+  "tool_use_id": "toolu_fixture0124",
+  "cwd": "C:\\repo"
+}

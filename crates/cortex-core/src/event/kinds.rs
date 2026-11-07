@@ -28,6 +28,8 @@ named_kind! {
         Junie => "junie",
         /// Augment's Auggie command-line agent.
         Augment => "augment",
+        /// GitHub Copilot's agent: Copilot CLI and Visual Studio Code's agent mode.
+        Copilot => "copilot",
         /// The opencode agent.
         Opencode => "opencode",
         /// Any other agent.
