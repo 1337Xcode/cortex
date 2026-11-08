@@ -275,6 +275,7 @@ fn options() -> IndexOptions<'static> {
         now_ms: NOW_MS,
         mode: ModeSetting::Auto,
         pause: None,
+        on_changed: None,
     }
 }
 
@@ -725,4 +726,60 @@ fn chosen_edits_index_as_everything_does() -> TestResult {
         Edit::RemoveFolder,
         Edit::Restore(0),
     ])
+}
+
+/// An index of a changed file tells its caller the definitions it changed before committing them,
+/// each once, as its report lists them: `f` changes its signature and `g` its body, `h` neither.
+/// A whole index of the repository tells them the same way.
+#[test]
+fn an_index_tells_the_definitions_it_changed() -> TestResult {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("repo");
+    std::fs::create_dir(&root)?;
+    let before =
+        "def f(a):\n    return a\n\n\ndef g():\n    return 1\n\n\ndef h():\n    return 2\n";
+    std::fs::write(root.join("app.py"), before)?;
+    let grammars = grammars()?;
+    let mut store = writer(&scratch.path().join("store"), &root)?;
+    index_repository(&root, &grammars, &mut store, &options())?;
+    let after =
+        "def f(a, b):\n    return a\n\n\ndef g():\n    return 3\n\n\ndef h():\n    return 2\n";
+    std::fs::write(root.join("app.py"), after)?;
+    let told = std::cell::RefCell::new(Vec::new());
+    let keep =
+        |changes: &[cortex_store::SymbolChange]| told.borrow_mut().extend_from_slice(changes);
+    let telling = IndexOptions {
+        on_changed: Some(cortex_index::OnChanged(&keep)),
+        ..options()
+    };
+    let report = index_paths(
+        &root,
+        &grammars,
+        &mut store,
+        &telling,
+        &[RepoPath::new("app.py")?],
+    )?;
+    let names = |changes: &[cortex_store::SymbolChange]| -> Vec<(String, String)> {
+        changes
+            .iter()
+            .map(|change| {
+                (
+                    change.name.as_str().to_owned(),
+                    format!("{:?}", change.kind),
+                )
+            })
+            .collect()
+    };
+    let expected = [
+        ("f".to_owned(), "Signature".to_owned()),
+        ("g".to_owned(), "Body".to_owned()),
+    ];
+    assert_eq!(names(&told.borrow()), expected);
+    assert_eq!(*told.borrow(), report.changed_symbols);
+    std::fs::write(root.join("app.py"), before)?;
+    told.borrow_mut().clear();
+    let report = index_repository(&root, &grammars, &mut store, &telling)?;
+    assert_eq!(names(&told.borrow()), expected);
+    assert_eq!(*told.borrow(), report.changed_symbols);
+    Ok(())
 }

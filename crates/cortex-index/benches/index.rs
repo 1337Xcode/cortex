@@ -39,6 +39,7 @@ fn options() -> IndexOptions<'static> {
         now_ms: now_ms(),
         mode: ModeSetting::Auto,
         pause: None,
+        on_changed: None,
     }
 }
 

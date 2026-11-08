@@ -17,10 +17,11 @@ use anyhow::{Context, bail};
 use cortex_core::{Config, Event, RepoPath, unix_millis};
 use cortex_git::mine;
 use cortex_index::{
-    Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
+    Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, OnChanged, index_paths,
+    index_repository,
 };
 use cortex_learn::{Recorder, TaskState};
-use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, WriteTx, Writer};
+use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, SymbolChange, WriteTx, Writer};
 
 use crate::given::{Given, Notices};
 use crate::graph::Snapshot;
@@ -288,8 +289,9 @@ impl<'a> Host<'a> {
     /// Runs `index` with the options of an index on `threads` threads, timed now, and the pause
     /// of [`Host::with_pause`], the recorder told while it runs so that a hook's edit recorded in a
     /// pause takes nothing from a row the index wrote as what its file held before. However it
-    /// went, the graph is rebuilt from what it wrote; an index that succeeded leaves the signature
-    /// changes it found with the signatures kept for an edit's warnings.
+    /// went, the graph is rebuilt from what it wrote. Each stretch of its writes leaves the
+    /// signature changes it found with the signatures kept for an edit's warnings before it is
+    /// committed, so that warnings that find a file's new rows know what changed in it.
     fn indexing<E>(
         &mut self,
         threads: NonZeroUsize,
@@ -302,24 +304,25 @@ impl<'a> Host<'a> {
     ) -> Result<IndexReport, E> {
         let options = self.options(threads);
         let (root, grammars) = (self.root, Arc::clone(&self.grammars));
+        let signatures = self.signatures;
+        let keep = |changes: &[SymbolChange]| {
+            let changed = changes
+                .iter()
+                .filter(|change| change.kind == ChangeKind::Signature)
+                .map(|change| change.symbol);
+            signatures.note(changed, now_ms());
+        };
         self.recorder.index_started(options.now_ms);
         let indexed = self.with_pause(|writer, pause| {
             let options = IndexOptions {
                 pause: Some(pause),
+                on_changed: Some(OnChanged(&keep)),
                 ..options
             };
             index(root, &grammars, writer, &options)
         });
         self.recorder.index_done();
         self.snapshot.changed();
-        if let Ok(report) = &indexed {
-            let changed = report
-                .changed_symbols
-                .iter()
-                .filter(|change| change.kind == ChangeKind::Signature)
-                .map(|change| change.symbol);
-            self.signatures.note(changed, now_ms());
-        }
         indexed
     }
 
@@ -371,6 +374,7 @@ impl<'a> Host<'a> {
             now_ms: now_ms(),
             mode: self.config.mode,
             pause: None,
+            on_changed: None,
         }
     }
 }
@@ -878,6 +882,69 @@ mod tests {
         let mut host = Host::new(root, grammars, (config, discover(config)), parts);
         host.index(&[])?;
         Ok(host)
+    }
+
+    /// The signature changes an index writes are kept before the index ends: an edit's warnings
+    /// that read a file's new rows while the index still runs know that `f` changed. `g` changed
+    /// its body only, which is no signature change.
+    #[test]
+    fn an_index_s_signature_changes_are_kept_as_they_are_written() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let (snapshot, signatures) = (Snapshot::default(), Signatures::new());
+        std::fs::write(
+            root.path().join("a.py"),
+            "def f(a):
+    return a
+
+
+def g():
+    return 1
+",
+        )?;
+        let parts = (
+            writer(root.path())?,
+            Recorder::new(false, 0.0, Commands::default()),
+            pending(),
+            (&inbox, &snapshot, &signatures),
+        );
+        let grammars = Arc::new(Grammars::load()?);
+        let mut host = Host::new(root.path(), grammars, (&config, discover(&config)), parts);
+        host.index(&[])?;
+        std::fs::write(
+            root.path().join("a.py"),
+            "def f(a, b):
+    return a
+
+
+def g():
+    return 2
+",
+        )?;
+        let changed = [RepoPath::new("a.py")?];
+        let mut kept = Vec::new();
+        host.indexing(NonZeroUsize::MIN, |root, grammars, writer, options| {
+            let indexed = index_paths(root, grammars, writer, options, &changed);
+            let queries = writer.queries();
+            let symbols = queries
+                .file(&changed[0])
+                .ok()
+                .flatten()
+                .and_then(|row| queries.symbols_in_file(row.id).ok())
+                .unwrap_or_default();
+            let changed_among = signatures.changed_among(
+                &symbols.iter().map(|symbol| symbol.id).collect::<Vec<_>>(),
+                (0, now_ms()),
+            );
+            kept = symbols
+                .into_iter()
+                .filter(|symbol| changed_among.contains(&symbol.id))
+                .map(|symbol| symbol.qual_name.as_str().to_owned())
+                .collect();
+            indexed
+        })?;
+        assert_eq!(kept, ["f"]);
+        Ok(())
     }
 
     /// Hook events waiting when the daemon is asked to stop are recorded before it stops, though

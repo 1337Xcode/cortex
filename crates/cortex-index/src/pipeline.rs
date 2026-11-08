@@ -19,6 +19,7 @@
 //! through imports it had.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::num::NonZeroUsize;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
@@ -72,6 +73,19 @@ const UNREAD: [FileFlags; 3] = [
 /// Flags that keep a file from being parsed: a tool or a third party wrote it.
 const UNPARSED: [FileFlags; 2] = [FileFlags::GENERATED, FileFlags::VENDORED];
 
+/// A callback an index calls with the definitions whose signature or body a stretch of its writes
+/// changed, just before it commits the stretch: a reader that finds the files' new rows can then
+/// know already what changed in them. It never calls the index back.
+#[derive(Clone, Copy)]
+pub struct OnChanged<'a>(pub &'a dyn Fn(&[SymbolChange]));
+
+impl fmt::Debug for OnChanged<'_> {
+    /// A callback has nothing to show.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("OnChanged")
+    }
+}
+
 /// What [`index_repository`] needs besides the root, the grammars and the writer.
 #[derive(Debug, Clone, Copy)]
 pub struct IndexOptions<'a> {
@@ -88,6 +102,9 @@ pub struct IndexOptions<'a> {
     pub mode: ModeSetting,
     /// What the caller does between the index's write transactions, if anything.
     pub pause: Option<Pause<'a>>,
+    /// What the caller does with the definitions each stretch of writes changed, before the
+    /// stretch is committed, if anything.
+    pub on_changed: Option<OnChanged<'a>>,
 }
 
 /// A file an index found edited: new, gone, or with other contents than stored.
@@ -319,24 +336,19 @@ pub fn index_repository(
         now_ms: options.now_ms,
         scip_written_ns: scip::written_ns(root),
     };
-    let candidates: Vec<DiscoveredFile> = discovery
-        .files
-        .iter()
-        .filter(|file| {
-            known.get(&file.path).is_none_or(|row| {
-                !incremental::is_unchanged(file, row)
-                    || (!is_inventory && waits_to_be_parsed(&row.file))
-            })
-        })
-        .cloned()
-        .collect();
+    let candidates = candidates_of(&discovery.files, &known, is_inventory);
     let mut report = IndexReport::starting(
         count(discovery.files.len() - candidates.len()),
         count(missing.len()),
         discovery.problems.clone(),
         ScipOutcome::Absent,
     );
-    let written = write_files(writer, &candidates, &context, (&mut report, &mut pacer))?;
+    let written = write_files(
+        writer,
+        &candidates,
+        &context,
+        (&mut report, &mut pacer, options.on_changed),
+    )?;
     pacer.let_in(writer);
     if !is_whole {
         let gone = missing.iter().filter_map(|path| known.get(path));
@@ -745,14 +757,34 @@ fn discovered(
     })
 }
 
+/// The walked `files` an index writes: those not stored as they are in `known`, and, outside an
+/// inventory (`is_inventory`), those stored but still waiting to be parsed.
+fn candidates_of(
+    files: &[DiscoveredFile],
+    known: &BTreeMap<RepoPath, FileRow>,
+    is_inventory: bool,
+) -> Vec<DiscoveredFile> {
+    files
+        .iter()
+        .filter(|file| {
+            known.get(&file.path).is_none_or(|row| {
+                !incremental::is_unchanged(file, row)
+                    || (!is_inventory && waits_to_be_parsed(&row.file))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Prepares the files in batches and writes each batch in one transaction while the next one is
-/// prepared, letting the caller in after each batch and while it waits for one. Returns each
-/// written file, in path order.
+/// prepared, letting the caller in after each batch and while it waits for one, and telling
+/// `on_changed` what each transaction changed before it is committed. Returns each written file,
+/// in path order.
 pub(crate) fn write_files(
     writer: &mut Writer,
     files: &[DiscoveredFile],
     context: &Context<'_>,
-    (report, pacer): (&mut IndexReport, &mut Pacer<'_>),
+    (report, pacer, on_changed): (&mut IndexReport, &mut Pacer<'_>, Option<OnChanged<'_>>),
 ) -> Result<Vec<Written>, IndexError> {
     thread::scope(|scope| {
         // Each batch reports on a channel of its own, so that a worker that panics closes it.
@@ -772,7 +804,7 @@ pub(crate) fn write_files(
                 writer,
                 outcomes,
                 context.known,
-                (report, pacer),
+                (report, pacer, on_changed),
             )?);
             pacer.offer(writer);
         }
@@ -783,17 +815,20 @@ pub(crate) fn write_files(
 /// Writes one batch's files, in order, and counts them in `report`, with the definitions whose
 /// signature or body changed. A file whose contents are as stored gets only its new time. The
 /// files go in one transaction, committed early and the caller let in whenever `pacer` says it has
-/// run its time; each file is written whole in one transaction. Returns each written file.
+/// run its time; each file is written whole in one transaction. Before each commit `on_changed`
+/// is told the definitions that transaction changed. Returns each written file.
 fn write_batch(
     writer: &mut Writer,
     outcomes: Vec<Outcome>,
     known: Option<&BTreeMap<RepoPath, FileRow>>,
-    (report, pacer): (&mut IndexReport, &mut Pacer<'_>),
+    (report, pacer, on_changed): (&mut IndexReport, &mut Pacer<'_>, Option<OnChanged<'_>>),
 ) -> Result<Vec<Written>, StoreError> {
     let mut written = Vec::new();
+    let mut told = report.changed_symbols.len();
     let mut transaction = writer.transaction()?;
     for outcome in outcomes {
         if pacer.is_due() {
+            tell(on_changed, report, &mut told);
             // INVARIANT: deterministic. The files are written in the same order however the
             // transactions are cut, so the rows and their ids are the same whatever the pauses.
             transaction.commit()?;
@@ -853,8 +888,21 @@ fn write_batch(
             scip_users,
         });
     }
+    tell(on_changed, report, &mut told);
     transaction.commit()?;
     Ok(written)
+}
+
+/// Tells `on_changed` the definitions `report` counts past the first `told`, those of the
+/// transaction about to be committed, and counts them told.
+fn tell(on_changed: Option<OnChanged<'_>>, report: &IndexReport, told: &mut usize) {
+    let new = report.changed_symbols.get(*told..).unwrap_or_default();
+    if let Some(OnChanged(callback)) = on_changed
+        && !new.is_empty()
+    {
+        callback(new);
+    }
+    *told = report.changed_symbols.len();
 }
 
 /// The definitions of `index` that `change` added or removed, counted in the file's language
@@ -1530,7 +1578,7 @@ mod tests {
             &mut writer,
             outcomes,
             None,
-            (&mut report, &mut Pacer::new(None)),
+            (&mut report, &mut Pacer::new(None), None),
         )?;
         let imports: Vec<(RepoPath, FileImports)> = written
             .into_iter()

@@ -112,7 +112,7 @@ pub fn index_paths(
         writer,
         &found.candidates,
         &context,
-        (&mut report, &mut pacer),
+        (&mut report, &mut pacer, options.on_changed),
     )?;
     pacer.let_in(writer);
     report.edited = pipeline::edited(&written, &found.gone, &found.known);

@@ -90,6 +90,7 @@ pub fn index_with_pause(
         now_ms: NOW_MS,
         mode,
         pause,
+        on_changed: None,
     };
     Ok(index_repository(root, &grammars()?, &mut writer, &options)?)
 }
@@ -120,6 +121,7 @@ pub fn index_changed_at(root: &Path, paths: &[&str], now_ms: i64) -> TestResult<
         now_ms,
         mode: ModeSetting::Auto,
         pause: None,
+        on_changed: None,
     };
     let changed: Vec<RepoPath> = paths
         .iter()
