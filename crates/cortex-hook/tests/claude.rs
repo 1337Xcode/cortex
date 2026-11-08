@@ -39,14 +39,16 @@ const S7: &str = "00000000-0000-4000-8000-000000000007";
 const TABLED: &str = "2.1.312";
 
 /// The fixtures only the newest version has: Grep runs given a folder, one file, context lines and
-/// count mode, captured after the table's version, whose hits are read off them by hand.
-const NEWEST_ONLY: [&str; 6] = [
+/// count mode, captured after the table's version, whose hits are read off them by hand; and a
+/// turn that ended on an API error.
+const NEWEST_ONLY: [&str; 7] = [
     "post-tool-use-grep-context.json",
     "post-tool-use-grep-count.json",
     "post-tool-use-grep-folder-content.json",
     "post-tool-use-grep-folder.json",
     "post-tool-use-grep-one-file-count.json",
     "post-tool-use-grep-one-file.json",
+    "stop-failure-model-not-found.json",
 ];
 
 /// The folder of the fixtures of Claude Code `version`.
@@ -540,6 +542,33 @@ fn every_fixture_normalizes_as_written() -> TestResult {
     Ok(())
 }
 
+/// A turn that ended on an API error (Claude Code 2.1.318's `StopFailure`, captured with an unknown
+/// model) is a stop that names the error, so that its task ends unfinished; nothing is asked of the
+/// daemon for it, since Claude Code reads no output.
+#[test]
+fn a_turn_ended_on_an_error_is_a_stop_naming_it() -> TestResult {
+    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
+    let payload = payload_of("2.1.318", "stop-failure-model-not-found.json")?;
+    let event = claude
+        .normalize("StopFailure", &payload, &locate, stamp())?
+        .ok_or("no event")?;
+    assert_eq!(event.hook, HookKind::Stop);
+    assert_eq!(
+        event
+            .end_reason
+            .as_ref()
+            .map(cortex_core::Identifier::as_str),
+        Some("model_not_found")
+    );
+    let entry = claude
+        .hooks()
+        .iter()
+        .find(|entry| entry.event_name == "StopFailure")
+        .ok_or("no StopFailure hook")?;
+    assert!(!entry.gives_context);
+    Ok(())
+}
+
 /// The newest version's payloads, captured from the same steps as the table's, make the same
 /// events as the table's in all but their values: the same fields filled, the hook among them, and
 /// no event where the table's make none.
@@ -586,7 +615,8 @@ fn fill(value: &serde_json::Value, prefix: &str, filled: &mut Vec<String>) {
     }
 }
 
-/// The registered hooks are the ten the decisions name, with their matchers and timeouts.
+/// The registered hooks are the eleven the decisions name, with their matchers and timeouts:
+/// `StopFailure` beside `Stop`, for a turn that ends on an API error.
 #[test]
 fn the_hooks_are_the_ones_cortex_registers() -> TestResult {
     let claude = adapter("claude").ok_or("no Claude Code adapter")?;
@@ -612,6 +642,7 @@ fn the_hooks_are_the_ones_cortex_registers() -> TestResult {
             ("PostToolUseFailure", results, 500),
             ("PreCompact", None, 300),
             ("Stop", None, 300),
+            ("StopFailure", None, 300),
             ("SubagentStart", None, 300),
             ("SubagentStop", None, 300),
             ("SessionEnd", None, 300),

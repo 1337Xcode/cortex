@@ -225,6 +225,17 @@ pub const REQUIRED: &[(&str, &str, &[Required])] = &[
     ("claude", "2.1.316", CLAUDE_CODE),
     ("claude", "2.1.318", CLAUDE_CODE),
     (
+        "claude",
+        "2.1.318",
+        &[(
+            "stop-failure-model-not-found",
+            &[
+                Is("/error", "model_not_found"),
+                Present("/last_assistant_message"),
+            ],
+        )],
+    ),
+    (
         "codex",
         "0.165.0",
         &[

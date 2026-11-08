@@ -81,11 +81,13 @@ pub(crate) fn event(
             .filter(|_| entry.hook == HookKind::Compact)
             .and_then(CompactTrigger::from_name),
         is_probe: payload.cortex_probe == Some(true),
-        end_reason: payload
-            .reason
-            .as_deref()
-            .filter(|_| entry.hook == HookKind::SessionEnd)
-            .and_then(name),
+        end_reason: match entry.hook {
+            HookKind::SessionEnd => payload.reason.as_deref(),
+            // A turn that ended on an error names it (Claude Code's `StopFailure`).
+            HookKind::Stop => payload.error.as_deref(),
+            _ => None,
+        }
+        .and_then(name),
     }))
 }
 

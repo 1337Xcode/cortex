@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 
 use common::{Store, TestResult, end, event, prompt, shell, start, succeeded, target, tool};
 use cortex_core::{
-    ContentHash, Event, FileContent, HookKind, RepoPath, StartSource, TaskOutcome, ToolKind,
+    ContentHash, Event, FileContent, HookKind, Identifier, RepoPath, StartSource, TaskOutcome,
+    ToolKind,
 };
 use cortex_learn::{Commands, FileNow, Judgement, Recorder, TaskState, judge, reverted_after};
 
@@ -431,7 +432,8 @@ fn a_git_restore_after_the_last_edit_reverts_the_task() -> TestResult {
 /// A task left before its answer ended was abandoned, unless a check after its last edit says how
 /// its work went. Worked out by hand: `s1` edits and the next prompt arrives with no end of the
 /// answer, so the first task was left; `s2` edits and its session ends; `s3` edits, its tests
-/// pass, and then its session ends, which the tests still vouch for.
+/// pass, and then its session ends, which the tests still vouch for; `s4` edits and its answer
+/// ends on an API error (a stop naming the error, Claude Code's `StopFailure`): left too.
 #[test]
 fn a_task_left_before_its_answer_ended_was_abandoned() -> TestResult {
     let mut store = Store::new()?;
@@ -477,6 +479,20 @@ fn a_task_left_before_its_answer_ended_was_abandoned() -> TestResult {
             "tests by cargo exited 0 after the last edit"
         )
     );
+    let failed_stop = Event {
+        end_reason: Some(Identifier::new("rate_limit")?),
+        ..event(HookKind::Stop, "s4", 4_300)?
+    };
+    let errored = store.record(
+        &mut recorder,
+        &[
+            start("s4", 4_000, StartSource::Startup)?,
+            prompt("s4", 4_100, "fix it")?,
+            edit("s4", 4_200, "a.py")?,
+            failed_stop,
+        ],
+    )?;
+    assert_eq!(said(&judge(&one(errored)?, &BTreeMap::new())), left);
     Ok(())
 }
 

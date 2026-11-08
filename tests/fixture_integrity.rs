@@ -37,6 +37,7 @@ const EVENT_PREFIXES: &[(&str, &str)] = &[
     ("subagent-stop", "SubagentStop"),
     ("pre-compact", "PreCompact"),
     ("post-compact", "PostCompact"),
+    ("stop-failure", "StopFailure"),
     ("stop", "Stop"),
 ];
 

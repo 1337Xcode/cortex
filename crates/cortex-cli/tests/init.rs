@@ -96,6 +96,7 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         "PostToolUse",
         "PostToolUseFailure",
         "PreCompact",
+        "StopFailure",
         "SubagentStart",
         "SubagentStop",
         "SessionEnd",
@@ -912,7 +913,7 @@ fn init_creates_the_settings_file() -> TestResult {
             .get("hooks")
             .and_then(Value::as_object)
             .map(serde_json::Map::len),
-        Some(10)
+        Some(11)
     );
     let [folder] = backup_folders(repo.path())?
         .try_into()

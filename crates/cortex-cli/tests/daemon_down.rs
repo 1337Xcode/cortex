@@ -21,7 +21,7 @@ use cortex_hook::{adapter, ask};
 use cortex_store::Reader;
 
 /// The Claude Code version whose payloads the hooks are sent: the newest Cortex is tested with.
-const NEWEST: &str = "2.1.316";
+const NEWEST: &str = "2.1.318";
 
 /// A home folder with a repository in it, and the daemon a hook may start there: stopped, and the
 /// folder removed, when the test ends however it ends, so that no process outlives the test.
@@ -106,7 +106,7 @@ fn logged(log: &Path) -> TestResult<String> {
 
 /// The captured payload each hook Cortex registers with Claude Code is sent: a session's start, a
 /// prompt, the moment before a read, an edit's result, a failed command's, a compaction's start,
-/// a subagent's start and end, the stop and the session's end.
+/// a subagent's start and end, the stop, a turn ended on an API error and the session's end.
 fn fixture_of(event: &str) -> Option<&'static str> {
     Some(match event {
         "SessionStart" => "session-start-startup.json",
@@ -119,6 +119,7 @@ fn fixture_of(event: &str) -> Option<&'static str> {
         "SubagentStop" => "subagent-stop.json",
         "Stop" => "stop.json",
         "SessionEnd" => "session-end.json",
+        "StopFailure" => "stop-failure-model-not-found.json",
         _ => return None,
     })
 }
@@ -183,7 +184,7 @@ fn every_hook_is_silent_with_the_daemon_down() -> TestResult {
             break;
         }
     }
-    assert_eq!(hooks.len(), 10);
+    assert_eq!(hooks.len(), 11);
     drop(held);
     Ok(())
 }

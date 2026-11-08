@@ -57,7 +57,8 @@ pub(crate) struct Payload<'a> {
     /// What the tool gave back.
     #[serde(borrow, deserialize_with = "response")]
     pub(crate) tool_response: Option<ToolResponse<'a>>,
-    /// A failed tool's message; a shell's begins `Exit code N`.
+    /// A failed tool's message, a shell's beginning `Exit code N`; at a stop, the error the turn
+    /// ended on (`rate_limit`, `billing_error`, ...).
     #[serde(deserialize_with = "lenient")]
     pub(crate) error: Option<String>,
     /// Whether the user interrupted the failed tool.

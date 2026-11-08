@@ -39,7 +39,10 @@ const OTHER_HARD_TIMEOUT: Duration = Duration::from_millis(300);
 pub(crate) struct Claude;
 
 /// The hooks Cortex registers with Claude Code. A tool's result is registered for both its outcomes
-/// (`PostToolUse`, `PostToolUseFailure`): a shell that fails reports its exit code only there.
+/// (`PostToolUse`, `PostToolUseFailure`): a shell that fails reports its exit code only there. A
+/// turn that ends on an API error (a usage limit, a billing error, an overloaded service) sends
+/// `StopFailure` instead of `Stop`, whose output Claude Code ignores: a stop whose end reason is
+/// the error, so that its task ends unfinished.
 const HOOKS: &[HookEntry] = &[
     HookEntry {
         event_name: "SessionStart",
@@ -89,6 +92,13 @@ const HOOKS: &[HookEntry] = &[
         hook: HookKind::Stop,
         hard_timeout: OTHER_HARD_TIMEOUT,
         gives_context: true,
+    },
+    HookEntry {
+        event_name: "StopFailure",
+        matcher: None,
+        hook: HookKind::Stop,
+        hard_timeout: OTHER_HARD_TIMEOUT,
+        gives_context: false,
     },
     HookEntry {
         event_name: "SubagentStart",
