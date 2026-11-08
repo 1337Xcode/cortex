@@ -5,6 +5,8 @@
 
 use super::command::Shell;
 use super::settings::{Events, Handler, Style, TimeoutUnit};
+use cortex_core::Agent;
+
 use super::{FoundBy, HooksFile, Setup};
 
 /// How Junie's config holds Cortex's hooks.
@@ -21,8 +23,7 @@ const STYLE: Style = Style {
 
 /// Junie: found by `~/.junie` or the `junie` program.
 pub(crate) const SETUP: Setup = Setup {
-    name: "junie",
-    title: "Junie",
+    agent: Agent::Junie,
     found_by: FoundBy {
         folders: &[".junie"],
         programs: &["junie"],

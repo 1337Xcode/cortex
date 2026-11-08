@@ -1,13 +1,15 @@
 //! What an answer claimed in the daemon's memory while it was worked out, so that one text is not
 //! given twice: the pairs a task was warned of, a compaction recapped, a task given strict mode's
-//! reason to go on. An answer whose text never reaches its hook (worked out too late, written after
-//! the hook stopped reading, or not written at all) gives its claim back, so that a later edit,
-//! start or stop is told what this one was not.
+//! reason to go on, the coordination notices a session was given. An answer whose text never
+//! reaches its hook (worked out too late, written after the hook stopped reading, or not written at
+//! all) gives its claim back, so that a later edit, start or stop is told what this one was not.
 
 use std::sync::Arc;
 
 use cortex_core::{Identifier, Ulid};
+use cortex_store::NoticeId;
 
+use crate::noticed::Noticed;
 use crate::recapped::Recapped;
 use crate::stopped::Stopped;
 use crate::told::{Pair, Told};
@@ -21,6 +23,8 @@ pub(crate) enum Claim {
     Recapped(Identifier, Ulid),
     /// Task `.0`, given its reason to go on.
     Stopped(Ulid),
+    /// Session `.0`, given the waiting notices `.1` and told the lines `.2`.
+    Noticed(Identifier, Vec<NoticeId>, Vec<String>),
 }
 
 /// Where the daemon keeps what answers claimed.
@@ -32,16 +36,21 @@ pub(crate) struct Claims {
     pub(crate) recapped: Arc<Recapped>,
     /// The tasks strict mode gave a reason to go on.
     pub(crate) stopped: Arc<Stopped>,
+    /// The coordination notices each recent session was given.
+    pub(crate) noticed: Arc<Noticed>,
 }
 
 impl Claims {
     /// Gives `claim` back: its pairs untold, its compaction not recapped, its task not given its
-    /// reason.
+    /// reason, its notices waiting again and its lines untold.
     pub(crate) fn release(&self, claim: &Claim) {
         match claim {
             Claim::Warned(task_id, pairs) => self.told.forget(*task_id, pairs),
             Claim::Recapped(session, start) => self.recapped.release(session, *start),
             Claim::Stopped(task_id) => self.stopped.release(*task_id),
+            Claim::Noticed(session, delivered, told) => {
+                self.noticed.release(session, (delivered, told));
+            }
         }
     }
 }

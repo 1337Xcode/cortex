@@ -3,8 +3,9 @@
 //! `add`'s signature is told of the calls to it in other files and of the file's tests; one that
 //! changes `mul`'s once the daemon has indexed it is told of its call, once, though two hooks report
 //! it at the same moment; the same edit again is told nothing; and the store keeps one row for each
-//! file each warning named. An edit outside a task, of a file the store does not hold, or of a file
-//! whose name says it holds secrets is told nothing.
+//! file each warning named. An edit of a file the store does not hold, or of a file whose name says
+//! it holds secrets, is told nothing; one outside a task is warned of nothing, and told only that
+//! another session is editing the same file.
 #![allow(
     clippy::indexing_slicing,
     reason = "the payloads edited here are JSON objects, where indexing a missing key adds it"
@@ -180,10 +181,6 @@ fn an_edit_is_warned_of_its_callers_and_its_tests() -> TestResult {
     wait_for(|| Ok(warned(&repo)?.len() == recorded.len()))?;
     assert_eq!(warned(&repo)?, recorded);
 
-    // Outside a task: another session, which sent no prompt, edits the same file.
-    let mut elsewhere = add.clone();
-    elsewhere["session_id"] = Value::from("00000000-0000-4000-8000-000000000009");
-    assert_eq!(given(&elsewhere, home)?, None);
     // A file the store does not hold yet, and one whose name says it holds secrets, which the
     // index never reads: neither is told anything.
     for path in ["calc/fresh.py", "calc/credentials.py"] {
@@ -197,5 +194,18 @@ fn an_edit_is_warned_of_its_callers_and_its_tests() -> TestResult {
         other["tool_response"]["filePath"] = Value::from(native);
         assert_eq!(given(&other, home)?, None, "{path}");
     }
+    // Outside a task: another session, which sent no prompt, edits the same file. It is warned of
+    // nothing, and told first that the captured session is editing that file too, minutes apart.
+    // Last, since the notice it leaves for the captured session would be given at that session's
+    // next edit.
+    let mut elsewhere = add.clone();
+    elsewhere["session_id"] = Value::from("00000000-0000-4000-8000-000000000009");
+    assert_eq!(
+        given(&elsewhere, home)?.as_deref(),
+        Some(
+            "[cortex] Coordination, act first: Another Claude Code session is also editing \
+             calc/ops.py, the file you just edited.\n"
+        )
+    );
     Ok(())
 }

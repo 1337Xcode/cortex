@@ -1,7 +1,7 @@
 //! The daemon's answers that are text: the work order a prompt gets, the primer a session's start
 //! gets, or the recap when its context was compacted, the warnings an edit gets, the hint a read
-//! gets, strict mode's reason at a stop, and what the engine finds for a question asked of it
-//! directly.
+//! gets, strict mode's reason at a stop, the coordination notices a prompt, an edit or a read gets
+//! ahead of the rest, and what the engine finds for a question asked of it directly.
 //! Each is worked out with a reader of the store and the graph as it stands, never waiting for the
 //! writer; what a prompt's retrieval gave or weighed, the primer or recap given and the warnings
 //! given are returned for the writer to record after the event they answer.
@@ -12,6 +12,7 @@
 //! and while the store has no mode (its first index not done), every answer but the recap is
 //! silent: the recap recalls what the session did, which needs no index.
 
+mod coordination;
 mod hints;
 mod recap;
 mod stop;
@@ -22,8 +23,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use cortex_core::{
-    ContentHash, Event, HookKind, RetrievalConfig, ScaleMode, StartSource, WarningsConfig,
-    is_held_out, task_id_of_prompt,
+    ContentHash, CoordinationConfig, Event, HookKind, RetrievalConfig, ScaleMode, StartSource,
+    Ulid, WarningsConfig, is_held_out, task_id_of_prompt,
 };
 use cortex_index::Grammars;
 use cortex_learn::{raise_of, recent_precision};
@@ -32,6 +33,7 @@ use cortex_store::{
     InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError, TaskRow,
 };
 
+pub(crate) use self::coordination::Coordination;
 use crate::claim::Claim;
 use crate::given::{Given, text_record};
 use crate::recapped::Recapped;
@@ -61,6 +63,8 @@ pub(crate) struct Service {
     holdout_share: f64,
     /// What an edit's warnings are worked out with.
     edits: EditSettings,
+    /// The `coordination.*` settings.
+    coordination: CoordinationConfig,
     /// Readers not in use.
     readers: Mutex<Vec<Reader>>,
 }
@@ -71,9 +75,12 @@ pub(crate) struct Answer {
     /// The text the agent gets.
     pub(crate) text: Option<String>,
     /// What the writer records of it.
-    pub(crate) given: Option<Given>,
+    pub(crate) given: Vec<Given>,
     /// What working it out claimed, given back when the text does not reach the agent.
-    pub(crate) claim: Option<Claim>,
+    pub(crate) claims: Vec<Claim>,
+    /// What an edit's coordination found, for [`Service::with_notices`] to give: empty for any
+    /// other answer.
+    pub(crate) coordination: Coordination,
 }
 
 /// What an edit's warnings are worked out with.
@@ -109,6 +116,8 @@ pub(crate) struct Settings {
     pub(crate) holdout_share: f64,
     /// What an edit's warnings are worked out with.
     pub(crate) edits: EditSettings,
+    /// The `coordination.*` settings.
+    pub(crate) coordination: CoordinationConfig,
 }
 
 impl Service {
@@ -122,28 +131,28 @@ impl Service {
             max_file_bytes: settings.max_file_bytes,
             holdout_share: settings.holdout_share,
             edits: settings.edits,
+            coordination: settings.coordination,
             readers: Mutex::new(Vec::new()),
         }
     }
 
     /// The work order `event`, a prompt, gets over `graph`, seeded with `uncommitted`, the file
-    /// nodes of the uncommitted diff, and what to record of the retrieval. A store that cannot be
-    /// read gives nothing, and the error is logged.
+    /// nodes of the uncommitted diff, and what to record of the retrieval; nothing for a prompt
+    /// that asks for no code. A store that cannot be read gives nothing, and the error is logged.
     pub(crate) fn prompt(
         &self,
         event: &Event,
         graph: Option<&Arc<Graph<NodeId>>>,
         uncommitted: &[NodeId],
     ) -> Answer {
-        let Some((graph, prompt)) = graph.zip(event.prompt_text.as_deref()) else {
+        let Some((graph, prompt)) = graph.zip(event.prompt_for_work()) else {
             return Answer::default();
         };
         let answered = self.with_reader(|queries| {
             let Some(mode) = mode_of(queries)? else {
                 return Ok(Answer::default());
             };
-            let task_id = task_id_of_prompt(event.event_id, event.ts_ms);
-            let is_holdout = is_held_out(task_id, self.holdout_share);
+            let (task_id, is_holdout) = prompt_task(event, self.holdout_share);
             let check = queries.self_check()?;
             let request = Request {
                 prompt,
@@ -177,8 +186,8 @@ impl Service {
                 .map(|(text, _)| text.to_owned());
             Ok(Answer {
                 text,
-                given: injection.map(Given::Injection),
-                claim: None,
+                given: injection.map(Given::Injection).into_iter().collect(),
+                ..Answer::default()
             })
         });
         answered.unwrap_or_else(|error| {
@@ -209,8 +218,8 @@ impl Service {
             let given = text_record(event, None, &text);
             Ok(Answer {
                 text: Some(text),
-                given: Some(Given::Injection(given)),
-                claim: None,
+                given: vec![Given::Injection(given)],
+                ..Answer::default()
             })
         });
         answered.unwrap_or_else(|error| {
@@ -223,9 +232,7 @@ impl Service {
     /// id falls against `holdout.share`: a held-out task is given nothing Cortex would say, so
     /// that it can be compared with the rest.
     fn is_held_out_task(&self, task: &TaskRow) -> bool {
-        task.record
-            .holdout
-            .unwrap_or_else(|| is_held_out(task.record.task_id, self.holdout_share))
+        held_out(task, self.holdout_share)
     }
 
     /// What the engine finds for `question` without the gate, at most `limit` files, over `graph`
@@ -290,6 +297,46 @@ impl Service {
     }
 }
 
+/// Whether `task` is held out, as its record says, or, for a task stored without that, as its id
+/// falls against `holdout_share`.
+fn held_out(task: &TaskRow, holdout_share: f64) -> bool {
+    task.record
+        .holdout
+        .unwrap_or_else(|| is_held_out(task.record.task_id, holdout_share))
+}
+
+/// The task `event`, a prompt, starts, and whether it is held out at `holdout_share`: its id from
+/// the prompt's id and time, as the recorder makes it once the writer records the prompt, which
+/// comes after the answer.
+fn prompt_task(event: &Event, holdout_share: f64) -> (Ulid, bool) {
+    let task_id = task_id_of_prompt(event.event_id, event.ts_ms);
+    (task_id, is_held_out(task_id, holdout_share))
+}
+
+/// The task the answer to `event` belongs to, and whether it is held out at `holdout_share`. A
+/// prompt starts a task of its own ([`prompt_task`]), whatever its session's previous task was:
+/// the writer records it only after the answer. Any other event belongs to its session's open
+/// task, if it has one.
+///
+/// # Errors
+///
+/// The store's errors.
+pub(crate) fn task_of_answer(
+    queries: Queries<'_>,
+    event: &Event,
+    holdout_share: f64,
+) -> Result<(Option<Ulid>, bool), StoreError> {
+    if event.hook == HookKind::Prompt {
+        let (task_id, is_holdout) = prompt_task(event, holdout_share);
+        return Ok((Some(task_id), is_holdout));
+    }
+    let task = queries.open_task(&event.session_id)?;
+    let is_holdout = task
+        .as_ref()
+        .is_some_and(|task| held_out(task, holdout_share));
+    Ok((task.map(|task| task.record.task_id), is_holdout))
+}
+
 /// The store's scale mode; none before the first index set one.
 pub(crate) fn mode_of(queries: Queries<'_>) -> Result<Option<ScaleMode>, StoreError> {
     Ok(queries
@@ -342,3 +389,6 @@ fn files_of(retrieval: &Retrieval, graph: &Graph<NodeId>) -> Vec<InjectedFile> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

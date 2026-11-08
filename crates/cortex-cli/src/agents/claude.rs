@@ -1,5 +1,7 @@
 //! Claude Code: its hooks in its settings, run as an argument list with no shell.
 
+use cortex_core::Agent;
+
 use super::settings::{Events, Handler, Style, TimeoutUnit};
 
 /// How Claude Code's settings hold Cortex's hooks: the exec form, timeouts in seconds, under
@@ -14,8 +16,7 @@ pub(crate) const STYLE: Style = Style {
 /// Claude Code: found by `~/.claude` or the `claude` program; its hooks in `.claude/settings.local.json`
 /// (a file Claude Code does not commit) or the user's `~/.claude/settings.json`.
 pub(crate) const SETUP: super::Setup = super::Setup {
-    name: "claude",
-    title: "Claude Code",
+    agent: Agent::Claude,
     found_by: super::FoundBy {
         folders: &[".claude"],
         programs: &["claude"],

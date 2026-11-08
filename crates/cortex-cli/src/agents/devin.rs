@@ -5,6 +5,8 @@
 
 use super::command::Shell;
 use super::settings::{Events, Handler, Style, TimeoutUnit};
+use cortex_core::Agent;
+
 use super::{FoundBy, HooksFile, Setup};
 
 /// How Devin's config holds Cortex's hooks.
@@ -21,8 +23,7 @@ const STYLE: Style = Style {
 
 /// Devin: found by its config folder or the `devin` program.
 pub(crate) const SETUP: Setup = Setup {
-    name: "devin",
-    title: "Devin",
+    agent: Agent::Devin,
     found_by: FoundBy {
         folders: &[if cfg!(windows) {
             "AppData/Roaming/devin"

@@ -389,6 +389,7 @@ name = "cortex-daemon"
 version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
+ "cortex-coord",
  "cortex-core",
  "cortex-git",
  "cortex-index",

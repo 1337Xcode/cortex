@@ -59,8 +59,8 @@ impl Service {
                 .map(|text| Given::Injection(text_record(event, task_id, text)));
             Ok(Answer {
                 text,
-                given,
-                claim: None,
+                given: given.into_iter().collect(),
+                ..Answer::default()
             })
         });
         answered.unwrap_or_else(|error| {

@@ -10,9 +10,9 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use cortex_core::{
-    Agent, ContentHash, EdgeType, Event, EventKind, EventMeta, FileFlags, HookKind, Identifier,
-    Language, LineRange, RepoId, RepoPath, ShellCommand, ShortHash, StartSource, SymbolKind,
-    ToolKind, ToolResult, ToolTarget, Ulid,
+    Agent, ContentHash, EdgeType, Event, EventKind, EventMeta, FileFlags, GateFeatures, HookKind,
+    Identifier, Language, LineRange, RepoId, RepoPath, ShellCommand, ShortHash, StartSource,
+    SymbolKind, ToolKind, ToolResult, ToolTarget, Ulid,
 };
 use cortex_learn::{Recorder, TaskState};
 use cortex_store::{
@@ -524,7 +524,8 @@ pub enum Given {
 pub type GivenSpans<'a> = (NodeId, &'a [(u32, u32)]);
 
 /// An injection for the task `task`, which a prompt of `session` began at `at_ms`, of `files`, the
-/// best first, its text faring as `given` says.
+/// best first, its text faring as `given` says: a work order, with the gate's features, as every
+/// prompt's retrieval records it.
 pub fn injection(
     (session, task, at_ms): (&str, Ulid, i64),
     files: &[GivenSpans<'_>],
@@ -550,7 +551,15 @@ pub fn injection(
         is_gated_out: given == Given::KeptBack,
         is_holdout: given == Given::HeldOut,
         text_hash: (given != Given::KeptBack).then(|| ContentHash::of(b"the work order")),
-        features: None,
+        features: Some(GateFeatures {
+            top_lexical: 1.0,
+            top_mass: 0.5,
+            agreeing_kinds: 2,
+            supporting_kinds: 2,
+            similar_task: 0.0,
+            recent_precision: None,
+            is_continuing: false,
+        }),
     })
 }
 

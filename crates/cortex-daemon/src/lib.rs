@@ -31,8 +31,10 @@ mod listener;
 mod log;
 mod meter;
 mod miner;
+mod noticed;
 mod paced;
 mod pending;
+mod positions;
 mod recapped;
 mod recent_errors;
 mod retrieval;
@@ -52,6 +54,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::Context;
+use cortex_coord::Timing;
 use cortex_core::ipc::CORTEX_VERSION;
 use cortex_core::{Config, RepoId, UserFolder, canonical_root};
 use cortex_index::{Change, DiscoverOptions, IndexReport, watch};
@@ -186,6 +189,7 @@ fn index_and_serve(
         note(&format!("warning: {warning}"))?;
     }
     let config = loaded.config;
+    inbox.keep_positions_by(Timing::of(&config.coordination));
     // The configuration refuses a pattern that does not compile, so this fails only as it would.
     let commands = Commands::new(&config.test_extra_patterns)?;
     let folder = root.join(".cortex");
@@ -271,6 +275,7 @@ fn index_and_serve(
             link_decay: config.link_decay,
             is_strict_mode: config.is_strict_mode,
         },
+        coordination: config.coordination,
     })));
     // The graph is built once the first index is done, before which a retrieval would find
     // nothing; told to stop when dropped.

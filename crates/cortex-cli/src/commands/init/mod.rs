@@ -268,7 +268,7 @@ struct Change {
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let root = found_root(args)?;
     let setups = selected(&args.agents, &root.folder)?;
-    let has_claude = setups.iter().any(|setup| setup.name == "claude");
+    let has_claude = setups.iter().any(|setup| setup.agent.name() == "claude");
     if has_claude {
         let adapter = cortex_hook::adapter("claude").context("finding the Claude Code adapter")?;
         let versions = adapter
@@ -286,7 +286,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     daemon::started_and_indexed(&root.folder)?;
     for setup in &setups {
         for step in setup.told {
-            output::line(&format!("{}: to do yourself: {step}", setup.title))?;
+            output::line(&format!("{}: to do yourself: {step}", setup.agent.title()))?;
         }
     }
     let failed = if has_claude { checked(root.folder)? } else { 0 };
@@ -311,7 +311,7 @@ fn selected(names: &[String], root: &Path) -> anyhow::Result<Vec<&'static Setup>
     let known = || {
         agents::SETUPS
             .iter()
-            .map(|setup| setup.name)
+            .map(|setup| setup.agent.name())
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -332,7 +332,7 @@ fn selected(names: &[String], root: &Path) -> anyhow::Result<Vec<&'static Setup>
     Ok(agents::SETUPS
         .iter()
         .copied()
-        .filter(|setup| setup.name == "claude" || agents::is_found(setup, &home, root))
+        .filter(|setup| setup.agent.name() == "claude" || agents::is_found(setup, &home, root))
         .collect())
 }
 

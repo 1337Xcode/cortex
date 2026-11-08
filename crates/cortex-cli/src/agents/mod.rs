@@ -14,17 +14,16 @@ pub(crate) mod settings;
 
 use std::path::Path;
 
-use cortex_core::find_program;
+use cortex_core::{Agent, find_program};
 
 use self::settings::Style;
 
 /// One agent `cortex init` sets up.
 #[derive(Debug)]
 pub(crate) struct Setup {
-    /// The agent's name on Cortex's command line, as its adapter names it.
-    pub(crate) name: &'static str,
-    /// The agent's name as people write it.
-    pub(crate) title: &'static str,
+    /// The agent: its name on Cortex's command line, as its adapter names it, and as people write
+    /// it.
+    pub(crate) agent: Agent,
     /// How the agent is found on this machine.
     pub(crate) found_by: FoundBy,
     /// Where its hooks go and how, if Cortex writes them into a settings file.
@@ -72,7 +71,10 @@ pub(crate) const SETUPS: &[&Setup] = &[
 
 /// The setup of the agent named `name` on the command line.
 pub(crate) fn setup(name: &str) -> Option<&'static Setup> {
-    SETUPS.iter().copied().find(|setup| setup.name == name)
+    SETUPS
+        .iter()
+        .copied()
+        .find(|setup| setup.agent.name() == name)
 }
 
 /// Whether `setup`'s agent is on this machine: one of its folders in `home`, or one of its
@@ -113,14 +115,15 @@ mod tests {
     /// every hooks file's style names the same agent.
     #[test]
     fn every_setup_is_its_adapter_s() {
-        let mut names: Vec<&str> = SETUPS.iter().map(|setup| setup.name).collect();
+        let mut names: Vec<&str> = SETUPS.iter().map(|setup| setup.agent.name()).collect();
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), SETUPS.len());
         for setup in SETUPS {
-            assert!(cortex_hook::adapter(setup.name).is_some(), "{}", setup.name);
+            let name = setup.agent.name();
+            assert!(cortex_hook::adapter(name).is_some(), "{name}");
             if let Some(hooks) = &setup.hooks {
-                assert_eq!(hooks.style.agent, setup.name);
+                assert_eq!(hooks.style.agent, name);
             }
         }
     }
@@ -146,8 +149,7 @@ mod tests {
         let home = tempfile::tempdir()?;
         let repository = tempfile::tempdir()?;
         let unknown = Setup {
-            name: "none",
-            title: "None",
+            agent: Agent::Other,
             found_by: FoundBy {
                 folders: &[".none-agent"],
                 programs: &["cortex-test-no-such-agent"],

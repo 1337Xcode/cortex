@@ -5,6 +5,8 @@
 
 use super::command::Shell;
 use super::settings::{Events, Handler, Style, TimeoutUnit};
+use cortex_core::Agent;
+
 use super::{FoundBy, HooksFile, Setup};
 
 /// How Gemini CLI's settings hold Cortex's hooks.
@@ -21,8 +23,7 @@ const STYLE: Style = Style {
 
 /// Gemini CLI: found by `~/.gemini` or the `gemini` program.
 pub(crate) const SETUP: Setup = Setup {
-    name: "gemini",
-    title: "Gemini CLI",
+    agent: Agent::Gemini,
     found_by: FoundBy {
         folders: &[".gemini"],
         programs: &["gemini"],

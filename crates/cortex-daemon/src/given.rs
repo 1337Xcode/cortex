@@ -1,12 +1,14 @@
 //! What Cortex gave an agent, or would have given, as the writer records it after the event it
 //! answered: a primer's or a prompt's injection, the text of a recap, a read's hint or a stop's
-//! reason, or the warnings an edit got with their text. Every text is an injection, so that what
-//! Cortex added to an agent's context is counted whole. What reached the agent is recorded as
-//! given; an injection that did not is recorded as not delivered, for the holdout and the labels,
-//! and warnings that did not are not recorded at all, since nobody was warned.
+//! reason, the warnings an edit got with their text, or the coordination notices an answer gave,
+//! told or queued for other sessions. Every text is an injection, so that what Cortex added to an
+//! agent's context is counted whole. What reached the agent is recorded as given; an injection
+//! that did not is recorded as not delivered, for the holdout and the labels, and warnings and
+//! notices that did not are not recorded as given at all, since nobody was told: the notices wait
+//! again. The notices an edit queued for other sessions are queued however its own answer fared.
 
 use cortex_core::{ContentHash, Event, Ulid, estimate_tokens};
-use cortex_store::{InjectionRecord, WarningRecord};
+use cortex_store::{InjectionRecord, NoticeId, NoticeRecord, WarningRecord};
 
 /// What one answer gave, or would have given.
 #[derive(Debug, Clone, PartialEq)]
@@ -15,6 +17,26 @@ pub(crate) enum Given {
     Injection(InjectionRecord),
     /// The warnings an edit got: one row for each file each of them named, and their text.
     Warnings(Vec<WarningRecord>, InjectionRecord),
+    /// What an answer did with coordination notices.
+    Notices(Notices),
+}
+
+/// What one answer did with coordination notices: those it gave and those it queued.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct Notices {
+    /// The waiting notices it gave, marked delivered at `at_ms`.
+    pub(crate) delivered: Vec<NoticeId>,
+    /// The lines it told its own session, recorded as delivered as they were made.
+    pub(crate) told: Vec<NoticeRecord>,
+    /// The notices an edit queued for the other sessions it concerns.
+    pub(crate) queued: Vec<NoticeRecord>,
+    /// How long a notice is not queued again for a session that was sent or given the same text,
+    /// in milliseconds.
+    pub(crate) repeat_after_ms: i64,
+    /// When the answer gave them, in UTC milliseconds.
+    pub(crate) at_ms: i64,
+    /// The record of the text the notices given came to; none when it gave none.
+    pub(crate) text: Option<InjectionRecord>,
 }
 
 impl Given {
@@ -23,14 +45,18 @@ impl Given {
         match self {
             Self::Injection(_) => "an injection was not recorded: too many waited",
             Self::Warnings(..) => "an edit's warnings were not recorded: too many waited",
+            Self::Notices(_) => {
+                "an answer's coordination notices were not recorded: too many waited"
+            }
         }
     }
 }
 
 /// The record of `text`, given at the hook of `event` in task `task_id` (none outside a task):
 /// its hash and tokens, no files and no features, neither kept back nor held out. Only a prompt's
-/// work order is labelled at its task's end, so a text recorded so counts in what was given and
-/// never in the work orders' precision.
+/// work order, which alone carries the gate's features, is labelled at its task's end or read back
+/// as a work order, so a text recorded so, the notices a prompt is given included, counts in what
+/// was given and never in the work orders' precision.
 pub(crate) fn text_record(event: &Event, task_id: Option<Ulid>, text: &str) -> InjectionRecord {
     InjectionRecord {
         task_id,
@@ -60,8 +86,9 @@ pub(crate) fn not_delivered(injection: InjectionRecord) -> InjectionRecord {
 /// What is recorded of `given` once its reply was written, or could not be (`is_written`): a reply
 /// holding text (`holds_text`) that could not be written, or was written after its hook stopped
 /// reading (`is_late`), gave the agent nothing: an injection is recorded as not delivered, warnings
-/// not at all. A reply without text gave nothing either way: an injection's record (kept back, or
-/// held out with what it would have given) stands, and warnings without text are none.
+/// not at all, notices as queued only. A reply without text gave nothing either way: an
+/// injection's record (kept back, or held out with what it would have given) stands, and warnings
+/// without text are none.
 pub(crate) fn recorded(
     given: Given,
     holds_text: bool,
@@ -78,6 +105,16 @@ pub(crate) fn recorded(
             Some(Given::Warnings(rows, text))
         }
         Given::Warnings(..) => None,
+        Given::Notices(notices) if reached => Some(Given::Notices(notices)),
+        // Nothing given reached the agent: what was given waits again, and only what was queued
+        // for the other sessions stands.
+        Given::Notices(notices) if notices.queued.is_empty() => None,
+        Given::Notices(notices) => Some(Given::Notices(Notices {
+            delivered: Vec::new(),
+            told: Vec::new(),
+            text: None,
+            ..notices
+        })),
     }
 }
 
@@ -173,6 +210,57 @@ mod tests {
             ),
             None
         );
+        Ok(())
+    }
+    /// Notices that reached the agent are recorded whole. When the reply was late, not written or
+    /// held no text, what it gave waits again: only the notices queued for the other sessions are
+    /// recorded, and nothing at all when it queued none.
+    #[test]
+    fn notices_given_are_recorded_only_when_they_reached_the_agent() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut store = writer(root.path())?;
+        let delivered = {
+            let mut transaction = store.transaction()?;
+            let notice = NoticeRecord {
+                to_session: Identifier::new("s1")?,
+                text: "waiting".to_owned(),
+                at_ms: 1,
+            };
+            let id = transaction.queue_notice(&notice, 0)?.ok_or("queued")?;
+            transaction.commit()?;
+            id
+        };
+        let line = |to: &str, text: &str| -> TestResult<NoticeRecord> {
+            Ok(NoticeRecord {
+                to_session: Identifier::new(to)?,
+                text: text.to_owned(),
+                at_ms: 5,
+            })
+        };
+        let given = Notices {
+            delivered: vec![delivered],
+            told: vec![line("s1", "told")?],
+            queued: vec![line("s2", "queued")?],
+            repeat_after_ms: 1_800_000,
+            at_ms: 5,
+            text: Some(injection()?),
+        };
+        let whole = || Given::Notices(given.clone());
+        let queued_only = Some(Given::Notices(Notices {
+            delivered: Vec::new(),
+            told: Vec::new(),
+            text: None,
+            ..given.clone()
+        }));
+        assert_eq!(recorded(whole(), true, true, false), Some(whole()));
+        assert_eq!(recorded(whole(), true, true, true), queued_only);
+        assert_eq!(recorded(whole(), true, false, false), queued_only);
+        assert_eq!(recorded(whole(), false, true, false), queued_only);
+        let nothing_queued = Given::Notices(Notices {
+            queued: Vec::new(),
+            ..given.clone()
+        });
+        assert_eq!(recorded(nothing_queued, true, false, false), None);
         Ok(())
     }
 }

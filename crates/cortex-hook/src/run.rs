@@ -276,8 +276,9 @@ fn probed(answer: Result<Answer, ClientError>, asks_for_text: bool) -> Result<()
 
 /// The request the hook makes of the daemon with `event` at the hook `entry`: the text Cortex
 /// gives the agent there, where it gives some (the primer at a session's start, the work order at
-/// a prompt, the warnings after an edit, the hint before a read, strict mode's reason at a stop),
-/// saying when the hook stops reading the answer; the event alone otherwise.
+/// a prompt, the warnings after an edit, the hint before a read, strict mode's reason at a stop,
+/// and at a prompt or after any tool the coordination notices waiting), saying when the hook stops
+/// reading the answer; the event alone otherwise.
 fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
     // The event's time is the clock at the hook's start, from which its deadline counts.
     let wait = entry.hard_timeout.saturating_sub(EXIT_MARGIN);
@@ -292,12 +293,10 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
             event,
             answer_by_ms,
         },
-        HookKind::Prompt if entry.gives_context && event.prompt_for_work().is_some() => {
-            RequestBody::Retrieve {
-                event,
-                answer_by_ms,
-            }
-        }
+        HookKind::Prompt if entry.gives_context => RequestBody::Retrieve {
+            event,
+            answer_by_ms,
+        },
         HookKind::PreTool if entry.gives_context && event.file_to_read().is_some() => {
             RequestBody::ReadHint {
                 event,
@@ -308,12 +307,10 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
             event,
             answer_by_ms,
         },
-        HookKind::PostTool if entry.gives_context && event.edited_file().is_some() => {
-            RequestBody::PostEdit {
-                event,
-                answer_by_ms,
-            }
-        }
+        HookKind::PostTool if entry.gives_context => RequestBody::PostEdit {
+            event,
+            answer_by_ms,
+        },
         _ => RequestBody::Event { event },
     }
 }
@@ -489,33 +486,29 @@ mod tests {
         })
     }
 
-    /// After a successful edit Claude Code's `PostToolUse` asks for the edit's warnings, to be read
-    /// by 1,485 ms (485 ms after the event's 1,000); after a read it reports the event alone, and so
-    /// does `PostToolUseFailure`, whose edit failed. Before a read, `PreToolUse` asks for its
-    /// hint, and at a stop, `Stop` for strict mode's reason.
+    /// After a successful tool Claude Code's `PostToolUse` asks for text, to be read by 1,485 ms
+    /// (485 ms after the event's 1,000): an edit's warnings and the notices waiting, and after a
+    /// read the notices waiting; `PostToolUseFailure`, whose output Claude Code does not show,
+    /// reports the event alone. Before a read, `PreToolUse` asks for its hint, and at a stop,
+    /// `Stop` for strict mode's reason.
     #[test]
-    fn an_edit_asks_for_its_warnings() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_tool_s_result_asks_for_its_text() -> Result<(), Box<dyn std::error::Error>> {
         use cortex_core::ToolKind;
         let entry = |event: &str| -> Result<&'static HookEntry, Box<dyn std::error::Error>> {
             Ok(hook_of(&args(&["--agent", "claude", "--event", event]))
                 .map_err(|failure| failure.to_string())?
                 .1)
         };
-        let edit = tool_result(ToolKind::Edit, true)?;
-        assert_eq!(
-            request_of(entry("PostToolUse")?, edit.clone()),
-            RequestBody::PostEdit {
-                event: Box::new(edit),
-                answer_by_ms: Some(1_485),
-            }
-        );
-        let read = tool_result(ToolKind::Read, true)?;
-        assert_eq!(
-            request_of(entry("PostToolUse")?, read.clone()),
-            RequestBody::Event {
-                event: Box::new(read)
-            }
-        );
+        for tool in [ToolKind::Edit, ToolKind::Read] {
+            let done = tool_result(tool, true)?;
+            assert_eq!(
+                request_of(entry("PostToolUse")?, done.clone()),
+                RequestBody::PostEdit {
+                    event: Box::new(done),
+                    answer_by_ms: Some(1_485),
+                }
+            );
+        }
         let failed = tool_result(ToolKind::Edit, false)?;
         assert_eq!(
             request_of(entry("PostToolUseFailure")?, failed.clone()),
@@ -554,11 +547,11 @@ mod tests {
         Ok(())
     }
 
-    /// A prompt asks for its work order, by 985 ms after the event's 1,000 (its hard timeout of a
-    /// second less the 15 ms the hook keeps); a slash command, a shell escape and "ok" are sent as
-    /// the event alone, which the daemon records and answers with no retrieval.
+    /// Every prompt asks for text, by 985 ms after the event's 1,000 (its hard timeout of a second
+    /// less the 15 ms the hook keeps): a slash command, a shell escape and "ok" too, which the
+    /// daemon answers with the notices waiting and no retrieval.
     #[test]
-    fn a_command_or_a_word_asks_for_no_work_order() -> Result<(), Box<dyn std::error::Error>> {
+    fn every_prompt_asks_for_text() -> Result<(), Box<dyn std::error::Error>> {
         let (_, entry) = hook_of(&args(&["--agent", "claude", "--event", "UserPromptSubmit"]))
             .map_err(|failure| failure.to_string())?;
         let prompt = |text: &str| -> Result<Event, Box<dyn std::error::Error>> {
@@ -571,20 +564,13 @@ mod tests {
                 ..tool_result(cortex_core::ToolKind::Read, true)?
             })
         };
-        let asked = prompt("fix the login bug")?;
-        assert_eq!(
-            request_of(entry, asked.clone()),
-            RequestBody::Retrieve {
-                event: Box::new(asked),
-                answer_by_ms: Some(1_985),
-            }
-        );
-        for text in ["/review", "!ls", "ok"] {
+        for text in ["fix the login bug", "/review", "!ls", "ok"] {
             let said = prompt(text)?;
             assert_eq!(
                 request_of(entry, said.clone()),
-                RequestBody::Event {
-                    event: Box::new(said)
+                RequestBody::Retrieve {
+                    event: Box::new(said),
+                    answer_by_ms: Some(1_985),
                 },
                 "{text}"
             );

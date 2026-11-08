@@ -4,6 +4,8 @@
 
 use super::command::Shell;
 use super::settings::{Events, Handler, Style, TimeoutUnit};
+use cortex_core::Agent;
+
 use super::{FoundBy, HooksFile, Setup};
 
 /// How Augment's settings hold Cortex's hooks.
@@ -20,8 +22,7 @@ const STYLE: Style = Style {
 
 /// Augment: found by `~/.augment` or the `auggie` program.
 pub(crate) const SETUP: Setup = Setup {
-    name: "augment",
-    title: "Augment",
+    agent: Agent::Augment,
     found_by: FoundBy {
         folders: &[".augment"],
         programs: &["auggie"],

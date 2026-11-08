@@ -139,8 +139,9 @@ fn an_injection_is_labelled_by_what_its_task_did() -> TestResult {
 }
 
 /// Of a task's texts only its prompt's work order is labelled: the warnings an edit got, a read's
-/// hint, a recap and a stop's reason, recorded as the task's with no files, stay unlabelled, so the
-/// work orders' precision never counts them. The work order: c edited, 1 used, 1.
+/// hint, a recap, a stop's reason and the notices a prompt was given (a text at the prompt without
+/// the gate's features), recorded as the task's with no files, stay unlabelled, so the work orders'
+/// precision never counts them. The work order: c edited, 1 used, 1.
 #[test]
 fn only_a_work_order_is_labelled() -> TestResult {
     let mut store = Store::new()?;
@@ -158,6 +159,7 @@ fn only_a_work_order_is_labelled() -> TestResult {
         (HookKind::PreTool, 1_011),
         (HookKind::SessionStart, 1_012),
         (HookKind::Stop, 1_013),
+        (HookKind::Prompt, 1_014),
     ] {
         transaction.record_injection(&InjectionRecord {
             task_id: Some(state.task_id()),
@@ -192,6 +194,7 @@ fn only_a_work_order_is_labelled() -> TestResult {
             (HookKind::PreTool, None, None),
             (HookKind::SessionStart, None, None),
             (HookKind::Stop, None, None),
+            (HookKind::Prompt, None, None),
         ]
     );
     Ok(())

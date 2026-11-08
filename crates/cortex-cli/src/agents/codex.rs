@@ -6,6 +6,8 @@
 
 use super::command::Shell;
 use super::settings::{Events, Handler, Style, TimeoutUnit};
+use cortex_core::Agent;
+
 use super::{FoundBy, HooksFile, Setup};
 
 /// How Codex's hooks file holds Cortex's hooks.
@@ -22,8 +24,7 @@ pub(crate) const STYLE: Style = Style {
 
 /// Codex: found by `~/.codex` or the `codex` program.
 pub(crate) const SETUP: Setup = Setup {
-    name: "codex",
-    title: "Codex",
+    agent: Agent::Codex,
     found_by: FoundBy {
         folders: &[".codex"],
         programs: &["codex"],

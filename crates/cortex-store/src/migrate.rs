@@ -542,7 +542,10 @@ mod tests {
              VALUES ('s1', 'claude', 1, 'live'); \
              INSERT INTO tasks (task_id, session_id, seq, started_at) VALUES ('t1', 's1', 1, 2);",
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let thirteenth = MIGRATIONS
+            .get(..13)
+            .ok_or("fewer than thirteen migrations")?;
+        migrate(&mut connection, thirteenth, &backups)?;
         assert_eq!(schema_version(&connection)?, 13);
         let objects = objects(&connection)?;
         for object in ["warnings", "warnings_task"] {
@@ -559,6 +562,42 @@ mod tests {
             [],
         );
         assert!(unknown_task.is_err());
+        Ok(())
+    }
+
+    /// The fourteenth schema adds the coordination tables (positions, notices, handoffs) and their
+    /// indexes, and keeps the warnings a thirteenth-schema store holds.
+    #[test]
+    fn the_fourteenth_schema_adds_coordination() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let thirteenth = MIGRATIONS
+            .get(..13)
+            .ok_or("fewer than thirteen migrations")?;
+        migrate(&mut connection, thirteenth, &backups)?;
+        connection.execute_batch(
+            "INSERT INTO sessions (session_id, agent, started_at, status) \
+             VALUES ('s1', 'claude', 1, 'live'); \
+             INSERT INTO tasks (task_id, session_id, seq, started_at) VALUES ('t1', 's1', 1, 2); \
+             INSERT INTO warnings (task_id, ts, kind, src_node, dst_node, strength) \
+             VALUES ('t1', 3, 'test', 4, 5, 1.0);",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 14);
+        let objects = objects(&connection)?;
+        for object in [
+            "positions",
+            "positions_last",
+            "notices",
+            "notices_to",
+            "handoffs",
+            "handoffs_open",
+        ] {
+            assert!(objects.contains(&object.to_owned()), "{object}");
+        }
+        let warnings: i64 =
+            connection.query_row("SELECT count(*) FROM warnings", [], |row| row.get(0))?;
+        assert_eq!(warnings, 1);
         Ok(())
     }
 

@@ -45,8 +45,8 @@ pub(super) fn planned(
     let Some(hooks) = &setup.hooks else {
         return Ok(None);
     };
-    let adapter = cortex_hook::adapter(setup.name)
-        .with_context(|| format!("finding the {} adapter", setup.title))?;
+    let adapter = cortex_hook::adapter(setup.agent.name())
+        .with_context(|| format!("finding the {} adapter", setup.agent.title()))?;
     let (file, owner) = match (scope, hooks.project) {
         (Scope::Project, Some(project)) => {
             let (folder, name) = split(project);
@@ -66,7 +66,13 @@ pub(super) fn planned(
     let before = read_text_file(&file, MAX_SETTINGS_BYTES)?;
     let program = crate::program::this_program()?;
     let after = settings::merged(before.as_deref(), &program, adapter.hooks(), &hooks.style)
-        .with_context(|| format!("reading the {} settings {}", setup.title, file.display()))?;
+        .with_context(|| {
+            format!(
+                "reading the {} settings {}",
+                setup.agent.title(),
+                file.display()
+            )
+        })?;
     Ok(Some(Settings {
         setup,
         file,
@@ -101,14 +107,14 @@ impl Settings {
     pub(super) fn current(&self) -> String {
         format!(
             "{}: the hooks in {} are current",
-            self.setup.title,
+            self.setup.agent.title(),
             self.file.display()
         )
     }
 
     /// The change that writes Cortex's current hooks.
     pub(super) fn into_change(self) -> Change {
-        let kind = match self.setup.name {
+        let kind = match self.setup.agent.name() {
             "claude" => Kind::ClaudeSettings,
             agent => Kind::AgentSettings {
                 agent: agent.to_owned(),
@@ -117,7 +123,7 @@ impl Settings {
         Change {
             said: format!(
                 "{}: hooks written to {}",
-                self.setup.title,
+                self.setup.agent.title(),
                 self.file.display()
             ),
             file: self.file,

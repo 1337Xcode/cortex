@@ -2,15 +2,17 @@
 //! that the watcher stopped, and a request to stop, with the counts, the miner's state and the
 //! latest errors the daemon's status reports, and how many of the watcher's changes the writer has
 //! indexed, which the miner waits on. One lock and one condition variable, so the writer sleeps
-//! until something arrives or a deadline passes.
+//! until something arrives or a deadline passes. It also holds the rules the writer keeps each
+//! session's positions by, set once the configuration is read.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
+use cortex_coord::Timing;
 use cortex_core::ipc::{GitReport, RecentError};
-use cortex_core::{Event, HookKind, RepoPath, ToolKind};
+use cortex_core::{CoordinationConfig, Event, HookKind, RepoPath, ToolKind};
 use cortex_git::mine::Mining;
 use cortex_index::Change;
 use cortex_store::CheckpointFailures;
@@ -42,6 +44,9 @@ pub(crate) struct Inbox {
     state: Mutex<State>,
     /// Signalled whenever something is put in.
     arrived: Condvar,
+    /// How long each kind of position holds, from the configuration: of a session's two positions
+    /// on one file, the writer keeps the one that holds longer.
+    position_timing: OnceLock<Timing>,
 }
 
 /// What waits in the inbox.
@@ -152,6 +157,22 @@ pub(crate) struct Counts {
 }
 
 impl Inbox {
+    /// Sets how long each kind of position holds, as the configuration says: once, before the
+    /// writer opens, so every event it records keeps its positions by the configured holds. A
+    /// second call changes nothing.
+    pub(crate) fn keep_positions_by(&self, timing: Timing) {
+        self.position_timing.get_or_init(|| timing);
+    }
+
+    /// How long each kind of position holds: as set from the configuration, which the daemon
+    /// does before its writer opens; the documented defaults for an inbox never set, as a test's.
+    pub(crate) fn position_timing(&self) -> Timing {
+        self.position_timing
+            .get()
+            .copied()
+            .unwrap_or_else(|| Timing::of(&CoordinationConfig::default()))
+    }
+
     /// Puts in a hook event, making room as [`MAX_EVENTS`] says when the inbox is full, and says
     /// whether it was taken: an event dropped to make room is taken (and counted), but none is
     /// once the inbox is closed, since the writer records what waits when it closes it and nothing
@@ -693,7 +714,7 @@ mod tests {
     fn injected_at(given: &Given) -> Option<i64> {
         match given {
             Given::Injection(injection) => Some(injection.at_ms),
-            Given::Warnings(..) => None,
+            Given::Warnings(..) | Given::Notices(_) => None,
         }
     }
 

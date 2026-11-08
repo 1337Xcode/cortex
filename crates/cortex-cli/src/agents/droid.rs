@@ -5,6 +5,8 @@
 
 use super::command::Shell;
 use super::settings::{Events, Handler, Style, TimeoutUnit};
+use cortex_core::Agent;
+
 use super::{FoundBy, HooksFile, Setup};
 
 /// How Droid's hooks file holds Cortex's hooks.
@@ -21,8 +23,7 @@ const STYLE: Style = Style {
 
 /// Droid: found by `~/.factory` or the `droid` program.
 pub(crate) const SETUP: Setup = Setup {
-    name: "droid",
-    title: "Droid",
+    agent: Agent::Droid,
     found_by: FoundBy {
         folders: &[".factory"],
         programs: &["droid"],

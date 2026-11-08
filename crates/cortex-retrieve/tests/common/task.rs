@@ -9,7 +9,7 @@ use cortex_store::{
     EventRecord, InjectedFile, InjectionRecord, NodeId, SessionRecord, TaskRecord, WarningRecord,
 };
 
-use super::{Repo, TestResult, function};
+use super::{FEATURES, Repo, TestResult, function};
 
 /// The session of the task.
 pub const SESSION: &str = "s1";
@@ -140,7 +140,7 @@ pub fn given(
         is_gated_out: is_kept_back,
         is_holdout: false,
         text_hash: (!is_kept_back).then(|| ContentHash::of(b"a work order")),
-        features: None,
+        features: Some(FEATURES),
     })?;
     transaction.commit()?;
     Ok(())

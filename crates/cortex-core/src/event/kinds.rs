@@ -53,6 +53,38 @@ named_kind! {
     }
 }
 
+impl Agent {
+    /// The agent's name as people write it, the one place text for a person or an agent names it:
+    /// `Claude Code`, `Codex`, `Gemini CLI`.
+    #[must_use]
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude Code",
+            Self::Codex => "Codex",
+            Self::Cursor => "Cursor",
+            Self::Gemini => "Gemini CLI",
+            Self::Qwen => "Qwen Code",
+            Self::Droid => "Droid",
+            Self::Devin => "Devin",
+            Self::OpenHands => "OpenHands",
+            Self::Trae => "TRAE",
+            Self::Junie => "Junie",
+            Self::Augment => "Augment",
+            Self::Copilot => "GitHub Copilot",
+            Self::Antigravity => "Antigravity",
+            Self::Kiro => "Kiro",
+            Self::Cline => "Cline",
+            Self::Crush => "Crush",
+            Self::Hermes => "Hermes Agent",
+            Self::Opencode => "opencode",
+            Self::Kilo => "Kilo Code",
+            Self::Amp => "Amp",
+            Self::OpenClaw => "OpenClaw",
+            Self::Other => "Another agent",
+        }
+    }
+}
+
 named_kind! {
     /// The point in the agent's loop an event comes from.
     HookKind {

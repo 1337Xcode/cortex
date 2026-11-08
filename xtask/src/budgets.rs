@@ -46,7 +46,7 @@ const BENCHES: [(&str, &str); 3] = [
 ];
 
 /// Every budget a benchmark checks. The limits are the product's latency budgets.
-const BUDGETS: [Budget; 20] = [
+const BUDGETS: [Budget; 22] = [
     Budget {
         group: "index",
         function: "initial_10k",
@@ -101,6 +101,13 @@ const BUDGETS: [Budget; 20] = [
         function: "post_tool_use_edit",
         what: "PostToolUse hook on an edit, start to exit",
         limit: Duration::from_millis(80),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks",
+        function: "post_tool_use_shell",
+        what: "PostToolUse hook on a shell command, start to exit",
+        limit: Duration::from_millis(60),
         platforms: Platforms::Reference,
     },
     Budget {
@@ -182,6 +189,13 @@ const BUDGETS: [Budget; 20] = [
         function: "post_tool_use_edit",
         what: "PostToolUse hook on an edit with the daemon down, start to exit",
         limit: Duration::from_millis(80),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks_daemon_down",
+        function: "post_tool_use_shell",
+        what: "PostToolUse hook on a shell command with the daemon down, start to exit",
+        limit: Duration::from_millis(60),
         platforms: Platforms::Reference,
     },
     Budget {
@@ -344,6 +358,7 @@ mod tests {
                 ("user_prompt_submit_word", 150),
                 ("pre_tool_use_read", 40),
                 ("post_tool_use_edit", 80),
+                ("post_tool_use_shell", 60),
                 ("stop", 60),
                 ("cold_start", 10)
             ]
@@ -360,6 +375,7 @@ mod tests {
                 ("user_prompt_submit", 150),
                 ("pre_tool_use_read", 40),
                 ("post_tool_use_edit", 80),
+                ("post_tool_use_shell", 60),
                 ("stop", 60)
             ]
         );

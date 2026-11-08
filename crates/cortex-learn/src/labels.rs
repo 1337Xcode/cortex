@@ -30,13 +30,14 @@ pub fn label_injections(
     transaction: &mut WriteTx<'_>,
     state: &TaskState,
 ) -> Result<usize, StoreError> {
-    // Only a prompt's work order names files the task may use; the other texts a task is given
-    // (warnings, hints, a recap, a stop's reason) name none and are counted, never labelled.
+    // Only a prompt's work order names files the task may use, and only it carries the gate's
+    // features; the other texts a task is given (warnings, hints, a recap, a stop's reason, the
+    // coordination notices a prompt is given) name none and are counted, never labelled.
     let rows: Vec<_> = transaction
         .queries()
         .injections_of_task(state.task_id())?
         .into_iter()
-        .filter(|row| row.record.hook == HookKind::Prompt)
+        .filter(|row| row.record.hook == HookKind::Prompt && row.record.features.is_some())
         .collect();
     if rows.is_empty() {
         return Ok(0);

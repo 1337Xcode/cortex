@@ -291,3 +291,18 @@ fn only_the_moment_before_a_read_names_its_file() -> TestResult {
     assert_eq!(outside.file_to_read(), None);
     Ok(())
 }
+
+/// The names people write, typed from each agent's own documentation: Claude Code, Codex, Gemini
+/// CLI, Qwen Code; every agent has one, and no two share one.
+#[test]
+fn every_agent_has_its_own_title() {
+    assert_eq!(Agent::Claude.title(), "Claude Code");
+    assert_eq!(Agent::Codex.title(), "Codex");
+    assert_eq!(Agent::Gemini.title(), "Gemini CLI");
+    assert_eq!(Agent::Qwen.title(), "Qwen Code");
+    let mut titles: Vec<&str> = Agent::ALL.iter().map(|agent| agent.title()).collect();
+    assert!(titles.iter().all(|title| !title.is_empty()));
+    titles.sort_unstable();
+    titles.dedup();
+    assert_eq!(titles.len(), Agent::ALL.len());
+}

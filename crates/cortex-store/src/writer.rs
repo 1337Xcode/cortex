@@ -10,10 +10,11 @@ use crate::archetype::{self, ArchetypeRecord};
 use crate::checkpoint::{CheckpointFailures, Checkpointer};
 use crate::cochange::{self, FileCommitsRow, GitStateKey, PairRow};
 use crate::connection::{self, Access};
+use crate::coordination::{self, NoticeRecord, PositionRecord};
 use crate::episode::{self, EpisodeRecord};
 use crate::error::{StoreError, io, sqlite};
 use crate::folders;
-use crate::ids::{InjectionId, NodeId, WarningId};
+use crate::ids::{InjectionId, NodeId, NoticeId, WarningId};
 use crate::injections::{self, InjectionRecord};
 use crate::interest::{self, InterestRow};
 use crate::layout;
@@ -432,6 +433,51 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors, among them a task the store does not hold.
     pub fn record_warning(&mut self, record: &WarningRecord) -> Result<WarningId, StoreError> {
         self.atomically(|connection| warnings::record(connection, record))
+    }
+
+    /// Keeps `record` as its session's position on its node, in place of the one kept before:
+    /// the caller decides which of the two holds longer.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn keep_position(&mut self, record: &PositionRecord) -> Result<(), StoreError> {
+        self.atomically(|connection| coordination::keep_position(connection, record))
+    }
+
+    /// Queues `notice` for its session's next hook that carries text, unless the session was sent
+    /// or given the same text at `unless_since_ms` or later: its row, or none when it was.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn queue_notice(
+        &mut self,
+        notice: &NoticeRecord,
+        unless_since_ms: i64,
+    ) -> Result<Option<NoticeId>, StoreError> {
+        self.atomically(|connection| {
+            coordination::queue_notice(connection, notice, unless_since_ms)
+        })
+    }
+
+    /// Records `notice` as told to its session as it was made: given in the answer to the hook
+    /// that made it, never waiting.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn record_told(&mut self, notice: &NoticeRecord) -> Result<(), StoreError> {
+        self.atomically(|connection| coordination::record_told(connection, notice))
+    }
+
+    /// Marks notice `id` delivered at `at_ms`. Whether it was waiting.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn deliver_notice(&mut self, id: NoticeId, at_ms: i64) -> Result<bool, StoreError> {
+        self.atomically(|connection| coordination::deliver_notice(connection, id, at_ms))
     }
 
     /// Sets whether warning `id` was resolved: its file read or edited after it in its task.

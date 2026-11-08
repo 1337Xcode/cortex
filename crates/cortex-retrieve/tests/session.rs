@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{Repo, TestResult, event, failed, function, of_subagent, record, tool};
+use common::{FEATURES, Repo, TestResult, event, failed, function, of_subagent, record, tool};
 use cortex_core::{
     ContentHash, FileFlags, HookKind, Identifier, LineRange, RepoPath, ShortHash, ToolKind,
 };
@@ -273,7 +273,7 @@ fn work_order(
         is_gated_out,
         is_holdout: false,
         text_hash: (!is_gated_out).then(|| ContentHash::of(b"a work order")),
-        features: None,
+        features: Some(FEATURES),
     })?;
     transaction.commit()?;
     Ok(())

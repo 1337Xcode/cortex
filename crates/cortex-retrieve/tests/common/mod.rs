@@ -9,14 +9,27 @@
 pub mod task;
 
 use cortex_core::{
-    Agent, ContentHash, EdgeType, Event, FileFlags, HookKind, Identifier, InterestTier, Language,
-    LineRange, RepoId, RepoPath, ScaleMode, ShortHash, SymbolKind, ToolKind, ToolResult,
-    ToolTarget, Ulid,
+    Agent, ContentHash, EdgeType, Event, FileFlags, GateFeatures, HookKind, Identifier,
+    InterestTier, Language, LineRange, RepoId, RepoPath, ScaleMode, ShortHash, SymbolKind,
+    ToolKind, ToolResult, ToolTarget, Ulid,
 };
 use cortex_learn::{Commands, Recorder};
 use cortex_store::{
     ArchetypeRecord, EdgeRecord, FileIndex, FileRecord, InterestRow, NodeId, Reader, SessionRecord,
     SymbolRecord, TaskRecord, Writer, WriterOptions,
+};
+
+/// What the gate weighed for a work order these tests record: every prompt's decision is stored
+/// with its features, a work order kept back as one given, and the store reads a prompt's row
+/// without them as no work order.
+pub const FEATURES: GateFeatures = GateFeatures {
+    top_lexical: 1.0,
+    top_mass: 0.5,
+    agreeing_kinds: 2,
+    supporting_kinds: 2,
+    similar_task: 0.0,
+    recent_precision: None,
+    is_continuing: false,
 };
 
 /// Result type for these tests: any failure fails the test.

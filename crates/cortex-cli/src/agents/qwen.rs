@@ -5,6 +5,8 @@
 
 use super::command::Shell;
 use super::settings::{Events, Handler, Style, TimeoutUnit};
+use cortex_core::Agent;
+
 use super::{FoundBy, HooksFile, Setup};
 
 /// How Qwen Code's settings hold Cortex's hooks.
@@ -21,8 +23,7 @@ const STYLE: Style = Style {
 
 /// Qwen Code: found by `~/.qwen` or the `qwen` program.
 pub(crate) const SETUP: Setup = Setup {
-    name: "qwen",
-    title: "Qwen Code",
+    agent: Agent::Qwen,
     found_by: FoundBy {
         folders: &[".qwen"],
         programs: &["qwen"],

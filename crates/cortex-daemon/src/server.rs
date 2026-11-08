@@ -157,7 +157,7 @@ struct Answered {
     /// The hook it answers.
     hook: Option<HookKind>,
     /// What the writer records of it.
-    given: Option<Given>,
+    given: Vec<Given>,
     /// What to undo when its text does not reach the hook.
     undo: Undo,
 }
@@ -168,7 +168,7 @@ impl Answered {
         Self {
             body,
             hook: Some(hook),
-            given: None,
+            given: Vec::new(),
             undo: Undo::default(),
         }
     }
@@ -179,7 +179,7 @@ impl Answered {
 #[derive(Debug, Default)]
 struct Undo {
     /// What working the answer out claimed.
-    claim: Option<Claim>,
+    claims: Vec<Claim>,
     /// The stop the answer held back.
     stop: Option<Event>,
 }
@@ -309,7 +309,7 @@ impl Server {
     ) -> Result<bool, Broken> {
         let Received { request, began } = received;
         let is_shutdown = request.body == RequestBody::Shutdown;
-        let mut given = None;
+        let mut given = Vec::new();
         let mut undo = Undo::default();
         let mut reads_until_ms = None;
         let (body, hook) = match request.body {
@@ -410,7 +410,7 @@ impl Server {
         let holds_text = matches!(&body, ResponseBody::Reply { text: Some(_) });
         let answered = write_response(writer, request.request_id, body).await;
         // Recorded once its answer is written, after its event, as `recorded` says.
-        if let Some(given) = given {
+        if !given.is_empty() {
             let is_late = is_past(reads_until_ms, now_ms());
             if holds_text && answered.is_ok() && is_late {
                 self.inbox.note_error(
@@ -418,8 +418,10 @@ impl Server {
                     now_ms(),
                 );
             }
-            if let Some(given) = recorded(given, holds_text, answered.is_ok(), is_late) {
-                self.inbox.push_given(given, now_ms());
+            for given in given {
+                if let Some(given) = recorded(given, holds_text, answered.is_ok(), is_late) {
+                    self.inbox.push_given(given, now_ms());
+                }
             }
         }
         // Text that did not reach its hook gives back what it claimed, and a stop it held back is
@@ -486,12 +488,22 @@ impl Server {
         let signatures = Arc::clone(&self.signatures);
         let claims = self.claims.clone();
         let mut answer = self
-            .with_service(move |service, graph, uncommitted| match asked {
-                Asked::WorkOrder => service.prompt(&event, graph, uncommitted),
-                Asked::Primer => service.primer(&event, graph, &claims.recapped),
-                Asked::Warnings => service.post_edit(&event, (&signatures, &claims.told)),
-                Asked::ReadHint => service.read_hint(&event),
-                Asked::StopReason => service.stop_reason(&event, &claims.stopped),
+            .with_service(move |service, graph, uncommitted| {
+                let answer = match asked {
+                    Asked::WorkOrder => service.prompt(&event, graph, uncommitted),
+                    Asked::Primer => service.primer(&event, graph, &claims.recapped),
+                    Asked::Warnings => service.post_edit(&event, (&signatures, &claims.told)),
+                    Asked::ReadHint => service.read_hint(&event),
+                    Asked::StopReason => service.stop_reason(&event, &claims.stopped),
+                };
+                // Notices go with every text but a stop's, which would hold the stop back. A
+                // probe's session is no agent's: it is given no notice and leaves none.
+                let has_notices = !matches!(asked, Asked::StopReason) && !is_probe;
+                if has_notices {
+                    service.with_notices(&event, answer, &claims.noticed)
+                } else {
+                    answer
+                }
             })
             .await
             .unwrap_or_default();
@@ -502,14 +514,16 @@ impl Server {
             answer.text = None;
             answer.given = answer
                 .given
-                .and_then(|given| recorded(given, true, false, true));
+                .into_iter()
+                .filter_map(|given| recorded(given, true, false, true))
+                .collect();
             if !is_probe {
                 self.inbox.note_error(
                     "an answer was worked out after its hook stopped waiting",
                     now_ms(),
                 );
             }
-            if let Some(claim) = answer.claim.take() {
+            for claim in answer.claims.drain(..) {
                 self.claims.release(&claim);
             }
         }
@@ -527,13 +541,13 @@ impl Server {
                 hook,
             );
         }
-        let given = answer.given.filter(|_| !is_probe);
+        let given = if is_probe { Vec::new() } else { answer.given };
         Answered {
             body: ResponseBody::Reply { text: answer.text },
             hook: Some(hook),
             given,
             undo: Undo {
-                claim: answer.claim.filter(|_| !is_probe),
+                claims: if is_probe { Vec::new() } else { answer.claims },
                 stop: held_stop,
             },
         }
@@ -541,8 +555,8 @@ impl Server {
 
     /// Undoes `undo`: gives back its claim and records the stop it held back.
     fn undo(&self, undo: Undo) {
-        if let Some(claim) = undo.claim {
-            self.claims.release(&claim);
+        for claim in &undo.claims {
+            self.claims.release(claim);
         }
         if let Some(stop) = undo.stop
             && !self.inbox.push_event(stop)

@@ -4,7 +4,8 @@
 //! once its graph is built, so that a session's start gets the primer and the prompt a work order,
 //! an edit that changes a function's signature its warnings, and a read of the file the session
 //! read whole already its hint, as checked before they are measured (every measured edit does the
-//! same work; its warnings, told once a task, are new only the first time); the start after a
+//! same work; its warnings, told once a task, are new only the first time); a shell command's
+//! result, which asks only for the notices waiting, here none; the start after a
 //! compaction its recap, each start after a compaction of its own; a prompt of one word, which
 //! asks for no work order, as checked; the cold start, a hook given no input, which ends before
 //! it asks the daemon anything; and each event again from a repository whose daemon is down, so
@@ -70,7 +71,7 @@ const TEST_OPS_PY: &str = "import unittest\n\nfrom calc.ops import add\n\n\n\
     class OpsTest(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n";
 
 /// Each benchmark: its name, the event the hook is run for, and the recorded payload it reads.
-const EVENTS: [(&str, &str, &str); 5] = [
+const EVENTS: [(&str, &str, &str); 6] = [
     (
         "session_start",
         "SessionStart",
@@ -86,6 +87,11 @@ const EVENTS: [(&str, &str, &str); 5] = [
         "post_tool_use_edit",
         "PostToolUse",
         "post-tool-use-edit.json",
+    ),
+    (
+        "post_tool_use_shell",
+        "PostToolUse",
+        "post-tool-use-bash.json",
     ),
     ("stop", "Stop", "stop.json"),
 ];
@@ -525,7 +531,7 @@ fn hooks(criterion: &mut Criterion) {
             });
         });
     }
-    // The other way a prompt goes: one word, sent as the event alone, gets nothing.
+    // A prompt of one word asks for no work order and, with no notice waiting, gets nothing.
     let word = word_payload(repo);
     let said = printed(repo, home, "UserPromptSubmit", &word);
     assert!(said.is_empty(), "the one-word prompt was told: {said}");

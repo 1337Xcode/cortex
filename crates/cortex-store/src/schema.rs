@@ -67,10 +67,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 13,
         sql: include_str!("../migrations/0013_warnings.sql"),
     },
+    Migration {
+        version: 14,
+        sql: include_str!("../migrations/0014_coordination.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 13;
+pub(crate) const SCHEMA_VERSION: u32 = 14;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -613,12 +617,14 @@ pub(crate) const INJECTIONS_OF_SESSION: &str = "SELECT injection_id, task_id, se
     features FROM injections WHERE session_id = ?1 ORDER BY injection_id";
 
 /// The work orders that reached session ?1's agent after ?2, the latest first, at most ?3: rows of
-/// prompts neither kept back nor held out, with a text's hash; the columns are those of
+/// prompts' retrievals (which alone carry the gate's features; a prompt's coordination notices do
+/// not) neither kept back nor held out, with a text's hash; the columns are those of
 /// [`INJECTIONS_OF_SESSION`].
 pub(crate) const WORK_ORDERS_SINCE: &str = "SELECT injection_id, task_id, session_id, hook, ts, \
     items, tokens_est, confidence, gated_out, holdout, rendered_hash, used_count, label, features \
     FROM injections WHERE session_id = ?1 AND ts > ?2 AND hook = 'prompt' AND gated_out = 0 \
-    AND holdout = 0 AND rendered_hash IS NOT NULL ORDER BY ts DESC, injection_id DESC LIMIT ?3";
+    AND holdout = 0 AND rendered_hash IS NOT NULL AND features IS NOT NULL \
+    ORDER BY ts DESC, injection_id DESC LIMIT ?3";
 
 /// Records one file a warning named, returning its row id.
 pub(crate) const WARNING_INSERT: &str = "INSERT INTO warnings \
@@ -626,6 +632,61 @@ pub(crate) const WARNING_INSERT: &str = "INSERT INTO warnings \
 
 /// Sets whether one warning was resolved.
 pub(crate) const WARNING_RESOLVE: &str = "UPDATE warnings SET resolved = ?2 WHERE warning_id = ?1";
+
+/// Keeps a session's position on a node, in place of the one kept before.
+pub(crate) const POSITION_KEEP: &str = "INSERT OR REPLACE INTO positions \
+     (session_id, node_id, mode, since, last_ts) VALUES (?1, ?2, ?3, ?4, ?5)";
+/// Session ?1's position on node ?2, if one is kept, with when its task ended, as for
+/// [`POSITIONS_SINCE`].
+pub(crate) const POSITION_OF: &str = "SELECT p.mode, p.since, p.last_ts, \
+     (SELECT CASE WHEN t.ended_at >= p.last_ts THEN t.ended_at END FROM tasks t \
+     WHERE t.session_id = p.session_id AND t.started_at <= p.last_ts \
+     ORDER BY t.started_at DESC LIMIT 1) \
+     FROM positions p WHERE p.session_id = ?1 AND p.node_id = ?2";
+/// The positions last taken at ?1 or later, with when the task the session had then ended: the
+/// latest task of the session started by then, when it ended at the position's last time or
+/// later. A position taken after that task ended, with no prompt since, has no task end.
+pub(crate) const POSITIONS_SINCE: &str = "SELECT p.session_id, p.node_id, p.mode, p.since, \
+     p.last_ts, (SELECT CASE WHEN t.ended_at >= p.last_ts THEN t.ended_at END FROM tasks t \
+     WHERE t.session_id = p.session_id AND t.started_at <= p.last_ts \
+     ORDER BY t.started_at DESC LIMIT 1) \
+     FROM positions p WHERE p.last_ts >= ?1 ORDER BY p.session_id, p.node_id";
+/// Each session in the JSON array ?1 that is stored: its agent, its parent, when it ended and its
+/// last event.
+pub(crate) const SESSIONS_SEEN: &str = "SELECT s.session_id, s.agent, s.parent_session_id, \
+     s.ended_at, (SELECT max(e.ts) FROM events e WHERE e.session_id = s.session_id) \
+     FROM sessions s WHERE s.session_id IN (SELECT value FROM json_each(?1)) ORDER BY s.session_id";
+/// The heaviest edge of each type between the file node ?1, with its symbols, and each file node
+/// in the JSON array ?2, with theirs: edges of type ?3 either way, and of type ?4 from ?1's side
+/// only. A file's symbols carry its path, which is how they are found.
+pub(crate) const COUPLINGS: &str = "WITH held AS (SELECT n.node_id, n.path FROM \
+     (SELECT DISTINCT value FROM json_each(?2)) AS j JOIN nodes AS n ON n.node_id = j.value \
+     WHERE n.kind = 'file'), \
+     mine AS (SELECT node_id FROM nodes WHERE kind != 'dir' AND path = \
+     (SELECT path FROM nodes WHERE node_id = ?1 AND kind = 'file')), \
+     linked AS (SELECT o.path, e.type, e.w FROM mine AS m JOIN edges AS e ON e.src = m.node_id \
+     JOIN nodes AS o ON o.node_id = e.dst WHERE e.type IN (?3, ?4) \
+     UNION ALL SELECT o.path, e.type, e.w FROM mine AS m JOIN edges AS e ON e.dst = m.node_id \
+     JOIN nodes AS o ON o.node_id = e.src WHERE e.type = ?3) \
+     SELECT h.node_id, l.type, max(l.w) FROM linked AS l JOIN held AS h ON h.path = l.path \
+     GROUP BY h.node_id, l.type ORDER BY h.node_id, l.type";
+/// Queues notice ?2 for session ?1 at ?3, unless the session was given or sent the same text at
+/// ?4 or later.
+pub(crate) const NOTICE_QUEUE: &str = "INSERT INTO notices (to_session, text, created_at) \
+     SELECT ?1, ?2, ?3 WHERE NOT EXISTS (SELECT 1 FROM notices \
+     WHERE to_session = ?1 AND text = ?2 AND created_at >= ?4)";
+/// Records notice ?2 as told to session ?1 at ?3, delivered as it was made.
+pub(crate) const NOTICE_TOLD: &str = "INSERT INTO notices (to_session, text, created_at, \
+     delivered_at) VALUES (?1, ?2, ?3, ?3)";
+/// The texts session ?1 was given or sent at ?2 or later, oldest first.
+pub(crate) const NOTICES_SINCE: &str = "SELECT text FROM notices \
+     WHERE to_session = ?1 AND created_at >= ?2 ORDER BY notice_id";
+/// The notices waiting for session ?1 made at ?2 or later, oldest first.
+pub(crate) const NOTICES_WAITING: &str = "SELECT notice_id, text, created_at FROM notices \
+     WHERE to_session = ?1 AND created_at >= ?2 AND delivered_at IS NULL ORDER BY notice_id";
+/// Marks notice ?1 delivered at ?2, unless it was already.
+pub(crate) const NOTICE_DELIVER: &str =
+    "UPDATE notices SET delivered_at = ?2 WHERE notice_id = ?1 AND delivered_at IS NULL";
 
 /// How many warnings were given, how many of them are marked, and how many of those resolved: each
 /// row one file a warning named.
@@ -926,7 +987,7 @@ mod tests {
     /// references through imports by name, `nodes.path`, the uniqueness of folder paths and the
     /// names passed on as others, the second and the last two partial. Each entry: columns, unique,
     /// partial.
-    fn expected_indexes() -> [(&'static str, Vec<Index>); 16] {
+    fn expected_indexes() -> [(&'static str, Vec<Index>); 19] {
         [
             ("meta", index_list(&[(&["key"], true, false)])),
             (
@@ -1010,6 +1071,57 @@ mod tests {
                 ]),
             ),
             ("warnings", index_list(&[(&["task_id"], false, false)])),
+            (
+                "positions",
+                index_list(&[
+                    (&["session_id", "node_id"], true, false),
+                    (&["last_ts"], false, false),
+                ]),
+            ),
+            (
+                "notices",
+                index_list(&[(&["to_session", "created_at"], false, false)]),
+            ),
+            ("handoffs", index_list(&[(&["created_at"], false, true)])),
+        ]
+    }
+
+    /// The coordination tables, column by column: positions, notices and handoffs.
+    fn expected_coordination_columns() -> [(&'static str, Vec<Column>); 3] {
+        [
+            (
+                "positions",
+                column_list(&[
+                    ("session_id", "TEXT", 1),
+                    ("node_id", "INTEGER", 2),
+                    ("mode", "TEXT", 0),
+                    ("since", "INTEGER", 0),
+                    ("last_ts", "INTEGER", 0),
+                ]),
+            ),
+            (
+                "notices",
+                column_list(&[
+                    ("notice_id", "INTEGER", 1),
+                    ("to_session", "TEXT", 0),
+                    ("text", "TEXT", 0),
+                    ("created_at", "INTEGER", 0),
+                    ("delivered_at", "INTEGER", 0),
+                ]),
+            ),
+            (
+                "handoffs",
+                column_list(&[
+                    ("handoff_id", "INTEGER", 1),
+                    ("from_session", "TEXT", 0),
+                    ("task_id", "TEXT", 0),
+                    ("working_set", "TEXT", 0),
+                    ("open_warnings", "TEXT", 0),
+                    ("last_failure", "TEXT", 0),
+                    ("created_at", "INTEGER", 0),
+                    ("consumed_by", "TEXT", 0),
+                ]),
+            ),
         ]
     }
 
@@ -1269,11 +1381,14 @@ mod tests {
                 "file_commits",
                 "files",
                 "git_state",
+                "handoffs",
                 "injections",
                 "interest",
                 "meta",
                 "nodes",
+                "notices",
                 "passes_on",
+                "positions",
                 "refs",
                 "search_index",
                 "search_terms",
@@ -1289,6 +1404,7 @@ mod tests {
             .chain(&expected_activity_columns())
             .chain(&expected_learning_columns())
             .chain(&expected_injection_columns())
+            .chain(&expected_coordination_columns())
         {
             assert_eq!(&columns(&connection, table)?, expected, "{table}");
         }

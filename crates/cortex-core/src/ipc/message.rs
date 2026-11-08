@@ -30,7 +30,9 @@ pub enum RequestBody {
         /// The event.
         event: Box<Event>,
     },
-    /// Record a prompt's event, and answer with the work order the prompt gets, if any.
+    /// Record a prompt's event, and answer with the work order the prompt gets, if any, and the
+    /// coordination notices waiting for its session; a prompt that asks for no code (a slash
+    /// command, "ok") gets only the notices.
     Retrieve {
         /// The prompt's event.
         event: Box<Event>,
@@ -52,10 +54,10 @@ pub enum RequestBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answer_by_ms: Option<i64>,
     },
-    /// Record an edit's event, and answer with the warnings the edit gets, if any (protocol 3.0
-    /// added it).
+    /// Record a tool's result, and answer with the warnings it gets if it changed a file, and the
+    /// coordination notices waiting for its session (protocol 3.0 added it, for edits).
     PostEdit {
-        /// The edit's event: a tool's result that changed a file.
+        /// The tool's result.
         event: Box<Event>,
         /// When the hook stops reading the answer, in UTC milliseconds by the wall clock, as for
         /// `Retrieve`: warnings that cannot reach the hook by then are not sent, and not recorded

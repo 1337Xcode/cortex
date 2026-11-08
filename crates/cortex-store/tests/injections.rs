@@ -461,10 +461,12 @@ fn only_labelled_deliveries_count() -> TestResult {
     Ok(())
 }
 
-/// A session's work orders since a time are its prompts' injections that reached the agent, as
-/// `was_delivered` says, the latest first: of a primer at 5, work orders given at 10 and 50, one the gate kept back at 20,
-/// one held out at 30, an edit's warnings at 40, and another session's work order at 60, session
-/// s1's since 0 are those at 50 and 10, since 10 the one at 50, and the latest one alone at 50.
+/// A session's work orders since a time are its prompts' retrievals that reached the agent, as
+/// `was_delivered` says, the latest first: of a primer at 5, work orders given at 10 and 50, one
+/// the gate kept back at 20, one held out at 30, an edit's warnings at 40, the notices a prompt was
+/// given at 45 (a text at the prompt without the gate's features), and another session's work order
+/// at 60, session s1's since 0 are those at 50 and 10, since 10 the one at 50, and the latest one
+/// alone at 50.
 #[test]
 fn a_session_s_work_orders_are_those_given() -> TestResult {
     let scratch = Scratch::new()?;
@@ -487,7 +489,8 @@ fn a_session_s_work_orders_are_those_given() -> TestResult {
         is_gated_out: false,
         is_holdout: false,
         text_hash: Some(ContentHash::of(b"a text")),
-        features: None,
+        // A prompt's retrieval records the gate's features; any other text records none.
+        features: (hook == HookKind::Prompt).then(features),
     };
     let rows = [
         given(&s1, None, HookKind::SessionStart, 5),
@@ -502,6 +505,11 @@ fn a_session_s_work_orders_are_those_given() -> TestResult {
             ..given(&s1, Some(task), HookKind::Prompt, 30)
         },
         given(&s1, Some(task), HookKind::PostTool, 40),
+        // The notices a prompt was given: a text at the prompt, without the gate's features.
+        InjectionRecord {
+            features: None,
+            ..given(&s1, Some(task), HookKind::Prompt, 45)
+        },
         given(&s1, Some(task), HookKind::Prompt, 50),
         given(&s2, Some(other), HookKind::Prompt, 60),
     ];

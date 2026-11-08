@@ -15,6 +15,7 @@ mod archetype;
 mod checkpoint;
 mod cochange;
 mod connection;
+mod coordination;
 mod episode;
 mod error;
 mod folders;
@@ -50,13 +51,16 @@ pub use activity::{EventRecord, EventRow, SessionRecord, SessionRow, TaskRecord,
 pub use archetype::ArchetypeRecord;
 pub use checkpoint::CheckpointFailures;
 pub use cochange::{CountedFile, FileCommitsRow, GitStateKey, PairRow};
+pub use coordination::{
+    Coupling, NoticeRecord, NoticeRow, PositionRecord, PositionRow, SeenSession,
+};
 pub use episode::{
     ChangedFile, ChangedSymbol, EpisodeRecord, MAX_EPISODE_BYTES, Pitfalls, RanCheck, ReadAgain,
     ReadFile,
 };
 pub use error::StoreError;
 pub use graph::GraphNodeRow;
-pub use ids::{FileId, InjectionId, NodeId, RefId, SymbolId, WarningId};
+pub use ids::{FileId, InjectionId, NodeId, NoticeId, RefId, SymbolId, WarningId};
 pub use injections::{InjectedFile, InjectionRecord, InjectionRow};
 pub use interest::InterestRow;
 pub use lock::is_writer_running;

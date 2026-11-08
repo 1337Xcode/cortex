@@ -48,3 +48,8 @@ row_id! {
     /// A row of `warnings`.
     WarningId
 }
+
+row_id! {
+    /// A row of `notices`.
+    NoticeId
+}

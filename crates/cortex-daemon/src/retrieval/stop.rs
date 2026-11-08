@@ -34,8 +34,9 @@ impl Service {
             let given = text_record(event, Some(task_id), &text);
             Ok(Answer {
                 text: Some(text),
-                given: Some(Given::Injection(given)),
-                claim: Some(Claim::Stopped(task_id)),
+                given: vec![Given::Injection(given)],
+                claims: vec![Claim::Stopped(task_id)],
+                ..Answer::default()
             })
         });
         answered.unwrap_or_else(|error| {

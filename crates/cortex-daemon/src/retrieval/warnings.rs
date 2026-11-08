@@ -11,12 +11,12 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-use cortex_core::{ContentHash, Event, FileFlags};
+use cortex_core::{ContentHash, Event, FileFlags, ScaleMode};
 use cortex_index::{Extractor, open_regular};
 use cortex_retrieve::{EditQuery, edit_facts, task_so_far, warnings_after_edit};
-use cortex_store::{FileRecord, FileRow, Queries, SymbolId};
+use cortex_store::{FileRecord, FileRow, Queries, StoreError, SymbolId, TaskRow};
 
-use super::{Answer, Service, mode_of};
+use super::{Answer, Coordination, Service, mode_of};
 use crate::claim::Claim;
 use crate::given::{Given, text_record};
 use crate::signatures::Signatures;
@@ -27,8 +27,10 @@ impl Service {
     /// reach the agent: none for an event that is no successful edit of a file the store holds,
     /// outside a task, or before the first index. `signatures` holds the signature changes the
     /// writer's indexes found lately. The warnings are decided while no other decision runs, with
-    /// the pairs the task was told so far, recorded or not yet, so each is told once a task. A
-    /// store that cannot be read gives nothing, and the error is logged.
+    /// the pairs the task was told so far, recorded or not yet, so each is told once a task. The
+    /// answer also carries what the edit's coordination found, whatever its own task is given,
+    /// for [`Service::with_notices`]. A store that cannot be read gives nothing, and the error is
+    /// logged; coordination and the warnings stand apart, so that one failing leaves the other.
     pub(crate) fn post_edit(
         &self,
         event: &Event,
@@ -41,53 +43,85 @@ impl Service {
             let Some(mode) = mode_of(queries)? else {
                 return Ok(Answer::default());
             };
-            let Some(task) = queries.open_task(&event.session_id)? else {
-                return Ok(Answer::default());
+            let task = queries.open_task(&event.session_id)?;
+            let row = queries.file(path)?;
+            let drifted = match (&task, &row) {
+                (Some(task), Some(row)) => {
+                    let since = (signatures, (task.record.started_at_ms, event.ts_ms));
+                    self.drifted(queries, row, since)?
+                }
+                _ => Vec::new(),
             };
-            // INVARIANT: silent-when-unsure (a held-out task is given nothing Cortex would say)
-            if self.is_held_out_task(&task) {
-                return Ok(Answer::default());
-            }
-            let Some(row) = queries.file(path)? else {
-                return Ok(Answer::default());
+            let changed = names_of(queries, row.as_ref(), &drifted)?;
+            let coordination = self
+                .coordinate(queries, event, &changed)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(error = %format!("{error:#}"), "an edit's coordination failed");
+                    Coordination::default()
+                });
+            let mut answer = match (task, row) {
+                // INVARIANT: silent-when-unsure (a held-out task is given nothing Cortex would say)
+                (Some(task), Some(row)) if !self.is_held_out_task(&task) => self
+                    .warned(queries, event, (&task, &row), (&drifted, told, mode))
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(error = %format!("{error:#}"), "an edit's warnings failed");
+                        Answer::default()
+                    }),
+                _ => Answer::default(),
             };
-            let task_id = task.record.task_id;
-            let since = (signatures, (task.record.started_at_ms, event.ts_ms));
-            let drifted = self.drifted(queries, &row, since)?;
-            let asked = EditQuery {
-                root: &self.root,
-                edited: path,
-                drifted: &drifted,
-                link_decay: self.edits.link_decay,
-                max_file_bytes: self.max_file_bytes,
-            };
-            let Some(facts) = edit_facts(queries, &asked)? else {
-                return Ok(Answer::default());
-            };
-            let mut so_far = task_so_far(queries, task_id, facts.edited.node)?;
-            let warned = told.deciding(task_id, |told| {
-                so_far.warned.extend(told.iter().copied());
-                warnings_after_edit(&facts, &so_far, &self.edits.warnings, mode)
-            });
-            let rows = warned.records(task_id, event.ts_ms);
-            let given = warned
-                .text
-                .as_deref()
-                .filter(|_| !rows.is_empty())
-                .map(|text| text_record(event, Some(task_id), text));
-            let claim = warned
-                .text
-                .is_some()
-                .then(|| Claim::Warned(task_id, pairs_of(&warned)));
-            Ok(Answer {
-                text: warned.text,
-                given: given.map(|text| Given::Warnings(rows, text)),
-                claim,
-            })
+            answer.coordination = coordination;
+            Ok(answer)
         });
         answered.unwrap_or_else(|error| {
             tracing::warn!(error = %format!("{error:#}"), "an edit's warnings failed");
             Answer::default()
+        })
+    }
+
+    /// The warnings `event`, an edit of `row`'s file in `task`, gets in `mode`, `drifted` being the
+    /// stored symbols whose signature it changed, decided with what `told` says the task was told,
+    /// and the rows to record of them.
+    fn warned(
+        &self,
+        queries: Queries<'_>,
+        event: &Event,
+        (task, row): (&TaskRow, &FileRow),
+        (drifted, told, mode): (&[SymbolId], &Told, ScaleMode),
+    ) -> Result<Answer, cortex_retrieve::RetrieveError> {
+        let task_id = task.record.task_id;
+        let asked = EditQuery {
+            root: &self.root,
+            edited: &row.file.path,
+            drifted,
+            link_decay: self.edits.link_decay,
+            max_file_bytes: self.max_file_bytes,
+        };
+        let Some(facts) = edit_facts(queries, &asked)? else {
+            return Ok(Answer::default());
+        };
+        let mut so_far = task_so_far(queries, task_id, facts.edited.node)?;
+        let warned = told.deciding(task_id, |told| {
+            so_far.warned.extend(told.iter().copied());
+            warnings_after_edit(&facts, &so_far, &self.edits.warnings, mode)
+        });
+        let rows = warned.records(task_id, event.ts_ms);
+        let given = warned
+            .text
+            .as_deref()
+            .filter(|_| !rows.is_empty())
+            .map(|text| text_record(event, Some(task_id), text));
+        let claims = warned
+            .text
+            .is_some()
+            .then(|| Claim::Warned(task_id, pairs_of(&warned)));
+        Ok(Answer {
+            text: warned.text,
+            given: given
+                .map(|text| Given::Warnings(rows, text))
+                .into_iter()
+                .collect(),
+            claims: claims.into_iter().collect(),
+            ..Answer::default()
         })
     }
 
@@ -123,6 +157,24 @@ impl Service {
         };
         Ok(queries.signature_changes(row.id, &extraction.symbols)?)
     }
+}
+
+/// The qualified names of `drifted`, the stored symbols of `row`'s file whose signature an edit
+/// changed, in the file's order; none without the file or a changed signature.
+fn names_of(
+    queries: Queries<'_>,
+    row: Option<&FileRow>,
+    drifted: &[SymbolId],
+) -> Result<Vec<String>, StoreError> {
+    let Some(row) = row.filter(|_| !drifted.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    Ok(queries
+        .symbols_in_file(row.id)?
+        .into_iter()
+        .filter(|symbol| drifted.contains(&symbol.id))
+        .map(|symbol| symbol.qual_name.as_str().to_owned())
+        .collect())
 }
 
 /// The bytes of `file`, in the repository at `root`, when the index parsed it for its definitions:

@@ -20,13 +20,14 @@ use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, index_paths, index_repository,
 };
 use cortex_learn::{Recorder, TaskState};
-use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, Writer};
+use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, WriteTx, Writer};
 
-use crate::given::Given;
+use crate::given::{Given, Notices};
 use crate::graph::Snapshot;
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
 use crate::meter::Transcript;
 use crate::pending::Pending;
+use crate::positions;
 use crate::signatures::Signatures;
 
 /// How often the crawler takes a batch of `index.crawl_files_per_second` files.
@@ -242,7 +243,7 @@ impl<'a> Host<'a> {
     ///
     /// The store's error.
     pub(crate) fn record(&mut self, events: &[Event]) -> Result<(), StoreError> {
-        let recorded = record_batch(&mut self.writer, &mut self.recorder, events)?;
+        let recorded = record_batch(&mut self.writer, &mut self.recorder, events, self.inbox)?;
         self.pending.wait(recorded);
         Ok(())
     }
@@ -422,7 +423,7 @@ pub(crate) fn record_waiting(
     let recorded = if events.is_empty() {
         Recorded::default()
     } else {
-        record_batch(writer, recorder, &events).unwrap_or_else(|error| {
+        record_batch(writer, recorder, &events, inbox).unwrap_or_else(|error| {
             count_failed(inbox, "hook events", &error);
             Recorded::default()
         })
@@ -458,12 +459,41 @@ fn record_given(writer: &mut Writer, inbox: &Inbox, given: &[Given]) {
                         }
                     }
                 }
+                Given::Notices(notices) => record_notices(&mut transaction, inbox, notices),
             }
         }
         transaction.commit()
     });
     if let Err(error) = recorded {
         count_failed(inbox, "what was given", &error);
+    }
+}
+
+/// Records in `transaction` what an answer did with coordination notices: the waiting ones it gave
+/// marked delivered, the lines it told kept as delivered, the text they came to as an injection,
+/// and each notice it queued for another session, unless that session was sent or given the same
+/// text lately. A row the store refuses is counted, with its error, and the rest kept.
+fn record_notices(transaction: &mut WriteTx<'_>, inbox: &Inbox, notices: &Notices) {
+    for id in &notices.delivered {
+        if let Err(error) = transaction.deliver_notice(*id, notices.at_ms) {
+            count_failed(inbox, "a notice delivered", &error);
+        }
+    }
+    for told in &notices.told {
+        if let Err(error) = transaction.record_told(told) {
+            count_failed(inbox, "a notice told", &error);
+        }
+    }
+    if let Some(text) = &notices.text
+        && let Err(error) = transaction.record_injection(text)
+    {
+        count_failed(inbox, "an injection", &error);
+    }
+    for queued in &notices.queued {
+        let unless_since_ms = queued.at_ms.saturating_sub(notices.repeat_after_ms);
+        if let Err(error) = transaction.queue_notice(queued, unless_since_ms) {
+            count_failed(inbox, "a notice queued", &error);
+        }
     }
 }
 
@@ -507,10 +537,12 @@ pub(crate) fn count_failed(inbox: &Inbox, what: &str, error: &StoreError) {
     inbox.count_failed_batch(&format!("recording {what} failed: {error}"), now_ms());
 }
 
-/// Records `events` with `recorder` in one transaction of `writer`, and returns what they left
-/// to do: the tasks they ended and the transcripts they named, each in order. When any of them
-/// cannot be recorded, none is: the transaction is rolled back, the recorder forgets what it took
-/// as stored, which may include what was rolled back, no task has ended and no transcript waits.
+/// Records `events` with `recorder` in one transaction of `writer`, with the positions they give
+/// their sessions, kept by the timing `inbox` holds, and returns what they left to do: the tasks
+/// they ended and the transcripts they named, each in order. When any of them cannot be recorded,
+/// none is: the transaction is rolled back, the recorder forgets what it took as stored, which may
+/// include what was rolled back, no task has ended and no transcript waits. A position that cannot
+/// be kept is counted in `inbox`, and the events are recorded all the same.
 ///
 /// # Errors
 ///
@@ -519,11 +551,18 @@ fn record_batch(
     writer: &mut Writer,
     recorder: &mut Recorder,
     events: &[Event],
+    inbox: &Inbox,
 ) -> Result<Recorded, StoreError> {
+    let timing = inbox.position_timing();
     let mut ended = Vec::new();
     let recorded = writer.transaction().and_then(|mut transaction| {
         for event in events {
             ended.extend(recorder.record(&mut transaction, event)?);
+            // A position serves coordination, not the event's record: one that cannot be kept is
+            // counted, and the batch goes on.
+            if let Err(error) = positions::keep(&mut transaction, event, &timing) {
+                count_failed(inbox, "a session's position", &error);
+            }
         }
         transaction.commit()
     });
