@@ -33,8 +33,8 @@ pub(crate) struct Setup {
     pub(crate) told: &'static [&'static str],
 }
 
-/// How an agent is found: any of its folders in the user's home, or any of its programs on the
-/// `PATH`.
+/// How an agent is found: any of its folders in the user's home holding the agent's own files, or
+/// any of its programs on the `PATH`.
 #[derive(Debug)]
 pub(crate) struct FoundBy {
     /// Folders relative to the home folder, with `/` between folders.
@@ -77,14 +77,15 @@ pub(crate) fn setup(name: &str) -> Option<&'static Setup> {
         .find(|setup| setup.agent.name() == name)
 }
 
-/// Whether `setup`'s agent is on this machine: one of its folders in `home`, or one of its
-/// programs on the `PATH` outside `repository`.
+/// Whether `setup`'s agent is on this machine: one of its folders in `home` holding anything but
+/// the hooks file Cortex writes there, or one of its programs on the `PATH` outside `repository`.
 pub(crate) fn is_found(setup: &Setup, home: &Path, repository: &Path) -> bool {
+    let written = setup.hooks.as_ref().map(|hooks| hooks.user);
     let has_folder = setup
         .found_by
         .folders
         .iter()
-        .any(|folder| home.join(folder).is_dir());
+        .any(|folder| holds_agents_own(home, folder, written));
     has_folder || {
         let names: Vec<String> = setup
             .found_by
@@ -95,6 +96,19 @@ pub(crate) fn is_found(setup: &Setup, home: &Path, repository: &Path) -> bool {
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         find_program(&names, repository).is_some()
     }
+}
+
+/// Whether the folder `folder` of the home folder `home` holds an entry besides `written`, the
+/// home-relative file Cortex writes hooks to: an empty folder, or one holding only Cortex's own
+/// file, is no sign of the agent, since an earlier `cortex init --agents` makes it.
+fn holds_agents_own(home: &Path, folder: &str, written: Option<&str>) -> bool {
+    let Ok(entries) = std::fs::read_dir(home.join(folder)) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = format!("{folder}/{}", entry.file_name().to_string_lossy());
+        Some(path.as_str()) != written
+    })
 }
 
 /// The file names `program` has on this system: `program.exe` and `program.cmd` on Windows, where
@@ -142,8 +156,9 @@ mod tests {
         }
     }
 
-    /// An agent is found by its folder in the home folder; one with neither folder nor program is
-    /// not.
+    /// An agent is found by its folder in the home folder once the folder holds a file besides
+    /// the hooks file Cortex writes there; an empty folder, one holding only that file, or no
+    /// folder and no program, is not.
     #[test]
     fn an_agent_is_found_by_its_folder() -> std::io::Result<()> {
         let home = tempfile::tempdir()?;
@@ -154,11 +169,20 @@ mod tests {
                 folders: &[".none-agent"],
                 programs: &["cortex-test-no-such-agent"],
             },
-            hooks: None,
+            hooks: Some(HooksFile {
+                project: None,
+                user: ".none-agent/hooks.json",
+                style: claude::STYLE,
+            }),
             told: &[],
         };
         assert!(!is_found(&unknown, home.path(), repository.path()));
-        std::fs::create_dir(home.path().join(".none-agent"))?;
+        let folder = home.path().join(".none-agent");
+        std::fs::create_dir(&folder)?;
+        assert!(!is_found(&unknown, home.path(), repository.path()));
+        std::fs::write(folder.join("hooks.json"), "{}")?;
+        assert!(!is_found(&unknown, home.path(), repository.path()));
+        std::fs::write(folder.join("config.toml"), "")?;
         assert!(is_found(&unknown, home.path(), repository.path()));
         Ok(())
     }

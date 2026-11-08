@@ -197,13 +197,16 @@ enum Place {
     Repository(&'static str),
 }
 
-/// Codex is found by its folder in the home folder, and Claude Code neither by its folder nor on
-/// the PATH: init, naming no agent, sets up Codex alone, writing nothing of Claude Code's.
+/// Codex is found by its folder in the home folder, which holds its configuration, and Claude Code
+/// neither by its folder (empty, as one Cortex made) nor on the PATH: init, naming no agent, sets
+/// up Codex alone, writing nothing of Claude Code's.
 #[test]
 fn init_sets_up_only_the_agents_it_finds() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     std::fs::create_dir(home.path().join(".codex"))?;
+    std::fs::write(home.path().join(".codex").join("config.toml"), "")?;
+    std::fs::create_dir(home.path().join(".claude"))?;
     let _daemon = StopsDaemon::of(repo.path(), home.path());
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command.args(["init", "--yes", "--root"]).arg(repo.path());
@@ -211,12 +214,12 @@ fn init_sets_up_only_the_agents_it_finds() -> TestResult {
     assert!(done.is_success, "{}", done.stderr);
     assert!(home.path().join(".codex").join("hooks.json").is_file());
     assert!(!repo.path().join(".claude").exists());
-    assert!(!home.path().join(".claude").exists());
+    assert_eq!(std::fs::read_dir(home.path().join(".claude"))?.count(), 0);
     let written: Vec<String> = std::fs::read_dir(home.path())?
         .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
         .collect::<Result<_, _>>()?;
     let mut written = written;
     written.sort_unstable();
-    assert_eq!(written, [".codex", ".cortex"]);
+    assert_eq!(written, [".claude", ".codex", ".cortex"]);
     Ok(())
 }

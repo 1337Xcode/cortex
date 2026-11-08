@@ -21,11 +21,11 @@ const STYLE: Style = Style {
     events: Events::UnderHooks,
 };
 
-/// Gemini CLI: found by `~/.gemini` or the `gemini` program.
+/// Gemini CLI: found by the `gemini` program alone, since `~/.gemini` is also Antigravity's.
 pub(crate) const SETUP: Setup = Setup {
     agent: Agent::Gemini,
     found_by: FoundBy {
-        folders: &[".gemini"],
+        folders: &[],
         programs: &["gemini"],
     },
     hooks: Some(HooksFile {
