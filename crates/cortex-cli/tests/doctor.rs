@@ -59,13 +59,21 @@ fn repository() -> TestResult<(tempfile::TempDir, tempfile::TempDir)> {
 /// repository's local settings, nothing turns hooks off, they run this binary, the daemon of this
 /// build answers, and twenty probes of each of five events reach it, each event's 95th percentile
 /// printed against its budget (over it on a loaded machine is a failure, and the command's result
-/// follows). With no Claude Code on the PATH, its version is a note. What doctor cannot see is
+/// follows). With no Claude Code on the PATH, init is asked for it by name, and its version is a
+/// note. What doctor cannot see is
 /// said last.
 #[test]
 fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
     let (repo, home) = repository()?;
     let _daemon = StopsDaemon::of(repo.path(), home.path());
-    assert!(cortex(&["init", "--yes"], repo.path(), home.path())?.is_success);
+    assert!(
+        cortex(
+            &["init", "--yes", "--agents", "claude"],
+            repo.path(),
+            home.path()
+        )?
+        .is_success
+    );
     let files =
         UserFolder::in_home(home.path()).run_files(&RepoId::of(&canonical_root(repo.path())?));
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -235,6 +243,7 @@ fn doctor_fails_on_an_older_claude_code() -> TestResult {
     Ok(())
 }
 
+/// Once init has set up Claude Code, asked for by name since it is not on the PATH,
 /// `disableAllHooks` in the user's settings fails the silenced check, naming the file; hooks that
 /// run a binary that is gone fail the hooks check (not what this build writes) and the binary
 /// check (it does not exist).
@@ -242,7 +251,14 @@ fn doctor_fails_on_an_older_claude_code() -> TestResult {
 fn doctor_fails_on_silenced_and_stale_hooks() -> TestResult {
     let (repo, home) = repository()?;
     let daemon = StopsDaemon::of(repo.path(), home.path());
-    assert!(cortex(&["init", "--yes"], repo.path(), home.path())?.is_success);
+    assert!(
+        cortex(
+            &["init", "--yes", "--agents", "claude"],
+            repo.path(),
+            home.path()
+        )?
+        .is_success
+    );
     // Without the daemon init started, the daemon check fails too.
     daemon.stop()?;
     let user_settings = home.path().join(".claude").join("settings.json");

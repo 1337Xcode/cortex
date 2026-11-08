@@ -371,10 +371,10 @@ fn init_never_sets_up_a_home_folder_repository() -> TestResult {
     Ok(())
 }
 
-/// With neither git nor Claude Code on the PATH, init says both, sets up the folder alone and
-/// writes the hooks.
+/// With neither git nor any agent on the machine, init says both, sets up the folder alone and
+/// writes no agent's hooks.
 #[test]
-fn init_without_git_or_claude_code_says_so() -> TestResult {
+fn init_without_git_or_any_agent_says_so() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
@@ -387,15 +387,13 @@ fn init_without_git_or_claude_code_says_so() -> TestResult {
         lines,
         [
             "note: git is not on the PATH; Cortex sets up this folder alone, without git history",
-            "note: Claude Code is not on the PATH, so its version cannot be asked"
+            "note: no agent Cortex sets up was found on this machine, so no hooks are written; \
+             once one is installed, run `cortex init` again, or name one with `--agents` (claude, \
+             codex, qwen, gemini, droid, devin, augment, junie)"
         ]
     );
-    assert!(
-        repo.path()
-            .join(".claude")
-            .join("settings.local.json")
-            .is_file()
-    );
+    assert!(!repo.path().join(".claude").exists());
+    assert!(repo.path().join(".cortex").join("config.toml").is_file());
     Ok(())
 }
 

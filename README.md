@@ -40,8 +40,9 @@ cortex receipts
 cortex uninstall
 ```
 
-`cortex init` sets Cortex up in the repository you run it in. It needs Claude Code 2.1.295 or
-later. It asks three questions once: whether to measure Cortex's effect by leaving one task in ten
+`cortex init` sets Cortex up in the repository you run it in, for the coding agents it finds on
+this machine (`--agents` names them instead); with none found it writes no hooks and says so.
+Claude Code needs to be 2.1.295 or later. It asks three questions once: whether to measure Cortex's effect by leaving one task in ten
 without its help (yes by default), whether to share facts with your team through a committed
 `.cortex/shared/` folder (no), and whether to allow optional upkeep by a language model (no);
 `--yes` takes those defaults. It registers Cortex's hooks with Claude Code in

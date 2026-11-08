@@ -1,10 +1,11 @@
 //! `cortex init`: sets Cortex up in a repository, the top of the git repository holding the folder
-//! it starts from (see [`root`]), once Claude Code is a version Cortex's hooks work with. It asks
-//! its questions once (see [`consent`]), registers Cortex's hooks with Claude Code (see [`hooks`])
-//! in the repository's `.claude/settings.local.json` (`--scope project`, the default, a file Claude
-//! Code does not commit) or in the user's `~/.claude/settings.json` (`--scope user`), keeps the
-//! answers, and has git leave out what Cortex writes (see [`ignores`]). Whatever the scope, the
-//! repository is set up.
+//! it starts from (see [`root`]), for the agents `--agents` names or else those found on this
+//! machine, once a Claude Code among them is a version Cortex's hooks work with. It asks its
+//! questions once (see [`consent`]), registers Cortex's hooks with each agent (see [`hooks`]): for
+//! Claude Code in the repository's `.claude/settings.local.json` (`--scope project`, the default, a
+//! file Claude Code does not commit) or in the user's `~/.claude/settings.json` (`--scope user`),
+//! keeps the answers, and has git leave out what Cortex writes (see [`ignores`]). Whatever the
+//! scope, and with no agent found, the repository is set up.
 //!
 //! Every file init may change is found, read and checked before anything is asked, and nothing is
 //! written until every question is answered. Then the `.gitignore` is written first, so that a run
@@ -268,6 +269,13 @@ struct Change {
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let root = found_root(args)?;
     let setups = selected(&args.agents, &root.folder)?;
+    if setups.is_empty() {
+        output::line(&format!(
+            "note: no agent Cortex sets up was found on this machine, so no hooks are written; \
+             once one is installed, run `cortex init` again, or name one with `--agents` ({})",
+            known_agents()
+        ))?;
+    }
     let has_claude = setups.iter().any(|setup| setup.agent.name() == "claude");
     if has_claude {
         let adapter = cortex_hook::adapter("claude").context("finding the Claude Code adapter")?;
@@ -300,21 +308,14 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The agents init sets up: those `names` name, or, when it names none, Claude Code, which init
-/// has always set up and whose missing program is a note, with every other agent found on this
-/// machine (outside the repository at `root`).
+/// The agents init sets up: those `names` name, or, when it names none, every agent found on this
+/// machine (outside the repository at `root`), Claude Code as any other: init never writes hooks
+/// for an agent that is not there.
 ///
 /// # Errors
 ///
 /// A name that is no agent Cortex sets up, or no home folder.
 fn selected(names: &[String], root: &Path) -> anyhow::Result<Vec<&'static Setup>> {
-    let known = || {
-        agents::SETUPS
-            .iter()
-            .map(|setup| setup.agent.name())
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
     if !names.is_empty() {
         return names
             .iter()
@@ -322,7 +323,7 @@ fn selected(names: &[String], root: &Path) -> anyhow::Result<Vec<&'static Setup>
                 agents::setup(name.trim()).with_context(|| {
                     format!(
                         "`{name}` is not an agent Cortex sets up; it sets up {}",
-                        known()
+                        known_agents()
                     )
                 })
             })
@@ -332,8 +333,17 @@ fn selected(names: &[String], root: &Path) -> anyhow::Result<Vec<&'static Setup>
     Ok(agents::SETUPS
         .iter()
         .copied()
-        .filter(|setup| setup.agent.name() == "claude" || agents::is_found(setup, &home, root))
+        .filter(|setup| agents::is_found(setup, &home, root))
         .collect())
+}
+
+/// The names of every agent init sets up, as `--agents` takes them, in its order.
+fn known_agents() -> String {
+    agents::SETUPS
+        .iter()
+        .map(|setup| setup.agent.name())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The repository init sets up from where `args` start it, said on stdout with why it is not
