@@ -118,7 +118,9 @@ const CLAUDE_CODE: &[Required] = &[
         "post-tool-use-agent",
         &[
             Is("/tool_name", "Agent"),
-            Is("/tool_response/status", "completed"),
+            // `completed` when the agent ran in the call, `async_launched` when it ran in the
+            // background (2.1.318): either way the call reports a status.
+            Present("/tool_response/status"),
         ],
     ),
     (
@@ -221,6 +223,7 @@ const CLAUDE_CODE: &[Required] = &[
 pub const REQUIRED: &[(&str, &str, &[Required])] = &[
     ("claude", "2.1.312", CLAUDE_CODE),
     ("claude", "2.1.316", CLAUDE_CODE),
+    ("claude", "2.1.318", CLAUDE_CODE),
     (
         "codex",
         "0.165.0",
