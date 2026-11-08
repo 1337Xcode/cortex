@@ -3,7 +3,8 @@
 //! holds no space and no character a shell reads (letters, digits, `.`, `_`, `-`, `/` and a drive's
 //! `:`) is written bare, with `/` between folders, which every one of these shells runs as it is;
 //! any other path is quoted for the agent's shell, and is not written for a shell Cortex does not
-//! know, since a wrong quote would run something else.
+//! know, or for `cmd` when the path holds a character `cmd` reads between quotes, since a wrong
+//! quote would run something else.
 
 /// The shell an agent hands a hook's command to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,10 +46,19 @@ fn written(program: &str, shell: Shell) -> Option<String> {
     }
     match shell {
         Shell::Posix => Some(format!("'{}'", forward.replace('\'', r"'\''"))),
-        // A Windows path holds no double quote, so one pair quotes it whole.
-        Shell::Cmd if !program.contains('"') => Some(format!("\"{program}\"")),
+        Shell::Cmd if !program.chars().any(is_special_to_cmd) => Some(format!("\"{program}\"")),
         Shell::Cmd | Shell::Unknown => None,
     }
+}
+
+/// Whether `char` changes what `cmd /c` runs even between double quotes: `%` and `!` expand a
+/// variable there, and with any of the others between its two quotes `cmd /c` strips the first
+/// and the last quote of its line instead of keeping them, which splits the path at its space.
+fn is_special_to_cmd(char: char) -> bool {
+    matches!(
+        char,
+        '"' | '%' | '!' | '&' | '<' | '>' | '(' | ')' | '@' | '^' | '|'
+    )
 }
 
 #[cfg(test)]
@@ -101,5 +111,27 @@ mod tests {
             Some(r#""C:\Users\Ann Lee\.cargo\bin\cortex.exe" hook --agent junie --event Stop"#)
         );
         assert_eq!(hook_command(windows, "qwen", "Stop", Shell::Unknown), None);
+    }
+
+    /// A Windows path that `cmd` would read differently between quotes is not written for it: a
+    /// `%` expands a variable (`C:\100%\cortex.exe`), and parentheses make `cmd /c` drop the
+    /// quotes (`C:\Program Files (x86)\cortex.exe`). A POSIX shell takes both in single quotes.
+    #[test]
+    fn a_path_cmd_reads_differently_is_not_written_for_it() {
+        for path in [
+            r"C:\100% done\cortex.exe",
+            r"C:\Program Files (x86)\cortex.exe",
+            r"C:\a&b\cortex.exe",
+        ] {
+            assert_eq!(
+                hook_command(path, "junie", "Stop", Shell::Cmd),
+                None,
+                "{path}"
+            );
+        }
+        assert_eq!(
+            hook_command("/opt/100% (x86)/cortex", "junie", "Stop", Shell::Posix).as_deref(),
+            Some("'/opt/100% (x86)/cortex' hook --agent junie --event Stop")
+        );
     }
 }
