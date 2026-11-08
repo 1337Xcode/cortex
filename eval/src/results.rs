@@ -1,7 +1,8 @@
 //! A results folder: `runs.json`, each completed run's counts, written as each run ends;
 //! `summary.json` and `summary.txt`, what the runs add up to, written once all have. A summary can
 //! be rebuilt from the runs, so that a change to how runs add up reaches results already made
-//! without running their sessions again.
+//! without running their sessions again. A treated arm's folder also holds `comparison.json` and
+//! `comparison.txt` once it is compared with a held-out arm's.
 
 use std::path::Path;
 
@@ -9,6 +10,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
+use crate::compare;
 use crate::report::{self, Incomplete};
 use crate::run::TaskRun;
 
@@ -20,6 +22,12 @@ const SUMMARY_FILE: &str = "summary.json";
 
 /// The file the summary goes to as text.
 const SUMMARY_TEXT_FILE: &str = "summary.txt";
+
+/// The file a comparison with the held-out arm goes to as JSON, in the treated arm's folder.
+const COMPARISON_FILE: &str = "comparison.json";
+
+/// The file the comparison goes to as text.
+const COMPARISON_TEXT_FILE: &str = "comparison.txt";
 
 /// What a rebuild keeps from the summary written when the evaluation ran: the runs that could not
 /// complete, which `runs.json` does not hold.
@@ -69,6 +77,26 @@ pub(crate) fn rebuild(folder: &Path) -> anyhow::Result<Vec<String>> {
     let runs: Vec<TaskRun> = read_json(&folder.join(RUNS_FILE))?;
     let written: Written = read_json(&folder.join(SUMMARY_FILE))?;
     write_summary(folder, &runs, &written.incomplete)
+}
+
+/// Compares the runs in `treated`'s `runs.json` with those in `held_out`'s, paired by task (see
+/// [`compare`]), writes the comparison to `treated`'s `comparison.json` and `comparison.txt`, and
+/// returns its lines.
+///
+/// # Errors
+///
+/// A `runs.json` cannot be read or is not what the runner writes, or the comparison cannot be
+/// written.
+pub(crate) fn write_comparison(treated: &Path, held_out: &Path) -> anyhow::Result<Vec<String>> {
+    let on: Vec<TaskRun> = read_json(&treated.join(RUNS_FILE))?;
+    let off: Vec<TaskRun> = read_json(&held_out.join(RUNS_FILE))?;
+    let groups = compare::compare(&on, &off);
+    write_json(&treated.join(COMPARISON_FILE), &groups)?;
+    let text = compare::lines(&groups);
+    let path = treated.join(COMPARISON_TEXT_FILE);
+    std::fs::write(&path, format!("{}\n", text.join("\n")))
+        .with_context(|| format!("writing {}", path.display()))?;
+    Ok(text)
 }
 
 /// The JSON file at `path` as a `T`.

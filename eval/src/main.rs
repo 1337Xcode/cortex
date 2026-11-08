@@ -1,12 +1,14 @@
 //! `cortex-eval`: Cortex's evaluation suite. `cortex-eval check` reads every task and testbed and
 //! says what is wrong with them; `cortex-eval run` runs tasks with a real agent in fresh copies of
 //! their testbeds and writes what the runs took to a results folder, as counts only;
-//! `cortex-eval report` rebuilds a results folder's summary from its runs.
+//! `cortex-eval report` rebuilds a results folder's summary from its runs; `cortex-eval compare`
+//! sets a treated arm's runs beside a held-out arm's, paired by task.
 //!
 //! The suite's files are this crate's own: `testbeds.toml`, `tasks/<id>.toml` and the checks in
 //! `checks/`.
 
 mod agent;
+mod compare;
 mod process;
 mod report;
 mod results;
@@ -53,6 +55,14 @@ enum Command {
     Report {
         /// The results folder, holding `runs.json` and `summary.json`.
         folder: PathBuf,
+    },
+    /// Compare a treated arm's runs with a held-out arm's, paired by task, and write the
+    /// comparison to the treated arm's folder.
+    Compare {
+        /// The treated arm's results folder, holding `runs.json`.
+        treated: PathBuf,
+        /// The held-out arm's results folder, holding `runs.json`.
+        held_out: PathBuf,
     },
 }
 
@@ -111,6 +121,10 @@ fn main() -> anyhow::Result<()> {
         Command::Run(args) => run(&args),
         Command::Report { folder } => {
             say(&results::rebuild(&folder)?);
+            Ok(())
+        }
+        Command::Compare { treated, held_out } => {
+            say(&results::write_comparison(&treated, &held_out)?);
             Ok(())
         }
     }
