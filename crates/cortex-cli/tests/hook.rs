@@ -497,17 +497,27 @@ fn a_silent_or_foreign_daemon_is_left_silently() -> TestResult {
     assert!(call.took < Duration::from_secs(20), "{:?}", call.took);
     assert_eq!(kinds(&silent.requests()?), ["hello", "retrieve"]);
 
-    let foreign = FakeDaemon::start(&repo, home.path(), Script::Mismatch("99.0.0"))?;
-    let call = hook(
-        &["--agent", "claude", "--event", "Stop"],
-        stop_payload(&repo)?,
-        Duration::ZERO,
-        home.path(),
-    )?;
-    assert!(call.is_silent_success(), "{:?}", call.output);
     // A daemon of a newer Cortex is left alone: the hook sends nothing after its handshake and
-    // its request, at a stop strict mode's reason.
-    assert_eq!(kinds(&foreign.requests()?), ["hello", "stop_reason"]);
+    // its request, at a stop strict mode's reason. On a loaded machine the hook may give up at its
+    // deadline before the fake daemon's thread reads the handshake, and the fake daemon then reads
+    // nothing: that call shows nothing of what is sent, so the call is made again, at most three
+    // times, until the handshake is read.
+    let mut read = Vec::new();
+    for _ in 0..3 {
+        let foreign = FakeDaemon::start(&repo, home.path(), Script::Mismatch("99.0.0"))?;
+        let call = hook(
+            &["--agent", "claude", "--event", "Stop"],
+            stop_payload(&repo)?,
+            Duration::ZERO,
+            home.path(),
+        )?;
+        assert!(call.is_silent_success(), "{:?}", call.output);
+        read = kinds(&foreign.requests()?);
+        if !read.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(read, ["hello", "stop_reason"]);
     Ok(())
 }
 
