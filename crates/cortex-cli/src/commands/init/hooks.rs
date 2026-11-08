@@ -163,9 +163,17 @@ impl Settings {
                 agent: agent.to_owned(),
             },
         };
+        // A user's file serves every repository, and only `--scope user` takes Cortex's hooks
+        // out of it again.
+        let reach = match self.owner {
+            Owner::User => {
+                ", which serve every repository; `cortex uninstall --scope user` takes them out"
+            }
+            Owner::Repository { .. } => "",
+        };
         Change {
             said: format!(
-                "{}: hooks written to {}",
+                "{}: hooks written to {}{reach}",
                 self.setup.agent.title(),
                 self.file.display()
             ),

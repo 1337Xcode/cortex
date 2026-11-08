@@ -178,33 +178,43 @@ fn purge_or_keep(
     }
 }
 
-/// The note to give when the user's own Claude Code settings hold Cortex's hooks, which run in
-/// every repository and which only `--scope user` takes out; `None` when they hold none.
-fn users_hooks(program: &str) -> Option<String> {
-    let settings = std::env::home_dir()?.join(".claude").join("settings.json");
-    let found = read_text_file(&settings, MAX_SETTINGS_BYTES)
-        .map_err(anyhow::Error::from)
-        .and_then(|text| {
-            text.map_or(Ok(Vec::new()), |text| {
-                crate::agents::settings::cortex_commands(
-                    &text,
-                    program,
-                    &crate::agents::claude::STYLE,
-                )
-            })
-        });
-    match found {
-        Ok(commands) if commands.is_empty() => None,
-        Ok(_) => Some(format!(
-            "note: {} holds Cortex's hooks, which run in every repository; `cortex uninstall \
-             --scope user` takes them out",
-            settings.display()
-        )),
-        Err(error) => Some(format!(
-            "note: could not tell whether {} holds Cortex's hooks: {error:#}",
-            settings.display()
-        )),
-    }
+/// The notes to give for each agent whose user's own settings hold Cortex's hooks, which run in
+/// every repository and which only `--scope user` takes out (init writes them there for an
+/// agent with no file of the repository's): one per file holding them, none when none does.
+fn users_hooks(program: &str) -> Vec<String> {
+    let Some(home) = std::env::home_dir() else {
+        return Vec::new();
+    };
+    crate::agents::SETUPS
+        .iter()
+        .filter_map(|setup| {
+            let hooks = setup.hooks.as_ref()?;
+            let settings = hooks
+                .user
+                .split('/')
+                .fold(home.clone(), |path, part| path.join(part));
+            let found = read_text_file(&settings, MAX_SETTINGS_BYTES)
+                .map_err(anyhow::Error::from)
+                .and_then(|text| {
+                    text.map_or(Ok(Vec::new()), |text| {
+                        crate::agents::settings::cortex_commands(&text, program, &hooks.style)
+                    })
+                });
+            let title = setup.agent.title();
+            match found {
+                Ok(commands) if commands.is_empty() => None,
+                Ok(_) => Some(format!(
+                    "note: {} holds Cortex's {title} hooks, which run in every repository; \
+                     `cortex uninstall --scope user` takes them out",
+                    settings.display()
+                )),
+                Err(error) => Some(format!(
+                    "note: could not tell whether {} holds Cortex's {title} hooks: {error:#}",
+                    settings.display()
+                )),
+            }
+        })
+        .collect()
 }
 
 /// Writes what `report` holds: its lines to stdout, then its notes and failures to stderr.

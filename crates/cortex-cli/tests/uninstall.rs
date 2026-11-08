@@ -635,8 +635,8 @@ fn uninstall_for_the_user_undoes_the_user_s_files() -> TestResult {
     assert!(project.is_success, "{}", project.stderr);
     assert!(settings.exists() && config.exists());
     let note = format!(
-        "note: {} holds Cortex's hooks, which run in every repository; `cortex uninstall --scope \
-         user` takes them out\n",
+        "note: {} holds Cortex's Claude Code hooks, which run in every repository; `cortex \
+         uninstall --scope user` takes them out\n",
         home.path().join(".claude").join("settings.json").display()
     );
     assert!(project.stdout.ends_with(&note), "{}", project.stdout);

@@ -60,11 +60,29 @@ fn init_sets_up_codex_in_the_user_s_hooks_file() -> TestResult {
     assert!(done.stdout.lines().any(|line| line
         == "Codex: to do yourself: trust Cortex's hooks in Codex's `/hooks` (Codex runs no hook \
             it has not been told to trust)"));
+    let written = done
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("Codex: hooks written to "))
+        .ok_or_else(|| done.stdout.clone())?;
+    assert!(
+        written.ends_with(
+            "hooks.json, which serve every repository; `cortex uninstall --scope user` takes \
+             them out"
+        ),
+        "{written}"
+    );
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command.args(["uninstall", "--root"]).arg(repo.path());
     let undone = run(&mut command, home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     assert!(file.exists());
+    let note = format!(
+        "note: {} holds Cortex's Codex hooks, which run in every repository; `cortex uninstall \
+         --scope user` takes them out\n",
+        file.display()
+    );
+    assert!(undone.stdout.ends_with(&note), "{}", undone.stdout);
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command
         .args(["uninstall", "--scope", "user", "--root"])
