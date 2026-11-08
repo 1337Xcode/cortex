@@ -40,6 +40,7 @@ pub(crate) const SETUP: Setup = Setup {
             ".config/devin/config.json"
         },
         style: STYLE,
+        read_instead: None,
     }),
     told: &[],
 };

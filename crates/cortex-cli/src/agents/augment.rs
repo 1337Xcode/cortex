@@ -31,6 +31,7 @@ pub(crate) const SETUP: Setup = Setup {
         project: Some(".augment/settings.local.json"),
         user: ".augment/settings.json",
         style: STYLE,
+        read_instead: None,
     }),
     told: &[],
 };

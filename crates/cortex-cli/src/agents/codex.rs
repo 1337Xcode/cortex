@@ -33,6 +33,7 @@ pub(crate) const SETUP: Setup = Setup {
         project: None,
         user: ".codex/hooks.json",
         style: STYLE,
+        read_instead: None,
     }),
     told: &[
         "trust Cortex's hooks in Codex's `/hooks` (Codex runs no hook it has not been told to trust)",

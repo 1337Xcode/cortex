@@ -32,6 +32,7 @@ pub(crate) const SETUP: Setup = Setup {
         project: None,
         user: ".qwen/settings.json",
         style: STYLE,
+        read_instead: None,
     }),
     told: &[],
 };

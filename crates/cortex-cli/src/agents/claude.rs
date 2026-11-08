@@ -25,6 +25,7 @@ pub(crate) const SETUP: super::Setup = super::Setup {
         project: Some(".claude/settings.local.json"),
         user: ".claude/settings.json",
         style: STYLE,
+        read_instead: None,
     }),
     told: &[],
 };

@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use cortex_core::{MAX_SETTINGS_BYTES, read_text_file};
 
 use super::{Change, Owner, Scope, place};
@@ -64,6 +64,12 @@ pub(super) fn planned(
     };
     place::writable(&file)?;
     let before = read_text_file(&file, MAX_SETTINGS_BYTES)?;
+    if before.is_none()
+        && owner == Owner::User
+        && let Some(read_instead) = hooks.read_instead
+    {
+        refuse_hidden_hooks(read_instead, setup)?;
+    }
     let program = crate::program::this_program()?;
     let after = settings::merged(before.as_deref(), &program, adapter.hooks(), &hooks.style)
         .with_context(|| {
@@ -80,6 +86,43 @@ pub(super) fn planned(
         after,
         owner,
     }))
+}
+
+/// Refuses when `read_instead`, a file of the home folder that `setup`'s agent reads hooks from
+/// while its own hooks file is absent, holds hooks: making that file would hide them. A file that
+/// is not JSON cannot say, and is refused too.
+///
+/// # Errors
+///
+/// No home folder, a file that cannot be read, or one holding hooks or not JSON.
+fn refuse_hidden_hooks(read_instead: &str, setup: &Setup) -> anyhow::Result<()> {
+    let home = std::env::home_dir().context("finding the home folder")?;
+    let path = read_instead
+        .split('/')
+        .fold(home, |path, part| path.join(part));
+    let Some(text) = read_text_file(&path, MAX_SETTINGS_BYTES)? else {
+        return Ok(());
+    };
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let holds = serde_json::from_str::<serde_json::Value>(text).map(|value| {
+        value
+            .get("hooks")
+            .is_some_and(|hooks| !hooks.as_object().is_some_and(serde_json::Map::is_empty))
+    });
+    let title = setup.agent.title();
+    match holds {
+        Ok(false) => Ok(()),
+        Ok(true) => bail!(
+            "{} holds hooks, which {title} reads only while it has no hooks file of its own: \
+             Cortex's would hide them; move them into that file first",
+            path.display()
+        ),
+        Err(error) => bail!(
+            "{} is not JSON ({error}), so whether it holds hooks {title} would stop reading \
+             cannot be told",
+            path.display()
+        ),
+    }
 }
 
 /// `path`'s folder, if it has one, and its file name.

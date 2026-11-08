@@ -55,6 +55,10 @@ pub(crate) struct HooksFile {
     pub(crate) user: &'static str,
     /// How the file holds Cortex's hooks.
     pub(crate) style: Style,
+    /// The user's file, relative to the home folder, that the agent reads hooks from while
+    /// [`HooksFile::user`] is absent: when it holds hooks, making the user's file would hide
+    /// them, so init does not.
+    pub(crate) read_instead: Option<&'static str>,
 }
 
 /// Every agent `cortex init` sets up, in the order it says them.
@@ -173,6 +177,7 @@ mod tests {
                 project: None,
                 user: ".none-agent/hooks.json",
                 style: claude::STYLE,
+                read_instead: None,
             }),
             told: &[],
         };

@@ -267,3 +267,44 @@ fn init_leaves_out_a_found_agent_it_cannot_set_up() -> TestResult {
     assert_eq!(std::fs::read_to_string(&codex_hooks)?, "not json");
     Ok(())
 }
+
+/// Droid reads hooks from `~/.factory/settings.json` while `~/.factory/hooks.json` is absent: with
+/// hooks kept there, init asked for Droid refuses, naming the file, and makes no `hooks.json`,
+/// which would hide them; the settings stay as they were. Without hooks there it is set up.
+#[test]
+fn init_does_not_hide_droid_s_hooks_in_its_settings() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
+    let factory = home.path().join(".factory");
+    std::fs::create_dir(&factory)?;
+    let settings = factory.join("settings.json");
+    let kept = r#"{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "notify"}]}]}}"#;
+    std::fs::write(&settings, kept)?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command
+        .args(["init", "--yes", "--agents", "droid", "--root"])
+        .arg(repo.path());
+    let refused = run(&mut command, home.path(), &[])?;
+    assert!(!refused.is_success);
+    assert!(
+        refused.stderr.contains(
+            "settings.json holds hooks, which Droid reads only while it has no hooks file of its \
+             own: Cortex's would hide them; move them into that file first"
+        ),
+        "{}",
+        refused.stderr
+    );
+    assert!(!factory.join("hooks.json").exists());
+    assert_eq!(std::fs::read_to_string(&settings)?, kept);
+    std::fs::write(&settings, r#"{"theme": "dark"}"#)?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command
+        .args(["init", "--yes", "--agents", "droid", "--root"])
+        .arg(repo.path());
+    let done = run(&mut command, home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    assert!(factory.join("hooks.json").is_file());
+    assert_eq!(std::fs::read_to_string(&settings)?, r#"{"theme": "dark"}"#);
+    Ok(())
+}
