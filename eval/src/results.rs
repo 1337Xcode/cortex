@@ -148,6 +148,7 @@ mod tests {
             },
             shown: None,
             warnings: None,
+            config: Vec::new(),
         }
     }
 

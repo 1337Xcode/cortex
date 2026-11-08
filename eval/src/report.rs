@@ -324,6 +324,7 @@ mod tests {
             given,
             shown: None,
             warnings: None,
+            config: Vec::new(),
         }
     }
 

@@ -53,6 +53,9 @@ pub(crate) struct Settings {
     pub(crate) checks: PathBuf,
     /// The share of tasks Cortex holds out: 0 for the treated arm, 1 for the held-out arm.
     pub(crate) holdout_share: f64,
+    /// Cortex configuration lines every run's copy gets besides the holdout share, each
+    /// `key = value` with a dotted key, as TOML reads them.
+    pub(crate) config: Vec<String>,
 }
 
 /// What Cortex gave the measured session, as its store holds it.
@@ -91,6 +94,10 @@ pub(crate) struct TaskRun {
     /// results from before the runner recorded them.
     #[serde(default)]
     pub(crate) warnings: Option<Warnings>,
+    /// The configuration lines the run's copy got besides the holdout share; none in results from
+    /// before the runner set any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) config: Vec<String>,
 }
 
 /// Runs `task` in a copy of `testbed`, from `from` when given, as run number `run`.
@@ -140,7 +147,19 @@ pub(crate) fn run_task(
         given,
         shown: Some(shown),
         warnings: Some(warnings),
+        config: settings.config.clone(),
     })
+}
+
+/// The configuration a run's copy gets: the arm's holdout share, then `lines`, each a dotted key
+/// at the top of the file, where no table header can claim it.
+pub(crate) fn config_text(holdout_share: f64, lines: &[String]) -> String {
+    let mut text = format!("holdout.share = {holdout_share}\n");
+    for line in lines {
+        text.push_str(line);
+        text.push('\n');
+    }
+    text
 }
 
 /// The folder run number `run` of task `task` works in, under `base`.
@@ -180,7 +199,7 @@ fn install((repo, home): (&Path, &Path), folder: &Path, settings: &Settings) -> 
     std::fs::create_dir_all(repo.join(".cortex"))?;
     std::fs::write(
         repo.join(".cortex/config.toml"),
-        format!("[holdout]\nshare = {}\n", settings.holdout_share),
+        config_text(settings.holdout_share, &settings.config),
     )?;
     let mut init = cortex(settings, repo, home);
     init.args(["init", "--yes", "--agents", "claude"]);
@@ -483,6 +502,29 @@ mod tests {
         let taken = taken_folders(base.path(), &["fix-tax"], 2);
         assert_eq!(taken, [base.path().join("fix-tax-2")]);
         assert!(taken_folders(base.path(), &["fix-tax"], 1).is_empty());
+        Ok(())
+    }
+
+    /// A run's configuration, as Cortex loads it: the treated arm's share, 0, then a warning
+    /// setting given on the command line, each a dotted key at the top, so neither is read as part
+    /// of the other's table and Cortex warns of no unknown key.
+    #[test]
+    fn a_run_s_configuration_reads_as_cortex_loads_it() -> anyhow::Result<()> {
+        let text = config_text(0.0, &["warnings.max_per_edit = 0".to_owned()]);
+        assert_eq!(
+            text,
+            "holdout.share = 0
+warnings.max_per_edit = 0
+"
+        );
+        let loaded = cortex_core::load_config(&[cortex_core::ConfigLayer {
+            origin: "config.toml",
+            text: &text,
+            is_users: false,
+        }])?;
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(loaded.config.holdout_share.abs() < f64::EPSILON);
+        assert_eq!(loaded.config.warnings.max_per_edit, 0);
         Ok(())
     }
 

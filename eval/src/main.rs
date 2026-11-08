@@ -105,6 +105,10 @@ struct RunArgs {
     /// Claude Code's configuration folder, where its login is; `~/.claude` when left out.
     #[arg(long)]
     claude_config: Option<PathBuf>,
+    /// A Cortex configuration key every run gets, as `key=value` with the value in TOML
+    /// (`warnings.max_per_edit=0`); kept with each run's results.
+    #[arg(long = "set", value_name = "KEY=VALUE")]
+    set: Vec<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -128,6 +132,29 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+/// The configuration lines `set` asks for, each `key=value` written `key = value`.
+///
+/// # Errors
+///
+/// An entry with no `=`, an empty key or value, or a key that is not dotted words.
+fn config_lines(set: &[String]) -> anyhow::Result<Vec<String>> {
+    set.iter()
+        .map(|entry| {
+            let (key, value) = entry
+                .split_once('=')
+                .with_context(|| format!("`{entry}` is not key=value"))?;
+            let key = key.trim();
+            let is_key = key.split('.').all(|word| {
+                !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            });
+            if !is_key || value.trim().is_empty() {
+                bail!("`{entry}` is not a dotted key and a value");
+            }
+            Ok(format!("{key} = {}", value.trim()))
+        })
+        .collect()
 }
 
 /// The suite in `folder`: its testbeds, and its tasks by id, each naming a listed testbed.
@@ -207,6 +234,7 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
             Arm::Treated => 0.0,
             Arm::HeldOut => 1.0,
         },
+        config: config_lines(&args.set)?,
     };
     let ids: Vec<&str> = chosen.iter().map(|task| task.id.as_str()).collect();
     let taken = taken_folders(&args.base, &ids, args.runs);
@@ -268,5 +296,35 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
 fn say(lines: &[String]) {
     for line in lines {
         println!("{line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--set` entries become dotted TOML lines; one with no `=`, an empty or broken key or an
+    /// empty value is refused, naming the entry.
+    #[test]
+    fn set_entries_become_configuration_lines() -> anyhow::Result<()> {
+        let lines = config_lines(&[
+            "warnings.max_per_edit=0".to_owned(),
+            "retrieval.gate = \"off\"".to_owned(),
+        ])?;
+        assert_eq!(
+            lines,
+            ["warnings.max_per_edit = 0", "retrieval.gate = \"off\""]
+        );
+        for entry in [
+            "no_equals",
+            "=1",
+            "a..b=1",
+            "a b=1",
+            "warnings.max_per_edit= ",
+        ] {
+            let refused = config_lines(&[entry.to_owned()]);
+            assert!(refused.is_err(), "{entry}");
+        }
+        Ok(())
     }
 }
