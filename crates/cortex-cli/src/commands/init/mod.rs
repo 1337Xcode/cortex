@@ -147,16 +147,30 @@ struct Files {
     ignores: Option<(Ignored, Found)>,
     /// The settings each agent's hooks go to.
     settings: Vec<hooks::Settings>,
+    /// The agents set up: their hooks planned, or with no hooks file Cortex writes; in order.
+    set_up: Vec<&'static Setup>,
+    /// What init says of each agent it found on this machine whose hooks cannot be planned: it
+    /// is left out, and the others are set up all the same.
+    not_set_up: Vec<String>,
 }
 
 impl Files {
-    /// The files init may change for `root` at `scope`, with the hooks of each of `setups`.
+    /// The files init may change for `root` at `scope`, with the hooks of each of `setups`, which
+    /// the command line named when `are_named`. A found agent whose hooks cannot be planned (its
+    /// settings are not the JSON it reads, or this program's path cannot be written for its
+    /// shell) is left out and said; a named one stops init.
     ///
     /// # Errors
     ///
     /// A file is read-only, cannot be read, would be written outside the repository or through a
-    /// link git does not read, or git cannot say what it ignores.
-    fn found(scope: Scope, root: &Root, setups: &[&'static Setup]) -> anyhow::Result<Self> {
+    /// link git does not read, or git cannot say what it ignores; or a named agent's hooks cannot
+    /// be planned.
+    fn found(
+        scope: Scope,
+        root: &Root,
+        setups: &[&'static Setup],
+        are_named: bool,
+    ) -> anyhow::Result<Self> {
         let user = UserFolder::of_current_user().context("finding the home folder")?;
         let repository_config = place::file_in(&root.folder, Some(".cortex"), "config.toml")?;
         let ignores = match root.without_git {
@@ -167,17 +181,29 @@ impl Files {
                 Some((ignored, Found::read(file)?))
             }
         };
+        let (mut settings, mut set_up, mut not_set_up) = (Vec::new(), Vec::new(), Vec::new());
+        for &setup in setups {
+            match hooks::planned(scope, &root.folder, setup) {
+                Ok(planned) => {
+                    settings.extend(planned);
+                    set_up.push(setup);
+                }
+                Err(error) if !are_named => not_set_up.push(format!(
+                    "note: {} was found but is not set up: {error:#}; `cortex init --agents {}` \
+                     sets it up once that is fixed",
+                    setup.agent.title(),
+                    setup.agent.name()
+                )),
+                Err(error) => return Err(error),
+            }
+        }
         Ok(Self {
             users_config: Found::read(place::file_beside(user.path(), "config.toml")?)?,
             repository_config: Found::read(repository_config)?,
             ignores,
-            settings: setups
-                .iter()
-                .map(|setup| hooks::planned(scope, &root.folder, setup))
-                .collect::<anyhow::Result<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .collect(),
+            settings,
+            set_up,
+            not_set_up,
         })
     }
 
@@ -268,7 +294,7 @@ struct Change {
 /// repository, or a backup or a write that fails.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let root = found_root(args)?;
-    let setups = selected(&args.agents, &root.folder)?;
+    let (setups, are_named) = selected(&args.agents, &root.folder)?;
     if setups.is_empty() {
         output::line(&format!(
             "note: no agent Cortex sets up was found on this machine, so no hooks are written; \
@@ -284,7 +310,11 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
             .context("the Claude Code adapter names no versions")?;
         check_claude_code(&root, versions)?;
     }
-    let files = Files::found(args.scope, &root, &setups)?;
+    let files = Files::found(args.scope, &root, &setups, are_named)?;
+    for line in &files.not_set_up {
+        output::line(line)?;
+    }
+    let set_up = files.set_up.clone();
     let kept = files.kept()?;
     let stdin = io::stdin();
     let mut terminal = stdin.is_terminal().then(|| stdin.lock());
@@ -292,12 +322,17 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let changes = files.changes(kept, answers)?;
     apply(&root.folder, changes)?;
     daemon::started_and_indexed(&root.folder)?;
-    for setup in &setups {
+    for setup in &set_up {
         for step in setup.told {
             output::line(&format!("{}: to do yourself: {step}", setup.agent.title()))?;
         }
     }
-    let failed = if has_claude { checked(root.folder)? } else { 0 };
+    let is_claude_set_up = set_up.iter().any(|setup| setup.agent.name() == "claude");
+    let failed = if is_claude_set_up {
+        checked(root.folder)?
+    } else {
+        0
+    };
     if failed > 0 {
         output::line(&format!(
             "note: init is done, and {failed} of doctor's checks failed; each says what to do, \
@@ -310,31 +345,36 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
 
 /// The agents init sets up: those `names` name, or, when it names none, every agent found on this
 /// machine (outside the repository at `root`), Claude Code as any other: init never writes hooks
-/// for an agent that is not there.
+/// for an agent that is not there. Named agents come each once, in the order first named, and
+/// with `true`: the user asked for them.
 ///
 /// # Errors
 ///
 /// A name that is no agent Cortex sets up, or no home folder.
-fn selected(names: &[String], root: &Path) -> anyhow::Result<Vec<&'static Setup>> {
+fn selected(names: &[String], root: &Path) -> anyhow::Result<(Vec<&'static Setup>, bool)> {
     if !names.is_empty() {
-        return names
-            .iter()
-            .map(|name| {
-                agents::setup(name.trim()).with_context(|| {
-                    format!(
-                        "`{name}` is not an agent Cortex sets up; it sets up {}",
-                        known_agents()
-                    )
-                })
-            })
-            .collect();
+        let mut named: Vec<&'static Setup> = Vec::new();
+        for name in names {
+            let setup = agents::setup(name.trim()).with_context(|| {
+                format!(
+                    "`{name}` is not an agent Cortex sets up; it sets up {}",
+                    known_agents()
+                )
+            })?;
+            // A second plan of the same file would find it changed by the first.
+            if !named.iter().any(|known| std::ptr::eq(*known, setup)) {
+                named.push(setup);
+            }
+        }
+        return Ok((named, true));
     }
     let home = std::env::home_dir().context("finding the home folder")?;
-    Ok(agents::SETUPS
+    let found = agents::SETUPS
         .iter()
         .copied()
         .filter(|setup| agents::is_found(setup, &home, root))
-        .collect())
+        .collect();
+    Ok((found, false))
 }
 
 /// The names of every agent init sets up, as `--agents` takes them, in its order.

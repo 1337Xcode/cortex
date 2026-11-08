@@ -923,8 +923,8 @@ fn init_creates_the_settings_file() -> TestResult {
     Ok(())
 }
 
-/// A settings file that is not JSON is refused with where it breaks and none of its text, and is
-/// left as it was, with nothing backed up.
+/// A settings file of an agent named on the command line that is not JSON is refused with where
+/// it breaks and none of its text, and is left as it was, with nothing backed up.
 #[test]
 fn init_refuses_a_file_it_cannot_read() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -933,7 +933,7 @@ fn init_refuses_a_file_it_cannot_read() -> TestResult {
     std::fs::create_dir_all(repo.path().join(".claude"))?;
     std::fs::write(&settings, "{\"token\": oops")?;
     let _daemon = StopsDaemon::of(repo.path(), home.path());
-    let run = init(repo.path(), home.path(), &[])?;
+    let run = init(repo.path(), home.path(), &["--agents", "claude"])?;
     assert!(!run.is_success);
     assert!(
         run.stderr.contains("it is not JSON (line 1, column ") && !run.stderr.contains("oops"),
@@ -979,7 +979,8 @@ fn init_for_the_user_writes_the_home_settings() -> TestResult {
     Ok(())
 }
 
-/// A settings file the user made read-only is left as it is: init says so and backs nothing up.
+/// A settings file the user made read-only, of an agent named on the command line, is left as it
+/// is: init says so and backs nothing up.
 #[test]
 fn init_leaves_a_read_only_file() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -991,7 +992,7 @@ fn init_leaves_a_read_only_file() -> TestResult {
     permissions.set_readonly(true);
     std::fs::set_permissions(&settings, permissions)?;
     let _daemon = StopsDaemon::of(repo.path(), home.path());
-    let run = init(repo.path(), home.path(), &[])?;
+    let run = init(repo.path(), home.path(), &["--agents", "claude"])?;
     assert!(!run.is_success);
     assert!(run.stderr.contains("is read-only"), "{}", run.stderr);
     assert_eq!(std::fs::read_to_string(&settings)?, "{}");

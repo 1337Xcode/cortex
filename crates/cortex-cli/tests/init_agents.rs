@@ -223,3 +223,47 @@ fn init_sets_up_only_the_agents_it_finds() -> TestResult {
     assert_eq!(written, [".claude", ".codex", ".cortex"]);
     Ok(())
 }
+
+/// An agent named twice is set up once; Codex, found by its folder with a hooks file that is not
+/// JSON, is left out with a note while Qwen Code, found by its folder, is set up, and the hooks
+/// file is left as it was; named, Codex with that file stops init.
+#[test]
+fn init_leaves_out_a_found_agent_it_cannot_set_up() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let _daemon = StopsDaemon::of(repo.path(), home.path());
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command
+        .args(["init", "--yes", "--agents", "codex,codex", "--root"])
+        .arg(repo.path());
+    let done = run(&mut command, home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let codex_hooks = home.path().join(".codex").join("hooks.json");
+    std::fs::write(&codex_hooks, "not json")?;
+    std::fs::write(home.path().join(".codex").join("config.toml"), "")?;
+    std::fs::create_dir(home.path().join(".qwen"))?;
+    std::fs::write(home.path().join(".qwen").join("installation_id"), "x")?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command.args(["init", "--yes", "--root"]).arg(repo.path());
+    let done = run(&mut command, home.path(), &[])?;
+    assert!(done.is_success, "{}", done.stderr);
+    let note = done
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("note: Codex was found but is not set up: "))
+        .ok_or_else(|| done.stdout.clone())?;
+    assert!(
+        note.ends_with("; `cortex init --agents codex` sets it up once that is fixed"),
+        "{note}"
+    );
+    assert_eq!(std::fs::read_to_string(&codex_hooks)?, "not json");
+    assert!(home.path().join(".qwen").join("settings.json").is_file());
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command
+        .args(["init", "--yes", "--agents", "codex", "--root"])
+        .arg(repo.path());
+    let refused = run(&mut command, home.path(), &[])?;
+    assert!(!refused.is_success);
+    assert_eq!(std::fs::read_to_string(&codex_hooks)?, "not json");
+    Ok(())
+}
