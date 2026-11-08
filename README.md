@@ -91,12 +91,26 @@ history.
 - Warnings after edits named 32 files, of which 4 were read or edited afterwards. Most edits in
   these tasks did not need the file a warning named.
 
-Whether Cortex saves tokens, turns or time needs the same tasks run with Cortex holding them out,
-with at least 30 tasks on each side. A first pilot with 15 tasks a side
-(`eval/results/2026-11-06-e8bee2b-treated/`) showed no saving: the sessions given work orders took
-more input tokens than the held-out ones (27,378 more on average, 95% interval 428 to 54,230), and
-the same number of turns and tool calls. That is too few tasks to claim anything either way, and
-it is reported as measured.
+Whether Cortex saves tokens, turns or money is measured by running the same tasks twice, once with
+Cortex and once with Cortex holding every task out, and pairing each task's runs
+(`cortex-eval compare`). A first pilot, 15 tasks a side with 2 runs each
+(`eval/results/2026-11-06-e8bee2b-treated/comparison.txt`, 95% intervals from resampling tasks):
+
+- In the 8 tasks where Cortex gave the agent a work order, the measured sessions took 1.1 fewer
+  turns and tool calls (7.4 against 8.6; interval 0.4 to 1.9 fewer), and each run cost about 13%
+  less ($0.157 against $0.181; interval $0.009 to $0.041 less). Their input was 10,770 tokens
+  lower on average, which these few tasks do not settle (interval 27,500 lower to 6,850 higher).
+- In the 7 tasks where it gave none, the sessions took 1.6 more turns and 70,977 more input tokens
+  (intervals 0.4 to 2.6 more turns, 36,986 to 104,311 more tokens). Cortex told them only a
+  primer, read hints and warnings after edits, and over all the pilot's sessions everything it
+  told them was at most 1.42% of their input, so its texts do not account for this; why the
+  sessions differ is not known yet.
+- Over all 15 tasks the input was 27,378 tokens higher (interval 2,285 to 56,418), the turns and
+  tool calls the same within their interval (0.17 more; 0.77 fewer to 1.13 more), and each run
+  cost $0.008 less (interval $0.021 less to $0.005 more).
+
+Fifteen tasks a side is too few to state a saving overall. The next comparison runs 30 or more
+tasks a side once more tasks get a correct work order and the warnings are cut.
 
 ## Build and test
 
