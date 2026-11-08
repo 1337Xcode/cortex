@@ -169,8 +169,9 @@ fn cortex(settings: &Settings, repo: &Path, home: &Path) -> Command {
     command
 }
 
-/// Installs Cortex in `repo` with the arm's holdout share, then waits for its index and graph,
-/// logging each command in `folder`.
+/// Installs Cortex in `repo` for Claude Code, the agent the evaluation runs, named so that no other
+/// agent on this machine is set up, with the arm's holdout share; then waits for its index and
+/// graph, logging each command in `folder`.
 ///
 /// # Errors
 ///
@@ -182,7 +183,7 @@ fn install((repo, home): (&Path, &Path), folder: &Path, settings: &Settings) -> 
         format!("[holdout]\nshare = {}\n", settings.holdout_share),
     )?;
     let mut init = cortex(settings, repo, home);
-    init.args(["init", "--yes"]);
+    init.args(["init", "--yes", "--agents", "claude"]);
     let log = folder.join("init.log");
     if !run_logged(init, &log, COMMAND_WITHIN)?.success() {
         bail!("cortex init failed:\n{}", tail_of(&log));
