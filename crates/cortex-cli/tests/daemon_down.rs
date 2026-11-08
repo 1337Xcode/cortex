@@ -95,6 +95,15 @@ fn hook(event: &str, payload: &[u8], home: &Path) -> TestResult<(bool, Duration)
     Ok((is_silent, took))
 }
 
+/// What the hook log at `log` holds: nothing when there is none.
+fn logged(log: &Path) -> TestResult<String> {
+    match std::fs::read_to_string(log) {
+        Ok(text) => Ok(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// The captured payload each hook Cortex registers with Claude Code is sent: a session's start, a
 /// prompt, the moment before a read, an edit's result, a failed command's, a compaction's start,
 /// a subagent's start and end, the stop and the session's end.
@@ -138,7 +147,9 @@ fn warm_up() -> TestResult {
 /// does), tries the daemon, starts one and returns: exit code 0, nothing printed, nothing logged
 /// (a hook held past its hard timeout would log that it ran out of time), and a start marked. The
 /// bound on how long a call took is loose, since starting a process on a busy machine is slow: the
-/// budgets are the benchmarks' to check.
+/// budgets are the benchmarks' to check. A call that took its hook's hard timeout or longer, which
+/// a loaded machine can make of any call, may rightly have fallen open before the start and logged
+/// it: it shows neither, so it is made again, at most three times, and the last call counts.
 #[test]
 fn every_hook_is_silent_with_the_daemon_down() -> TestResult {
     let scene = Scene::new()?;
@@ -148,23 +159,31 @@ fn every_hook_is_silent_with_the_daemon_down() -> TestResult {
     let hooks = adapter("claude")
         .ok_or("no adapter for Claude Code")?
         .hooks();
+    let log = UserFolder::in_home(home).logs_folder().join("hook.log");
     for entry in hooks {
         let event = entry.event_name;
         let fixture = fixture_of(event).ok_or(event)?;
         let payload = payloads::payload(NEWEST, fixture, &repo)?;
-        if let Err(error) = std::fs::remove_file(scene.files.start_path())
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(error.into());
+        for call in 1..=3 {
+            if let Err(error) = std::fs::remove_file(scene.files.start_path())
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(error.into());
+            }
+            let logged_before = logged(&log)?.len();
+            let (is_silent, took) = hook(event, &payload, home)?;
+            assert!(is_silent, "{event}");
+            if took >= entry.hard_timeout && call < 3 {
+                continue;
+            }
+            assert!(took < Duration::from_secs(10), "{event}: {took:?}");
+            let logged = logged(&log)?;
+            assert_eq!(logged.get(logged_before..), Some(""), "{event}");
+            assert!(scene.files.start_path().exists(), "{event} made no start");
+            break;
         }
-        let (is_silent, took) = hook(event, &payload, home)?;
-        assert!(is_silent, "{event}");
-        assert!(took < Duration::from_secs(10), "{event}: {took:?}");
-        assert!(scene.files.start_path().exists(), "{event} made no start");
     }
     assert_eq!(hooks.len(), 10);
-    let log = UserFolder::in_home(home).logs_folder().join("hook.log");
-    assert!(!log.exists(), "{:?}", std::fs::read_to_string(&log));
     drop(held);
     Ok(())
 }
