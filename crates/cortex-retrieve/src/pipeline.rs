@@ -14,9 +14,10 @@ use std::path::Path;
 use std::time::Instant;
 
 use cortex_core::{GateFeatures, Identifier, RetrievalConfig, ScaleMode};
-use cortex_store::{NodeId, Queries};
+use cortex_store::{NodeId, Queries, StoreError};
 
 use crate::error::RetrieveError;
+use crate::facts::{ListedFile, OrderFact, order_facts};
 use crate::features::{Found, GATED_FILES, features_of};
 use crate::gate::{Rule, Shut, Verdict, decide};
 use crate::graph::Graph;
@@ -159,6 +160,7 @@ pub fn retrieve(
     let order = WorkOrder {
         basis: basis_of(rule, &reached.scored, &support),
         items: listed.iter().map(|entry| entry.item.clone()).collect(),
+        facts: facts_about(queries, graph, &listed)?,
     };
     let Some(rendered) = render(&order, request.root, &limits_of(request)) else {
         return Ok(silent(Silence::NothingToShow, Some(features), &weighed));
@@ -216,6 +218,7 @@ pub fn locate(
             verdict,
         },
         items: listed.iter().map(|entry| entry.item.clone()).collect(),
+        facts: facts_about(queries, graph, &listed)?,
     };
     let limits = Limits {
         max_files: limit,
@@ -336,6 +339,34 @@ fn reached(
         scored,
         is_out_of_time,
     }))
+}
+
+/// The active facts about the files of `listed`, as a work order weighs them over `graph`: each
+/// file with its node and the symbols of the spans listed of it.
+///
+/// # Errors
+///
+/// The store's errors.
+fn facts_about(
+    queries: Queries<'_>,
+    graph: &Graph<NodeId>,
+    listed: &[Listed],
+) -> Result<Vec<OrderFact>, StoreError> {
+    let files: Vec<ListedFile> = listed
+        .iter()
+        .filter_map(|entry| {
+            Some(ListedFile {
+                path: entry.item.path.clone(),
+                node: graph.id(entry.file)?,
+                shown: entry
+                    .spans
+                    .iter()
+                    .filter_map(|span| graph.id(span.symbol?))
+                    .collect(),
+            })
+        })
+        .collect();
+    order_facts(queries, &files)
 }
 
 /// The entries of `listed` the work order `rendered` wrote, each with only the spans whose lines it
@@ -513,6 +544,7 @@ mod tests {
             tokens: 0,
             written: vec![(2, vec![1]), (0, vec![0, 1])],
             shown: vec![(0, 1, LineRange::new(4, 5)?)],
+            facts: Vec::new(),
         };
         let written = written_of(&listed, &rendered);
         let files: Vec<u32> = written.iter().map(|entry| entry.file).collect();

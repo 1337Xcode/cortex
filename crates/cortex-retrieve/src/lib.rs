@@ -16,6 +16,7 @@ mod by_files;
 mod disk;
 mod error;
 mod exploration;
+mod facts;
 mod features;
 mod gate;
 mod graph;
@@ -46,6 +47,7 @@ mod warnings;
 pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
 pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
+pub use facts::{FactAt, ListedFile, MAX_ORDER_FACTS, OrderFact, order_facts};
 pub use features::{Found, GATED_FILES, MASSED_FILES, features_of};
 pub use gate::{
     AGREEING_KINDS, LEXICAL_BAR, Rule, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR, Shut, Verdict,

@@ -3,7 +3,8 @@
 //!
 //! The header says what agreed. "Start here" lists the items whose code is shown, each with its
 //! lines, the symbol they are for and why it is listed; "Also likely" the rest, by path and lines;
-//! "Current code" holds the shown spans' lines, numbered. A part with nothing in it is left out.
+//! "Current code" holds the shown spans' lines, numbered; "Project facts" the facts about the
+//! listed files that are true now (`crate::facts`). A part with nothing in it is left out.
 //! Before an item's lines are written its file is read and hashed: a file that is not the one the
 //! index read lends no lines, and its item is listed by path alone; an item whose file is gone
 //! (deleted, no longer a regular file, unreadable) is not listed. Control characters (but tabs)
@@ -18,8 +19,8 @@
 //! the caller gives, the token cap the caller gives, never above the hard cap of 1,200 tokens,
 //! and 8,000 characters. Past a cap, code is shed first, the last body shown first: it is cut to
 //! its first half, again and again down to [`MIN_SHOWN_LINES`], with a line saying which lines are
-//! not shown, and only then taken out; then the items from the last. A work order that cannot fit
-//! with one item is not rendered at all.
+//! not shown, and only then taken out; then the facts from the last; then the items from the last.
+//! A work order that cannot fit with one item is not rendered at all.
 //!
 //! A span that starts inside a definition, a method in its class, is shown under that definition's
 //! first line, so the agent sees where the code lives without reading the file for it.
@@ -33,6 +34,7 @@ use cortex_core::{
 };
 
 use crate::disk::{CheckedFile, Unchecked, is_readable};
+use crate::facts::{OrderFact, true_now, write_facts};
 use crate::gate::{Rule, Shut, Verdict};
 use crate::reasons::Reason;
 use crate::spans::MAX_SPANS_PER_FILE;
@@ -93,6 +95,8 @@ pub struct WorkOrder {
     pub basis: Basis,
     /// The files listed, the best first.
     pub items: Vec<Item>,
+    /// The facts about them, the closest to the code shown first.
+    pub facts: Vec<OrderFact>,
 }
 
 /// How a work order is held in.
@@ -124,6 +128,8 @@ pub struct Rendered {
     /// written (all of them, or its first ones when it was cut), in the order written: each from
     /// the file its item's `content` says, checked as the text was built.
     pub shown: Vec<(usize, usize, LineRange)>,
+    /// The facts written, in the order written.
+    pub facts: Vec<cortex_store::FactId>,
 }
 
 /// `order` written for the repository at `root`, held to `limits`; `None` when it has no item that
@@ -145,6 +151,7 @@ pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendere
             tokens,
             written: Vec::new(),
             shown: Vec::new(),
+            facts: Vec::new(),
         });
     }
     let files: Vec<OnDisk> = order
@@ -159,6 +166,7 @@ pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendere
     if plan.kept.is_empty() {
         return None;
     }
+    plan.facts = true_now(&order.facts, root, limits.max_file_bytes);
     let max_tokens = limits.max_tokens.min(MAX_WORK_ORDER_TOKENS);
     loop {
         let text = plan.write(order, &files);
@@ -177,6 +185,11 @@ pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendere
                     .iter()
                     .map(|shown| (shown.item, shown.span, shown.lines))
                     .collect(),
+                facts: plan
+                    .facts
+                    .iter()
+                    .filter_map(|at| order.facts.get(*at).map(|fact| fact.id))
+                    .collect(),
             });
         }
         if !plan.shed() {
@@ -192,6 +205,8 @@ struct Plan {
     kept: Vec<(usize, Vec<usize>)>,
     /// The spans whose code is shown, in the order they are shown.
     shown: Vec<Shown>,
+    /// The facts written, by position, in the order written.
+    facts: Vec<usize>,
 }
 
 /// One span whose code is shown.
@@ -307,12 +322,16 @@ impl Plan {
                 }
             }
         }
-        Self { kept, shown }
+        Self {
+            kept,
+            shown,
+            facts: Vec::new(),
+        }
     }
 
     /// Takes one thing out to make the text shorter: half of the last code shown, while it is more
-    /// than [`MIN_SHOWN_LINES`] lines, else that code, else the last item not shown, else the last
-    /// item after the first; `false` when there is nothing left to take.
+    /// than [`MIN_SHOWN_LINES`] lines, else that code, else the last fact, else the last item not
+    /// shown, else the last item after the first; `false` when there is nothing left to take.
     fn shed(&mut self) -> bool {
         if let Some(last) = self.shown.last_mut() {
             let (start, count) = (
@@ -327,6 +346,9 @@ impl Plan {
                 return true;
             }
             self.shown.pop();
+            return true;
+        }
+        if self.facts.pop().is_some() {
             return true;
         }
         if self.kept.len() > 1 {
@@ -381,6 +403,7 @@ impl Plan {
                 write_code(&mut text, (item, span, shown.lines), file);
             }
         }
+        write_facts(&mut text, &order.facts, &self.facts);
         text
     }
 }
