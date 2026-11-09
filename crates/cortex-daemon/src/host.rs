@@ -464,6 +464,14 @@ fn record_given(writer: &mut Writer, inbox: &Inbox, given: &[Given]) {
                     }
                 }
                 Given::Notices(notices) => record_notices(&mut transaction, inbox, notices),
+                Given::Handoff(from, by, text) => {
+                    if let Err(error) = transaction.record_injection(text) {
+                        count_failed(inbox, "an injection", &error);
+                    }
+                    if let Err(error) = transaction.close_handoff(from, by) {
+                        count_failed(inbox, "a handoff given", &error);
+                    }
+                }
             }
         }
         transaction.commit()

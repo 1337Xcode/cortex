@@ -7,7 +7,7 @@
 //! notices that did not are not recorded as given at all, since nobody was told: the notices wait
 //! again. The notices an edit queued for other sessions are queued however its own answer fared.
 
-use cortex_core::{ContentHash, Event, Ulid, estimate_tokens};
+use cortex_core::{ContentHash, Event, Identifier, Ulid, estimate_tokens};
 use cortex_store::{InjectionRecord, NoticeId, NoticeRecord, WarningRecord};
 
 /// What one answer gave, or would have given.
@@ -19,6 +19,10 @@ pub(crate) enum Given {
     Warnings(Vec<WarningRecord>, InjectionRecord),
     /// What an answer did with coordination notices.
     Notices(Notices),
+    /// A handoff given at a session's first prompt: the session that left it, the session given
+    /// it, and the record of its text. Recorded only once the text reached the agent, which
+    /// closes the handoff.
+    Handoff(Identifier, Identifier, InjectionRecord),
 }
 
 /// What one answer did with coordination notices: those it gave and those it queued.
@@ -48,6 +52,7 @@ impl Given {
             Self::Notices(_) => {
                 "an answer's coordination notices were not recorded: too many waited"
             }
+            Self::Handoff(..) => "a handoff given was not recorded: too many waited",
         }
     }
 }
@@ -105,6 +110,9 @@ pub(crate) fn recorded(
             Some(Given::Warnings(rows, text))
         }
         Given::Warnings(..) => None,
+        // A handoff that did not reach the agent stays open for the next session.
+        Given::Handoff(from, by, text) if reached => Some(Given::Handoff(from, by, text)),
+        Given::Handoff(..) => None,
         Given::Notices(notices) if reached => Some(Given::Notices(notices)),
         // Nothing given reached the agent: what was given waits again, and only what was queued
         // for the other sessions stands.

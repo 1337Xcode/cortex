@@ -13,6 +13,7 @@
 //! silent: the recap recalls what the session did, which needs no index.
 
 mod coordination;
+mod handoff;
 mod hints;
 mod recap;
 mod stop;
@@ -37,6 +38,8 @@ pub(crate) use self::coordination::Coordination;
 use crate::claim::Claim;
 use crate::given::{Given, text_record};
 use crate::recapped::Recapped;
+
+use self::handoff::handoff_for;
 
 /// How long a prompt's spreading may run before it stops where it is: well inside the
 /// `UserPromptSubmit` hook's hard timeout of 1 s, with room for the listing and the rendering.
@@ -184,9 +187,26 @@ impl Service {
             let text = rendered(&retrieval)
                 .filter(|_| !is_holdout)
                 .map(|(text, _)| text.to_owned());
+            let mut given: Vec<Given> = injection.map(Given::Injection).into_iter().collect();
+            // A held-out task gets no handoff either: it stays open for the next session.
+            let handoff = if is_holdout {
+                None
+            } else {
+                handoff_for(queries, (event, prompt, task_id), &retrieval.weighed)?
+            };
+            let text = match handoff {
+                Some((from, handed)) => {
+                    // Each line given ends its line, as a work order's lines and notices do.
+                    let line = format!("{handed}\n");
+                    let record = text_record(event, Some(task_id), &line);
+                    given.push(Given::Handoff(from, event.session_id.clone(), record));
+                    Some(line + text.as_deref().unwrap_or_default())
+                }
+                None => text,
+            };
             Ok(Answer {
                 text,
-                given: injection.map(Given::Injection).into_iter().collect(),
+                given,
                 ..Answer::default()
             })
         });

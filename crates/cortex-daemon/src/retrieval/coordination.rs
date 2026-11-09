@@ -321,7 +321,7 @@ fn capped(open: Giving, config: &CoordinationConfig) -> Giving {
 
 /// The sessions the editing session of `event` works with rather than beside: itself, the session
 /// that started it and the subagents it started, as `seen` and the event say.
-fn family_of(event: &Event, seen: &[SeenSession]) -> Vec<Identifier> {
+pub(super) fn family_of(event: &Event, seen: &[SeenSession]) -> Vec<Identifier> {
     let own = seen.iter().find(|seen| seen.session_id == event.session_id);
     let parent = event
         .parent_session_id

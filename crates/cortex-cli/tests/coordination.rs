@@ -4,8 +4,9 @@
 //! session has read the file that depends on its edit; Claude Code is told at its next hook which
 //! definition changed, in which file, and how its own file depends on it. Each is told once; a
 //! third session holding an unrelated file is told nothing, and nothing is told of it. When both
-//! agents edit the same file, each is told to act first. Neither agent messages the other and no
-//! tool call is held: each hook only adds context.
+//! agents edit the same file, each is told to act first. When a session stops before finishing
+//! its task, the next session's first prompt that asks to go on is told what it left. Neither
+//! agent messages the other and no tool call is held: each hook only adds context.
 #![allow(
     clippy::indexing_slicing,
     reason = "the payloads edited here are JSON objects, where indexing a missing key adds it"
@@ -16,7 +17,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use common::calc::{MAIN, OPS, OPS_FIXED, S1, captured, prompt, repository};
+use common::calc::{MAIN, OPS, OPS_FIXED, S1, captured, prompt, read_of_tests, repository};
 use common::hook_call::hook;
 use common::payloads;
 use common::{Daemon, TestResult, graph_of, wait_for};
@@ -464,5 +465,79 @@ fn a_notice_reaches_a_short_prompt_and_a_shell_s_result() -> TestResult {
         Some(format!("{TOLD_CLAUDE}\n"))
     );
     assert_eq!(given("claude", &shell, home)?, None);
+    Ok(())
+}
+
+/// The open handoffs of the repository at `root`.
+fn open_handoffs(root: &Path) -> TestResult<usize> {
+    read(root, |queries| Ok(queries.open_handoffs_since(0)?.len()))
+}
+
+/// Claude Code reads the tests, edits `calc/ops.py`, and its turn stops on a usage limit before it
+/// finishes. A session that was already at work asks to continue and is told nothing. Codex's
+/// first prompt asks the same and is told, once, what was left: the agent, when, the file edited
+/// and the file read (no check ran, no warning was open). Codex's next prompt is told nothing, and
+/// neither is a later session asking the same, the handoff having been taken.
+#[test]
+fn a_task_left_unfinished_is_handed_to_the_next_session() -> TestResult {
+    let (home, repo, _daemon) = started(0)?;
+    let home = home.path();
+    given(
+        "claude",
+        &prompt_in(&repo, BESIDE, "Explain what main.py prints.")?,
+        home,
+    )?;
+    given(
+        "claude",
+        &prompt_in(&repo, S1, "Make divide return true division.")?,
+        home,
+    )?;
+    given("claude", &read_of_tests(&repo)?, home)?;
+    std::fs::write(repo.join("calc/ops.py"), OPS_FIXED)?;
+    given("claude", &captured("post-tool-use-edit.json", &repo)?, home)?;
+    let mut stopped: Value = serde_json::from_slice(&payloads::payload_of(
+        "claude",
+        "2.1.318",
+        "stop-failure-model-not-found.json",
+        &repo,
+    )?)?;
+    stopped["session_id"] = Value::from(S1);
+    stopped["error"] = Value::from("rate_limit");
+    assert_eq!(given("claude", &stopped, home)?, None);
+    wait_for(|| Ok(open_handoffs(&repo)? == 1))?;
+    let beside = Identifier::new(BESIDE)?;
+    wait_for(|| {
+        read(&repo, |queries| {
+            Ok(!queries.tasks_of_session(&beside)?.is_empty())
+        })
+    })?;
+    assert_eq!(
+        given("claude", &prompt_in(&repo, BESIDE, "Continue.")?, home)?,
+        None
+    );
+    assert_eq!(open_handoffs(&repo)?, 1);
+
+    let mut asked = codex(&repo, "user-prompt-submit.json")?;
+    asked["prompt"] = Value::from("Continue.");
+    assert_eq!(
+        given("codex", &asked, home)?,
+        Some(
+            "[cortex] Handoff: a Claude Code session stopped less than a minute ago before \
+             finishing its task. It edited calc/ops.py. It had read tests/test_ops.py.\n"
+                .to_owned()
+        )
+    );
+    wait_for(|| Ok(open_handoffs(&repo)? == 0))?;
+    let codex_session = Identifier::new(CODEX_SESSION)?;
+    wait_for(|| {
+        read(&repo, |queries| {
+            Ok(!queries.tasks_of_session(&codex_session)?.is_empty())
+        })
+    })?;
+    assert_eq!(given("codex", &asked, home)?, None);
+    assert_eq!(
+        given("claude", &prompt_in(&repo, ASIDE, "Continue.")?, home)?,
+        None
+    );
     Ok(())
 }
