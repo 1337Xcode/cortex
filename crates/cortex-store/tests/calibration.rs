@@ -146,6 +146,32 @@ fn the_labelled_injections_are_the_latest_prompts_with_features() -> TestResult 
     Ok(())
 }
 
+/// Coefficients read back exactly as they were kept, to the last bit: 0.1 + 0.2 (written
+/// 0.30000000000000004) and two weights of about -1.06e-22, written ...828e-22 and ...289e-22,
+/// that a parser one unit in the last place off reads as ...829e-22 and ...288e-22.
+#[test]
+fn coefficients_read_back_to_the_bit() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let coefficients = [
+        0.1 + 0.2,
+        -1.058_780_894_363_382_8e-22,
+        -1.058_785_723_178_228_9e-22,
+    ];
+    let mut transaction = writer.transaction()?;
+    transaction.add_calibration((&coefficients, 200, 1.0, 1_000), 1)?;
+    transaction.commit()?;
+    let read = writer.queries().calibration()?.ok_or("a model")?;
+    let bits = |values: &[f64]| {
+        values
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(bits(&read.coefficients), bits(&coefficients));
+    Ok(())
+}
+
 /// Models are versioned from 1 and the newest is read back as kept; keeping the newest two, the
 /// third deletes the first. The last fitting reads back as kept. Coefficients that are not a list
 /// of numbers are an error naming the column and the version, not a model.

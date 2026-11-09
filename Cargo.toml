@@ -57,7 +57,9 @@ rmcp = { version = "3.9.0", default-features = false, features = ["macros", "ser
 rusqlite = { version = "0.41.1", default-features = false, features = ["backup", "bundled", "cache"] }
 scip = "0.10.0"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.154", features = ["raw_value"] }
+# `float_roundtrip`: numbers read back exactly as they were written (the default parser may land
+# one unit in the last place off), so a stored model or set of features is the one that was kept.
+serde_json = { version = "1.0.154", features = ["float_roundtrip", "raw_value"] }
 syn = { version = "3.0.9", default-features = false, features = ["full", "parsing", "printing", "visit"] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
