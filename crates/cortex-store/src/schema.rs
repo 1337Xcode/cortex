@@ -95,10 +95,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 20,
         sql: include_str!("../migrations/0020_calibration.sql"),
     },
+    Migration {
+        version: 21,
+        sql: include_str!("../migrations/0021_transitions.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 20;
+pub(crate) const SCHEMA_VERSION: u32 = 21;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -642,6 +646,24 @@ pub(crate) const COUNT_DELIVERED_LABELLED: &str = "SELECT count(*) FROM injectio
 pub(crate) const DELIVERED_PRECISION: &str = "SELECT count(*), coalesce(sum(label), 0) \
     FROM injections \
     WHERE gated_out = 0 AND holdout = 0 AND rendered_hash IS NOT NULL AND label IS NOT NULL";
+
+/// The transitions from the files in the JSON array ?1, by first file and then second.
+pub(crate) const TRANSITIONS_FROM: &str = "SELECT src, dst, weight, count, last_seq \
+    FROM transitions WHERE src IN (SELECT value FROM json_each(?1)) ORDER BY src, dst";
+
+/// The transitions after the pair (?1, ?2), at most ?3, by first file and then second.
+pub(crate) const TRANSITIONS_AFTER: &str = "SELECT src, dst, weight, count, last_seq \
+    FROM transitions WHERE (src, dst) > (?1, ?2) ORDER BY src, dst LIMIT ?3";
+
+/// Sets a transition's weight, count and task, adding it when it is not there.
+pub(crate) const TRANSITION_SET: &str = "INSERT INTO transitions (src, dst, weight, count, last_seq) \
+    VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (src, dst) DO UPDATE SET \
+    weight = excluded.weight, count = excluded.count, last_seq = excluded.last_seq";
+
+/// Removes the transitions from each pair's first file to its second, the pairs a JSON array of
+/// two-number arrays in ?1.
+pub(crate) const TRANSITIONS_REMOVE: &str = "DELETE FROM transitions WHERE (src, dst) IN \
+    (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1))";
 
 /// The newest confidence model kept.
 pub(crate) const CALIBRATION_LATEST: &str = "SELECT version, coefficients, samples, auc, trained_at \
@@ -1454,8 +1476,18 @@ mod tests {
     }
 
     /// The injections and warnings tables, column by column.
-    fn expected_injection_columns() -> [(&'static str, Vec<Column>); 3] {
+    fn expected_injection_columns() -> [(&'static str, Vec<Column>); 4] {
         [
+            (
+                "transitions",
+                column_list(&[
+                    ("src", "INTEGER", 1),
+                    ("dst", "INTEGER", 2),
+                    ("weight", "REAL", 0),
+                    ("count", "INTEGER", 0),
+                    ("last_seq", "INTEGER", 0),
+                ]),
+            ),
             (
                 "calibration",
                 column_list(&[
@@ -1737,6 +1769,7 @@ mod tests {
                 "sessions",
                 "symbols",
                 "tasks",
+                "transitions",
                 "usage",
                 "warnings"
             ]
@@ -1795,6 +1828,13 @@ mod tests {
         assert_eq!(
             foreign_keys(&connection, "interest")?,
             [key("nodes", "node_id", "node_id", "CASCADE")]
+        );
+        assert_eq!(
+            foreign_keys(&connection, "transitions")?,
+            [
+                key("nodes", "dst", "node_id", "CASCADE"),
+                key("nodes", "src", "node_id", "CASCADE"),
+            ]
         );
         assert_eq!(
             foreign_keys(&connection, "cochange_stats")?,

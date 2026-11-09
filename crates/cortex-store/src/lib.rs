@@ -52,6 +52,7 @@ mod schema;
 mod search;
 mod self_check;
 mod symbol_names;
+mod transitions;
 mod usage;
 mod values;
 mod warnings;
@@ -95,6 +96,7 @@ pub use records::{
 };
 pub use rows::{EdgeRow, FileRow, IndexCounts, RefName, RefRow, SymbolName, SymbolRow, SymbolSpan};
 pub use self_check::SelfCheckRecord;
+pub use transitions::TransitionRow;
 pub use usage::UsageRow;
 pub use warnings::{WarningCounts, WarningRecord, WarningRow};
 pub use writer::{WriteTx, Writer, WriterOptions};

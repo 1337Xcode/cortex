@@ -35,6 +35,7 @@ use crate::replace;
 use crate::retention;
 use crate::schema;
 use crate::self_check::{self, SelfCheckRecord};
+use crate::transitions::{self, TransitionRow};
 use crate::usage::{self, UsageRow};
 use crate::warnings::{self, WarningRecord};
 
@@ -452,6 +453,25 @@ impl WriteTx<'_> {
         keep_versions: u32,
     ) -> Result<u32, StoreError> {
         self.atomically(|connection| calibration::add(connection, model, keep_versions))
+    }
+
+    /// Sets each of `rows`, the transitions from a file to the file tasks read next, adding a pair
+    /// that is not there.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn set_transitions(&mut self, rows: &[TransitionRow]) -> Result<(), StoreError> {
+        self.atomically(|connection| transitions::set(connection, rows))
+    }
+
+    /// Removes the transitions from each pair's first file to its second: how many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn remove_transitions(&mut self, pairs: &[(NodeId, NodeId)]) -> Result<u64, StoreError> {
+        self.atomically(|connection| transitions::remove(connection, pairs))
     }
 
     /// Keeps `attempt` as the last time the confidence model was fitted.
