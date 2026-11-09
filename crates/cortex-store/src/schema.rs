@@ -726,15 +726,19 @@ pub(crate) const HANDOFFS_OPEN_OF_SESSION: &str = "SELECT handoff_id, from_sessi
 pub(crate) const NOTICE_DELIVER: &str =
     "UPDATE notices SET delivered_at = ?2 WHERE notice_id = ?1 AND delivered_at IS NULL";
 
-/// Adds a fact: its text ?1, kind ?2, source ?3, status ?4, made at ?5 (confirmed then too).
-pub(crate) const FACT_ADD: &str = "INSERT INTO facts (text, kind, source, status, created_at, \
-     last_verified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)";
+/// Adds a fact: its text ?1, kind ?2, source ?3, status ?4, made at ?5 (its status set and
+/// confirmed then too), first asserted in task ?6.
+pub(crate) const FACT_ADD: &str = "INSERT INTO facts (text, kind, source, status, status_at, \
+     asserted_in, created_at, last_verified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?5, ?5)";
 /// Anchors fact ?1 to node ?2, whose hash was ?3 when the fact was made.
 pub(crate) const FACT_ANCHOR_ADD: &str =
     "INSERT INTO fact_anchors (fact_id, node_id, anchor_hash) VALUES (?1, ?2, ?3)";
-/// Sets fact ?1's status to ?2; one made active at ?3 counts as confirmed then (?4 is 1).
-pub(crate) const FACT_SET_STATUS: &str = "UPDATE facts SET status = ?2, \
+/// Sets fact ?1's status to ?2 at ?3; one made active counts as confirmed then (?4 is 1).
+pub(crate) const FACT_SET_STATUS: &str = "UPDATE facts SET status = ?2, status_at = ?3, \
      last_verified_at = CASE WHEN ?4 THEN ?3 ELSE last_verified_at END WHERE fact_id = ?1";
+/// Gives fact ?1's anchor on node ?2 the hash ?3.
+pub(crate) const FACT_ANCHOR_RESTAMP: &str =
+    "UPDATE fact_anchors SET anchor_hash = ?3 WHERE fact_id = ?1 AND node_id = ?2";
 /// Marks fact ?1 superseded by fact ?2.
 pub(crate) const FACT_SUPERSEDE: &str =
     "UPDATE facts SET superseded_by = ?2 WHERE fact_id = ?1 AND superseded_by IS NULL";
@@ -742,12 +746,26 @@ pub(crate) const FACT_SUPERSEDE: &str =
 pub(crate) const FACT_COUNT_USES: &str =
     "UPDATE facts SET uses = uses + 1 WHERE fact_id IN (SELECT value FROM json_each(?1))";
 /// A fact's columns by its id.
-pub(crate) const FACT_BY_ID: &str = "SELECT fact_id, text, kind, source, status, uses, \
-     created_at, last_verified_at, superseded_by FROM facts WHERE fact_id = ?1";
+pub(crate) const FACT_BY_ID: &str = "SELECT fact_id, text, kind, source, status, status_at, \
+     asserted_in, uses, created_at, last_verified_at, superseded_by FROM facts WHERE fact_id = ?1";
 /// The current facts (none supersedes them) of status ?1, oldest first.
 pub(crate) const FACTS_CURRENT_WITH_STATUS: &str = "SELECT fact_id, text, kind, source, status, \
-     uses, created_at, last_verified_at, superseded_by FROM facts \
+     status_at, asserted_in, uses, created_at, last_verified_at, superseded_by FROM facts \
      WHERE status = ?1 AND superseded_by IS NULL ORDER BY fact_id";
+/// The current facts of status ?1 or ?2 with an anchor whose node's hash is not the one kept (or
+/// that has none now: the node is gone, or its contents are no longer read), in id order.
+pub(crate) const FACTS_WITH_CHANGED_ANCHORS: &str = "SELECT DISTINCT a.fact_id \
+     FROM fact_anchors AS a JOIN facts AS f ON f.fact_id = a.fact_id \
+     LEFT JOIN anchor_hashes AS h ON h.node_id = a.node_id \
+     WHERE f.status IN (?1, ?2) AND f.superseded_by IS NULL AND a.anchor_hash IS NOT h.hash \
+     ORDER BY a.fact_id";
+/// The current facts of status ?1 whose status was set at ?2 or before, in id order.
+pub(crate) const FACTS_WITH_STATUS_SINCE: &str = "SELECT fact_id FROM facts \
+     WHERE status = ?1 AND superseded_by IS NULL AND status_at <= ?2 ORDER BY fact_id";
+/// The hash an anchor on each node of the JSON list ?1 would keep now, in node order; a node with
+/// none is left out.
+pub(crate) const ANCHOR_HASHES_OF: &str = "SELECT node_id, hash FROM anchor_hashes \
+     WHERE node_id IN (SELECT value FROM json_each(?1)) AND hash IS NOT NULL ORDER BY node_id";
 /// The current facts anchored to any node of the JSON list ?1, each once, in id order.
 pub(crate) const FACTS_ANCHORED_TO: &str = "SELECT DISTINCT a.fact_id FROM fact_anchors AS a \
      JOIN facts AS f ON f.fact_id = a.fact_id \
@@ -1181,6 +1199,8 @@ mod tests {
                     ("kind", "TEXT", 0),
                     ("source", "TEXT", 0),
                     ("status", "TEXT", 0),
+                    ("status_at", "INTEGER", 0),
+                    ("asserted_in", "TEXT", 0),
                     ("uses", "INTEGER", 0),
                     ("created_at", "INTEGER", 0),
                     ("last_verified_at", "INTEGER", 0),

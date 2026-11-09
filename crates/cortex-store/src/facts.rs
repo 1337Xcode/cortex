@@ -1,11 +1,13 @@
 //! Facts: short project rules anchored to the files or symbols they are about. The store keeps each
-//! fact's text, kind, source, status and use count, and each anchor's hash when the fact was made,
-//! so that a later reader can tell when the code it is about changed. A corrected fact is
-//! superseded by the one that corrects it: the old one stays, hidden from every reader of current
-//! facts. Which status a fact moves to, and when, is decided by the learner; the store keeps what
-//! it is told and refuses what it can never hold (text too long, no anchor).
+//! fact's text, kind, source, status (and since when), the task it was first asserted in and its
+//! use count, and each anchor's hash when the fact was made, so that a later reader can tell when
+//! the code it is about changed: [`Queries::facts_with_changed_anchors`] compares them with the
+//! hash an anchor would keep now. A corrected fact is superseded by the one that corrects it: the
+//! old one stays, hidden from every reader of current facts. Which status a fact moves to, and
+//! when, is decided by the learner; the store keeps what it is told and refuses what it can never
+//! hold (text too long, no anchor).
 
-use cortex_core::{ContentHash, FactKind, FactSource, FactStatus, MAX_FACT_CHARS};
+use cortex_core::{FactKind, FactSource, FactStatus, MAX_FACT_CHARS, ShortHash, Ulid};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{StoreError, sqlite};
@@ -13,13 +15,14 @@ use crate::ids::{FactId, NodeId};
 use crate::queries::{Queries, json_array};
 use crate::{schema, values};
 
-/// One anchor of a fact: the node it is about and that node's hash when the fact was made.
+/// One anchor of a fact: the node it is about and that node's hash when the fact was made or last
+/// confirmed: the first 16 bytes of a file's content hash, a symbol's body hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FactAnchor {
     /// The file or symbol.
     pub node: NodeId,
     /// Its hash then.
-    pub hash: ContentHash,
+    pub hash: ShortHash,
 }
 
 /// A fact as written.
@@ -35,6 +38,8 @@ pub struct FactRecord {
     pub status: FactStatus,
     /// When it was written, in UTC milliseconds.
     pub created_at_ms: i64,
+    /// The task it was first asserted in: none for the user's and for imports.
+    pub task: Option<Ulid>,
     /// What it is about: at least one anchor, in node order.
     pub anchors: Vec<FactAnchor>,
 }
@@ -46,6 +51,8 @@ pub struct FactRow {
     pub id: FactId,
     /// What was written, with its status now.
     pub record: FactRecord,
+    /// When its status was last set, in UTC milliseconds: its making when it never changed.
+    pub status_at_ms: i64,
     /// How many times it was injected.
     pub uses: u64,
     /// When it was last confirmed true, in UTC milliseconds.
@@ -77,6 +84,7 @@ pub(crate) fn add(connection: &Connection, record: &FactRecord) -> Result<FactId
                 record.source.name(),
                 record.status.name(),
                 record.created_at_ms,
+                record.task.map(|task| task.to_string()),
             ))
         })
         .map_err(sqlite("adding a fact"))?;
@@ -109,6 +117,38 @@ pub(crate) fn set_status(
         .map_err(sqlite("setting a fact's status"))?;
     if changed == 0 {
         return Err(unknown(id));
+    }
+    Ok(())
+}
+
+/// Gives each of fact `id`'s `anchors` the hash it holds there, as when the fact is confirmed
+/// against the code as it is now.
+///
+/// # Errors
+///
+/// [`StoreError::UnknownRow`] for a node the fact is not anchored to, or SQLite errors.
+pub(crate) fn restamp(
+    connection: &Connection,
+    id: FactId,
+    anchors: &[FactAnchor],
+) -> Result<(), StoreError> {
+    let mut restamp = connection
+        .prepare_cached(schema::FACT_ANCHOR_RESTAMP)
+        .map_err(sqlite("restamping a fact's anchors"))?;
+    for anchor in anchors {
+        let changed = restamp
+            .execute((
+                id.get(),
+                anchor.node.get(),
+                anchor.hash.as_bytes().as_slice(),
+            ))
+            .map_err(sqlite("restamping a fact's anchors"))?;
+        if changed == 0 {
+            return Err(StoreError::UnknownRow {
+                table: "fact_anchors",
+                id: anchor.node.get(),
+            });
+        }
     }
     Ok(())
 }
@@ -152,14 +192,16 @@ fn unknown(id: FactId) -> StoreError {
     }
 }
 
-/// A fact's columns as read: id, text, kind, source, status, uses, created, last verified, the
-/// fact superseding it.
+/// A fact's columns as read: id, text, kind, source, status, when it was set, the task first
+/// asserting it, uses, created, last verified, the fact superseding it.
 type Columns = (
     i64,
     String,
     String,
     String,
     String,
+    i64,
+    Option<String>,
     i64,
     i64,
     i64,
@@ -201,6 +243,72 @@ impl Queries<'_> {
             .collect()
     }
 
+    /// The ids of the current candidate and active facts with an anchor whose node's hash is not
+    /// the one kept, or that has none now (the node is gone, or its contents are not read), in
+    /// id order.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn facts_with_changed_anchors(self) -> Result<Vec<FactId>, StoreError> {
+        let statuses = (FactStatus::Candidate.name(), FactStatus::Active.name());
+        self.fact_ids(schema::FACTS_WITH_CHANGED_ANCHORS, statuses)
+    }
+
+    /// The ids of the current facts in `status` since `at_ms` or before, in id order.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn facts_with_status_since(
+        self,
+        status: FactStatus,
+        at_ms: i64,
+    ) -> Result<Vec<FactId>, StoreError> {
+        self.fact_ids(schema::FACTS_WITH_STATUS_SINCE, (status.name(), at_ms))
+    }
+
+    /// The hash an anchor on each of `nodes` would keep now, in node order: the first 16 bytes of
+    /// a file's content hash, a symbol's body hash. A node with none (a folder, a file whose
+    /// contents are not read, a node that does not exist) is left out.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors, or a hash that is not what the store writes.
+    pub fn anchor_hashes(self, nodes: &[NodeId]) -> Result<Vec<FactAnchor>, StoreError> {
+        let listed = json_array(nodes.iter().map(|node| node.get().to_string()));
+        let rows: Vec<(i64, Vec<u8>)> = self
+            .connection()
+            .prepare_cached(schema::ANCHOR_HASHES_OF)
+            .and_then(|mut statement| {
+                statement
+                    .query_map([listed], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<Result<_, _>>()
+            })
+            .map_err(sqlite("reading anchor hashes"))?;
+        rows.into_iter()
+            .map(|(node, hash)| anchor(node, hash, "anchor_hashes.hash", node))
+            .collect()
+    }
+
+    /// The fact ids `sql` selects with `parameters`.
+    fn fact_ids(
+        self,
+        sql: &str,
+        parameters: impl rusqlite::Params,
+    ) -> Result<Vec<FactId>, StoreError> {
+        let ids: Vec<i64> = self
+            .connection()
+            .prepare_cached(sql)
+            .and_then(|mut statement| {
+                statement
+                    .query_map(parameters, |row| row.get(0))?
+                    .collect::<Result<_, _>>()
+            })
+            .map_err(sqlite("reading facts"))?;
+        Ok(ids.into_iter().map(FactId).collect())
+    }
+
     /// The ids of the current facts anchored to any of `nodes`, each once, in id order.
     ///
     /// # Errors
@@ -208,21 +316,13 @@ impl Queries<'_> {
     /// SQLite errors.
     pub fn facts_anchored_to(self, nodes: &[NodeId]) -> Result<Vec<FactId>, StoreError> {
         let listed = json_array(nodes.iter().map(|node| node.get().to_string()));
-        let ids: Vec<i64> = self
-            .connection()
-            .prepare_cached(schema::FACTS_ANCHORED_TO)
-            .and_then(|mut statement| {
-                statement
-                    .query_map([listed], |row| row.get(0))?
-                    .collect::<Result<_, _>>()
-            })
-            .map_err(sqlite("reading the facts of nodes"))?;
-        Ok(ids.into_iter().map(FactId).collect())
+        self.fact_ids(schema::FACTS_ANCHORED_TO, [listed])
     }
 
     /// The fact `columns` hold, with its anchors read.
     fn row_of(self, columns: Columns) -> Result<FactRow, StoreError> {
-        let (id, text, kind, source, status, uses, created, verified, by) = columns;
+        let (id, text, kind, source, status, status_at, task, uses, created, verified, by) =
+            columns;
         let anchors: Vec<(i64, Vec<u8>)> = self
             .connection()
             .prepare_cached(schema::FACT_ANCHORS_OF)
@@ -235,16 +335,11 @@ impl Queries<'_> {
         let corrupt = |column: &'static str| StoreError::Corrupt { column, row: id };
         let anchors = anchors
             .into_iter()
-            .map(|(node, hash)| {
-                let hash: [u8; 32] = hash
-                    .try_into()
-                    .map_err(|_| corrupt("fact_anchors.anchor_hash"))?;
-                Ok(FactAnchor {
-                    node: NodeId(node),
-                    hash: ContentHash::from_bytes(hash),
-                })
-            })
+            .map(|(node, hash)| anchor(node, hash, "fact_anchors.anchor_hash", id))
             .collect::<Result<Vec<_>, StoreError>>()?;
+        let task = task
+            .map(|task| Ulid::parse(&task).map_err(|_| corrupt("facts.asserted_in")))
+            .transpose()?;
         Ok(FactRow {
             id: FactId(id),
             record: FactRecord {
@@ -253,8 +348,10 @@ impl Queries<'_> {
                 source: values::kind(&source, FactSource::from_name, "facts.source", id)?,
                 status: values::kind(&status, FactStatus::from_name, "facts.status", id)?,
                 created_at_ms: created,
+                task,
                 anchors,
             },
+            status_at_ms: status_at,
             uses: u64::try_from(uses).map_err(|_| corrupt("facts.uses"))?,
             last_verified_at_ms: verified,
             superseded_by: by.map(FactId),
@@ -274,5 +371,24 @@ fn columns_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Columns> {
         row.get(6)?,
         row.get(7)?,
         row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
     ))
+}
+
+/// The anchor on `node` whose stored hash is `hash`, which must be 16 bytes; `column` of `row`
+/// is corrupt otherwise.
+fn anchor(
+    node: i64,
+    hash: Vec<u8>,
+    column: &'static str,
+    row: i64,
+) -> Result<FactAnchor, StoreError> {
+    let hash: [u8; 16] = hash
+        .try_into()
+        .map_err(|_| StoreError::Corrupt { column, row })?;
+    Ok(FactAnchor {
+        node: NodeId(node),
+        hash: ShortHash::from_bytes(hash),
+    })
 }

@@ -631,8 +631,8 @@ mod tests {
         Ok(())
     }
 
-    /// The sixteenth schema adds the facts and their anchors, with their indexes, and keeps the
-    /// notices a fifteenth-schema store holds.
+    /// The sixteenth schema adds the facts and their anchors, with their indexes and the view of
+    /// each node's anchor hash, and keeps the notices a fifteenth-schema store holds.
     #[test]
     fn the_sixteenth_schema_adds_facts() -> Result<(), Box<dyn std::error::Error>> {
         let (folder, mut connection) = database()?;
@@ -654,6 +654,7 @@ mod tests {
             "facts_current",
             "fact_anchors",
             "fact_anchors_node",
+            "anchor_hashes",
         ] {
             assert!(objects.contains(&object.to_owned()), "{object}");
         }

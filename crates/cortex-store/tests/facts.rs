@@ -1,12 +1,13 @@
 //! Facts as the store keeps them: refused when they can never be held (too long, no anchor), read
 //! back with their anchors, current until superseded, found by the nodes they are anchored to,
-//! their uses counted and their confirmation stamped when made active again.
+//! their uses counted and their confirmation stamped when made active again, and found when an
+//! anchor's code changed or a status has lasted.
 
 mod common;
 
-use common::{Scratch, TestResult, index};
-use cortex_core::{ContentHash, FactKind, FactSource, FactStatus, MAX_FACT_CHARS};
-use cortex_store::{FactAnchor, FactRecord, NodeId, StoreError, Writer};
+use common::{Scratch, TestResult, index, symbol};
+use cortex_core::{FactKind, FactSource, FactStatus, MAX_FACT_CHARS, ShortHash, SymbolKind, Ulid};
+use cortex_store::{FactAnchor, FactId, FactRecord, NodeId, StoreError, Writer};
 
 /// Files `paths` stored, their nodes in the same order.
 fn files(writer: &mut Writer, paths: &[&str]) -> TestResult<Vec<NodeId>> {
@@ -24,21 +25,33 @@ fn files(writer: &mut Writer, paths: &[&str]) -> TestResult<Vec<NodeId>> {
 }
 
 /// A fact saying `text`, from `source`, made at `at_ms`, anchored to `nodes`, each with a hash
-/// made from its id.
+/// made from its id. An agent's is asserted in a task made from the time.
 fn fact(text: &str, source: FactSource, at_ms: i64, nodes: &[NodeId]) -> FactRecord {
+    let anchors = nodes
+        .iter()
+        .map(|node| FactAnchor {
+            node: *node,
+            hash: ShortHash::of(&node.get().to_le_bytes()),
+        })
+        .collect();
+    anchored(text, (source, at_ms), anchors)
+}
+
+/// A fact saying `text`, from `source`, made at `at_ms`, with `anchors`. An agent's is asserted
+/// in a task made from the time.
+fn anchored(
+    text: &str,
+    (source, at_ms): (FactSource, i64),
+    anchors: Vec<FactAnchor>,
+) -> FactRecord {
     FactRecord {
         text: text.to_owned(),
         kind: FactKind::Convention,
         source,
         status: source.first_status(),
         created_at_ms: at_ms,
-        anchors: nodes
-            .iter()
-            .map(|node| FactAnchor {
-                node: *node,
-                hash: ContentHash::of(&node.get().to_le_bytes()),
-            })
-            .collect(),
+        task: (source == FactSource::Agent).then(|| Ulid::from_seed(at_ms.unsigned_abs(), b"task")),
+        anchors,
     }
 }
 
@@ -123,6 +136,8 @@ fn current_facts_are_read_with_their_anchors() -> TestResult {
         read.record,
         fact("Tax rounds half up.", FactSource::Agent, 2, &[money, tax])
     );
+    assert_eq!(read.record.task, Some(Ulid::from_seed(2, b"task")));
+    assert_eq!(queries.fact(third)?.ok_or("fact 3")?.record.task, None);
     assert_eq!(read.superseded_by, None);
     assert_eq!(
         queries.fact(first)?.ok_or("fact 1")?.superseded_by,
@@ -132,7 +147,8 @@ fn current_facts_are_read_with_their_anchors() -> TestResult {
 }
 
 /// A use is counted once a fact is injected: twice for fact 1, once for fact 2. Made suspect at
-/// 10, its confirmation stays at its making (1); made active again at 20, it is confirmed at 20.
+/// 10, its confirmation stays at its making (1) and its status dates from 10; made active again at
+/// 20, it is confirmed at 20. Suspect since 9 or before: none; since 10: fact 1.
 #[test]
 fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
     let scratch = Scratch::new()?;
@@ -147,6 +163,16 @@ fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
     transaction.commit()?;
     assert_eq!(read(&writer, first)?, (2, FactStatus::Suspect, 1));
     assert_eq!(read(&writer, second)?, (1, FactStatus::Active, 1));
+    let status_at =
+        |id| -> TestResult<i64> { Ok(writer.queries().fact(id)?.ok_or("a fact")?.status_at_ms) };
+    assert_eq!((status_at(first)?, status_at(second)?), (10, 1));
+    let since = |at_ms| {
+        writer
+            .queries()
+            .facts_with_status_since(FactStatus::Suspect, at_ms)
+    };
+    assert_eq!(since(9)?, []);
+    assert_eq!(since(10)?, [first]);
     let mut transaction = writer.transaction()?;
     transaction.set_fact_status(first, FactStatus::Active, 20)?;
     transaction.commit()?;
@@ -154,8 +180,99 @@ fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
     Ok(())
 }
 
+/// Worked by hand. `src/money.rs` (content hash of its path) defines `Money` (body hash of
+/// `cents`); `src/tax.rs` defines nothing. The anchor hashes now are the first 16 bytes of each
+/// file's content hash and `Money`'s body hash; a file that is gone has none.
+///
+/// Facts: 1 active on `Money` as it is; 2 a candidate on `tax.rs` as it is; 3 suspect on `Money`
+/// with another hash (suspect facts are not listed); 4 active on `tax.rs` with another hash.
+/// Changed: 4. `Money`'s body becomes `dollars`: 1 and 4. `tax.rs` goes: 1, 2 and 4. Fact 1
+/// restamped with `Money`'s hash now: 2 and 4. Restamping a node fact 1 is not anchored to fails.
+#[test]
+fn anchors_are_compared_with_the_code_now() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let money_symbol = |body| symbol(SymbolKind::Class, "Money", None, ("class Money", body));
+    let mut transaction = writer.transaction()?;
+    let money = transaction.replace_file(&index(
+        "src/money.rs",
+        vec![money_symbol("cents")?],
+        Vec::new(),
+    )?)?;
+    let tax = transaction
+        .replace_file(&index("src/tax.rs", Vec::new(), Vec::new())?)?
+        .file_node;
+    transaction.commit()?;
+    let (money_file, class) = (money.file_node, money.symbol_nodes[0]);
+    let mut expected = vec![
+        (money_file, ShortHash::of(b"src/money.rs")),
+        (class, ShortHash::of(b"cents")),
+        (tax, ShortHash::of(b"src/tax.rs")),
+    ];
+    expected.sort_by_key(|(node, _)| *node);
+    let now = writer.queries().anchor_hashes(&[tax, class, money_file])?;
+    let now: Vec<(NodeId, ShortHash)> = now.iter().map(|each| (each.node, each.hash)).collect();
+    assert_eq!(now, expected);
+    let on = |node, hash: &[u8]| {
+        vec![FactAnchor {
+            node,
+            hash: ShortHash::of(hash),
+        }]
+    };
+    let mut transaction = writer.transaction()?;
+    let first = transaction.add_fact(&anchored(
+        "Money is in cents.",
+        (FactSource::User, 1),
+        on(class, b"cents"),
+    ))?;
+    let second = transaction.add_fact(&anchored(
+        "Tax is a rate.",
+        (FactSource::Agent, 2),
+        on(tax, b"src/tax.rs"),
+    ))?;
+    let third = transaction.add_fact(&anchored(
+        "Money is exact.",
+        (FactSource::User, 3),
+        on(class, b"old"),
+    ))?;
+    transaction.set_fact_status(third, FactStatus::Suspect, 3)?;
+    let fourth = transaction.add_fact(&anchored(
+        "Tax rounds up.",
+        (FactSource::User, 4),
+        on(tax, b"old"),
+    ))?;
+    transaction.commit()?;
+    let changed = |writer: &Writer| writer.queries().facts_with_changed_anchors();
+    assert_eq!(changed(&writer)?, [fourth]);
+    let mut transaction = writer.transaction()?;
+    transaction.replace_file(&index(
+        "src/money.rs",
+        vec![money_symbol("dollars")?],
+        Vec::new(),
+    )?)?;
+    transaction.commit()?;
+    assert_eq!(changed(&writer)?, [first, fourth]);
+    let mut transaction = writer.transaction()?;
+    transaction.remove_file(&common::path("src/tax.rs")?)?;
+    transaction.commit()?;
+    assert_eq!(changed(&writer)?, [first, second, fourth]);
+    assert_eq!(writer.queries().anchor_hashes(&[tax])?, []);
+    let mut transaction = writer.transaction()?;
+    transaction.restamp_fact(first, &on(class, b"dollars"))?;
+    assert!(matches!(
+        transaction.restamp_fact(first, &on(money_file, b"src/money.rs")),
+        Err(StoreError::UnknownRow {
+            table: "fact_anchors",
+            ..
+        })
+    ));
+    transaction.commit()?;
+    assert_eq!(changed(&writer)?, [second, fourth]);
+    Ok(())
+}
+
 /// Fact `id`'s uses, status and last confirmation, as `writer` reads them.
-fn read(writer: &Writer, id: cortex_store::FactId) -> TestResult<(u64, FactStatus, i64)> {
+fn read(writer: &Writer, id: FactId) -> TestResult<(u64, FactStatus, i64)> {
     let row = writer.queries().fact(id)?.ok_or("a fact")?;
     Ok((row.uses, row.record.status, row.last_verified_at_ms))
 }

@@ -15,7 +15,7 @@ use crate::connection::{self, Access};
 use crate::coordination::{self, NoticeRecord, PositionRecord};
 use crate::episode::{self, EpisodeRecord};
 use crate::error::{StoreError, io, sqlite};
-use crate::facts::{self, FactRecord};
+use crate::facts::{self, FactAnchor, FactRecord};
 use crate::folders;
 use crate::handoffs::{self, HandoffRecord};
 use crate::ids::{FactId, HandoffId, InjectionId, NodeId, NoticeId, WarningId};
@@ -530,6 +530,17 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn supersede_fact(&mut self, old: FactId, new: FactId) -> Result<bool, StoreError> {
         self.atomically(|connection| facts::supersede(connection, old, new))
+    }
+
+    /// Gives each of fact `id`'s `anchors` its hash there, as when the fact is confirmed against
+    /// the code as it is now.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::UnknownRow`] for a node the fact is not anchored to,
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn restamp_fact(&mut self, id: FactId, anchors: &[FactAnchor]) -> Result<(), StoreError> {
+        self.atomically(|connection| facts::restamp(connection, id, anchors))
     }
 
     /// Counts one injection of each of `ids`.
