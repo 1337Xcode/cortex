@@ -446,6 +446,39 @@ fn folders_hold_their_files() -> TestResult {
     Ok(())
 }
 
+/// The repository's root always has a node, holding nothing when no file lies at the top: with
+/// `src/a.py` alone, the root's node holds no file and `src`'s holds `a.py`. Once `top.py` is added
+/// and removed again, the root keeps the same node.
+#[test]
+fn the_root_always_has_a_node() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    write(
+        root,
+        "src/a.py",
+        b"def a():
+    pass
+",
+    )?;
+    index(root, 2, GENEROUS, SMALL_LIMIT)?;
+    let first = folders(root)?;
+    assert_eq!(held(&first), [("", vec![]), ("src", vec!["src/a.py"])]);
+    write(
+        root, "top.py", b"x = 1
+",
+    )?;
+    index(root, 2, GENEROUS, SMALL_LIMIT)?;
+    std::fs::remove_file(root.join("top.py"))?;
+    index(root, 2, GENEROUS, SMALL_LIMIT)?;
+    let last = folders(root)?;
+    assert_eq!(held(&last), held(&first));
+    assert_eq!(
+        last.first().map(|(_, node, _)| *node),
+        first.first().map(|(_, node, _)| *node)
+    );
+    Ok(())
+}
+
 /// The folders of `folders` with the files each holds, without their nodes.
 fn held(folders: &[(String, NodeId, Vec<String>)]) -> Vec<(&str, Vec<&str>)> {
     folders

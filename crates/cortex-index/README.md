@@ -276,7 +276,8 @@ finish make it index the whole repository instead.
 Each folder that directly holds a stored file gets a graph node, joined to each of those files by
 a containment edge that points both ways and carries full strength; how much containment counts
 when activation spreads is the containment type's weight, applied where the graph is read. A
-folder that holds only folders gets no node, and one whose files are all gone loses its node.
+folder that holds only folders gets no node, and one whose files are all gone loses its node; the
+repository's root always keeps one, which project facts about the whole repository are anchored to.
 
 Files are read and parsed in batches on several threads, each thread with a parser of its own,
 while the batch before is written in one transaction. Each batch is written in path order, so the

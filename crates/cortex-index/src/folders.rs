@@ -1,5 +1,7 @@
 //! The graph's folders: a node for each folder that directly holds a stored file, joined to each
-//! such file by a containment edge. A folder that holds only folders gets no node.
+//! such file by a containment edge. A folder that holds only folders gets no node, but for the
+//! repository's root, which always has one: project facts that hold for the whole repository are
+//! anchored to it.
 //!
 //! A containment edge carries full strength and points both ways. How much containment counts
 //! when activation spreads is the containment type's weight (`retrieval.type_weights`, 0.1 by
@@ -13,14 +15,16 @@ use cortex_store::{EdgeRecord, StoreError, Writer};
 /// The strength stored on a containment edge: a folder holds its file entirely.
 const CONTAINMENT_STRENGTH: f64 = 1.0;
 
-/// Gives every folder that directly holds a stored file a node joined to each such file, and
-/// removes the nodes of folders that hold none any more, in one transaction.
+/// Gives every folder that directly holds a stored file a node joined to each such file, and the
+/// repository's root a node whatever it holds, and removes the nodes of other folders that hold
+/// none any more, in one transaction.
 ///
 /// # Errors
 ///
 /// Store errors; the transaction then writes nothing.
 pub(crate) fn write_folders(writer: &mut Writer) -> Result<(), StoreError> {
     let mut folders: BTreeMap<RepoPath, Vec<EdgeRecord>> = BTreeMap::new();
+    folders.insert(RepoPath::root(), Vec::new());
     for (path, node) in writer.queries().file_nodes()? {
         // A stored file has a name, so it is in a folder, the root at least.
         let Some(folder) = path.parent() else {
