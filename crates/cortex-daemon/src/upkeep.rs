@@ -2,7 +2,8 @@
 //! writer) once the repository has been quiet for [`QUIET_BEFORE_UPKEEP`] or a session ended. Its
 //! jobs run in order, each a batch at a time in a transaction of its own: links of use that have
 //! faded below 0.01 are removed, then interest that has; the facts are reviewed and those retired
-//! for 90 days deleted; events older than 90 days are deleted, episodes kept to 50,000 (unknown
+//! for 90 days deleted; the gate's confidence model is fitted when one is due (see
+//! [`cortex_learn::calibrate`]); events older than 90 days are deleted, episodes kept to 50,000 (unknown
 //! outcomes first) and positions that can no longer hold removed; last, the query planner's
 //! statistics are refreshed and up to [`VACUUM_PAGES`] free pages given back to the file system.
 //! Between batches a run stops when a hook event or a request waits, after
@@ -15,7 +16,7 @@
 
 use std::time::{Duration, Instant};
 
-use cortex_learn::{has_faded_out, review_facts};
+use cortex_learn::{Calibrated, calibrate, has_faded_out, review_facts};
 use cortex_store::{NodeId, StoreError, Writer};
 
 /// How long the repository must be quiet, no hook event recorded, before upkeep runs.
@@ -168,6 +169,8 @@ enum Step {
     Interest(Option<NodeId>),
     /// The facts.
     Facts,
+    /// The confidence model, fitted when one is due.
+    Calibration,
     /// Old events.
     Events,
     /// Episodes past the cap.
@@ -291,8 +294,22 @@ impl Upkeep {
                 if deleted == BATCH_ROWS {
                     Step::Facts
                 } else {
-                    Step::Events
+                    Step::Calibration
                 }
+            }
+            Step::Calibration => {
+                match calibrate(&mut transaction, now_ms)? {
+                    Some(Calibrated::Kept(fitted)) => tracing::info!(
+                        auc = fitted.auc,
+                        samples = fitted.samples,
+                        "confidence model kept"
+                    ),
+                    Some(Calibrated::Refused(refusal)) => {
+                        tracing::info!(?refusal, "confidence model not kept");
+                    }
+                    None => {}
+                }
+                Step::Events
             }
             Step::Events => {
                 let deleted = transaction
@@ -347,8 +364,11 @@ fn is_full(rows: usize) -> bool {
 mod tests {
     use std::cell::Cell;
 
-    use cortex_core::{EdgeType, EventKind, EventMeta, RepoPath};
-    use cortex_store::{EdgeRecord, EventRecord};
+    use cortex_core::{
+        Agent, ContentHash, EdgeType, EventKind, EventMeta, GateFeatures, HookKind, Identifier,
+        RepoPath,
+    };
+    use cortex_store::{EdgeRecord, EventRecord, InjectionRecord, SessionRecord};
 
     use super::*;
     use crate::test_store::{TestResult, add_file, writer};
@@ -496,6 +516,68 @@ mod tests {
             clock.due_at(minutes(30)),
             Some(minutes(30) + Duration::from_secs(2))
         );
+    }
+
+    /// 250 labelled injections of prompts, each used exactly when its top lexical score, (37 n mod
+    /// 100) / 100 for the n-th, is above 0.5: a run fits a model on the oldest 200 and judges it on
+    /// the newest 50, which it ranks perfectly by that score, an AUC of 1, so it keeps it as the
+    /// first. With nothing labelled since, the next run fits nothing.
+    #[test]
+    fn a_run_fits_the_confidence_model_once_enough_are_labelled() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut writer = writer(root.path())?;
+        let mut transaction = writer.transaction()?;
+        transaction.record_session(&SessionRecord {
+            session_id: Identifier::new("s0")?,
+            agent: Agent::Claude,
+            agent_version: None,
+            model: None,
+            parent_session_id: None,
+            cwd: None,
+            transcript_path: None,
+            started_at_ms: 1,
+        })?;
+        for at in 0..250_u32 {
+            let top_lexical = f64::from(at * 37 % 100) / 100.0;
+            let id = transaction.record_injection(&InjectionRecord {
+                task_id: None,
+                session_id: Identifier::new("s0")?,
+                hook: HookKind::Prompt,
+                at_ms: 10 + i64::from(at),
+                files: Vec::new(),
+                tokens: 10,
+                confidence: None,
+                is_gated_out: false,
+                is_holdout: false,
+                text_hash: Some(ContentHash::of(b"a work order")),
+                features: Some(GateFeatures {
+                    top_lexical,
+                    top_mass: 0.5,
+                    agreeing_kinds: 2,
+                    supporting_kinds: 2,
+                    similar_task: 0.0,
+                    recent_precision: None,
+                    is_continuing: false,
+                }),
+            })?;
+            transaction.label_injection(id, 0, top_lexical > 0.5)?;
+        }
+        transaction.commit()?;
+        let mut upkeep = Upkeep::default();
+        let far = Instant::now() + Duration::from_secs(60);
+        let now = (200 * DAY_MS, &SETTINGS);
+        let (_, ended) = upkeep.run(&mut writer, now, (far, &|| false))?;
+        assert_eq!(ended, Ended::Done);
+        let kept = writer.queries().calibration()?.ok_or("a model kept")?;
+        assert_eq!((kept.version, kept.samples), (1, 200));
+        assert!((kept.auc - 1.0).abs() < f64::EPSILON, "{kept:?}");
+        let (_, ended) = upkeep.run(&mut writer, now, (far, &|| false))?;
+        assert_eq!(ended, Ended::Done);
+        assert_eq!(
+            writer.queries().calibration()?.map(|model| model.version),
+            Some(1)
+        );
+        Ok(())
     }
 
     /// The log is held to a limit of nothing at all, so that it always holds too much. A run that
