@@ -1,7 +1,6 @@
-//! The receipts as lines of text: what the costs were estimated from, what the counts leave out,
-//! whether there is enough to compare held-out tasks with the rest, how precise the work orders
-//! given were, then each session with its primers, its tasks, the work outside any task, and its
-//! total.
+//! The receipts as lines of text: what the costs were estimated from, how far the held-out tasks
+//! are from being enough to compare with the rest, how precise the work orders given were, then
+//! each session with its primers, its tasks, the work outside any task, and its total.
 
 use std::path::Path;
 
@@ -25,10 +24,6 @@ pub(super) fn lines(report: &Report, root: &Path, days: Option<u32>) -> Vec<Stri
         ));
         return lines;
     };
-    lines.push(format!(
-        "usage: as each transcript records it; {}, are not counted",
-        report.uncounted
-    ));
     lines.extend(holdout_lines(&recorded.holdout));
     lines.push(precision_line(recorded.precision));
     lines.push(warning_line(recorded.warnings));
@@ -50,42 +45,29 @@ pub(super) fn lines(report: &Report, root: &Path, days: Option<u32>) -> Vec<Stri
 /// The line saying what the costs were estimated from.
 fn prices_line(prices: &Prices) -> String {
     match prices {
-        Prices::Read {
-            file,
-            updated,
-            source,
-        } => {
-            let from = source
-                .as_ref()
-                .map(|source| format!(", read from {source}"))
-                .unwrap_or_default();
-            format!(
-                "prices: as of {updated}{from}, kept in {file}; costs are estimates and count \
-                 tokens only"
-            )
-        }
+        Prices::Read { file, updated, .. } => format!("prices: as of {updated}, from {file}"),
         Prices::Missing { why } => format!("prices: none, so no cost is estimated ({why})"),
     }
 }
 
-/// The line saying whether held-out tasks can be compared with the rest yet.
+/// The lines saying how the held-out tasks compare with the rest, or how many of each there are
+/// so far against how many the comparison needs.
 fn holdout_lines(holdout: &Holdout) -> Vec<String> {
-    let counts = format!(
-        "the repository has {} held out and {} not",
-        counted(holdout.arms.held_out, "task", "tasks"),
-        grouped(holdout.arms.treated)
-    );
+    let needed = holdout.needed_per_arm;
+    let (held_out, treated) = (holdout.arms.held_out, holdout.arms.treated);
     if !holdout.arms.is_enough() {
         return vec![format!(
-            "holdout comparison: not enough data yet ({counts}; {} of each are needed)",
-            holdout.needed_per_arm
+            "holdout comparison: {} of {needed} held-out and {} of {needed} treated tasks so far",
+            grouped(held_out),
+            grouped(treated)
         )];
     }
     let Some(comparison) = &holdout.comparison else {
         return vec![format!(
-            "holdout comparison: not enough data yet ({counts}, but fewer than {} of each have \
-             ended)",
-            holdout.needed_per_arm
+            "holdout comparison: {} held-out and {} treated tasks so far, but fewer than {needed} \
+             of each have ended",
+            grouped(held_out),
+            grouped(treated)
         )];
     };
     let [treated, held_out] = comparison.tasks;
@@ -118,11 +100,10 @@ fn holdout_lines(holdout: &Holdout) -> Vec<String> {
             ));
         }
         None => lines.push(format!(
-            "  per successful task: not enough data yet ({} with Cortex and {} held out whose \
-             usage was read; {} of each are needed)",
-            counted(treated_succeeded, "successful task", "successful tasks"),
-            grouped(held_out_succeeded),
-            holdout.needed_per_arm
+            "  per successful task: {} of {needed} with Cortex and {} of {needed} held out have \
+             usage read so far",
+            grouped(treated_succeeded),
+            grouped(held_out_succeeded)
         )),
     }
     lines
@@ -191,19 +172,10 @@ fn warning_line(precision: Precision) -> String {
     }
 }
 
-/// What a session of an agent whose transcripts Cortex does not read shows for its usage.
-const NOT_METERED: &str = "usage not read, as Cortex reads no transcript of this agent";
-
 /// The lines of one session: itself, each task, the work outside any task, and its total. A
-/// session whose agent is not metered says so in place of every count of usage.
+/// session whose agent is not metered leaves usage out of every line, as Cortex reads none.
 fn session_lines(session: &SessionReceipt) -> Vec<String> {
-    let usage = |tally: &Tally| {
-        if session.is_metered {
-            usage(tally)
-        } else {
-            NOT_METERED.to_owned()
-        }
-    };
+    let usage = |tally: &Tally| session.is_metered.then(|| usage(tally));
     let mut lines = vec![format!(
         "session {} ({}, {}), started {}, {}",
         session.session_id.as_str(),
@@ -225,35 +197,50 @@ fn session_lines(session: &SessionReceipt) -> Vec<String> {
             .map(|task| task_line(task, usage(&task.usage))),
     );
     if session.outside_tasks.turns > 0 || session.outside_tool_calls > 0 {
+        let calls = counted(session.outside_tool_calls, "tool call", "tool calls");
         lines.push(format!(
-            "  outside any task: {}; {}",
-            usage(&session.outside_tasks),
-            counted(session.outside_tool_calls, "tool call", "tool calls")
+            "  outside any task: {}",
+            joined(usage(&session.outside_tasks), vec![calls])
         ));
     }
-    lines.push(format!(
-        "  total: {}; {}; {} injected by Cortex",
-        usage(&session.total),
+    let rest = vec![
         counted(session.tool_calls, "tool call", "tool calls"),
-        counted(session.injected_tokens, "token", "tokens")
-    ));
+        format!(
+            "{} injected by Cortex",
+            counted(session.injected_tokens, "token", "tokens")
+        ),
+    ];
+    lines.push(format!("  total: {}", joined(usage(&session.total), rest)));
     lines
 }
 
-/// The line of one task, whose usage reads `usage`.
-fn task_line(task: &TaskReceipt, usage: String) -> String {
+/// The line of one task, whose usage reads `usage` when its agent is metered.
+fn task_line(task: &TaskReceipt, usage: Option<String>) -> String {
     let state = match (task.outcome, task.ended_at_ms) {
         (Some(outcome), _) => outcome,
         (None, Some(_)) => "ended",
         (None, None) => "open",
     };
+    let rest = vec![
+        counted(task.tool_calls, "tool call", "tool calls"),
+        format!(
+            "{} injected by Cortex",
+            counted(task.injected_tokens, "token", "tokens")
+        ),
+    ];
     format!(
-        "  task {} ({state}), started {}: {usage}; {}; {} injected by Cortex",
+        "  task {} ({state}), started {}: {}",
         task.seq,
         when(task.started_at_ms),
-        counted(task.tool_calls, "tool call", "tool calls"),
-        counted(task.injected_tokens, "token", "tokens")
+        joined(usage, rest)
     )
+}
+
+/// The parts of a line, `usage` first when there is any, separated by semicolons.
+fn joined(usage: Option<String>, rest: Vec<String>) -> String {
+    let mut parts: Vec<String> = usage.into_iter().collect();
+    parts.extend(rest);
+    parts.join("; ")
 }
 
 /// The responses of `tally` and what they cost, as words; that none was recorded when there is
@@ -366,7 +353,7 @@ mod tests {
         Unpriced,
     };
 
-    use super::super::{Holdout, Prices, Recorded, Report, UNCOUNTED};
+    use super::super::{Holdout, Prices, Recorded, Report};
     use super::{amount, grouped, holdout_lines, lines, session_lines, usage, when};
 
     /// Digits grouped by hand.
@@ -436,7 +423,6 @@ mod tests {
             prices: Prices::Missing {
                 why: "no home folder".to_owned(),
             },
-            uncounted: UNCOUNTED,
             recorded: Some(Recorded {
                 holdout: Holdout {
                     arms: Arms {
@@ -461,25 +447,22 @@ mod tests {
             lines(&report, Path::new("repo"), Some(2)),
             [
                 "prices: none, so no cost is estimated (no home folder)",
-                "usage: as each transcript records it; calls a transcript does not record, such \
-                 as compaction, are not counted",
-                "holdout comparison: not enough data yet (the repository has 31 tasks held out \
-                 and 1,200 not, but fewer than 30 of each have ended)",
+                "holdout comparison: 31 held-out and 1,200 treated tasks so far, but fewer than \
+                 30 of each have ended",
                 "injection precision: 0.71, 52 of 73 work orders given and labelled were used",
                 "warning precision: 0.56, 5 of 9 files warnings named and marked were then read \
                  or edited",
                 "no session started in the last 2 days",
             ]
         );
-        assert_eq!(lines(&report, Path::new("repo"), None)[5], "no session");
+        assert_eq!(lines(&report, Path::new("repo"), None)[4], "no session");
     }
 
-    /// A session of an agent whose transcripts Cortex does not read says its usage was not read,
-    /// for each task and in its total, where a metered session with no response says none was
-    /// recorded.
+    /// A session of an agent whose transcripts Cortex does not read leaves usage out of each task,
+    /// the work outside any task and its total, where a metered session with no response says
+    /// none was recorded.
     #[test]
-    fn a_session_not_metered_says_its_usage_was_not_read() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn a_session_not_metered_leaves_its_usage_out() -> Result<(), Box<dyn std::error::Error>> {
         let nothing = Tally {
             turns: 0,
             cumulative_input: 0,
@@ -508,10 +491,10 @@ mod tests {
             ended_at_ms: Some(180_000),
             status: "ended",
             subagents: 0,
-            tool_calls: 2,
+            tool_calls: 3,
             tasks: vec![task],
             outside_tasks: nothing.clone(),
-            outside_tool_calls: 0,
+            outside_tool_calls: 1,
             total: nothing,
             primer_tokens: 0,
             injected_tokens: 0,
@@ -520,10 +503,10 @@ mod tests {
             session_lines(&codex),
             [
                 "session s1 (codex, ended), started 1970-01-01 00:00 UTC, 0 subagents",
-                "  task 1 (ended), started 1970-01-01 00:01 UTC: usage not read, as Cortex reads \
-                 no transcript of this agent; 2 tool calls; 0 tokens injected by Cortex",
-                "  total: usage not read, as Cortex reads no transcript of this agent; 2 tool \
-                 calls; 0 tokens injected by Cortex",
+                "  task 1 (ended), started 1970-01-01 00:01 UTC: 2 tool calls; 0 tokens injected \
+                 by Cortex",
+                "  outside any task: 1 tool call",
+                "  total: 3 tool calls; 0 tokens injected by Cortex",
             ]
         );
         let claude = SessionReceipt {
@@ -534,7 +517,11 @@ mod tests {
         let said = session_lines(&claude);
         assert_eq!(
             said.get(2).map(String::as_str),
-            Some("  total: no usage recorded; 2 tool calls; 0 tokens injected by Cortex")
+            Some("  outside any task: no usage recorded; 1 tool call")
+        );
+        assert_eq!(
+            said.get(3).map(String::as_str),
+            Some("  total: no usage recorded; 3 tool calls; 0 tokens injected by Cortex")
         );
         Ok(())
     }
@@ -594,9 +581,21 @@ mod tests {
         assert_eq!(
             holdout_lines(&thin).last().map(String::as_str),
             Some(
-                "  per successful task: not enough data yet (12 successful tasks with Cortex and \
-                 30 held out whose usage was read; 30 of each are needed)"
+                "  per successful task: 12 of 30 with Cortex and 30 of 30 held out have usage \
+                 read so far"
             )
+        );
+        let few = Holdout {
+            arms: Arms {
+                held_out: 4,
+                treated: 12,
+            },
+            needed_per_arm: 30,
+            comparison: None,
+        };
+        assert_eq!(
+            holdout_lines(&few),
+            ["holdout comparison: 4 of 30 held-out and 12 of 30 treated tasks so far"]
         );
     }
 

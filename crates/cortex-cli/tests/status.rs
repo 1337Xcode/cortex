@@ -97,10 +97,8 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
         empty.stdout,
         "daemon: not running\nindex: not ready, an index is under way\n\
          mode: not counted yet\nfiles: 0 stored, 0 parsed\nco-change: nothing mined yet\n\
-         gate: a work order when the prompt's words match a file at 0.50 or more and 2 kinds of \
-         evidence agree, or at 0.10 or more and 3 agree, or when a session goes on with its \
-         own work\n\
-         self-check: no work order given is labelled yet; the bar is not raised\n\
+         gate: bar 0.50, 0.10 when 3 kinds agree\n\
+         self-check: no work order given is labelled yet\n\
          warnings: none given yet\n"
     );
     index(root, &mut writer)?;
@@ -109,10 +107,8 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
         ready.stdout,
         "daemon: not running\nindex: ready\nmode: tiny\nfiles: 3 stored, 2 parsed\n\
          co-change: nothing mined yet\n\
-         gate: a work order when the prompt's words match a file at 0.50 or more and 2 kinds of \
-         evidence agree, or at 0.10 or more and 3 agree, or when a session goes on with its \
-         own work\n\
-         self-check: no work order given is labelled yet; the bar is not raised\n\
+         gate: bar 0.50, 0.10 when 3 kinds agree\n\
+         self-check: no work order given is labelled yet\n\
          warnings: none given yet\n"
     );
     drop(writer);
@@ -122,10 +118,8 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
         stopped.stdout,
         "daemon: not running\nindex: ready\nmode: tiny; pinned to small in the configuration\n\
          files: 3 stored, 2 parsed\nco-change: nothing mined yet\n\
-         gate: a work order when the prompt's words match a file at 0.50 or more and 2 kinds of \
-         evidence agree, or at 0.10 or more and 3 agree, or when a session goes on with its \
-         own work\n\
-         self-check: no work order given is labelled yet; the bar is not raised\n\
+         gate: bar 0.50, 0.10 when 3 kinds agree\n\
+         self-check: no work order given is labelled yet\n\
          warnings: none given yet\n"
     );
     Ok(())
@@ -187,10 +181,8 @@ fn status_finds_the_repository_from_a_folder_inside_it() -> TestResult {
         String::from_utf8(output.stdout)?,
         "daemon: not running\nindex: ready\nmode: tiny\nfiles: 1 stored, 1 parsed\n\
          co-change: nothing mined yet\n\
-         gate: a work order when the prompt's words match a file at 0.50 or more and 2 kinds of \
-         evidence agree, or at 0.10 or more and 3 agree, or when a session goes on with its \
-         own work\n\
-         self-check: no work order given is labelled yet; the bar is not raised\n\
+         gate: bar 0.50, 0.10 when 3 kinds agree\n\
+         self-check: no work order given is labelled yet\n\
          warnings: none given yet\n"
     );
     Ok(())
@@ -222,9 +214,7 @@ fn status_shows_the_gate_as_the_self_check_left_it() -> TestResult {
         raised.stdout,
         "daemon: not running\nindex: ready\nmode: tiny\nfiles: 1 stored, 1 parsed\n\
          co-change: nothing mined yet\n\
-         gate: a work order when the prompt's words match a file at 0.60 or more and 2 kinds of \
-         evidence agree, or at 0.20 or more and 3 agree, or when a session goes on with its \
-         own work\n\
+         gate: bar 0.60, 0.20 when 3 kinds agree\n\
          self-check: precision 0.52 over the latest 100 work orders given; the bar is raised 2 \
          of 4 steps, by 0.10, last when 130 work orders had been labelled\n\
          warnings: none given yet\n"

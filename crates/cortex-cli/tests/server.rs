@@ -313,13 +313,7 @@ fn events_sent_to_the_daemon_are_recorded() -> TestResult {
         ]
     );
     let stdout = status_output(repo.path(), home.path())?;
-    assert!(
-        stdout.contains(
-            "\nqueue: 0 events and 0 changes waiting; 0 events dropped, 0 batches not recorded, \
-             0 checkpoints failed\n"
-        ),
-        "{stdout}"
-    );
+    assert!(stdout.contains("\nqueue: 0 waiting\n"), "{stdout}");
     let latencies: Vec<(&str, &str)> = stdout
         .lines()
         .filter_map(|line| line.strip_prefix("daemon latency: "))

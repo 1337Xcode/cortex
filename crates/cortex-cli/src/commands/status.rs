@@ -18,7 +18,7 @@ use cortex_git::mine::Mark;
 use cortex_hook::{Answer, ClientError};
 use cortex_index::waits_to_be_parsed;
 use cortex_learn::{MAX_RAISE_STEPS, raise_of, recent_precision};
-use cortex_retrieve::{AGREEING_KINDS, LEXICAL_BAR, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR};
+use cortex_retrieve::{LEXICAL_BAR, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR};
 use cortex_store::{
     MetaKey, Queries, Reader, SelfCheckRecord, StoreError, WarningCounts, is_writer_running,
 };
@@ -134,15 +134,7 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
             report.cortex_version,
             report.uptime_ms / 1000
         ),
-        format!(
-            "queue: {} events and {} changes waiting; {} events dropped, {} batches not \
-             recorded, {} checkpoints failed",
-            report.events_waiting,
-            report.changes_waiting,
-            report.events_dropped,
-            report.failed_batches,
-            report.failed_checkpoints
-        ),
+        queue_line(report),
         git_line(report.git.as_ref()),
         graph_line(report.graph.as_ref()),
         worktree_line(report.worktree.as_ref()),
@@ -161,6 +153,30 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
             .map(|error| error_line(error, now_ms)),
     );
     lines
+}
+
+/// What waits for the daemon, events and changes together, then each loss the daemon counted
+/// (events dropped, batches not recorded, checkpoints failed) only when it is not zero.
+fn queue_line(report: &StatusReport) -> String {
+    let waiting = report.events_waiting.saturating_add(report.changes_waiting);
+    let mut line = format!("queue: {waiting} waiting");
+    let losses = [
+        (report.events_dropped, ("event dropped", "events dropped")),
+        (
+            report.failed_batches,
+            ("batch not recorded", "batches not recorded"),
+        ),
+        (
+            report.failed_checkpoints,
+            ("checkpoint failed", "checkpoints failed"),
+        ),
+    ];
+    for (count, words) in losses {
+        if count > 0 {
+            line.push_str(&format!("; {}", counted(count, words)));
+        }
+    }
+    line
 }
 
 /// What the daemon read of the work tree's uncommitted changes, as a line: the files kept to seed
@@ -202,10 +218,7 @@ fn worktree_said(report: &WorktreeReport) -> String {
             "not read, as the repository's own git configuration names a filter a look would run"
                 .to_owned()
         }
-        WorktreeState::WouldFetch => {
-            "not read, as git older than 2.45 could fetch from the network in a partial clone"
-                .to_owned()
-        }
+        WorktreeState::WouldFetch => "not read; update git to 2.45 or later".to_owned(),
         WorktreeState::TooMany => {
             let many = match report.listed_files {
                 0 => "more uncommitted files than a look reads".to_owned(),
@@ -393,16 +406,13 @@ fn warnings_line(counts: WarningCounts) -> String {
     }
 }
 
-/// What the gate asks before it hands a work order over, its bar for the prompt's words raised as
-/// far as the self-check's `record` says.
+/// What the gate asks before it hands a work order over: its bar for the prompt's words, raised as
+/// far as the self-check's `record` says, and the lower bar that holds when the most kinds of
+/// evidence agree.
 fn gate_line(record: &SelfCheckRecord) -> String {
     let raise = raise_of(record);
     let (bar, strong_bar) = (LEXICAL_BAR + raise, STRONG_LEXICAL_BAR + raise);
-    format!(
-        "gate: a work order when the prompt's words match a file at {bar:.2} or more and \
-         {AGREEING_KINDS} kinds of evidence agree, or at {strong_bar:.2} or more and \
-         {STRONG_AGREEING_KINDS} agree, or when a session goes on with its own work"
-    )
+    format!("gate: bar {bar:.2}, {strong_bar:.2} when {STRONG_AGREEING_KINDS} kinds agree")
 }
 
 /// What the self-check last found, as its `record` keeps it: how often the latest work orders
@@ -418,16 +428,15 @@ fn self_check_line(record: &SelfCheckRecord) -> String {
             ),
         ),
     };
-    let raised = match record.raise_steps {
-        0 => "the bar is not raised".to_owned(),
+    match record.raise_steps {
+        0 => format!("self-check: {found}"),
         steps => format!(
-            "the bar is raised {steps} of {MAX_RAISE_STEPS} steps, by {:.2}, last when {} had \
-             been labelled",
+            "self-check: {found}; the bar is raised {steps} of {MAX_RAISE_STEPS} steps, by {:.2}, \
+             last when {} had been labelled",
             raise_of(record),
             counted(record.raised_at, ("work order", "work orders")),
         ),
-    };
-    format!("self-check: {found}; {raised}")
+    }
 }
 
 /// How far the history is mined, from the `mark` the last mining left, with how long before
@@ -483,8 +492,7 @@ mod tests {
             report_lines(&report(), 0),
             [
                 "daemon: running (process 7, Cortex 1.2.3, up 61 s)",
-                "queue: 0 events and 0 changes waiting; 0 events dropped, 0 batches not \
-                 recorded, 0 checkpoints failed",
+                "queue: 0 waiting",
                 "git: not ready, waiting for the first index",
                 "graph: none built yet",
                 "work tree: not looked at yet",
@@ -492,6 +500,29 @@ mod tests {
                 "errors: none",
             ]
         );
+    }
+
+    /// The queue counts events and changes together (3 and 4 are 7 waiting) and names a loss only
+    /// when it is not zero, singular for one.
+    #[test]
+    fn the_queue_names_only_the_losses_that_happened() {
+        let queue = |events_dropped, failed_batches, failed_checkpoints| {
+            queue_line(&StatusReport {
+                events_waiting: 3,
+                changes_waiting: 4,
+                events_dropped,
+                failed_batches,
+                failed_checkpoints,
+                ..report()
+            })
+        };
+        assert_eq!(queue(0, 0, 0), "queue: 7 waiting");
+        assert_eq!(queue(2, 0, 0), "queue: 7 waiting; 2 events dropped");
+        assert_eq!(
+            queue(1, 1, 1),
+            "queue: 7 waiting; 1 event dropped; 1 batch not recorded; 1 checkpoint failed"
+        );
+        assert_eq!(queue(0, 5, 0), "queue: 7 waiting; 5 batches not recorded");
     }
 
     /// Each hook's percentiles print in milliseconds to the microsecond (125 µs is 0.125 ms, 4 µs
@@ -669,8 +700,7 @@ mod tests {
             ),
             (
                 WorktreeState::WouldFetch,
-                "work tree: not read, as git older than 2.45 could fetch from the network in a \
-                 partial clone",
+                "work tree: not read; update git to 2.45 or later",
             ),
             (
                 WorktreeState::TooMany,

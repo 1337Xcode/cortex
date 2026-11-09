@@ -169,12 +169,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             "source": "https://platform.claude.com/docs/en/about-claude/pricing",
         }))
     );
-    assert_eq!(
-        report.get("uncounted"),
-        Some(&json!(
-            "calls a transcript does not record, such as compaction"
-        ))
-    );
+    assert_eq!(report.get("uncounted"), None);
     let recorded = report.get("recorded").ok_or("recorded")?;
     assert_eq!(
         recorded.get("holdout"),
@@ -261,36 +256,27 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     assert!(printed.status.success(), "{printed:?}");
     let text = String::from_utf8(printed.stdout)?;
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 10, "{text}");
+    assert_eq!(lines.len(), 9, "{text}");
     assert_eq!(
-        lines[..5],
+        lines[..4],
         [
-            format!(
-                "prices: as of 2026-11-03, read from \
-                 https://platform.claude.com/docs/en/about-claude/pricing, kept in {}; costs are \
-                 estimates and count tokens only",
-                price_file.display()
-            )
-            .as_str(),
-            "usage: as each transcript records it; calls a transcript does not record, such as \
-             compaction, are not counted",
-            "holdout comparison: not enough data yet (the repository has 0 tasks held out and 1 \
-             not; 30 of each are needed)",
+            format!("prices: as of 2026-11-03, from {}", price_file.display()).as_str(),
+            "holdout comparison: 0 of 30 held-out and 1 of 30 treated tasks so far",
             "injection precision: no work order given is labelled yet",
             "warning precision: no warning is marked yet",
         ]
     );
-    let session_line = lines[5];
+    let session_line = lines[4];
     assert!(
         session_line.starts_with(&format!("session {S1} (claude, live), started ")),
         "{session_line}"
     );
     assert!(session_line.ends_with(" UTC, 1 subagent"), "{session_line}");
     assert_eq!(
-        lines[6],
+        lines[5],
         format!("  primer: {PRIMER_TOKENS} tokens injected by Cortex")
     );
-    let task_line = lines[7];
+    let task_line = lines[6];
     assert!(
         task_line.starts_with("  task 1 (unknown), started "),
         "{task_line}"
@@ -304,7 +290,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         "{task_line}"
     );
     assert_eq!(
-        lines[8..],
+        lines[7..],
         [
             "  outside any task: 1 turn, 33,499 input tokens (3,702 uncached, 0 read from the \
              cache, 29,797 written to it), 100 output tokens, about $0.1276; 0 tool calls"
