@@ -139,8 +139,9 @@ fn listed(paths: &[&str], named: usize) -> String {
     }
 }
 
-/// How long ago, said in whole minutes or hours.
-fn ago(ago_ms: i64) -> String {
+/// How long ago, said in whole minutes or hours, as text an agent reads says it.
+#[must_use]
+pub fn ago(ago_ms: i64) -> String {
     let minutes = ago_ms.max(0) / MINUTE_MS;
     match minutes {
         0 => "less than a minute ago".to_owned(),

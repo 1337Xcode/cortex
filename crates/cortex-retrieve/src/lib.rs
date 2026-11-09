@@ -21,6 +21,7 @@ mod features;
 mod gate;
 mod graph;
 mod hints;
+mod innermost;
 mod items;
 mod lexical;
 mod node_hash;
@@ -43,6 +44,7 @@ mod support;
 mod two_stage;
 mod uncommitted;
 mod warnings;
+mod why;
 
 pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
@@ -84,4 +86,7 @@ pub use warnings::{
     CallSite, Drift, EditFacts, EditQuery, Linked, MAX_CHECKED_CALLER_FILES, MAX_LISTED_CALL_SITES,
     MAX_LISTED_TESTS, MAX_WARNING_TOKENS, MIN_LINK_TASKS, MIN_LINK_WEIGHT, NamedFile, Partner,
     TaskSoFar, TestFile, Warned, Warning, edit_facts, task_so_far, warnings_after_edit,
+};
+pub use why::{
+    MAX_LINKS_PER_KIND, MAX_WHY_SESSIONS, MAX_WHY_TOKENS, MAX_WHY_WARNINGS, Why, WhyAt, why,
 };

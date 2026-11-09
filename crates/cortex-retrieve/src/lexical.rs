@@ -21,6 +21,7 @@ use cortex_core::{Identifier, RepoPath};
 use cortex_store::{NodeId, Queries, StoreError};
 
 use crate::graph::Graph;
+use crate::innermost::innermost_at;
 use crate::prompt::PromptTerms;
 
 /// Most rows a lookup keeps, the best by BM25.
@@ -226,7 +227,9 @@ fn named(
         {
             add(&mut named, graph, (node, 1.0));
             if let Some(line) = mention.line
-                && let Some(symbol) = symbol_at(queries, file, line)?
+                && let Some(symbol) = innermost_at(queries, file, line)?
+                    .first()
+                    .map(|span| span.node)
             {
                 add(&mut named, graph, (symbol, 1.0));
             }
@@ -295,20 +298,6 @@ fn file_named(
         (Some((_, file, node)), None) => Ok(Some((file, node))),
         _ => Ok(None),
     }
-}
-
-/// The innermost symbol of `file` whose lines hold `line`, if any.
-fn symbol_at(
-    queries: Queries<'_>,
-    file: cortex_store::FileId,
-    line: u32,
-) -> Result<Option<NodeId>, StoreError> {
-    Ok(queries
-        .symbol_spans_in_file(file)?
-        .into_iter()
-        .filter(|span| span.start_line <= line && line <= span.end_line)
-        .min_by_key(|span| (span.end_line - span.start_line, span.node))
-        .map(|span| span.node))
 }
 
 /// The files of `nodes`, those that are files themselves included.
