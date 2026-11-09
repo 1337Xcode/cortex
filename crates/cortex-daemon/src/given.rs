@@ -8,7 +8,7 @@
 //! again. The notices an edit queued for other sessions are queued however its own answer fared.
 
 use cortex_core::{ContentHash, Event, Identifier, Ulid, estimate_tokens};
-use cortex_store::{HandoffId, InjectionRecord, NoticeId, NoticeRecord, WarningRecord};
+use cortex_store::{FactId, HandoffId, InjectionRecord, NoticeId, NoticeRecord, WarningRecord};
 
 /// What one answer gave, or would have given.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +23,9 @@ pub(crate) enum Given {
     /// record of its text. Recorded only once the text reached the agent, which closes that
     /// handoff and no other.
     Handoff(HandoffId, Identifier, InjectionRecord),
+    /// The project facts a work order carried, each counted as used once the text reached the
+    /// agent.
+    Facts(Vec<FactId>),
 }
 
 /// What one answer did with coordination notices: those it gave and those it queued.
@@ -53,6 +56,7 @@ impl Given {
                 "an answer's coordination notices were not recorded: too many waited"
             }
             Self::Handoff(..) => "a handoff given was not recorded: too many waited",
+            Self::Facts(_) => "the facts a work order gave were not counted: too many waited",
         }
     }
 }
@@ -113,6 +117,9 @@ pub(crate) fn recorded(
         // A handoff that did not reach the agent stays open for the next session.
         Given::Handoff(handoff, by, text) if reached => Some(Given::Handoff(handoff, by, text)),
         Given::Handoff(..) => None,
+        // A fact counts as used only when the text that carried it reached the agent.
+        Given::Facts(facts) if reached => Some(Given::Facts(facts)),
+        Given::Facts(_) => None,
         Given::Notices(notices) if reached => Some(Given::Notices(notices)),
         // Nothing given reached the agent: what was given waits again, and only what was queued
         // for the other sessions stands.
@@ -128,8 +135,11 @@ pub(crate) fn recorded(
 
 #[cfg(test)]
 mod tests {
-    use cortex_core::{ContentHash, HookKind, Identifier, NoticeSubject, Ulid, WarningKind};
-    use cortex_store::{InjectionRecord, WarningRecord};
+    use cortex_core::{
+        ContentHash, FactKind, FactSource, HookKind, Identifier, NoticeSubject, ShortHash, Ulid,
+        WarningKind,
+    };
+    use cortex_store::{FactAnchor, FactRecord, InjectionRecord, WarningRecord};
 
     use super::*;
     use crate::test_store::{TestResult, add_file, writer};
@@ -271,6 +281,34 @@ mod tests {
             ..given.clone()
         });
         assert_eq!(recorded(nothing_queued, true, false, false), None);
+        Ok(())
+    }
+
+    /// The facts a work order carried count as used only when its text reached the agent, written
+    /// before its hook stopped reading; written late, or not at all, they are not counted.
+    #[test]
+    fn facts_count_as_used_only_when_their_text_arrived() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut store = writer(root.path())?;
+        let node = add_file(&mut store, "a.py", 1)?;
+        let mut transaction = store.transaction()?;
+        let fact = transaction.add_fact(&FactRecord {
+            text: "A is small.".to_owned(),
+            kind: FactKind::Convention,
+            source: FactSource::User,
+            status: FactSource::User.first_status(),
+            created_at_ms: 1,
+            task: None,
+            anchors: vec![FactAnchor {
+                node,
+                hash: ShortHash::of(b"a"),
+            }],
+        })?;
+        transaction.commit()?;
+        let given = || Given::Facts(vec![fact]);
+        assert_eq!(recorded(given(), true, true, false), Some(given()));
+        assert_eq!(recorded(given(), true, true, true), None);
+        assert_eq!(recorded(given(), true, false, false), None);
         Ok(())
     }
 }

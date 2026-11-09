@@ -192,6 +192,12 @@ impl Service {
                 .filter(|_| !is_holdout)
                 .map(|(text, _)| text.to_owned());
             let mut given: Vec<Given> = injection.map(Given::Injection).into_iter().collect();
+            if let Outcome::WorkOrder(_, rendered) = &retrieval.outcome
+                && !is_holdout
+                && !rendered.facts.is_empty()
+            {
+                given.push(Given::Facts(rendered.facts.clone()));
+            }
             // A held-out task gets no handoff either: it stays open for the next session.
             let handoff = if is_holdout {
                 None

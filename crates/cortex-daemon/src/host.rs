@@ -547,6 +547,11 @@ fn record_given(writer: &mut Writer, inbox: &Inbox, given: &[Given]) {
                         count_failed(inbox, "a handoff given", &error);
                     }
                 }
+                Given::Facts(facts) => {
+                    if let Err(error) = transaction.count_fact_uses(facts) {
+                        count_failed(inbox, "the facts given", &error);
+                    }
+                }
             }
         }
         transaction.commit()
