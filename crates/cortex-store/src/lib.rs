@@ -48,7 +48,9 @@ mod values;
 mod warnings;
 mod writer;
 
-pub use activity::{EventRecord, EventRow, SessionRecord, SessionRow, TaskRecord, TaskRow};
+pub use activity::{
+    EventRecord, EventRow, QuietTask, SessionRecord, SessionRow, TaskRecord, TaskRow,
+};
 pub use archetype::ArchetypeRecord;
 pub use checkpoint::CheckpointFailures;
 pub use cochange::{CountedFile, FileCommitsRow, GitStateKey, PairRow};

@@ -63,6 +63,55 @@ fn committed<T>(
     Ok(value)
 }
 
+/// A task not ended counts as quiet once the latest of its start, its own events and its
+/// session's events is at or before the time asked. Worked by hand: `open` (s1) started at 100,
+/// its own last event at 400, its session's last event (outside the task) at 700, so its last
+/// sign is 700; `fresh` (s2) started at 800 with no event, last sign 800; `ended` (s1) ended and
+/// never counts. Asked at 699: none; at 700: `open` at 700; at 800: `open`, then `fresh`.
+#[test]
+fn tasks_of_quiet_sessions_are_found_by_their_last_sign_of_work() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let open = task(b"open", "s1", 100)?;
+    let ended = task(b"ended", "s1", 50)?;
+    let fresh = task(b"fresh", "s2", 800)?;
+    committed(&mut writer, |transaction| {
+        transaction.record_session(&session("s1", 10)?)?;
+        transaction.record_session(&session("s2", 20)?)?;
+        transaction.start_task(&ended)?;
+        transaction.end_task(ended.task_id, 90, TaskOutcome::Unknown)?;
+        transaction.start_task(&open)?;
+        transaction.start_task(&fresh)?;
+        transaction.append_event(&event(Some(open.task_id), 400, EventKind::Prompt)?)?;
+        transaction.append_event(&event(None, 700, EventKind::Compact)?)?;
+        Ok(())
+    })?;
+    let quiet = |at_ms: i64| -> TestResult<Vec<(Ulid, String, i64)>> {
+        Ok(writer
+            .queries()
+            .quiet_open_tasks(at_ms)?
+            .into_iter()
+            .map(|task| {
+                (
+                    task.task_id,
+                    task.session_id.as_str().to_owned(),
+                    task.last_ms,
+                )
+            })
+            .collect())
+    };
+    assert_eq!(quiet(699)?, []);
+    assert_eq!(quiet(700)?, [(open.task_id, "s1".to_owned(), 700)]);
+    assert_eq!(
+        quiet(800)?,
+        [
+            (open.task_id, "s1".to_owned(), 700),
+            (fresh.task_id, "s2".to_owned(), 800)
+        ]
+    );
+    Ok(())
+}
+
 /// A session's edits are those of its tasks, its subagent's included and another session's not,
 /// newest first by time; its reads and compactions are its own, newest first by time even when
 /// stored out of order. Worked by hand from the rows written: edits 8 (330), 4 (180), 1 (150);

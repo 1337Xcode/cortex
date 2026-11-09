@@ -89,6 +89,17 @@ pub struct SessionRow {
     pub status: SessionStatus,
 }
 
+/// A task not ended whose session went quiet: which task, whose, and its last sign of work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuietTask {
+    /// The task.
+    pub task_id: Ulid,
+    /// Its session.
+    pub session_id: Identifier,
+    /// The latest of its start, its own events and its session's events, in UTC milliseconds.
+    pub last_ms: i64,
+}
+
 /// A stored task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRow {
@@ -267,6 +278,40 @@ impl Queries<'_> {
             .map_err(sqlite("reading a session"))?
             .map(RawSession::check)
             .transpose()
+    }
+
+    /// The tasks not ended whose last sign of work (their start, their own events, their
+    /// session's events) is at or before `quiet_since_ms`: the tasks of sessions that went quiet
+    /// without ending them, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn quiet_open_tasks(self, quiet_since_ms: i64) -> Result<Vec<QuietTask>, StoreError> {
+        let rows: Vec<(String, String, i64)> = self
+            .connection()
+            .prepare_cached(schema::QUIET_OPEN_TASKS)
+            .and_then(|mut statement| {
+                statement
+                    .query_map([quiet_since_ms], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })?
+                    .collect::<rusqlite::Result<_>>()
+            })
+            .map_err(sqlite("reading quiet tasks"))?;
+        rows.into_iter()
+            .zip(0_i64..)
+            .map(|((task, session, last_ms), row)| {
+                Ok(QuietTask {
+                    task_id: Ulid::parse(&task).map_err(|_| StoreError::Corrupt {
+                        column: "tasks.task_id",
+                        row,
+                    })?,
+                    session_id: values::identifier(&session, "tasks.session_id", row)?,
+                    last_ms,
+                })
+            })
+            .collect()
     }
 
     /// The task with id `task_id`.

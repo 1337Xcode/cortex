@@ -399,6 +399,33 @@ impl Recorder {
         self.open_tasks.insert(session_id.clone(), open);
     }
 
+    /// Ends, as left, each task not ended whose session has shown no sign of work since
+    /// `quiet_since_ms`, as of its last sign, and returns what each did, to learn from. An agent
+    /// killed, crashed or interrupted with no stop and no session end leaves its task open; only
+    /// an ended task leaves a handoff for the next session. Like [`Recorder::record`], a failed
+    /// transaction needs [`Recorder::forget_stored`].
+    ///
+    /// # Errors
+    ///
+    /// The store's errors.
+    pub fn end_quiet_tasks(
+        &mut self,
+        transaction: &mut WriteTx<'_>,
+        quiet_since_ms: i64,
+    ) -> Result<Vec<TaskState>, StoreError> {
+        let quiet = transaction.queries().quiet_open_tasks(quiet_since_ms)?;
+        let mut ended = Vec::new();
+        for task in quiet {
+            ended.extend(self.end_open_task(
+                transaction,
+                &task.session_id,
+                task.last_ms,
+                TaskEnd::Left,
+            )?);
+        }
+        Ok(ended)
+    }
+
     /// Ends the open task of `session_id`, if it has one, as of `ended_at_ms` and in the way
     /// `end` says, and returns its state.
     fn end_open_task(

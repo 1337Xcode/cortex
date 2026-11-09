@@ -112,6 +112,13 @@ pub(crate) const TASK_BY_ID: &str = "SELECT rowid, task_id, session_id, seq, sta
 pub(crate) const TASK_OPEN_OF_SESSION: &str = "SELECT rowid, task_id, session_id, seq, \
      started_at, ended_at, prompt_hash, prompt_excerpt, holdout, outcome, outcome_evidence \
      FROM tasks WHERE session_id = ?1 AND ended_at IS NULL ORDER BY seq DESC LIMIT 1";
+/// The tasks not ended whose last sign of work, the latest of their start, their own events and
+/// their session's events, is at or before ?1: task id, session id and that time, oldest first.
+pub(crate) const QUIET_OPEN_TASKS: &str = "SELECT task_id, session_id, last FROM (SELECT \
+     t.task_id, t.session_id, max(t.started_at, \
+     coalesce((SELECT max(e.ts) FROM events e WHERE e.task_id = t.task_id), t.started_at), \
+     coalesce((SELECT max(e.ts) FROM events e WHERE e.session_id = t.session_id), t.started_at)) \
+     AS last FROM tasks t WHERE t.ended_at IS NULL) WHERE last <= ?1 ORDER BY last, task_id";
 /// The sessions that started at or after ?1, by start and then id; the columns are those of
 /// [`SESSION_BY_ID`].
 pub(crate) const SESSIONS_STARTED_SINCE: &str = "SELECT rowid, session_id, agent, agent_version, \

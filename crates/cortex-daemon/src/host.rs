@@ -34,6 +34,10 @@ use crate::signatures::Signatures;
 /// How often the crawler takes a batch of `index.crawl_files_per_second` files.
 const CRAWL_PERIOD: Duration = Duration::from_secs(1);
 
+/// How often the writer ends the tasks of sessions gone quiet: often enough that a handoff is
+/// left within a minute of its session counting as done, rarely enough to cost nothing.
+const QUIET_SWEEP_PERIOD: Duration = Duration::from_secs(60);
+
 /// The daemon's state between changes: the writer and the files waiting to be parsed.
 pub(crate) struct Host<'a> {
     /// The repository's root folder.
@@ -168,14 +172,20 @@ impl<'a> Host<'a> {
         let idle = Duration::from_secs(self.config.idle_shutdown_minutes.saturating_mul(60));
         let mut last_activity = Instant::now();
         let mut next_crawl = Instant::now();
+        // At once, then every period: a daemon that stopped idle missed sessions going quiet.
+        let mut next_sweep = Instant::now();
         loop {
             let recorded = record_due_edits(&mut self.writer, &mut self.recorder, inbox, now_ms());
             self.pending.wait(recorded);
+            if Instant::now() >= next_sweep {
+                next_sweep = Instant::now() + QUIET_SWEEP_PERIOD;
+                self.end_quiet_tasks();
+            }
             self.settle();
             last_activity = last_activity.max(inbox.last_request().unwrap_or(last_activity));
             // An idle time too long to reach is never reached: the inbox is waited on for ever.
             let idle_at = last_activity.checked_add(idle);
-            match inbox.wait(self.deadline(next_crawl, idle_at)) {
+            match inbox.wait(self.deadline(next_crawl, idle_at, next_sweep)) {
                 Work::Stop => {
                     tracing::info!("stopping: asked to");
                     return Ok(());
@@ -219,8 +229,14 @@ impl<'a> Host<'a> {
 
     /// When the work loop looks again if nothing arrives: at once while ended tasks wait to be
     /// learned from or transcripts to be read, at the next crawl while files wait to be parsed,
-    /// else at `idle_at`, and sooner when a held edit falls due.
-    fn deadline(&self, next_crawl: Instant, idle_at: Option<Instant>) -> Option<Instant> {
+    /// else at `idle_at`, and sooner when a held edit falls due or the next sweep for quiet
+    /// sessions, `next_sweep`, comes.
+    fn deadline(
+        &self,
+        next_crawl: Instant,
+        idle_at: Option<Instant>,
+        next_sweep: Instant,
+    ) -> Option<Instant> {
         if !self.pending.is_idle() {
             return Some(Instant::now());
         }
@@ -233,7 +249,31 @@ impl<'a> Host<'a> {
             let wait_ms = u64::try_from(due_ms.saturating_sub(now_ms())).unwrap_or(0);
             Instant::now() + Duration::from_millis(wait_ms)
         });
-        work.into_iter().chain(edit_due).min()
+        work.into_iter().chain(edit_due).chain([next_sweep]).min()
+    }
+
+    /// Ends the tasks of sessions quiet for `coordination.handoff_idle_minutes`, so that what they
+    /// left is handed on, and leaves them to be learned from. A failure is counted, and the next
+    /// sweep tries again.
+    fn end_quiet_tasks(&mut self) {
+        let quiet_ms = self.inbox.position_timing().handoff_idle_ms;
+        let since_ms = now_ms().saturating_sub(quiet_ms);
+        let recorder = &mut self.recorder;
+        let ended = self.writer.transaction().and_then(|mut transaction| {
+            let ended = recorder.end_quiet_tasks(&mut transaction, since_ms)?;
+            transaction.commit()?;
+            Ok(ended)
+        });
+        match ended {
+            Ok(ended) => self.pending.wait(Recorded {
+                ended,
+                transcripts: Vec::new(),
+            }),
+            Err(error) => {
+                self.recorder.forget_stored();
+                count_failed(self.inbox, "ending the tasks of quiet sessions", &error);
+            }
+        }
     }
 
     /// Records `events` in one transaction, the tasks they end left to wait to be learned from
@@ -1242,7 +1282,11 @@ def g():
         let snapshot = Snapshot::default();
         let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         let idle_at = Instant::now() + Duration::from_secs(600);
-        assert_eq!(host.deadline(idle_at, Some(idle_at)), Some(idle_at));
+        let sweep_at = idle_at + Duration::from_secs(60);
+        assert_eq!(
+            host.deadline(idle_at, Some(idle_at), sweep_at),
+            Some(idle_at)
+        );
         host.record(&[
             event(HookKind::SessionStart, 5, b"start")?,
             event(HookKind::Prompt, 10, b"prompt")?,
@@ -1250,11 +1294,44 @@ def g():
         ])?;
         let now = Instant::now();
         assert!(
-            host.deadline(idle_at, Some(idle_at))
+            host.deadline(idle_at, Some(idle_at), sweep_at)
                 .is_some_and(|at| at <= Instant::now() && at >= now)
         );
         host.settle();
-        assert_eq!(host.deadline(idle_at, Some(idle_at)), Some(idle_at));
+        assert_eq!(
+            host.deadline(idle_at, Some(idle_at), sweep_at),
+            Some(idle_at)
+        );
+        // A sweep for quiet sessions due before the idle stop is when the loop looks again.
+        let sooner = idle_at - Duration::from_secs(300);
+        assert_eq!(host.deadline(idle_at, Some(idle_at), sooner), Some(sooner));
+        Ok(())
+    }
+
+    /// A task whose session went quiet without a stop (last heard from at 10 ms, far longer ago
+    /// than the 30 quiet minutes) is ended as left at its last sign of work, and waits to be
+    /// learned from; a second sweep finds nothing left to end.
+    #[test]
+    fn a_task_whose_session_went_quiet_is_ended() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
+        host.record(&[
+            event(HookKind::SessionStart, 5, b"start")?,
+            event(HookKind::Prompt, 10, b"prompt")?,
+        ])?;
+        host.settle();
+        assert!(host.pending.is_idle());
+        host.end_quiet_tasks();
+        assert!(!host.pending.is_idle());
+        host.settle();
+        let reader = cortex_store::Reader::open(&root.path().join(".cortex"), 0)?;
+        let tasks = reader.queries().tasks_of_session(&Identifier::new("s1")?)?;
+        let ended: Vec<Option<i64>> = tasks.iter().map(|task| task.ended_at_ms).collect();
+        assert_eq!(ended, [Some(10)]);
+        host.end_quiet_tasks();
+        assert!(host.pending.is_idle());
         Ok(())
     }
 
