@@ -165,9 +165,10 @@ fn a_limit_outside_one_to_five_is_refused() -> TestResult {
 }
 
 /// `cortex mcp` through the binary, spoken to in JSON-RPC lines as an agent does: it starts the
-/// session as `cortex`, offers `cortex_where` alone, and answers the question with the text
-/// `cortex where` prints for it; when the agent closes its input, the server exits 0 having
-/// printed nothing but the protocol, and nothing on stderr.
+/// session as `cortex`, offers `cortex_note` and `cortex_where`, and answers the question with the
+/// text `cortex where` prints for it; a rule noted on `create_order`, named from the repository's
+/// root, becomes fact 1, a candidate, as `cortex facts list` shows; when the agent closes its
+/// input, the server exits 0 having printed nothing but the protocol, and nothing on stderr.
 #[test]
 fn the_mcp_tool_answers_as_cortex_where_prints() -> TestResult {
     let (repo, home, _daemon) = repository(None)?;
@@ -178,11 +179,19 @@ fn the_mcp_tool_answers_as_cortex_where_prints() -> TestResult {
         "jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": {"name": "cortex_where", "arguments": {"query": QUESTION}}
     });
+    let rule = "Orders are created from a whole cart.";
+    let note = serde_json::json!({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {"name": "cortex_note", "arguments": {
+            "text": rule, "anchors": ["src/orders/service.py:create_order"]
+        }}
+    });
     let lines = [
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#.to_owned(),
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.to_owned(),
         call.to_string(),
+        note.to_string(),
     ];
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command.arg("mcp").arg("--root").arg(repo.path());
@@ -201,20 +210,38 @@ fn the_mcp_tool_answers_as_cortex_where_prints() -> TestResult {
             .ok_or(format!("no reply {id}: {replies:?}"))
     };
     assert_eq!(reply(1)?["result"]["serverInfo"]["name"], "cortex");
-    let tools = reply(2)?["result"]["tools"]
+    let mut tools = reply(2)?["result"]["tools"]
         .as_array()
         .ok_or("no tools")?
         .iter()
-        .map(|tool| tool["name"].clone())
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
         .collect::<Vec<_>>();
-    assert_eq!(tools, ["cortex_where"]);
+    tools.sort();
+    assert_eq!(tools, ["cortex_note", "cortex_where"]);
     let answer = &reply(3)?["result"];
     assert_eq!(answer["isError"], false);
     assert_eq!(
         answer["content"][0]["text"].as_str(),
         Some(expected.as_str())
     );
-    assert_eq!(replies.len(), 3, "{replies:?}");
+    let noted = &reply(4)?["result"];
+    assert_eq!(noted["isError"], false, "{noted}");
+    assert_eq!(
+        noted["content"][0]["text"].as_str(),
+        Some(
+            "Noted as fact 1, a candidate: given to agents once the user confirms it or it is \
+             noted again in another task."
+        )
+    );
+    assert_eq!(replies.len(), 4, "{replies:?}");
+    let mut list = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    list.args(["facts", "list", "--root"]).arg(repo.path());
+    isolate(&mut list, home.path());
+    let listed = list.output()?;
+    assert_eq!(
+        String::from_utf8(listed.stdout)?,
+        format!("   1  candidate  convention  {rule}  (at src/orders/service.py:create_order)\n")
+    );
     Ok(())
 }
 

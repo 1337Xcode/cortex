@@ -1,8 +1,9 @@
 //! Cortex's MCP server, which an agent starts as `cortex mcp` and talks to over stdio. It offers
-//! one tool, `cortex_where`: the code the retrieval engine finds for a question, with its reasons
-//! and confidence, as `cortex where` prints it. Every call is answered by the repository's daemon
-//! through [`Daemon`], which the binary implements; this crate knows the protocol, the tool and
-//! its limits, not how the daemon is found or started.
+//! `cortex_where`: the code the retrieval engine finds for a question, with its reasons and
+//! confidence, as `cortex where` prints it; and `cortex_note`: a project rule the agent found, kept
+//! as a candidate fact. Every call is answered by the repository's daemon through [`Daemon`],
+//! which the binary implements; this crate knows the protocol, the tools and their limits, not how
+//! the daemon is found or started.
 
 mod cap;
 mod server;

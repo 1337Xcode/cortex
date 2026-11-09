@@ -68,7 +68,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
 /// # Errors
 ///
 /// A folder other than the root, a path that is not a file, or a file outside the repository.
-fn anchor_of(root: &Path, given: &str) -> anyhow::Result<String> {
+pub(crate) fn anchor_of(root: &Path, given: &str) -> anyhow::Result<String> {
     if Path::new(given).is_dir() {
         let full = std::fs::canonicalize(given).with_context(|| format!("finding {given}"))?;
         let path = RepoPath::from_native(root, &full)

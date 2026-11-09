@@ -1,10 +1,11 @@
-//! The MCP server: its one tool, `cortex_where`, answered by the daemon, and the session over
-//! stdio. A call the server cannot answer is a tool error the agent reads, never a crash: the
-//! session goes on.
+//! The MCP server: its tools, `cortex_where` and `cortex_note`, answered by the daemon, and the
+//! session over stdio. A call the server cannot answer is a tool error the agent reads, never a
+//! crash: the session goes on.
 
 use std::sync::Arc;
 
-use cortex_core::ipc::{RequestBody, ResponseBody};
+use cortex_core::ipc::{FactsAnswer, Note, NoteOutcome, RequestBody, ResponseBody};
+use cortex_core::{FactKind, FactSource};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ErrorData, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
@@ -43,6 +44,17 @@ pub struct WhereInput {
     /// The most files to name, from 1 to 5; 3 when left out.
     #[schemars(range(min = 1, max = 5))]
     limit: Option<i64>,
+}
+
+/// The input of `cortex_note`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct NoteInput {
+    /// The rule, one short sentence of at most 240 characters.
+    text: String,
+    /// What it is about: file paths, `path:symbol`, or `.` for the whole repository.
+    anchors: Vec<String>,
+    /// convention, decision, invariant, pitfall or ownership; convention when left out.
+    kind: Option<String>,
 }
 
 /// The server: its tools, each answered by the daemon.
@@ -99,6 +111,66 @@ impl Server {
             Err(_) => return Ok(failed("the call to the daemon stopped")),
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+    }
+
+    /// `cortex_note`: a project rule the agent found, kept as a candidate fact until the user
+    /// confirms it or it is noted again in another task.
+    #[tool(
+        name = "cortex_note",
+        description = "Record a non-obvious project rule about files or symbols, as a candidate fact."
+    )]
+    async fn note(
+        &self,
+        Parameters(input): Parameters<NoteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let kind = match input.kind.as_deref() {
+            None => FactKind::Convention,
+            Some(name) => match FactKind::from_name(name) {
+                Some(kind) => kind,
+                None => {
+                    return Ok(failed(
+                        "the kind is convention, decision, invariant, pitfall or ownership",
+                    ));
+                }
+            },
+        };
+        if input.text.trim().is_empty() {
+            return Ok(failed("the rule is empty: say it in a sentence"));
+        }
+        if input.anchors.is_empty() {
+            return Ok(failed(
+                "name what the rule is about: a file, `path:symbol`, or `.` for the repository",
+            ));
+        }
+        let daemon = Arc::clone(&self.daemon);
+        let body = RequestBody::Note(Note {
+            text: input.text,
+            kind,
+            source: FactSource::Agent,
+            at: input.anchors,
+        });
+        let asked = tokio::task::spawn_blocking(move || daemon.ask(body)).await;
+        let text = match asked {
+            Ok(Ok(ResponseBody::Facts(FactsAnswer::Noted { id, outcome }))) => match outcome {
+                NoteOutcome::Added => format!(
+                    "Noted as fact {id}, a candidate: given to agents once the user confirms it \
+                     or it is noted again in another task."
+                ),
+                NoteOutcome::Merged => format!("Fact {id} says this already."),
+                NoteOutcome::Activated => {
+                    format!("Fact {id} says this already, and is now active.")
+                }
+            },
+            Ok(Ok(ResponseBody::Error { message })) => {
+                return Ok(failed(&format!("the rule was not noted: {message}")));
+            }
+            Ok(Ok(_)) => return Ok(failed("the daemon gave an answer of another kind")),
+            Ok(Err(why)) => return Ok(failed(&why)),
+            Err(_) => return Ok(failed("the call to the daemon stopped")),
+        };
+        Ok(CallToolResult::success(vec![ContentBlock::text(capped(
+            &text,
+        ))]))
     }
 }
 

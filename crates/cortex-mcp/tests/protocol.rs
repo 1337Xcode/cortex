@@ -1,11 +1,12 @@
 //! The server spoken to by an MCP client over an in-memory pipe, its daemon a fake that records
-//! each request and answers as told: the one tool and its schema, the answer as the daemon wrote
+//! each request and answers as told: the tools and their schemas, the answer as the daemon wrote
 //! it, the inputs refused, and each way the daemon can fail turned into a tool error the agent
 //! reads.
 
 use std::sync::{Arc, Mutex};
 
-use cortex_core::ipc::{RequestBody, ResponseBody};
+use cortex_core::ipc::{FactsAnswer, Note, NoteOutcome, RequestBody, ResponseBody};
+use cortex_core::{FactKind, FactSource};
 use cortex_mcp::{Daemon, Server};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
@@ -31,9 +32,20 @@ impl Daemon for Fake {
     }
 }
 
-/// Runs `calls` against a server whose daemon answers `answer`, and returns, for each call, the
-/// result as JSON (or the protocol error's code), with the requests the daemon was sent.
+/// Runs `calls` of `cortex_where` against a server whose daemon answers `answer`, and returns,
+/// for each call, the result as JSON (or the protocol error's code), with the requests the daemon
+/// was sent.
 async fn session(
+    answer: Result<ResponseBody, String>,
+    calls: Vec<Value>,
+) -> TestResult<(Vec<Value>, Vec<RequestBody>)> {
+    session_of("cortex_where", answer, calls).await
+}
+
+/// Runs `calls` of the tool `tool` against a server whose daemon answers `answer`, as [`session`]
+/// does.
+async fn session_of(
+    tool: &'static str,
     answer: Result<ResponseBody, String>,
     calls: Vec<Value>,
 ) -> TestResult<(Vec<Value>, Vec<RequestBody>)> {
@@ -51,7 +63,7 @@ async fn session(
         let Value::Object(arguments) = arguments else {
             return Err("arguments are no object".into());
         };
-        let params = CallToolRequestParams::new("cortex_where").with_arguments(arguments);
+        let params = CallToolRequestParams::new(tool).with_arguments(arguments);
         results.push(match client.call_tool(params).await {
             Ok(result) => serde_json::to_value(result)?,
             Err(rmcp::ServiceError::McpError(error)) => json!({"code": error.code.0}),
@@ -69,9 +81,10 @@ fn result(text: &str, is_error: bool) -> Value {
     json!({"content": [{"type": "text", "text": text}], "isError": is_error})
 }
 
-/// The server offers exactly one tool, `cortex_where`, taking a query and an optional limit.
+/// The server offers `cortex_note`, taking a rule, its anchors and an optional kind, and
+/// `cortex_where`, taking a query and an optional limit.
 #[tokio::test]
-async fn the_one_tool_is_cortex_where() -> TestResult {
+async fn the_tools_are_cortex_note_and_cortex_where() -> TestResult {
     let fake = Arc::new(Fake {
         answer: Err("unused".to_owned()),
         asked: Mutex::new(Vec::new()),
@@ -81,9 +94,23 @@ async fn the_one_tool_is_cortex_where() -> TestResult {
         tokio::join!(Server::new(fake).serve(server_side), ().serve(client_side));
     let (server, client) = (server?, client?);
     let tools = client.list_all_tools().await?;
-    let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-    assert_eq!(names, ["cortex_where"]);
-    let schema = serde_json::to_value(&tools.first().ok_or("no tool")?.input_schema)?;
+    let mut names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["cortex_note", "cortex_where"]);
+    let schema_of = |name: &str| -> TestResult<Value> {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .ok_or("no such tool")?;
+        Ok(serde_json::to_value(&tool.input_schema)?)
+    };
+    let note = schema_of("cortex_note")?;
+    assert_eq!(note.pointer("/required"), Some(&json!(["text", "anchors"])));
+    assert_eq!(
+        note.pointer("/properties/anchors/type"),
+        Some(&json!("array"))
+    );
+    let schema = schema_of("cortex_where")?;
     assert_eq!(schema.pointer("/required"), Some(&json!(["query"])));
     assert_eq!(
         schema.pointer("/properties/query/type"),
@@ -215,6 +242,87 @@ async fn a_long_answer_is_cut() -> TestResult {
     assert_eq!(text.lines().count(), 48);
     assert!(
         text.ends_with("[cortex] cut at 1200 tokens: 253 more lines; ask with a smaller limit\n")
+    );
+    Ok(())
+}
+
+/// A rule goes to the daemon as an agent's note, a convention when no kind is given, its anchors
+/// as given; what became of it comes back in words: a new candidate, a fact that says it already,
+/// one that is now active. A kind Cortex does not know, an empty rule and no anchor are tool
+/// errors the model can correct, and never reach the daemon.
+#[tokio::test]
+async fn a_rule_is_noted_as_an_agent_s_candidate() -> TestResult {
+    let calls = || {
+        vec![
+            json!({"text": "Money is kept in cents.", "anchors": ["calc/money.py:Money"]}),
+            json!({"text": "Tax rounds up.", "anchors": ["calc/tax.py"], "kind": "pitfall"}),
+            json!({"text": "Tax rounds up.", "anchors": ["calc/tax.py"], "kind": "rule"}),
+            json!({"text": " ", "anchors": ["calc/tax.py"]}),
+            json!({"text": "Tax rounds up.", "anchors": []}),
+        ]
+    };
+    let noted = |outcome| Ok(ResponseBody::Facts(FactsAnswer::Noted { id: 7, outcome }));
+    let (results, asked) = session_of("cortex_note", noted(NoteOutcome::Added), calls()).await?;
+    let added = result(
+        "Noted as fact 7, a candidate: given to agents once the user confirms it or it is noted \
+         again in another task.",
+        false,
+    );
+    assert_eq!(
+        results,
+        [
+            added.clone(),
+            added,
+            result(
+                "Cortex: the kind is convention, decision, invariant, pitfall or ownership",
+                true
+            ),
+            result("Cortex: the rule is empty: say it in a sentence", true),
+            result(
+                "Cortex: name what the rule is about: a file, `path:symbol`, or `.` for the \
+                 repository",
+                true
+            ),
+        ]
+    );
+    assert_eq!(
+        asked,
+        [
+            RequestBody::Note(Note {
+                text: "Money is kept in cents.".to_owned(),
+                kind: FactKind::Convention,
+                source: FactSource::Agent,
+                at: vec!["calc/money.py:Money".to_owned()],
+            }),
+            RequestBody::Note(Note {
+                text: "Tax rounds up.".to_owned(),
+                kind: FactKind::Pitfall,
+                source: FactSource::Agent,
+                at: vec!["calc/tax.py".to_owned()],
+            }),
+        ]
+    );
+    let one = || vec![json!({"text": "Tax rounds up.", "anchors": ["calc/tax.py"]})];
+    let (merged, _) = session_of("cortex_note", noted(NoteOutcome::Merged), one()).await?;
+    assert_eq!(merged, [result("Fact 7 says this already.", false)]);
+    let (activated, _) = session_of("cortex_note", noted(NoteOutcome::Activated), one()).await?;
+    assert_eq!(
+        activated,
+        [result(
+            "Fact 7 says this already, and is now active.",
+            false
+        )]
+    );
+    let refused = Ok(ResponseBody::Error {
+        message: "calc/tax.py is not a file Cortex indexes".to_owned(),
+    });
+    let (failed, _) = session_of("cortex_note", refused, one()).await?;
+    assert_eq!(
+        failed,
+        [result(
+            "Cortex: the rule was not noted: calc/tax.py is not a file Cortex indexes",
+            true
+        )]
     );
     Ok(())
 }

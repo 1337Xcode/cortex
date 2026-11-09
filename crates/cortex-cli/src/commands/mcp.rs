@@ -11,6 +11,7 @@ use cortex_core::UserFolder;
 use cortex_core::ipc::{RequestBody, ResponseBody};
 use cortex_mcp::Daemon;
 
+use crate::commands::note::anchor_of;
 use crate::{repository, upgrade};
 
 /// How long the daemon has to answer one call, a daemon started by it included, as for
@@ -32,10 +33,32 @@ struct RepositoryDaemon {
 }
 
 impl Daemon for RepositoryDaemon {
+    /// A note's anchors are read from the repository's root as `cortex note` reads them from its
+    /// folder, and the note goes to one daemon only, since it changes what the daemon keeps.
     fn ask(&self, body: RequestBody) -> Result<ResponseBody, String> {
         let root = repository::root(self.root.as_deref()).map_err(|error| format!("{error:#}"))?;
         let user = UserFolder::of_current_user().ok_or("no home folder to find the daemon from")?;
-        let asked = upgrade::ask_started(&root, &user, &body, Instant::now() + ANSWER_WITHIN);
+        let deadline = Instant::now() + ANSWER_WITHIN;
+        let asked = match body {
+            RequestBody::Note(mut note) => {
+                note.at = note
+                    .at
+                    .iter()
+                    .map(|anchor| {
+                        // An agent names files from the repository's root, whatever folder the
+                        // server was started in; an absolute path stays as it is.
+                        let joined = root.join(anchor);
+                        let joined = joined.to_str().ok_or_else(|| {
+                            anyhow::anyhow!("{anchor}: not a path Cortex can read")
+                        })?;
+                        anchor_of(&root, joined)
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()
+                    .map_err(|error| format!("{error:#}"))?;
+                upgrade::ask_once_started(&root, &user, &RequestBody::Note(note), deadline)
+            }
+            body => upgrade::ask_started(&root, &user, &body, deadline),
+        };
         asked
             .answer
             .map(|answer| answer.body)
