@@ -24,8 +24,8 @@ use interprocess::local_socket::traits::tokio::Listener as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
 
+use crate::asked::{ASK_START_WITHIN, ASK_WRITE_WITHIN, Ask};
 use crate::claim::{Claim, Claims};
-use crate::facts::{FACTS_START_WITHIN, FACTS_WRITE_WITHIN, FactsRequest};
 use crate::given::{Given, recorded};
 use crate::graph::Snapshot;
 use crate::host::now_ms;
@@ -381,8 +381,8 @@ impl Server {
             }
             RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
             RequestBody::Why { target } => (self.explain(target).await, None),
-            RequestBody::Note(note) => (self.ask_writer(FactsRequest::Note(note)).await, None),
-            RequestBody::Facts(ask) => (self.ask_writer(FactsRequest::Ask(ask)).await, None),
+            RequestBody::Note(note) => (self.ask_writer(Ask::Note(note)).await, None),
+            RequestBody::Facts(ask) => (self.ask_writer(Ask::Facts(ask)).await, None),
             RequestBody::Event { event } => {
                 let hook = event.hook;
                 // The moment before a tool runs is answered, not recorded: the tool's result is,
@@ -653,24 +653,24 @@ impl Server {
         }
     }
 
-    /// Hands a fact request to the writer and waits, on the blocking pool, for its answer: within
-    /// [`FACTS_START_WITHIN`] for the writer to take it, then [`FACTS_WRITE_WITHIN`] to write it. A
+    /// Hands a request to the writer and waits, on the blocking pool, for its answer: within
+    /// [`ASK_START_WITHIN`] for the writer to take it, then [`ASK_WRITE_WITHIN`] to write it. A
     /// request the writer did not take in time is never written.
-    async fn ask_writer(&self, request: FactsRequest) -> ResponseBody {
-        let Some(answer) = self.inbox.push_facts(request) else {
-            return error("the daemon is stopping, or too many fact requests wait: try again");
+    async fn ask_writer(&self, request: Ask) -> ResponseBody {
+        let Some(answer) = self.inbox.push_ask(request) else {
+            return error("the daemon is stopping, or too many requests wait: try again");
         };
-        let within = FACTS_START_WITHIN + FACTS_WRITE_WITHIN;
+        let within = ASK_START_WITHIN + ASK_WRITE_WITHIN;
         let waited = tokio::task::spawn_blocking(move || answer.recv_timeout(within)).await;
         match waited {
-            Ok(Ok(Ok(answer))) => ResponseBody::Facts(answer),
+            Ok(Ok(Ok(answer))) => answer,
             Ok(Ok(Err(message))) => ResponseBody::Error { message },
             Ok(Err(mpsc::RecvTimeoutError::Disconnected)) => error(
                 "the daemon was busy and did not take the request, which changed nothing: try again",
             ),
-            Ok(Err(mpsc::RecvTimeoutError::Timeout)) | Err(_) => error(
-                "the daemon did not answer in time: run `cortex facts list` to see whether it was done",
-            ),
+            Ok(Err(mpsc::RecvTimeoutError::Timeout)) | Err(_) => {
+                error("the daemon did not answer in time: list again to see whether it was done")
+            }
         }
     }
 

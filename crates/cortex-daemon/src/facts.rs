@@ -4,22 +4,14 @@
 //! retire, correct). Each request is answered in one transaction, refused in words the user reads
 //! when it names something wrongly.
 
-use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::time::{Duration, Instant};
-
 use cortex_core::ipc::{FactLine, FactsAnswer, FactsAsk, Note, NoteOutcome};
 use cortex_core::{FactSource, FactStatus, Identifier, RepoPath};
 use cortex_learn::{
     Asserted, Assertion, FactError, assert_fact, confirm_fact, edit_fact, retire_fact,
 };
-use cortex_store::{FactId, FactRow, NodeId, Queries, StoreError, WriteTx, Writer};
+use cortex_store::{FactId, FactRow, NodeId, Queries, StoreError, WriteTx};
 
-/// How long a fact request may wait for the writer before it is dropped unwritten: long enough for
-/// a batch of the index to end, short enough that the person who typed it is told.
-pub(crate) const FACTS_START_WITHIN: Duration = Duration::from_secs(10);
-
-/// How long the writer has to answer a fact request it took: one transaction of a few rows.
-pub(crate) const FACTS_WRITE_WITHIN: Duration = Duration::from_secs(5);
+use crate::asked::Refused;
 
 /// How long before an agent's note the session that noted it was last seen at work, at most, in
 /// milliseconds: the MCP call carries no session, so the note is taken to be the task of the
@@ -27,109 +19,12 @@ pub(crate) const FACTS_WRITE_WITHIN: Duration = Duration::from_secs(5);
 /// spends between two tool calls.
 pub(crate) const NOTE_AT_WORK_WITHIN_MS: i64 = 5 * 60 * 1_000;
 
-/// A fact request, as the writer takes it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum FactsRequest {
-    /// A fact the user notes.
-    Note(Note),
-    /// The user's word on the facts.
-    Ask(FactsAsk),
-}
-
-/// A fact request for the writer, with where to answer it and until when to start on it.
-#[derive(Debug)]
-pub(crate) struct FactsJob {
-    /// What is asked.
-    request: FactsRequest,
-    /// When the asker stops waiting for the writer to start: a job taken later is dropped
-    /// unwritten, so that a note the asker was told failed is never written after all.
-    start_by: Instant,
-    /// Where the writer answers.
-    answered: SyncSender<Result<FactsAnswer, String>>,
-}
-
-impl FactsJob {
-    /// A job for `request`, to be started within [`FACTS_START_WITHIN`], and where its answer
-    /// arrives.
-    pub(crate) fn new(request: FactsRequest) -> (Self, Receiver<Result<FactsAnswer, String>>) {
-        let (answered, answer) = mpsc::sync_channel(1);
-        let job = Self {
-            request,
-            start_by: Instant::now() + FACTS_START_WITHIN,
-            answered,
-        };
-        (job, answer)
-    }
-
-    /// Carries out the job at `now_ms` with `writer`, in a transaction of its own, and answers it
-    /// only once that transaction is committed: what the asker is told was done is written. A
-    /// refusal rolls the transaction back and is the answer; a job that waited too long is dropped
-    /// unanswered and nothing is written.
-    ///
-    /// An agent's note is taken to be the open task of `at_work`, the session at work.
-    ///
-    /// # Errors
-    ///
-    /// The store's errors, the commit's among them, which are also the job's answer.
-    pub(crate) fn carry_out(
-        self,
-        writer: &mut Writer,
-        (now_ms, at_work): (i64, Option<&Identifier>),
-    ) -> Result<(), StoreError> {
-        if Instant::now() > self.start_by {
-            return Ok(());
-        }
-        let done = writer
-            .transaction()
-            .map_err(Refused::from)
-            .and_then(|mut transaction| {
-                let answer = answer(&mut transaction, &self.request, (now_ms, at_work))?;
-                transaction.commit()?;
-                Ok(answer)
-            });
-        match done {
-            Ok(answer) => {
-                drop(self.answered.send(Ok(answer)));
-                Ok(())
-            }
-            Err(Refused::Named(message)) => {
-                drop(self.answered.send(Err(message)));
-                Ok(())
-            }
-            Err(Refused::Store(error)) => {
-                drop(self.answered.send(Err(error.to_string())));
-                Err(error)
-            }
-        }
-    }
-}
-
-/// Why a fact request was refused.
-#[derive(Debug)]
-enum Refused {
-    /// The request named something wrongly, in words the user reads.
-    Named(String),
-    /// The store failed.
-    Store(StoreError),
-}
-
-impl From<StoreError> for Refused {
-    /// The store's failure, as it is.
-    fn from(error: StoreError) -> Self {
-        Self::Store(error)
-    }
-}
-
-/// Answers `request` at `now_ms` in `transaction`, an agent's note in the open task of `at_work`.
-fn answer(
+/// Carries out the user's word `ask` on the facts at `now_ms` in `transaction`.
+pub(crate) fn answer_ask(
     transaction: &mut WriteTx<'_>,
-    request: &FactsRequest,
-    (now_ms, at_work): (i64, Option<&Identifier>),
+    ask: &FactsAsk,
+    now_ms: i64,
 ) -> Result<FactsAnswer, Refused> {
-    let ask = match request {
-        FactsRequest::Note(note) => return noted(transaction, note, (now_ms, at_work)),
-        FactsRequest::Ask(ask) => ask,
-    };
     let done = match ask {
         FactsAsk::List { all } => {
             return Ok(FactsAnswer::Listed {
@@ -164,7 +59,7 @@ fn numbered(queries: Queries<'_>, id: i64) -> Result<FactId, Refused> {
 
 /// States `note` at `now_ms` in `transaction`, as the user's or, in the open task of `at_work`,
 /// an agent's.
-fn noted(
+pub(crate) fn noted(
     transaction: &mut WriteTx<'_>,
     note: &Note,
     (now_ms, at_work): (i64, Option<&Identifier>),
@@ -326,11 +221,13 @@ fn listed(queries: Queries<'_>, all: bool) -> Result<Vec<FactLine>, StoreError> 
 
 #[cfg(test)]
 mod tests {
+    use cortex_core::ipc::ResponseBody;
     use cortex_core::{Agent, ContentHash, FactKind, FileFlags, Ulid};
-    use cortex_store::{FileIndex, FileRecord, SessionRecord, TaskRecord};
+    use cortex_store::{FileIndex, FileRecord, SessionRecord, TaskRecord, Writer};
 
     use super::*;
-    use crate::test_store::{TestResult, add_file, writer};
+    use crate::asked::{Ask, AskJob};
+    use crate::test_store::{TestResult, writer};
 
     /// Stores `src/money.py`, read, holding "cents", and session `s1` with its open task, made at 1;
     /// returns the task.
@@ -384,7 +281,7 @@ mod tests {
         let task = money_and_a_task(&mut writer)?;
         let at_work = Identifier::new("s1")?;
         let note = |text: &str, source| {
-            FactsRequest::Note(Note {
+            Ask::Note(Note {
                 text: text.to_owned(),
                 kind: FactKind::Convention,
                 source,
@@ -400,9 +297,12 @@ mod tests {
             (note("Money is exact.", FactSource::User), Some(&at_work)),
         ];
         for (request, session) in cases {
-            let (job, answer) = FactsJob::new(request);
+            let (job, answer) = AskJob::new(request);
             job.carry_out(&mut writer, (5, session))?;
-            assert!(matches!(answer.try_recv()?, Ok(FactsAnswer::Noted { .. })));
+            assert!(matches!(
+                answer.try_recv()?,
+                Ok(ResponseBody::Facts(FactsAnswer::Noted { .. }))
+            ));
         }
         let facts: Vec<(String, FactStatus, Option<Ulid>)> = [1, 2, 3]
             .into_iter()
@@ -427,44 +327,6 @@ mod tests {
                 ),
                 ("Money is exact.".to_owned(), FactStatus::Active, None),
             ]
-        );
-        Ok(())
-    }
-
-    /// A note the writer takes after its asker stopped waiting is dropped unanswered, which tells
-    /// the asker it was not taken, and nothing is written; one taken in time is answered, and a
-    /// refused one is answered with the refusal and writes nothing.
-    #[test]
-    fn a_request_taken_too_late_is_never_written() -> TestResult {
-        let root = tempfile::tempdir()?;
-        let mut writer = writer(root.path())?;
-        add_file(&mut writer, "src/money.py", 1)?;
-        let note = FactsRequest::Note(Note {
-            text: "Money is kept in cents.".to_owned(),
-            kind: FactKind::Convention,
-            source: FactSource::User,
-            at: vec!["src/money.py".to_owned()],
-        });
-        let (mut late, answer) = FactsJob::new(note.clone());
-        late.start_by = Instant::now()
-            .checked_sub(Duration::from_millis(1))
-            .ok_or("no earlier instant")?;
-        late.carry_out(&mut writer, (5, None))?;
-        assert!(matches!(
-            answer.try_recv(),
-            Err(mpsc::TryRecvError::Disconnected)
-        ));
-        let (unread, answer) = FactsJob::new(note);
-        unread.carry_out(&mut writer, (6, None))?;
-        assert_eq!(
-            answer.try_recv()?,
-            Err("src/money.py cannot anchor a fact: Cortex does not read it".to_owned())
-        );
-        let (in_time, answer) = FactsJob::new(FactsRequest::Ask(FactsAsk::List { all: true }));
-        in_time.carry_out(&mut writer, (7, None))?;
-        assert_eq!(
-            answer.try_recv()?,
-            Ok(FactsAnswer::Listed { facts: Vec::new() })
         );
         Ok(())
     }

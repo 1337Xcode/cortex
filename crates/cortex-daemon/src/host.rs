@@ -25,7 +25,8 @@ use cortex_index::{
 use cortex_learn::{Recorder, TaskState, review_facts};
 use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, SymbolChange, WriteTx, Writer};
 
-use crate::facts::{FactsJob, NOTE_AT_WORK_WITHIN_MS};
+use crate::asked::AskJob;
+use crate::facts::NOTE_AT_WORK_WITHIN_MS;
 use crate::given::{Given, Notices};
 use crate::graph::Snapshot;
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
@@ -210,8 +211,8 @@ impl<'a> Host<'a> {
                 }
                 // Mining is the daemon's own work, not a user's: it does not put off the idle stop.
                 Work::Mining(job) => self.store_mining(*job),
-                Work::Facts(job) => {
-                    self.answer_facts(*job);
+                Work::Ask(job) => {
+                    self.carry_out_ask(*job);
                     last_activity = Instant::now();
                 }
                 Work::Timeout if self.waiting() > 0 && Instant::now() >= next_crawl => {
@@ -408,13 +409,13 @@ impl<'a> Host<'a> {
         job.answer(stored.map_err(|error| error.to_string()));
     }
 
-    /// Carries out a fact request in a transaction of its own, answered once it is committed. A
-    /// store error is the answer, and counted.
-    fn answer_facts(&mut self, job: FactsJob) {
+    /// Carries out a request of a person or an agent in a transaction of its own, answered once
+    /// it is committed. A store error is the answer, and counted.
+    fn carry_out_ask(&mut self, job: AskJob) {
         let now = now_ms();
         let at_work = self.recorder.session_at_work(now, NOTE_AT_WORK_WITHIN_MS);
         if let Err(error) = job.carry_out(&mut self.writer, (now, at_work.as_ref())) {
-            count_failed(self.inbox, "a fact request", &error);
+            count_failed(self.inbox, "a request asked of the writer", &error);
         }
     }
 
