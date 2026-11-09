@@ -1,7 +1,8 @@
 //! Upkeep: the daemon's housekeeping, run on the writer's own thread (one core, and never a second
 //! writer) once the repository has been quiet for [`QUIET_BEFORE_UPKEEP`] or a session ended. Its
 //! jobs run in order, each a batch at a time in a transaction of its own: links of use that have
-//! faded below 0.01 are removed, then interest that has; the facts are reviewed and those retired
+//! faded below 0.01 are removed, then the ways tasks read on from file to file that have, then
+//! interest that has; the facts are reviewed and those retired
 //! for 90 days deleted; the gate's confidence model is fitted when one is due (see
 //! [`cortex_learn::calibrate`]); events older than 90 days are deleted, episodes kept to 50,000 (unknown
 //! outcomes first) and positions that can no longer hold removed; last, the query planner's
@@ -72,6 +73,8 @@ pub struct UpkeepSettings {
 pub struct Swept {
     /// Links of use removed.
     pub links: u64,
+    /// Ways tasks read on from file to file removed.
+    pub transitions: u64,
     /// Nodes whose interest was removed.
     pub interest: u64,
     /// Facts deleted.
@@ -165,6 +168,8 @@ impl UpkeepClock {
 enum Step {
     /// Links of use, after this pair.
     Links(Option<(NodeId, NodeId)>),
+    /// What tasks read next, after this pair.
+    Transitions(Option<(NodeId, NodeId)>),
     /// Interest, after this node.
     Interest(Option<NodeId>),
     /// The facts.
@@ -267,6 +272,24 @@ impl Upkeep {
                 swept.links += transaction.remove_coaccess_links(&faded)?;
                 match page.last() {
                     Some(last) if is_full(page.len()) => Step::Links(Some((last.src, last.dst))),
+                    _ => Step::Transitions(None),
+                }
+            }
+            Step::Transitions(after) => {
+                let page = transaction.queries().transitions_after(after, BATCH_ROWS)?;
+                let latest = transaction.queries().latest_task_seq()?;
+                let faded: Vec<(NodeId, NodeId)> = page
+                    .iter()
+                    .filter(|way| {
+                        has_faded_out(way.weight, way.last_seq, latest, settings.link_decay)
+                    })
+                    .map(|way| (way.src, way.dst))
+                    .collect();
+                swept.transitions += transaction.remove_transitions(&faded)?;
+                match page.last() {
+                    Some(last) if is_full(page.len()) => {
+                        Step::Transitions(Some((last.src, last.dst)))
+                    }
                     _ => Step::Interest(None),
                 }
             }
@@ -368,7 +391,7 @@ mod tests {
         Agent, ContentHash, EdgeType, EventKind, EventMeta, GateFeatures, HookKind, Identifier,
         RepoPath,
     };
-    use cortex_store::{EdgeRecord, EventRecord, InjectionRecord, SessionRecord};
+    use cortex_store::{EdgeRecord, EventRecord, InjectionRecord, SessionRecord, TransitionRow};
 
     use super::*;
     use crate::test_store::{TestResult, add_file, writer};
@@ -421,12 +444,32 @@ mod tests {
     }
 
     /// Worked by hand, at day 200: the link of 0.004 is below 0.01 and goes, the one of 0.5 stays;
-    /// the event of day 100 is older than 90 days and goes, the one of day 199 stays. Nothing else
-    /// is there to remove. The run finishes.
+    /// so with the ways tasks read on from `a.py`, 0.004 to `b.py` and 0.5 to `c.py` (no task has
+    /// run, so neither has faded); the event of day 100 is older than 90 days and goes, the one of
+    /// day 199 stays. Nothing else is there to remove. The run finishes.
     #[test]
     fn a_run_removes_what_faded_and_what_is_too_old() -> TestResult {
         let root = tempfile::tempdir()?;
         let mut writer = store(root.path())?;
+        let nodes: Vec<NodeId> = writer
+            .queries()
+            .coaccess_links_after(None, 9)?
+            .iter()
+            .flat_map(|link| [link.src, link.dst])
+            .collect();
+        let [a, b, .., c] = nodes[..] else {
+            return Err("the links' nodes".into());
+        };
+        let way = |dst, weight| TransitionRow {
+            src: a,
+            dst,
+            weight,
+            count: 1,
+            last_seq: 0,
+        };
+        let mut transaction = writer.transaction()?;
+        transaction.set_transitions(&[way(b, 0.004), way(c, 0.5)])?;
+        transaction.commit()?;
         let mut upkeep = Upkeep::default();
         let far = Instant::now() + Duration::from_secs(60);
         let (swept, ended) =
@@ -436,11 +479,13 @@ mod tests {
             swept,
             Swept {
                 links: 1,
+                transitions: 1,
                 events: 1,
                 ..Swept::default()
             }
         );
         assert_eq!(writer.queries().coaccess_links_after(None, 9)?.len(), 1);
+        assert_eq!(writer.queries().transitions_after(None, 9)?, [way(c, 0.5)]);
         Ok(())
     }
 
@@ -583,7 +628,7 @@ mod tests {
     /// The log is held to a limit of nothing at all, so that it always holds too much. A run that
     /// yields after its first batch removes the faded link. The next run looks at the log before
     /// writing and paces at once, at the same step; the one after a pace writes a batch first
-    /// (interest, which holds nothing) and then paces. With the usual limit the next run carries
+    /// (what tasks read next, which holds nothing) and then paces. With the usual limit the next run carries
     /// on and finishes, removing the old event.
     #[test]
     fn a_run_waits_while_the_log_holds_too_much() -> TestResult {
@@ -614,10 +659,10 @@ mod tests {
         let full = (200 * DAY_MS, &full);
         let (swept, ended) = upkeep.run(&mut writer, full, (far, &|| false))?;
         assert_eq!((swept, ended), (Swept::default(), Ended::Paced));
-        assert_eq!(upkeep.step, Step::Interest(None));
+        assert_eq!(upkeep.step, Step::Transitions(None));
         let (swept, ended) = upkeep.run(&mut writer, full, (far, &|| false))?;
         assert_eq!((swept, ended), (Swept::default(), Ended::Paced));
-        assert_eq!(upkeep.step, Step::Facts);
+        assert_eq!(upkeep.step, Step::Interest(None));
         let (swept, ended) = upkeep.run(&mut writer, now, (far, &|| false))?;
         assert_eq!(ended, Ended::Done);
         assert_eq!(

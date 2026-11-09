@@ -23,7 +23,8 @@ use cortex_core::{
 use cortex_daemon::{Ended, LOG_LIMIT_BYTES, PACE_WAIT, Swept, Upkeep, UpkeepSettings};
 use cortex_store::{
     EdgeRecord, EpisodeRecord, EventRecord, FactRecord, FileIndex, FileRecord, InterestRow, NodeId,
-    Pitfalls, PositionRecord, SessionRecord, TaskRecord, WriteTx, Writer, WriterOptions,
+    Pitfalls, PositionRecord, SessionRecord, TaskRecord, TransitionRow, WriteTx, Writer,
+    WriterOptions,
 };
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
 
@@ -67,13 +68,16 @@ const SAMPLES: usize = 10;
 const SETTLE: Duration = Duration::from_secs(5);
 
 /// What a pass of upkeep removes, counted from the store's shape: every odd link of the 10 from each file
-/// (100,000); the interest of every even file (10,000); every even fact, retired on day 1, more
+/// (100,000); every odd way of the 4 from each file to the files read after it (40,000); the interest of every even file (10,000); every even fact, retired on day 1, more
 /// than 90 days before day 100 (500); the events of the first 10 days, one every 8.64 s (100,000);
 /// the episodes past 50,000 of the 60,000, all of unknown outcome (10,000); the positions of
 /// day 1, every even one of each session's 100 (5,000); and 2,000 free pages, the most upkeep
 /// gives back each time through its jobs, of the more than 2,400 the events alone leave (100,000
 /// rows of over 100 bytes each, in 4 KiB pages).
-const SWEPT: [u64; 7] = [100_000, 10_000, 500, 100_000, 10_000, 5_000, 2_000];
+const SWEPT: [u64; 8] = [100_000, 40_000, 10_000, 500, 100_000, 10_000, 5_000, 2_000];
+
+/// How many ways each file has to the files tasks read after it.
+const TRANSITIONS_PER_FILE: usize = 4;
 
 /// Upkeep's runs on a copy of the store, until it is done: how long they took, and their longest
 /// batch.
@@ -169,7 +173,8 @@ fn add_tasks(transaction: &mut WriteTx<'_>) -> BenchResult<(Vec<Ulid>, u64)> {
     Ok((tasks, latest))
 }
 
-/// Stores the links of use and the interest, as of task `latest`, so that none fades further.
+/// Stores the links of use, the ways from file to file and the interest, as of task `latest`, so
+/// that none fades further.
 fn add_links(transaction: &mut WriteTx<'_>, nodes: &[NodeId], latest: u64) -> BenchResult {
     let link_seq = i64::try_from(latest)?;
     let mut links = Vec::with_capacity(FILES * LINKS_PER_FILE);
@@ -197,6 +202,19 @@ fn add_links(transaction: &mut WriteTx<'_>, nodes: &[NodeId], latest: u64) -> Be
     }
     transaction.set_edges(EdgeType::CoAccess, &links)?;
     transaction.replace_interest(&interest)?;
+    let mut ways = Vec::with_capacity(FILES * TRANSITIONS_PER_FILE);
+    for (at, node) in nodes.iter().enumerate() {
+        for step in 1..=TRANSITIONS_PER_FILE {
+            ways.push(TransitionRow {
+                src: *node,
+                dst: wrapped(nodes, at + step)?,
+                weight: if step % 2 == 0 { 2.0 } else { 0.004 },
+                count: 1,
+                last_seq: latest,
+            });
+        }
+    }
+    transaction.set_transitions(&ways)?;
     Ok(())
 }
 
@@ -302,9 +320,10 @@ fn copy_store(from: &Path, to: &Path) -> BenchResult {
 }
 
 /// What `swept` removed, in the order of [`SWEPT`].
-fn counts(swept: Swept) -> [u64; 7] {
+fn counts(swept: Swept) -> [u64; 8] {
     let Swept {
         links,
+        transitions,
         interest,
         facts,
         events,
@@ -312,7 +331,16 @@ fn counts(swept: Swept) -> [u64; 7] {
         positions,
         pages,
     } = swept;
-    [links, interest, facts, events, episodes, positions, pages]
+    [
+        links,
+        transitions,
+        interest,
+        facts,
+        events,
+        episodes,
+        positions,
+        pages,
+    ]
 }
 
 /// One run of `upkeep` with `writer` and `settings`, timed: what it removed, how it ended, and how
@@ -361,7 +389,7 @@ fn run_once(template: &Path, copy: &Path, repo: &RepoId) -> BenchResult<Run> {
         log_limit_bytes: LOG_LIMIT_BYTES,
     };
     let mut upkeep = Upkeep::default();
-    let mut removed = [0; 7];
+    let mut removed = [0; 8];
     let mut runs = Run {
         took: Duration::ZERO,
         longest_batch: Duration::ZERO,

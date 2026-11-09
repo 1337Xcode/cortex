@@ -314,6 +314,7 @@ impl<'a> Host<'a> {
             Ok((swept, ended)) => {
                 tracing::info!(
                     links = swept.links,
+                    transitions = swept.transitions,
                     interest = swept.interest,
                     facts = swept.facts,
                     events = swept.events,
