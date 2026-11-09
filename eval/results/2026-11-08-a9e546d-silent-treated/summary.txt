@@ -1,0 +1,10 @@
+runs: 14 completed, 0 could not complete; sessions that ended in an error: 0
+success: 1.00 (95% interval 1.00 to 1.00, resampling tasks)
+work orders to the measured sessions: 0 delivered, 0 labelled, 0 used
+precision: none
+measured sessions, medians: 196336.0 cumulative input tokens, 7.5 turns, 6.5 tool calls
+cost of every session, as the agent reported it: $1.92
+code lines shown to the agents: 268, of which 0 were not their file's line when shown; sessions not checked: 0
+Cortex's texts that reached the agents, tokens as Cortex estimates them: post_tool 12 (592 tokens), pre_tool 9 (277 tokens), prompt 8 (4928 tokens), session_start 22 (940 tokens); at most 1.01% of the sessions' input
+warnings after edits: call_site 6 (6 labelled, 0 resolved), cochange 6 (6 labelled, 0 resolved), test 6 (6 labelled, 0 resolved); precision: 0.00 (95% interval 0.00 to 0.00, resampling tasks)
+agents: 2.1.318 claude-sonnet-5-5 via none

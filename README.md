@@ -101,10 +101,12 @@ Cortex and once with Cortex holding every task out, and pairing each task's runs
   less ($0.157 against $0.181; interval $0.009 to $0.041 less). Their input was 10,770 tokens
   lower on average, which these few tasks do not settle (interval 27,500 lower to 6,850 higher).
 - In the 7 tasks where it gave none, the sessions took 1.6 more turns and 70,977 more input tokens
-  (intervals 0.4 to 2.6 more turns, 36,986 to 104,311 more tokens). Cortex told them only a
-  primer, read hints and warnings after edits, and over all the pilot's sessions everything it
-  told them was at most 1.42% of their input, so its texts do not account for this; why the
-  sessions differ is not known yet.
+  (intervals 0.4 to 2.6 more turns, 36,986 to 104,311 more tokens). Those 7 tasks were run again
+  on a later build, 2 runs each in each arm (`eval/results/2026-11-08-a9e546d-silent-treated/`),
+  and the cost did not come back: with Cortex the sessions took 19,707 fewer input tokens
+  (interval 95,424 fewer to 34,881 more), 0.64 fewer turns (2.43 fewer to 0.86 more) and $0.011
+  less a run (0.026 less to 0.001 more). The pilot's difference there was not a steady effect of
+  Cortex.
 - Over all 15 tasks the input was 27,378 tokens higher (interval 2,285 to 56,418), the turns and
   tool calls the same within their interval (0.17 more; 0.77 fewer to 1.13 more), and each run
   cost $0.008 less (interval $0.021 less to $0.005 more).
