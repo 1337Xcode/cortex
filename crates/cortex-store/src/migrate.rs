@@ -646,7 +646,10 @@ mod tests {
              VALUES ('s1', 'kept', 1, 'a')",
             [],
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let sixteenth = MIGRATIONS
+            .get(..16)
+            .ok_or("fewer than sixteen migrations")?;
+        migrate(&mut connection, sixteenth, &backups)?;
         assert_eq!(schema_version(&connection)?, 16);
         let objects = objects(&connection)?;
         for object in [
@@ -661,6 +664,32 @@ mod tests {
         let notices: i64 =
             connection.query_row("SELECT count(*) FROM notices", [], |row| row.get(0))?;
         assert_eq!(notices, 1);
+        Ok(())
+    }
+
+    /// The seventeenth schema gives facts the status a suspect one held before, and keeps the
+    /// facts a sixteenth-schema store holds, with none.
+    #[test]
+    fn the_seventeenth_schema_keeps_what_a_suspect_fact_was()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let sixteenth = MIGRATIONS
+            .get(..16)
+            .ok_or("fewer than sixteen migrations")?;
+        migrate(&mut connection, sixteenth, &backups)?;
+        connection.execute(
+            "INSERT INTO facts (text, kind, source, status, status_at, created_at, \
+             last_verified_at) VALUES ('kept', 'convention', 'user', 'suspect', 2, 1, 1)",
+            [],
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 17);
+        let kept: (String, Option<String>) =
+            connection.query_row("SELECT text, before_suspect FROM facts", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+        assert_eq!(kept, ("kept".to_owned(), None));
         Ok(())
     }
 

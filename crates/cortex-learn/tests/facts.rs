@@ -219,6 +219,31 @@ fn a_suspect_fact_said_against_the_code_now_is_active_again() -> TestResult {
     Ok(())
 }
 
+/// An agent's candidate on `money.py` ("v1") from task 1 at 10. The agent changes `money.py` to
+/// "v2" and a review at 20 makes the candidate suspect. Said again in task 1 at 30, it stays
+/// suspect: an agent cannot confirm its own rule by changing the code it is about. Said in task 2
+/// at 40, it turns active, as a candidate would.
+#[test]
+fn a_suspect_candidate_turns_active_only_as_a_candidate_would() -> TestResult {
+    let mut store = Store::new()?;
+    let money = store.index_text(&[("src/money.py", "v1")])?;
+    let rule = |task| ("Money is kept in cents.", FactSource::Agent, Some(task));
+    let fact = added(say(&mut store, rule(1), &money, 10)?)?;
+    store.index_text(&[("src/money.py", "v2")])?;
+    assert_eq!(review(&mut store, 20)?.suspected, [fact]);
+    assert_eq!(
+        say(&mut store, rule(1), &money, 30)?,
+        Asserted::Merged(fact)
+    );
+    assert_eq!(status(&store, fact)?, (FactStatus::Suspect, 20));
+    assert_eq!(
+        say(&mut store, rule(2), &money, 40)?,
+        Asserted::Activated(fact)
+    );
+    assert_eq!(status(&store, fact)?, (FactStatus::Active, 40));
+    Ok(())
+}
+
 /// A file whose contents are not read and a folder have no hash to keep: a fact on either is
 /// refused, naming the node, and nothing is stored.
 #[test]

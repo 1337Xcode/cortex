@@ -79,10 +79,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 16,
         sql: include_str!("../migrations/0016_facts.sql"),
     },
+    Migration {
+        version: 17,
+        sql: include_str!("../migrations/0017_fact_standing.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 16;
+pub(crate) const SCHEMA_VERSION: u32 = 17;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -733,9 +737,14 @@ pub(crate) const FACT_ADD: &str = "INSERT INTO facts (text, kind, source, status
 /// Anchors fact ?1 to node ?2, whose hash was ?3 when the fact was made.
 pub(crate) const FACT_ANCHOR_ADD: &str =
     "INSERT INTO fact_anchors (fact_id, node_id, anchor_hash) VALUES (?1, ?2, ?3)";
-/// Sets fact ?1's status to ?2 at ?3; one made active counts as confirmed then (?4 is 1).
+/// Sets fact ?1's status to ?2 at ?3; one made active counts as confirmed then (?4 is 1). Made
+/// suspect (?5 names the status), it keeps the status it held before, which it held already when
+/// it was suspect; any other status forgets it.
 pub(crate) const FACT_SET_STATUS: &str = "UPDATE facts SET status = ?2, status_at = ?3, \
-     last_verified_at = CASE WHEN ?4 THEN ?3 ELSE last_verified_at END WHERE fact_id = ?1";
+     last_verified_at = CASE WHEN ?4 THEN ?3 ELSE last_verified_at END, \
+     before_suspect = CASE WHEN ?2 = ?5 THEN \
+     (CASE WHEN status = ?5 THEN before_suspect ELSE status END) ELSE NULL END \
+     WHERE fact_id = ?1";
 /// Records task ?2 as the one that first asserted fact ?1, unless one already is.
 pub(crate) const FACT_NOTE_TASK: &str =
     "UPDATE facts SET asserted_in = ?2 WHERE fact_id = ?1 AND asserted_in IS NULL";
@@ -750,10 +759,12 @@ pub(crate) const FACT_COUNT_USES: &str =
     "UPDATE facts SET uses = uses + 1 WHERE fact_id IN (SELECT value FROM json_each(?1))";
 /// A fact's columns by its id.
 pub(crate) const FACT_BY_ID: &str = "SELECT fact_id, text, kind, source, status, status_at, \
-     asserted_in, uses, created_at, last_verified_at, superseded_by FROM facts WHERE fact_id = ?1";
+     asserted_in, uses, created_at, last_verified_at, superseded_by, before_suspect FROM facts \
+     WHERE fact_id = ?1";
 /// The current facts (none supersedes them) of status ?1, oldest first.
 pub(crate) const FACTS_CURRENT_WITH_STATUS: &str = "SELECT fact_id, text, kind, source, status, \
-     status_at, asserted_in, uses, created_at, last_verified_at, superseded_by FROM facts \
+     status_at, asserted_in, uses, created_at, last_verified_at, superseded_by, before_suspect \
+     FROM facts \
      WHERE status = ?1 AND superseded_by IS NULL ORDER BY fact_id";
 /// The current facts of status ?1 or ?2 with an anchor whose node's hash is not the one kept (or
 /// that has none now: the node is gone, or its contents are no longer read), in id order.
@@ -1219,6 +1230,7 @@ mod tests {
                     ("created_at", "INTEGER", 0),
                     ("last_verified_at", "INTEGER", 0),
                     ("superseded_by", "INTEGER", 0),
+                    ("before_suspect", "TEXT", 0),
                 ]),
             ),
             (

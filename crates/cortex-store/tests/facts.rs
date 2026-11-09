@@ -147,8 +147,9 @@ fn current_facts_are_read_with_their_anchors() -> TestResult {
 }
 
 /// A use is counted once a fact is injected: twice for fact 1, once for fact 2. Made suspect at
-/// 10, its confirmation stays at its making (1) and its status dates from 10; made active again at
-/// 20, it is confirmed at 20. Suspect since 9 or before: none; since 10: fact 1.
+/// 10 and again at 11, its confirmation stays at its making (1), its status dates from 11 and it
+/// was active before; made active again at 20, it is confirmed at 20 and holds no earlier status.
+/// Suspect since 10 or before: none; since 11: fact 1.
 #[test]
 fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
     let scratch = Scratch::new()?;
@@ -160,23 +161,36 @@ fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
     transaction.count_fact_uses(&[first, second])?;
     transaction.count_fact_uses(&[first])?;
     transaction.set_fact_status(first, FactStatus::Suspect, 10)?;
+    transaction.set_fact_status(first, FactStatus::Suspect, 11)?;
     transaction.commit()?;
     assert_eq!(read(&writer, first)?, (2, FactStatus::Suspect, 1));
+    let before = |id| -> TestResult<Option<FactStatus>> {
+        Ok(writer.queries().fact(id)?.ok_or("a fact")?.before_suspect)
+    };
+    assert_eq!(before(first)?, Some(FactStatus::Active));
     assert_eq!(read(&writer, second)?, (1, FactStatus::Active, 1));
     let status_at =
         |id| -> TestResult<i64> { Ok(writer.queries().fact(id)?.ok_or("a fact")?.status_at_ms) };
-    assert_eq!((status_at(first)?, status_at(second)?), (10, 1));
+    assert_eq!((status_at(first)?, status_at(second)?), (11, 1));
     let since = |at_ms| {
         writer
             .queries()
             .facts_with_status_since(FactStatus::Suspect, at_ms)
     };
-    assert_eq!(since(9)?, []);
-    assert_eq!(since(10)?, [first]);
+    assert_eq!(since(10)?, []);
+    assert_eq!(since(11)?, [first]);
     let mut transaction = writer.transaction()?;
     transaction.set_fact_status(first, FactStatus::Active, 20)?;
     transaction.commit()?;
     assert_eq!(read(&writer, first)?, (2, FactStatus::Active, 20));
+    assert_eq!(
+        writer
+            .queries()
+            .fact(first)?
+            .ok_or("a fact")?
+            .before_suspect,
+        None
+    );
     Ok(())
 }
 

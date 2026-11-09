@@ -61,6 +61,9 @@ pub struct FactRow {
     pub last_verified_at_ms: i64,
     /// The fact that corrects it, if one does.
     pub superseded_by: Option<FactId>,
+    /// While it is suspect, what it was before: a candidate or an active fact. None otherwise, and
+    /// for a fact made suspect before this was kept.
+    pub before_suspect: Option<FactStatus>,
 }
 
 /// Adds `record` and its anchors, and returns its id.
@@ -114,7 +117,13 @@ pub(crate) fn set_status(
     let changed = connection
         .prepare_cached(schema::FACT_SET_STATUS)
         .and_then(|mut statement| {
-            statement.execute((id.get(), status.name(), at_ms, status == FactStatus::Active))
+            statement.execute((
+                id.get(),
+                status.name(),
+                at_ms,
+                status == FactStatus::Active,
+                FactStatus::Suspect.name(),
+            ))
         })
         .map_err(sqlite("setting a fact's status"))?;
     if changed == 0 {
@@ -213,7 +222,8 @@ fn unknown(id: FactId) -> StoreError {
 }
 
 /// A fact's columns as read: id, text, kind, source, status, when it was set, the task first
-/// asserting it, uses, created, last verified, the fact superseding it.
+/// asserting it, uses, created, last verified, the fact superseding it, the status before it
+/// turned suspect.
 type Columns = (
     i64,
     String,
@@ -226,6 +236,7 @@ type Columns = (
     i64,
     i64,
     Option<i64>,
+    Option<String>,
 );
 
 impl Queries<'_> {
@@ -383,7 +394,7 @@ impl Queries<'_> {
 
     /// The fact `columns` hold, with its anchors read.
     fn row_of(self, columns: Columns) -> Result<FactRow, StoreError> {
-        let (id, text, kind, source, status, status_at, task, uses, created, verified, by) =
+        let (id, text, kind, source, status, status_at, task, uses, created, verified, by, before) =
             columns;
         let anchors: Vec<(i64, Vec<u8>)> = self
             .connection()
@@ -417,6 +428,11 @@ impl Queries<'_> {
             uses: u64::try_from(uses).map_err(|_| corrupt("facts.uses"))?,
             last_verified_at_ms: verified,
             superseded_by: by.map(FactId),
+            before_suspect: before
+                .map(|before| {
+                    values::kind(&before, FactStatus::from_name, "facts.before_suspect", id)
+                })
+                .transpose()?,
         })
     }
 }
@@ -435,6 +451,7 @@ fn columns_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Columns> {
         row.get(8)?,
         row.get(9)?,
         row.get(10)?,
+        row.get(11)?,
     ))
 }
 

@@ -93,7 +93,7 @@ fn a_reader_refuses_a_database_without_the_schema() -> TestResult {
             error,
             Some(StoreError::SchemaNotCurrent {
                 found: 0,
-                expected: 16
+                expected: 17
             })
         ),
         "{error:?}"

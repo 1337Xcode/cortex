@@ -177,16 +177,29 @@ fn said_before(
 }
 
 /// Whether `assertion`, saying `said` again, makes it active: a candidate the user states, or one
-/// an agent states in a task other than the one that first asserted it; a suspect fact the user or
-/// an agent states against the code as it is now. An import confirms nothing.
+/// an agent states in a task other than the one that first asserted it; a suspect fact that was
+/// active, the user or an agent states against the code as it is now; a suspect fact that was a
+/// candidate (or of which that is not known), as a candidate is confirmed, so that an agent cannot
+/// confirm its own rule by changing the code it is about. An import confirms nothing.
 fn confirms(said: &FactRow, assertion: &Assertion<'_>) -> bool {
-    match (said.record.status, assertion.source) {
-        (FactStatus::Candidate, FactSource::User)
-        | (FactStatus::Suspect, FactSource::User | FactSource::Agent) => true,
-        (FactStatus::Candidate, FactSource::Agent) => {
+    match (said.record.status, said.before_suspect) {
+        (FactStatus::Suspect, Some(FactStatus::Active)) => {
+            matches!(assertion.source, FactSource::User | FactSource::Agent)
+        }
+        (FactStatus::Candidate | FactStatus::Suspect, _) => confirms_candidate(said, assertion),
+        (FactStatus::Active | FactStatus::Retired, _) => false,
+    }
+}
+
+/// Whether `assertion` confirms `said` as a candidate: the user's word, or an agent's in a task
+/// other than the one that first asserted it.
+fn confirms_candidate(said: &FactRow, assertion: &Assertion<'_>) -> bool {
+    match assertion.source {
+        FactSource::User => true,
+        FactSource::Agent => {
             matches!((said.record.task, assertion.task), (Some(first), Some(now)) if first != now)
         }
-        (FactStatus::Active | FactStatus::Retired, _) | (_, FactSource::Import) => false,
+        FactSource::Import => false,
     }
 }
 
