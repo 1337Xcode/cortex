@@ -520,7 +520,6 @@ warnings.max_per_edit = 0
         let loaded = cortex_core::load_config(&[cortex_core::ConfigLayer {
             origin: "config.toml",
             text: &text,
-            is_users: false,
         }])?;
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         assert!(loaded.config.holdout_share.abs() < f64::EPSILON);

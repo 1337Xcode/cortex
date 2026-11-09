@@ -74,10 +74,6 @@ pub const DEFAULT_GIT_MAX_FILES_PER_COMMIT: u64 = 30;
 /// counts half as much toward co-change.
 pub const DEFAULT_GIT_HALF_LIFE_COMMITS: u64 = 500;
 
-/// The keys only the user's own configuration may set: what reaches the network is the user's to
-/// turn on, and a repository's file is the repository's, whoever wrote it.
-const USERS_ONLY: &[&str] = &["upkeep.llm.enabled"];
-
 /// The scale mode setting: chosen from the repository's size, or pinned by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModeSetting {
@@ -118,9 +114,6 @@ pub struct Config {
     /// effect can be measured against them; 0 turns the holdout off. Default
     /// [`DEFAULT_HOLDOUT_SHARE`].
     pub holdout_share: f64,
-    /// `upkeep.llm.enabled`: let optional upkeep by a language model propose facts, with an API key
-    /// the user provides. Default `false`.
-    pub is_llm_upkeep_enabled: bool,
     /// `learning.eta`: the link learning rate, above 0 and at most 1. Default
     /// [`DEFAULT_LEARNING_ETA`].
     pub learning_eta: f64,
@@ -168,7 +161,6 @@ impl Default for Config {
             crawl_files_per_second: DEFAULT_CRAWL_FILES_PER_SECOND,
             store_prompt_excerpt: false,
             holdout_share: DEFAULT_HOLDOUT_SHARE,
-            is_llm_upkeep_enabled: false,
             learning_eta: DEFAULT_LEARNING_ETA,
             link_decay: DEFAULT_LINK_DECAY,
             interest_decay: DEFAULT_INTEREST_DECAY,
@@ -185,16 +177,13 @@ impl Default for Config {
     }
 }
 
-/// One configuration file's text, a name for it in messages such as its path, and whose it is.
+/// One configuration file's text and a name for it in messages, such as its path.
 #[derive(Debug, Clone, Copy)]
 pub struct ConfigLayer<'a> {
     /// Where the text came from, shown in warnings and errors.
     pub origin: &'a str,
     /// The file's TOML text.
     pub text: &'a str,
-    /// Whether it is the user's own file, `~/.cortex/config.toml`, which alone may set the keys
-    /// that turn on what reaches the network; a repository's may not.
-    pub is_users: bool,
 }
 
 /// The settings that result from the layers, with a warning for each key that was ignored.
@@ -243,14 +232,6 @@ pub fn load(layers: &[ConfigLayer<'_>]) -> Result<LoadedConfig, ConfigError> {
         let mut entries = Vec::new();
         flatten("", &table, &mut entries);
         for (key, value) in entries {
-            if !layer.is_users && USERS_ONLY.contains(&key.as_str()) {
-                warnings.push(format!(
-                    "{}: `{key}` is read only from the user's own configuration, \
-                     ~/.cortex/config.toml, so it is ignored here",
-                    layer.origin
-                ));
-                continue;
-            }
             if !config.apply(&key, value, layer.origin)? {
                 warnings.push(format!("{}: unknown key `{key}` is ignored", layer.origin));
             }
@@ -348,10 +329,6 @@ impl Config {
             }
             "holdout.share" => {
                 self.holdout_share = share(value).ok_or_else(|| refuse("a number from 0 to 1"))?;
-            }
-            "upkeep.llm.enabled" => {
-                self.is_llm_upkeep_enabled =
-                    value.as_bool().ok_or_else(|| refuse("true or false"))?;
             }
             "learning.eta" => {
                 self.learning_eta =
@@ -459,43 +436,7 @@ mod tests {
 
     /// A layer named `origin` holding `text`.
     fn layer<'a>(origin: &'a str, text: &'a str) -> ConfigLayer<'a> {
-        ConfigLayer {
-            origin,
-            text,
-            is_users: true,
-        }
-    }
-
-    /// A repository's layer named `origin` holding `text`.
-    fn repository_layer<'a>(origin: &'a str, text: &'a str) -> ConfigLayer<'a> {
-        ConfigLayer {
-            is_users: false,
-            ..layer(origin, text)
-        }
-    }
-
-    /// A repository's file cannot turn on LLM upkeep: the key is ignored there with a warning, and
-    /// the user's own file's value, here on, stands; nothing else changes.
-    #[test]
-    fn only_the_user_turns_on_llm_upkeep() -> Result<(), ConfigError> {
-        let cloned = repository_layer(
-            "repo",
-            "[upkeep.llm]\nenabled = true\n[holdout]\nshare = 0\n",
-        );
-        let loaded = load(&[cloned])?;
-        assert!(!loaded.config.is_llm_upkeep_enabled);
-        assert_eq!(loaded.config.holdout_share, 0.0);
-        assert_eq!(
-            loaded.warnings,
-            [
-                "repo: `upkeep.llm.enabled` is read only from the user's own configuration, \
-                 ~/.cortex/config.toml, so it is ignored here"
-            ]
-        );
-        let user = layer("user", "upkeep.llm.enabled = true\n");
-        let off = repository_layer("repo", "upkeep.llm.enabled = false\n");
-        assert!(load(&[user, off])?.config.is_llm_upkeep_enabled);
-        Ok(())
+        ConfigLayer { origin, text }
     }
 
     /// With no files, every setting has its documented default.
@@ -514,7 +455,6 @@ mod tests {
                 crawl_files_per_second: 100,
                 store_prompt_excerpt: false,
                 holdout_share: 0.1,
-                is_llm_upkeep_enabled: false,
                 learning_eta: 0.1,
                 link_decay: 0.995,
                 interest_decay: 0.98,
@@ -567,10 +507,9 @@ mod tests {
     fn later_layers_override_earlier_ones() -> Result<(), ConfigError> {
         let user = layer(
             "user",
-            "mode = \"small\"\nstrict_mode = true\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n\
-             [upkeep.llm]\nenabled = true\n",
+            "mode = \"small\"\nstrict_mode = true\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n",
         );
-        let repository = repository_layer(
+        let repository = layer(
             "repository",
             "[index]\nmax_file_bytes = 5000\nparse_timeout_ms = 250\ncrawl_files_per_second = 7\n\
              [daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n\
@@ -603,7 +542,6 @@ mod tests {
                 crawl_files_per_second: 7,
                 store_prompt_excerpt: true,
                 holdout_share: 0.25,
-                is_llm_upkeep_enabled: true,
                 learning_eta: 0.2,
                 link_decay: 1.0,
                 interest_decay: 0.5,
@@ -674,14 +612,14 @@ mod tests {
     #[test]
     fn the_keys_a_file_sets_are_listed() -> Result<(), ConfigError> {
         let text = "mode = \"small\"\nretrieval.max_tokenz = 3\n[holdout]\nshare = 0\n\
-                    [upkeep.llm]\nenabled = true\n";
+                    [warnings]\nmax_per_edit = 2\n";
         assert_eq!(
             keys_set(&layer("f", text))?,
             [
                 "holdout.share",
                 "mode",
                 "retrieval.max_tokenz",
-                "upkeep.llm.enabled"
+                "warnings.max_per_edit"
             ]
         );
         assert!(matches!(
@@ -795,11 +733,6 @@ mod tests {
                 "holdout.share = nan",
                 "holdout.share",
                 "a number from 0 to 1",
-            ),
-            (
-                "upkeep.llm.enabled = 1",
-                "upkeep.llm.enabled",
-                "true or false",
             ),
         ];
         assert_refused(&cases);

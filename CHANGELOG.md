@@ -9,7 +9,7 @@ All notable changes to this project are documented in this file. The format is b
 ### Added
 
 - `cortex init` sets a repository up for Claude Code: it finds the repository with git, checks
-  Claude Code's version, asks three questions once (the holdout, team sharing, model upkeep),
+  Claude Code's version, asks two questions once (the holdout, team sharing),
   registers Cortex's hooks in `.claude/settings.local.json` (or `~/.claude/settings.json` with
   `--scope user`) beside the user's own, backs up every file it changes with a hashed manifest,
   starts the repository's daemon, waits for its first index and ends with `cortex doctor`.

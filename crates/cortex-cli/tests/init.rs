@@ -132,16 +132,14 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         .map_err(|_| "one backup")?;
     let resolved = std::fs::canonicalize(&settings)?;
     // Init's own lines; the daemon's, the index's and doctor's follow.
-    let lines: Vec<&str> = run.stdout.lines().take(8).collect();
+    let lines: Vec<&str> = run.stdout.lines().take(6).collect();
     let [
         repository,
         no_git,
         claude,
         written_to,
         repository_answer,
-        users_answer,
         backed_up,
-        users_backed_up,
     ] = lines.as_slice()
     else {
         return Err(run.stdout.into());
@@ -175,25 +173,9 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         *repository_answer,
         format!("answer kept in {}", config.display())
     );
-    let users_config = home.path().join(".cortex").join("config.toml");
-    assert_eq!(
-        *users_answer,
-        format!("answer kept in {}", users_config.display())
-    );
     assert_eq!(
         *backed_up,
         format!("backup and manifest in {}", folder.display())
-    );
-    // Init writes in folders it has resolved, so it names the home folder's backups canonically.
-    assert!(
-        users_backed_up.starts_with(&format!(
-            "backup and manifest in {}",
-            canonical_root(home.path())?
-                .join(".cortex")
-                .join("backups")
-                .display()
-        )),
-        "{users_backed_up}"
     );
     assert_eq!(
         std::fs::read_to_string(folder.join("1-settings.local.json"))?,
@@ -635,12 +617,9 @@ fn init_reports_doctor_s_failures_without_failing() -> TestResult {
 const REPOSITORY_ANSWER: &str =
     "# The answer to a question `cortex init` asked; change it here.\n[holdout]\nshare = 0.1\n";
 
-/// The user's answer `--yes` writes: no upkeep by a language model.
-const USERS_ANSWER: &str = "# The answer to a question `cortex init` asked; change it here.\n[upkeep.llm]\nenabled = false\n";
-
-/// With `--yes`, the defaults: a holdout of one task in ten in the repository's configuration, no
-/// upkeep by a language model in the user's own, no sharing, so git leaves out all of `.cortex/`
-/// and the local settings init made.
+/// With `--yes`, the defaults: a holdout of one task in ten in the repository's configuration and
+/// no sharing, so git leaves out all of `.cortex/` and the local settings init made. The user's own
+/// configuration is not written.
 #[test]
 fn init_with_yes_takes_the_defaults() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -654,10 +633,7 @@ fn init_with_yes_takes_the_defaults() -> TestResult {
         std::fs::read_to_string(repo.path().join(".cortex").join("config.toml"))?,
         REPOSITORY_ANSWER
     );
-    assert_eq!(
-        std::fs::read_to_string(home.path().join(".cortex").join("config.toml"))?,
-        USERS_ANSWER
-    );
+    assert!(!home.path().join(".cortex").join("config.toml").exists());
     assert_eq!(
         std::fs::read_to_string(repo.path().join(".gitignore"))?,
         "# Cortex\n.cortex/\n.claude/settings.local.json\n"
@@ -681,18 +657,6 @@ fn init_with_yes_takes_the_defaults() -> TestResult {
         .filter_map(|file| file.get("kind").and_then(Value::as_str))
         .collect();
     assert_eq!(kinds, ["gitignore", "claude_settings", "cortex_config"]);
-    let run = folder.file_name().ok_or("a run folder")?;
-    let users_manifest = home
-        .path()
-        .join(".cortex")
-        .join("backups")
-        .join(run)
-        .join("manifest.json");
-    let users: Value = serde_json::from_slice(&std::fs::read(users_manifest)?)?;
-    assert_eq!(
-        users.pointer("/files/0/kind").and_then(Value::as_str),
-        Some("cortex_config")
-    );
     Ok(())
 }
 
@@ -719,8 +683,8 @@ fn init_asks_nothing_once_answered() -> TestResult {
 }
 
 /// With a question to ask, no terminal and no `--yes`, init names the question and writes nothing
-/// anywhere. With the answers kept by hand (the holdout in the repository's configuration, the
-/// upkeep in the user's own) it asks nothing; outside git, sharing is not a question.
+/// anywhere. With the holdout kept by hand in the user's own configuration it asks nothing and
+/// writes no answer in the repository's; outside git, sharing is not a question.
 #[test]
 fn init_without_a_terminal_writes_nothing() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -737,15 +701,10 @@ fn init_without_a_terminal_writes_nothing() -> TestResult {
     assert!(!repo.path().join(".claude").exists());
     assert!(!repo.path().join(".cortex").exists());
     assert!(!home.path().join(".cortex").exists());
-    std::fs::create_dir(repo.path().join(".cortex"))?;
-    std::fs::write(
-        repo.path().join(".cortex").join("config.toml"),
-        "holdout.share = 0\n",
-    )?;
     std::fs::create_dir(home.path().join(".cortex"))?;
     std::fs::write(
         home.path().join(".cortex").join("config.toml"),
-        "upkeep.llm.enabled = false\n",
+        "holdout.share = 0\n",
     )?;
     let answered = init_without_yes(repo.path(), home.path())?;
     assert!(answered.is_success, "{}", answered.stderr);
@@ -754,6 +713,11 @@ fn init_without_a_terminal_writes_nothing() -> TestResult {
             .join(".claude")
             .join("settings.local.json")
             .is_file()
+    );
+    assert!(!repo.path().join(".cortex").join("config.toml").exists());
+    assert_eq!(
+        std::fs::read_to_string(home.path().join(".cortex").join("config.toml"))?,
+        "holdout.share = 0\n"
     );
     Ok(())
 }
@@ -775,31 +739,6 @@ fn init_keeps_the_team_s_sharing() -> TestResult {
     assert_eq!(
         std::fs::read_to_string(repo.path().join(".gitignore"))?,
         ".cortex/*\n!.cortex/shared/\n# Cortex\n.claude/settings.local.json\n"
-    );
-    Ok(())
-}
-
-/// A repository's own configuration cannot answer the question on upkeep by a language model,
-/// which only the user's may: with the holdout kept there and upkeep turned on there, init still
-/// asks about upkeep, and with no terminal refuses naming it.
-#[test]
-fn init_never_takes_a_repository_s_upkeep_for_an_answer() -> TestResult {
-    let repo = tempfile::tempdir()?;
-    let home = tempfile::tempdir()?;
-    std::fs::create_dir(repo.path().join(".cortex"))?;
-    std::fs::write(
-        repo.path().join(".cortex").join("config.toml"),
-        "holdout.share = 0.1\n[upkeep.llm]\nenabled = true\n",
-    )?;
-    let _daemon = StopsDaemon::of(repo.path(), home.path());
-    let refused = init_without_yes(repo.path(), home.path())?;
-    assert!(!refused.is_success);
-    assert!(
-        refused
-            .stderr
-            .contains("init asks \"Allow optional upkeep by a language model"),
-        "{}",
-        refused.stderr
     );
     Ok(())
 }

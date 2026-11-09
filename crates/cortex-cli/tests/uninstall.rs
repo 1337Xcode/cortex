@@ -67,9 +67,8 @@ fn is_daemon_running(repo: &Path, home: &Path) -> TestResult<bool> {
 
 /// A git repository whose `.gitignore` ends without a line break and whose local settings hold
 /// the user's own Stop hook: init changes both and makes `.cortex/config.toml`; uninstall gives
-/// both their bytes back, removes the configuration init made, stops the daemon, and keeps the
-/// answer in the user's own configuration, which serves every repository. Run again, it finds
-/// nothing to undo and no daemon.
+/// both their bytes back, removes the configuration init made and stops the daemon; init never
+/// made a configuration of the user's own. Run again, it finds nothing to undo and no daemon.
 #[test]
 fn uninstall_gives_back_every_byte_init_changed() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -103,7 +102,7 @@ fn uninstall_gives_back_every_byte_init_changed() -> TestResult {
     assert_eq!(std::fs::read_to_string(&gitignore)?, "target/");
     assert_eq!(std::fs::read_to_string(&settings)?, original);
     assert!(!repo.path().join(".cortex").join("config.toml").exists());
-    assert!(home.path().join(".cortex").join("config.toml").exists());
+    assert!(!home.path().join(".cortex").join("config.toml").exists());
     assert!(!is_daemon_running(repo.path(), home.path())?);
     let again = uninstall(repo.path(), home.path(), &[])?;
     assert!(again.is_success, "{}", again.stderr);
@@ -462,9 +461,9 @@ fn uninstall_fails_when_the_daemon_never_answers() -> TestResult {
 }
 
 /// `--purge` deletes what Cortex keeps of the repository but the folder the team shares: its
-/// `.cortex/` but `.cortex/shared/`, init's manifest for it in the user's folder (the run folder
-/// stays for the user's own manifest, which holds the user's configuration), and the daemon's log
-/// with the files it rotated to. Another repository's log stays, and so do the run files.
+/// `.cortex/` but `.cortex/shared/`, init's manifest for it in the user's folder (with its run
+/// folder, empty then), and the daemon's log with the files it rotated to. Another repository's
+/// log stays, and so do the run files and the user's own configuration.
 #[test]
 fn purge_deletes_what_cortex_keeps_but_the_shared_folder() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -473,6 +472,8 @@ fn purge_deletes_what_cortex_keeps_but_the_shared_folder() -> TestResult {
     let _daemon = StopsDaemon::of(repo.path(), home.path());
     let done = init(repo.path(), home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
+    let users_config = home.path().join(".cortex").join("config.toml");
+    std::fs::write(&users_config, "mode = \"auto\"\n")?;
     let root = canonical_root(repo.path())?;
     let shared = root.join(".cortex").join("shared");
     std::fs::create_dir_all(&shared)?;
@@ -508,8 +509,8 @@ fn purge_deletes_what_cortex_keeps_but_the_shared_folder() -> TestResult {
     assert!(!log.exists() && !rotated.exists());
     assert_eq!(std::fs::read_to_string(&other)?, "another repository's\n");
     assert!(lock.exists());
-    assert_eq!(names(&backups.join(&run))?, ["manifest.json"]);
-    assert!(home.path().join(".cortex").join("config.toml").exists());
+    assert!(!backups.join(&run).exists());
+    assert_eq!(std::fs::read_to_string(&users_config)?, "mode = \"auto\"\n");
     Ok(())
 }
 
@@ -614,7 +615,7 @@ fn purge_refuses_a_linked_cortex_folder() -> TestResult {
 
 /// After `init --scope user`, uninstalling the repository's files leaves the user's settings, which
 /// hold Cortex's hooks for every repository, and says so last on stdout; `--scope user` then gives
-/// the settings their bytes back and removes the configuration init made in the home folder.
+/// the settings their bytes back. Init makes no configuration in the home folder.
 #[test]
 fn uninstall_for_the_user_undoes_the_user_s_files() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -630,10 +631,10 @@ fn uninstall_for_the_user_undoes_the_user_s_files() -> TestResult {
     assert!(done.is_success, "{}", done.stderr);
     let settings = canonical_root(&home.path().join(".claude"))?.join("settings.json");
     let config = home.path().join(".cortex").join("config.toml");
-    assert!(settings.exists() && config.exists());
+    assert!(settings.exists() && !config.exists());
     let project = uninstall(repo.path(), home.path(), &[])?;
     assert!(project.is_success, "{}", project.stderr);
-    assert!(settings.exists() && config.exists());
+    assert!(settings.exists());
     let note = format!(
         "note: {} holds Cortex's Claude Code hooks, which run in every repository; `cortex \
          uninstall --scope user` takes them out\n",
@@ -644,10 +645,8 @@ fn uninstall_for_the_user_undoes_the_user_s_files() -> TestResult {
     assert!(user.is_success, "{}", user.stderr);
     let root = canonical_root(repo.path())?;
     let expected = format!(
-        "repository: {}\nremoved {}, which init made\nrestored {} from its backup\n\
-         daemon: not running\n{}",
+        "repository: {}\nrestored {} from its backup\ndaemon: not running\n{}",
         root.display(),
-        config.display(),
         settings.display(),
         stays(&root)
     );

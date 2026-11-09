@@ -106,6 +106,15 @@ impl Found {
     /// The file is read-only, or cannot be read as a small text file.
     fn read(file: PathBuf) -> anyhow::Result<Self> {
         place::writable(&file)?;
+        Self::read_only(file)
+    }
+
+    /// The file at `file`, which init reads and never writes.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be read as a small text file.
+    fn read_only(file: PathBuf) -> anyhow::Result<Self> {
         let text = read_text_file(&file, MAX_SETTINGS_BYTES)?;
         Ok(Self {
             origin: file.display().to_string(),
@@ -114,12 +123,11 @@ impl Found {
         })
     }
 
-    /// The file as a configuration, the user's own when `is_users`.
-    fn config(&self, is_users: bool) -> ConfigFile<'_> {
+    /// The file as a configuration.
+    fn config(&self) -> ConfigFile<'_> {
         ConfigFile {
             text: self.text.as_deref(),
             origin: &self.origin,
-            is_users,
         }
     }
 
@@ -139,7 +147,8 @@ impl Found {
 
 /// Every file init may change, found, read and checked before anything is asked.
 struct Files {
-    /// The user's own configuration, `~/.cortex/config.toml`.
+    /// The user's own configuration, `~/.cortex/config.toml`, read for an answer kept there and
+    /// never written.
     users_config: Found,
     /// The repository's configuration, `.cortex/config.toml`.
     repository_config: Found,
@@ -198,7 +207,7 @@ impl Files {
             }
         }
         Ok(Self {
-            users_config: Found::read(place::file_beside(user.path(), "config.toml")?)?,
+            users_config: Found::read_only(user.config_path())?,
             repository_config: Found::read(repository_config)?,
             ignores,
             settings,
@@ -218,8 +227,8 @@ impl Files {
             .as_ref()
             .map_or(Some(false), |(ignored, _)| ignored.sharing());
         consent::kept(
-            self.users_config.config(true),
-            self.repository_config.config(false),
+            self.users_config.config(),
+            self.repository_config.config(),
             sharing,
         )
     }
@@ -249,7 +258,7 @@ impl Files {
             }
         }
         let repository =
-            consent::repository_config(self.repository_config.config(false), kept, answers)?;
+            consent::repository_config(self.repository_config.config(), kept, answers)?;
         if let Some(after) = repository {
             let owner = Owner::Repository {
                 folder: Some(".cortex"),
@@ -257,12 +266,6 @@ impl Files {
             changes.push(
                 self.repository_config
                     .changed(after, owner, "answer kept in"),
-            );
-        }
-        if let Some(after) = consent::users_config(self.users_config.config(true), kept, answers)? {
-            changes.push(
-                self.users_config
-                    .changed(after, Owner::User, "answer kept in"),
             );
         }
         Ok(changes)

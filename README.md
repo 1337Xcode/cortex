@@ -42,10 +42,10 @@ cortex uninstall
 
 `cortex init` sets Cortex up in the repository you run it in, for the coding agents it finds on
 this machine (`--agents` names them instead); with none found it writes no hooks and says so.
-Claude Code needs to be 2.1.295 or later. It asks three questions once: whether to measure Cortex's effect by leaving one task in ten
-without its help (yes by default), whether to share facts with your team through a committed
-`.cortex/shared/` folder (no), and whether to allow optional upkeep by a language model (no);
-`--yes` takes those defaults. It registers Cortex's hooks with Claude Code in
+Claude Code needs to be 2.1.295 or later. It asks two questions once: whether to measure
+Cortex's effect by leaving one task in ten without its help (yes by default), and whether to share
+facts with your team through a committed `.cortex/shared/` folder (no); `--yes` takes those
+defaults. It registers Cortex's hooks with Claude Code in
 `.claude/settings.local.json` (or, with `--scope user`, in `~/.claude/settings.json`), adds what
 Cortex writes to `.gitignore`, backs up every file before it changes it, starts the repository's
 daemon, waits for its first index and ends with `cortex doctor`'s checks, whose failures it

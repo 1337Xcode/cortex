@@ -1,12 +1,11 @@
 //! The questions `cortex init` asks once: measure Cortex's effect against a holdout of tasks (yes
-//! by default), share facts with the team through a committed `.cortex/shared/` (no), and allow
-//! optional upkeep by a language model (no). Each answer is kept where it takes effect: the holdout
-//! in the repository's `.cortex/config.toml` (or the user's own, when the user set it there), the
-//! sharing in the repository's `.gitignore` (a team that shares has committed it), and the upkeep,
-//! which reaches the network, in the user's own `~/.cortex/config.toml`, the one file a repository
-//! cannot write. A question answered there is not asked again. `--yes` takes the defaults;
-//! otherwise questions go to stderr and answers come a line at a time from a terminal. Without one
-//! init refuses rather than wait on input that may never come.
+//! by default), and share facts with the team through a committed `.cortex/shared/` (no). Each
+//! answer is kept where it takes effect: the holdout in the repository's `.cortex/config.toml` (or
+//! the user's own `~/.cortex/config.toml`, when the user set it there), and the sharing in the
+//! repository's `.gitignore` (a team that shares has committed it). A question answered there is
+//! not asked again. `--yes` takes the defaults; otherwise questions go to stderr and answers come a
+//! line at a time from a terminal. Without one init refuses rather than wait on input that may
+//! never come.
 
 use std::io::{BufRead, Read as _};
 
@@ -35,13 +34,6 @@ const SHARING: Question = Question {
     default: false,
 };
 
-/// Optional upkeep by a language model.
-const LLM_UPKEEP: Question = Question {
-    text: "Allow optional upkeep by a language model, with an API key you provide, proposing \
-           facts for you to confirm?",
-    default: false,
-};
-
 /// How many answers that read as neither yes nor no a question takes before init gives up.
 const ATTEMPTS: usize = 3;
 
@@ -51,9 +43,6 @@ const MAX_ANSWER_BYTES: u64 = 1_024;
 /// The key that keeps the holdout answer.
 const HOLDOUT_KEY: &str = "holdout.share";
 
-/// The key that keeps the upkeep answer.
-const LLM_UPKEEP_KEY: &str = "upkeep.llm.enabled";
-
 /// The answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Answers {
@@ -61,8 +50,6 @@ pub(super) struct Answers {
     pub(super) holdout: bool,
     /// Share facts with the team.
     pub(super) sharing: bool,
-    /// Allow optional upkeep by a language model.
-    pub(super) llm_upkeep: bool,
 }
 
 /// The answers already kept, `None` for each question not answered yet.
@@ -72,8 +59,6 @@ pub(super) struct Kept {
     holdout: Option<bool>,
     /// Share facts with the team.
     sharing: Option<bool>,
-    /// Allow optional upkeep by a language model.
-    llm_upkeep: Option<bool>,
 }
 
 /// A configuration file as init read it.
@@ -83,8 +68,6 @@ pub(super) struct ConfigFile<'a> {
     pub(super) text: Option<&'a str>,
     /// Its path, for messages.
     pub(super) origin: &'a str,
-    /// Whether it is the user's own.
-    pub(super) is_users: bool,
 }
 
 impl ConfigFile<'_> {
@@ -93,7 +76,6 @@ impl ConfigFile<'_> {
         self.text.map(|text| ConfigLayer {
             origin: self.origin,
             text,
-            is_users: self.is_users,
         })
     }
 
@@ -130,9 +112,6 @@ pub(super) fn kept(
     Ok(Kept {
         holdout: is_holdout_set.then_some(config.holdout_share > 0.0),
         sharing,
-        llm_upkeep: users
-            .sets(LLM_UPKEEP_KEY)?
-            .then_some(config.is_llm_upkeep_enabled),
     })
 }
 
@@ -161,7 +140,6 @@ pub(super) fn answers(
     Ok(Answers {
         holdout: answer(kept.holdout, &HOLDOUT)?,
         sharing: answer(kept.sharing, &SHARING)?,
-        llm_upkeep: answer(kept.llm_upkeep, &LLM_UPKEEP)?,
     })
 }
 
@@ -224,24 +202,6 @@ pub(super) fn repository_config(
     appended(file, HOLDOUT_KEY, &format!("[holdout]\nshare = {share}")).map(Some)
 }
 
-/// The user's own configuration `file` with the upkeep answer added at its end, unless it was
-/// kept.
-///
-/// # Errors
-///
-/// The configuration with the answer added does not load (see [`appended`]).
-pub(super) fn users_config(
-    file: ConfigFile<'_>,
-    kept: Kept,
-    answers: Answers,
-) -> anyhow::Result<Option<String>> {
-    if kept.llm_upkeep.is_some() {
-        return Ok(None);
-    }
-    let table = format!("[upkeep.llm]\nenabled = {}", answers.llm_upkeep);
-    appended(file, LLM_UPKEEP_KEY, &table).map(Some)
-}
-
 /// The text of `file` (empty when there is none) with the lines of `table`, which sets `key`,
 /// added at its end after a comment, in the file's own line ending.
 ///
@@ -271,7 +231,6 @@ fn appended(file: ConfigFile<'_>, key: &str, table: &str) -> anyhow::Result<Stri
     load_config(&[ConfigLayer {
         origin: file.origin,
         text: &text,
-        is_users: file.is_users,
     }])
     .with_context(|| {
         format!(
@@ -292,38 +251,34 @@ mod tests {
     const NONE_KEPT: Kept = Kept {
         holdout: None,
         sharing: None,
-        llm_upkeep: None,
     };
 
     /// No file.
     const NO_FILE: ConfigFile<'static> = ConfigFile {
         text: None,
         origin: "f",
-        is_users: false,
     };
 
-    /// Empty lines take the defaults (yes, no, no); `y`, `NO` and ` yes ` read in any case and
-    /// spacing; a line that is neither is asked again; with `--yes` nothing is read.
+    /// Empty lines take the defaults (yes, no); `NO` and ` yes ` read in any case and spacing; a
+    /// line that is neither is asked again; with `--yes` nothing is read.
     #[test]
     fn answers_are_lines_or_defaults() -> anyhow::Result<()> {
-        let defaults = answers(NONE_KEPT, false, Some(&mut Cursor::new("\n\n\n")))?;
+        let defaults = answers(NONE_KEPT, false, Some(&mut Cursor::new("\n\n")))?;
         let expected = Answers {
             holdout: true,
             sharing: false,
-            llm_upkeep: false,
         };
         assert_eq!(defaults, expected);
         let given = answers(
             NONE_KEPT,
             false,
-            Some(&mut Cursor::new("NO\nmaybe\n yes \ny\n")),
+            Some(&mut Cursor::new("NO\nmaybe\n yes \n")),
         )?;
         assert_eq!(
             given,
             Answers {
                 holdout: false,
                 sharing: true,
-                llm_upkeep: true,
             }
         );
         assert_eq!(
@@ -333,7 +288,7 @@ mod tests {
         Ok(())
     }
 
-    /// Kept answers are not asked: with all three kept, nothing is read, terminal or not; with a
+    /// Kept answers are not asked: with both kept, nothing is read, terminal or not; with a
     /// question left and no terminal, init refuses naming it; input that ends before an answer,
     /// or three answers that are neither yes nor no, refuse too.
     #[test]
@@ -341,14 +296,12 @@ mod tests {
         let all = Kept {
             holdout: Some(false),
             sharing: Some(true),
-            llm_upkeep: Some(false),
         };
         assert!(matches!(
             answers(all, false, None::<&mut Cursor<&str>>),
             Ok(Answers {
                 holdout: false,
                 sharing: true,
-                llm_upkeep: false
             })
         ));
         let no_terminal = answers(NONE_KEPT, false, None::<&mut Cursor<&str>>);
@@ -374,42 +327,37 @@ mod tests {
         );
     }
 
-    /// The holdout is kept by either file, the user's winning; the upkeep only by the user's: a
-    /// repository's that sets it keeps nothing, and its value is not taken.
+    /// The holdout is kept by either file, the user's winning over the default and the
+    /// repository's over the user's; the sharing comes from the ignores as given.
     #[test]
     fn answers_are_kept_where_they_may_be() -> anyhow::Result<()> {
         let users = ConfigFile {
             text: Some("[holdout]\nshare = 0\n"),
             origin: "user",
-            is_users: true,
-        };
-        let repository = ConfigFile {
-            text: Some("[upkeep.llm]\nenabled = true\n"),
-            origin: "repo",
-            is_users: false,
         };
         assert_eq!(
-            kept(users, repository, None)?,
+            kept(users, NO_FILE, None)?,
             Kept {
                 holdout: Some(false),
                 sharing: None,
-                llm_upkeep: None,
             }
         );
-        let users = ConfigFile {
-            text: Some("upkeep.llm.enabled = true\n"),
-            ..users
-        };
         let repository = ConfigFile {
             text: Some("holdout.share = 0.1\n"),
-            ..repository
+            origin: "repo",
         };
         assert_eq!(
             kept(users, repository, Some(true))?,
             Kept {
                 holdout: Some(true),
                 sharing: Some(true),
-                llm_upkeep: Some(true),
+            }
+        );
+        assert_eq!(
+            kept(NO_FILE, NO_FILE, Some(false))?,
+            Kept {
+                holdout: None,
+                sharing: Some(false),
             }
         );
         Ok(())
@@ -423,7 +371,6 @@ mod tests {
         let answers = Answers {
             holdout: true,
             sharing: false,
-            llm_upkeep: false,
         };
         let file = ConfigFile {
             text: Some("mode = \"small\""),
@@ -438,23 +385,24 @@ mod tests {
         );
         let crlf = ConfigFile {
             text: Some("mode = \"small\"\r\n"),
-            is_users: true,
             ..NO_FILE
         };
+        let declined = Answers {
+            holdout: false,
+            ..answers
+        };
         assert_eq!(
-            users_config(crlf, NONE_KEPT, answers)?.as_deref(),
+            repository_config(crlf, NONE_KEPT, declined)?.as_deref(),
             Some(
                 "mode = \"small\"\r\n\r\n# The answer to a question `cortex init` asked; change \
-                 it here.\r\n[upkeep.llm]\r\nenabled = false\r\n"
+                 it here.\r\n[holdout]\r\nshare = 0\r\n"
             )
         );
         let kept = Kept {
             holdout: Some(true),
             sharing: Some(false),
-            llm_upkeep: Some(false),
         };
         assert_eq!(repository_config(NO_FILE, kept, answers)?, None);
-        assert_eq!(users_config(NO_FILE, kept, answers)?, None);
         let own_table = ConfigFile {
             text: Some("[holdout]\n"),
             ..NO_FILE
