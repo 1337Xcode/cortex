@@ -203,11 +203,17 @@ fn refused(queries: Queries<'_>, error: FactError) -> Refused {
     }
 }
 
-/// The node `anchor` names: a stored file at that repository path, or a symbol in one, given after
+/// The node `anchor` names: the repository's root for `.`, a stored file at that repository path,
+/// or a symbol in one, given after
 /// the last `:`, by its qualified name, or by its name when no symbol has that qualified name and
 /// one alone has that name. A path that is a stored file whole is that file, so a file whose name
 /// holds `:` is found too.
 fn anchor_of(queries: Queries<'_>, anchor: &str) -> Result<NodeId, Refused> {
+    if anchor == "." {
+        return queries.folder_node_at(&RepoPath::root())?.ok_or_else(|| {
+            Refused::Named("the repository is not indexed yet: try again once it is".to_owned())
+        });
+    }
     if let Some(node) = file_node(queries, anchor)? {
         return Ok(node);
     }

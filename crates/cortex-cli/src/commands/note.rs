@@ -1,7 +1,8 @@
 //! `cortex note "text" --at path[:symbol]...`: a project rule of the user's, active at once,
 //! anchored to the files and symbols it is about. Each anchor is a file inside the repository,
-//! given from the current folder, optionally followed by `:` and a symbol it defines. The daemon
-//! writes it, and is started when none runs.
+//! given from the current folder, optionally followed by `:` and a symbol it defines; or the
+//! repository's root folder itself, for a rule about the whole repository. The daemon writes it,
+//! and is started when none runs.
 
 use std::path::{Path, PathBuf};
 
@@ -17,7 +18,8 @@ use crate::{output, repository};
 pub(crate) struct Args {
     /// The rule, at most 240 characters.
     text: String,
-    /// What the rule is about: a file, or a file, `:` and a symbol it defines. Repeat for each.
+    /// What the rule is about: a file, or a file, `:` and a symbol it defines, or the repository's
+    /// root folder (`.` from it) for the whole repository. Repeat for each.
     #[arg(long = "at", required = true, value_name = "PATH[:SYMBOL]")]
     at: Vec<String>,
     /// What kind of rule it is: convention, decision, invariant, pitfall or ownership.
@@ -57,14 +59,27 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     }
 }
 
-/// The anchor `given` names, as the daemon reads it: the repository path of a file inside `root`,
-/// and the symbol after it. `given` is a path from the current folder, whole when it is a file,
-/// else up to its last `:`, which is followed by the symbol.
+/// The anchor `given` names, as the daemon reads it: `.` for the repository's root folder `root`,
+/// or the repository path of a file inside it, and the symbol after it. `given` is a path from the
+/// current folder, whole when it is a file or a folder, else up to its last `:`, which is followed
+/// by the symbol.
 ///
 /// # Errors
 ///
-/// A path that is not a file, or a file outside the repository.
+/// A folder other than the root, a path that is not a file, or a file outside the repository.
 fn anchor_of(root: &Path, given: &str) -> anyhow::Result<String> {
+    if Path::new(given).is_dir() {
+        let full = std::fs::canonicalize(given).with_context(|| format!("finding {given}"))?;
+        let path = RepoPath::from_native(root, &full)
+            .with_context(|| format!("{given} is not inside the repository"))?;
+        if !path.is_root() {
+            bail!(
+                "{given}: a fact is about a file, a symbol in one, or the whole repository (its \
+                 root folder), and this is another folder"
+            );
+        }
+        return Ok(".".to_owned());
+    }
     let (file, symbol) = match given.rsplit_once(':') {
         _ if Path::new(given).is_file() => (given, None),
         Some((file, symbol)) if !symbol.is_empty() && Path::new(file).is_file() => {

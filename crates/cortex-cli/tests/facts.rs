@@ -44,7 +44,8 @@ fn refused(root: &Path, home: &Path, args: &[&str]) -> TestResult<String> {
 /// Worked by hand. Fact 1 on `Money`, fact 2 a pitfall on `tax.py`; the first said again is
 /// fact 1 again. The list: both active, in number order, each with its kind, text and anchor.
 /// Fact 2 corrected becomes fact 3; fact 1 retired. The list: fact 3 alone; with `--all`, fact 1
-/// retired too. `tax.py` changes: fact 3 turns suspect; confirmed, it is active again.
+/// retired too. Fact 4 is about the whole repository, anchored to its root (`.`). `tax.py` changes:
+/// fact 3 turns suspect; confirmed, it is active again.
 #[test]
 fn facts_are_noted_listed_corrected_retired_and_confirmed() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -99,19 +100,30 @@ fn facts_are_noted_listed_corrected_retired_and_confirmed() -> TestResult {
         )
     );
 
+    let whole = ["note", "Every module has tests.", "--at", "."];
+    assert_eq!(said(root, home, &whole)?, "fact 4 added\n");
+    let whole_line = "   4  active     convention  Every module has tests.  (at .)\n";
+    assert_eq!(
+        said(root, home, &["facts", "list"])?,
+        format!("{even}{whole_line}")
+    );
     std::fs::write(root.join("src/tax.py"), "def rate():\n    return 2\n")?;
     wait_for(|| Ok(said(root, home, &["facts", "list"])?.contains("3  suspect")))?;
     assert_eq!(
         said(root, home, &["facts", "confirm", "3"])?,
         "fact 3 confirmed\n"
     );
-    assert_eq!(said(root, home, &["facts", "list"])?, even);
+    assert_eq!(
+        said(root, home, &["facts", "list"])?,
+        format!("{even}{whole_line}")
+    );
     Ok(())
 }
 
 /// Each refusal says what is wrong: a path that is not a file, a symbol the file does not define,
 /// a file outside the repository, a text one character too long, a number no fact has, a fact
-/// corrected since, and a kind Cortex does not know. None of them adds a fact.
+/// corrected since, a kind Cortex does not know, a folder other than the root, and the root named
+/// with a file. None of them adds a fact.
 #[test]
 fn a_note_or_a_word_that_names_something_wrongly_is_refused() -> TestResult {
     let outside = tempfile::tempdir()?;
@@ -162,6 +174,17 @@ fn a_note_or_a_word_that_names_something_wrongly_is_refused() -> TestResult {
             &["note", rule, "--at", "src/money.py", "--kind", "rule"]
         )?
         .contains("rule is not a kind of fact")
+    );
+    assert!(
+        refused(root, home, &["note", rule, "--at", "src"])?.contains("this is another folder")
+    );
+    assert!(
+        refused(
+            root,
+            home,
+            &["note", rule, "--at", ".", "--at", "src/money.py"]
+        )?
+        .contains("a fact about the whole repository is anchored to it alone")
     );
     assert_eq!(
         said(root, home, &["facts", "list", "--all"])?,
