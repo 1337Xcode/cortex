@@ -22,7 +22,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{Identifier, TaskOutcome};
+use cortex_core::{Identifier, TaskOutcome, jaccard};
 use cortex_store::{ArchetypeRecord, EpisodeRecord, NodeId, Queries, StoreError};
 
 /// How alike two tasks' changed files must be for the tasks to belong to one cluster: half of
@@ -170,28 +170,12 @@ fn most_like(
         let Some(cluster) = clusters.get(at) else {
             continue;
         };
-        let share = overlap(&cluster.seed, changed);
+        let share = jaccard(&cluster.seed, changed);
         if share >= JOINS_A_CLUSTER && best.is_none_or(|(_, top)| share.total_cmp(&top).is_gt()) {
             best = Some((at, share));
         }
     }
     best.map(|(at, _)| at)
-}
-
-/// What share of the files two tasks changed between them they both changed, from 0 for tasks with
-/// nothing in common to 1 for tasks that changed the same files.
-fn overlap(left: &BTreeSet<NodeId>, right: &BTreeSet<NodeId>) -> f64 {
-    let both = left.intersection(right).count();
-    let either = left.union(right).count();
-    if either == 0 {
-        return 0.0;
-    }
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "a task changes far fewer files than a count loses precision at"
-    )]
-    let share = both as f64 / either as f64;
-    share
 }
 
 /// How well a word a cluster's tasks gave `in_cluster` times, of the `in_all` times the tasks

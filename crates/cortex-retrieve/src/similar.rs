@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use cortex_core::jaccard;
 use cortex_store::{NodeId, Queries, StoreError};
 
 use crate::graph::Graph;
@@ -80,20 +81,4 @@ pub fn similar(
         }
     }
     Ok(found)
-}
-
-/// What `left` and `right` share over what they hold between them, from 0 to 1; 0 for two empty
-/// sets.
-fn jaccard(left: &BTreeSet<&str>, right: &BTreeSet<&str>) -> f64 {
-    let both = left.intersection(right).count();
-    let either = left.union(right).count();
-    if either == 0 {
-        return 0.0;
-    }
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "counts of words are far below where a float loses whole numbers"
-    )]
-    let score = both as f64 / either as f64;
-    score
 }

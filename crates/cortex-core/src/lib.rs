@@ -25,6 +25,7 @@ mod identifier;
 mod ignore_block;
 mod injection;
 pub mod ipc;
+mod jaccard;
 mod kinds;
 mod language;
 mod log_rotation;
@@ -74,6 +75,7 @@ pub use ignore_block::{
     IGNORE_LOCAL_SETTINGS, without_ignore_block,
 };
 pub use injection::{GateFeatures, ReasonKind};
+pub use jaccard::jaccard;
 pub use kinds::{EdgeType, FileFlags, InterestTier, NodeKind, RefKind, Resolution, SymbolKind};
 pub use language::{Language, Tier};
 pub use log_rotation::rotate_log;
