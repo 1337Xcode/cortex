@@ -11,7 +11,7 @@ use cortex_core::UserFolder;
 use cortex_core::ipc::{RequestBody, ResponseBody};
 use cortex_mcp::Daemon;
 
-use crate::commands::note::anchor_of;
+use crate::commands::note::{anchor_of, file_target};
 use crate::{repository, upgrade};
 
 /// How long the daemon has to answer one call, a daemon started by it included, as for
@@ -56,6 +56,19 @@ impl Daemon for RepositoryDaemon {
                     .collect::<anyhow::Result<Vec<_>>>()
                     .map_err(|error| format!("{error:#}"))?;
                 upgrade::ask_once_started(&root, &user, &RequestBody::Note(note), deadline)
+            }
+            RequestBody::Why { target } => {
+                // A file is named from the repository's root, as a note's anchor is; anything
+                // else, a symbol's name, goes as it is.
+                let joined = root.join(&target);
+                let target = match joined
+                    .to_str()
+                    .and_then(|joined| file_target(&root, joined))
+                {
+                    Some(found) => found.map_err(|error| format!("{error:#}"))?,
+                    None => target,
+                };
+                upgrade::ask_started(&root, &user, &RequestBody::Why { target }, deadline)
             }
             body => upgrade::ask_started(&root, &user, &body, deadline),
         };

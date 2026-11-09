@@ -1,5 +1,5 @@
-//! The MCP server: its tools, `cortex_where` and `cortex_note`, answered by the daemon, and the
-//! session over stdio. A call the server cannot answer is a tool error the agent reads, never a
+//! The MCP server: its three tools, `cortex_where`, `cortex_why` and `cortex_note`, answered by
+//! the daemon, and the session over stdio. A call the server cannot answer is a tool error the agent reads, never a
 //! crash: the session goes on.
 
 use std::sync::Arc;
@@ -44,6 +44,13 @@ pub struct WhereInput {
     /// The most files to name, from 1 to 5; 3 when left out.
     #[schemars(range(min = 1, max = 5))]
     limit: Option<i64>,
+}
+
+/// The input of `cortex_why`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WhyInput {
+    /// A file path from the repository's root, `path:line`, `path:symbol`, or a symbol's name.
+    target: String,
 }
 
 /// The input of `cortex_note`.
@@ -106,6 +113,37 @@ impl Server {
             Ok(Ok(ResponseBody::Error { message })) => {
                 return Ok(failed(&format!("the daemon could not answer: {message}")));
             }
+            Ok(Ok(_)) => return Ok(failed("the daemon gave an answer of another kind")),
+            Ok(Err(why)) => return Ok(failed(&why)),
+            Err(_) => return Ok(failed("the call to the daemon stopped")),
+        };
+        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+    }
+
+    /// `cortex_why`: why code is where it is, as `cortex why` prints it, within 1,200 tokens.
+    #[tool(
+        name = "cortex_why",
+        description = "Explain a file or symbol: its strongest links with strengths, project rules, sessions on it now and open warnings."
+    )]
+    async fn explain_why(
+        &self,
+        Parameters(input): Parameters<WhyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if input.target.trim().is_empty() {
+            return Ok(failed(
+                "name a file, `path:line`, `path:symbol` or a symbol's name",
+            ));
+        }
+        let daemon = Arc::clone(&self.daemon);
+        let body = RequestBody::Why {
+            target: input.target,
+        };
+        let asked = tokio::task::spawn_blocking(move || daemon.ask(body)).await;
+        let text = match asked {
+            Ok(Ok(ResponseBody::Reply {
+                text: Some(text), ..
+            })) => capped(&text),
+            Ok(Ok(ResponseBody::Error { message })) => return Ok(failed(&message)),
             Ok(Ok(_)) => return Ok(failed("the daemon gave an answer of another kind")),
             Ok(Err(why)) => return Ok(failed(&why)),
             Err(_) => return Ok(failed("the call to the daemon stopped")),

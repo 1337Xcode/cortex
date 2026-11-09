@@ -211,10 +211,12 @@ fn why_names_what_code_is_linked_to_and_the_rules_about_it() -> TestResult {
 }
 
 /// `cortex mcp` through the binary, spoken to in JSON-RPC lines as an agent does: it starts the
-/// session as `cortex`, offers `cortex_note` and `cortex_where`, and answers the question with the
-/// text `cortex where` prints for it; a rule noted on `create_order`, named from the repository's
-/// root, becomes fact 1, a candidate, as `cortex facts list` shows; when the agent closes its
-/// input, the server exits 0 having printed nothing but the protocol, and nothing on stderr.
+/// session as `cortex`, offers `cortex_note`, `cortex_where` and `cortex_why`, and answers the
+/// question with the text `cortex where` prints for it; a rule noted on `create_order`, named from
+/// the repository's root, becomes fact 1, a candidate, as `cortex facts list` shows; asked why of
+/// `src/orders/service.py:2`, it answers for `create_order` with the model changing with its file,
+/// the candidate not given; when the agent closes its input, the server exits 0 having printed
+/// nothing but the protocol, and nothing on stderr.
 #[test]
 fn the_mcp_tool_answers_as_cortex_where_prints() -> TestResult {
     let (repo, home, _daemon) = repository(None)?;
@@ -232,12 +234,17 @@ fn the_mcp_tool_answers_as_cortex_where_prints() -> TestResult {
             "text": rule, "anchors": ["src/orders/service.py:create_order"]
         }}
     });
+    let why = serde_json::json!({
+        "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+        "params": {"name": "cortex_why", "arguments": {"target": "src/orders/service.py:2"}}
+    });
     let lines = [
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#.to_owned(),
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.to_owned(),
         call.to_string(),
         note.to_string(),
+        why.to_string(),
     ];
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command.arg("mcp").arg("--root").arg(repo.path());
@@ -263,7 +270,7 @@ fn the_mcp_tool_answers_as_cortex_where_prints() -> TestResult {
         .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
         .collect::<Vec<_>>();
     tools.sort();
-    assert_eq!(tools, ["cortex_note", "cortex_where"]);
+    assert_eq!(tools, ["cortex_note", "cortex_where", "cortex_why"]);
     let answer = &reply(3)?["result"];
     assert_eq!(answer["isError"], false);
     assert_eq!(
@@ -279,7 +286,16 @@ fn the_mcp_tool_answers_as_cortex_where_prints() -> TestResult {
              noted again in another task."
         )
     );
-    assert_eq!(replies.len(), 4, "{replies:?}");
+    let why = &reply(5)?["result"];
+    assert_eq!(why["isError"], false, "{why}");
+    assert_eq!(
+        why["content"][0]["text"].as_str(),
+        Some(
+            "[cortex] Why · src/orders/service.py:create_order · what is known of its file, its \
+             own facts first\nChanged together in history:\n  - src/orders/model.py (1.00)\n"
+        )
+    );
+    assert_eq!(replies.len(), 5, "{replies:?}");
     let mut list = Command::new(env!("CARGO_BIN_EXE_cortex"));
     list.args(["facts", "list", "--root"]).arg(repo.path());
     isolate(&mut list, home.path());

@@ -81,10 +81,20 @@ fn result(text: &str, is_error: bool) -> Value {
     json!({"content": [{"type": "text", "text": text}], "isError": is_error})
 }
 
-/// The server offers `cortex_note`, taking a rule, its anchors and an optional kind, and
-/// `cortex_where`, taking a query and an optional limit.
+/// The input schema of the tool `name` among `tools`.
+fn schema_of_tool(tools: &[rmcp::model::Tool], name: &str) -> TestResult<Value> {
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name == name)
+        .ok_or("no such tool")?;
+    Ok(serde_json::to_value(&tool.input_schema)?)
+}
+
+/// The server offers exactly three tools: `cortex_note`, taking a rule, its anchors and an
+/// optional kind; `cortex_where`, taking a query and an optional limit; and `cortex_why`, taking a
+/// target.
 #[tokio::test]
-async fn the_tools_are_cortex_note_and_cortex_where() -> TestResult {
+async fn the_tools_are_cortex_note_where_and_why() -> TestResult {
     let fake = Arc::new(Fake {
         answer: Err("unused".to_owned()),
         asked: Mutex::new(Vec::new()),
@@ -96,21 +106,20 @@ async fn the_tools_are_cortex_note_and_cortex_where() -> TestResult {
     let tools = client.list_all_tools().await?;
     let mut names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
     names.sort_unstable();
-    assert_eq!(names, ["cortex_note", "cortex_where"]);
-    let schema_of = |name: &str| -> TestResult<Value> {
-        let tool = tools
-            .iter()
-            .find(|tool| tool.name == name)
-            .ok_or("no such tool")?;
-        Ok(serde_json::to_value(&tool.input_schema)?)
-    };
-    let note = schema_of("cortex_note")?;
+    assert_eq!(names, ["cortex_note", "cortex_where", "cortex_why"]);
+    let why = schema_of_tool(&tools, "cortex_why")?;
+    assert_eq!(why.pointer("/required"), Some(&json!(["target"])));
+    assert_eq!(
+        why.pointer("/properties/target/type"),
+        Some(&json!("string"))
+    );
+    let note = schema_of_tool(&tools, "cortex_note")?;
     assert_eq!(note.pointer("/required"), Some(&json!(["text", "anchors"])));
     assert_eq!(
         note.pointer("/properties/anchors/type"),
         Some(&json!("array"))
     );
-    let schema = schema_of("cortex_where")?;
+    let schema = schema_of_tool(&tools, "cortex_where")?;
     assert_eq!(schema.pointer("/required"), Some(&json!(["query"])));
     assert_eq!(
         schema.pointer("/properties/query/type"),
@@ -321,6 +330,49 @@ async fn a_rule_is_noted_as_an_agent_s_candidate() -> TestResult {
         failed,
         [result(
             "Cortex: the rule was not noted: calc/tax.py is not a file Cortex indexes",
+            true
+        )]
+    );
+    Ok(())
+}
+
+/// A target goes to the daemon as it is given; the daemon's answer comes back as it wrote it, and
+/// its refusal as a tool error the model can correct, in the daemon's own words. An empty target
+/// is refused before the daemon is asked.
+#[tokio::test]
+async fn a_why_is_answered_as_the_daemon_wrote_it() -> TestResult {
+    let answer = "[cortex] Why · calc/ops.py\nLinked by code:\n  - calc/tax.py (0.90)\n";
+    let reply = Ok(ResponseBody::Reply {
+        text: Some(answer.to_owned()),
+        to_user: None,
+    });
+    let calls = vec![json!({"target": "calc/ops.py"}), json!({"target": " "})];
+    let (results, asked) = session_of("cortex_why", reply, calls).await?;
+    assert_eq!(
+        results,
+        [
+            result(answer, false),
+            result(
+                "Cortex: name a file, `path:line`, `path:symbol` or a symbol's name",
+                true
+            ),
+        ]
+    );
+    assert_eq!(
+        asked,
+        [RequestBody::Why {
+            target: "calc/ops.py".to_owned()
+        }]
+    );
+    let refused = Ok(ResponseBody::Error {
+        message: "refund names no file or symbol Cortex indexes".to_owned(),
+    });
+    let one = vec![json!({"target": "refund"})];
+    let (failed, _) = session_of("cortex_why", refused, one).await?;
+    assert_eq!(
+        failed,
+        [result(
+            "Cortex: refund names no file or symbol Cortex indexes",
             true
         )]
     );
