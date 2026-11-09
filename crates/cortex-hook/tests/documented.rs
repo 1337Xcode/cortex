@@ -993,6 +993,22 @@ fn the_hooks_are_the_ones_each_documentation_supports() -> TestResult {
         ["SessionStart", "BeforeAgent", "AfterTool"]
     );
     assert_eq!(giving("cursor")?, ["sessionStart", "postToolUse"]);
+    // Cursor's permission hooks take silence for a refusal: Cortex, which is silent below its
+    // gate, registers none of them.
+    let cursor: Vec<&str> = registered("cursor")?
+        .into_iter()
+        .map(|(event, _, _)| event)
+        .collect();
+    for permission in [
+        "preToolUse",
+        "beforeShellExecution",
+        "beforeMCPExecution",
+        "beforeReadFile",
+        "beforeTabFileRead",
+        "subagentStart",
+    ] {
+        assert!(!cursor.contains(&permission), "{permission}");
+    }
     assert_eq!(giving("copilot")?, ["SessionStart", "PostToolUse"]);
     assert_eq!(
         registered("antigravity")?,

@@ -3,8 +3,8 @@
 //! `conversation_id`, stable across turns (its start also names a `session_id`, which is not
 //! used); the working folder is its hooks' environment's `CURSOR_PROJECT_DIR` when a payload names
 //! no `cwd`. Text goes back as a top-level `additional_context` at a session's start and after a
-//! tool; its prompt hook only allows or blocks, and its hooks before a tool take silence for a
-//! refusal, so none is registered there. Its `cursor-agent` command-line agent runs a few of
+//! tool; its prompt hook only allows or blocks, and its permission hooks (those before a tool,
+//! and a subagent's start) take silence for a refusal, so none is registered there. Its `cursor-agent` command-line agent runs a few of
 //! these hooks only.
 
 use std::path::Path;
@@ -85,13 +85,6 @@ const HOOKS: &[HookEntry] = &[
         event_name: "stop",
         matcher: None,
         hook: HookKind::Stop,
-        hard_timeout: OTHER_HARD_TIMEOUT,
-        gives_context: false,
-    },
-    HookEntry {
-        event_name: "subagentStart",
-        matcher: None,
-        hook: HookKind::SubagentStart,
         hard_timeout: OTHER_HARD_TIMEOUT,
         gives_context: false,
     },
