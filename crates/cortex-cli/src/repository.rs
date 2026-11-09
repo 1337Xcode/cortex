@@ -1,6 +1,7 @@
 //! Which repository a command works on: the folder `--root` names; else the repository the current
-//! folder is in, found as a hook finds it (the nearest folder at or above it that holds `.cortex`,
-//! below the home folder); else the current folder, which Cortex has not set up yet.
+//! folder is in, the nearest folder at or above it that holds `.cortex`, below the home folder, set
+//! up here or a fresh clone holding only a team's shared folder; else the current folder, which
+//! Cortex has not set up yet.
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +19,7 @@ pub(crate) fn root(given: Option<&Path>) -> anyhow::Result<PathBuf> {
         return canonical(given);
     }
     let current = std::env::current_dir().context("reading the current folder")?;
-    match cortex_hook::locate(&current, std::env::home_dir().as_deref()) {
+    match cortex_hook::locate_marked(&current, std::env::home_dir().as_deref()) {
         Some(located) => Ok(located.root),
         None => canonical(&current),
     }

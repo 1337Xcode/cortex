@@ -1,7 +1,9 @@
 //! The repository a hook's working folder belongs to: the nearest folder at or above it that holds
 //! a `.cortex` folder of its own. A `.cortex` holding nothing but `shared` is not one: that is what
 //! git checks out in a clone of a repository whose team shares facts, where the user who cloned it
-//! never set Cortex up. Inside the user's home folder the search stops below the home folder, whose
+//! never set Cortex up (files an operating system leaves in any folder it shows, such as
+//! `.DS_Store`, count for nothing). A command finds a clone's root all the same
+//! ([`locate_marked`]): it is still the repository's root, though no hook records there. Inside the user's home folder the search stops below the home folder, whose
 //! `.cortex` is the user's own folder and which no repository contains. A folder with no marked
 //! folder above it was never set up for Cortex, and the hook leaves it alone.
 
@@ -17,17 +19,32 @@ const MARKER: &str = ".cortex";
 /// The folder inside the marker that a team commits, and that alone marks nothing.
 const SHARED: &str = "shared";
 
+/// Files an operating system leaves in a folder it shows, which say nothing of who set it up.
+const MADE_BY_THE_SYSTEM: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
+
 /// Where the working folder `cwd`, as the agent spells it, sits: its canonical form, its
 /// repository's canonical root, and that root as the agent spells it. `None` when `cwd` is not a
-/// folder or no repository holds it. `home` is the user's home folder: neither it nor anything
-/// above it is a root for a folder inside it.
+/// folder or no repository set up for Cortex holds it. `home` is the user's home folder: neither it
+/// nor anything above it is a root for a folder inside it.
 pub fn locate(cwd: &Path, home: Option<&Path>) -> Option<Located> {
+    located(cwd, home, is_set_up)
+}
+
+/// Where `cwd` sits, as [`locate`] says, the root being the nearest folder holding any `.cortex`
+/// folder, set up here or not, such as a fresh clone of a repository whose team shares facts.
+pub fn locate_marked(cwd: &Path, home: Option<&Path>) -> Option<Located> {
+    located(cwd, home, Path::is_dir)
+}
+
+/// Where `cwd` sits, the root being the nearest folder at or above it, below `home`, whose
+/// `.cortex` `marks` accepts.
+fn located(cwd: &Path, home: Option<&Path>, marks: impl Fn(&Path) -> bool) -> Option<Located> {
     let canonical = canonical_root(cwd).ok()?;
     let home = home.and_then(|home| canonical_root(home).ok());
     let root = canonical
         .ancestors()
         .take_while(|folder| Some(*folder) != home.as_deref())
-        .find(|folder| is_set_up(&folder.join(MARKER)))?
+        .find(|folder| marks(&folder.join(MARKER)))?
         .to_path_buf();
     // The agent's spelling of the root drops as many folders from its working folder as lie
     // between the canonical working folder and the root: through a link, the names differ. A link
@@ -47,8 +64,8 @@ pub fn locate(cwd: &Path, home: Option<&Path>) -> Option<Located> {
 }
 
 /// Whether `marker`, a folder's `.cortex`, marks a repository set up here: a folder holding
-/// anything but the shared folder alone, or nothing at all. A folder that cannot be read marks
-/// nothing, and the hook leaves it alone.
+/// anything but the shared folder alone (files the system made aside), or nothing at all. A folder
+/// that cannot be read marks nothing, and the hook leaves it alone.
 fn is_set_up(marker: &Path) -> bool {
     if !marker.is_dir() {
         return false;
@@ -57,7 +74,10 @@ fn is_set_up(marker: &Path) -> bool {
         return false;
     };
     // Two names at most tell the shared folder alone from anything else.
-    let mut names = entries.map_while(Result::ok).map(|entry| entry.file_name());
+    let mut names = entries
+        .map_while(Result::ok)
+        .map(|entry| entry.file_name())
+        .filter(|name| !MADE_BY_THE_SYSTEM.iter().any(|made| name == made));
     !matches!((names.next(), names.next()), (Some(only), None) if only == SHARED)
 }
 
@@ -117,7 +137,8 @@ mod tests {
     }
 
     /// A clone of a repository whose team shares facts holds `.cortex/shared/` and nothing else
-    /// of Cortex's: it is not set up, and the search goes on above it, to the home folder (here the
+    /// of Cortex's (a `.DS_Store` the system left beside it counts for nothing): it is not set up,
+    /// though a command finds it as its root, and the search goes on above it, to the home folder (here the
     /// temporary folder), where it stops. Once the
     /// user sets it up and `.cortex` holds more, it is the root; an empty `.cortex` marks it too.
     #[test]
@@ -127,8 +148,13 @@ mod tests {
         let clone = base.join("clone");
         std::fs::create_dir_all(clone.join(MARKER).join(SHARED))?;
         std::fs::write(clone.join(MARKER).join(SHARED).join("facts.json"), "{}")?;
+        std::fs::write(clone.join(MARKER).join(".DS_Store"), "")?;
         std::fs::create_dir_all(clone.join("src"))?;
         assert_eq!(locate(&clone.join("src"), Some(&base)), None);
+        assert_eq!(
+            locate_marked(&clone.join("src"), Some(&base)).map(|located| located.root),
+            Some(clone.clone())
+        );
         std::fs::write(clone.join(MARKER).join("config.toml"), "")?;
         assert_eq!(
             locate(&clone.join("src"), Some(&base)).map(|located| located.root),

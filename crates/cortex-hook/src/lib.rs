@@ -45,7 +45,7 @@ pub use plugin::PluginFile;
 pub use relaunch::RELAUNCH_FLAG;
 #[cfg(windows)]
 pub use relaunch::relaunch_daemon;
-pub use root::locate;
+pub use root::{locate, locate_marked};
 pub use run::run;
 pub use spawn::{Started, start_daemon, start_daemon_now};
 pub use stop::{Stop, stop_any, stop_if_older};
