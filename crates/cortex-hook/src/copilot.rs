@@ -15,9 +15,9 @@ use crate::adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, Version
 use crate::shaped::table::{Outcome, PromptField, ToolTable};
 use crate::shaped::{normalize, output};
 
-/// The most characters GitHub Copilot is given at once. Its documentation names no limit; Claude Code's is
-/// taken.
-const MAX_CONTEXT_CHARS: usize = 10_000;
+/// The most bytes GitHub Copilot is given at once: it caps a tool's added context at 10 KB, counted
+/// here in bytes so that text it would cut, inside a code line, is never given.
+const MAX_CONTEXT_BYTES: usize = 10_000;
 
 /// The hard timeout of the events whose budget names none: a margin over their 60 ms budget.
 const OTHER_HARD_TIMEOUT: Duration = Duration::from_millis(300);
@@ -32,6 +32,10 @@ const TOOLS: ToolTable = ToolTable {
         ("grep", ToolKind::Grep),
         ("bash", ToolKind::Shell),
         ("powershell", ToolKind::Shell),
+        // Visual Studio Code's agent mode reports Claude Code's names for these.
+        ("Read", ToolKind::Read),
+        ("Write", ToolKind::Write),
+        ("Edit", ToolKind::Edit),
     ],
     subcommands: &[],
     renames: &[],
@@ -141,11 +145,36 @@ impl Adapter for Copilot {
 
     fn context_output(&self, entry: &HookEntry, text: &str) -> Option<String> {
         // INVARIANT: budgeted. A text past the agent's limit is not given in part.
-        if text.encode_utf16().count() > MAX_CONTEXT_CHARS {
+        if text.len() > MAX_CONTEXT_BYTES {
             return None;
         }
         entry
             .gives_context
             .then(|| output::top_level("additionalContext", text))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hook of `name`.
+    fn entry(name: &str) -> Option<&'static HookEntry> {
+        HOOKS.iter().find(|entry| entry.event_name == name)
+    }
+
+    /// After a tool the text goes back as a top-level `additionalContext`; the cap counts bytes,
+    /// as Copilot's 10 KB does: 10,000 bytes are given, 5,001 two-byte characters (10,002 bytes)
+    /// are not.
+    #[test]
+    fn the_text_is_a_top_level_additional_context_within_10_kb() -> Result<(), &'static str> {
+        let after = entry("PostToolUse").ok_or("PostToolUse")?;
+        assert_eq!(
+            Copilot.context_output(after, "a \"b\"\n").as_deref(),
+            Some(r#"{"additionalContext":"a \"b\"\n"}"#)
+        );
+        assert!(Copilot.context_output(after, &"x".repeat(10_000)).is_some());
+        assert_eq!(Copilot.context_output(after, &"é".repeat(5_001)), None);
+        Ok(())
     }
 }

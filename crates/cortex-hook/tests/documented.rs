@@ -811,6 +811,34 @@ fn kiro_reads_lines_only() -> TestResult {
     Ok(())
 }
 
+/// Visual Studio Code's agent mode names Copilot's tools as Claude Code does: a `PostToolUse` of
+/// `Read`, `Write` or `Edit` is that kind of call. The payload is `post-tool-use-bash.json` with its
+/// tool renamed; its input names no file (Copilot's tool inputs are not documented).
+#[test]
+fn copilot_reads_visual_studio_code_s_tool_names() -> TestResult {
+    let mut payload: serde_json::Value = serde_json::from_slice(&read_fixture(
+        "copilot",
+        DOCUMENTED,
+        "post-tool-use-bash.json",
+    )?)?;
+    let copilot = adapter("copilot").ok_or("copilot")?;
+    for (name, kind) in [
+        ("Read", ToolKind::Read),
+        ("Write", ToolKind::Write),
+        ("Edit", ToolKind::Edit),
+    ] {
+        payload["tool_name"] = name.into();
+        let found = copilot.normalize(
+            "PostToolUse",
+            &serde_json::to_vec(&payload)?,
+            &locate,
+            stamp(),
+        )?;
+        assert_eq!(found.and_then(|event| event.tool), Some(kind), "{name}");
+    }
+    Ok(())
+}
+
 /// Each agent's payloads make the events written for them, and its table names every fixture.
 #[test]
 fn every_documented_payload_normalizes_as_written() -> TestResult {
