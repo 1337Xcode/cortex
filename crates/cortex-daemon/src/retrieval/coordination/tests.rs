@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use cortex_core::{Agent, CoordinationConfig, Event, HookKind, Identifier, Ulid};
+use cortex_core::{Agent, CoordinationConfig, Event, HookKind, Identifier, SessionStatus, Ulid};
 use cortex_store::{NoticeRecord, NoticeRow, Reader, SeenSession};
 
 use super::{capped, family_of, last_event_of, name_of};
@@ -23,6 +23,7 @@ fn seen(
         parent_session_id: parent.map(Identifier::new).transpose()?,
         ended_ms,
         last_event_ms: last_ms,
+        status: SessionStatus::Live,
     })
 }
 

@@ -654,7 +654,7 @@ pub(crate) const POSITIONS_SINCE: &str = "SELECT p.session_id, p.node_id, p.mode
 /// Each session in the JSON array ?1 that is stored: its agent, its parent, when it ended and its
 /// last event.
 pub(crate) const SESSIONS_SEEN: &str = "SELECT s.session_id, s.agent, s.parent_session_id, \
-     s.ended_at, (SELECT max(e.ts) FROM events e WHERE e.session_id = s.session_id) \
+     s.ended_at, (SELECT max(e.ts) FROM events e WHERE e.session_id = s.session_id), s.status \
      FROM sessions s WHERE s.session_id IN (SELECT value FROM json_each(?1)) ORDER BY s.session_id";
 /// The heaviest edge of each type between the file node ?1, with its symbols, and each file node
 /// in the JSON array ?2, with theirs: edges of type ?3 either way, and of type ?4 from ?1's side

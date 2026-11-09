@@ -4,7 +4,7 @@
 //! were sent or given. A notice's text names agents, files, symbols and links, never code, prompt
 //! text or a command.
 
-use cortex_core::{Agent, EdgeType, Identifier, PositionMode};
+use cortex_core::{Agent, EdgeType, Identifier, PositionMode, SessionStatus};
 use rusqlite::Connection;
 
 use crate::error::{StoreError, sqlite};
@@ -50,6 +50,8 @@ pub struct SeenSession {
     pub ended_ms: Option<i64>,
     /// When its last event was, if it had one.
     pub last_event_ms: Option<i64>,
+    /// Whether it is live, ended, or cleared by the user.
+    pub status: SessionStatus,
 }
 
 /// The heaviest edge of one type between an edited file and a file a session holds, counting the
@@ -261,12 +263,13 @@ impl Queries<'_> {
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<i64>>(3)?,
                     row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             })
             .map_err(sqlite("reading sessions"))?;
         let mut seen = Vec::new();
         for (row, at) in rows.zip(0_i64..) {
-            let (session, agent, parent, ended_ms, last_event_ms) =
+            let (session, agent, parent, ended_ms, last_event_ms, status) =
                 row.map_err(sqlite("reading sessions"))?;
             let parent_session_id = parent
                 .map(|parent| values::identifier(&parent, "sessions.parent_session_id", at))
@@ -277,6 +280,7 @@ impl Queries<'_> {
                 parent_session_id,
                 ended_ms,
                 last_event_ms,
+                status: values::kind(&status, SessionStatus::from_name, "sessions.status", at)?,
             });
         }
         Ok(seen)

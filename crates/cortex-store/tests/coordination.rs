@@ -7,8 +7,8 @@ mod common;
 
 use common::{Scratch, TestResult, index, symbol};
 use cortex_core::{
-    Agent, CommandKind, EdgeType, EventKind, EventMeta, Identifier, PositionMode, SymbolKind,
-    TaskOutcome, Ulid,
+    Agent, CommandKind, EdgeType, EventKind, EventMeta, Identifier, PositionMode, SessionStatus,
+    SymbolKind, TaskOutcome, Ulid,
 };
 use cortex_store::{
     Coupling, EdgeRecord, EventRecord, HandoffEnd, HandoffRecord, LastFailure, NodeId,
@@ -49,7 +49,7 @@ fn store_with(writer: &mut Writer, paths: &[&str]) -> TestResult<Vec<NodeId>> {
             started_at_ms: 500,
         })?;
     }
-    transaction.end_session(&Identifier::new("s2")?, 3_000)?;
+    transaction.end_session(&Identifier::new("s2")?, (3_000, SessionStatus::Cleared))?;
     for (task, at) in [(FIRST, 1_000), (SECOND, 2_000)] {
         transaction.start_task(&TaskRecord {
             task_id: Ulid::parse(task)?,
@@ -173,6 +173,7 @@ fn each_session_s_agent_parent_end_and_last_event_are_read() -> TestResult {
                 parent_session_id: None,
                 ended_ms: None,
                 last_event_ms: Some(2_100),
+                status: SessionStatus::Live,
             },
             SeenSession {
                 session_id: Identifier::new("s2")?,
@@ -180,6 +181,7 @@ fn each_session_s_agent_parent_end_and_last_event_are_read() -> TestResult {
                 parent_session_id: Some(Identifier::new("s1")?),
                 ended_ms: Some(3_000),
                 last_event_ms: Some(900),
+                status: SessionStatus::Cleared,
             },
         ]
     );

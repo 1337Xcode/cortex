@@ -21,7 +21,7 @@ use common::calc::{MAIN, OPS, OPS_FIXED, S1, captured, prompt, read_of_tests, re
 use common::hook_call::hook;
 use common::payloads;
 use common::{Daemon, TestResult, graph_of, wait_for};
-use cortex_core::Identifier;
+use cortex_core::{Identifier, SessionStatus};
 use cortex_store::{Queries, Reader};
 use serde_json::Value;
 
@@ -618,5 +618,41 @@ fn a_handoff_waits_until_its_session_is_done() -> TestResult {
                 .to_owned()
         )
     );
+    Ok(())
+}
+
+/// A session its user cleared (`/clear`, a session end with reason `clear`) set its work aside on
+/// purpose: what it left is handed to nobody, not even the session `/clear` starts.
+#[test]
+fn a_cleared_session_hands_nothing_on() -> TestResult {
+    let (home, repo, _daemon) = started(0)?;
+    let home = home.path();
+    given(
+        "claude",
+        &prompt_in(&repo, S1, "Make divide return true division.")?,
+        home,
+    )?;
+    std::fs::write(repo.join("calc/ops.py"), OPS_FIXED)?;
+    given("claude", &captured("post-tool-use-edit.json", &repo)?, home)?;
+    given("claude", &captured("stop.json", &repo)?, home)?;
+    wait_for(|| Ok(open_handoffs(&repo)? == 1))?;
+    let mut cleared = captured("session-end.json", &repo)?;
+    cleared["reason"] = Value::from("clear");
+    given("claude", &cleared, home)?;
+    let ended = Identifier::new(S1)?;
+    wait_for(|| {
+        read(&repo, |queries| {
+            Ok(queries
+                .session(&ended)?
+                .is_some_and(|row| row.status == SessionStatus::Cleared))
+        })
+    })?;
+    assert_eq!(
+        given("claude", &prompt_in(&repo, ASIDE, "Continue.")?, home)?,
+        None
+    );
+    let mut asked = codex(&repo, "user-prompt-submit.json")?;
+    asked["prompt"] = Value::from("Continue.");
+    assert_eq!(given("codex", &asked, home)?, None);
     Ok(())
 }

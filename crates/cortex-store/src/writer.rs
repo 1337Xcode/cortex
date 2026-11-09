@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use cortex_core::{EdgeType, Identifier, RepoId, RepoPath, ScaleMode, TaskOutcome, Ulid};
+use cortex_core::{
+    EdgeType, Identifier, RepoId, RepoPath, ScaleMode, SessionStatus, TaskOutcome, Ulid,
+};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::activity::{self, EventRecord, SessionRecord, TaskRecord};
@@ -314,7 +316,8 @@ impl WriteTx<'_> {
         self.atomically(|connection| activity::record_session(connection, session))
     }
 
-    /// Marks the session ended at `ended_at_ms`. `false` when no such session is stored.
+    /// Marks the session ended at the time of `ended`, with its status: ended, or cleared by the
+    /// user. `false` when no such session is stored.
     ///
     /// # Errors
     ///
@@ -322,9 +325,9 @@ impl WriteTx<'_> {
     pub fn end_session(
         &mut self,
         session_id: &Identifier,
-        ended_at_ms: i64,
+        ended: (i64, SessionStatus),
     ) -> Result<bool, StoreError> {
-        self.atomically(|connection| activity::end_session(connection, session_id, ended_at_ms))
+        self.atomically(|connection| activity::end_session(connection, session_id, ended))
     }
 
     /// Adds the task, numbered one past every task stored, and returns its number.

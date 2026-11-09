@@ -141,20 +141,17 @@ pub(crate) fn record_session(
         .map_err(sqlite("writing a session"))
 }
 
-/// Marks the session ended at `ended_at_ms`. `false` when no such session is stored.
+/// Marks the session ended at `ended_at_ms` with `status` ([`SessionStatus::Ended`], or
+/// [`SessionStatus::Cleared`] when the user cleared it). `false` when no such session is stored.
 pub(crate) fn end_session(
     connection: &Connection,
     session_id: &Identifier,
-    ended_at_ms: i64,
+    (ended_at_ms, status): (i64, SessionStatus),
 ) -> Result<bool, StoreError> {
     connection
         .prepare_cached(schema::SESSION_END)
         .and_then(|mut statement| {
-            statement.execute((
-                session_id.as_str(),
-                ended_at_ms,
-                SessionStatus::Ended.name(),
-            ))
+            statement.execute((session_id.as_str(), ended_at_ms, status.name()))
         })
         .map(|rows| rows > 0)
         .map_err(sqlite("ending a session"))

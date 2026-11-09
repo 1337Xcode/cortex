@@ -21,6 +21,9 @@ named_kind! {
         Ended => "ended",
         /// It stopped sending events without ending.
         Abandoned => "abandoned",
+        /// It ended because the user cleared its conversation (`/clear`): what it left is
+        /// context the user set aside on purpose.
+        Cleared => "cleared",
     }
 }
 

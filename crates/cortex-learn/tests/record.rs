@@ -361,7 +361,8 @@ fn compaction_keeps_the_open_task() -> TestResult {
 }
 
 /// `/clear` in the order captured: the old session resumes and ends with reason `clear`, a new
-/// session starts from the clear and ends. Two sessions, each ended.
+/// session starts from the clear and ends. Two sessions, each ended: the first as cleared, the
+/// second, ended for another reason, as ended.
 #[test]
 fn clearing_ends_one_session_and_starts_another() -> TestResult {
     let mut store = Store::new()?;
@@ -378,7 +379,7 @@ fn clearing_ends_one_session_and_starts_another() -> TestResult {
     let second = queries.session(&name("s2")?)?.ok_or("s2")?;
     assert_eq!(
         (first.record.started_at_ms, first.ended_at_ms, first.status),
-        (10, Some(20), SessionStatus::Ended)
+        (10, Some(20), SessionStatus::Cleared)
     );
     assert_eq!(
         (

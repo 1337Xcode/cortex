@@ -305,8 +305,8 @@ fn a_session_seen_again_keeps_its_start_and_gains_facts() -> TestResult {
     assert_eq!(row.record, expected);
     assert_eq!((row.ended_at_ms, row.status), (None, SessionStatus::Live));
     let ended = committed(&mut writer, |transaction| {
-        let ended = transaction.end_session(&name("s1")?, 1_000)?;
-        let unknown = transaction.end_session(&name("nobody")?, 1_000)?;
+        let ended = transaction.end_session(&name("s1")?, (1_000, SessionStatus::Ended))?;
+        let unknown = transaction.end_session(&name("nobody")?, (1_000, SessionStatus::Ended))?;
         Ok((ended, unknown))
     })?;
     assert_eq!(ended, (true, false));

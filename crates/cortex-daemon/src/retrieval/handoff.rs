@@ -6,7 +6,7 @@
 //! carry on, finish). The handoff says what was left, and comes ahead of any work order.
 
 use cortex_coord::{Handed, handoff_text};
-use cortex_core::{Event, Identifier, RepoPath, Ulid};
+use cortex_core::{Event, Identifier, RepoPath, SessionStatus, Ulid};
 use cortex_store::{HandoffEnd, HandoffRow, NodeId, Queries, SeenSession, StoreError};
 
 use super::coordination::family_of;
@@ -62,7 +62,10 @@ pub(super) fn handoff_for(
         else {
             continue;
         };
-        if !is_done(from, record.end, (event.ts_ms, idle_ms)) {
+        // A conversation its user cleared set its work aside on purpose.
+        if from.status == SessionStatus::Cleared
+            || !is_done(from, record.end, (event.ts_ms, idle_ms))
+        {
             continue;
         }
         let agent = from.agent.title();
@@ -160,6 +163,7 @@ mod tests {
             parent_session_id: None,
             ended_ms,
             last_event_ms: last_ms,
+            status: SessionStatus::Live,
         })
     }
 

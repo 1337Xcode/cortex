@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 
 use cortex_core::{
     CommandKind, ContentHash, Event, EventKind, EventMeta, FileContent, HookKind, Identifier,
-    LineRange, MAX_RANGES, PromptExcerpt, RepoPath, TaskOutcome, ToolKind, Ulid, is_held_out,
-    task_id_of_prompt,
+    LineRange, MAX_RANGES, PromptExcerpt, RepoPath, SessionStatus, TaskOutcome, ToolKind, Ulid,
+    is_held_out, task_id_of_prompt,
 };
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
 
@@ -23,6 +23,10 @@ use crate::activity::Activity;
 use crate::commands::{Check, Commands, Ran, Restore, Told};
 use crate::task_state::{TaskEnd, TaskState, TaskStates, Unkept};
 use crate::watcher_edits::WatcherEdits;
+
+/// The reason Claude Code gives a session's end when the user cleared its conversation (`/clear`),
+/// as its hooks documentation names it and a captured run showed.
+const CLEARED_REASON: &str = "clear";
 
 /// Most sessions the recorder remembers. Past that it forgets them all and reads each one again
 /// from the store when its next event comes, so memory stays bounded however long it runs.
@@ -121,7 +125,18 @@ impl Recorder {
             ended = self.end_open_task(transaction, &event.session_id, event.ts_ms, end)?;
         }
         if matches!(event.hook, HookKind::SessionEnd | HookKind::SubagentStop) {
-            transaction.end_session(&event.session_id, event.ts_ms)?;
+            // A conversation the user cleared (`/clear`) set its work aside on purpose: no
+            // session is handed what it left.
+            let is_cleared = event
+                .end_reason
+                .as_ref()
+                .is_some_and(|reason| reason.as_str() == CLEARED_REASON);
+            let status = if is_cleared {
+                SessionStatus::Cleared
+            } else {
+                SessionStatus::Ended
+            };
+            transaction.end_session(&event.session_id, (event.ts_ms, status))?;
             self.parents.remove(&event.session_id);
             self.open_tasks.remove(&event.session_id);
         }
