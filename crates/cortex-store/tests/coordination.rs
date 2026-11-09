@@ -7,8 +7,8 @@ mod common;
 
 use common::{Scratch, TestResult, index, symbol};
 use cortex_core::{
-    Agent, CommandKind, EdgeType, EventKind, EventMeta, Identifier, PositionMode, SessionStatus,
-    SymbolKind, TaskOutcome, Ulid,
+    Agent, CommandKind, EdgeType, EventKind, EventMeta, Identifier, NoticeSubject, PositionMode,
+    SessionStatus, SymbolKind, TaskOutcome, Ulid,
 };
 use cortex_store::{
     Coupling, EdgeRecord, EventRecord, HandoffEnd, HandoffRecord, LastFailure, NodeId,
@@ -287,18 +287,67 @@ fn an_edited_file_s_links_to_held_files_are_read_by_type() -> TestResult {
     Ok(())
 }
 
-/// A notice for `to` saying `text`, made at `at_ms`.
+/// Codex's edit of `path`, changing `changed`, as a notice's subject.
+fn edit_of(path: &str, changed: &[&str]) -> TestResult<NoticeSubject> {
+    Ok(
+        NoticeSubject::new(("Codex", path), (PositionMode::Edit, false), changed)
+            .ok_or("a subject")?,
+    )
+}
+
+/// A notice for `to` saying `text`, made at `at_ms`, about Codex's edit of a file named as `text`.
 fn notice(to: &str, text: &str, at_ms: i64) -> TestResult<NoticeRecord> {
     Ok(NoticeRecord {
         to_session: Identifier::new(to)?,
+        about: edit_of(text, &[])?,
         text: text.to_owned(),
         at_ms,
     })
 }
 
-/// Worked by hand. Queued for `s1`: "first" at 1,000, "second" at 1,100, "first" again at 1,500
-/// unless sent since 600 (it was, at 1,000: not queued), and "first" at 5,000 unless sent since
-/// 2,000 (queued); for `s2`, "other" at 1,050; and "told" recorded as told to `s1` at 1,200.
+/// A notice is not queued when one sent since says as much: after Codex's edit of `calc/ops.py`
+/// changing `add` and `parse` at 1,000, neither its plain edit nor its change of `add` alone is
+/// queued; its change of `run` at 1,300, not told before, is. Its plain edit at 1,400 is queued
+/// when nothing sent since 1,301 says as much, and the change of `run` was sent at 1,300.
+#[test]
+fn a_notice_saying_no_more_than_one_sent_is_not_queued() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let about = |changed: &[&str], at_ms| -> TestResult<NoticeRecord> {
+        Ok(NoticeRecord {
+            about: edit_of("calc/ops.py", changed)?,
+            ..notice("s1", "changed", at_ms)?
+        })
+    };
+    let mut transaction = writer.transaction()?;
+    assert!(
+        transaction
+            .queue_notice(&about(&["parse", "add"], 1_000)?, 0)?
+            .is_some()
+    );
+    assert_eq!(transaction.queue_notice(&about(&[], 1_100)?, 500)?, None);
+    assert_eq!(
+        transaction.queue_notice(&about(&["add"], 1_200)?, 500)?,
+        None
+    );
+    assert!(
+        transaction
+            .queue_notice(&about(&["run"], 1_300)?, 500)?
+            .is_some()
+    );
+    assert!(
+        transaction
+            .queue_notice(&about(&[], 1_400)?, 1_301)?
+            .is_some()
+    );
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Worked by hand. Queued for `s1`: "first" at 1,000, "second" at 1,100, "first" again in other
+/// words at 1,500 unless one about it was sent since 600 (it was, at 1,000: not queued), and
+/// "first" at 5,000 unless sent since 2,000 (queued); for `s2`, "other" at 1,050; and "told"
+/// recorded as told to `s1` at 1,200.
 /// Waiting for `s1`: both "first"s and "second", oldest first; made since 1,050: "second" and the
 /// later "first"; "told" never waits. Sent or given to `s1` since 1,100, in the order recorded:
 /// "second", "told", "first". The first "first" delivered no longer waits, and delivering it again
@@ -323,10 +372,11 @@ fn notices_are_queued_once_and_wait_until_delivered() -> TestResult {
             .queue_notice(&notice("s2", "other", 1_050)?, 0)?
             .is_some()
     );
-    assert_eq!(
-        transaction.queue_notice(&notice("s1", "first", 1_500)?, 600)?,
-        None
-    );
+    let reworded = NoticeRecord {
+        text: "first, in other words".to_owned(),
+        ..notice("s1", "first", 1_500)?
+    };
+    assert_eq!(transaction.queue_notice(&reworded, 600)?, None);
     transaction.record_told(&notice("s1", "told", 1_200)?)?;
     assert!(
         transaction
@@ -359,8 +409,18 @@ fn notices_are_queued_once_and_wait_until_delivered() -> TestResult {
     );
     assert_eq!(waiting(&s2, 0)?, texts(&[("other", 1_050)]));
     assert_eq!(
-        scratch.reader()?.queries().notices_since(&s1, 1_100)?,
-        ["second", "told", "first"]
+        scratch
+            .reader()?
+            .queries()
+            .notices_since(&s1, 1_100)?
+            .into_iter()
+            .map(|notice| (notice.about, notice.text))
+            .collect::<Vec<_>>(),
+        [
+            (Some(edit_of("second", &[])?), "second".to_owned()),
+            (Some(edit_of("told", &[])?), "told".to_owned()),
+            (Some(edit_of("first", &[])?), "first".to_owned()),
+        ]
     );
     let mut transaction = writer.transaction()?;
     assert!(transaction.deliver_notice(first, 1_200)?);

@@ -450,7 +450,8 @@ impl WriteTx<'_> {
     }
 
     /// Queues `notice` for its session's next hook that carries text, unless the session was sent
-    /// or given the same text at `unless_since_ms` or later: its row, or none when it was.
+    /// or given, at `unless_since_ms` or later, a notice whose subject covers this one's: its row,
+    /// or none when it was.
     ///
     /// # Errors
     ///

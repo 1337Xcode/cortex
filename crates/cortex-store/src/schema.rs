@@ -71,10 +71,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 14,
         sql: include_str!("../migrations/0014_coordination.sql"),
     },
+    Migration {
+        version: 15,
+        sql: include_str!("../migrations/0015_notice_subjects.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 14;
+pub(crate) const SCHEMA_VERSION: u32 = 15;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -683,20 +687,19 @@ pub(crate) const COUPLINGS: &str = "WITH held AS (SELECT n.node_id, n.path FROM 
      JOIN nodes AS o ON o.node_id = e.src WHERE e.type = ?3) \
      SELECT h.node_id, l.type, max(l.w) FROM linked AS l JOIN held AS h ON h.path = l.path \
      GROUP BY h.node_id, l.type ORDER BY h.node_id, l.type";
-/// Queues notice ?2 for session ?1 at ?3, unless the session was given or sent the same text at
-/// ?4 or later.
-pub(crate) const NOTICE_QUEUE: &str = "INSERT INTO notices (to_session, text, created_at) \
-     SELECT ?1, ?2, ?3 WHERE NOT EXISTS (SELECT 1 FROM notices \
-     WHERE to_session = ?1 AND text = ?2 AND created_at >= ?4)";
-/// Records notice ?2 as told to session ?1 at ?3, delivered as it was made.
+/// Queues notice ?2, about ?4, for session ?1 at ?3.
+pub(crate) const NOTICE_QUEUE: &str =
+    "INSERT INTO notices (to_session, text, created_at, about) VALUES (?1, ?2, ?3, ?4)";
+/// Records notice ?2, about ?4, as told to session ?1 at ?3, delivered as it was made.
 pub(crate) const NOTICE_TOLD: &str = "INSERT INTO notices (to_session, text, created_at, \
-     delivered_at) VALUES (?1, ?2, ?3, ?3)";
-/// The texts session ?1 was given or sent at ?2 or later, oldest first.
-pub(crate) const NOTICES_SINCE: &str = "SELECT text FROM notices \
+     delivered_at, about) VALUES (?1, ?2, ?3, ?3, ?4)";
+/// The notices session ?1 was given or sent at ?2 or later, oldest first.
+pub(crate) const NOTICES_SINCE: &str = "SELECT notice_id, about, text, created_at FROM notices \
      WHERE to_session = ?1 AND created_at >= ?2 ORDER BY notice_id";
 /// The notices waiting for session ?1 made at ?2 or later, oldest first.
-pub(crate) const NOTICES_WAITING: &str = "SELECT notice_id, text, created_at FROM notices \
-     WHERE to_session = ?1 AND created_at >= ?2 AND delivered_at IS NULL ORDER BY notice_id";
+pub(crate) const NOTICES_WAITING: &str = "SELECT notice_id, about, text, created_at \
+     FROM notices WHERE to_session = ?1 AND created_at >= ?2 AND delivered_at IS NULL \
+     ORDER BY notice_id";
 /// Leaves the handoff of session ?1 for task ?2: its files ?3, its open warnings ?4, its last
 /// failure ?5, at ?6.
 pub(crate) const HANDOFF_LEAVE: &str = "INSERT INTO handoffs (from_session, task_id, \
@@ -1138,6 +1141,7 @@ mod tests {
                     ("text", "TEXT", 0),
                     ("created_at", "INTEGER", 0),
                     ("delivered_at", "INTEGER", 0),
+                    ("about", "TEXT", 0),
                 ]),
             ),
             (

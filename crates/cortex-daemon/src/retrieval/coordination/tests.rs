@@ -3,7 +3,10 @@
 
 use std::path::PathBuf;
 
-use cortex_core::{Agent, CoordinationConfig, Event, HookKind, Identifier, SessionStatus, Ulid};
+use cortex_coord::Notice;
+use cortex_core::{
+    Agent, CoordinationConfig, Event, HookKind, Identifier, NoticeSubject, SessionStatus, Ulid,
+};
 use cortex_store::{NoticeRecord, NoticeRow, Reader, SeenSession};
 
 use super::{capped, family_of, last_event_of, name_of};
@@ -128,6 +131,7 @@ fn waiting(texts: &[&str]) -> TestResult<(tempfile::TempDir, Vec<NoticeRow>)> {
     for (text, at_ms) in texts.iter().zip(1..) {
         let notice = NoticeRecord {
             to_session: session.clone(),
+            about: NoticeSubject::from_stored(format!("about {text}")),
             text: (*text).to_owned(),
             at_ms,
         };
@@ -139,6 +143,17 @@ fn waiting(texts: &[&str]) -> TestResult<(tempfile::TempDir, Vec<NoticeRow>)> {
     Ok((root, rows))
 }
 
+/// Lines saying `texts`, each about something of its own.
+fn lines(texts: &[&str]) -> Vec<Notice> {
+    texts
+        .iter()
+        .map(|text| Notice {
+            subject: NoticeSubject::from_stored(format!("about {text}")),
+            text: (*text).to_owned(),
+        })
+        .collect()
+}
+
 /// Worked by hand. Of two waiting notices and two lines, at most 3 are given: both waiting ones,
 /// oldest first, then the first line. With 0, none. A cap of 8 tokens (32 bytes at 4 a token, each
 /// line ending in a line break) fits a notice of 20 characters and one of 10 (21 + 11 = 32 bytes),
@@ -148,7 +163,7 @@ fn an_answer_gives_at_most_its_notices_and_its_tokens() -> TestResult {
     let (_short_store, short) = waiting(&["first", "second"])?;
     let open = || Giving {
         delivered: short.clone(),
-        told: vec!["told one".to_owned(), "told two".to_owned()],
+        told: lines(&["told one", "told two"]),
     };
     let config = |max_notices, max_tokens| CoordinationConfig {
         max_notices,
@@ -159,7 +174,7 @@ fn an_answer_gives_at_most_its_notices_and_its_tokens() -> TestResult {
         capped(open(), &config(3, 200)),
         Giving {
             delivered: short.clone(),
-            told: vec!["told one".to_owned()],
+            told: lines(&["told one"]),
         }
     );
     assert_eq!(capped(open(), &config(0, 200)), Giving::default());
@@ -167,7 +182,7 @@ fn an_answer_gives_at_most_its_notices_and_its_tokens() -> TestResult {
     let (_long_store, rows) = waiting(&[&long, &ten])?;
     let tight = Giving {
         delivered: rows.clone(),
-        told: vec!["c".repeat(10), "d".repeat(2)],
+        told: lines(&[&"c".repeat(10), &"d".repeat(2)]),
     };
     assert_eq!(
         capped(tight, &config(10, 8)),

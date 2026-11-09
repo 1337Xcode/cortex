@@ -28,7 +28,8 @@ told. The daemon asks these rules and gives the text in each agent's own hooks.
   and until when; `Position::longer_of`, which of two positions is kept.
 - `concerned`, `Thresholds` (from `CoordinationConfig`): the sessions an edit concerns, given
   positions, each session's last event and the edited node's links.
-- `to_editor`, `to_holder`: the text each side is told.
+- `to_editor`, `to_holder`, `Notice`: what each side is told, with its subject, so that one
+  happening told from either side, or in other words, is told to a session once.
 
 ## Tests
 

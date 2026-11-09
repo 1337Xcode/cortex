@@ -145,7 +145,13 @@ fn waiting(root: &Path, session: &str) -> TestResult<Vec<String>> {
 /// The texts `session` was sent or given.
 fn noticed(root: &Path, session: &str) -> TestResult<Vec<String>> {
     let session = Identifier::new(session)?;
-    read(root, |queries| Ok(queries.notices_since(&session, 0)?))
+    read(root, |queries| {
+        Ok(queries
+            .notices_since(&session, 0)?
+            .into_iter()
+            .map(|notice| notice.text)
+            .collect())
+    })
 }
 
 /// Starts the daemon on the captured repository, pinned to medium mode with `share` of tasks held
@@ -245,7 +251,48 @@ fn two_agents_are_each_told_once_of_the_other() -> TestResult {
         [told_codex.trim_end_matches('\n')]
     );
     assert_eq!(noticed(&repo, ASIDE)?, Vec::<String>::new());
+
+    // Claude Code edits `main.py`, linked to the `calc/ops.py` Codex is editing. It is not told
+    // that Codex edited `calc/ops.py`: it was told so, with the signature changed, in other words.
+    // Codex's notice of the edit, which it was never told, is queued.
+    std::fs::write(repo.join("main.py"), MAIN_THREE)?;
+    let edits_main = edit_of(&repo, "main.py", (MAIN, MAIN_THREE))?;
+    let answer = given("claude", &edits_main, home)?.unwrap_or_default();
+    assert!(!answer.contains("[cortex] Coordination"), "{answer}");
+    wait_for(|| Ok(!waiting(&repo, CODEX_SESSION)?.is_empty()))?;
+    assert_eq!(
+        waiting(&repo, CODEX_SESSION)?,
+        [
+            "[cortex] Coordination: Claude Code edited main.py, which your file is linked to by \
+             code (0.80); you are editing calc/ops.py."
+        ]
+    );
     Ok(())
+}
+
+/// `main.py` calling `add` with three numbers.
+const MAIN_THREE: &str = "from calc.ops import add\n\nprint(add(1, 2, 3))\n";
+
+/// Claude Code's captured edit, moved to `path` in `root`, whose one changed line turns `before`
+/// into `after`; both differ in their third line only.
+fn edit_of(root: &Path, path: &str, (before, after): (&str, &str)) -> TestResult<Value> {
+    let mut edit = captured("post-tool-use-edit.json", root)?;
+    let file = Value::from(native(root, path).to_string_lossy().into_owned());
+    let line = |text: &str| text.lines().nth(2).unwrap_or_default().to_owned();
+    let (old, new) = (line(before), line(after));
+    edit["tool_input"]["file_path"] = file.clone();
+    edit["tool_input"]["old_string"] = Value::from(old.clone());
+    edit["tool_input"]["new_string"] = Value::from(new.clone());
+    let result = &mut edit["tool_response"];
+    result["filePath"] = file;
+    result["oldString"] = Value::from(old.clone());
+    result["newString"] = Value::from(new.clone());
+    result["originalFile"] = Value::from(before);
+    result["structuredPatch"] = serde_json::json!([{
+        "oldStart": 3, "oldLines": 1, "newStart": 3, "newLines": 1,
+        "lines": [format!("-{old}"), format!("+{new}")],
+    }]);
+    Ok(edit)
 }
 
 /// Claude Code edits `calc/ops.py` and Codex edits it too within minutes: each is told to act

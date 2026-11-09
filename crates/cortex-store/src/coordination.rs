@@ -2,9 +2,9 @@
 //! one that holds longest, which the caller decides), what the store knows of the sessions holding
 //! them, how strongly an edited file is linked to the files they hold, and the notices sessions
 //! were sent or given. A notice's text names agents, files, symbols and links, never code, prompt
-//! text or a command.
+//! text or a command; what it is about is a key made of the same names.
 
-use cortex_core::{Agent, EdgeType, Identifier, PositionMode, SessionStatus};
+use cortex_core::{Agent, EdgeType, Identifier, NoticeSubject, PositionMode, SessionStatus};
 use rusqlite::Connection;
 
 use crate::error::{StoreError, sqlite};
@@ -67,22 +67,26 @@ pub struct Coupling {
     pub weight: f64,
 }
 
-/// A notice for a session: what it says and when it was made.
+/// A notice for a session: what it is about, what it says and when it was made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoticeRecord {
     /// The session it is for.
     pub to_session: Identifier,
+    /// What happened, apart from the wording: one session is sent or given each once.
+    pub about: NoticeSubject,
     /// What it says.
     pub text: String,
     /// When it was made, in UTC milliseconds.
     pub at_ms: i64,
 }
 
-/// A notice waiting for a session's next hook.
+/// A notice as kept for a session, whether it waits for the session's next hook or was given.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoticeRow {
     /// Its row.
     pub id: NoticeId,
+    /// What happened, apart from the wording; none for a notice kept before notices kept it.
+    pub about: Option<NoticeSubject>,
     /// What it says.
     pub text: String,
     /// When it was queued, in UTC milliseconds.
@@ -109,25 +113,42 @@ pub(crate) fn keep_position(
     Ok(())
 }
 
-/// Queues `notice`, unless its session was sent or given the same text at `unless_since_ms` or
-/// later: its row, or none when it was.
+/// Queues `notice`, unless its session was sent or given, at `unless_since_ms` or later, a notice
+/// whose subject covers this one's: its row, or none when it was.
 pub(crate) fn queue_notice(
     connection: &Connection,
     notice: &NoticeRecord,
     unless_since_ms: i64,
 ) -> Result<Option<NoticeId>, StoreError> {
-    let added = connection
+    let sent: Vec<Option<String>> = connection
+        .prepare_cached(schema::NOTICES_SINCE)
+        .and_then(|mut statement| {
+            statement
+                .query_map((notice.to_session.as_str(), unless_since_ms), |row| {
+                    row.get(1)
+                })?
+                .collect()
+        })
+        .map_err(sqlite("reading the notices sent"))?;
+    if sent
+        .into_iter()
+        .flatten()
+        .any(|sent| NoticeSubject::from_stored(sent).covers(&notice.about))
+    {
+        return Ok(None);
+    }
+    connection
         .prepare_cached(schema::NOTICE_QUEUE)
         .and_then(|mut statement| {
             statement.execute((
                 notice.to_session.as_str(),
                 notice.text.as_str(),
                 notice.at_ms,
-                unless_since_ms,
+                notice.about.as_str(),
             ))
         })
         .map_err(sqlite("queueing a notice"))?;
-    Ok((added == 1).then(|| NoticeId(connection.last_insert_rowid())))
+    Ok(Some(NoticeId(connection.last_insert_rowid())))
 }
 
 /// Records `notice` as told to its session as it was made, delivered at once.
@@ -142,6 +163,7 @@ pub(crate) fn record_told(
                 notice.to_session.as_str(),
                 notice.text.as_str(),
                 notice.at_ms,
+                notice.about.as_str(),
             ))
         })
         .map_err(sqlite("recording a notice told"))?;
@@ -334,7 +356,7 @@ impl Queries<'_> {
         Ok(couplings)
     }
 
-    /// The texts session `session_id` was sent or given at `since_ms` or later, oldest first.
+    /// The notices session `session_id` was sent or given at `since_ms` or later, oldest first.
     ///
     /// # Errors
     ///
@@ -343,16 +365,8 @@ impl Queries<'_> {
         self,
         session_id: &Identifier,
         since_ms: i64,
-    ) -> Result<Vec<String>, StoreError> {
-        let mut statement = self
-            .connection()
-            .prepare_cached(schema::NOTICES_SINCE)
-            .map_err(sqlite("reading notices"))?;
-        let rows = statement
-            .query_map((session_id.as_str(), since_ms), |row| row.get(0))
-            .map_err(sqlite("reading notices"))?;
-        rows.collect::<Result<_, _>>()
-            .map_err(sqlite("reading notices"))
+    ) -> Result<Vec<NoticeRow>, StoreError> {
+        self.notice_rows(schema::NOTICES_SINCE, session_id, since_ms)
     }
 
     /// The notices made at `since_ms` or later that wait for session `session_id`, oldest first.
@@ -365,16 +379,29 @@ impl Queries<'_> {
         session_id: &Identifier,
         since_ms: i64,
     ) -> Result<Vec<NoticeRow>, StoreError> {
+        self.notice_rows(schema::NOTICES_WAITING, session_id, since_ms)
+    }
+
+    /// The notices `sql` finds for session `session_id` from `since_ms` on.
+    fn notice_rows(
+        self,
+        sql: &'static str,
+        session_id: &Identifier,
+        since_ms: i64,
+    ) -> Result<Vec<NoticeRow>, StoreError> {
         let mut statement = self
             .connection()
-            .prepare_cached(schema::NOTICES_WAITING)
+            .prepare_cached(sql)
             .map_err(sqlite("reading notices"))?;
         let rows = statement
             .query_map((session_id.as_str(), since_ms), |row| {
                 Ok(NoticeRow {
                     id: NoticeId(row.get(0)?),
-                    text: row.get(1)?,
-                    created_ms: row.get(2)?,
+                    about: row
+                        .get::<_, Option<String>>(1)?
+                        .map(NoticeSubject::from_stored),
+                    text: row.get(2)?,
+                    created_ms: row.get(3)?,
                 })
             })
             .map_err(sqlite("reading notices"))?;

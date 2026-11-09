@@ -582,7 +582,10 @@ mod tests {
              INSERT INTO warnings (task_id, ts, kind, src_node, dst_node, strength) \
              VALUES ('t1', 3, 'test', 4, 5, 1.0);",
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let fourteenth = MIGRATIONS
+            .get(..14)
+            .ok_or("fewer than fourteen migrations")?;
+        migrate(&mut connection, fourteenth, &backups)?;
         assert_eq!(schema_version(&connection)?, 14);
         let objects = objects(&connection)?;
         for object in [
@@ -598,6 +601,30 @@ mod tests {
         let warnings: i64 =
             connection.query_row("SELECT count(*) FROM warnings", [], |row| row.get(0))?;
         assert_eq!(warnings, 1);
+        Ok(())
+    }
+
+    /// The fifteenth schema gives notices a subject, none for those a fourteenth-schema store
+    /// holds, which it keeps.
+    #[test]
+    fn the_fifteenth_schema_gives_notices_a_subject() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let fourteenth = MIGRATIONS
+            .get(..14)
+            .ok_or("fewer than fourteen migrations")?;
+        migrate(&mut connection, fourteenth, &backups)?;
+        connection.execute(
+            "INSERT INTO notices (to_session, text, created_at) VALUES ('s1', 'kept', 1)",
+            [],
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 15);
+        let kept: (String, Option<String>) =
+            connection.query_row("SELECT text, about FROM notices", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+        assert_eq!(kept, ("kept".to_owned(), None));
         Ok(())
     }
 

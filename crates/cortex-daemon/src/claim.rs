@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use cortex_core::{Identifier, Ulid};
+use cortex_core::{Identifier, NoticeSubject, Ulid};
 use cortex_store::{HandoffId, NoticeId};
 
 use crate::noticed::Noticed;
@@ -24,8 +24,8 @@ pub(crate) enum Claim {
     Recapped(Identifier, Ulid),
     /// Task `.0`, given its reason to go on.
     Stopped(Ulid),
-    /// Session `.0`, given the waiting notices `.1` and told the lines `.2`.
-    Noticed(Identifier, Vec<NoticeId>, Vec<String>),
+    /// Session `.0`, given the waiting notices `.1` and told lines about `.2`.
+    Noticed(Identifier, Vec<NoticeId>, Vec<NoticeSubject>),
     /// Handoff `.0`, given to a first prompt.
     Handed(HandoffId),
 }

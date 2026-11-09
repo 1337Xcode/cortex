@@ -523,8 +523,8 @@ fn record_given(writer: &mut Writer, inbox: &Inbox, given: &[Given]) {
 
 /// Records in `transaction` what an answer did with coordination notices: the waiting ones it gave
 /// marked delivered, the lines it told kept as delivered, the text they came to as an injection,
-/// and each notice it queued for another session, unless that session was sent or given the same
-/// text lately. A row the store refuses is counted, with its error, and the rest kept.
+/// and each notice it queued for another session, unless that session was sent or given one about
+/// the same lately. A row the store refuses is counted, with its error, and the rest kept.
 fn record_notices(transaction: &mut WriteTx<'_>, inbox: &Inbox, notices: &Notices) {
     for id in &notices.delivered {
         if let Err(error) = transaction.deliver_notice(*id, notices.at_ms) {

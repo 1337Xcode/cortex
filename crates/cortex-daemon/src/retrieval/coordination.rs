@@ -7,9 +7,10 @@
 
 use std::collections::BTreeSet;
 
-use cortex_coord::{EditAt, Link, Party, Position, Thresholds, Timing, concerned};
+use cortex_coord::{EditAt, Link, Notice, Party, Position, Thresholds, Timing, concerned};
 use cortex_core::{
-    Agent, CoordinationConfig, EdgeType, Event, Identifier, RepoPath, estimate_tokens,
+    Agent, CoordinationConfig, EdgeType, Event, Identifier, NoticeSubject, RepoPath,
+    estimate_tokens,
 };
 use cortex_store::{Coupling, NodeId, NoticeRecord, PositionRow, Queries, SeenSession};
 
@@ -22,13 +23,13 @@ use crate::noticed::{Giving, Noticed};
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct Coordination {
     /// The lines the editing session could be told, those that act first leading.
-    pub(crate) lines: Vec<String>,
+    pub(crate) lines: Vec<Notice>,
     /// The notices for the sessions it concerns.
     pub(crate) queued: Vec<NoticeRecord>,
 }
 
 /// One concern found, with whether it acts first.
-type Line = (bool, String);
+type Line = (bool, Notice);
 
 /// The other sessions around an edit: their positions outside the editing session's own family,
 /// the nodes those are on, and what the store knows of each session.
@@ -141,11 +142,13 @@ impl Around {
                 agent: &editor_name,
                 path: path.as_str(),
             };
-            if let Some(text) = cortex_coord::to_holder(&concern, editor, held_path.as_str(), names)
+            if let Some(notice) =
+                cortex_coord::to_holder(&concern, editor, held_path.as_str(), names)
             {
                 found.queued.push(NoticeRecord {
                     to_session: concern.session.clone(),
-                    text,
+                    about: notice.subject,
+                    text: notice.text,
                     at_ms: event.ts_ms,
                 });
             }
@@ -156,13 +159,14 @@ impl Around {
 
 impl Found {
     /// What was found, the lines that act first leading and otherwise in the order found (by file,
-    /// then session), each line once: two sessions of one agent holding one file are said the same
-    /// way, and one line says it of both.
+    /// then session), one line for each happening: two sessions of one agent holding one file are
+    /// said the same way, and one line says it of both, as does one held file linked to two files
+    /// one edit changed.
     fn into_coordination(self) -> Coordination {
         let mut lines = self.lines;
         lines.sort_by_key(|(is_urgent, _)| !is_urgent);
         let mut told = BTreeSet::new();
-        lines.retain(|(_, line)| told.insert(line.clone()));
+        lines.retain(|(_, line)| told.insert(line.subject.clone()));
         Coordination {
             lines: lines.into_iter().map(|(_, line)| line).collect(),
             queued: self.queued,
@@ -234,7 +238,11 @@ impl Service {
                 return Ok(None);
             }
             let waiting = queries.notices_waiting(&event.session_id, since_ms)?;
-            let sent = queries.notices_since(&event.session_id, since_ms)?;
+            let sent: Vec<NoticeSubject> = queries
+                .notices_since(&event.session_id, since_ms)?
+                .into_iter()
+                .filter_map(|notice| notice.about)
+                .collect();
             Ok(Some((task_id, waiting, sent)))
         });
         let read = read.unwrap_or_else(|error| {
@@ -258,7 +266,7 @@ impl Service {
                 .delivered
                 .iter()
                 .map(|notice| notice.text.as_str())
-                .chain(giving.told.iter().map(String::as_str))
+                .chain(giving.told.iter().map(|line| line.text.as_str()))
                 .map(|line| format!("{line}\n"))
                 .collect();
             if !block.is_empty() {
@@ -269,14 +277,15 @@ impl Service {
                     .iter()
                     .map(|line| NoticeRecord {
                         to_session: event.session_id.clone(),
-                        text: line.clone(),
+                        about: line.subject.clone(),
+                        text: line.text.clone(),
                         at_ms: event.ts_ms,
                     })
                     .collect();
                 answer.claims.push(Claim::Noticed(
                     event.session_id.clone(),
                     notices.delivered.clone(),
-                    giving.told,
+                    giving.told.into_iter().map(|line| line.subject).collect(),
                 ));
                 answer.text = Some(block + answer.text.as_deref().unwrap_or_default());
             }
@@ -312,7 +321,7 @@ fn capped(open: Giving, config: &CoordinationConfig) -> Giving {
         }
     }
     for line in open.told {
-        if given.delivered.len() + given.told.len() < most && fits(&line) {
+        if given.delivered.len() + given.told.len() < most && fits(&line.text) {
             given.told.push(line);
         }
     }

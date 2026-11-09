@@ -11,5 +11,5 @@ mod position;
 
 pub use concern::{Concern, EditAt, Link, Thresholds, Via, concerned};
 pub use handoff::{Handed, MAX_HANDOFF_TOKENS, handoff_text};
-pub use notice::{Party, to_editor, to_holder};
+pub use notice::{Notice, Party, to_editor, to_holder};
 pub use position::{Position, PositionMode, Timing, is_live};

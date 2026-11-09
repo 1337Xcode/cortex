@@ -4,14 +4,26 @@
 //! never lines, so it stays true until it is given; the paths and names are the repository's,
 //! given by the caller when the notice is rendered. A repository is untrusted, so a notice whose
 //! path is not plain text is not given, and a changed name that is not is left out.
+//!
+//! Each notice has a subject, what happened apart from how it is worded, so that a session is told
+//! one happening once whichever side tells it.
 
-use cortex_core::is_plain;
+use cortex_core::{NoticeSubject, is_plain};
 
 use crate::concern::{Concern, Link, Via};
 use crate::position::PositionMode;
 
 /// How many changed definitions a notice names; the rest are counted.
 const MAX_NAMED: usize = 3;
+
+/// A notice: what it is about and what it says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    /// What happened, apart from the words.
+    pub subject: NoticeSubject,
+    /// What it says.
+    pub text: String,
+}
 
 /// Who did what in a notice: an agent's name as people write it, and the path of a node.
 #[derive(Debug, Clone, Copy)]
@@ -23,9 +35,10 @@ pub struct Party<'p> {
 }
 
 /// The line the editing session is told about one session its edit concerns: `other` holding
-/// `concern.held` at `other.path`, its edit being of `edited`. None when a path is not plain.
+/// `concern.held` at `other.path`, its edit being of `edited`; its subject is `other`'s hold.
+/// None when a path is not plain.
 #[must_use]
-pub fn to_editor<S, N>(concern: &Concern<S, N>, other: Party<'_>, edited: &str) -> Option<String> {
+pub fn to_editor<S, N>(concern: &Concern<S, N>, other: Party<'_>, edited: &str) -> Option<Notice> {
     if !is_plain(other.path) || !is_plain(edited) {
         return None;
     }
@@ -36,22 +49,27 @@ pub fn to_editor<S, N>(concern: &Concern<S, N>, other: Party<'_>, edited: &str) 
         (PositionMode::Claim, _) => "has claimed",
     };
     let line = format!("{} {did} {}", other.agent, other.path);
-    Some(format!(
-        "{}{line}{}.",
-        prefix(concern.is_urgent),
-        relation(concern.via, edited)
-    ))
+    let held = (concern.mode, concern.is_urgent);
+    Some(Notice {
+        subject: NoticeSubject::new((other.agent, other.path), held, &[])?,
+        text: format!(
+            "{}{line}{}.",
+            prefix(concern.is_urgent),
+            relation(concern.via, edited)
+        ),
+    })
 }
 
 /// The line the concerned session is told: `editor` edited its path, changing the signatures of
-/// `changed`, while this session holds `held` in `concern.mode`. None when a path is not plain.
+/// `changed`, while this session holds `held` in `concern.mode`; its subject is `editor`'s edit.
+/// None when a path is not plain.
 #[must_use]
 pub fn to_holder<S, N>(
     concern: &Concern<S, N>,
     editor: Party<'_>,
     held: &str,
     changed: &[&str],
-) -> Option<String> {
+) -> Option<Notice> {
     if !is_plain(editor.path) || !is_plain(held) {
         return None;
     }
@@ -64,27 +82,31 @@ pub fn to_holder<S, N>(
         Via::Same => format!(", the file {yours}"),
         Via::Coupled(link) => format!(", {}; {yours} {held}", linked(link)),
     };
-    let did = match signatures_of(changed) {
-        Some(names) => format!("changed the signature of {names} in"),
-        None => "edited".to_owned(),
-    };
-    Some(format!(
-        "{}{} {did} {}{about}.",
-        prefix(concern.is_urgent),
-        editor.agent,
-        editor.path
-    ))
-}
-
-/// The plain names of `changed`, as a list a sentence can hold: "a", "a and b", "a, b and c",
-/// "a, b, c and 2 more"; none when no name is plain.
-fn signatures_of(changed: &[&str]) -> Option<String> {
     let plain: Vec<&str> = changed
         .iter()
         .copied()
         .filter(|name| is_plain(name))
         .collect();
-    let named = plain.get(..MAX_NAMED).unwrap_or(&plain);
+    let did = match signatures_of(&plain) {
+        Some(names) => format!("changed the signature of {names} in"),
+        None => "edited".to_owned(),
+    };
+    let edit = (PositionMode::Edit, concern.is_urgent);
+    Some(Notice {
+        subject: NoticeSubject::new((editor.agent, editor.path), edit, &plain)?,
+        text: format!(
+            "{}{} {did} {}{about}.",
+            prefix(concern.is_urgent),
+            editor.agent,
+            editor.path
+        ),
+    })
+}
+
+/// `plain`, names that are plain text, as a list a sentence can hold: "a", "a and b", "a, b and
+/// c", "a, b, c and 2 more"; none when there is no name.
+fn signatures_of(plain: &[&str]) -> Option<String> {
+    let named = plain.get(..MAX_NAMED).unwrap_or(plain);
     let more = plain.len() - named.len();
     match (named, more) {
         ([], _) => None,
@@ -161,20 +183,89 @@ mod tests {
         path: "api/handler.py",
     };
 
+    /// What `notice` says.
+    fn text(notice: Notice) -> String {
+        notice.text
+    }
+
+    /// The subject of what `notice` is, if anything, as the store keeps it.
+    fn subject_of(notice: Option<Notice>) -> Option<String> {
+        notice.map(|notice| notice.subject.as_str().to_owned())
+    }
+
+    /// One happening has one subject from either side and in any words: Codex told at its next hook
+    /// that Claude Code edited `api/handler.py` (linked to Codex's read file), and Codex told at
+    /// its own edit of `web/client.ts` that Claude Code's edit of `api/handler.py` holds, are about
+    /// the same edit. Claude Code reading the file, both editing it at once, or a signature change
+    /// are other happenings; the same names in another order, or with one that is not plain, are
+    /// the same.
+    #[test]
+    fn one_happening_has_one_subject() {
+        let linked = Via::Coupled(Link::Structural(0.8));
+        let edited = "Claude Code\napi/handler.py\nedit\napart".to_owned();
+        let told_later = to_holder(
+            &concern(PositionMode::Read, linked, false),
+            CLAUDE,
+            "web/client.ts",
+            &[],
+        );
+        let told_at_once = to_editor(
+            &concern(PositionMode::Edit, linked, false),
+            CLAUDE,
+            "web/client.ts",
+        );
+        assert_eq!(subject_of(told_later), Some(edited.clone()));
+        assert_eq!(subject_of(told_at_once), Some(edited.clone()));
+        let read = to_editor(
+            &concern(PositionMode::Read, linked, false),
+            CLAUDE,
+            "web/client.ts",
+        );
+        assert_eq!(
+            subject_of(read),
+            Some("Claude Code\napi/handler.py\nread\napart".to_owned())
+        );
+        let at_once = to_holder(
+            &concern(PositionMode::Edit, Via::Same, true),
+            CLAUDE,
+            "api/handler.py",
+            &[],
+        );
+        assert_eq!(
+            subject_of(at_once),
+            Some("Claude Code\napi/handler.py\nedit\nat once".to_owned())
+        );
+        let changed = |names: &[&str]| {
+            subject_of(to_holder(
+                &concern(PositionMode::Read, linked, false),
+                CLAUDE,
+                "web/client.ts",
+                names,
+            ))
+        };
+        let both = Some(format!("{edited}\nlist_orders\nparse"));
+        assert_eq!(changed(&["parse", "list_orders"]), both);
+        assert_eq!(changed(&["list_orders", "parse", "evil\nrun"]), both);
+    }
+
     /// Each text, typed by hand: Claude Code edits `api/handler.py`; Codex holds the same file or
     /// a linked one.
     #[test]
     fn each_side_is_told_in_its_own_words() {
         let urgent = concern(PositionMode::Edit, Via::Same, true);
         assert_eq!(
-            to_editor(&urgent, codex("api/handler.py"), "api/handler.py").as_deref(),
+            to_editor(&urgent, codex("api/handler.py"), "api/handler.py")
+                .map(text)
+                .as_deref(),
             Some(
                 "[cortex] Coordination, act first: Codex is also editing api/handler.py, the file \
                  you just edited."
             )
         );
         assert_eq!(
-            to_holder(&urgent, CLAUDE, "api/handler.py", &[]).as_deref(),
+            to_holder(&urgent, CLAUDE, "api/handler.py", &[])
+                .map(text)
+                .as_deref(),
             Some(
                 "[cortex] Coordination, act first: Claude Code edited api/handler.py, the file you \
                  are editing."
@@ -186,14 +277,18 @@ mod tests {
             false,
         );
         assert_eq!(
-            to_editor(&structural, codex("web/client.ts"), "api/handler.py").as_deref(),
+            to_editor(&structural, codex("web/client.ts"), "api/handler.py")
+                .map(text)
+                .as_deref(),
             Some(
                 "[cortex] Coordination: Codex has read web/client.ts, linked by code (0.90) to \
                  api/handler.py."
             )
         );
         assert_eq!(
-            to_holder(&structural, CLAUDE, "web/client.ts", &[]).as_deref(),
+            to_holder(&structural, CLAUDE, "web/client.ts", &[])
+                .map(text)
+                .as_deref(),
             Some(
                 "[cortex] Coordination: Claude Code edited api/handler.py, which your file is \
                  linked to by code (0.90); you read web/client.ts."
@@ -205,14 +300,18 @@ mod tests {
             false,
         );
         assert_eq!(
-            to_editor(&cochange, codex("web/client.ts"), "api/handler.py").as_deref(),
+            to_editor(&cochange, codex("web/client.ts"), "api/handler.py")
+                .map(text)
+                .as_deref(),
             Some(
                 "[cortex] Coordination: Codex has claimed web/client.ts, changing in history \
                  (0.60) with api/handler.py."
             )
         );
         assert_eq!(
-            to_holder(&cochange, CLAUDE, "web/client.ts", &[]).as_deref(),
+            to_holder(&cochange, CLAUDE, "web/client.ts", &[])
+                .map(text)
+                .as_deref(),
             Some(
                 "[cortex] Coordination: Claude Code edited api/handler.py, which changes with \
                  your file in history (0.60); you claimed web/client.ts."
@@ -230,7 +329,8 @@ mod tests {
             Via::Coupled(Link::Structural(0.95)),
             false,
         );
-        let told = |changed: &[&str]| to_holder(&linked, CLAUDE, "web/client.ts", changed);
+        let told =
+            |changed: &[&str]| to_holder(&linked, CLAUDE, "web/client.ts", changed).map(text);
         let opening = "[cortex] Coordination: Claude Code";
         let closing = "api/handler.py, which your file is linked to by code (0.95); you are \
                        editing web/client.ts.";

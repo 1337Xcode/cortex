@@ -34,8 +34,8 @@ pub(crate) struct Notices {
     pub(crate) told: Vec<NoticeRecord>,
     /// The notices an edit queued for the other sessions it concerns.
     pub(crate) queued: Vec<NoticeRecord>,
-    /// How long a notice is not queued again for a session that was sent or given the same text,
-    /// in milliseconds.
+    /// How long a notice is not queued again for a session that was sent or given one about the
+    /// same, in milliseconds.
     pub(crate) repeat_after_ms: i64,
     /// When the answer gave them, in UTC milliseconds.
     pub(crate) at_ms: i64,
@@ -128,7 +128,7 @@ pub(crate) fn recorded(
 
 #[cfg(test)]
 mod tests {
-    use cortex_core::{ContentHash, HookKind, Identifier, Ulid, WarningKind};
+    use cortex_core::{ContentHash, HookKind, Identifier, NoticeSubject, Ulid, WarningKind};
     use cortex_store::{InjectionRecord, WarningRecord};
 
     use super::*;
@@ -231,6 +231,7 @@ mod tests {
             let mut transaction = store.transaction()?;
             let notice = NoticeRecord {
                 to_session: Identifier::new("s1")?,
+                about: NoticeSubject::from_stored("about waiting".to_owned()),
                 text: "waiting".to_owned(),
                 at_ms: 1,
             };
@@ -241,6 +242,7 @@ mod tests {
         let line = |to: &str, text: &str| -> TestResult<NoticeRecord> {
             Ok(NoticeRecord {
                 to_session: Identifier::new(to)?,
+                about: NoticeSubject::from_stored(format!("about {text}")),
                 text: text.to_owned(),
                 at_ms: 5,
             })
