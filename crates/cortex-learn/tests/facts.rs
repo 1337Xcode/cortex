@@ -235,7 +235,7 @@ fn a_fact_on_what_has_no_hash_is_refused() -> TestResult {
             1,
         );
         assert!(
-            matches!(refused, Err(FactError::Unanchorable { node_id }) if node_id == node.get())
+            matches!(refused, Err(FactError::Unanchorable { node: refused }) if refused == node)
         );
     }
     let queries = store.writer.queries();
@@ -305,7 +305,7 @@ fn the_user_confirms_retires_and_corrects_facts() -> TestResult {
     assert_eq!(anchored, tax);
     let old_row = store.writer.queries().fact(old)?.ok_or("no old fact")?;
     assert_eq!(old_row.superseded_by, Some(new));
-    let superseded = |error: FactError| matches!(error, FactError::Superseded { fact_id, by } if fact_id == old.get() && by == new.get());
+    let superseded = |error: FactError| matches!(error, FactError::Superseded { fact, by } if fact == old && by == new);
     let mut transaction = store.writer.transaction()?;
     assert!(confirm_fact(&mut transaction, old, 61).is_err_and(superseded));
     assert!(retire_fact(&mut transaction, old, 61).is_err_and(superseded));
@@ -315,7 +315,8 @@ fn the_user_confirms_retires_and_corrects_facts() -> TestResult {
     let mut transaction = store.writer.transaction()?;
     transaction.remove_file(&RepoPath::new("src/tax.py")?)?;
     transaction.commit()?;
-    let gone = |error: FactError| matches!(error, FactError::Unanchorable { node_id } if node_id == tax[0].get());
+    let gone =
+        |error: FactError| matches!(error, FactError::Unanchorable { node } if node == tax[0]);
     let mut transaction = store.writer.transaction()?;
     assert!(confirm_fact(&mut transaction, new, 65).is_err_and(gone));
     assert!(edit_fact(&mut transaction, new, "Tax is exact.", 65).is_err_and(gone));

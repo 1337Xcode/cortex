@@ -454,3 +454,85 @@ fn a_read_s_request_reads_back_as_written() -> TestResult {
     assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, read);
     Ok(())
 }
+
+/// A note, the user's word on the facts and the daemon's answers are written in the shapes typed
+/// here by hand and read back as they were.
+#[test]
+fn fact_requests_and_answers_read_back() -> TestResult {
+    let note = Request {
+        request_id: 4,
+        body: RequestBody::Note(Note {
+            text: "Money is kept in cents.".to_owned(),
+            kind: crate::FactKind::Invariant,
+            at: vec!["src/money.py:Money".to_owned()],
+        }),
+    };
+    let written = |message: &Request| -> Result<String, Box<dyn std::error::Error>> {
+        let frame = encode(message)?;
+        assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, *message);
+        Ok(String::from_utf8(frame[LENGTH_PREFIX_BYTES..].to_vec())?)
+    };
+    assert_eq!(
+        written(&note)?,
+        r#"{"request_id":4,"body":{"type":"note","text":"Money is kept in cents.","kind":"invariant","at":["src/money.py:Money"]}}"#
+    );
+    let edit = Request {
+        request_id: 5,
+        body: RequestBody::Facts(FactsAsk::Edit {
+            id: 3,
+            text: "Tax rounds half to even.".to_owned(),
+        }),
+    };
+    assert_eq!(
+        written(&edit)?,
+        r#"{"request_id":5,"body":{"type":"facts","ask":"edit","id":3,"text":"Tax rounds half to even."}}"#
+    );
+    let list = Request {
+        request_id: 6,
+        body: RequestBody::Facts(FactsAsk::List { all: false }),
+    };
+    assert_eq!(
+        written(&list)?,
+        r#"{"request_id":6,"body":{"type":"facts","ask":"list","all":false}}"#
+    );
+    let answers = [
+        FactsAnswer::Noted {
+            id: 3,
+            outcome: NoteOutcome::Activated,
+        },
+        FactsAnswer::Listed {
+            facts: vec![FactLine {
+                id: 3,
+                status: crate::FactStatus::Suspect,
+                kind: crate::FactKind::Pitfall,
+                text: "Tax rounds half up.".to_owned(),
+                anchors: vec!["src/tax.py".to_owned()],
+                uses: 2,
+            }],
+        },
+        FactsAnswer::Edited { id: 3, by: 4 },
+    ];
+    for answer in answers {
+        let response = Response {
+            request_id: 7,
+            body: ResponseBody::Facts(answer),
+        };
+        let frame = encode(&response)?;
+        assert_eq!(decode::<Response>(&frame[LENGTH_PREFIX_BYTES..])?, response);
+    }
+    let noted = encode(&Response {
+        request_id: 7,
+        body: ResponseBody::Facts(FactsAnswer::Noted {
+            id: 3,
+            outcome: NoteOutcome::Added,
+        }),
+    })?;
+    assert_eq!(
+        noted.get(LENGTH_PREFIX_BYTES..),
+        Some(
+            r#"{"request_id":7,"body":{"type":"facts","answer":"noted","id":3,"outcome":"added"}}"#
+                .as_bytes()
+        )
+    );
+    Ok(())
+}

@@ -25,6 +25,7 @@ use cortex_index::{
 use cortex_learn::{Recorder, TaskState, review_facts};
 use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, SymbolChange, WriteTx, Writer};
 
+use crate::facts::FactsJob;
 use crate::given::{Given, Notices};
 use crate::graph::Snapshot;
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
@@ -209,6 +210,10 @@ impl<'a> Host<'a> {
                 }
                 // Mining is the daemon's own work, not a user's: it does not put off the idle stop.
                 Work::Mining(job) => self.store_mining(*job),
+                Work::Facts(job) => {
+                    self.answer_facts(*job);
+                    last_activity = Instant::now();
+                }
                 Work::Timeout if self.waiting() > 0 && Instant::now() >= next_crawl => {
                     next_crawl = Instant::now() + CRAWL_PERIOD;
                     self.crawl_batch()?;
@@ -401,6 +406,20 @@ impl<'a> Host<'a> {
             tracing::warn!(error = %error, "a mining could not be stored");
         }
         job.answer(stored.map_err(|error| error.to_string()));
+    }
+
+    /// Answers a fact request in a transaction of its own. A refusal or a store error is the
+    /// answer and nothing is written; a store error is counted too.
+    fn answer_facts(&mut self, job: FactsJob) {
+        let answered = self.writer.transaction().and_then(|mut transaction| {
+            if job.answer(&mut transaction, now_ms())? {
+                transaction.commit()?;
+            }
+            Ok(())
+        });
+        if let Err(error) = answered {
+            count_failed(self.inbox, "a fact request", &error);
+        }
     }
 
     /// Runs `work` with the writer and a pause that records the hook events waiting, and the edits

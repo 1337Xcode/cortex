@@ -52,24 +52,24 @@ pub enum Asserted {
 #[derive(Debug, thiserror::Error)]
 pub enum FactError {
     /// A node has no hash to keep: not a file whose contents are read, nor a symbol, or gone.
-    #[error("node {node_id} cannot anchor a fact: only a read file or a symbol can")]
+    #[error("node {} cannot anchor a fact: only a read file or a symbol can", node.get())]
     Unanchorable {
-        /// The node's id.
-        node_id: i64,
+        /// The node.
+        node: NodeId,
     },
     /// No fact has the id.
-    #[error("there is no fact {fact_id}")]
+    #[error("there is no fact {}", fact.get())]
     Unknown {
-        /// The id asked for.
-        fact_id: i64,
+        /// The fact asked for.
+        fact: FactId,
     },
     /// The fact was corrected by another, which is the one to change.
-    #[error("fact {fact_id} was corrected by fact {by}")]
+    #[error("fact {} was corrected by fact {}", fact.get(), by.get())]
     Superseded {
         /// The fact asked for.
-        fact_id: i64,
+        fact: FactId,
         /// The fact correcting it.
-        by: i64,
+        by: FactId,
     },
     /// The store failed.
     #[error(transparent)]
@@ -204,9 +204,7 @@ pub(crate) fn anchors_now(
         .iter()
         .find(|node| !anchors.iter().any(|anchor| anchor.node == **node))
     {
-        Some(node) => Err(FactError::Unanchorable {
-            node_id: node.get(),
-        }),
+        Some(node) => Err(FactError::Unanchorable { node: *node }),
         None => Ok(anchors),
     }
 }

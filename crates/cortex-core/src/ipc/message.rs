@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::facts::{FactsAnswer, FactsAsk, Note};
 use super::version::Protocol;
 use crate::Event;
 use crate::named::named_kind;
@@ -95,6 +96,11 @@ pub enum RequestBody {
         /// The most files to name, from 1 to 5.
         limit: u8,
     },
+    /// Note a fact of the user's, and answer with what became of it (protocol 6.0 added it).
+    Note(Note),
+    /// List the facts, or carry the user's word on one, and answer with the outcome (protocol 6.0
+    /// added it).
+    Facts(FactsAsk),
     /// Report the daemon's state.
     Status,
     /// Stop gracefully. Frozen.
@@ -170,6 +176,9 @@ pub enum ResponseBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to_user: Option<String>,
     },
+    /// What became of a note or of the user's word on the facts, or the facts listed (protocol 6.0
+    /// added it).
+    Facts(FactsAnswer),
     /// The request could not be served.
     Error {
         /// What went wrong, without file contents or prompt text.

@@ -5,10 +5,12 @@
 //! the CLI block on a local socket or named pipe, the daemon reads asynchronously; both encode and
 //! decode through this module, so the format has one implementation.
 
+mod facts;
 mod frame;
 mod message;
 mod version;
 
+pub use self::facts::{FactLine, FactsAnswer, FactsAsk, Note, NoteOutcome};
 pub use self::frame::{
     FrameError, LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES, body_len, decode, encode, read_frame,
     write_frame,

@@ -73,14 +73,9 @@ pub fn edit_fact(
 
 /// Fact `id`, when it exists and no other fact supersedes it.
 fn current(queries: Queries<'_>, id: FactId) -> Result<FactRow, FactError> {
-    let row = queries
-        .fact(id)?
-        .ok_or(FactError::Unknown { fact_id: id.get() })?;
+    let row = queries.fact(id)?.ok_or(FactError::Unknown { fact: id })?;
     match row.superseded_by {
-        Some(by) => Err(FactError::Superseded {
-            fact_id: id.get(),
-            by: by.get(),
-        }),
+        Some(by) => Err(FactError::Superseded { fact: id, by }),
         None => Ok(row),
     }
 }

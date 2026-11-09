@@ -9,7 +9,7 @@
 
 use std::io;
 use std::sync::atomic::{self, AtomicU64};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use cortex_core::ipc::{
@@ -25,6 +25,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
 
 use crate::claim::{Claim, Claims};
+use crate::facts::{FACTS_START_WITHIN, FACTS_WRITE_WITHIN, FactsRequest};
 use crate::given::{Given, recorded};
 use crate::graph::Snapshot;
 use crate::host::now_ms;
@@ -379,6 +380,8 @@ impl Server {
                 (answered.body, answered.hook)
             }
             RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
+            RequestBody::Note(note) => (self.ask_writer(FactsRequest::Note(note)).await, None),
+            RequestBody::Facts(ask) => (self.ask_writer(FactsRequest::Ask(ask)).await, None),
             RequestBody::Event { event } => {
                 let hook = event.hook;
                 // The moment before a tool runs is answered, not recorded: the tool's result is,
@@ -623,6 +626,27 @@ impl Server {
                     .note_error("a question was not answered", now_ms());
                 ResponseBody::Error { message }
             }
+        }
+    }
+
+    /// Hands a fact request to the writer and waits, on the blocking pool, for its answer: within
+    /// [`FACTS_START_WITHIN`] for the writer to take it, then [`FACTS_WRITE_WITHIN`] to write it. A
+    /// request the writer did not take in time is never written.
+    async fn ask_writer(&self, request: FactsRequest) -> ResponseBody {
+        let Some(answer) = self.inbox.push_facts(request) else {
+            return error("the daemon is stopping, or too many fact requests wait: try again");
+        };
+        let within = FACTS_START_WITHIN + FACTS_WRITE_WITHIN;
+        let waited = tokio::task::spawn_blocking(move || answer.recv_timeout(within)).await;
+        match waited {
+            Ok(Ok(Ok(answer))) => ResponseBody::Facts(answer),
+            Ok(Ok(Err(message))) => ResponseBody::Error { message },
+            Ok(Err(mpsc::RecvTimeoutError::Disconnected)) => error(
+                "the daemon was busy and did not take the request, which changed nothing: try again",
+            ),
+            Ok(Err(mpsc::RecvTimeoutError::Timeout)) | Err(_) => error(
+                "the daemon did not answer in time: run `cortex facts list` to see whether it was done",
+            ),
         }
     }
 

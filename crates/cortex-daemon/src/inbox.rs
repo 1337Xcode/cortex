@@ -11,12 +11,13 @@ use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
 use cortex_coord::Timing;
-use cortex_core::ipc::{GitReport, RecentError};
+use cortex_core::ipc::{FactsAnswer, GitReport, RecentError};
 use cortex_core::{CoordinationConfig, Event, HookKind, RepoPath, ToolKind};
 use cortex_git::mine::Mining;
 use cortex_index::Change;
 use cortex_store::CheckpointFailures;
 
+use crate::facts::{FactsJob, FactsRequest};
 use crate::given::Given;
 
 use crate::recent_errors::RecentErrors;
@@ -37,6 +38,10 @@ pub(crate) const MAX_GIVEN: usize = 1_000;
 /// overflow marked, so that the changes drained next are indexed as a change to everything, the
 /// dropped change's files included.
 pub(crate) const MAX_CHANGES: usize = 10_000;
+
+/// Most fact requests waiting for the writer: people type them, so a handful at once is already
+/// many, and one more is refused rather than kept.
+const MAX_FACTS_WAITING: usize = 16;
 
 /// The writer's inbox.
 #[derive(Debug, Default)]
@@ -81,6 +86,8 @@ struct State {
     changes_indexed: u64,
     /// A mining waiting to be written: one at most, since the miner waits for the write.
     mining: Option<MiningJob>,
+    /// Fact requests waiting for the writer, oldest first, at most [`MAX_FACTS_WAITING`].
+    facts: VecDeque<FactsJob>,
     /// What the co-change miner is doing.
     git: GitReport,
     /// Whether the daemon was asked to stop.
@@ -108,6 +115,8 @@ pub(crate) enum Work {
     Changed(Changed),
     /// Write what the miner found, and tell it how that went.
     Mining(Box<MiningJob>),
+    /// Answer a fact request.
+    Facts(Box<FactsJob>),
     /// The watcher stopped: changes are no longer seen.
     WatcherStopped,
     /// Nothing arrived before the deadline.
@@ -343,6 +352,23 @@ impl Inbox {
         Some(answer)
     }
 
+    /// Puts in a fact request for the writer, and returns where the writer will answer it; none
+    /// when the inbox is closed or [`MAX_FACTS_WAITING`] requests wait already.
+    pub(crate) fn push_facts(
+        &self,
+        request: FactsRequest,
+    ) -> Option<Receiver<Result<FactsAnswer, String>>> {
+        let mut state = self.lock();
+        if state.is_closed || state.facts.len() >= MAX_FACTS_WAITING {
+            return None;
+        }
+        let (job, answer) = FactsJob::new(request);
+        state.facts.push_back(job);
+        drop(state);
+        self.arrived.notify_one();
+        Some(answer)
+    }
+
     /// How many changes the watcher put in since the daemon started.
     pub(crate) fn changes_in(&self) -> u64 {
         self.lock().changes_in
@@ -377,6 +403,7 @@ impl Inbox {
         let mut state = self.lock();
         state.is_closed = true;
         state.mining = None;
+        state.facts.clear();
     }
 
     /// Says the watcher stopped feeding the inbox.
@@ -387,8 +414,9 @@ impl Inbox {
 
     /// Waits until an event, a change, a mining, a stop or word of the watcher arrives, or `until`
     /// passes (never, when `None`), and says what to do: a stop first, then every event waiting,
-    /// then every change waiting, drained into one, then the mining, then that the watcher
-    /// stopped. Only the writer waits, so the changes it took before are indexed by now.
+    /// then every change waiting, drained into one, then the oldest fact request, so that a note
+    /// finds the files changed before it indexed, then the mining, then that the watcher stopped.
+    /// Only the writer waits, so the changes it took before are indexed by now.
     pub(crate) fn wait(&self, until: Option<Instant>) -> Work {
         let mut state = self.lock();
         state.changes_indexed = state.changes_taken;
@@ -404,6 +432,9 @@ impl Inbox {
             }
             if !state.changes.is_empty() || state.is_overflowed {
                 return Work::Changed(drain(&mut state));
+            }
+            if let Some(job) = state.facts.pop_front() {
+                return Work::Facts(Box::new(job));
             }
             if let Some(job) = state.mining.take() {
                 return Work::Mining(Box::new(job));

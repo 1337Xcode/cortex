@@ -19,6 +19,7 @@
 //! top level, and its errors are reported, never matched.
 
 mod claim;
+mod facts;
 mod given;
 mod global_ignore;
 mod graph;
