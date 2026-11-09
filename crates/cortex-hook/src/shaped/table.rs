@@ -55,7 +55,8 @@ pub(crate) enum Outcome {
     ResponseSuccess,
     /// The payload's `tool_is_error` field says.
     ToolIsError,
-    /// The payload's `error` says: a call that reports one, not empty, failed.
+    /// The payload's `error` says: an empty one is a success, any other a failure, none at all
+    /// unknown.
     PayloadError,
     /// The response says: one with an `error` is a failure, one without a success.
     ResponseError,
@@ -152,7 +153,12 @@ impl Tools for ToolTable {
             Outcome::PostIsSuccess { failure_event } => event_name != failure_event,
             Outcome::ResponseSuccess => payload.tool_response.as_ref()?.success?,
             Outcome::ToolIsError => !payload.tool_is_error?,
-            Outcome::PayloadError => payload.error.as_deref().is_none_or(str::is_empty),
+            // No `error` at all says nothing; one that is not text still reports a failure.
+            Outcome::PayloadError => match payload.error.as_ref()? {
+                serde_json::Value::Null => return None,
+                serde_json::Value::String(message) => message.is_empty(),
+                _ => false,
+            },
             Outcome::ResponseError => payload
                 .tool_response
                 .as_ref()?
@@ -326,6 +332,30 @@ mod tests {
         );
         let unmoved = serde_json::json!({"toolCall": "text", "workspacePaths": "C:/repo"});
         assert_eq!(read(unmoved.clone())?, unmoved);
+        Ok(())
+    }
+
+    /// A table whose calls end as their payload's `error` says, as Antigravity's.
+    const ERRORS: ToolTable = ToolTable {
+        outcome: Outcome::PayloadError,
+        ..RENAMING
+    };
+
+    /// An empty `error` is a success and any other a failure, text or not (a code in an object
+    /// still reports one); a payload with no `error`, or a `null` one, says nothing of the call.
+    #[test]
+    fn a_payload_s_error_of_any_kind_is_a_failure() -> Result<(), serde_json::Error> {
+        let ended = |payload: &str| -> Result<Option<bool>, serde_json::Error> {
+            let payload: Payload<'_> = serde_json::from_str(payload)?;
+            Ok(ERRORS
+                .result(ToolKind::Shell, "PostToolUse", &payload)
+                .map(|result| result.is_success))
+        };
+        assert_eq!(ended(r#"{"error":""}"#)?, Some(true));
+        assert_eq!(ended(r#"{"error":"exit status 1"}"#)?, Some(false));
+        assert_eq!(ended(r#"{"error":{"code":1}}"#)?, Some(false));
+        assert_eq!(ended(r#"{"error":null}"#)?, None);
+        assert_eq!(ended("{}")?, None);
         Ok(())
     }
 

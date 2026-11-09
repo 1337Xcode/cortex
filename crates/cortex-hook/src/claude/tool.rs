@@ -207,7 +207,7 @@ fn range(start: i64, count: i64) -> Option<LineRange> {
 /// How a call of `tool`, reported as `event_name`, ended.
 fn result(tool: ToolKind, event_name: &str, payload: &Payload<'_>) -> ToolResult {
     if event_name == "PostToolUseFailure" {
-        let message = payload.error.as_deref();
+        let message = payload.error.as_ref().and_then(serde_json::Value::as_str);
         return ToolResult {
             exit_code: message
                 .and_then(exit_code)

@@ -84,7 +84,7 @@ pub(crate) fn event(
         end_reason: match entry.hook {
             HookKind::SessionEnd => payload.reason.as_deref(),
             // A turn that ended on an error names it (Claude Code's `StopFailure`).
-            HookKind::Stop => payload.error.as_deref(),
+            HookKind::Stop => payload.error.as_ref().and_then(serde_json::Value::as_str),
             _ => None,
         }
         .and_then(name),
