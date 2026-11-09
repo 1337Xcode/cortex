@@ -1,0 +1,71 @@
+{
+  "runs": 40,
+  "incomplete": [],
+  "success": {
+    "value": 1.0,
+    "low": 1.0,
+    "high": 1.0
+  },
+  "delivered": 34,
+  "labelled": 34,
+  "used": 30,
+  "precision": {
+    "value": 0.8823529411764706,
+    "low": 0.7,
+    "high": 1.0
+  },
+  "median_cumulative_input": 188326.0,
+  "median_turns": 8.0,
+  "median_tool_calls": 7.0,
+  "cost_usd": 6.438299400000001,
+  "agents": [
+    "2.1.318 claude-sonnet-5-5 via none"
+  ],
+  "failed_sessions": 0,
+  "shown": {
+    "lines": 2228,
+    "differ": 0,
+    "unread_sessions": 0
+  },
+  "texts": {
+    "post_tool": {
+      "count": 35,
+      "tokens": 1659
+    },
+    "pre_tool": {
+      "count": 32,
+      "tokens": 1057
+    },
+    "prompt": {
+      "count": 70,
+      "tokens": 42585
+    },
+    "session_start": {
+      "count": 76,
+      "tokens": 3279
+    }
+  },
+  "texts_share": 0.030640797028777332,
+  "warnings": {
+    "call_site": {
+      "given": 28,
+      "labelled": 28,
+      "resolved": 20
+    },
+    "cochange": {
+      "given": 8,
+      "labelled": 8,
+      "resolved": 0
+    },
+    "test": {
+      "given": 25,
+      "labelled": 25,
+      "resolved": 5
+    }
+  },
+  "warning_precision": {
+    "value": 0.4098360655737705,
+    "low": 0.09523809523809523,
+    "high": 0.6530612244897959
+  }
+}
