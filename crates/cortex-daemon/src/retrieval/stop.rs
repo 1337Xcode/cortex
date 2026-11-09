@@ -2,13 +2,13 @@
 //! store: only when the user turned `strict_mode` on, and once a task. A held-out task is never
 //! given one: it is given no warnings, so none of them is recorded to be followed up.
 
-use cortex_core::Event;
+use cortex_core::{Event, Ulid};
 use cortex_retrieve::stop_reason;
 
 use super::{Answer, Service};
 use crate::claim::Claim;
 use crate::given::{Given, text_record};
-use crate::stopped::Stopped;
+use crate::once::ClaimedOnce;
 
 impl Service {
     /// The reason `event`, an agent's stop, gets to go on, and what to record of it: none with
@@ -16,7 +16,7 @@ impl Service {
     /// task has none), or when `stopped` says the task was given its reason already. The task is claimed
     /// only once there is a reason to give. A store that cannot be read gives nothing, and the
     /// error is logged.
-    pub(crate) fn stop_reason(&self, event: &Event, stopped: &Stopped) -> Answer {
+    pub(crate) fn stop_reason(&self, event: &Event, stopped: &ClaimedOnce<Ulid>) -> Answer {
         if !self.edits.is_strict_mode {
             return Answer::default();
         }

@@ -607,7 +607,8 @@ fn only_so_many_sessions_keep_their_last_task() -> TestResult {
 /// `a.py` edited, `b.py` read and the failed run. `s2` edits `b.py` and its answer ends at 2,401
 /// with no check: unknown, it leaves, as answered, `b.py` edited. `s3` edits `b.py` and its turn
 /// stops on a usage limit: abandoned, it leaves, as stopped, `b.py` edited and no failure; its
-/// next task edits `b.py` again, passes `cargo test` and is a success, which closes the handoff
+/// next task edits only `a.py` and passes, which closes nothing; the one after edits `b.py`, passes
+/// `cargo test` and is a success, which closes the handoff
 /// `s3` left. `s1`'s and `s2`'s stay open, the newest first.
 #[test]
 fn a_task_that_did_not_succeed_leaves_a_handoff() -> TestResult {
@@ -694,6 +695,22 @@ fn a_task_that_did_not_succeed_leaves_a_handoff() -> TestResult {
         last_failure: None,
         created_at_ms: 3_003,
     };
+    assert_eq!(
+        open(&store)?,
+        [left_by_s3.clone(), left_by_s2.clone(), left_by_s1.clone()]
+    );
+    // A success on another file settles none of it: `s3`'s handoff names `b.py`, this task edits
+    // only `a.py`.
+    let elsewhere = task(
+        "s3",
+        3_500,
+        vec![
+            edit("s3", 3_501, "a.py")?,
+            shell("s3", 3_502, "cargo test", Some(0))?,
+        ],
+    )?;
+    let (_, learned) = learning.one(&mut store, &elsewhere)?;
+    assert_eq!(learned.outcome, TaskOutcome::Success);
     assert_eq!(
         open(&store)?,
         [left_by_s3, left_by_s2.clone(), left_by_s1.clone()]

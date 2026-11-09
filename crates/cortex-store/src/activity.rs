@@ -280,6 +280,25 @@ impl Queries<'_> {
             .transpose()
     }
 
+    /// Whether session `session_id` has a task other than `task_id`: one indexed lookup, cheap
+    /// enough for every prompt.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn has_other_task(
+        self,
+        session_id: &Identifier,
+        task_id: Ulid,
+    ) -> Result<bool, StoreError> {
+        self.connection()
+            .prepare_cached(schema::SESSION_HAS_OTHER_TASK)
+            .and_then(|mut statement| {
+                statement.query_row((session_id.as_str(), task_id.to_string()), |row| row.get(0))
+            })
+            .map_err(sqlite("reading a session's tasks"))
+    }
+
     /// The tasks not ended whose last sign of work (their start, their own events, their
     /// session's events) is at or before `quiet_since_ms`: the tasks of sessions that went quiet
     /// without ending them, oldest first.

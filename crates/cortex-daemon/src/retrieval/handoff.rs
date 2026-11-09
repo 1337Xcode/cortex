@@ -3,13 +3,16 @@
 //! `coordination.handoff_idle_minutes`, or its turn stopped on an error), that the prompt concerns. A prompt concerns a handoff when one
 //! of the files its retrieval weighed (the three best, known whether or not the gate opened) is a
 //! file the stopped session edited or read, or when it asks to go on (continue, resume, pick up,
-//! carry on, finish). The handoff says what was left, and comes ahead of any work order.
+//! carry on, finish). The handoff says what was left, and comes ahead of any work order. Each
+//! handoff is claimed when it is given, so two first prompts answered at once do not both get it;
+//! the claim is given back if its text never reaches the agent.
 
 use cortex_coord::{Handed, handoff_text};
 use cortex_core::{Event, Identifier, RepoPath, SessionStatus, Ulid};
-use cortex_store::{HandoffEnd, HandoffRow, NodeId, Queries, SeenSession, StoreError};
+use cortex_store::{HandoffEnd, HandoffId, HandoffRow, NodeId, Queries, SeenSession, StoreError};
 
 use super::coordination::family_of;
+use crate::once::ClaimedOnce;
 
 /// How long a handoff is offered after its session stopped: a day, in milliseconds.
 const OFFERED_FOR_MS: i64 = 24 * 60 * 60 * 1_000;
@@ -18,10 +21,10 @@ const OFFERED_FOR_MS: i64 = 24 * 60 * 60 * 1_000;
 const GO_ON_WORDS: [&str; 5] = ["continue", "resume", "pick up", "carry on", "finish"];
 
 /// The handoff the prompt `prompt` of `event`, starting the task `task_id`, is given, its retrieval
-/// having weighed `weighed` and a session counting as done once quiet for `idle_ms`: the session
-/// that left it and its text. None unless this is the
-/// session's first prompt and an open handoff applies. The prompt's own task does not count: the
-/// event is queued before it is answered, so the writer may already have stored it.
+/// having weighed `weighed`, a session counting as done once quiet for `idle_ms` and the handoffs
+/// already given claimed in `handed`: the handoff and its text, claimed. None unless this is the
+/// session's first prompt and an open handoff, not given yet, applies. The prompt's own task does
+/// not count: the event is queued before it is answered, so the writer may already have stored it.
 ///
 /// # Errors
 ///
@@ -30,10 +33,9 @@ pub(super) fn handoff_for(
     queries: Queries<'_>,
     (event, prompt, task_id): (&Event, &str, Ulid),
     weighed: &[NodeId],
-    idle_ms: i64,
-) -> Result<Option<(Identifier, String)>, StoreError> {
-    let tasks = queries.tasks_of_session(&event.session_id)?;
-    if tasks.iter().any(|task| task.record.task_id != task_id) {
+    (idle_ms, handed): (i64, &ClaimedOnce<HandoffId>),
+) -> Result<Option<(HandoffId, String)>, StoreError> {
+    if queries.has_other_task(&event.session_id, task_id)? {
         return Ok(None);
     }
     let open = queries.open_handoffs_since(event.ts_ms.saturating_sub(OFFERED_FOR_MS))?;
@@ -53,6 +55,8 @@ pub(super) fn handoff_for(
     for row in &open {
         let record = &row.record;
         let is_concerned = concerns(weighed, &record.edited, &record.read);
+        // INVARIANT: silent-when-unsure (a handoff only for a prompt that asks to go on or weighs
+        // one of its files, and never a session's own)
         if family.contains(&record.from_session) || !(goes_on || is_concerned) {
             continue;
         }
@@ -69,8 +73,10 @@ pub(super) fn handoff_for(
             continue;
         }
         let agent = from.agent.title();
-        if let Some(text) = text_of(queries, row, (agent, event.ts_ms))? {
-            return Ok(Some((record.from_session.clone(), text)));
+        if let Some(text) = text_of(queries, row, (agent, event.ts_ms))?
+            && handed.claim(row.id)
+        {
+            return Ok(Some((row.id, text)));
         }
     }
     Ok(None)
@@ -230,5 +236,90 @@ mod tests {
         ] {
             assert!(!asks_to_go_on(prompt), "{prompt}");
         }
+    }
+
+    /// A Codex session `session`'s first prompt "Continue." at 2,000 ms.
+    fn first_prompt(session: &str) -> TestResult<(cortex_core::Event, Ulid)> {
+        let ts_ms = 2_000;
+        let event = cortex_core::Event {
+            event_id: Ulid::from_seed(ts_ms, session.as_bytes()),
+            ts_ms: 2_000,
+            agent: cortex_core::Agent::Codex,
+            agent_version: None,
+            session_id: Identifier::new(session)?,
+            parent_session_id: None,
+            cwd: std::path::PathBuf::from("/repo"),
+            repo_root: std::path::PathBuf::from("/repo"),
+            hook: cortex_core::HookKind::Prompt,
+            source: None,
+            tool: None,
+            tool_target: None,
+            tool_result: None,
+            prompt_text: Some("Continue.".to_owned()),
+            transcript_path: None,
+            model: None,
+            subagent_type: None,
+            compact_trigger: None,
+            end_reason: None,
+            is_probe: false,
+        };
+        let task_id = cortex_core::task_id_of_prompt(event.event_id, event.ts_ms);
+        Ok((event, task_id))
+    }
+
+    /// One open handoff, left by a Claude Code session `s1` that ended, read by the first prompts
+    /// of two Codex sessions answered before either is recorded: the first is given it and claims
+    /// it, the second is given nothing; once the first's text is known not to have reached its
+    /// agent, the claim given back, the second is given it.
+    #[test]
+    fn a_handoff_is_given_to_one_first_prompt() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut store = crate::test_store::writer(root.path())?;
+        let ops = crate::test_store::add_file(&mut store, "calc/ops.py", 1)?;
+        let session = |id: &str, agent| -> TestResult<cortex_store::SessionRecord> {
+            Ok(cortex_store::SessionRecord {
+                session_id: Identifier::new(id)?,
+                agent,
+                agent_version: None,
+                model: None,
+                parent_session_id: None,
+                cwd: None,
+                transcript_path: None,
+                started_at_ms: 100,
+            })
+        };
+        let mut transaction = store.transaction()?;
+        transaction.record_session(&session("s1", cortex_core::Agent::Claude)?)?;
+        transaction.record_session(&session("s2", cortex_core::Agent::Codex)?)?;
+        transaction.record_session(&session("s3", cortex_core::Agent::Codex)?)?;
+        transaction.end_session(&Identifier::new("s1")?, (1_500, SessionStatus::Ended))?;
+        transaction.leave_handoff(&cortex_store::HandoffRecord {
+            from_session: Identifier::new("s1")?,
+            task_id: Ulid::from_seed(1_000, b"s1"),
+            end: HandoffEnd::Left,
+            edited: vec![ops],
+            read: Vec::new(),
+            open_warnings: Vec::new(),
+            last_failure: None,
+            created_at_ms: 1_500,
+        })?;
+        transaction.commit()?;
+        let handed = ClaimedOnce::default();
+        let idle_ms = 30 * 60 * 1_000;
+        let given = |session: &str| -> TestResult<Option<HandoffId>> {
+            let (event, task_id) = first_prompt(session)?;
+            let found = handoff_for(
+                store.queries(),
+                (&event, "Continue.", task_id),
+                &[],
+                (idle_ms, &handed),
+            )?;
+            Ok(found.map(|(handoff, _)| handoff))
+        };
+        let first = given("s2")?.ok_or("s2 is given the handoff")?;
+        assert_eq!(given("s3")?, None);
+        handed.release(&first);
+        assert_eq!(given("s3")?, Some(first));
+        Ok(())
     }
 }

@@ -32,6 +32,7 @@ mod log;
 mod meter;
 mod miner;
 mod noticed;
+mod once;
 mod paced;
 mod pending;
 mod positions;
@@ -41,7 +42,6 @@ mod retrieval;
 mod server;
 pub mod settings;
 mod signatures;
-mod stopped;
 #[cfg(test)]
 mod test_store;
 mod told;

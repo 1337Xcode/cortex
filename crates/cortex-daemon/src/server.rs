@@ -490,7 +490,9 @@ impl Server {
         let mut answer = self
             .with_service(move |service, graph, uncommitted| {
                 let answer = match asked {
-                    Asked::WorkOrder => service.prompt(&event, graph, uncommitted),
+                    Asked::WorkOrder => {
+                        service.prompt(&event, (graph, uncommitted), &claims.handed)
+                    }
                     Asked::Primer => service.primer(&event, graph, &claims.recapped),
                     Asked::Warnings => service.post_edit(&event, (&signatures, &claims.told)),
                     Asked::ReadHint => service.read_hint(&event),

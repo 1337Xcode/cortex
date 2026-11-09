@@ -32,12 +32,13 @@ use cortex_index::Grammars;
 use cortex_learn::{raise_of, recent_precision};
 use cortex_retrieve::{Graph, Outcome, Request, Retrieval, Span, locate, primer, retrieve};
 use cortex_store::{
-    InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError, TaskRow,
+    HandoffId, InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError, TaskRow,
 };
 
 pub(crate) use self::coordination::Coordination;
 use crate::claim::Claim;
 use crate::given::{Given, text_record};
+use crate::once::ClaimedOnce;
 use crate::recapped::Recapped;
 
 use self::handoff::handoff_for;
@@ -142,12 +143,14 @@ impl Service {
 
     /// The work order `event`, a prompt, gets over `graph`, seeded with `uncommitted`, the file
     /// nodes of the uncommitted diff, and what to record of the retrieval; nothing for a prompt
-    /// that asks for no code. A store that cannot be read gives nothing, and the error is logged.
+    /// that asks for no code. A session's first prompt may also get a handoff, claimed in `handed`
+    /// so that it is given once. A store that cannot be read gives nothing, and the error is
+    /// logged.
     pub(crate) fn prompt(
         &self,
         event: &Event,
-        graph: Option<&Arc<Graph<NodeId>>>,
-        uncommitted: &[NodeId],
+        (graph, uncommitted): (Option<&Arc<Graph<NodeId>>>, &[NodeId]),
+        handed: &ClaimedOnce<HandoffId>,
     ) -> Answer {
         let Some((graph, prompt)) = graph.zip(event.prompt_for_work()) else {
             return Answer::default();
@@ -198,15 +201,17 @@ impl Service {
                     queries,
                     (event, prompt, task_id),
                     &retrieval.weighed,
-                    idle_ms,
+                    (idle_ms, handed),
                 )?
             };
+            let mut claims = Vec::new();
             let text = match handoff {
-                Some((from, handed)) => {
+                Some((handoff, handoff_text)) => {
                     // Each line given ends its line, as a work order's lines and notices do.
-                    let line = format!("{handed}\n");
+                    let line = format!("{handoff_text}\n");
                     let record = text_record(event, Some(task_id), &line);
-                    given.push(Given::Handoff(from, event.session_id.clone(), record));
+                    given.push(Given::Handoff(handoff, event.session_id.clone(), record));
+                    claims.push(Claim::Handed(handoff));
                     Some(line + text.as_deref().unwrap_or_default())
                 }
                 None => text,
@@ -214,6 +219,7 @@ impl Service {
             Ok(Answer {
                 text,
                 given,
+                claims,
                 ..Answer::default()
             })
         });

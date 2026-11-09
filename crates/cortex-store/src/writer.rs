@@ -474,18 +474,15 @@ impl WriteTx<'_> {
         self.atomically(|connection| handoffs::leave(connection, record))
     }
 
-    /// Closes the open handoff session `from_session` left, as picked up by session `by`: the
-    /// session given it, or the one that left it once it finished the work itself.
+    /// Closes handoff `id`, as picked up by session `by`: the session given it, or the one that
+    /// left it once it finished the work itself. `false` when it was closed already.
     ///
     /// # Errors
     ///
     /// [`StoreError::TransactionLost`] and SQLite errors.
-    pub fn close_handoff(
-        &mut self,
-        from_session: &Identifier,
-        by: &Identifier,
-    ) -> Result<(), StoreError> {
-        self.atomically(|connection| handoffs::close_of_session(connection, from_session, by))
+    pub fn close_handoff(&mut self, id: HandoffId, by: &Identifier) -> Result<bool, StoreError> {
+        // INVARIANT: single-writer (a handoff is closed only through the writer, by its id)
+        self.atomically(|connection| handoffs::close(connection, id, by))
     }
 
     /// Records `notice` as told to its session as it was made: given in the answer to the hook

@@ -6,7 +6,7 @@
 //! success in the session that left it.
 
 use cortex_core::{CommandKind, Identifier, Ulid};
-use rusqlite::{Connection, OptionalExtension as _};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{StoreError, sqlite};
@@ -38,6 +38,8 @@ pub enum HandoffEnd {
 }
 
 /// What a session whose task did not succeed leaves.
+// INVARIANT: no-content-stored (node ids, a runner's name, a check's kind and an exit code: no
+// prompt text, command line or output)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoffRecord {
     /// The session that left it.
@@ -123,9 +125,9 @@ pub(crate) fn leave(
         .map_err(not_text("handoffs.last_failure"))?;
     let session = record.from_session.as_str();
     connection
-        .prepare_cached(schema::HANDOFFS_CLOSE_OF_SESSION)
-        .and_then(|mut statement| statement.execute((session, session)))
-        .map_err(sqlite("closing a session's handoff"))?;
+        .prepare_cached(schema::HANDOFFS_REPLACE_OF_SESSION)
+        .and_then(|mut statement| statement.execute([session]))
+        .map_err(sqlite("replacing a session's handoff"))?;
     connection
         .prepare_cached(schema::HANDOFF_LEAVE)
         .and_then(|mut statement| {
@@ -142,17 +144,18 @@ pub(crate) fn leave(
         .map_err(sqlite("leaving a handoff"))
 }
 
-/// Closes the open handoff session `from_session` left, as picked up by session `by`.
-pub(crate) fn close_of_session(
+/// Closes handoff `id`, as picked up by session `by`: `false` when it was closed already, so that a
+/// handoff given twice is closed once, by the first to record it.
+pub(crate) fn close(
     connection: &Connection,
-    from_session: &Identifier,
+    id: HandoffId,
     by: &Identifier,
-) -> Result<(), StoreError> {
+) -> Result<bool, StoreError> {
     connection
-        .prepare_cached(schema::HANDOFFS_CLOSE_OF_SESSION)
-        .and_then(|mut statement| statement.execute((from_session.as_str(), by.as_str())))
-        .map_err(sqlite("closing a session's handoff"))?;
-    Ok(())
+        .prepare_cached(schema::HANDOFF_CLOSE)
+        .and_then(|mut statement| statement.execute((id.0, by.as_str())))
+        .map(|rows| rows > 0)
+        .map_err(sqlite("closing a handoff"))
 }
 
 impl Queries<'_> {
@@ -162,12 +165,30 @@ impl Queries<'_> {
     ///
     /// SQLite errors, or a row that is not what the store writes.
     pub fn open_handoffs_since(self, since_ms: i64) -> Result<Vec<HandoffRow>, StoreError> {
+        self.handoffs(schema::HANDOFFS_OPEN_SINCE, since_ms)
+    }
+
+    /// The open handoffs session `session` left, the latest first.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors, or a row that is not what the store writes.
+    pub fn open_handoffs_of(self, session: &Identifier) -> Result<Vec<HandoffRow>, StoreError> {
+        self.handoffs(schema::HANDOFFS_OPEN_OF_SESSION, session.as_str())
+    }
+
+    /// The handoffs statement `sql` finds with its one parameter `key`.
+    fn handoffs(
+        self,
+        sql: &'static str,
+        key: impl rusqlite::ToSql,
+    ) -> Result<Vec<HandoffRow>, StoreError> {
         let mut statement = self
             .connection()
-            .prepare_cached(schema::HANDOFFS_OPEN_SINCE)
+            .prepare_cached(sql)
             .map_err(sqlite("reading handoffs"))?;
         let rows = statement
-            .query_map([since_ms], |row| {
+            .query_map([key], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -184,34 +205,6 @@ impl Queries<'_> {
             handoffs.push(row_of(row.map_err(sqlite("reading handoffs"))?)?);
         }
         Ok(handoffs)
-    }
-
-    /// The open handoff session `session` left, if it left one.
-    ///
-    /// # Errors
-    ///
-    /// SQLite errors, or a row that is not what the store writes.
-    pub fn open_handoff_of(self, session: &Identifier) -> Result<Option<HandoffRow>, StoreError> {
-        let found = self
-            .connection()
-            .prepare_cached(schema::HANDOFF_OPEN_OF_SESSION)
-            .and_then(|mut statement| {
-                statement
-                    .query_row([session.as_str()], |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                            row.get::<_, String>(4)?,
-                            row.get::<_, Option<String>>(5)?,
-                            row.get::<_, i64>(6)?,
-                        ))
-                    })
-                    .optional()
-            })
-            .map_err(sqlite("reading a handoff"))?;
-        found.map(row_of).transpose()
     }
 }
 

@@ -406,9 +406,11 @@ fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
     let mut transaction = writer.transaction()?;
     transaction.leave_handoff(&first)?;
     transaction.commit()?;
+    let firsts = writer.queries().open_handoffs_of(&s1)?;
+    let first_id = firsts.first().ok_or("the first handoff")?.id;
     assert_eq!(
-        writer.queries().open_handoff_of(&s1)?.map(|row| row.record),
-        Some(first)
+        firsts.into_iter().map(|row| row.record).collect::<Vec<_>>(),
+        [first]
     );
     let second = HandoffRecord {
         end: HandoffEnd::Answered,
@@ -432,10 +434,23 @@ fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
         .collect();
     assert_eq!(open, [second.clone(), other.clone()]);
     assert_eq!(writer.queries().open_handoffs_since(2_200)?.len(), 1);
+    // Closed by its id: the first, which the second replaced when it was left, is closed already;
+    // the second closes once, and the second time finds it closed.
+    let second_id = writer
+        .queries()
+        .open_handoffs_of(&s1)?
+        .first()
+        .ok_or("the second handoff")?
+        .id;
     let mut transaction = writer.transaction()?;
-    transaction.close_handoff(&s1, &s2)?;
+    let closed = (
+        transaction.close_handoff(first_id, &s2)?,
+        transaction.close_handoff(second_id, &s2)?,
+        transaction.close_handoff(second_id, &s2)?,
+    );
     transaction.commit()?;
-    assert_eq!(writer.queries().open_handoff_of(&s1)?, None);
+    assert_eq!(closed, (false, true, false));
+    assert_eq!(writer.queries().open_handoffs_of(&s1)?, []);
     let open: Vec<HandoffRecord> = writer
         .queries()
         .open_handoffs_since(0)?

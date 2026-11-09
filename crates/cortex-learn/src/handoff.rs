@@ -4,7 +4,8 @@
 //! stopped on an error such as a usage limit) having read one, leaves how it ended, the files it
 //! edited and read, the warnings its edits got that were not resolved, and its last check command
 //! when that one failed, so that another session, of any agent, can pick the work up once this
-//! one is done with it. A task that succeeds closes the open handoff its own session left.
+//! one is done with it. A task that succeeds closes the open handoffs its own session left that
+//! name a file it edited: the work it settled, and no other.
 
 use cortex_core::{Identifier, TaskOutcome};
 use cortex_store::{HandoffEnd, HandoffRecord, LastFailure, NodeId, StoreError, WriteTx};
@@ -13,8 +14,8 @@ use crate::task_state::{Step, TaskEnd, TaskState};
 
 /// Leaves the handoff `state`, a task of session `session` that ended at `ended_at_ms` judged
 /// `outcome`, calls for in `transaction`: one for a task that did not succeed and edited an indexed
-/// file, or was cut off having read one; for a task that succeeded, its session's open handoff
-/// closed. Nothing otherwise.
+/// file, or was cut off having read one; for a task that succeeded, its session's open handoffs
+/// naming a file it edited closed. Nothing otherwise.
 ///
 /// # Errors
 ///
@@ -25,7 +26,15 @@ pub(crate) fn leave_handoff(
     (session, ended_at_ms, outcome): (&Identifier, i64, TaskOutcome),
 ) -> Result<(), StoreError> {
     if outcome == TaskOutcome::Success {
-        return transaction.close_handoff(session, session);
+        // A success settles only the earlier work it touched: a handoff naming a file this task
+        // edited is closed, one about other files stays for the next session.
+        let (edited, _) = files_of(state);
+        for row in transaction.queries().open_handoffs_of(session)? {
+            if row.record.edited.iter().any(|node| edited.contains(node)) {
+                transaction.close_handoff(row.id, session)?;
+            }
+        }
+        return Ok(());
     }
     let end = match state.end() {
         Some(TaskEnd::Answered) => HandoffEnd::Answered,

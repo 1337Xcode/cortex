@@ -112,6 +112,9 @@ pub(crate) const TASK_BY_ID: &str = "SELECT rowid, task_id, session_id, seq, sta
 pub(crate) const TASK_OPEN_OF_SESSION: &str = "SELECT rowid, task_id, session_id, seq, \
      started_at, ended_at, prompt_hash, prompt_excerpt, holdout, outcome, outcome_evidence \
      FROM tasks WHERE session_id = ?1 AND ended_at IS NULL ORDER BY seq DESC LIMIT 1";
+/// Whether session ?1 has a task other than ?2.
+pub(crate) const SESSION_HAS_OTHER_TASK: &str =
+    "SELECT EXISTS (SELECT 1 FROM tasks WHERE session_id = ?1 AND task_id <> ?2)";
 /// The tasks not ended whose last sign of work, the latest of their start, their own events and
 /// their session's events, is at or before ?1: task id, session id and that time, oldest first.
 pub(crate) const QUIET_OPEN_TASKS: &str = "SELECT task_id, session_id, last FROM (SELECT \
@@ -695,17 +698,20 @@ pub(crate) const NOTICES_WAITING: &str = "SELECT notice_id, text, created_at FRO
 /// failure ?5, at ?6.
 pub(crate) const HANDOFF_LEAVE: &str = "INSERT INTO handoffs (from_session, task_id, \
      working_set, open_warnings, last_failure, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
-/// Closes the open handoff session ?1 left, as picked up by session ?2.
-pub(crate) const HANDOFFS_CLOSE_OF_SESSION: &str =
-    "UPDATE handoffs SET consumed_by = ?2 WHERE from_session = ?1 AND consumed_by IS NULL";
+/// Closes the open handoffs session ?1 left, as replaced by the one it leaves now.
+pub(crate) const HANDOFFS_REPLACE_OF_SESSION: &str =
+    "UPDATE handoffs SET consumed_by = ?1 WHERE from_session = ?1 AND consumed_by IS NULL";
+/// Closes handoff ?1, as picked up by session ?2, unless it was already closed.
+pub(crate) const HANDOFF_CLOSE: &str =
+    "UPDATE handoffs SET consumed_by = ?2 WHERE handoff_id = ?1 AND consumed_by IS NULL";
 /// The open handoffs left at ?1 or later, the newest first.
 pub(crate) const HANDOFFS_OPEN_SINCE: &str = "SELECT handoff_id, from_session, task_id, \
      working_set, open_warnings, last_failure, created_at FROM handoffs \
      WHERE consumed_by IS NULL AND created_at >= ?1 ORDER BY created_at DESC, handoff_id DESC";
-/// The open handoff session ?1 left, the latest if there were several.
-pub(crate) const HANDOFF_OPEN_OF_SESSION: &str = "SELECT handoff_id, from_session, task_id, \
+/// The open handoffs session ?1 left, the latest first.
+pub(crate) const HANDOFFS_OPEN_OF_SESSION: &str = "SELECT handoff_id, from_session, task_id, \
      working_set, open_warnings, last_failure, created_at FROM handoffs \
-     WHERE from_session = ?1 AND consumed_by IS NULL ORDER BY handoff_id DESC LIMIT 1";
+     WHERE from_session = ?1 AND consumed_by IS NULL ORDER BY handoff_id DESC";
 /// Marks notice ?1 delivered at ?2, unless it was already.
 pub(crate) const NOTICE_DELIVER: &str =
     "UPDATE notices SET delivered_at = ?2 WHERE notice_id = ?1 AND delivered_at IS NULL";
