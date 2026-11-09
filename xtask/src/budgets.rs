@@ -19,8 +19,9 @@ enum Platforms {
     Every,
     /// On the machines hook latency is specified on, macOS and Linux. On Windows starting a
     /// process alone takes 6 to 7 ms at the median and over 10 ms at the 95th percentile, most of
-    /// a hook's time and more than its cold start's budget, so there the hooks are measured and
-    /// printed, not checked.
+    /// a hook's time and more than its cold start's budget; and the malware protection reads
+    /// through the large files a benchmark writes, which made the same batch of upkeep take 26 ms
+    /// or 755 ms. There these budgets are measured and printed, not checked.
     Reference,
 }
 
@@ -39,14 +40,15 @@ struct Budget {
 }
 
 /// The benchmarks the budgets read: each package and its benchmark target.
-const BENCHES: [(&str, &str); 3] = [
+const BENCHES: [(&str, &str); 4] = [
     ("cortex-index", "index"),
     ("cortex-retrieve", "spread"),
+    ("cortex-daemon", "upkeep"),
     ("cortex-cli", "hooks"),
 ];
 
 /// Every budget a benchmark checks. The limits are the product's latency budgets.
-const BUDGETS: [Budget; 22] = [
+const BUDGETS: [Budget; 24] = [
     Budget {
         group: "index",
         function: "initial_10k",
@@ -154,6 +156,24 @@ const BUDGETS: [Budget; 22] = [
         what: "two-stage spreading over 1,000,000 nodes",
         limit: Duration::from_millis(120),
         platforms: Platforms::Every,
+    },
+    // Upkeep stops a run after 2 minutes and goes on at the next; a large store's whole pass
+    // through its jobs is less work than one run may do. Between two batches it lets the writer
+    // record the hook events waiting, so that a batch keeps them waiting no longer than an index
+    // does: the index lets them in every 250 ms.
+    Budget {
+        group: "upkeep",
+        function: "run_large",
+        what: "a pass of upkeep through its jobs on a large store, its waits left out",
+        limit: Duration::from_secs(120),
+        platforms: Platforms::Every,
+    },
+    Budget {
+        group: "upkeep",
+        function: "longest_batch_large",
+        what: "the longest batch of a pass of upkeep on a large store",
+        limit: Duration::from_millis(250),
+        platforms: Platforms::Reference,
     },
     Budget {
         group: "retrieval",
@@ -340,8 +360,9 @@ mod tests {
     }
 
     /// Every hook the benchmarks run has a budget, read from the hooks group with the daemon running
-    /// and from its own group with the daemon down; the index's two budgets, spreading's four and
-    /// retrieval's hold everywhere, spreading and retrieval within 120 ms.
+    /// and from its own group with the daemon down; the index's two budgets, spreading's four,
+    /// upkeep's pass and retrieval's hold everywhere, spreading and retrieval within 120 ms; upkeep's
+    /// pass within 2 minutes, and its longest batch within 250 ms where the hooks' budgets hold.
     #[test]
     fn every_hook_benchmark_has_its_budget() {
         let hooks: Vec<(&str, u128)> = BUDGETS
@@ -393,7 +414,20 @@ mod tests {
                 "nodes/100000",
                 "nodes/1000000",
                 "two_stage_nodes/1000000",
+                "run_large",
                 "medium_10k"
+            ]
+        );
+        let upkeep: Vec<(&str, u128, Platforms)> = BUDGETS
+            .iter()
+            .filter(|budget| budget.group == "upkeep")
+            .map(|budget| (budget.function, budget.limit.as_millis(), budget.platforms))
+            .collect();
+        assert_eq!(
+            upkeep,
+            [
+                ("run_large", 120_000, Platforms::Every),
+                ("longest_batch_large", 250, Platforms::Reference)
             ]
         );
         let retrieving: Vec<u128> = BUDGETS

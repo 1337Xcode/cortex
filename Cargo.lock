@@ -398,6 +398,7 @@ dependencies = [
  "cortex-meter",
  "cortex-retrieve",
  "cortex-store",
+ "criterion",
  "interprocess",
  "tempfile",
  "tokio",

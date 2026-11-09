@@ -27,11 +27,11 @@ pub(crate) const UPKEEP_RUN_BUDGET: Duration = Duration::from_secs(120);
 /// How much the write-ahead log may hold before upkeep waits: 32 MiB, half the 64 MiB at which
 /// the writer checkpoints it inside a commit, which in the upkeep benchmark kept a hook event
 /// waiting 65 to 204 ms, and seconds while the disk was busy. A batch writes a few MiB at most.
-pub(crate) const LOG_LIMIT_BYTES: u64 = 32 * 1_024 * 1_024;
+pub const LOG_LIMIT_BYTES: u64 = 32 * 1_024 * 1_024;
 
 /// How long upkeep waits once the log holds too much: two of the checkpointer's one-second
 /// periods, so that it has copied every page upkeep wrote.
-pub(crate) const PACE_WAIT: Duration = Duration::from_secs(2);
+pub const PACE_WAIT: Duration = Duration::from_secs(2);
 
 /// Rows weighed or deleted in one batch: a transaction short enough that a hook event waiting
 /// behind it is recorded within milliseconds.
@@ -55,39 +55,39 @@ const VACUUM_BATCH_PAGES: u32 = 500;
 /// What upkeep weighs with: the settings that say how links and interest fade, how long a
 /// position can hold at the longest, and how much the write-ahead log may hold.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct UpkeepSettings {
+pub struct UpkeepSettings {
     /// `learning.link_decay`.
-    pub(crate) link_decay: f64,
+    pub link_decay: f64,
     /// `learning.interest_decay`.
-    pub(crate) interest_decay: f64,
+    pub interest_decay: f64,
     /// The longest any position holds, in milliseconds.
-    pub(crate) longest_hold_ms: i64,
+    pub longest_hold_ms: i64,
     /// How much the write-ahead log may hold before a run stops, [`LOG_LIMIT_BYTES`].
-    pub(crate) log_limit_bytes: u64,
+    pub log_limit_bytes: u64,
 }
 
 /// What a run removed or changed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct Swept {
+pub struct Swept {
     /// Links of use removed.
-    pub(crate) links: u64,
+    pub links: u64,
     /// Nodes whose interest was removed.
-    pub(crate) interest: u64,
+    pub interest: u64,
     /// Facts deleted.
-    pub(crate) facts: u64,
+    pub facts: u64,
     /// Events deleted.
-    pub(crate) events: u64,
+    pub events: u64,
     /// Episodes deleted.
-    pub(crate) episodes: u64,
+    pub episodes: u64,
     /// Positions removed.
-    pub(crate) positions: u64,
+    pub positions: u64,
     /// Free pages given back to the file system.
-    pub(crate) pages: u64,
+    pub pages: u64,
 }
 
 /// Why a run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Ended {
+pub enum Ended {
     /// Every job is done.
     Done,
     /// Other work waits: the run carries on once it is done.
@@ -182,7 +182,7 @@ enum Step {
 
 /// Upkeep's place between runs.
 #[derive(Debug)]
-pub(crate) struct Upkeep {
+pub struct Upkeep {
     /// The next batch to run.
     step: Step,
     /// Whether the last run paced and no batch has run since: the next run writes a batch before
@@ -209,7 +209,7 @@ impl Upkeep {
     /// # Errors
     ///
     /// The store's errors; the batch that failed is rolled back and is the next run's first.
-    pub(crate) fn run(
+    pub fn run(
         &mut self,
         writer: &mut Writer,
         (now_ms, settings): (i64, &UpkeepSettings),

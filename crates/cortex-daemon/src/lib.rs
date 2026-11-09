@@ -53,6 +53,7 @@ mod upkeep;
 mod worktree;
 
 pub use instance::is_running;
+pub use upkeep::{Ended, LOG_LIMIT_BYTES, PACE_WAIT, Swept, Upkeep, UpkeepSettings};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};

@@ -27,9 +27,14 @@ tracing-subscriber.workspace = true
 widestring.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 tempfile.workspace = true
 # A paused clock, so that a test of the 10 s frame timeout takes no time.
 tokio = { workspace = true, features = ["test-util"] }
+
+[[bench]]
+name = "upkeep"
+harness = false
 
 [lints]
 workspace = true
