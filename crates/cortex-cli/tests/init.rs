@@ -1004,7 +1004,7 @@ fn init_refuses_folders_that_lead_outside() -> TestResult {
             let link = repo.path().join(name);
             std::os::unix::fs::symlink(target, &link)?;
             let _daemon = StopsDaemon::of(repo.path(), home.path());
-            let run = init(repo.path(), home.path(), &[])?;
+            let run = init(repo.path(), home.path(), &["--agents", "claude"])?;
             assert!(!run.is_success, "{name}");
             assert!(run.stderr.contains("leads elsewhere"), "{}", run.stderr);
             assert_eq!(std::fs::read_dir(target)?.count(), 0, "{name}");
@@ -1048,7 +1048,7 @@ fn init_leaves_a_link_to_nothing() -> TestResult {
     let settings = repo.path().join(".claude").join("settings.local.json");
     std::os::unix::fs::symlink(repo.path().join("gone.json"), &settings)?;
     let _daemon = StopsDaemon::of(repo.path(), home.path());
-    let run = init(repo.path(), home.path(), &[])?;
+    let run = init(repo.path(), home.path(), &["--agents", "claude"])?;
     assert!(!run.is_success);
     assert!(
         run.stderr
