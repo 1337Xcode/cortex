@@ -23,6 +23,8 @@ pub(crate) struct Asked {
     pub(crate) answer: Result<Answer, ClientError>,
     /// The Cortex version of the daemon this command stopped and replaced, if it did.
     pub(crate) replaced: Option<String>,
+    /// Why an older daemon that answered was not replaced after, when it was not.
+    pub(crate) not_replaced: Option<ClientError>,
 }
 
 /// Asks the daemon of the repository at `root`, whose user folder is `user`, `body` as a command
@@ -33,9 +35,24 @@ pub(crate) fn ask_current(
     body: &RequestBody,
     deadline: Instant,
 ) -> Asked {
+    let first = ask(
+        &user.run_files(&RepoId::of(root)),
+        Role::Cli,
+        body.clone(),
+        deadline,
+    );
+    settle(root, user, body, first)
+}
+
+/// What [`ask_current`] gives once the daemon was asked `body` and answered `first`: that answer,
+/// unless the daemon is older than this build, which is then replaced and the new one asked.
+fn settle(
+    root: &Path,
+    user: &UserFolder,
+    body: &RequestBody,
+    first: Result<Answer, ClientError>,
+) -> Asked {
     let repo_id = RepoId::of(root);
-    let files = user.run_files(&repo_id);
-    let first = ask(&files, Role::Cli, body.clone(), deadline);
     let version = match &first {
         Ok(answer) => answer.welcome.cortex_version.as_str(),
         Err(ClientError::Mismatch(theirs)) => theirs.cortex_version.as_str(),
@@ -45,17 +62,51 @@ pub(crate) fn ask_current(
         return Asked {
             answer: first,
             replaced: None,
+            not_replaced: None,
         };
     }
     match replace(root, (user, &repo_id), body) {
         Ok((answer, replaced)) => Asked {
             answer: Ok(answer),
             replaced,
+            not_replaced: None,
         },
         Err(error) => Asked {
             answer: Err(error),
             replaced: None,
+            not_replaced: None,
         },
+    }
+}
+
+/// Asks the daemon of the repository at `root`, whose user folder is `user`, `body`, a request
+/// that changes what the daemon keeps, before `deadline`, so that one daemon only carries it out:
+/// an older daemon of this protocol that answered keeps its answer and is replaced after, asked
+/// only its status; one of another protocol, which cannot have taken it, is replaced first and the
+/// new daemon asked; with none running, one of this build is started and asked.
+pub(crate) fn ask_once_started(
+    root: &Path,
+    user: &UserFolder,
+    body: &RequestBody,
+    deadline: Instant,
+) -> Asked {
+    let repo_id = RepoId::of(root);
+    let first = ask(&user.run_files(&repo_id), Role::Cli, body.clone(), deadline);
+    match &first {
+        Ok(answer) if is_older_than_this_build(&answer.welcome.cortex_version) => {
+            let (replaced, not_replaced) =
+                match replace(root, (user, &repo_id), &RequestBody::Status) {
+                    Ok((_, replaced)) => (replaced, None),
+                    Err(error) => (None, Some(error)),
+                };
+            Asked {
+                answer: first,
+                replaced,
+                not_replaced,
+            }
+        }
+        Err(ClientError::NotRunning) => started(root, user, body),
+        _ => settle(root, user, body, first),
     }
 }
 
@@ -72,10 +123,16 @@ pub(crate) fn ask_started(
     if !matches!(asked.answer, Err(ClientError::NotRunning)) {
         return asked;
     }
-    // With nothing running, nothing is stopped: this starts a daemon and asks it.
+    started(root, user, body)
+}
+
+/// A daemon of this build started for the repository at `root`, whose user folder is `user`, where
+/// none runs, and its answer to `body`. With nothing running, nothing is stopped.
+fn started(root: &Path, user: &UserFolder, body: &RequestBody) -> Asked {
     Asked {
         answer: replace(root, (user, &RepoId::of(root)), body).map(|(answer, _)| answer),
         replaced: None,
+        not_replaced: None,
     }
 }
 

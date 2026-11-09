@@ -79,6 +79,46 @@ fn a_request_puts_off_the_idle_stop() -> TestResult {
     Ok(())
 }
 
+/// `cortex facts retire` that finds a daemon of an older Cortex, of this protocol, sends the
+/// request to it alone: its answer stands, and the daemon is replaced after, a daemon of this build
+/// started in its place and asked nothing but its status, so the fact is not retired twice.
+#[test]
+fn a_fact_request_reaches_one_daemon_only() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    std::fs::write(repo.path().join("app.py"), "def app():\n    pass\n")?;
+    let older = FakeDaemon::start(repo.path(), home.path(), Script::Welcome(&["0.0.1"]))?;
+    let mut retire = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    retire
+        .args(["facts", "retire", "1", "--root"])
+        .arg(repo.path());
+    isolate(&mut retire, home.path());
+    let ran = printed(&mut retire, b"")?;
+    assert!(ran.is_success, "{}{}", ran.stdout, ran.stderr);
+    assert_eq!(ran.stdout, "fact 1 retired\n");
+    assert!(
+        ran.stderr.contains("replaced a daemon of Cortex 0.0.1"),
+        "{}",
+        ran.stderr
+    );
+    assert_eq!(
+        kinds(&older.requests()?),
+        ["hello", "facts", "hello", "shutdown"]
+    );
+    let user = UserFolder::in_home(home.path());
+    let repo_id = RepoId::of(&canonical_root(repo.path())?);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let stop = ask(
+        &user.run_files(&repo_id),
+        Role::Cli,
+        RequestBody::Shutdown,
+        deadline,
+    )?;
+    assert_eq!(stop.body, ResponseBody::Ack);
+    wait_for(|| Ok(!is_running(&user, &repo_id)?))?;
+    Ok(())
+}
+
 /// `cortex status` that finds a daemon of an older Cortex asks it to stop, waits for it to let go
 /// of the repository, starts a daemon of this build in its place and reports that one. The new
 /// daemon runs detached, as one a hook starts, and is stopped at the end.

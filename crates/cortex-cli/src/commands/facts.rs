@@ -86,7 +86,8 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     }
 }
 
-/// The daemon's answer to `body`, a fact request, for the repository at `root`.
+/// The daemon's answer to `body`, a fact request, for the repository at `root`: sent to one daemon
+/// only, since it may change what the daemon keeps.
 ///
 /// # Errors
 ///
@@ -94,9 +95,14 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
 /// request, in its words.
 pub(crate) fn answer_of(root: &Path, body: &RequestBody) -> anyhow::Result<FactsAnswer> {
     let user = UserFolder::of_current_user().context("finding the home folder")?;
-    let asked = upgrade::ask_started(root, &user, body, Instant::now() + ANSWER_WITHIN);
+    let asked = upgrade::ask_once_started(root, &user, body, Instant::now() + ANSWER_WITHIN);
     if let Some(old) = &asked.replaced {
         output::note(&format!("replaced a daemon of Cortex {old}"))?;
+    }
+    if let Some(error) = &asked.not_replaced {
+        output::note(&format!(
+            "an older daemon answered and was not replaced: {error}"
+        ))?;
     }
     let answer = asked
         .answer

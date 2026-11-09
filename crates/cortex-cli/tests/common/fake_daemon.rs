@@ -9,8 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cortex_core::ipc::{
-    CORTEX_VERSION, GitReport, Mismatch, Protocol, Request, RequestBody, Response, ResponseBody,
-    StatusReport, Welcome, read_frame, write_frame,
+    CORTEX_VERSION, FactsAnswer, FactsAsk, GitReport, Mismatch, Protocol, Request, RequestBody,
+    Response, ResponseBody, StatusReport, Welcome, read_frame, write_frame,
 };
 use cortex_core::{Endpoint, RepoId, RunFiles, UserFolder, canonical_root};
 use interprocess::local_socket::traits::{Listener as _, Stream as _};
@@ -234,6 +234,10 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
                     text: None,
                     to_user: None,
                 },
+                // As a daemon that carried a fact request out answers it.
+                (_, RequestBody::Facts(FactsAsk::Retire { id })) => {
+                    ResponseBody::Facts(FactsAnswer::Retired { id: *id })
+                }
                 _ => ResponseBody::Ack,
             };
             let answer = Response {
