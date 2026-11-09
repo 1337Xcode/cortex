@@ -16,7 +16,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, bail};
-use cortex_core::{Config, Event, RepoPath, unix_millis};
+use cortex_core::{Config, Event, HookKind, RepoPath, unix_millis};
 use cortex_git::mine;
 use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, OnChanged, index_paths,
@@ -33,6 +33,7 @@ use crate::meter::Transcript;
 use crate::pending::Pending;
 use crate::positions;
 use crate::signatures::Signatures;
+use crate::upkeep::{Ended, UPKEEP_RUN_BUDGET, Upkeep, UpkeepClock, UpkeepSettings};
 
 /// How often the crawler takes a batch of `index.crawl_files_per_second` files.
 const CRAWL_PERIOD: Duration = Duration::from_secs(1);
@@ -66,6 +67,10 @@ pub(crate) struct Host<'a> {
     snapshot: &'a Snapshot,
     /// Where the signature changes an index finds are kept a short while, for an edit's warnings.
     signatures: &'a Signatures,
+    /// Where upkeep is between runs.
+    upkeep: Upkeep,
+    /// When upkeep is due.
+    upkeep_clock: UpkeepClock,
 }
 
 impl<'a> Host<'a> {
@@ -97,6 +102,8 @@ impl<'a> Host<'a> {
             inbox,
             snapshot,
             signatures,
+            upkeep: Upkeep::default(),
+            upkeep_clock: UpkeepClock::new(Instant::now()),
         }
     }
 
@@ -185,6 +192,15 @@ impl<'a> Host<'a> {
                 self.end_quiet_tasks();
             }
             self.settle();
+            let is_free = self.pending.is_idle() && self.waiting() == 0;
+            if is_free
+                && self
+                    .upkeep_clock
+                    .due_at(Instant::now())
+                    .is_some_and(|at| Instant::now() >= at)
+            {
+                self.run_upkeep();
+            }
             last_activity = last_activity.max(inbox.last_request().unwrap_or(last_activity));
             // An idle time too long to reach is never reached: the inbox is waited on for ever.
             let idle_at = last_activity.checked_add(idle);
@@ -199,6 +215,10 @@ impl<'a> Host<'a> {
                         count_failed(inbox, "hook events", &error);
                     }
                     last_activity = Instant::now();
+                    let has_ended = events
+                        .iter()
+                        .any(|event| event.hook == HookKind::SessionEnd);
+                    self.upkeep_clock.heard(last_activity, has_ended);
                 }
                 Work::Given(given) => record_given(&mut self.writer, inbox, &given),
                 Work::Changed(changed) => {
@@ -256,7 +276,57 @@ impl<'a> Host<'a> {
             let wait_ms = u64::try_from(due_ms.saturating_sub(now_ms())).unwrap_or(0);
             Instant::now() + Duration::from_millis(wait_ms)
         });
-        work.into_iter().chain(edit_due).chain([next_sweep]).min()
+        // Upkeep waits for the files waiting to be parsed: it is not due while they are.
+        let upkeep_due = self
+            .upkeep_clock
+            .due_at(Instant::now())
+            .filter(|_| self.waiting() == 0);
+        work.into_iter()
+            .chain(edit_due)
+            .chain(upkeep_due)
+            .chain([next_sweep])
+            .min()
+    }
+
+    /// Runs upkeep from where it last stopped, within its budget, stopping when other work waits
+    /// for the writer; what it removed is logged, and the graph told when links or interest went.
+    /// A failure is counted, and the next quiet spell runs it again.
+    fn run_upkeep(&mut self) {
+        let settings = UpkeepSettings {
+            link_decay: self.config.link_decay,
+            interest_decay: self.config.interest_decay,
+            longest_hold_ms: self.inbox.position_timing().longest_ms(),
+        };
+        let inbox = self.inbox;
+        let should_stop = || inbox.has_work_waiting();
+        let deadline = Instant::now() + UPKEEP_RUN_BUDGET;
+        let ran = self.upkeep.run(
+            &mut self.writer,
+            (now_ms(), &settings),
+            (deadline, &should_stop),
+        );
+        match ran {
+            Ok((swept, ended)) => {
+                tracing::info!(
+                    links = swept.links,
+                    interest = swept.interest,
+                    facts = swept.facts,
+                    events = swept.events,
+                    episodes = swept.episodes,
+                    positions = swept.positions,
+                    ended = ?ended,
+                    "upkeep ran"
+                );
+                if swept.links > 0 || swept.interest > 0 {
+                    self.snapshot.changed();
+                }
+                self.upkeep_clock.ran(ended);
+            }
+            Err(error) => {
+                count_failed(inbox, "upkeep", &error);
+                self.upkeep_clock.ran(Ended::OutOfTime);
+            }
+        }
     }
 
     /// Ends the tasks of sessions quiet for `coordination.handoff_idle_minutes`, so that what they
@@ -1367,12 +1437,15 @@ def g():
 
     /// A task that ended and waits to be learned from has the work loop look again at once, instead
     /// of when the next crawl or the idle stop is due; with none waiting it waits for those again.
+    /// Upkeep due ten minutes into a quiet spell, before the idle stop, is when it looks again too.
     #[test]
     fn a_task_waiting_to_be_learned_from_wakes_the_work_loop() -> TestResult {
         let root = tempfile::tempdir()?;
         let (config, inbox) = (Config::default(), Inbox::default());
         let snapshot = Snapshot::default();
         let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
+        // Upkeep has run in this quiet spell: it is not due until the next event.
+        host.upkeep_clock.ran(Ended::Done);
         let idle_at = Instant::now() + Duration::from_secs(600);
         let sweep_at = idle_at + Duration::from_secs(60);
         assert_eq!(
@@ -1397,6 +1470,13 @@ def g():
         // A sweep for quiet sessions due before the idle stop is when the loop looks again.
         let sooner = idle_at - Duration::from_secs(300);
         assert_eq!(host.deadline(idle_at, Some(idle_at), sooner), Some(sooner));
+        let quiet = Instant::now();
+        host.upkeep_clock = UpkeepClock::new(quiet);
+        let later = quiet + Duration::from_secs(3_600);
+        assert_eq!(
+            host.deadline(later, Some(later), later),
+            Some(quiet + crate::upkeep::QUIET_BEFORE_UPKEEP)
+        );
         Ok(())
     }
 

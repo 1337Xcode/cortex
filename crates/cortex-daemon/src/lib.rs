@@ -49,6 +49,7 @@ mod signatures;
 mod test_store;
 mod told;
 mod troubles;
+mod upkeep;
 mod worktree;
 
 pub use instance::is_running;

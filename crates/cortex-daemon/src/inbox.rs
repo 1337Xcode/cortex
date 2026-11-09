@@ -339,6 +339,16 @@ impl Inbox {
         self.lock().last_request
     }
 
+    /// Whether work the writer should do before upkeep waits: hook events to record, what was
+    /// given to record, a request asked of it, or a stop.
+    pub(crate) fn has_work_waiting(&self) -> bool {
+        let state = self.lock();
+        state.is_stopping
+            || !state.events.is_empty()
+            || !state.given.is_empty()
+            || !state.asked.is_empty()
+    }
+
     /// Puts in a mining for the writer, and returns where the writer will say whether it stored
     /// it; `None` once the inbox is closed, when nothing would store it.
     pub(crate) fn push_mining(&self, mining: Mining) -> Option<Receiver<Result<(), String>>> {
