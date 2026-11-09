@@ -411,6 +411,13 @@ impl Server {
             self.latencies().note(hook, took);
         }
         let holds_text = matches!(&body, ResponseBody::Reply { text: Some(_), .. });
+        let tells_user = matches!(
+            &body,
+            ResponseBody::Reply {
+                to_user: Some(_),
+                ..
+            }
+        );
         let answered = write_response(writer, request.request_id, body).await;
         // Recorded once its answer is written, after its event, as `recorded` says.
         if !given.is_empty() {
@@ -428,8 +435,9 @@ impl Server {
             }
         }
         // Text that did not reach its hook gives back what it claimed, and a stop it held back is
-        // recorded: the agent stopped after all.
-        if holds_text && (answered.is_err() || is_past(reads_until_ms, now_ms())) {
+        // recorded: the agent stopped after all. A message for the user alone gives back the
+        // failures it took to tell, though the reply held no text.
+        if (holds_text || tells_user) && (answered.is_err() || is_past(reads_until_ms, now_ms())) {
             self.undo(undo);
         }
         if is_shutdown {
@@ -743,6 +751,7 @@ mod tests {
 
     use super::*;
     use crate::inbox::Work;
+    use crate::troubles::Step;
 
     /// Result type for these tests: any failure fails the test.
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -839,6 +848,38 @@ mod tests {
             "{answered:?}"
         );
         assert!(matches!(inbox.wait(Some(Instant::now())), Work::Stop));
+        Ok(())
+    }
+
+    /// A start's reply that holds no text, only failures to tell the user, gives them back when
+    /// it cannot be written, the client having gone: the next start takes them again.
+    #[test]
+    fn failures_in_a_reply_that_never_arrived_are_kept() -> TestResult {
+        let inbox = Arc::new(Inbox::default());
+        inbox.note_trouble(Step::Mining, "reading the history: bad object", now_ms());
+        let server = Server::new(Arc::clone(&inbox), Default::default(), Arc::default());
+        let start = cortex_core::Event {
+            hook: HookKind::SessionStart,
+            ..stop_event()?
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+        let answered = runtime.block_on(async {
+            let (client, mut daemon) = tokio::io::duplex(64);
+            drop(client);
+            let asked = Received {
+                request: Request {
+                    request_id: 3,
+                    body: RequestBody::Primer {
+                        event: Box::new(start),
+                        answer_by_ms: None,
+                    },
+                },
+                began: Instant::now(),
+            };
+            server.answer(asked, &mut daemon).await
+        });
+        assert!(answered.is_err(), "{answered:?}");
+        assert!(inbox.take_troubles(now_ms()).is_some());
         Ok(())
     }
 
