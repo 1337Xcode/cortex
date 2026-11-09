@@ -767,11 +767,13 @@ pub(crate) const FACTS_CURRENT_WITH_STATUS: &str = "SELECT fact_id, text, kind, 
      FROM facts \
      WHERE status = ?1 AND superseded_by IS NULL ORDER BY fact_id";
 /// The current facts of status ?1 or ?2 with an anchor whose node's hash is not the one kept (or
-/// that has none now: the node is gone, or its contents are no longer read), in id order.
+/// that has none now: the node is gone, or its contents are no longer read), in id order. Each
+/// anchor's hash now is looked up by its node: joined whole, the view would be built over every
+/// node of the repository.
 pub(crate) const FACTS_WITH_CHANGED_ANCHORS: &str = "SELECT DISTINCT a.fact_id \
      FROM fact_anchors AS a JOIN facts AS f ON f.fact_id = a.fact_id \
-     LEFT JOIN anchor_hashes AS h ON h.node_id = a.node_id \
-     WHERE f.status IN (?1, ?2) AND f.superseded_by IS NULL AND a.anchor_hash IS NOT h.hash \
+     WHERE f.status IN (?1, ?2) AND f.superseded_by IS NULL \
+     AND a.anchor_hash IS NOT (SELECT h.hash FROM anchor_hashes AS h WHERE h.node_id = a.node_id) \
      ORDER BY a.fact_id";
 /// The current facts of status ?1 whose status was set at ?2 or before, in id order.
 pub(crate) const FACTS_WITH_STATUS_SINCE: &str = "SELECT fact_id FROM facts \
@@ -1211,6 +1213,28 @@ mod tests {
                 ]),
             ),
         ]
+    }
+
+    /// A review finds the facts whose anchors changed by looking up each anchor's node, never by
+    /// scanning every node: it runs after every index, and a repository may hold hundreds of
+    /// thousands of nodes. Its plan names no scan and no view built whole.
+    #[test]
+    fn changed_anchors_are_found_by_lookups() -> Result<(), Box<dyn std::error::Error>> {
+        let connection = Connection::open_in_memory()?;
+        for migration in MIGRATIONS {
+            connection.execute_batch(migration.sql)?;
+        }
+        let mut statement =
+            connection.prepare(&format!("EXPLAIN QUERY PLAN {FACTS_WITH_CHANGED_ANCHORS}"))?;
+        let plan: Vec<String> = statement
+            .query_map(["candidate", "active"], |row| row.get(3))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert!(
+            plan.iter()
+                .all(|step| !step.starts_with("SCAN") && !step.starts_with("MATERIALIZE")),
+            "{plan:?}"
+        );
+        Ok(())
     }
 
     /// The fact tables, column by column: facts and their anchors.
