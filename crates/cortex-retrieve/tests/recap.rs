@@ -22,7 +22,7 @@ fn recapped(repo: &Repo) -> TestResult<Option<String>> {
     let Some(task) = queries.open_task(&Identifier::new(SESSION)?)? else {
         return Ok(None);
     };
-    Ok(recap(queries, &task)?)
+    Ok(recap(queries, &task, (repo.root.path(), 1_048_576))?)
 }
 
 /// A task that edited `main.py` at 8 and 20, `calc/ops.py` at 10 and 30, and failed to edit `x.py`
@@ -305,5 +305,62 @@ fn a_recap_is_held_to_its_cap() -> TestResult {
         "the oldest warning goes first"
     );
     assert!(!recalled.contains("began with the prompt"));
+    Ok(())
+}
+
+/// Adds to `repo` a fact of the user's saying `text`, anchored to `nodes` with the hashes they hold
+/// now.
+fn fact(
+    repo: &mut Repo,
+    text: &str,
+    nodes: &[cortex_store::NodeId],
+) -> TestResult<cortex_store::FactId> {
+    let mut transaction = repo.writer.transaction()?;
+    let anchors = transaction.queries().anchor_hashes(nodes)?;
+    let id = transaction.add_fact(&cortex_store::FactRecord {
+        text: text.to_owned(),
+        kind: cortex_core::FactKind::Convention,
+        source: cortex_core::FactSource::User,
+        status: cortex_core::FactStatus::Active,
+        created_at_ms: 1,
+        task: None,
+        anchors,
+    })?;
+    transaction.commit()?;
+    Ok(id)
+}
+
+/// The facts the task was given come back after a compaction while they still hold. Given: a rule
+/// on `calc/ops.py:f`, a rule on `main.py`, which then changes on disk, and a rule on `docs.md`,
+/// which is then retired; a fourth rule on `calc/ops.py` was never given. The task edited
+/// `calc/ops.py`. Recalled: the edit, then the first rule alone.
+#[test]
+fn the_facts_a_task_was_given_come_back_while_true() -> TestResult {
+    let mut repo = Repo::new()?;
+    let (ops, f) = file(&mut repo, "calc/ops.py")?;
+    let (main, _) = file(&mut repo, "main.py")?;
+    let (docs, _) = file(&mut repo, "docs.md")?;
+    let task = task(&mut repo, None)?;
+    acted(
+        &mut repo,
+        task,
+        (ToolKind::Edit, "calc/ops.py", ops),
+        (10, true),
+    )?;
+    let on_f = fact(&mut repo, "f returns one.", &[f])?;
+    let on_main = fact(&mut repo, "main is short.", &[main])?;
+    let on_docs = fact(&mut repo, "docs are plain.", &[docs])?;
+    fact(&mut repo, "ops is pure.", &[ops])?;
+    let mut transaction = repo.writer.transaction()?;
+    transaction.give_facts(Some(task), &[on_f, on_main, on_docs])?;
+    transaction.set_fact_status(on_docs, cortex_core::FactStatus::Retired, 20)?;
+    transaction.commit()?;
+    std::fs::write(repo.root.path().join("main.py"), "def f():\n    return 2\n")?;
+    let expected = "\
+[cortex] Before the compaction, the task in progress:
+- edited calc/ops.py
+- holds to the rule: f returns one. (anchored to calc/ops.py:f)
+";
+    assert_eq!(recapped(&repo)?.as_deref(), Some(expected));
     Ok(())
 }

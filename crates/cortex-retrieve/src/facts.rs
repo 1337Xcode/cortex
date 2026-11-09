@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
-use cortex_core::{ContentHash, FactStatus, RepoPath, is_plain};
+use cortex_core::{ContentHash, FactStatus, RepoPath, Ulid, is_plain};
 use cortex_store::{AnchorState, FactId, FactRow, NodeId, Queries, StoreError};
 
 use crate::disk::CheckedFile;
@@ -119,6 +119,50 @@ pub fn order_facts(
         .collect())
 }
 
+/// The facts task `task` was given that are active and true now of the files in the repository at
+/// `root`, read up to `max_bytes`, in id order, at most [`MAX_ORDER_FACTS`]: what a recap after a
+/// compaction carries again.
+///
+/// # Errors
+///
+/// The store's errors.
+pub(crate) fn given_and_true(
+    queries: Queries<'_>,
+    task: Ulid,
+    (root, max_bytes): (&Path, u64),
+) -> Result<Vec<OrderFact>, StoreError> {
+    let mut rows: Vec<FactRow> = Vec::new();
+    for id in queries
+        .facts_given_in(task)?
+        .into_iter()
+        .take(MAX_FACTS_READ)
+    {
+        rows.extend(
+            queries.fact(id)?.filter(|row| {
+                row.record.status == FactStatus::Active && row.superseded_by.is_none()
+            }),
+        );
+    }
+    let anchored: Vec<NodeId> = rows
+        .iter()
+        .flat_map(|row| row.record.anchors.iter().map(|anchor| anchor.node))
+        .collect();
+    let states: BTreeMap<NodeId, AnchorState> = queries
+        .anchor_states(&anchored)?
+        .into_iter()
+        .map(|state| (state.node, state))
+        .collect();
+    let facts: Vec<OrderFact> = rows
+        .iter()
+        .filter_map(|row| order_fact(row, &states))
+        .collect();
+    let kept = true_now(&facts, root, max_bytes);
+    Ok(kept
+        .into_iter()
+        .filter_map(|at| facts.get(at).cloned())
+        .collect())
+}
+
 /// `row` as a work order carries it, each anchor with where it stands in `states`; none when an
 /// anchor is gone.
 fn order_fact(row: &FactRow, states: &BTreeMap<NodeId, AnchorState>) -> Option<OrderFact> {
@@ -200,12 +244,18 @@ pub(crate) fn write_facts(text: &mut String, facts: &[OrderFact], kept: &[usize]
     }
     text.push_str("Project facts:\n");
     for fact in lines {
-        let names: BTreeSet<&str> = fact
-            .anchors
-            .iter()
-            .map(|anchor| anchor.name.as_str())
-            .collect();
-        let names: Vec<&str> = names.into_iter().collect();
-        let _ = writeln!(text, "  - {} (anchored to {})", fact.text, names.join(", "));
+        let _ = writeln!(text, "  - {}", fact_line(fact));
     }
+}
+
+/// `fact` as one line: its text and what it is about, `(anchored to path[:symbol], ...)`, the
+/// anchors in name order, each once.
+pub(crate) fn fact_line(fact: &OrderFact) -> String {
+    let names: BTreeSet<&str> = fact
+        .anchors
+        .iter()
+        .map(|anchor| anchor.name.as_str())
+        .collect();
+    let names: Vec<&str> = names.into_iter().collect();
+    format!("{} (anchored to {})", fact.text, names.join(", "))
 }

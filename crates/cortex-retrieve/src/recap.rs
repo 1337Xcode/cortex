@@ -1,16 +1,19 @@
 //! The recap a session gets after its context is compacted: what its open task was doing, so that
 //! the agent goes on without finding it again. It names the files the task edited, the latest
-//! first; the files it was warned of and has not read or edited since; and the task's prompt, when
-//! the user's settings kept its start. Lines past the cap go from the end, the prompt first. It
-//! names no line of a file: an edit's lines are not kept as the file was after it, so they could
-//! not be checked against the file as it is now.
+//! first; the files it was warned of and has not read or edited since; the project facts the task
+//! was given that are still active and true of the files on disk; and the task's prompt, when the
+//! user's settings kept its start. Lines past the cap go from the end, the prompt first. It names
+//! no line of a file: an edit's lines are not kept as the file was after it, so they could not be
+//! checked against the file as it is now.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
+use std::path::Path;
 
 use cortex_core::{EventKind, RepoPath, WarningKind, estimate_tokens};
 use cortex_store::{EventRow, NodeId, Queries, StoreError, TaskRow, WarningRecord};
 
+use crate::facts::{fact_line, given_and_true};
 use crate::open_warnings::{plain_path, so_far};
 use cortex_core::{is_plain, is_taken_out};
 
@@ -27,16 +30,24 @@ pub const MAX_RECAPPED_WARNINGS: usize = 6;
 const HEADER: &str = "[cortex] Before the compaction, the task in progress:\n";
 
 /// The recap a session gets after a compaction of its open task `task`, as the store `queries`
-/// reads holds it; none when the task has nothing to recall.
+/// reads holds it and the repository at `root` holds its files, each read up to `max_bytes`;
+/// none when the task has nothing to recall.
 ///
 /// # Errors
 ///
 /// The store's errors.
-pub fn recap(queries: Queries<'_>, task: &TaskRow) -> Result<Option<String>, StoreError> {
+pub fn recap(
+    queries: Queries<'_>,
+    task: &TaskRow,
+    (root, max_bytes): (&Path, u64),
+) -> Result<Option<String>, StoreError> {
     let so_far = so_far(queries, task.record.task_id)?;
     let mut lines: Vec<String> = Vec::new();
     lines.extend(edited_line(&edited_files(&so_far.events)));
     lines.extend(warned_lines(queries, &so_far.open)?);
+    for fact in given_and_true(queries, task.record.task_id, (root, max_bytes))? {
+        lines.push(format!("- holds to the rule: {}", fact_line(&fact)));
+    }
     let excerpt = task.record.prompt_excerpt.as_ref();
     if let Some(prompt) = excerpt.and_then(|excerpt| one_line(excerpt.as_str())) {
         lines.push(format!("- began with the prompt \"{prompt}\""));

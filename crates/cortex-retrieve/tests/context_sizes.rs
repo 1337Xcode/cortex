@@ -221,7 +221,7 @@ fn fullest_recap() -> TestResult<String> {
     let open = queries
         .open_task(&Identifier::new(task::SESSION)?)?
         .ok_or("an open task")?;
-    recap(queries, &open)?.ok_or_else(|| "no recap".into())
+    recap(queries, &open, (repo.root.path(), 1_048_576))?.ok_or_else(|| "no recap".into())
 }
 
 /// The hint a read of the whole of [`EDITED`], 700 lines, gets when the task's work order gave its
