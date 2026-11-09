@@ -21,6 +21,7 @@ mod coordination;
 mod episode;
 mod error;
 mod facts;
+mod fading;
 mod file_links;
 mod folders;
 mod graph;
@@ -70,6 +71,7 @@ pub use episode::{
 };
 pub use error::StoreError;
 pub use facts::{FactAnchor, FactRecord, FactRow};
+pub use fading::FadingLink;
 pub use file_links::FileLink;
 pub use graph::GraphNodeRow;
 pub use handoffs::{HandoffEnd, HandoffRecord, HandoffRow, LastFailure};

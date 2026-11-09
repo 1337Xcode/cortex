@@ -17,6 +17,7 @@ use crate::coordination::{self, NoticeRecord, PositionRecord};
 use crate::episode::{self, EpisodeRecord};
 use crate::error::{StoreError, io, sqlite};
 use crate::facts::{self, FactAnchor, FactRecord};
+use crate::fading;
 use crate::folders;
 use crate::handoffs::{self, HandoffRecord};
 use crate::ids::{FactId, HandoffId, InjectionId, NodeId, NoticeId, WarningId};
@@ -450,6 +451,24 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn keep_position(&mut self, record: &PositionRecord) -> Result<(), StoreError> {
         self.atomically(|connection| coordination::keep_position(connection, record))
+    }
+
+    /// Removes the links of use from each pair's first node to its second: how many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn remove_coaccess_links(&mut self, links: &[(NodeId, NodeId)]) -> Result<u64, StoreError> {
+        self.atomically(|connection| fading::remove_links(connection, links))
+    }
+
+    /// Removes the interest of `nodes`, which then have none: how many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn remove_interest(&mut self, nodes: &[NodeId]) -> Result<u64, StoreError> {
+        self.atomically(|connection| fading::remove_interest(connection, nodes))
     }
 
     /// Deletes at most `limit` events older than `before_ms`, the first recorded first: how many.

@@ -4,6 +4,17 @@
 //! factor for each task in the repository since. Applying it where a weight is read, instead of
 //! to every row at every task, means a task writes only what it touched.
 
+/// The least a faded link weight or interest score keeps and still counts: below it, upkeep
+/// removes the row, and a node with no interest has none.
+pub const FADED_OUT_BELOW: f64 = 0.01;
+
+/// Whether `weight`, written at task `last_seq`, has faded below [`FADED_OUT_BELOW`] by task `seq`
+/// at `factor` for each task since.
+#[must_use]
+pub fn has_faded_out(weight: f64, last_seq: u64, seq: u64, factor: f64) -> bool {
+    decayed(weight, last_seq, seq, factor) < FADED_OUT_BELOW
+}
+
 /// The `weight` a row held at task `last_seq`, brought forward to task `seq` by `factor` for each
 /// task since. A weight written at a task yet to come is left as it is, and one left long enough
 /// fades to nothing.
@@ -31,6 +42,9 @@ mod tests {
         assert!(decayed(1.0, 1, 1_000_000, 0.98).abs() < 1e-12);
         // A link fades far more slowly: 0.995 to the tenth is 0.9511101304657719.
         assert!((decayed(1.0, 1, 11, 0.995) - 0.951_110_130_465_771_9).abs() < 1e-12);
+        // 0.02 halved once is 0.01, which still counts; halved twice, 0.005, which does not.
+        assert!(!has_faded_out(0.02, 0, 1, 0.5));
+        assert!(has_faded_out(0.02, 0, 2, 0.5));
     }
 
     proptest! {

@@ -67,6 +67,23 @@ impl Queries<'_> {
     }
 
     /// The interest rows `sql` reads with `params`.
+    /// At most `limit` nodes' interest after node `after`, by node, from the first when `after` is
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn interest_after(
+        self,
+        after: Option<NodeId>,
+        limit: u64,
+    ) -> Result<Vec<InterestRow>, StoreError> {
+        let after = after.map_or(-1, NodeId::get);
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.interest(schema::INTEREST_AFTER, (after, limit))
+    }
+
+    /// The rows `sql` selects with `params`.
     fn interest(
         self,
         sql: &str,

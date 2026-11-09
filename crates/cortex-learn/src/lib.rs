@@ -39,7 +39,7 @@ mod watcher_edits;
 
 pub use archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
 pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore, Told};
-pub use decay::decayed;
+pub use decay::{FADED_OUT_BELOW, decayed, has_faded_out};
 pub use episode::episode_of;
 pub use fact_word::{confirm_fact, edit_fact, retire_fact};
 pub use facts::{

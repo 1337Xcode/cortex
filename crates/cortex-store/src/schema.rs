@@ -672,6 +672,19 @@ pub(crate) const WARNING_INSERT: &str = "INSERT INTO warnings \
 /// Sets whether one warning was resolved.
 pub(crate) const WARNING_RESOLVE: &str = "UPDATE warnings SET resolved = ?2 WHERE warning_id = ?1";
 
+/// At most ?4 edges of type ?1 after the pair (?2, ?3), in the order of their ends.
+pub(crate) const COACCESS_AFTER: &str = "SELECT src, dst, w, last_seq FROM edges \
+     WHERE type = ?1 AND (src, dst) > (?2, ?3) ORDER BY src, dst LIMIT ?4";
+/// Removes the edges of type ?1 from each pair's first node to its second, the pairs a JSON array
+/// of two-number arrays in ?2.
+pub(crate) const COACCESS_REMOVE: &str = "DELETE FROM edges WHERE type = ?1 AND (src, dst) IN \
+     (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?2))";
+/// The interest of nodes after ?1, at most ?2, by node.
+pub(crate) const INTEREST_AFTER: &str = "SELECT node_id, score, last_seq, tier FROM interest \
+     WHERE node_id > ?1 ORDER BY node_id LIMIT ?2";
+/// Removes the interest of the nodes in the JSON array ?1.
+pub(crate) const INTEREST_REMOVE: &str =
+    "DELETE FROM interest WHERE node_id IN (SELECT value FROM json_each(?1))";
 /// Deletes at most ?2 events older than ?1, the first recorded first.
 pub(crate) const EVENTS_DELETE_BEFORE: &str = "DELETE FROM events WHERE seq IN \
      (SELECT seq FROM events WHERE ts < ?1 ORDER BY seq LIMIT ?2)";
