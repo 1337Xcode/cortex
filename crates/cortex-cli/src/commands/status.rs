@@ -254,6 +254,7 @@ fn upkeep_line(report: Option<&UpkeepReport>, now_ms: i64) -> String {
         (report.events, ("old event", "old events")),
         (report.episodes, ("episode", "episodes")),
         (report.positions, ("position", "positions")),
+        (report.pages, ("free page", "free pages")),
     ]
     .into_iter()
     .filter(|(count, _)| *count > 0)
@@ -552,6 +553,7 @@ mod tests {
             events,
             episodes: 0,
             positions: 0,
+            pages: 0,
             is_done,
         };
         assert_eq!(

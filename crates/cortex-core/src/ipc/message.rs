@@ -297,6 +297,9 @@ pub struct UpkeepReport {
     pub episodes: u64,
     /// Positions removed, no longer holding.
     pub positions: u64,
+    /// Free pages of the database given back to the file system (protocol 10.1 added it).
+    #[serde(default)]
+    pub pages: u64,
     /// Whether every job was done; otherwise the next run carries on.
     pub is_done: bool,
 }

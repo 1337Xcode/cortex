@@ -316,6 +316,7 @@ impl<'a> Host<'a> {
                     events = swept.events,
                     episodes = swept.episodes,
                     positions = swept.positions,
+                    pages = swept.pages,
                     ended = ?ended,
                     "upkeep ran"
                 );
@@ -330,6 +331,7 @@ impl<'a> Host<'a> {
                     events: swept.events,
                     episodes: swept.episodes,
                     positions: swept.positions,
+                    pages: swept.pages,
                     is_done: ended == Ended::Done,
                 });
                 self.upkeep_clock.ran(ended);

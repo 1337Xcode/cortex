@@ -3,9 +3,10 @@
 //! jobs run in order, each a batch at a time in a transaction of its own: links of use that have
 //! faded below 0.01 are removed, then interest that has; the facts are reviewed and those retired
 //! for 90 days deleted; events older than 90 days are deleted, episodes kept to 50,000 (unknown
-//! outcomes first) and positions that can no longer hold removed. Between batches a run stops when
-//! a hook event or a request waits, or after [`UPKEEP_RUN_BUDGET`], and the next run carries on
-//! where it stopped.
+//! outcomes first) and positions that can no longer hold removed; last, the query planner's
+//! statistics are refreshed and up to [`VACUUM_PAGES`] free pages given back to the file system.
+//! Between batches a run stops when a hook event or a request waits, or after
+//! [`UPKEEP_RUN_BUDGET`], and the next run carries on where it stopped.
 
 use std::time::{Duration, Instant};
 
@@ -27,6 +28,10 @@ const KEPT_FOR_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
 
 /// The most episodes kept.
 const MAX_EPISODES: u64 = 50_000;
+
+/// The most free pages of the database a run gives back: 2,000 pages, 8 MiB at SQLite's usual
+/// page size, a short step however much was deleted; the rest goes at the next runs.
+const VACUUM_PAGES: u32 = 2_000;
 
 /// What upkeep weighs with: the settings that say how links and interest fade, and how long a
 /// position can hold at the longest.
@@ -55,6 +60,8 @@ pub(crate) struct Swept {
     pub(crate) episodes: u64,
     /// Positions removed.
     pub(crate) positions: u64,
+    /// Free pages given back to the file system.
+    pub(crate) pages: u64,
 }
 
 /// Why a run ended.
@@ -135,6 +142,8 @@ enum Step {
     Episodes,
     /// Positions that no longer hold.
     Positions,
+    /// The planner's statistics and the free pages.
+    Optimize,
 }
 
 /// Upkeep's place between runs.
@@ -262,6 +271,10 @@ impl Upkeep {
             Step::Positions => {
                 swept.positions += transaction
                     .delete_positions_before(now_ms.saturating_sub(settings.longest_hold_ms))?;
+                Step::Optimize
+            }
+            Step::Optimize => {
+                swept.pages += transaction.optimize(VACUUM_PAGES)?;
                 transaction.commit()?;
                 return Ok(None);
             }

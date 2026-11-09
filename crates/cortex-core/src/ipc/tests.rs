@@ -625,9 +625,16 @@ fn consolidate_and_the_upkeep_report_read_back() -> TestResult {
         events: 4,
         episodes: 5,
         positions: 6,
+        pages: 7,
         is_done: false,
     };
     let encoded = serde_json::to_value(report)?;
     assert_eq!(serde_json::from_value::<UpkeepReport>(encoded)?, report);
+    // A daemon of 10.0 says nothing of pages: none were given back that it knows of.
+    let older = serde_json::json!({
+        "at_ms": 5, "links": 1, "interest": 2, "facts": 3, "events": 4, "episodes": 5,
+        "positions": 6, "is_done": true
+    });
+    assert_eq!(serde_json::from_value::<UpkeepReport>(older)?.pages, 0);
     Ok(())
 }

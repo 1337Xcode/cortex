@@ -50,6 +50,12 @@ fn upkeep_runs_when_asked_and_the_status_says_so() -> TestResult {
         ),
         (0, 0, 0, 0, 0, 0)
     );
+    // Whatever free pages the first index left were given back: the line says how many.
+    let removed = match ran.pages {
+        0 => "nothing to remove".to_owned(),
+        1 => "removed 1 free page".to_owned(),
+        pages => format!("removed {pages} free pages"),
+    };
     let status = cortex(root, home, &["status"])?;
     assert!(status.is_success, "{}", status.stderr);
     assert!(
@@ -57,7 +63,7 @@ fn upkeep_runs_when_asked_and_the_status_says_so() -> TestResult {
             .stdout
             .lines()
             .any(|line| line.starts_with("upkeep: last ran ")
-                && line.ends_with(", nothing to remove; done")),
+                && line.ends_with(&format!(", {removed}; done"))),
         "{}",
         status.stdout
     );
