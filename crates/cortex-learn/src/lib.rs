@@ -36,6 +36,7 @@ mod record;
 mod self_check;
 mod task_end;
 mod task_state;
+mod transitions;
 mod warnings;
 mod watcher_edits;
 
@@ -67,5 +68,6 @@ pub use task_state::{
     FileNode, MAX_TASK_HIT_BYTES, MAX_TASK_ROWS, MAX_TASK_STATES, RunCheck, Step, TaskEnd,
     TaskState,
 };
+pub use transitions::{add_transitions, transitions_of};
 pub use warnings::{resolve_warnings, resolves};
 pub use watcher_edits::{ATTRIBUTION_WINDOW_MS, HOLD_MS, HeldEdit, WatcherEdit};

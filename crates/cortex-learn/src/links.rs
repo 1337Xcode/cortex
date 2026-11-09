@@ -171,7 +171,7 @@ pub fn add_links(
 /// What a task's outcome does to the weight of every pair in its working set, as a share of the
 /// learning rate: a task that was seen to work teaches most, one nobody can vouch for a little,
 /// and one that failed, was reverted or was left nothing at all.
-fn gain(outcome: TaskOutcome) -> f64 {
+pub(crate) fn gain(outcome: TaskOutcome) -> f64 {
     match outcome {
         TaskOutcome::Success => GAIN_SUCCESS,
         TaskOutcome::Unknown => GAIN_UNKNOWN,

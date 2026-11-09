@@ -28,6 +28,7 @@ use crate::links::{EarnedLinks, Linking, add_links, links_of};
 use crate::outcome::{FileNow, judge, reverted_after};
 use crate::self_check::check_self;
 use crate::task_state::TaskState;
+use crate::transitions::add_transitions;
 use crate::warnings::resolve_warnings;
 
 /// Most sessions whose last ended task is kept for the look the session's next task's end takes
@@ -140,6 +141,7 @@ impl Learner {
             (judgement.outcome, ended_at_ms),
         )?;
         transaction.replace_episode(&record)?;
+        add_transitions(transaction, &record, (row.seq, config.link_decay))?;
         let reverted_before = match previous {
             Some(earlier) => revert_before(transaction, (earlier, state), &now, (config, row.seq))?,
             None => None,
