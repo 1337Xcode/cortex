@@ -24,7 +24,7 @@ pub(crate) enum Command {
     Daemon(daemon::Args),
     /// Show whether the daemon runs, the index's state and the scale mode.
     Status(status::Args),
-    /// Register Cortex's hooks with Claude Code.
+    /// Set Cortex up in a repository for the coding agents found on this machine.
     Init(init::Args),
     /// Check that Claude Code will run Cortex's hooks and the daemon will answer them.
     Doctor(doctor::Args),
