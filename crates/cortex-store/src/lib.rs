@@ -18,6 +18,7 @@ mod connection;
 mod coordination;
 mod episode;
 mod error;
+mod facts;
 mod folders;
 mod graph;
 mod handoffs;
@@ -62,9 +63,12 @@ pub use episode::{
     ReadFile,
 };
 pub use error::StoreError;
+pub use facts::{FactAnchor, FactRecord, FactRow};
 pub use graph::GraphNodeRow;
 pub use handoffs::{HandoffEnd, HandoffRecord, HandoffRow, LastFailure};
-pub use ids::{FileId, HandoffId, InjectionId, NodeId, NoticeId, RefId, SymbolId, WarningId};
+pub use ids::{
+    FactId, FileId, HandoffId, InjectionId, NodeId, NoticeId, RefId, SymbolId, WarningId,
+};
 pub use injections::{InjectedFile, InjectionRecord, InjectionRow};
 pub use interest::InterestRow;
 pub use lock::is_writer_running;

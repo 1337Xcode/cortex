@@ -58,3 +58,8 @@ row_id! {
     /// A row of `handoffs`.
     HandoffId
 }
+
+row_id! {
+    /// A row of `facts`.
+    FactId
+}

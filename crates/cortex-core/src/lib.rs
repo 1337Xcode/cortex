@@ -18,6 +18,7 @@ mod config;
 mod coordination;
 mod estimate;
 mod event;
+mod fact;
 mod file_content;
 mod hash;
 mod identifier;
@@ -64,6 +65,7 @@ pub use event::{
     MAX_EDITED_FILES, MAX_HITS, MAX_HITS_BYTES, MAX_RANGES, MIN_WORK_PROMPT_CHARS, ShellCommand,
     ShellCommandError, StartSource, ToolKind, ToolResult, ToolTarget,
 };
+pub use fact::{FactKind, FactSource, FactStatus, MAX_FACT_CHARS};
 pub use file_content::FileContent;
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};

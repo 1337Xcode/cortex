@@ -75,10 +75,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 15,
         sql: include_str!("../migrations/0015_notice_subjects.sql"),
     },
+    Migration {
+        version: 16,
+        sql: include_str!("../migrations/0016_facts.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 15;
+pub(crate) const SCHEMA_VERSION: u32 = 16;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -722,6 +726,37 @@ pub(crate) const HANDOFFS_OPEN_OF_SESSION: &str = "SELECT handoff_id, from_sessi
 pub(crate) const NOTICE_DELIVER: &str =
     "UPDATE notices SET delivered_at = ?2 WHERE notice_id = ?1 AND delivered_at IS NULL";
 
+/// Adds a fact: its text ?1, kind ?2, source ?3, status ?4, made at ?5 (confirmed then too).
+pub(crate) const FACT_ADD: &str = "INSERT INTO facts (text, kind, source, status, created_at, \
+     last_verified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)";
+/// Anchors fact ?1 to node ?2, whose hash was ?3 when the fact was made.
+pub(crate) const FACT_ANCHOR_ADD: &str =
+    "INSERT INTO fact_anchors (fact_id, node_id, anchor_hash) VALUES (?1, ?2, ?3)";
+/// Sets fact ?1's status to ?2; one made active at ?3 counts as confirmed then (?4 is 1).
+pub(crate) const FACT_SET_STATUS: &str = "UPDATE facts SET status = ?2, \
+     last_verified_at = CASE WHEN ?4 THEN ?3 ELSE last_verified_at END WHERE fact_id = ?1";
+/// Marks fact ?1 superseded by fact ?2.
+pub(crate) const FACT_SUPERSEDE: &str =
+    "UPDATE facts SET superseded_by = ?2 WHERE fact_id = ?1 AND superseded_by IS NULL";
+/// Counts one more use of each fact in the JSON list ?1.
+pub(crate) const FACT_COUNT_USES: &str =
+    "UPDATE facts SET uses = uses + 1 WHERE fact_id IN (SELECT value FROM json_each(?1))";
+/// A fact's columns by its id.
+pub(crate) const FACT_BY_ID: &str = "SELECT fact_id, text, kind, source, status, uses, \
+     created_at, last_verified_at, superseded_by FROM facts WHERE fact_id = ?1";
+/// The current facts (none supersedes them) of status ?1, oldest first.
+pub(crate) const FACTS_CURRENT_WITH_STATUS: &str = "SELECT fact_id, text, kind, source, status, \
+     uses, created_at, last_verified_at, superseded_by FROM facts \
+     WHERE status = ?1 AND superseded_by IS NULL ORDER BY fact_id";
+/// The current facts anchored to any node of the JSON list ?1, each once, in id order.
+pub(crate) const FACTS_ANCHORED_TO: &str = "SELECT DISTINCT a.fact_id FROM fact_anchors AS a \
+     JOIN facts AS f ON f.fact_id = a.fact_id \
+     WHERE a.node_id IN (SELECT value FROM json_each(?1)) AND f.superseded_by IS NULL \
+     ORDER BY a.fact_id";
+/// Fact ?1's anchors, in node order.
+pub(crate) const FACT_ANCHORS_OF: &str =
+    "SELECT node_id, anchor_hash FROM fact_anchors WHERE fact_id = ?1 ORDER BY node_id";
+
 /// How many warnings were given, how many of them are marked, and how many of those resolved: each
 /// row one file a warning named.
 pub(crate) const WARNING_COUNTS: &str =
@@ -1120,6 +1155,49 @@ mod tests {
         ]
     }
 
+    /// The indexes of the fact tables: current facts by status (partial), anchors by fact and node
+    /// (their key) and by node.
+    fn expected_fact_indexes() -> [(&'static str, Vec<Index>); 2] {
+        [
+            ("facts", index_list(&[(&["status"], false, true)])),
+            (
+                "fact_anchors",
+                index_list(&[
+                    (&["fact_id", "node_id"], true, false),
+                    (&["node_id"], false, false),
+                ]),
+            ),
+        ]
+    }
+
+    /// The fact tables, column by column: facts and their anchors.
+    fn expected_fact_columns() -> [(&'static str, Vec<Column>); 2] {
+        [
+            (
+                "facts",
+                column_list(&[
+                    ("fact_id", "INTEGER", 1),
+                    ("text", "TEXT", 0),
+                    ("kind", "TEXT", 0),
+                    ("source", "TEXT", 0),
+                    ("status", "TEXT", 0),
+                    ("uses", "INTEGER", 0),
+                    ("created_at", "INTEGER", 0),
+                    ("last_verified_at", "INTEGER", 0),
+                    ("superseded_by", "INTEGER", 0),
+                ]),
+            ),
+            (
+                "fact_anchors",
+                column_list(&[
+                    ("fact_id", "INTEGER", 1),
+                    ("node_id", "INTEGER", 2),
+                    ("anchor_hash", "BLOB", 0),
+                ]),
+            ),
+        ]
+    }
+
     /// The coordination tables, column by column: positions, notices and handoffs.
     fn expected_coordination_columns() -> [(&'static str, Vec<Column>); 3] {
         [
@@ -1413,6 +1491,8 @@ mod tests {
                 "edges",
                 "episodes",
                 "events",
+                "fact_anchors",
+                "facts",
                 "file_commits",
                 "files",
                 "git_state",
@@ -1440,10 +1520,11 @@ mod tests {
             .chain(&expected_learning_columns())
             .chain(&expected_injection_columns())
             .chain(&expected_coordination_columns())
+            .chain(&expected_fact_columns())
         {
             assert_eq!(&columns(&connection, table)?, expected, "{table}");
         }
-        for (table, expected) in &expected_indexes() {
+        for (table, expected) in expected_indexes().iter().chain(&expected_fact_indexes()) {
             assert_eq!(&indexes(&connection, table)?, expected, "{table}");
         }
         Ok(())

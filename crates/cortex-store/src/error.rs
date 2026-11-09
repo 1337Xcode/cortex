@@ -129,6 +129,15 @@ pub enum StoreError {
         /// The key.
         key: &'static str,
     },
+    /// A fact's text is longer than a fact may be.
+    #[error("a fact holds at most 240 characters; this one holds {chars}")]
+    FactTooLong {
+        /// How many characters it holds.
+        chars: usize,
+    },
+    /// A fact names nothing it is about.
+    #[error("a fact needs at least one anchor: a file or a symbol")]
+    FactUnanchored,
     /// An update named a row that does not exist.
     #[error("no row {id} in {table}")]
     UnknownRow {

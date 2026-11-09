@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use cortex_core::{
-    EdgeType, Identifier, RepoId, RepoPath, ScaleMode, SessionStatus, TaskOutcome, Ulid,
+    EdgeType, FactStatus, Identifier, RepoId, RepoPath, ScaleMode, SessionStatus, TaskOutcome, Ulid,
 };
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
@@ -15,9 +15,10 @@ use crate::connection::{self, Access};
 use crate::coordination::{self, NoticeRecord, PositionRecord};
 use crate::episode::{self, EpisodeRecord};
 use crate::error::{StoreError, io, sqlite};
+use crate::facts::{self, FactRecord};
 use crate::folders;
 use crate::handoffs::{self, HandoffRecord};
-use crate::ids::{HandoffId, InjectionId, NodeId, NoticeId, WarningId};
+use crate::ids::{FactId, HandoffId, InjectionId, NodeId, NoticeId, WarningId};
 use crate::injections::{self, InjectionRecord};
 use crate::interest::{self, InterestRow};
 use crate::layout;
@@ -494,6 +495,50 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn record_told(&mut self, notice: &NoticeRecord) -> Result<(), StoreError> {
         self.atomically(|connection| coordination::record_told(connection, notice))
+    }
+
+    /// Adds the fact `record` with its anchors: its id.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::FactTooLong`], [`StoreError::FactUnanchored`],
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn add_fact(&mut self, record: &FactRecord) -> Result<FactId, StoreError> {
+        self.atomically(|connection| facts::add(connection, record))
+    }
+
+    /// Sets fact `id`'s status to `status` at `at_ms`; one made active counts as confirmed then.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::UnknownRow`] for no such fact, [`StoreError::TransactionLost`] and SQLite
+    /// errors.
+    pub fn set_fact_status(
+        &mut self,
+        id: FactId,
+        status: FactStatus,
+        at_ms: i64,
+    ) -> Result<(), StoreError> {
+        self.atomically(|connection| facts::set_status(connection, id, (status, at_ms)))
+    }
+
+    /// Marks fact `old` superseded by fact `new`, which corrects it: the old one stays as history,
+    /// hidden from readers of current facts. Whether `old` was current.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn supersede_fact(&mut self, old: FactId, new: FactId) -> Result<bool, StoreError> {
+        self.atomically(|connection| facts::supersede(connection, old, new))
+    }
+
+    /// Counts one injection of each of `ids`.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn count_fact_uses(&mut self, ids: &[FactId]) -> Result<(), StoreError> {
+        self.atomically(|connection| facts::count_uses(connection, ids))
     }
 
     /// Marks notice `id` delivered at `at_ms`. Whether it was waiting.

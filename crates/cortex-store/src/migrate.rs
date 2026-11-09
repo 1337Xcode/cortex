@@ -618,13 +618,48 @@ mod tests {
             "INSERT INTO notices (to_session, text, created_at) VALUES ('s1', 'kept', 1)",
             [],
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let fifteenth = MIGRATIONS
+            .get(..15)
+            .ok_or("fewer than fifteen migrations")?;
+        migrate(&mut connection, fifteenth, &backups)?;
         assert_eq!(schema_version(&connection)?, 15);
         let kept: (String, Option<String>) =
             connection.query_row("SELECT text, about FROM notices", [], |row| {
                 Ok((row.get(0)?, row.get(1)?))
             })?;
         assert_eq!(kept, ("kept".to_owned(), None));
+        Ok(())
+    }
+
+    /// The sixteenth schema adds the facts and their anchors, with their indexes, and keeps the
+    /// notices a fifteenth-schema store holds.
+    #[test]
+    fn the_sixteenth_schema_adds_facts() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let fifteenth = MIGRATIONS
+            .get(..15)
+            .ok_or("fewer than fifteen migrations")?;
+        migrate(&mut connection, fifteenth, &backups)?;
+        connection.execute(
+            "INSERT INTO notices (to_session, text, created_at, about) \
+             VALUES ('s1', 'kept', 1, 'a')",
+            [],
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 16);
+        let objects = objects(&connection)?;
+        for object in [
+            "facts",
+            "facts_current",
+            "fact_anchors",
+            "fact_anchors_node",
+        ] {
+            assert!(objects.contains(&object.to_owned()), "{object}");
+        }
+        let notices: i64 =
+            connection.query_row("SELECT count(*) FROM notices", [], |row| row.get(0))?;
+        assert_eq!(notices, 1);
         Ok(())
     }
 
