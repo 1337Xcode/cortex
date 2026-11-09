@@ -20,7 +20,8 @@ use cortex_index::waits_to_be_parsed;
 use cortex_learn::{MAX_RAISE_STEPS, raise_of, recent_precision};
 use cortex_retrieve::{LEXICAL_BAR, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR};
 use cortex_store::{
-    MetaKey, Queries, Reader, SelfCheckRecord, StoreError, WarningCounts, is_writer_running,
+    FactHealth, MetaKey, Queries, Reader, SelfCheckRecord, StoreError, WarningCounts,
+    is_writer_running,
 };
 
 use crate::{output, repository, upgrade};
@@ -417,6 +418,7 @@ fn status_lines(
         Err(error) => return Err(error.into()),
     }
     lines.push(warnings_line(queries.warning_counts()?));
+    lines.extend(health_line(queries.fact_health()?));
     Ok(lines)
 }
 
@@ -440,6 +442,30 @@ fn warnings_line(counts: WarningCounts) -> String {
             )
         }
     }
+}
+
+/// The line naming the facts that need a person, none when no fact does: those anchored to code
+/// the index no longer holds, and those suspect since their code changed.
+fn health_line(health: FactHealth) -> Option<String> {
+    let mut found = Vec::new();
+    if health.gone > 0 {
+        found.push(format!(
+            "{} anchored to code that is gone",
+            counted(health.gone, ("fact", "facts"))
+        ));
+    }
+    if health.changed > 0 {
+        found.push(format!(
+            "{} whose code changed since",
+            counted(health.changed, ("fact", "facts"))
+        ));
+    }
+    (!found.is_empty()).then(|| {
+        format!(
+            "health: {}; `cortex facts` lists them to confirm or retire",
+            found.join(", ")
+        )
+    })
 }
 
 /// What the gate asks before it hands a work order over: its bar for the prompt's words, raised as
@@ -901,6 +927,32 @@ mod tests {
                 1_180_000
             ),
             "co-change: 42 commits mined, up to 0123456789ab; the last full mining 3 min ago"
+        );
+    }
+
+    /// Worked by hand: nothing to look at, no line; one fact on code that is gone; two whose code
+    /// changed; both, those on code that is gone first.
+    #[test]
+    fn health_is_named_only_when_a_fact_needs_a_person() {
+        let line = |gone, changed| health_line(FactHealth { gone, changed });
+        let tail = "; `cortex facts` lists them to confirm or retire";
+        assert_eq!(line(0, 0), None);
+        assert_eq!(
+            line(1, 0),
+            Some(format!(
+                "health: 1 fact anchored to code that is gone{tail}"
+            ))
+        );
+        assert_eq!(
+            line(0, 2),
+            Some(format!("health: 2 facts whose code changed since{tail}"))
+        );
+        assert_eq!(
+            line(2, 1),
+            Some(format!(
+                "health: 2 facts anchored to code that is gone, 1 fact whose code changed \
+                 since{tail}"
+            ))
         );
     }
 }

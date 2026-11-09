@@ -45,7 +45,8 @@ fn refused(root: &Path, home: &Path, args: &[&str]) -> TestResult<String> {
 /// fact 1 again. The list: both active, in number order, each with its kind, text and anchor.
 /// Fact 2 corrected becomes fact 3; fact 1 retired. The list: fact 3 alone; with `--all`, fact 1
 /// retired too. Fact 4 is about the whole repository, anchored to its root (`.`). `tax.py` changes:
-/// fact 3 turns suspect; confirmed, it is active again.
+/// fact 3 turns suspect, and `cortex status` names it; confirmed, it is active again, and the
+/// status names no fact. `tax.py` removed, the status names fact 3 as on code that is gone.
 #[test]
 fn facts_are_noted_listed_corrected_retired_and_confirmed() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -109,6 +110,18 @@ fn facts_are_noted_listed_corrected_retired_and_confirmed() -> TestResult {
     );
     std::fs::write(root.join("src/tax.py"), "def rate():\n    return 2\n")?;
     wait_for(|| Ok(said(root, home, &["facts", "list"])?.contains("3  suspect")))?;
+    let health = || -> TestResult<Vec<String>> {
+        Ok(said(root, home, &["status"])?
+            .lines()
+            .filter(|line| line.starts_with("health: "))
+            .map(str::to_owned)
+            .collect())
+    };
+    let looks = "; `cortex facts` lists them to confirm or retire";
+    assert_eq!(
+        health()?,
+        [format!("health: 1 fact whose code changed since{looks}")]
+    );
     assert_eq!(
         said(root, home, &["facts", "confirm", "3"])?,
         "fact 3 confirmed\n"
@@ -117,6 +130,12 @@ fn facts_are_noted_listed_corrected_retired_and_confirmed() -> TestResult {
         said(root, home, &["facts", "list"])?,
         format!("{even}{whole_line}")
     );
+    assert!(health()?.is_empty());
+    std::fs::remove_file(root.join("src/tax.py"))?;
+    let gone = [format!(
+        "health: 1 fact anchored to code that is gone{looks}"
+    )];
+    wait_for(|| Ok(health()? == gone))?;
     Ok(())
 }
 

@@ -847,6 +847,13 @@ pub(crate) const FACTS_WITH_CHANGED_ANCHORS: &str = "SELECT DISTINCT a.fact_id \
 /// The current facts of status ?1 whose status was set at ?2 or before, in id order.
 pub(crate) const FACTS_WITH_STATUS_SINCE: &str = "SELECT fact_id FROM facts \
      WHERE status = ?1 AND superseded_by IS NULL AND status_at <= ?2 ORDER BY fact_id";
+/// Of the current facts not of status ?1 (retired): how many have an anchor on a node the index
+/// no longer holds, and how many of the others are of status ?2 (suspect).
+pub(crate) const FACT_HEALTH: &str = "SELECT coalesce(sum(gone), 0), \
+     coalesce(sum(NOT gone AND status = ?2), 0) FROM (SELECT f.status AS status, \
+     EXISTS (SELECT 1 FROM fact_anchors AS a WHERE a.fact_id = f.fact_id \
+     AND NOT EXISTS (SELECT 1 FROM nodes AS n WHERE n.node_id = a.node_id)) AS gone \
+     FROM facts AS f WHERE f.status != ?1 AND f.superseded_by IS NULL)";
 /// The id of fact ?1, when one has it.
 pub(crate) const FACT_ID_OF: &str = "SELECT fact_id FROM facts WHERE fact_id = ?1";
 /// Each node of the JSON list ?1 that is a file, a symbol in one or the repository's root: the

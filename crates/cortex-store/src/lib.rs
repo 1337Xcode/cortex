@@ -20,6 +20,7 @@ mod connection;
 mod coordination;
 mod episode;
 mod error;
+mod fact_health;
 mod facts;
 mod fading;
 mod file_links;
@@ -70,6 +71,7 @@ pub use episode::{
     ReadFile,
 };
 pub use error::StoreError;
+pub use fact_health::FactHealth;
 pub use facts::{FactAnchor, FactRecord, FactRow};
 pub use fading::FadingLink;
 pub use file_links::FileLink;
