@@ -77,7 +77,7 @@ fn identity_is_recorded() -> TestResult {
     let writer = scratch.writer(1000)?;
     let expected_id = RepoId::of(scratch.root.path());
     let queries = writer.queries();
-    assert_eq!(queries.meta(MetaKey::SchemaVersion)?.as_deref(), Some("19"));
+    assert_eq!(queries.meta(MetaKey::SchemaVersion)?.as_deref(), Some("20"));
     assert_eq!(
         queries.meta(MetaKey::RepoId)?.as_deref(),
         Some(expected_id.as_str())

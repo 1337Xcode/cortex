@@ -13,6 +13,7 @@
 mod activity;
 mod anchors;
 mod archetype;
+mod calibration;
 mod checkpoint;
 mod claims;
 mod cochange;
@@ -61,6 +62,7 @@ pub use activity::{
 };
 pub use anchors::{AnchorState, ROOT_ANCHOR_HASH};
 pub use archetype::ArchetypeRecord;
+pub use calibration::{CalibrationAttempt, CalibrationRecord, LabelledInjection};
 pub use checkpoint::CheckpointFailures;
 pub use cochange::{CountedFile, FileCommitsRow, GitStateKey, PairRow};
 pub use coordination::{

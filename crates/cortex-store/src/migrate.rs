@@ -730,9 +730,40 @@ mod tests {
     fn the_nineteenth_schema_keeps_the_facts_given() -> Result<(), Box<dyn std::error::Error>> {
         let (folder, mut connection) = database()?;
         let backups = folder.path().join("backups");
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let nineteenth = MIGRATIONS
+            .get(..19)
+            .ok_or("fewer than nineteen migrations")?;
+        migrate(&mut connection, nineteenth, &backups)?;
         assert_eq!(schema_version(&connection)?, 19);
         assert!(objects(&connection)?.contains(&"facts_given".to_owned()));
+        Ok(())
+    }
+
+    /// The twentieth schema adds the confidence models, and keeps the labelled injections a
+    /// nineteenth-schema store holds.
+    #[test]
+    fn the_twentieth_schema_keeps_confidence_models() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let nineteenth = MIGRATIONS
+            .get(..19)
+            .ok_or("fewer than nineteen migrations")?;
+        migrate(&mut connection, nineteenth, &backups)?;
+        connection.execute_batch(
+            "INSERT INTO sessions (session_id, agent, started_at, status) \
+             VALUES ('s', 'claude', 1, 'live'); \
+             INSERT INTO injections (session_id, hook, ts, items, tokens_est, gated_out, holdout, \
+             label, features) VALUES ('s', 'prompt', 2, '[]', 0, 1, 0, 1, '{}');",
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 20);
+        assert!(objects(&connection)?.contains(&"calibration".to_owned()));
+        let kept: i64 = connection.query_row(
+            "SELECT count(*) FROM injections WHERE label = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(kept, 1);
         Ok(())
     }
 

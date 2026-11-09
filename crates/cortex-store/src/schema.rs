@@ -91,10 +91,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 19,
         sql: include_str!("../migrations/0019_facts_given.sql"),
     },
+    Migration {
+        version: 20,
+        sql: include_str!("../migrations/0020_calibration.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 19;
+pub(crate) const SCHEMA_VERSION: u32 = 20;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -638,6 +642,32 @@ pub(crate) const COUNT_DELIVERED_LABELLED: &str = "SELECT count(*) FROM injectio
 pub(crate) const DELIVERED_PRECISION: &str = "SELECT count(*), coalesce(sum(label), 0) \
     FROM injections \
     WHERE gated_out = 0 AND holdout = 0 AND rendered_hash IS NOT NULL AND label IS NOT NULL";
+
+/// The newest confidence model kept.
+pub(crate) const CALIBRATION_LATEST: &str = "SELECT version, coefficients, samples, auc, trained_at \
+    FROM calibration ORDER BY version DESC LIMIT 1";
+
+/// Keeps a confidence model as the newest, its version one more than the newest before it.
+pub(crate) const CALIBRATION_ADD: &str = "INSERT INTO calibration \
+    (version, coefficients, samples, auc, trained_at) \
+    SELECT coalesce(max(version), 0) + 1, ?1, ?2, ?3, ?4 FROM calibration";
+
+/// Deletes the confidence models older than the newest `?1`.
+pub(crate) const CALIBRATION_PRUNE: &str = "DELETE FROM calibration \
+    WHERE version <= (SELECT max(version) FROM calibration) - ?1";
+
+/// The latest `?2` labelled injections of hook `?1` that carry the gate's features, the oldest of
+/// them first.
+pub(crate) const LABELLED_INJECTIONS: &str = "SELECT injection_id, features, label FROM \
+    (SELECT injection_id, features, label FROM injections \
+     WHERE hook = ?1 AND features IS NOT NULL AND label IS NOT NULL \
+     ORDER BY injection_id DESC LIMIT ?2) \
+    ORDER BY injection_id";
+
+/// How many labelled injections of hook `?1` carry the gate's features, told as
+/// [`LABELLED_INJECTIONS`] tells them.
+pub(crate) const COUNT_LABELLED_INJECTIONS: &str = "SELECT count(*) FROM injections \
+    WHERE hook = ?1 AND features IS NOT NULL AND label IS NOT NULL";
 
 /// Sets what the end of its task found of one injection: its used count and its label.
 pub(crate) const INJECTION_LABEL: &str =
@@ -1424,8 +1454,18 @@ mod tests {
     }
 
     /// The injections and warnings tables, column by column.
-    fn expected_injection_columns() -> [(&'static str, Vec<Column>); 2] {
+    fn expected_injection_columns() -> [(&'static str, Vec<Column>); 3] {
         [
+            (
+                "calibration",
+                column_list(&[
+                    ("version", "INTEGER", 1),
+                    ("coefficients", "TEXT", 0),
+                    ("samples", "INTEGER", 0),
+                    ("auc", "REAL", 0),
+                    ("trained_at", "INTEGER", 0),
+                ]),
+            ),
             (
                 "injections",
                 column_list(&[
@@ -1672,6 +1712,7 @@ mod tests {
             tables,
             [
                 "archetypes",
+                "calibration",
                 "cochange_stats",
                 "edges",
                 "episodes",

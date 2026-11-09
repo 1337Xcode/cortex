@@ -17,6 +17,8 @@ pub enum MetaKey {
     ScaleMode,
     /// What the self-check last found, as JSON.
     SelfCheck,
+    /// The last time the confidence model was fitted, kept or not, as JSON.
+    CalibrationAttempt,
 }
 
 impl MetaKey {
@@ -30,6 +32,7 @@ impl MetaKey {
             Self::CreatedAt => "created_at",
             Self::ScaleMode => "scale_mode",
             Self::SelfCheck => "self_check",
+            Self::CalibrationAttempt => "calibration_attempt",
         }
     }
 }

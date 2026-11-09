@@ -9,6 +9,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::activity::{self, EventRecord, SessionRecord, TaskRecord};
 use crate::archetype::{self, ArchetypeRecord};
+use crate::calibration::{self, CalibrationAttempt};
 use crate::checkpoint::{CheckpointFailures, Checkpointer};
 use crate::claims;
 use crate::cochange::{self, FileCommitsRow, GitStateKey, PairRow};
@@ -436,6 +437,33 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn set_self_check(&mut self, record: &SelfCheckRecord) -> Result<(), StoreError> {
         self.atomically(|connection| self_check::set(connection, record))
+    }
+
+    /// Keeps a confidence model with `coefficients`, fitted on `samples` labelled injections at
+    /// `trained_at_ms`, whose AUC on the labelled injections held out from its fitting is `auc`,
+    /// as the newest, and deletes all but the newest `keep_versions` models: its version.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn add_calibration(
+        &mut self,
+        model: (&[f64], u32, f64, i64),
+        keep_versions: u32,
+    ) -> Result<u32, StoreError> {
+        self.atomically(|connection| calibration::add(connection, model, keep_versions))
+    }
+
+    /// Keeps `attempt` as the last time the confidence model was fitted.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn set_calibration_attempt(
+        &mut self,
+        attempt: &CalibrationAttempt,
+    ) -> Result<(), StoreError> {
+        self.atomically(|connection| calibration::set_attempt(connection, attempt))
     }
 
     /// Sets what the end of its task found of injection `id`: `used_count`, how many of its files
