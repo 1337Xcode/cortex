@@ -36,6 +36,11 @@ const SPAN_MAX_LINES_LIMIT: u32 = 200;
 /// seeds at each step, rather than following a link.
 pub const DEFAULT_TELEPORT: f64 = 0.5;
 
+/// The default for `retrieval.min_confidence`: once a confidence model is kept, a work order is
+/// given only when the model puts the chance that its task uses one of its first files at this or
+/// more. Small mode asks at least 0.85, whatever the setting.
+pub const DEFAULT_MIN_CONFIDENCE: f64 = 0.70;
+
 /// How much each kind of link counts while activation spreads, before each node's links are
 /// normalized: only the ratios between them matter, so each is a number from 0 to 1, and 0 leaves
 /// that kind out.
@@ -91,6 +96,9 @@ pub struct RetrievalConfig {
     pub teleport: f64,
     /// `retrieval.type_weights`: how much each kind of link counts.
     pub type_weights: TypeWeights,
+    /// `retrieval.min_confidence`: the chance, from 0 to 1, the confidence model must give a work
+    /// order once one is kept. Default [`DEFAULT_MIN_CONFIDENCE`]; small mode asks at least 0.85.
+    pub min_confidence: f64,
 }
 
 impl Default for RetrievalConfig {
@@ -103,6 +111,7 @@ impl Default for RetrievalConfig {
             span_max_lines: DEFAULT_SPAN_MAX_LINES,
             teleport: DEFAULT_TELEPORT,
             type_weights: TypeWeights::default(),
+            min_confidence: DEFAULT_MIN_CONFIDENCE,
         }
     }
 }
@@ -141,6 +150,9 @@ impl RetrievalConfig {
             "retrieval.teleport" => super::factor(value)
                 .ok_or("a number above 0 and at most 1")
                 .map(|teleport| self.teleport = teleport),
+            "retrieval.min_confidence" => super::share(value)
+                .ok_or("a number from 0 to 1")
+                .map(|least| self.min_confidence = least),
             "retrieval.type_weights.structural" => {
                 weight().map(|weight| self.type_weights.structural = weight)
             }

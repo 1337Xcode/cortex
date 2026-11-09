@@ -476,6 +476,7 @@ mod tests {
                         about: 1.0,
                         containment: 0.1,
                     },
+                    min_confidence: 0.7,
                 },
                 warnings: WarningsConfig {
                     max_per_edit: 3,
@@ -518,7 +519,7 @@ mod tests {
              [git]\nmax_commits = 100\nmax_age_days = 7\nmax_files_per_commit = 5\n\
              half_life_commits = 50\n[tests]\nextra_patterns = [\"^just test\", \"tox( |$)\"]\n\
              [retrieval]\nmax_tokens = 1200\nmax_files = 20\nmax_code_spans = 0\n\
-             span_max_lines = 1\nteleport = 1\n\
+             span_max_lines = 1\nteleport = 1\nmin_confidence = 0.8\n\
              [retrieval.type_weights]\nstructural = 0\ncochange = 1\ncoaccess = 0.25\nabout = 0.5\n\
              containment = 0.05\n\
              [warnings]\nmax_per_edit = 0\ncochange_min_confidence = 1\n\
@@ -563,6 +564,7 @@ mod tests {
                         about: 0.5,
                         containment: 0.05,
                     },
+                    min_confidence: 0.8,
                 },
                 warnings: WarningsConfig {
                     max_per_edit: 0,
@@ -796,6 +798,32 @@ mod tests {
             ),
         ];
         assert_refused(&cases);
+    }
+
+    /// `retrieval.min_confidence` is a chance: 1.5 and -0.1 are refused, naming the file, the key
+    /// and what it accepts; 0 and 1 are read as the whole numbers they are.
+    #[test]
+    fn bad_min_confidence_is_refused() -> Result<(), ConfigError> {
+        assert_refused(&[
+            (
+                "retrieval.min_confidence = 1.5",
+                "retrieval.min_confidence",
+                "a number from 0 to 1",
+            ),
+            (
+                "retrieval.min_confidence = -0.1",
+                "retrieval.min_confidence",
+                "a number from 0 to 1",
+            ),
+        ]);
+        for (text, expected) in [
+            ("retrieval.min_confidence = 0", 0.0),
+            ("retrieval.min_confidence = 1", 1.0),
+        ] {
+            let read = load(&[layer("f", text)])?.config.retrieval.min_confidence;
+            assert!((read - expected).abs() < f64::EPSILON, "{text}");
+        }
+        Ok(())
     }
 
     /// The retrieval keys refuse what retrieval cannot use, naming the file, the key and what it
