@@ -55,7 +55,7 @@ pub use facts::{
     SUSPECT_RETIRES_AFTER_MS, assert_fact, review_facts,
 };
 pub use interest::{EarnedInterest, add_interest, interest_of, tier_now};
-pub use labels::{LABELLED_FILES, label_injections};
+pub use labels::{LABELLED_FILES, count_next_file_use, label_injections};
 pub use links::{EarnedLinks, Linking, MAX_LINK_WEIGHT, add_links, links_of};
 pub use outcome::{FileNow, Judgement, judge, reverted_after};
 pub use record::Recorder;

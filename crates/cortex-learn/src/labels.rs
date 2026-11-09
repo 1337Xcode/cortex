@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use cortex_core::HookKind;
+use cortex_core::{HookKind, ReasonKind};
 use cortex_store::{InjectedFile, NodeId, StoreError, WriteTx};
 
 use crate::links::{Role, file_roles};
@@ -50,6 +50,46 @@ pub fn label_injections(
         delivered += usize::from(row.record.was_delivered());
     }
     Ok(delivered)
+}
+
+/// Counts, in `transaction`, the use of each line of the task `state` shows ended that named the
+/// file earlier tasks read next: 1 when the task read or edited that file, which it had not when
+/// the line was given, else 0. The count is all such a line gets; its label stays unset, so that it
+/// never weighs in the self-check or the confidence model, which judge work orders.
+///
+/// # Errors
+///
+/// The store's errors.
+pub fn count_next_file_use(
+    transaction: &mut WriteTx<'_>,
+    state: &TaskState,
+) -> Result<(), StoreError> {
+    let rows: Vec<_> = transaction
+        .queries()
+        .injections_of_task(state.task_id())?
+        .into_iter()
+        .filter(|row| {
+            row.record
+                .files
+                .iter()
+                .any(|file| file.reason == Some(ReasonKind::ReadNext))
+        })
+        .collect();
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let roles = file_roles(transaction.queries(), state)?;
+    for row in rows {
+        let used = row
+            .record
+            .files
+            .iter()
+            .filter(|file| file.reason == Some(ReasonKind::ReadNext))
+            .filter(|file| roles.contains_key(&file.node))
+            .count();
+        transaction.count_injection_use(row.id, u32::try_from(used).unwrap_or(u32::MAX))?;
+    }
+    Ok(())
 }
 
 /// The used count and the label of an injection of `files`, the best first, for a task whose files

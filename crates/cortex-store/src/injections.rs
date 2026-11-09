@@ -157,7 +157,43 @@ pub(crate) fn label(
     Ok(changed == 1)
 }
 
+/// Sets how many of injection `id`'s files its task read or edited, leaving its label as it is:
+/// whether the injection was found.
+pub(crate) fn count_use(
+    connection: &Connection,
+    id: InjectionId,
+    used_count: u32,
+) -> Result<bool, StoreError> {
+    let changed = connection
+        .prepare_cached(schema::INJECTION_USE)
+        .and_then(|mut statement| statement.execute((id.get(), used_count)))
+        .map_err(sqlite("counting an injection's use"))?;
+    Ok(changed == 1)
+}
+
 impl Queries<'_> {
+    /// How many lines naming the file earlier tasks read next reached the agent and had their
+    /// task's end count their use, and how many of those named a file the task then read or
+    /// edited.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn next_file_use(self) -> Result<(u64, u64), StoreError> {
+        let (named, used): (i64, i64) = self
+            .connection()
+            .query_row(
+                schema::NEXT_FILE_USE,
+                [ReasonKind::ReadNext.name()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(sqlite("counting the use of next-file lines"))?;
+        Ok((
+            u64::try_from(named).unwrap_or(0),
+            u64::try_from(used).unwrap_or(0),
+        ))
+    }
+
     /// The injections of task `task_id`, in the order they were recorded.
     ///
     /// # Errors

@@ -23,7 +23,7 @@ use crate::decay::decayed;
 use crate::episode::episode_of;
 use crate::handoff::leave_handoff;
 use crate::interest::{add_interest, interest_of};
-use crate::labels::label_injections;
+use crate::labels::{count_next_file_use, label_injections};
 use crate::links::{EarnedLinks, Linking, add_links, links_of};
 use crate::outcome::{FileNow, judge, reverted_after};
 use crate::self_check::check_self;
@@ -129,6 +129,7 @@ impl Learner {
         if label_injections(transaction, state)? > 0 {
             check_self(transaction)?;
         }
+        count_next_file_use(transaction, state)?;
         resolve_warnings(transaction, state)?;
         leave_handoff(
             transaction,

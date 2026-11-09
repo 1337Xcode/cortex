@@ -502,6 +502,20 @@ impl WriteTx<'_> {
         self.atomically(|connection| injections::label(connection, id, (used_count, label)))
     }
 
+    /// Sets how many of injection `id`'s files its task read or edited, its label left as it is:
+    /// whether the store holds the injection.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn count_injection_use(
+        &mut self,
+        id: InjectionId,
+        used_count: u32,
+    ) -> Result<bool, StoreError> {
+        self.atomically(|connection| injections::count_use(connection, id, used_count))
+    }
+
     /// Records `record`, one file a warning named, returning its row.
     ///
     /// # Errors

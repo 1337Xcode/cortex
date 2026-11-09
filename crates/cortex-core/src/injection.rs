@@ -53,5 +53,7 @@ named_kind! {
         WorkedOnWith => "worked_on_with",
         /// The session read it.
         ReadHere => "read_here",
+        /// Earlier tasks read it right after the file the agent is reading.
+        ReadNext => "read_next",
     }
 }

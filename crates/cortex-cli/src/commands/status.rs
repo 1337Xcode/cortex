@@ -428,6 +428,7 @@ fn status_lines(
         Err(error) => return Err(error.into()),
     }
     lines.push(warnings_line(queries.warning_counts()?));
+    lines.extend(next_file_line(queries.next_file_use()?));
     lines.extend(health_line(queries.fact_health()?));
     Ok(lines)
 }
@@ -452,6 +453,22 @@ fn warnings_line(counts: WarningCounts) -> String {
             )
         }
     }
+}
+
+/// How many lines naming the file earlier tasks read next were given and counted at their task's
+/// end, and how many named a file the task then read or edited; none before any was counted.
+fn next_file_line((named, used): (u64, u64)) -> Option<String> {
+    (named > 0).then(|| {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "counts of lines given stay far below the 2^52 a float holds exactly"
+        )]
+        let share = used as f64 / named as f64;
+        format!(
+            "next files: {} named; {used} then read or edited ({share:.2})",
+            counted(named, ("file", "files"))
+        )
+    })
 }
 
 /// The line naming the facts that need a person, none when no fact does: those anchored to code
@@ -582,6 +599,21 @@ mod tests {
     use cortex_learn::{ConfidenceModel, MODEL_INPUTS};
 
     use super::*;
+
+    /// No line before a next-file line is counted; 4 named and 3 used read 0.75; 1 named reads in
+    /// the singular.
+    #[test]
+    fn the_next_file_line_says_how_often_the_file_was_read() {
+        assert_eq!(next_file_line((0, 0)), None);
+        assert_eq!(
+            next_file_line((4, 3)).as_deref(),
+            Some("next files: 4 files named; 3 then read or edited (0.75)")
+        );
+        assert_eq!(
+            next_file_line((1, 0)).as_deref(),
+            Some("next files: 1 file named; 0 then read or edited (0.00)")
+        );
+    }
 
     /// The gate's lines, case by case. With no model: the cold-start bars, 0.50 and 0.10, lifted by
     /// a raise of two steps (0.10) to 0.60 and 0.20. With model 3, fitted on 1600 retrievals at an

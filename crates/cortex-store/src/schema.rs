@@ -691,6 +691,16 @@ pub(crate) const LABELLED_INJECTIONS: &str = "SELECT injection_id, features, lab
 pub(crate) const COUNT_LABELLED_INJECTIONS: &str = "SELECT count(*) FROM injections \
     WHERE hook = ?1 AND features IS NOT NULL AND label IS NOT NULL";
 
+/// Sets how many of one injection's files its task read or edited, its label left as it is.
+pub(crate) const INJECTION_USE: &str =
+    "UPDATE injections SET used_count = ?2 WHERE injection_id = ?1";
+
+/// How many delivered injections naming a file for reason ?1 have their use counted and carry no
+/// label, and how many of them were used.
+pub(crate) const NEXT_FILE_USE: &str = "SELECT count(*), coalesce(sum(used_count > 0), 0) \
+    FROM injections WHERE used_count IS NOT NULL AND label IS NULL AND rendered_hash IS NOT NULL \
+    AND EXISTS (SELECT 1 FROM json_each(items) WHERE json_extract(value, '$.reason') = ?1)";
+
 /// Sets what the end of its task found of one injection: its used count and its label.
 pub(crate) const INJECTION_LABEL: &str =
     "UPDATE injections SET used_count = ?2, label = ?3 WHERE injection_id = ?1";
