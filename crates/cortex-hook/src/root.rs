@@ -1,5 +1,7 @@
 //! The repository a hook's working folder belongs to: the nearest folder at or above it that holds
-//! a `.cortex` folder. Inside the user's home folder the search stops below the home folder, whose
+//! a `.cortex` folder of its own. A `.cortex` holding nothing but `shared` is not one: that is what
+//! git checks out in a clone of a repository whose team shares facts, where the user who cloned it
+//! never set Cortex up. Inside the user's home folder the search stops below the home folder, whose
 //! `.cortex` is the user's own folder and which no repository contains. A folder with no marked
 //! folder above it was never set up for Cortex, and the hook leaves it alone.
 
@@ -12,6 +14,9 @@ use crate::adapter::Located;
 /// The folder that marks a repository's root.
 const MARKER: &str = ".cortex";
 
+/// The folder inside the marker that a team commits, and that alone marks nothing.
+const SHARED: &str = "shared";
+
 /// Where the working folder `cwd`, as the agent spells it, sits: its canonical form, its
 /// repository's canonical root, and that root as the agent spells it. `None` when `cwd` is not a
 /// folder or no repository holds it. `home` is the user's home folder: neither it nor anything
@@ -22,7 +27,7 @@ pub fn locate(cwd: &Path, home: Option<&Path>) -> Option<Located> {
     let root = canonical
         .ancestors()
         .take_while(|folder| Some(*folder) != home.as_deref())
-        .find(|folder| folder.join(MARKER).is_dir())?
+        .find(|folder| is_set_up(&folder.join(MARKER)))?
         .to_path_buf();
     // The agent's spelling of the root drops as many folders from its working folder as lie
     // between the canonical working folder and the root: through a link, the names differ. A link
@@ -39,6 +44,21 @@ pub fn locate(cwd: &Path, home: Option<&Path>) -> Option<Located> {
         root,
         agent_root,
     })
+}
+
+/// Whether `marker`, a folder's `.cortex`, marks a repository set up here: a folder holding
+/// anything but the shared folder alone, or nothing at all. A folder that cannot be read marks
+/// nothing, and the hook leaves it alone.
+fn is_set_up(marker: &Path) -> bool {
+    if !marker.is_dir() {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(marker) else {
+        return false;
+    };
+    // Two names at most tell the shared folder alone from anything else.
+    let mut names = entries.map_while(Result::ok).map(|entry| entry.file_name());
+    !matches!((names.next(), names.next()), (Some(only), None) if only == SHARED)
 }
 
 #[cfg(test)]
@@ -92,6 +112,33 @@ mod tests {
         assert_eq!(
             locate(&outside, Some(&home)).map(|located| located.root),
             Some(base.clone())
+        );
+        Ok(())
+    }
+
+    /// A clone of a repository whose team shares facts holds `.cortex/shared/` and nothing else
+    /// of Cortex's: it is not set up, and the search goes on above it, to the home folder (here the
+    /// temporary folder), where it stops. Once the
+    /// user sets it up and `.cortex` holds more, it is the root; an empty `.cortex` marks it too.
+    #[test]
+    fn the_shared_folder_alone_marks_nothing() -> TestResult {
+        let base = tempfile::tempdir()?;
+        let base = canonical_root(base.path())?;
+        let clone = base.join("clone");
+        std::fs::create_dir_all(clone.join(MARKER).join(SHARED))?;
+        std::fs::write(clone.join(MARKER).join(SHARED).join("facts.json"), "{}")?;
+        std::fs::create_dir_all(clone.join("src"))?;
+        assert_eq!(locate(&clone.join("src"), Some(&base)), None);
+        std::fs::write(clone.join(MARKER).join("config.toml"), "")?;
+        assert_eq!(
+            locate(&clone.join("src"), Some(&base)).map(|located| located.root),
+            Some(clone.clone())
+        );
+        let empty = base.join("empty");
+        std::fs::create_dir_all(empty.join(MARKER))?;
+        assert_eq!(
+            locate(&empty, Some(&base)).map(|located| located.root),
+            Some(empty.clone())
         );
         Ok(())
     }

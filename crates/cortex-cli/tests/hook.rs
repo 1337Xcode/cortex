@@ -434,17 +434,32 @@ fn bad_calls_are_silent() -> TestResult {
 }
 
 /// A working folder with no `.cortex` folder at or above it is left alone: nothing printed, and
-/// nothing written to the user's folder, not even a log line.
+/// nothing written to the user's folder, not even a log line. So is a clone of a repository whose
+/// team shares facts, whose `.cortex` holds the committed `shared` folder alone: its user never set
+/// Cortex up there, whatever hooks the user's own settings run.
 #[test]
 fn folders_without_cortex_are_left_alone() -> TestResult {
     let (home, repo) = repository()?;
-    let call = hook(
-        &["--agent", "claude", "--event", "Stop"],
-        stop_payload(&repo)?,
-        Duration::ZERO,
-        home.path(),
+    let call = || {
+        hook(
+            &["--agent", "claude", "--event", "Stop"],
+            stop_payload(&repo)?,
+            Duration::ZERO,
+            home.path(),
+        )
+    };
+    let alone = call()?;
+    assert!(alone.is_silent_success(), "{:?}", alone.output);
+    assert!(!UserFolder::in_home(home.path()).path().exists());
+    let shared = repo.join(".cortex").join("shared");
+    std::fs::create_dir_all(&shared)?;
+    std::fs::write(
+        shared.join("facts.json"),
+        "{\"version\": 1, \"facts\": []}
+",
     )?;
-    assert!(call.is_silent_success(), "{:?}", call.output);
+    let cloned = call()?;
+    assert!(cloned.is_silent_success(), "{:?}", cloned.output);
     assert!(!UserFolder::in_home(home.path()).path().exists());
     Ok(())
 }
