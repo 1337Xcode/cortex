@@ -407,7 +407,7 @@ impl Server {
         if let Some(hook) = hook {
             self.latencies().note(hook, took);
         }
-        let holds_text = matches!(&body, ResponseBody::Reply { text: Some(_) });
+        let holds_text = matches!(&body, ResponseBody::Reply { text: Some(_), .. });
         let answered = write_response(writer, request.request_id, body).await;
         // Recorded once its answer is written, after its event, as `recorded` says.
         if !given.is_empty() {
@@ -543,7 +543,10 @@ impl Server {
         }
         let given = if is_probe { Vec::new() } else { answer.given };
         Answered {
-            body: ResponseBody::Reply { text: answer.text },
+            body: ResponseBody::Reply {
+                text: answer.text,
+                to_user: None,
+            },
             hook: Some(hook),
             given,
             undo: Undo {
@@ -576,8 +579,14 @@ impl Server {
             })
             .await;
         match located {
-            Some(Ok(text)) => ResponseBody::Reply { text },
-            None => ResponseBody::Reply { text: None },
+            Some(Ok(text)) => ResponseBody::Reply {
+                text,
+                to_user: None,
+            },
+            None => ResponseBody::Reply {
+                text: None,
+                to_user: None,
+            },
             Some(Err(error)) => {
                 let message = format!("{error:#}");
                 tracing::warn!(error = %message, "a question was not answered");

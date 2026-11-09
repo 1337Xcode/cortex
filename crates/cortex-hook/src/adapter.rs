@@ -112,6 +112,20 @@ pub trait Adapter: Sync {
     /// hook protocol; none when the agent would not take the text as it is: longer than it takes
     /// whole, or holding text it rewrites.
     fn context_output(&self, entry: &HookEntry, text: &str) -> Option<String>;
+
+    /// `message` as the hook `entry` prints it for the user to see and the model not to, with
+    /// `text`, when there is one, for the agent's context as [`Adapter::context_output`] would
+    /// give it; none when the agent shows no hook's message to its user or would not take either
+    /// as it is, and the text is then given alone.
+    fn message_output(
+        &self,
+        entry: &HookEntry,
+        text: Option<&str>,
+        message: &str,
+    ) -> Option<String> {
+        let _ = (entry, text, message);
+        None
+    }
 }
 
 /// One hook Cortex registers with an agent.

@@ -325,14 +325,20 @@ fn text_requests_and_replies_read_back() -> TestResult {
     for text in [Some("[cortex] Work order".to_owned()), None] {
         let reply = Response {
             request_id: 2,
-            body: ResponseBody::Reply { text },
+            body: ResponseBody::Reply {
+                text,
+                to_user: None,
+            },
         };
         let frame = encode(&reply)?;
         assert_eq!(decode::<Response>(&frame[LENGTH_PREFIX_BYTES..])?, reply);
     }
     let silent = encode(&Response {
         request_id: 3,
-        body: ResponseBody::Reply { text: None },
+        body: ResponseBody::Reply {
+            text: None,
+            to_user: None,
+        },
     })?;
     assert_eq!(
         silent.get(LENGTH_PREFIX_BYTES..),

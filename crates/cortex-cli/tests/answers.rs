@@ -132,7 +132,7 @@ fn event(root: &Path, hook: HookKind, ts_ms: i64) -> TestResult<Event> {
 fn reply(files: &RunFiles, body: RequestBody) -> TestResult<Option<String>> {
     let deadline = Instant::now() + Duration::from_secs(10);
     match ask(files, Role::Hook, body, deadline)?.body {
-        ResponseBody::Reply { text } => Ok(text),
+        ResponseBody::Reply { text, .. } => Ok(text),
         other => Err(format!("{other:?}").into()),
     }
 }

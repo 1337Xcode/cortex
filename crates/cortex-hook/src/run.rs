@@ -196,16 +196,12 @@ impl Hook {
         }
         match answer {
             Ok(answer) => {
-                let text = text_of(answer.body, asks_for_text)?;
+                let reply = reply_of(answer.body, asks_for_text)?;
                 // The answer came: a stop that fails is noted, and the text given all the same.
                 if let Err(failure) = stop_older(&files, &answer.welcome.cortex_version, deadline) {
                     self.note(&describe(&failure));
                 }
-                // INVARIANT: silent-when-unsure. An empty text gives the agent nothing, not an
-                // empty context.
-                text.filter(|text| !text.is_empty())
-                    .map(|text| adapter.context_output(entry, &text).ok_or(Failure::Unfit))
-                    .transpose()
+                printed(adapter, entry, reply)
             }
             // No daemon: start one and go on without it. The event that found none is not kept;
             // the next hook finds the daemon listening.
@@ -268,7 +264,7 @@ fn stop_older(files: &RunFiles, version: &str, deadline: Instant) -> Result<(), 
 /// older one to stop, nor starts one when none runs, and the text it gets is not given.
 fn probed(answer: Result<Answer, ClientError>, asks_for_text: bool) -> Result<(), Failure> {
     match answer {
-        Ok(answer) => text_of(answer.body, asks_for_text).map(drop),
+        Ok(answer) => reply_of(answer.body, asks_for_text).map(drop),
         Err(ClientError::NotRunning) => Err(Failure::ProbeWithoutDaemon),
         Err(error) => Err(error.into()),
     }
@@ -315,18 +311,49 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
     }
 }
 
-/// The text in the daemon's answer `body` to a request that asked for text or not: none for the
-/// event taken, or when the daemon has no text to give.
+/// The text in the daemon's answer `body` to a request that asked for text or not, and the
+/// message it holds for the user: none for the event taken, or when the daemon has none to give.
 ///
 /// # Errors
 ///
 /// The answer is not the one the request asks for: an error, or another kind of answer.
-fn text_of(body: ResponseBody, asks_for_text: bool) -> Result<Option<String>, Failure> {
+fn reply_of(body: ResponseBody, asks_for_text: bool) -> Result<Reply, Failure> {
     match (body, asks_for_text) {
-        (ResponseBody::Ack, false) => Ok(None),
-        (ResponseBody::Reply { text }, true) => Ok(text),
+        (ResponseBody::Ack, false) => Ok(Reply::default()),
+        (ResponseBody::Reply { text, to_user }, true) => Ok(Reply { text, to_user }),
         _ => Err(Failure::NotTaken),
     }
+}
+
+/// What the daemon's reply gives: text for the agent's context, and a message for the user.
+#[derive(Debug, Default)]
+struct Reply {
+    /// The text for the agent.
+    text: Option<String>,
+    /// The message for the user, never the model.
+    to_user: Option<String>,
+}
+
+/// What the hook `entry` of `adapter` prints for `reply`: the text in the agent's context and the
+/// message shown to the user when the agent shows hooks' messages, else the text alone.
+///
+/// # Errors
+///
+/// The text is one the agent would not take as it is.
+fn printed(
+    adapter: &dyn Adapter,
+    entry: &HookEntry,
+    reply: Reply,
+) -> Result<Option<String>, Failure> {
+    // INVARIANT: silent-when-unsure. An empty text gives the agent nothing, not an empty context.
+    let text = reply.text.filter(|text| !text.is_empty());
+    if let Some(message) = reply.to_user.filter(|message| !message.is_empty())
+        && let Some(both) = adapter.message_output(entry, text.as_deref(), &message)
+    {
+        return Ok(Some(both));
+    }
+    text.map(|text| adapter.context_output(entry, &text).ok_or(Failure::Unfit))
+        .transpose()
 }
 
 /// The adapter and the hook the arguments name.

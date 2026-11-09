@@ -141,6 +141,23 @@ impl Adapter for Codex {
         }
         Some(output::context(entry.event_name, text))
     }
+
+    fn message_output(
+        &self,
+        entry: &HookEntry,
+        text: Option<&str>,
+        message: &str,
+    ) -> Option<String> {
+        // The same limit as the context's for each string; a context that would not be taken
+        // leaves the whole answer to `context_output`.
+        if message.len() > MAX_CONTEXT_BYTES {
+            return None;
+        }
+        if let Some(text) = text {
+            self.context_output(entry, text)?;
+        }
+        Some(output::with_message(entry.event_name, text, message))
+    }
 }
 
 #[cfg(test)]

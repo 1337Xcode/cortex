@@ -130,6 +130,7 @@ fn exchange(
 fn reply(text: &str) -> ResponseBody {
     ResponseBody::Reply {
         text: Some(text.to_owned()),
+        to_user: None,
     }
 }
 
@@ -176,6 +177,47 @@ fn a_prompt_and_a_session_start_write_the_daemon_s_text() -> TestResult {
     Ok(())
 }
 
+/// A session's start whose answer holds a message for the user writes it as Claude Code's
+/// `systemMessage`, which the user sees and the model does not, before the primer; with no primer
+/// the message goes alone; a message too long for Claude Code leaves the primer alone.
+#[test]
+fn a_message_for_the_user_is_written_as_the_system_message() -> TestResult {
+    let answer = |text: Option<&str>, message: String| ResponseBody::Reply {
+        text: text.map(str::to_owned),
+        to_user: Some(message),
+    };
+    let failed = "Cortex: storing what agents did failed 2 times in the last 3 minutes".to_owned();
+    let (written, _, log) = exchange(
+        "SessionStart",
+        answer(Some("[cortex] Project map\n"), failed.clone()),
+        false,
+    )?;
+    assert_eq!(
+        written,
+        "{\"systemMessage\":\"Cortex: storing what agents did failed 2 times in the last 3 \
+         minutes\",\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\
+         \"additionalContext\":\"[cortex] Project map\\n\"}}\n"
+    );
+    assert_eq!(log, "");
+    let (written, _, _) = exchange("SessionStart", answer(None, failed), false)?;
+    assert_eq!(
+        written,
+        "{\"systemMessage\":\"Cortex: storing what agents did failed 2 times in the last 3 \
+         minutes\"}\n"
+    );
+    let (written, _, _) = exchange(
+        "SessionStart",
+        answer(Some("[cortex] Project map\n"), "x".repeat(10_001)),
+        false,
+    )?;
+    assert_eq!(
+        written,
+        "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\
+         \"[cortex] Project map\\n\"}}\n"
+    );
+    Ok(())
+}
+
 /// The hook writes nothing when the daemon has no text or an empty one, when it answers a request
 /// for text as it answers an event, when its text is longer than Claude Code takes whole (10,001
 /// characters) or holds a tag Claude Code rewrites, and for `cortex doctor`'s probe, whose text is
@@ -184,7 +226,13 @@ fn a_prompt_and_a_session_start_write_the_daemon_s_text() -> TestResult {
 /// not taken.
 #[test]
 fn text_absent_unasked_or_unfit_writes_nothing() -> TestResult {
-    for absent in [ResponseBody::Reply { text: None }, reply("")] {
+    for absent in [
+        ResponseBody::Reply {
+            text: None,
+            to_user: None,
+        },
+        reply(""),
+    ] {
         let (written, _, log) = exchange("UserPromptSubmit", absent, false)?;
         assert_eq!((written, log), (String::new(), String::new()));
     }

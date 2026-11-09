@@ -54,8 +54,10 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         .answer
         .with_context(|| format!("asking the daemon of {}", root.display()))?;
     match answer.body {
-        ResponseBody::Reply { text: Some(text) } => output::lines(&text),
-        ResponseBody::Reply { text: None } => output::line(nothing_found(&root, &user)),
+        ResponseBody::Reply {
+            text: Some(text), ..
+        } => output::lines(&text),
+        ResponseBody::Reply { text: None, .. } => output::line(nothing_found(&root, &user)),
         ResponseBody::Error { message } => bail!("the daemon could not answer: {message}"),
         other => bail!("the daemon answered the question with {other:?}"),
     }

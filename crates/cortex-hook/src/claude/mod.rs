@@ -162,6 +162,23 @@ impl Adapter for Claude {
         }
         Some(output::context(entry.event_name, text))
     }
+
+    fn message_output(
+        &self,
+        entry: &HookEntry,
+        text: Option<&str>,
+        message: &str,
+    ) -> Option<String> {
+        // The same limits as the context's: each string is capped alike, and a context that
+        // would not be taken leaves the whole answer to `context_output`.
+        if message.encode_utf16().count() > MAX_CONTEXT_CHARS {
+            return None;
+        }
+        if let Some(text) = text {
+            self.context_output(entry, text)?;
+        }
+        Some(output::with_message(entry.event_name, text, message))
+    }
 }
 
 #[cfg(test)]

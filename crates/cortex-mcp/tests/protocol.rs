@@ -107,6 +107,7 @@ async fn a_question_is_answered_as_the_daemon_wrote_it() -> TestResult {
     let (results, asked) = session(
         Ok(ResponseBody::Reply {
             text: Some(answer.to_owned()),
+            to_user: None,
         }),
         vec![
             json!({"query": "where is divide"}),
@@ -153,7 +154,14 @@ async fn a_question_is_answered_as_the_daemon_wrote_it() -> TestResult {
 #[tokio::test]
 async fn an_answer_without_code_is_said_in_words() -> TestResult {
     let question = || vec![json!({"query": "divide"})];
-    let (nothing, _) = session(Ok(ResponseBody::Reply { text: None }), question()).await?;
+    let (nothing, _) = session(
+        Ok(ResponseBody::Reply {
+            text: None,
+            to_user: None,
+        }),
+        question(),
+    )
+    .await?;
     assert_eq!(
         nothing,
         [result(
@@ -192,7 +200,10 @@ async fn a_long_answer_is_cut() -> TestResult {
     let line = "x".repeat(99);
     let long: String = (0..300).map(|_| format!("{line}\n")).collect();
     let (results, _) = session(
-        Ok(ResponseBody::Reply { text: Some(long) }),
+        Ok(ResponseBody::Reply {
+            text: Some(long),
+            to_user: None,
+        }),
         vec![json!({"query": "divide"})],
     )
     .await?;

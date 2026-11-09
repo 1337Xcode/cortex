@@ -164,6 +164,11 @@ pub enum ResponseBody {
     Reply {
         /// The text.
         text: Option<String>,
+        /// A message for the user and never the model, as when a step the daemon runs on its own
+        /// failed. Absent from the frame when there is none, so a hook built before it reads the
+        /// reply as before.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to_user: Option<String>,
     },
     /// The request could not be served.
     Error {

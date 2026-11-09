@@ -461,7 +461,7 @@ fn retrieve(files: &RunFiles, root: &Path, session: u64) -> (Duration, bool) {
     let answer = cortex_hook::ask(files, Role::Hook, body, start + Duration::from_secs(10))
         .expect("the daemon's answer");
     let took = start.elapsed();
-    let has_work_order = matches!(answer.body, ResponseBody::Reply { text: Some(_) });
+    let has_work_order = matches!(answer.body, ResponseBody::Reply { text: Some(_), .. });
     (took, has_work_order)
 }
 

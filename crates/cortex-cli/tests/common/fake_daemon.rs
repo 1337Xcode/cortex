@@ -220,16 +220,20 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
             let is_stop = request.body == RequestBody::Shutdown;
             let body = match (&script, &request.body) {
                 (Script::Indexing(_), RequestBody::Status) => ResponseBody::Status(indexing()),
-                (Script::Indexing(_), RequestBody::Where { .. }) => {
-                    ResponseBody::Reply { text: None }
-                }
+                (Script::Indexing(_), RequestBody::Where { .. }) => ResponseBody::Reply {
+                    text: None,
+                    to_user: None,
+                },
                 // As a daemon with nothing to say answers a request for text.
                 (
                     _,
                     RequestBody::PostEdit { .. }
                     | RequestBody::ReadHint { .. }
                     | RequestBody::StopReason { .. },
-                ) => ResponseBody::Reply { text: None },
+                ) => ResponseBody::Reply {
+                    text: None,
+                    to_user: None,
+                },
                 _ => ResponseBody::Ack,
             };
             let answer = Response {

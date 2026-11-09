@@ -180,7 +180,10 @@ fn a_late_stop_is_recorded_and_a_mismatched_one_refused() -> TestResult {
     let late = stop_request(&repo, HookKind::Stop, Some(0))?;
     assert_eq!(
         ask(&files, Role::Hook, late, deadline)?.body,
-        ResponseBody::Reply { text: None }
+        ResponseBody::Reply {
+            text: None,
+            to_user: None
+        }
     );
     wait_for(|| Ok(!stops(home.path())?.1))?;
     assert_eq!(stops(home.path())?, (1, false));
@@ -216,7 +219,7 @@ fn a_recap_that_came_too_late_is_given_to_the_next_start() -> TestResult {
     };
     let text = |answer_by_ms| -> TestResult<Option<String>> {
         match ask(&files, Role::Hook, start(answer_by_ms)?, deadline)?.body {
-            ResponseBody::Reply { text } => Ok(text),
+            ResponseBody::Reply { text, .. } => Ok(text),
             other => Err(format!("{other:?}").into()),
         }
     };

@@ -87,8 +87,10 @@ impl Server {
         // The daemon is asked over a blocking connection, off the session's thread.
         let asked = tokio::task::spawn_blocking(move || daemon.ask(body)).await;
         let text = match asked {
-            Ok(Ok(ResponseBody::Reply { text: Some(text) })) => capped(&text),
-            Ok(Ok(ResponseBody::Reply { text: None })) => NOTHING_FOUND.to_owned(),
+            Ok(Ok(ResponseBody::Reply {
+                text: Some(text), ..
+            })) => capped(&text),
+            Ok(Ok(ResponseBody::Reply { text: None, .. })) => NOTHING_FOUND.to_owned(),
             Ok(Ok(ResponseBody::Error { message })) => {
                 return Ok(failed(&format!("the daemon could not answer: {message}")));
             }

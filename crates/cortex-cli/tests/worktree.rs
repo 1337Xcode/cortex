@@ -109,7 +109,7 @@ fn work_order(files: &RunFiles, event: &Event) -> TestResult<Option<String>> {
     };
     let deadline = Instant::now() + Duration::from_secs(10);
     match ask(files, Role::Hook, body, deadline)?.body {
-        ResponseBody::Reply { text } => Ok(text),
+        ResponseBody::Reply { text, .. } => Ok(text),
         other => Err(format!("{other:?}").into()),
     }
 }
