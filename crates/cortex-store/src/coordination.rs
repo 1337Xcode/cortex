@@ -54,6 +54,17 @@ pub struct SeenSession {
     pub status: SessionStatus,
 }
 
+impl SeenSession {
+    /// When it was last heard from: its last event, unless it ended at or after it; none for a
+    /// session that never had one.
+    #[must_use]
+    pub fn heard_from_ms(&self) -> Option<i64> {
+        let last = self.last_event_ms?;
+        let is_ended = self.ended_ms.is_some_and(|ended| ended >= last);
+        (!is_ended).then_some(last)
+    }
+}
+
 /// The heaviest edge of one type between an edited file and a file a session holds, counting the
 /// files' symbols: a structural edge's weight is how surely its reference was tied, a co-change
 /// edge's is how often the held file changed when the edited one did.

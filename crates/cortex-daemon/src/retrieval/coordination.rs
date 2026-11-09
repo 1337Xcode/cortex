@@ -347,10 +347,9 @@ pub(super) fn family_of(event: &Event, seen: &[SeenSession]) -> Vec<Identifier> 
 /// When `session` was last heard from, as `seen` says; none for a session that ended after its
 /// last event (an event after its end means it was taken up again).
 fn last_event_of(session: &Identifier, seen: &[SeenSession]) -> Option<i64> {
-    let seen = seen.iter().find(|seen| seen.session_id == *session)?;
-    let last = seen.last_event_ms?;
-    let is_ended = seen.ended_ms.is_some_and(|ended| ended >= last);
-    (!is_ended).then_some(last)
+    seen.iter()
+        .find(|seen| seen.session_id == *session)?
+        .heard_from_ms()
 }
 
 /// How a session of `agent` is named to a session of `to`: by its agent's name, or as another
