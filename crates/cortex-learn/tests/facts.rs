@@ -1,14 +1,18 @@
 //! The life of a fact on worked histories: said again on the same anchors in alike enough words it
 //! is the same fact, a candidate turning active when the user says it or an agent says it in a
 //! second task; a changed or gone anchor makes it suspect, 14 days suspect retire it, and saying it
-//! against the code as it is now makes it active again. Every expected value is worked out by hand
+//! against the code as it is now makes it active again. The user confirms, retires and corrects
+//! facts. Every expected value is worked out by hand
 //! in the comment above its test.
 
 mod common;
 
 use common::{Store, TestResult};
 use cortex_core::{FactKind, FactSource, FactStatus, RepoPath, Ulid};
-use cortex_learn::{AssertError, Asserted, Assertion, Reviewed, assert_fact, review_facts};
+use cortex_learn::{
+    Asserted, Assertion, FactError, Reviewed, assert_fact, confirm_fact, edit_fact, retire_fact,
+    review_facts,
+};
 use cortex_store::{FactId, NodeId};
 
 /// Fourteen days in milliseconds: 14 x 24 x 60 x 60 x 1,000.
@@ -21,7 +25,7 @@ fn say(
     (text, source, task): (&str, FactSource, Option<u64>),
     nodes: &[NodeId],
     at_ms: i64,
-) -> Result<Asserted, AssertError> {
+) -> Result<Asserted, FactError> {
     let mut transaction = store.writer.transaction()?;
     let asserted = assert_fact(
         &mut transaction,
@@ -231,10 +235,103 @@ fn a_fact_on_what_has_no_hash_is_refused() -> TestResult {
             1,
         );
         assert!(
-            matches!(refused, Err(AssertError::Unanchorable { node_id }) if node_id == node.get())
+            matches!(refused, Err(FactError::Unanchorable { node_id }) if node_id == node.get())
         );
     }
     let queries = store.writer.queries();
     assert_eq!(queries.current_facts(FactStatus::Active)?.len(), 0);
     Ok(())
+}
+
+/// The user's word. An agent's candidate on `money.py` ("v1") from 10, confirmed at 20: active
+/// from 20. `money.py` becomes "v2" and a review at 30 makes it suspect; confirmed at 40 it is
+/// active from 40 with its anchor stamped anew, so a review at 50 finds nothing. The user's pitfall
+/// on `tax.py` from 10, corrected at 60: a new active pitfall from 60 on `tax.py` with the new
+/// text, which supersedes it; the old one is no longer current and cannot be confirmed, retired or
+/// corrected again. `tax.py` goes: the new fact cannot be confirmed or corrected (its anchor has no
+/// hash now), and is retired at 70.
+#[test]
+fn the_user_confirms_retires_and_corrects_facts() -> TestResult {
+    let mut store = Store::new()?;
+    let nodes = store.index_text(&[("src/money.py", "v1"), ("src/tax.py", "t1")])?;
+    let (money, tax) = (&nodes[..1], &nodes[1..]);
+    let cents = ("Money is kept in cents.", FactSource::Agent, Some(1));
+    let candidate = added(say(&mut store, cents, money, 10)?)?;
+    word(&mut store, |transaction| {
+        confirm_fact(transaction, candidate, 20)
+    })?;
+    assert_eq!(status(&store, candidate)?, (FactStatus::Active, 20));
+    store.index_text(&[("src/money.py", "v2")])?;
+    assert_eq!(review(&mut store, 30)?.suspected, [candidate]);
+    word(&mut store, |transaction| {
+        confirm_fact(transaction, candidate, 40)
+    })?;
+    assert_eq!(status(&store, candidate)?, (FactStatus::Active, 40));
+    assert_eq!(review(&mut store, 50)?, Reviewed::default());
+
+    let mut transaction = store.writer.transaction()?;
+    let pitfall = assert_fact(
+        &mut transaction,
+        &Assertion {
+            text: "Tax rounds half up.",
+            kind: FactKind::Pitfall,
+            source: FactSource::User,
+            task: None,
+            nodes: tax,
+        },
+        10,
+    )?;
+    transaction.commit()?;
+    let old = added(pitfall)?;
+    let new = word(&mut store, |transaction| {
+        edit_fact(transaction, old, "Tax rounds half to even.", 60)
+    })?;
+    let row = store.writer.queries().fact(new)?.ok_or("no new fact")?;
+    assert_eq!(
+        (row.record.text.as_str(), row.record.kind, row.record.source),
+        (
+            "Tax rounds half to even.",
+            FactKind::Pitfall,
+            FactSource::User
+        )
+    );
+    assert_eq!(status(&store, new)?, (FactStatus::Active, 60));
+    let anchored: Vec<NodeId> = row
+        .record
+        .anchors
+        .iter()
+        .map(|anchor| anchor.node)
+        .collect();
+    assert_eq!(anchored, tax);
+    let old_row = store.writer.queries().fact(old)?.ok_or("no old fact")?;
+    assert_eq!(old_row.superseded_by, Some(new));
+    let superseded = |error: FactError| matches!(error, FactError::Superseded { fact_id, by } if fact_id == old.get() && by == new.get());
+    let mut transaction = store.writer.transaction()?;
+    assert!(confirm_fact(&mut transaction, old, 61).is_err_and(superseded));
+    assert!(retire_fact(&mut transaction, old, 61).is_err_and(superseded));
+    assert!(edit_fact(&mut transaction, old, "Tax is exact.", 61).is_err_and(superseded));
+    transaction.commit()?;
+
+    let mut transaction = store.writer.transaction()?;
+    transaction.remove_file(&RepoPath::new("src/tax.py")?)?;
+    transaction.commit()?;
+    let gone = |error: FactError| matches!(error, FactError::Unanchorable { node_id } if node_id == tax[0].get());
+    let mut transaction = store.writer.transaction()?;
+    assert!(confirm_fact(&mut transaction, new, 65).is_err_and(gone));
+    assert!(edit_fact(&mut transaction, new, "Tax is exact.", 65).is_err_and(gone));
+    retire_fact(&mut transaction, new, 70)?;
+    transaction.commit()?;
+    assert_eq!(status(&store, new)?, (FactStatus::Retired, 70));
+    Ok(())
+}
+
+/// Carries out `change` in a transaction of `store`'s, and commits it.
+fn word<T>(
+    store: &mut Store,
+    change: impl FnOnce(&mut cortex_store::WriteTx<'_>) -> Result<T, FactError>,
+) -> TestResult<T> {
+    let mut transaction = store.writer.transaction()?;
+    let done = change(&mut transaction)?;
+    transaction.commit()?;
+    Ok(done)
 }

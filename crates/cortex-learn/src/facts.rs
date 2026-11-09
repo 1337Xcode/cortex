@@ -5,12 +5,13 @@
 //! added, active when the user wrote it and a candidate when an agent or an import did.
 //!
 //! [`review_facts`] keeps statuses true to the code: a candidate or active fact with an anchor whose
-//! code changed, or is gone, turns suspect; a fact suspect for 14 days retires.
+//! code changed, or is gone, turns suspect; a fact suspect for 14 days retires. The user's own word
+//! on a fact (confirm, retire, correct) is in `fact_word`.
 
 use std::collections::BTreeSet;
 
 use cortex_core::{FactKind, FactSource, FactStatus, Ulid, identifier_tokens, jaccard};
-use cortex_store::{FactId, FactRecord, FactRow, NodeId, Queries, StoreError, WriteTx};
+use cortex_store::{FactAnchor, FactId, FactRecord, FactRow, NodeId, Queries, StoreError, WriteTx};
 
 /// How alike two facts' words must be for one to be the other said again: 80% of the words they
 /// hold between them shared, as Jaccard measures it, after the case and the marks between words
@@ -47,14 +48,28 @@ pub enum Asserted {
     Activated(FactId),
 }
 
-/// Why an assertion was refused.
+/// Why a change to the facts was refused.
 #[derive(Debug, thiserror::Error)]
-pub enum AssertError {
-    /// A node has no hash to keep: not a file whose contents are read, nor a symbol.
+pub enum FactError {
+    /// A node has no hash to keep: not a file whose contents are read, nor a symbol, or gone.
     #[error("node {node_id} cannot anchor a fact: only a read file or a symbol can")]
     Unanchorable {
         /// The node's id.
         node_id: i64,
+    },
+    /// No fact has the id.
+    #[error("there is no fact {fact_id}")]
+    Unknown {
+        /// The id asked for.
+        fact_id: i64,
+    },
+    /// The fact was corrected by another, which is the one to change.
+    #[error("fact {fact_id} was corrected by fact {by}")]
+    Superseded {
+        /// The fact asked for.
+        fact_id: i64,
+        /// The fact correcting it.
+        by: i64,
     },
     /// The store failed.
     #[error(transparent)]
@@ -75,24 +90,16 @@ pub struct Reviewed {
 ///
 /// # Errors
 ///
-/// [`AssertError::Unanchorable`] for a node that cannot anchor a fact, and the store's errors
+/// [`FactError::Unanchorable`] for a node that cannot anchor a fact, and the store's errors
 /// (among them text that is too long and no node at all).
 pub fn assert_fact(
     transaction: &mut WriteTx<'_>,
     assertion: &Assertion<'_>,
     now_ms: i64,
-) -> Result<Asserted, AssertError> {
+) -> Result<Asserted, FactError> {
     let nodes: BTreeSet<NodeId> = assertion.nodes.iter().copied().collect();
     let listed: Vec<NodeId> = nodes.iter().copied().collect();
-    let anchors = transaction.queries().anchor_hashes(&listed)?;
-    if let Some(node) = listed
-        .iter()
-        .find(|node| !anchors.iter().any(|anchor| anchor.node == **node))
-    {
-        return Err(AssertError::Unanchorable {
-            node_id: node.get(),
-        });
-    }
+    let anchors = anchors_now(transaction.queries(), &listed)?;
     let Some(said) = said_before(transaction.queries(), assertion.text, &nodes)? else {
         let id = transaction.add_fact(&FactRecord {
             text: assertion.text.to_owned(),
@@ -180,6 +187,27 @@ fn confirms(said: &FactRow, assertion: &Assertion<'_>) -> bool {
             matches!((said.record.task, assertion.task), (Some(first), Some(now)) if first != now)
         }
         (FactStatus::Active | FactStatus::Retired, _) | (_, FactSource::Import) => false,
+    }
+}
+
+/// The anchors on `nodes`, each once in node order, with the hashes they hold now.
+///
+/// # Errors
+///
+/// [`FactError::Unanchorable`] for the first node that holds no hash, and the store's errors.
+pub(crate) fn anchors_now(
+    queries: Queries<'_>,
+    nodes: &[NodeId],
+) -> Result<Vec<FactAnchor>, FactError> {
+    let anchors = queries.anchor_hashes(nodes)?;
+    match nodes
+        .iter()
+        .find(|node| !anchors.iter().any(|anchor| anchor.node == **node))
+    {
+        Some(node) => Err(FactError::Unanchorable {
+            node_id: node.get(),
+        }),
+        None => Ok(anchors),
     }
 }
 
