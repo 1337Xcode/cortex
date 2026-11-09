@@ -41,6 +41,10 @@ pub const DEFAULT_TELEPORT: f64 = 0.5;
 /// more. Small mode asks at least 0.85, whatever the setting.
 pub const DEFAULT_MIN_CONFIDENCE: f64 = 0.70;
 
+/// The least `retrieval.min_confidence` may be set to: a chance under one half is a guess that the
+/// work order goes unused, and a bar of 0 would let every retrieval through.
+pub const MIN_CONFIDENCE_FLOOR: f64 = 0.5;
+
 /// How much each kind of link counts while activation spreads, before each node's links are
 /// normalized: only the ratios between them matter, so each is a number from 0 to 1, and 0 leaves
 /// that kind out.
@@ -96,8 +100,9 @@ pub struct RetrievalConfig {
     pub teleport: f64,
     /// `retrieval.type_weights`: how much each kind of link counts.
     pub type_weights: TypeWeights,
-    /// `retrieval.min_confidence`: the chance, from 0 to 1, the confidence model must give a work
-    /// order once one is kept. Default [`DEFAULT_MIN_CONFIDENCE`]; small mode asks at least 0.85.
+    /// `retrieval.min_confidence`: the chance, from [`MIN_CONFIDENCE_FLOOR`] to 1, the confidence
+    /// model must give a work order once one is kept. Default [`DEFAULT_MIN_CONFIDENCE`]; small
+    /// mode asks at least 0.85.
     pub min_confidence: f64,
 }
 
@@ -151,7 +156,8 @@ impl RetrievalConfig {
                 .ok_or("a number above 0 and at most 1")
                 .map(|teleport| self.teleport = teleport),
             "retrieval.min_confidence" => super::share(value)
-                .ok_or("a number from 0 to 1")
+                .filter(|least| *least >= MIN_CONFIDENCE_FLOOR)
+                .ok_or("a number from 0.5 to 1")
                 .map(|least| self.min_confidence = least),
             "retrieval.type_weights.structural" => {
                 weight().map(|weight| self.type_weights.structural = weight)

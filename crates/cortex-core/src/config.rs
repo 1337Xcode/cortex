@@ -800,24 +800,20 @@ mod tests {
         assert_refused(&cases);
     }
 
-    /// `retrieval.min_confidence` is a chance: 1.5 and -0.1 are refused, naming the file, the key
-    /// and what it accepts; 0 and 1 are read as the whole numbers they are.
+    /// `retrieval.min_confidence` is a chance of at least one half: 1.5, -0.1, 0 and 0.49 are
+    /// refused, naming the file, the key and what it accepts; 0.5 and the whole number 1 are read.
     #[test]
     fn bad_min_confidence_is_refused() -> Result<(), ConfigError> {
+        let key = "retrieval.min_confidence";
+        let expected = "a number from 0.5 to 1";
         assert_refused(&[
-            (
-                "retrieval.min_confidence = 1.5",
-                "retrieval.min_confidence",
-                "a number from 0 to 1",
-            ),
-            (
-                "retrieval.min_confidence = -0.1",
-                "retrieval.min_confidence",
-                "a number from 0 to 1",
-            ),
+            ("retrieval.min_confidence = 1.5", key, expected),
+            ("retrieval.min_confidence = -0.1", key, expected),
+            ("retrieval.min_confidence = 0", key, expected),
+            ("retrieval.min_confidence = 0.49", key, expected),
         ]);
         for (text, expected) in [
-            ("retrieval.min_confidence = 0", 0.0),
+            ("retrieval.min_confidence = 0.5", 0.5),
             ("retrieval.min_confidence = 1", 1.0),
         ] {
             let read = load(&[layer("f", text)])?.config.retrieval.min_confidence;
