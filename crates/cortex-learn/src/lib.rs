@@ -19,6 +19,7 @@ mod commands;
 mod decay;
 mod episode;
 mod given;
+mod handoff;
 mod interest;
 mod labels;
 mod links;

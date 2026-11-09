@@ -53,3 +53,8 @@ row_id! {
     /// A row of `notices`.
     NoticeId
 }
+
+row_id! {
+    /// A row of `handoffs`.
+    HandoffId
+}

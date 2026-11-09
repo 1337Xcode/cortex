@@ -684,6 +684,21 @@ pub(crate) const NOTICES_SINCE: &str = "SELECT text FROM notices \
 /// The notices waiting for session ?1 made at ?2 or later, oldest first.
 pub(crate) const NOTICES_WAITING: &str = "SELECT notice_id, text, created_at FROM notices \
      WHERE to_session = ?1 AND created_at >= ?2 AND delivered_at IS NULL ORDER BY notice_id";
+/// Leaves the handoff of session ?1 for task ?2: its files ?3, its open warnings ?4, its last
+/// failure ?5, at ?6.
+pub(crate) const HANDOFF_LEAVE: &str = "INSERT INTO handoffs (from_session, task_id, \
+     working_set, open_warnings, last_failure, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+/// Closes the open handoff session ?1 left, as picked up by session ?2.
+pub(crate) const HANDOFFS_CLOSE_OF_SESSION: &str =
+    "UPDATE handoffs SET consumed_by = ?2 WHERE from_session = ?1 AND consumed_by IS NULL";
+/// The open handoffs left at ?1 or later, the newest first.
+pub(crate) const HANDOFFS_OPEN_SINCE: &str = "SELECT handoff_id, from_session, task_id, \
+     working_set, open_warnings, last_failure, created_at FROM handoffs \
+     WHERE consumed_by IS NULL AND created_at >= ?1 ORDER BY created_at DESC, handoff_id DESC";
+/// The open handoff session ?1 left, the latest if there were several.
+pub(crate) const HANDOFF_OPEN_OF_SESSION: &str = "SELECT handoff_id, from_session, task_id, \
+     working_set, open_warnings, last_failure, created_at FROM handoffs \
+     WHERE from_session = ?1 AND consumed_by IS NULL ORDER BY handoff_id DESC LIMIT 1";
 /// Marks notice ?1 delivered at ?2, unless it was already.
 pub(crate) const NOTICE_DELIVER: &str =
     "UPDATE notices SET delivered_at = ?2 WHERE notice_id = ?1 AND delivered_at IS NULL";

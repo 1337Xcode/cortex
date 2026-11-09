@@ -7,11 +7,12 @@ mod common;
 
 use common::{Scratch, TestResult, index, symbol};
 use cortex_core::{
-    Agent, EdgeType, EventKind, EventMeta, Identifier, PositionMode, SymbolKind, TaskOutcome, Ulid,
+    Agent, CommandKind, EdgeType, EventKind, EventMeta, Identifier, PositionMode, SymbolKind,
+    TaskOutcome, Ulid,
 };
 use cortex_store::{
-    Coupling, EdgeRecord, EventRecord, NodeId, NoticeRecord, PositionRecord, PositionRow,
-    SeenSession, SessionRecord, TaskRecord, Writer,
+    Coupling, EdgeRecord, EventRecord, HandoffRecord, LastFailure, NodeId, NoticeRecord,
+    PositionRecord, PositionRow, SeenSession, SessionRecord, TaskRecord, Writer,
 };
 
 /// Session `s1`'s first task.
@@ -367,5 +368,73 @@ fn notices_are_queued_once_and_wait_until_delivered() -> TestResult {
         waiting(&s1, 0)?,
         texts(&[("second", 1_100), ("first", 5_000)])
     );
+    Ok(())
+}
+
+/// A session's handoff is kept with its files, warnings and failure as written; a second one of the
+/// same session takes the first's place; open handoffs read back newest first from a time; closing
+/// one, by the session given it, leaves it out.
+#[test]
+fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let nodes = store_with(&mut writer, &["a.py", "b.py", "c.py"])?;
+    let [a, b, c] = nodes.as_slice() else {
+        return Err("three nodes".into());
+    };
+    let s1 = Identifier::new("s1")?;
+    let s2 = Identifier::new("s2")?;
+    let left = |session: &Identifier, task: &str, at_ms| -> TestResult<HandoffRecord> {
+        Ok(HandoffRecord {
+            from_session: session.clone(),
+            task_id: Ulid::parse(task)?,
+            edited: vec![*a, *c],
+            read: vec![*b],
+            open_warnings: Vec::new(),
+            last_failure: Some(LastFailure {
+                runner: Identifier::new("pytest")?,
+                kind: CommandKind::Test,
+                exit_code: 1,
+            }),
+            created_at_ms: at_ms,
+        })
+    };
+    let first = left(&s1, FIRST, 1_500)?;
+    let mut transaction = writer.transaction()?;
+    transaction.leave_handoff(&first)?;
+    transaction.commit()?;
+    assert_eq!(
+        writer.queries().open_handoff_of(&s1)?.map(|row| row.record),
+        Some(first)
+    );
+    let second = HandoffRecord {
+        last_failure: None,
+        read: Vec::new(),
+        ..left(&s1, SECOND, 2_500)?
+    };
+    let other = left(&s2, FIRST, 2_000)?;
+    let mut transaction = writer.transaction()?;
+    transaction.leave_handoff(&second)?;
+    transaction.leave_handoff(&other)?;
+    transaction.commit()?;
+    let open: Vec<HandoffRecord> = writer
+        .queries()
+        .open_handoffs_since(1_000)?
+        .into_iter()
+        .map(|row| row.record)
+        .collect();
+    assert_eq!(open, [second.clone(), other.clone()]);
+    assert_eq!(writer.queries().open_handoffs_since(2_200)?.len(), 1);
+    let mut transaction = writer.transaction()?;
+    transaction.close_handoff(&s1, &s2)?;
+    transaction.commit()?;
+    assert_eq!(writer.queries().open_handoff_of(&s1)?, None);
+    let open: Vec<HandoffRecord> = writer
+        .queries()
+        .open_handoffs_since(0)?
+        .into_iter()
+        .map(|row| row.record)
+        .collect();
+    assert_eq!(open, [other]);
     Ok(())
 }

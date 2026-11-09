@@ -4,12 +4,13 @@
 
 mod common;
 
-use common::{Store, TestResult, event, prompt, shell, start, succeeded, target, tool};
+use common::{Store, TestResult, end, event, prompt, shell, start, succeeded, target, tool};
 use cortex_core::{
-    Config, EdgeType, Event, HookKind, InterestTier, StartSource, TaskOutcome, ToolKind, Ulid,
+    CommandKind, Config, EdgeType, Event, HookKind, Identifier, InterestTier, StartSource,
+    TaskOutcome, ToolKind, Ulid,
 };
 use cortex_learn::{Commands, Learned, Learner, MAX_SESSIONS_KEPT, Recorder, cluster_tasks};
-use cortex_store::{EdgeRecord, NodeId};
+use cortex_store::{EdgeRecord, HandoffRecord, LastFailure, NodeId};
 
 /// An edit of line 1 of `path` by `session` at `ts_ms`, as Claude Code reports one that applied.
 fn edit(session: &str, ts_ms: i64, path: &str) -> TestResult<Event> {
@@ -598,5 +599,99 @@ fn only_so_many_sessions_keep_their_last_task() -> TestResult {
     );
     let (_, found) = learning.one(&mut store, &task("s01", 201_000, Vec::new())?)?;
     assert_eq!(found.reverted_before, None, "s01's last task was let go");
+    Ok(())
+}
+
+/// Tasks left unfinished hand off, worked out by hand. `s1` edits `a.py`, reads `b.py`, sees
+/// `cargo test` exit 1, and its session ends before its answer did: it failed, and leaves `a.py`
+/// edited, `b.py` read and the failed run. `s2` edits `b.py` and its answer ends: answered, it
+/// leaves nothing. `s3` edits `b.py` and its turn stops on a usage limit: abandoned, it leaves
+/// `b.py` edited and no failure; its next task edits `b.py` again, passes `cargo test` and is a
+/// success, which closes the handoff `s3` left. `s1`'s stays open.
+#[test]
+fn a_task_left_unfinished_leaves_a_handoff() -> TestResult {
+    let mut store = Store::new()?;
+    let mut learning = Learning::new();
+    let (a, b) = two_files(&mut store)?;
+    let read_b = |session, ts_ms| {
+        tool(
+            HookKind::PostTool,
+            (session, ts_ms),
+            (ToolKind::Read, target("b.py", &[])?, succeeded(None, None)),
+        )
+    };
+    let mut events = vec![
+        start("s1", 1_000, StartSource::Startup)?,
+        prompt("s1", 1_001, "change it")?,
+        edit("s1", 1_002, "a.py")?,
+        read_b("s1", 1_003)?,
+        shell("s1", 1_004, "cargo test", Some(1))?,
+        end("s1", 1_500, "other")?,
+        start("s2", 2_000, StartSource::Startup)?,
+    ];
+    events.extend(task("s2", 2_001, vec![edit("s2", 2_002, "b.py")?])?);
+    events.extend([
+        start("s3", 3_000, StartSource::Startup)?,
+        prompt("s3", 3_001, "change it")?,
+        edit("s3", 3_002, "b.py")?,
+        Event {
+            end_reason: Some(Identifier::new("rate_limit")?),
+            ..event(HookKind::Stop, "s3", 3_003)?
+        },
+    ]);
+    let found = learning.feed(&mut store, &events)?;
+    let outcomes: Vec<TaskOutcome> = found.iter().map(|(_, learned)| learned.outcome).collect();
+    assert_eq!(
+        outcomes,
+        [
+            TaskOutcome::Failure,
+            TaskOutcome::Unknown,
+            TaskOutcome::Abandoned
+        ]
+    );
+    let tasks: Vec<Ulid> = found.iter().map(|(task_id, _)| *task_id).collect();
+    let open = |store: &Store| -> TestResult<Vec<HandoffRecord>> {
+        Ok(store
+            .writer
+            .queries()
+            .open_handoffs_since(0)?
+            .into_iter()
+            .map(|row| row.record)
+            .collect())
+    };
+    let left_by_s1 = HandoffRecord {
+        from_session: Identifier::new("s1")?,
+        task_id: tasks[0],
+        edited: vec![a],
+        read: vec![b],
+        open_warnings: Vec::new(),
+        last_failure: Some(LastFailure {
+            runner: Identifier::new("cargo")?,
+            kind: CommandKind::Test,
+            exit_code: 1,
+        }),
+        created_at_ms: 1_500,
+    };
+    let left_by_s3 = HandoffRecord {
+        from_session: Identifier::new("s3")?,
+        task_id: tasks[2],
+        edited: vec![b],
+        read: Vec::new(),
+        open_warnings: Vec::new(),
+        last_failure: None,
+        created_at_ms: 3_003,
+    };
+    assert_eq!(open(&store)?, [left_by_s3, left_by_s1.clone()]);
+    let finished = task(
+        "s3",
+        4_000,
+        vec![
+            edit("s3", 4_001, "b.py")?,
+            shell("s3", 4_002, "cargo test", Some(0))?,
+        ],
+    )?;
+    let (_, learned) = learning.one(&mut store, &finished)?;
+    assert_eq!(learned.outcome, TaskOutcome::Success);
+    assert_eq!(open(&store)?, [left_by_s1]);
     Ok(())
 }

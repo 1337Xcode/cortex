@@ -14,7 +14,8 @@ use crate::coordination::{self, NoticeRecord, PositionRecord};
 use crate::episode::{self, EpisodeRecord};
 use crate::error::{StoreError, io, sqlite};
 use crate::folders;
-use crate::ids::{InjectionId, NodeId, NoticeId, WarningId};
+use crate::handoffs::{self, HandoffRecord};
+use crate::ids::{HandoffId, InjectionId, NodeId, NoticeId, WarningId};
 use crate::injections::{self, InjectionRecord};
 use crate::interest::{self, InterestRow};
 use crate::layout;
@@ -459,6 +460,29 @@ impl WriteTx<'_> {
         self.atomically(|connection| {
             coordination::queue_notice(connection, notice, unless_since_ms)
         })
+    }
+
+    /// Leaves `record` as its session's open handoff, in place of any it left before: its row.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn leave_handoff(&mut self, record: &HandoffRecord) -> Result<HandoffId, StoreError> {
+        self.atomically(|connection| handoffs::leave(connection, record))
+    }
+
+    /// Closes the open handoff session `from_session` left, as picked up by session `by`: the
+    /// session given it, or the one that left it once it finished the work itself.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn close_handoff(
+        &mut self,
+        from_session: &Identifier,
+        by: &Identifier,
+    ) -> Result<(), StoreError> {
+        self.atomically(|connection| handoffs::close_of_session(connection, from_session, by))
     }
 
     /// Records `notice` as told to its session as it was made: given in the answer to the hook

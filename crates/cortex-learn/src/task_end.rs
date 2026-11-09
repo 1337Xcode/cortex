@@ -21,6 +21,7 @@ use cortex_store::{Queries, StoreError, WriteTx};
 use crate::archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
 use crate::decay::decayed;
 use crate::episode::episode_of;
+use crate::handoff::leave_handoff;
 use crate::interest::{add_interest, interest_of};
 use crate::labels::label_injections;
 use crate::links::{EarnedLinks, Linking, add_links, links_of};
@@ -82,12 +83,13 @@ impl Learner {
     /// with the settings of `config`: judges it and stores the judgement, adds the interest its
     /// work earned, changes the links between what it used, labels the injections its prompt got
     /// and runs the self-check over the labels when one of them reached the agent, marks the
-    /// warnings its edits got resolved or not, and writes its record. When the task
-    /// before it in the same session, kept by [`Learner::keep`], now shows as put back, that task
-    /// is judged reverted, the links lose what its end gave them and the links between the files it
-    /// edited are weakened, and its record says so. `None` when the store holds no ended row for
-    /// the task. Once the caller has committed, it passes the state and what was learned to
-    /// [`Learner::keep`].
+    /// warnings its edits got resolved or not, leaves a handoff when the task was left unfinished
+    /// without success (or closes its session's when it succeeded), and writes its record. When
+    /// the task before it in the same session, kept by [`Learner::keep`], now shows as put back,
+    /// that task is judged reverted, the links lose what its end gave them and the links between
+    /// the files it edited are weakened, and its record says so. `None` when the store holds no
+    /// ended row for the task. Once the caller has committed, it passes the state and what was
+    /// learned to [`Learner::keep`].
     ///
     /// # Errors
     ///
@@ -127,6 +129,11 @@ impl Learner {
             check_self(transaction)?;
         }
         resolve_warnings(transaction, state)?;
+        leave_handoff(
+            transaction,
+            state,
+            (&row.record.session_id, ended_at_ms, judgement.outcome),
+        )?;
         let record = episode_of(
             transaction.queries(),
             state,
