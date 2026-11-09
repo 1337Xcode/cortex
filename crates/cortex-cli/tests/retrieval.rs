@@ -19,7 +19,7 @@ use common::calc::{
     OPS, OPS_FIXED, S1, captured, edit_back, prompt, read_of_tests, repository, tests_run,
 };
 use common::hook_call::hook;
-use common::{Daemon, TestResult, graph_of, wait_for};
+use common::{Daemon, TestResult, graph_of, isolate, printed, wait_for};
 use cortex_core::{ContentHash, Identifier, RepoPath, TaskOutcome};
 use cortex_store::{InjectionRow, Queries, Reader, TaskRow};
 use serde_json::Value;
@@ -32,6 +32,9 @@ const LATER: &str = "00000000-0000-4000-8000-000000000002";
 
 /// Another new session, which asks the same.
 const ELSEWHERE: &str = "00000000-0000-4000-8000-000000000003";
+
+/// Another new session, the third to ask after the first task.
+const THIRD: &str = "00000000-0000-4000-8000-000000000004";
 
 /// The repository of the captured payloads, pinned to medium mode, with `share` of its tasks held
 /// out; its home folder; and its daemon, once its graph is built.
@@ -354,5 +357,53 @@ fn a_session_is_not_shown_the_same_code_twice() -> TestResult {
     })?;
     let after = given(&later(&repo, FAMILIAR, LATER)?, home.path())?.ok_or("no work order")?;
     assert!(after.contains(divide), "{after}");
+    Ok(())
+}
+
+/// What `cortex` printed with `args` in the repository at `root`, `home` being the home folder,
+/// having succeeded.
+fn cortex(root: &Path, home: &Path, args: &[&str]) -> TestResult<String> {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command.args(args).arg("--root").arg(root).current_dir(root);
+    isolate(&mut command, home);
+    let printed = printed(&mut command, b"")?;
+    if !printed.is_success {
+        return Err(format!("cortex {args:?} failed: {}", printed.stderr).into());
+    }
+    Ok(printed.stdout)
+}
+
+/// F10. After the first task, the user notes that `divide` rounds to two places. A prompt naming
+/// `divide`, from a new session, gets a work order carrying the rule under "Project facts", with
+/// `calc/ops.py:divide`, and the fact counts as given once. `divide` changes on disk (back to
+/// floor division): the daemon reads the change, the fact turns suspect, and the same prompt from
+/// another new session gets a work order with no fact. Confirmed against the code as it is now, the
+/// fact is carried again, to a third session.
+#[test]
+fn a_fact_is_given_while_its_code_holds_and_withheld_once_it_changes() -> TestResult {
+    let (home, repo, _daemon) = started("0")?;
+    let home = home.path();
+    first_task(&repo, home)?;
+    let rule = "divide rounds its result to two places.";
+    assert_eq!(
+        cortex(&repo, home, &["note", rule, "--at", "calc/ops.py:divide"])?,
+        "fact 1 added\n"
+    );
+    let line = format!("Project facts:\n  - {rule} (anchored to calc/ops.py:divide)\n");
+    let work_order = given(&later(&repo, FAMILIAR, LATER)?, home)?.ok_or("no work order")?;
+    assert!(work_order.contains(&line), "{work_order}");
+    wait_for(|| Ok(cortex(&repo, home, &["facts", "list"])?.contains("given once")))?;
+
+    std::fs::write(repo.join("calc/ops.py"), OPS)?;
+    wait_for(|| Ok(cortex(&repo, home, &["facts", "list"])?.contains("1  suspect")))?;
+    let withheld = given(&later(&repo, FAMILIAR, ELSEWHERE)?, home)?.ok_or("no work order")?;
+    assert!(!withheld.contains("Project facts"), "{withheld}");
+
+    assert_eq!(
+        cortex(&repo, home, &["facts", "confirm", "1"])?,
+        "fact 1 confirmed\n"
+    );
+    let again = given(&later(&repo, FAMILIAR, THIRD)?, home)?.ok_or("no work order")?;
+    assert!(again.contains(&line), "{again}");
     Ok(())
 }
