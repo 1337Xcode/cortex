@@ -22,6 +22,9 @@ pub struct Timing {
     pub live_ms: i64,
     /// How close two sessions' edits of one file must be for both to be told first.
     pub same_file_ms: i64,
+    /// How long a session must have been quiet for its handoff to be given though it never
+    /// ended.
+    pub handoff_idle_ms: i64,
 }
 
 impl Timing {
@@ -36,6 +39,7 @@ impl Timing {
             claim_ms: ms(config.claim_minutes),
             live_ms: ms(config.live_minutes),
             same_file_ms: ms(config.same_file_minutes),
+            handoff_idle_ms: ms(config.handoff_idle_minutes),
         }
     }
 

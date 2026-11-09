@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use cortex_coord::Timing;
 use cortex_core::{
     ContentHash, CoordinationConfig, Event, HookKind, RetrievalConfig, ScaleMode, StartSource,
     Ulid, WarningsConfig, is_held_out, task_id_of_prompt,
@@ -192,7 +193,13 @@ impl Service {
             let handoff = if is_holdout {
                 None
             } else {
-                handoff_for(queries, (event, prompt, task_id), &retrieval.weighed)?
+                let idle_ms = Timing::of(&self.coordination).handoff_idle_ms;
+                handoff_for(
+                    queries,
+                    (event, prompt, task_id),
+                    &retrieval.weighed,
+                    idle_ms,
+                )?
             };
             let text = match handoff {
                 Some((from, handed)) => {

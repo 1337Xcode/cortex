@@ -42,6 +42,8 @@ pub enum TaskEnd {
     /// It was left: the session's next prompt came, or the session ended, with no end of an
     /// answer, as when the agent was interrupted or stopped.
     Left,
+    /// Its turn stopped on an error, such as a usage limit, before its answer ended.
+    Stopped,
 }
 
 /// A file a step touched, and its graph node when the store has one.

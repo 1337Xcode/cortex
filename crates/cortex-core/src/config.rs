@@ -549,6 +549,7 @@ mod tests {
                     claim_minutes: 120,
                     live_minutes: 15,
                     same_file_minutes: 10,
+                    handoff_idle_minutes: 30,
                     structural_min_weight: 0.8,
                     cochange_min_confidence: 0.5,
                     max_notices: 3,
@@ -585,6 +586,7 @@ mod tests {
              cochange_min_count = 7\n\
              [coordination]\nread_minutes = 1\nedit_minutes = 2\nedit_after_task_minutes = 3\n\
              claim_minutes = 1440\nlive_minutes = 4\nsame_file_minutes = 6\n\
+             handoff_idle_minutes = 45\n\
              structural_min_weight = 0.9\ncochange_min_confidence = 0\nmax_notices = 0\n\
              max_tokens = 400\n",
         );
@@ -636,6 +638,7 @@ mod tests {
                     claim_minutes: 1440,
                     live_minutes: 4,
                     same_file_minutes: 6,
+                    handoff_idle_minutes: 45,
                     structural_min_weight: 0.9,
                     cochange_min_confidence: 0.0,
                     max_notices: 0,

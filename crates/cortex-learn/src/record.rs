@@ -111,12 +111,12 @@ impl Recorder {
         self.activity.note(event, kind);
         if ends_task {
             // A session that ends with its answer unfinished leaves its task: the agent was
-            // interrupted, cleared or stopped. So does a turn that ended on an error (a usage
-            // limit), whose stop names it.
-            let end = if event.hook == HookKind::Stop && event.end_reason.is_none() {
-                TaskEnd::Answered
-            } else {
-                TaskEnd::Left
+            // interrupted, cleared or stopped. A turn that ended on an error (a usage limit)
+            // stops it, its stop naming the error.
+            let end = match (event.hook, &event.end_reason) {
+                (HookKind::Stop, None) => TaskEnd::Answered,
+                (HookKind::Stop, Some(_)) => TaskEnd::Stopped,
+                _ => TaskEnd::Left,
             };
             ended = self.end_open_task(transaction, &event.session_id, event.ts_ms, end)?;
         }

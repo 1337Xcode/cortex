@@ -1,12 +1,13 @@
 //! The handoff a session's first prompt is given: the most recent open one, left within a day by a
-//! session outside its own family, that the prompt concerns. A prompt concerns a handoff when one
+//! session outside its own family that is done with it (it ended, it has been quiet for
+//! `coordination.handoff_idle_minutes`, or its turn stopped on an error), that the prompt concerns. A prompt concerns a handoff when one
 //! of the files its retrieval weighed (the three best, known whether or not the gate opened) is a
 //! file the stopped session edited or read, or when it asks to go on (continue, resume, pick up,
 //! carry on, finish). The handoff says what was left, and comes ahead of any work order.
 
 use cortex_coord::{Handed, handoff_text};
 use cortex_core::{Event, Identifier, RepoPath, Ulid};
-use cortex_store::{HandoffRow, NodeId, Queries, StoreError};
+use cortex_store::{HandoffEnd, HandoffRow, NodeId, Queries, SeenSession, StoreError};
 
 use super::coordination::family_of;
 
@@ -17,7 +18,8 @@ const OFFERED_FOR_MS: i64 = 24 * 60 * 60 * 1_000;
 const GO_ON_WORDS: [&str; 5] = ["continue", "resume", "pick up", "carry on", "finish"];
 
 /// The handoff the prompt `prompt` of `event`, starting the task `task_id`, is given, its retrieval
-/// having weighed `weighed`: the session that left it and its text. None unless this is the
+/// having weighed `weighed` and a session counting as done once quiet for `idle_ms`: the session
+/// that left it and its text. None unless this is the
 /// session's first prompt and an open handoff applies. The prompt's own task does not count: the
 /// event is queued before it is answered, so the writer may already have stored it.
 ///
@@ -28,6 +30,7 @@ pub(super) fn handoff_for(
     queries: Queries<'_>,
     (event, prompt, task_id): (&Event, &str, Ulid),
     weighed: &[NodeId],
+    idle_ms: i64,
 ) -> Result<Option<(Identifier, String)>, StoreError> {
     let tasks = queries.tasks_of_session(&event.session_id)?;
     if tasks.iter().any(|task| task.record.task_id != task_id) {
@@ -53,13 +56,16 @@ pub(super) fn handoff_for(
         if family.contains(&record.from_session) || !(goes_on || is_concerned) {
             continue;
         }
-        let Some(agent) = seen
+        let Some(from) = seen
             .iter()
             .find(|seen| seen.session_id == record.from_session)
-            .map(|seen| seen.agent.title())
         else {
             continue;
         };
+        if !is_done(from, record.end, (event.ts_ms, idle_ms)) {
+            continue;
+        }
+        let agent = from.agent.title();
         if let Some(text) = text_of(queries, row, (agent, event.ts_ms))? {
             return Ok(Some((record.from_session.clone(), text)));
         }
@@ -96,11 +102,24 @@ fn text_of(
     Ok(handoff_text(&Handed {
         agent,
         ago_ms: now_ms.saturating_sub(row.record.created_at_ms),
+        is_cut_off: row.record.end != HandoffEnd::Answered,
         edited: &edited,
         read: &read,
         failure,
         open_warnings: row.record.open_warnings.len(),
     }))
+}
+
+/// Whether the session `from` is done with the work its handoff names, that handoff's task having
+/// ended as `end`, as of `now_ms`: its turn stopped on an error (the user is likely to switch
+/// agents at once), it ended, or it has been quiet for `idle_ms`. A session still at work keeps
+/// its handoff.
+fn is_done(from: &SeenSession, end: HandoffEnd, (now_ms, idle_ms): (i64, i64)) -> bool {
+    end == HandoffEnd::Stopped
+        || from.ended_ms.is_some()
+        || from
+            .last_event_ms
+            .is_some_and(|last_ms| now_ms.saturating_sub(last_ms) >= idle_ms)
 }
 
 /// Whether a prompt whose retrieval weighed `weighed` concerns a handoff naming `edited` and `read`:
@@ -129,6 +148,51 @@ fn asks_to_go_on(prompt: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A test's result: any error fails it.
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+    /// A session `s1` of Claude Code, ended at `ended_ms` and last heard from at `last_ms`.
+    fn seen(ended_ms: Option<i64>, last_ms: Option<i64>) -> TestResult<SeenSession> {
+        Ok(SeenSession {
+            session_id: Identifier::new("s1")?,
+            agent: cortex_core::Agent::Claude,
+            parent_session_id: None,
+            ended_ms,
+            last_event_ms: last_ms,
+        })
+    }
+
+    /// At 100 minutes, with 30 minutes quiet making a session done: a turn stopped on an error is
+    /// done at once; an answered or left task's session once it ended, or once its last event is
+    /// 30 minutes old or more (70 is, 71 is not), never while it has no event and has not ended.
+    #[test]
+    fn a_session_is_done_with_its_handoff_once_it_ends_or_is_quiet() -> TestResult {
+        let minute = 60_000;
+        let at = (100 * minute, 30 * minute);
+        assert!(is_done(
+            &seen(None, Some(100 * minute))?,
+            HandoffEnd::Stopped,
+            at
+        ));
+        assert!(is_done(
+            &seen(Some(99 * minute), Some(99 * minute))?,
+            HandoffEnd::Answered,
+            at
+        ));
+        assert!(is_done(
+            &seen(None, Some(70 * minute))?,
+            HandoffEnd::Left,
+            at
+        ));
+        assert!(!is_done(
+            &seen(None, Some(71 * minute))?,
+            HandoffEnd::Answered,
+            at
+        ));
+        assert!(!is_done(&seen(None, None)?, HandoffEnd::Left, at));
+        Ok(())
+    }
 
     /// A handoff that edited 1 and read 2: a prompt weighing 2 or 1 concerns it, one weighing only
     /// 3 and 4, or nothing, does not.

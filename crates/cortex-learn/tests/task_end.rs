@@ -10,7 +10,7 @@ use cortex_core::{
     TaskOutcome, ToolKind, Ulid,
 };
 use cortex_learn::{Commands, Learned, Learner, MAX_SESSIONS_KEPT, Recorder, cluster_tasks};
-use cortex_store::{EdgeRecord, HandoffRecord, LastFailure, NodeId};
+use cortex_store::{EdgeRecord, HandoffEnd, HandoffRecord, LastFailure, NodeId};
 
 /// An edit of line 1 of `path` by `session` at `ts_ms`, as Claude Code reports one that applied.
 fn edit(session: &str, ts_ms: i64, path: &str) -> TestResult<Event> {
@@ -602,14 +602,15 @@ fn only_so_many_sessions_keep_their_last_task() -> TestResult {
     Ok(())
 }
 
-/// Tasks left unfinished hand off, worked out by hand. `s1` edits `a.py`, reads `b.py`, sees
-/// `cargo test` exit 1, and its session ends before its answer did: it failed, and leaves `a.py`
-/// edited, `b.py` read and the failed run. `s2` edits `b.py` and its answer ends: answered, it
-/// leaves nothing. `s3` edits `b.py` and its turn stops on a usage limit: abandoned, it leaves
-/// `b.py` edited and no failure; its next task edits `b.py` again, passes `cargo test` and is a
-/// success, which closes the handoff `s3` left. `s1`'s stays open.
+/// Tasks that did not succeed hand off, worked out by hand. `s1` edits `a.py`, reads `b.py`, sees
+/// `cargo test` exit 1, and its session ends before its answer did: it failed, and leaves, as left,
+/// `a.py` edited, `b.py` read and the failed run. `s2` edits `b.py` and its answer ends at 2,401
+/// with no check: unknown, it leaves, as answered, `b.py` edited. `s3` edits `b.py` and its turn
+/// stops on a usage limit: abandoned, it leaves, as stopped, `b.py` edited and no failure; its
+/// next task edits `b.py` again, passes `cargo test` and is a success, which closes the handoff
+/// `s3` left. `s1`'s and `s2`'s stay open, the newest first.
 #[test]
-fn a_task_left_unfinished_leaves_a_handoff() -> TestResult {
+fn a_task_that_did_not_succeed_leaves_a_handoff() -> TestResult {
     let mut store = Store::new()?;
     let mut learning = Learning::new();
     let (a, b) = two_files(&mut store)?;
@@ -662,6 +663,7 @@ fn a_task_left_unfinished_leaves_a_handoff() -> TestResult {
     let left_by_s1 = HandoffRecord {
         from_session: Identifier::new("s1")?,
         task_id: tasks[0],
+        end: HandoffEnd::Left,
         edited: vec![a],
         read: vec![b],
         open_warnings: Vec::new(),
@@ -672,16 +674,30 @@ fn a_task_left_unfinished_leaves_a_handoff() -> TestResult {
         }),
         created_at_ms: 1_500,
     };
+    let left_by_s2 = HandoffRecord {
+        from_session: Identifier::new("s2")?,
+        task_id: tasks[1],
+        end: HandoffEnd::Answered,
+        edited: vec![b],
+        read: Vec::new(),
+        open_warnings: Vec::new(),
+        last_failure: None,
+        created_at_ms: 2_401,
+    };
     let left_by_s3 = HandoffRecord {
         from_session: Identifier::new("s3")?,
         task_id: tasks[2],
+        end: HandoffEnd::Stopped,
         edited: vec![b],
         read: Vec::new(),
         open_warnings: Vec::new(),
         last_failure: None,
         created_at_ms: 3_003,
     };
-    assert_eq!(open(&store)?, [left_by_s3, left_by_s1.clone()]);
+    assert_eq!(
+        open(&store)?,
+        [left_by_s3, left_by_s2.clone(), left_by_s1.clone()]
+    );
     let finished = task(
         "s3",
         4_000,
@@ -692,6 +708,6 @@ fn a_task_left_unfinished_leaves_a_handoff() -> TestResult {
     )?;
     let (_, learned) = learning.one(&mut store, &finished)?;
     assert_eq!(learned.outcome, TaskOutcome::Success);
-    assert_eq!(open(&store)?, [left_by_s1]);
+    assert_eq!(open(&store)?, [left_by_s2, left_by_s1]);
     Ok(())
 }

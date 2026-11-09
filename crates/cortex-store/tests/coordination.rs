@@ -11,8 +11,8 @@ use cortex_core::{
     TaskOutcome, Ulid,
 };
 use cortex_store::{
-    Coupling, EdgeRecord, EventRecord, HandoffRecord, LastFailure, NodeId, NoticeRecord,
-    PositionRecord, PositionRow, SeenSession, SessionRecord, TaskRecord, Writer,
+    Coupling, EdgeRecord, EventRecord, HandoffEnd, HandoffRecord, LastFailure, NodeId,
+    NoticeRecord, PositionRecord, PositionRow, SeenSession, SessionRecord, TaskRecord, Writer,
 };
 
 /// Session `s1`'s first task.
@@ -388,6 +388,7 @@ fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
         Ok(HandoffRecord {
             from_session: session.clone(),
             task_id: Ulid::parse(task)?,
+            end: HandoffEnd::Left,
             edited: vec![*a, *c],
             read: vec![*b],
             open_warnings: Vec::new(),
@@ -408,11 +409,15 @@ fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
         Some(first)
     );
     let second = HandoffRecord {
+        end: HandoffEnd::Answered,
         last_failure: None,
         read: Vec::new(),
         ..left(&s1, SECOND, 2_500)?
     };
-    let other = left(&s2, FIRST, 2_000)?;
+    let other = HandoffRecord {
+        end: HandoffEnd::Stopped,
+        ..left(&s2, FIRST, 2_000)?
+    };
     let mut transaction = writer.transaction()?;
     transaction.leave_handoff(&second)?;
     transaction.leave_handoff(&other)?;

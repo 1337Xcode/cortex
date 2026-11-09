@@ -21,6 +21,7 @@ const TIMING: Timing = Timing {
     claim_ms: 30_000,
     live_ms: 30_000,
     same_file_ms: 5_000,
+    handoff_idle_ms: 60_000,
 };
 
 /// Session `s1`'s call to `tool` on `paths` at `at_ms`, seen at `hook`, ending as `is_success`

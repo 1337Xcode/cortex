@@ -1,19 +1,20 @@
-//! The handoff a task left unfinished leaves for the next session: written where its end is
-//! learned. A task whose answer never ended (the session ended, a turn stopped on an API error such
-//! as a usage limit, or the next prompt came first) and that did not succeed leaves the files it
+//! The handoff a task that did not succeed leaves for the next session: written where its end is
+//! learned, in place of any its session left before. A task that edited a file, or that was cut
+//! off (its answer never ended: the session ended, the next prompt came first, or its turn
+//! stopped on an error such as a usage limit) having read one, leaves how it ended, the files it
 //! edited and read, the warnings its edits got that were not resolved, and its last check command
-//! when that one failed, so that another session, of any agent, can pick the work up. A task that
-//! succeeds closes the open handoff its own session left: the work was finished there.
+//! when that one failed, so that another session, of any agent, can pick the work up once this
+//! one is done with it. A task that succeeds closes the open handoff its own session left.
 
 use cortex_core::{Identifier, TaskOutcome};
-use cortex_store::{HandoffRecord, LastFailure, NodeId, StoreError, WriteTx};
+use cortex_store::{HandoffEnd, HandoffRecord, LastFailure, NodeId, StoreError, WriteTx};
 
 use crate::task_state::{Step, TaskEnd, TaskState};
 
 /// Leaves the handoff `state`, a task of session `session` that ended at `ended_at_ms` judged
-/// `outcome`, calls for in `transaction`: one for a task left unfinished that did not succeed and
-/// touched an indexed file; for a task that succeeded, its session's open handoff closed. Nothing
-/// otherwise.
+/// `outcome`, calls for in `transaction`: one for a task that did not succeed and edited an indexed
+/// file, or was cut off having read one; for a task that succeeded, its session's open handoff
+/// closed. Nothing otherwise.
 ///
 /// # Errors
 ///
@@ -26,11 +27,18 @@ pub(crate) fn leave_handoff(
     if outcome == TaskOutcome::Success {
         return transaction.close_handoff(session, session);
     }
-    if state.end() != Some(TaskEnd::Left) {
-        return Ok(());
-    }
+    let end = match state.end() {
+        Some(TaskEnd::Answered) => HandoffEnd::Answered,
+        Some(TaskEnd::Left) => HandoffEnd::Left,
+        Some(TaskEnd::Stopped) => HandoffEnd::Stopped,
+        None => return Ok(()),
+    };
     let (edited, read) = files_of(state);
-    if edited.is_empty() && read.is_empty() {
+    // A task answered that edited nothing leaves nothing to pick up; one cut off may have been
+    // finding its way when it stopped.
+    let is_cut_off = end != HandoffEnd::Answered;
+    let has_work = !edited.is_empty() || (is_cut_off && !read.is_empty());
+    if !has_work {
         return Ok(());
     }
     let open_warnings = transaction
@@ -43,6 +51,7 @@ pub(crate) fn leave_handoff(
     let record = HandoffRecord {
         from_session: session.clone(),
         task_id: state.task_id(),
+        end,
         edited,
         read,
         open_warnings,

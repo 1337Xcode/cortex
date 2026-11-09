@@ -26,6 +26,9 @@ pub struct Handed<'h> {
     pub agent: &'h str,
     /// How long ago it stopped, in milliseconds.
     pub ago_ms: i64,
+    /// Whether its task was cut off (its answer never ended) rather than answered without a
+    /// check that passed.
+    pub is_cut_off: bool,
     /// The files it edited, the first edited first.
     pub edited: &'h [&'h str],
     /// The files it read and did not edit.
@@ -82,11 +85,13 @@ fn text_of(
     (edited, edits_named): (&[&str], usize),
     (read, reads_named): (&[&str], usize),
 ) -> String {
-    let mut text = format!(
-        "[cortex] Handoff: a {} session stopped {} before finishing its task.",
-        handed.agent,
-        ago(handed.ago_ms)
-    );
+    let ago = ago(handed.ago_ms);
+    let how = if handed.is_cut_off {
+        format!("stopped {ago} before finishing its task")
+    } else {
+        format!("ended {ago} without a passing check")
+    };
+    let mut text = format!("[cortex] Handoff: a {} session {how}.", handed.agent);
     if !edited.is_empty() {
         text.push_str(&format!(" It edited {}.", listed(edited, edits_named)));
     }
@@ -164,6 +169,7 @@ mod tests {
         let handed = Handed {
             agent: "Claude Code",
             ago_ms: 4 * MINUTE_MS + 10_000,
+            is_cut_off: true,
             edited: &["calc/ops.py", "main.py"],
             read: &["tests/test_ops.py"],
             failure: Some(("pytest", "test", 1)),
@@ -187,6 +193,7 @@ mod tests {
         let read_only = Handed {
             agent: "Codex",
             ago_ms: 125 * MINUTE_MS,
+            is_cut_off: true,
             edited: &[],
             read: &["a.py"],
             failure: None,
@@ -220,6 +227,28 @@ mod tests {
         assert_eq!(handoff_text(&crafted), None);
     }
 
+    /// A task answered without a passing check, 40 minutes ago, that edited one file: the text
+    /// says the session ended, not that it stopped.
+    #[test]
+    fn an_answered_handoff_says_its_session_ended() {
+        let handed = Handed {
+            agent: "Codex",
+            ago_ms: 40 * MINUTE_MS,
+            is_cut_off: false,
+            edited: &["a.py"],
+            read: &[],
+            failure: None,
+            open_warnings: 0,
+        };
+        assert_eq!(
+            handoff_text(&handed).as_deref(),
+            Some(
+                "[cortex] Handoff: a Codex session ended 40 minutes ago without a passing check. \
+                 It edited a.py."
+            )
+        );
+    }
+
     /// Long paths are named fewer until the text fits its tokens: never over the cap, at least one
     /// file named, and none when one file alone is over.
     #[test]
@@ -231,6 +260,7 @@ mod tests {
         let handed = Handed {
             agent: "Claude Code",
             ago_ms: 0,
+            is_cut_off: true,
             edited: &paths,
             read: &paths,
             failure: Some(("cargo", "build", 101)),

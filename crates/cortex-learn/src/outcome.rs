@@ -63,7 +63,7 @@ pub fn judge(state: &TaskState, now: &BTreeMap<RepoPath, FileNow>) -> Judgement 
     if let Some(judgement) = checked(state, &did) {
         return judgement;
     }
-    if state.end() == Some(TaskEnd::Left) {
+    if matches!(state.end(), Some(TaskEnd::Left | TaskEnd::Stopped)) {
         return Judgement {
             outcome: TaskOutcome::Abandoned,
             evidence: Some("the task was left before its answer ended".to_owned()),

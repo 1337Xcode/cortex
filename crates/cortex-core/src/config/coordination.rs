@@ -23,6 +23,10 @@ pub const DEFAULT_CLAIM_MINUTES: u32 = 120;
 /// to be live.
 pub const DEFAULT_LIVE_MINUTES: u32 = 15;
 
+/// The default for `coordination.handoff_idle_minutes`: how long a session must have been quiet
+/// for its handoff to be given though it never ended, as when its terminal was closed.
+pub const DEFAULT_HANDOFF_IDLE_MINUTES: u32 = 30;
+
 /// The default for `coordination.same_file_minutes`: how close two sessions' edits of one file must
 /// be for both to be told first.
 pub const DEFAULT_SAME_FILE_MINUTES: u32 = 10;
@@ -69,6 +73,8 @@ pub struct CoordinationConfig {
     pub live_minutes: u32,
     /// `coordination.same_file_minutes`. Default [`DEFAULT_SAME_FILE_MINUTES`].
     pub same_file_minutes: u32,
+    /// `coordination.handoff_idle_minutes`. Default [`DEFAULT_HANDOFF_IDLE_MINUTES`].
+    pub handoff_idle_minutes: u32,
     /// `coordination.structural_min_weight`, from 0 to 1. Default
     /// [`DEFAULT_STRUCTURAL_MIN_WEIGHT`].
     pub structural_min_weight: f64,
@@ -92,6 +98,7 @@ impl Default for CoordinationConfig {
             claim_minutes: DEFAULT_CLAIM_MINUTES,
             live_minutes: DEFAULT_LIVE_MINUTES,
             same_file_minutes: DEFAULT_SAME_FILE_MINUTES,
+            handoff_idle_minutes: DEFAULT_HANDOFF_IDLE_MINUTES,
             structural_min_weight: DEFAULT_STRUCTURAL_MIN_WEIGHT,
             cochange_min_confidence: DEFAULT_COCHANGE_MIN_CONFIDENCE,
             max_notices: DEFAULT_MAX_NOTICES,
@@ -127,6 +134,9 @@ impl CoordinationConfig {
             "coordination.live_minutes" => minutes().map(|live| self.live_minutes = live),
             "coordination.same_file_minutes" => {
                 minutes().map(|close| self.same_file_minutes = close)
+            }
+            "coordination.handoff_idle_minutes" => {
+                minutes().map(|quiet| self.handoff_idle_minutes = quiet)
             }
             "coordination.structural_min_weight" => {
                 share().map(|least| self.structural_min_weight = least)

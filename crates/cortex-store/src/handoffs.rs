@@ -25,13 +25,27 @@ pub struct LastFailure {
     pub exit_code: i32,
 }
 
-/// What a session that stopped mid-task leaves.
+/// How the task a handoff was left by ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffEnd {
+    /// Its answer ended, without a check that passed.
+    Answered,
+    /// It was left with no end of its answer: the session ended, or its next prompt came.
+    Left,
+    /// Its turn stopped on an error, such as a usage limit.
+    Stopped,
+}
+
+/// What a session whose task did not succeed leaves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoffRecord {
     /// The session that left it.
     pub from_session: Identifier,
-    /// The task it stopped in.
+    /// The task it was in.
     pub task_id: Ulid,
+    /// How that task ended.
+    pub end: HandoffEnd,
     /// The files the task edited, in the order it first edited them.
     pub edited: Vec<NodeId>,
     /// The files it read and did not edit, in the order it first read them.
@@ -60,6 +74,14 @@ struct WorkingSet {
     edited: Vec<i64>,
     /// The read files' node ids.
     read: Vec<i64>,
+    /// How the task ended; a row written before this was kept was left by a task left.
+    #[serde(default = "left")]
+    end: HandoffEnd,
+}
+
+/// The end of a task whose handoff row does not say: only tasks left wrote handoffs then.
+fn left() -> HandoffEnd {
+    HandoffEnd::Left
 }
 
 /// A failure as its column holds it.
@@ -82,6 +104,7 @@ pub(crate) fn leave(
     let working_set = serde_json::to_string(&WorkingSet {
         edited: record.edited.iter().map(|node| node.get()).collect(),
         read: record.read.iter().map(|node| node.get()).collect(),
+        end: record.end,
     })
     .map_err(not_text("handoffs.working_set"))?;
     let warnings: Vec<i64> = record.open_warnings.iter().map(|id| id.get()).collect();
@@ -228,6 +251,7 @@ fn row_of(
         record: HandoffRecord {
             from_session,
             task_id,
+            end: set.end,
             edited: set.edited.into_iter().map(NodeId).collect(),
             read: set.read.into_iter().map(NodeId).collect(),
             open_warnings: warnings.into_iter().map(WarningId).collect(),

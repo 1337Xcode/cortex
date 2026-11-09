@@ -577,3 +577,46 @@ fn a_subagent_is_held_out_with_its_parent() -> TestResult {
     assert_eq!(subagent_edits_ops(&repo, home.path())?, None);
     Ok(())
 }
+
+/// Claude Code edits `calc/ops.py` and its answer ends with no check run: the task leaves a
+/// handoff, but its session is still at work, so Codex asking to continue is told nothing. Once
+/// the session ends, a new session asking the same is told the session ended without a passing
+/// check, what it edited, and that the warning its edit got (the file's tests, never run) is still
+/// open.
+#[test]
+fn a_handoff_waits_until_its_session_is_done() -> TestResult {
+    let (home, repo, _daemon) = started(0)?;
+    let home = home.path();
+    given(
+        "claude",
+        &prompt_in(&repo, S1, "Make divide return true division.")?,
+        home,
+    )?;
+    std::fs::write(repo.join("calc/ops.py"), OPS_FIXED)?;
+    given("claude", &captured("post-tool-use-edit.json", &repo)?, home)?;
+    given("claude", &captured("stop.json", &repo)?, home)?;
+    wait_for(|| Ok(open_handoffs(&repo)? == 1))?;
+
+    let mut asked = codex(&repo, "user-prompt-submit.json")?;
+    asked["prompt"] = Value::from("Continue.");
+    assert_eq!(given("codex", &asked, home)?, None);
+
+    given("claude", &captured("session-end.json", &repo)?, home)?;
+    let ended = Identifier::new(S1)?;
+    wait_for(|| {
+        read(&repo, |queries| {
+            Ok(queries
+                .session(&ended)?
+                .is_some_and(|row| row.ended_at_ms.is_some()))
+        })
+    })?;
+    assert_eq!(
+        given("claude", &prompt_in(&repo, ASIDE, "Continue.")?, home)?,
+        Some(
+            "[cortex] Handoff: a Claude Code session ended less than a minute ago without a \
+             passing check. It edited calc/ops.py. 1 warning about its edits was still open.\n"
+                .to_owned()
+        )
+    );
+    Ok(())
+}

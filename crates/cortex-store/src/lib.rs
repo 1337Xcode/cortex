@@ -61,7 +61,7 @@ pub use episode::{
 };
 pub use error::StoreError;
 pub use graph::GraphNodeRow;
-pub use handoffs::{HandoffRecord, HandoffRow, LastFailure};
+pub use handoffs::{HandoffEnd, HandoffRecord, HandoffRow, LastFailure};
 pub use ids::{FileId, HandoffId, InjectionId, NodeId, NoticeId, RefId, SymbolId, WarningId};
 pub use injections::{InjectedFile, InjectionRecord, InjectionRow};
 pub use interest::InterestRow;
