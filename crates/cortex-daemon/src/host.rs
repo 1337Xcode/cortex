@@ -408,16 +408,10 @@ impl<'a> Host<'a> {
         job.answer(stored.map_err(|error| error.to_string()));
     }
 
-    /// Answers a fact request in a transaction of its own. A refusal or a store error is the
-    /// answer and nothing is written; a store error is counted too.
+    /// Carries out a fact request in a transaction of its own, answered once it is committed. A
+    /// store error is the answer, and counted.
     fn answer_facts(&mut self, job: FactsJob) {
-        let answered = self.writer.transaction().and_then(|mut transaction| {
-            if job.answer(&mut transaction, now_ms())? {
-                transaction.commit()?;
-            }
-            Ok(())
-        });
-        if let Err(error) = answered {
+        if let Err(error) = job.carry_out(&mut self.writer, now_ms()) {
             count_failed(self.inbox, "a fact request", &error);
         }
     }

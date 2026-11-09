@@ -12,7 +12,7 @@ use cortex_core::{FactSource, FactStatus, RepoPath};
 use cortex_learn::{
     Asserted, Assertion, FactError, assert_fact, confirm_fact, edit_fact, retire_fact,
 };
-use cortex_store::{FactId, FactRow, NodeId, Queries, StoreError, WriteTx};
+use cortex_store::{FactId, FactRow, NodeId, Queries, StoreError, WriteTx, Writer};
 
 /// How long a fact request may wait for the writer before it is dropped unwritten: long enough for
 /// a batch of the index to end, short enough that the person who typed it is told.
@@ -55,28 +55,34 @@ impl FactsJob {
         (job, answer)
     }
 
-    /// Answers the job at `now_ms` in `transaction`, unless it waited too long, when it is dropped
-    /// unanswered and nothing is written. Whether it was answered.
+    /// Carries out the job at `now_ms` with `writer`, in a transaction of its own, and answers it
+    /// only once that transaction is committed: what the asker is told was done is written. A
+    /// refusal rolls the transaction back and is the answer; a job that waited too long is dropped
+    /// unanswered and nothing is written.
     ///
     /// # Errors
     ///
-    /// The store's errors, which are also the job's answer.
-    pub(crate) fn answer(
-        self,
-        transaction: &mut WriteTx<'_>,
-        now_ms: i64,
-    ) -> Result<bool, StoreError> {
+    /// The store's errors, the commit's among them, which are also the job's answer.
+    pub(crate) fn carry_out(self, writer: &mut Writer, now_ms: i64) -> Result<(), StoreError> {
         if Instant::now() > self.start_by {
-            return Ok(false);
+            return Ok(());
         }
-        match answer(transaction, &self.request, now_ms) {
+        let done = writer
+            .transaction()
+            .map_err(Refused::from)
+            .and_then(|mut transaction| {
+                let answer = answer(&mut transaction, &self.request, now_ms)?;
+                transaction.commit()?;
+                Ok(answer)
+            });
+        match done {
             Ok(answer) => {
                 drop(self.answered.send(Ok(answer)));
-                Ok(true)
+                Ok(())
             }
             Err(Refused::Named(message)) => {
                 drop(self.answered.send(Err(message)));
-                Ok(true)
+                Ok(())
             }
             Err(Refused::Store(error)) => {
                 drop(self.answered.send(Err(error.to_string())));
@@ -177,19 +183,19 @@ fn refused(queries: Queries<'_>, error: FactError) -> Refused {
         FactError::Store(StoreError::FactTooLong { chars }) => Refused::Named(format!(
             "a fact holds at most 240 characters; this one holds {chars}"
         )),
-        FactError::Store(error) => Refused::Store(error),
-        FactError::Unanchorable { node } => {
-            let name = queries
-                .anchor_names(&[node])
-                .ok()
-                .and_then(|names| names.into_values().next());
-            Refused::Named(match name {
-                Some(name) => format!("{name} cannot anchor a fact: Cortex does not read it"),
-                None => {
-                    "a file the fact is about is gone: correct the fact or retire it".to_owned()
-                }
-            })
+        FactError::Store(StoreError::FactUnanchored) => {
+            Refused::Named("a fact needs a file or a symbol it is about".to_owned())
         }
+        FactError::Store(error) => Refused::Store(error),
+        FactError::Unanchorable { node } => match queries.anchor_names(&[node]) {
+            Err(error) => Refused::Store(error),
+            Ok(names) => Refused::Named(match names.into_values().next() {
+                Some(name) => format!("{name} cannot anchor a fact: Cortex does not read it"),
+                None => "a file or symbol the fact is about is gone: retire the fact, or note it \
+                         again where the code is now"
+                    .to_owned(),
+            }),
+        },
         other => Refused::Named(other.to_string()),
     }
 }
@@ -300,7 +306,8 @@ mod tests {
     use crate::test_store::{TestResult, add_file, writer};
 
     /// A note the writer takes after its asker stopped waiting is dropped unanswered, which tells
-    /// the asker it was not taken, and nothing is written; one taken in time is answered.
+    /// the asker it was not taken, and nothing is written; one taken in time is answered, and a
+    /// refused one is answered with the refusal and writes nothing.
     #[test]
     fn a_request_taken_too_late_is_never_written() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -315,17 +322,19 @@ mod tests {
         late.start_by = Instant::now()
             .checked_sub(Duration::from_millis(1))
             .ok_or("no earlier instant")?;
-        let mut transaction = writer.transaction()?;
-        assert!(!late.answer(&mut transaction, 5)?);
-        transaction.commit()?;
+        late.carry_out(&mut writer, 5)?;
         assert!(matches!(
             answer.try_recv(),
             Err(mpsc::TryRecvError::Disconnected)
         ));
+        let (unread, answer) = FactsJob::new(note);
+        unread.carry_out(&mut writer, 6)?;
+        assert_eq!(
+            answer.try_recv()?,
+            Err("src/money.py cannot anchor a fact: Cortex does not read it".to_owned())
+        );
         let (in_time, answer) = FactsJob::new(FactsRequest::Ask(FactsAsk::List { all: true }));
-        let mut transaction = writer.transaction()?;
-        assert!(in_time.answer(&mut transaction, 6)?);
-        transaction.commit()?;
+        in_time.carry_out(&mut writer, 7)?;
         assert_eq!(
             answer.try_recv()?,
             Ok(FactsAnswer::Listed { facts: Vec::new() })
