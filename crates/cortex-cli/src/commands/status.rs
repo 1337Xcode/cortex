@@ -233,7 +233,7 @@ fn worktree_said(report: &WorktreeReport) -> String {
 }
 
 /// `count` things, named `one` when there is one and `many` otherwise.
-fn counted(count: u64, (one, many): (&str, &str)) -> String {
+pub(crate) fn counted(count: u64, (one, many): (&str, &str)) -> String {
     match count {
         1 => format!("1 {one}"),
         count => format!("{count} {many}"),

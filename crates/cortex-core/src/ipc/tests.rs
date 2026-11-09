@@ -549,3 +549,56 @@ fn fact_requests_and_answers_read_back() -> TestResult {
     );
     Ok(())
 }
+
+/// A claims request and each answer are written as typed here and read back as they were.
+#[test]
+fn claims_requests_and_answers_read_back() -> TestResult {
+    let add = Request {
+        request_id: 8,
+        body: RequestBody::Claims(ClaimsAsk::Add {
+            at: vec!["src/tax.py".to_owned()],
+        }),
+    };
+    let frame = encode(&add)?;
+    assert_eq!(
+        frame.get(LENGTH_PREFIX_BYTES..),
+        Some(
+            r#"{"request_id":8,"body":{"type":"claims","ask":"add","at":["src/tax.py"]}}"#
+                .as_bytes()
+        )
+    );
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, add);
+    for ask in [ClaimsAsk::List, ClaimsAsk::Release { at: Vec::new() }] {
+        let request = Request {
+            request_id: 9,
+            body: RequestBody::Claims(ask),
+        };
+        let frame = encode(&request)?;
+        assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, request);
+    }
+    let answers = [
+        ClaimsAnswer::Listed {
+            claims: vec![ClaimLine {
+                path: "src/tax.py".to_owned(),
+                agent: "Codex".to_owned(),
+                session: "3f2a9c1e-77".to_owned(),
+                since_ms: 1_000,
+            }],
+        },
+        ClaimsAnswer::Added {
+            agent: "Claude Code".to_owned(),
+            session: "s1".to_owned(),
+            files: 2,
+        },
+        ClaimsAnswer::Released { count: 3 },
+    ];
+    for answer in answers {
+        let response = Response {
+            request_id: 9,
+            body: ResponseBody::Claims(answer),
+        };
+        let frame = encode(&response)?;
+        assert_eq!(decode::<Response>(&frame[LENGTH_PREFIX_BYTES..])?, response);
+    }
+    Ok(())
+}

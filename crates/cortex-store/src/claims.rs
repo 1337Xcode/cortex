@@ -8,14 +8,15 @@ use crate::error::{StoreError, sqlite};
 use crate::ids::NodeId;
 use crate::schema;
 
-/// Removes the claims on `nodes`, or every claim when `nodes` is none: how many were removed.
+/// Removes the claims taken at `since_ms` or later on `nodes`, or on every node when `nodes` is
+/// none: how many were removed. An older claim holds no more and is left as it is.
 ///
 /// # Errors
 ///
 /// SQLite errors.
 pub(crate) fn release(
     connection: &Connection,
-    nodes: Option<&[NodeId]>,
+    (nodes, since_ms): (Option<&[NodeId]>, i64),
 ) -> Result<u64, StoreError> {
     let listed = nodes
         .map(|nodes| {
@@ -28,7 +29,7 @@ pub(crate) fn release(
         .transpose()?;
     let removed = connection
         .prepare_cached(schema::CLAIMS_RELEASE)
-        .and_then(|mut statement| statement.execute([listed]))
+        .and_then(|mut statement| statement.execute((listed, since_ms)))
         .map_err(sqlite("releasing claims"))?;
     Ok(u64::try_from(removed).unwrap_or(u64::MAX))
 }

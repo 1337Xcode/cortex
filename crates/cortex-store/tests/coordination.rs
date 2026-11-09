@@ -139,10 +139,11 @@ fn positions_are_kept_once_and_read_back_with_their_task_s_end() -> TestResult {
     Ok(())
 }
 
-/// Worked by hand: `s1` claims `a.py` and `b.py` and reads `c.py`; `s2` claims `a.py` and reads
-/// `b.py`. Releasing the claims on `a.py` removes both sessions' claims there, two, and nothing
-/// else; releasing every claim then removes `s1`'s on `b.py`, one, and leaves the two reads;
-/// releasing again removes none.
+/// Worked by hand: `s1` claims `a.py` and `b.py` at 1,000 and reads `c.py`; `s2` claims `a.py` at
+/// 1,000, reads `b.py`, and claimed `c.py` at 500, a claim no longer holding. Releasing the claims
+/// taken since 900 on `a.py` removes both sessions' claims there, two, and nothing else;
+/// releasing every claim since 900 then removes `s1`'s on `b.py`, one, and leaves the reads and
+/// the old claim; releasing again removes none.
 #[test]
 fn claims_are_released_by_file_or_all_at_once() -> TestResult {
     let scratch = Scratch::new()?;
@@ -162,7 +163,8 @@ fn claims_are_released_by_file_or_all_at_once() -> TestResult {
     ] {
         transaction.keep_position(&position(session, node, mode, (1_000, 1_000))?)?;
     }
-    assert_eq!(transaction.release_claims(Some(&[a]))?, 2);
+    transaction.keep_position(&position("s2", c, claim, (500, 500))?)?;
+    assert_eq!(transaction.release_claims(Some(&[a]), 900)?, 2);
     let held = |transaction: &mut cortex_store::WriteTx<'_>| -> TestResult<Vec<(String, NodeId)>> {
         Ok(transaction
             .queries()
@@ -171,20 +173,17 @@ fn claims_are_released_by_file_or_all_at_once() -> TestResult {
             .map(|row| (row.record.session_id.as_str().to_owned(), row.record.node))
             .collect())
     };
+    let pair = |session: &str, node| (session.to_owned(), node);
     assert_eq!(
         held(&mut transaction)?,
-        [
-            ("s1".to_owned(), b),
-            ("s1".to_owned(), c),
-            ("s2".to_owned(), b)
-        ]
+        [pair("s1", b), pair("s1", c), pair("s2", b), pair("s2", c)]
     );
-    assert_eq!(transaction.release_claims(None)?, 1);
+    assert_eq!(transaction.release_claims(None, 900)?, 1);
     assert_eq!(
         held(&mut transaction)?,
-        [("s1".to_owned(), c), ("s2".to_owned(), b)]
+        [pair("s1", c), pair("s2", b), pair("s2", c)]
     );
-    assert_eq!(transaction.release_claims(None)?, 0);
+    assert_eq!(transaction.release_claims(None, 900)?, 0);
     transaction.commit()?;
     Ok(())
 }

@@ -12,6 +12,7 @@
 //! and while the store has no mode (its first index not done), every answer but the recap is
 //! silent: the recap recalls what the session did, which needs no index.
 
+mod claims;
 mod coordination;
 mod handoff;
 mod hints;

@@ -3,6 +3,7 @@
 //! Every command is one module in this folder plus one variant of [`Command`] and one arm in
 //! [`run`]. Removing a command means deleting all three.
 
+mod claims;
 mod daemon;
 mod doctor;
 mod facts;
@@ -47,6 +48,9 @@ pub(crate) enum Command {
     Note(note::Args),
     /// List the project rules, or confirm, retire or correct one.
     Facts(facts::Args),
+    /// List advisory claims on files, claim files for the agent session at work, or release
+    /// claims.
+    Claims(claims::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -68,5 +72,6 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Mcp(args) => mcp::run(&args),
         Command::Note(args) => note::run(&args),
         Command::Facts(args) => facts::run(&args),
+        Command::Claims(args) => claims::run(&args),
     }
 }

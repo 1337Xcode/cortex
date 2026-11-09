@@ -451,14 +451,19 @@ impl WriteTx<'_> {
         self.atomically(|connection| coordination::keep_position(connection, record))
     }
 
-    /// Releases the claims on `nodes`, whoever holds them, or every claim when `nodes` is none:
-    /// how many were released.
+    /// Releases the claims taken at `since_ms` or later on `nodes`, whoever holds them, or on every
+    /// node when `nodes` is none: how many were released. The caller gives when a claim still
+    /// holding was taken at the earliest.
     ///
     /// # Errors
     ///
     /// [`StoreError::TransactionLost`] and SQLite errors.
-    pub fn release_claims(&mut self, nodes: Option<&[NodeId]>) -> Result<u64, StoreError> {
-        self.atomically(|connection| claims::release(connection, nodes))
+    pub fn release_claims(
+        &mut self,
+        nodes: Option<&[NodeId]>,
+        since_ms: i64,
+    ) -> Result<u64, StoreError> {
+        self.atomically(|connection| claims::release(connection, (nodes, since_ms)))
     }
 
     /// Queues `notice` for its session's next hook that carries text, unless the session was sent

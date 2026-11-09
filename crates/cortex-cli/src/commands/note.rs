@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use cortex_core::ipc::{FactsAnswer, Note, NoteOutcome, RequestBody};
+use cortex_core::ipc::{FactsAnswer, Note, NoteOutcome, RequestBody, ResponseBody};
 use cortex_core::{FactKind, FactSource, RepoPath};
 
 use crate::commands::facts::answer_of;
@@ -50,7 +50,11 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         source: FactSource::User,
         at,
     };
-    match answer_of(&root, &RequestBody::Note(note))? {
+    let answer = match answer_of(&root, &RequestBody::Note(note))? {
+        ResponseBody::Facts(answer) => answer,
+        other => bail!("the daemon answered the note with {other:?}"),
+    };
+    match answer {
         FactsAnswer::Noted { id, outcome } => output::line(&match outcome {
             NoteOutcome::Added => format!("fact {id} added"),
             NoteOutcome::Merged => format!("fact {id} says this already"),

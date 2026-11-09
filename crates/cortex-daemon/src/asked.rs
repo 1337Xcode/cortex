@@ -1,16 +1,18 @@
 //! What a person or an agent asks the writer for, as one kind of job: a note, the user's word on
-//! the facts. Each job is carried out in a transaction of its own and answered only once that
-//! transaction is committed, so what the asker is told was done is written; a job the writer did
+//! the facts, a claim made or released. Each job is carried out in a transaction of its own and
+//! answered only once that transaction is committed, so what the asker is told was done is
+//! written; a job the writer did
 //! not start in time is dropped unwritten, so nothing the asker was told failed is done after all.
 
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 
+use cortex_coord::Timing;
 use cortex_core::Identifier;
 use cortex_core::ipc::{FactsAsk, Note, ResponseBody};
 use cortex_store::{StoreError, WriteTx, Writer};
 
-use crate::facts;
+use crate::{claims, facts};
 
 /// How long a request may wait for the writer before it is dropped unwritten: long enough for a
 /// batch of the index to end, short enough that the person who typed it is told.
@@ -19,6 +21,12 @@ pub(crate) const ASK_START_WITHIN: Duration = Duration::from_secs(10);
 /// How long the writer has to answer a request it took: one transaction of a few rows.
 pub(crate) const ASK_WRITE_WITHIN: Duration = Duration::from_secs(5);
 
+/// How long before an agent's note or a claim the session that made it was last seen at work, at
+/// most, in milliseconds: neither an MCP call nor a command carries the session, so it is taken
+/// to be the session whose latest event came last within these five minutes, longer than an
+/// agent's turn spends between two tool calls.
+pub(crate) const AT_WORK_WITHIN_MS: i64 = 5 * 60 * 1_000;
+
 /// A request for the writer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Ask {
@@ -26,6 +34,10 @@ pub(crate) enum Ask {
     Note(Note),
     /// The user's word on the facts.
     Facts(FactsAsk),
+    /// Files, by repository path, claimed for the session at work.
+    Claim(Vec<String>),
+    /// The claims on files, by repository path, released; every claim when there is none.
+    Release(Vec<String>),
 }
 
 /// A request for the writer, with where to answer it and until when to start on it.
@@ -73,7 +85,8 @@ impl AskJob {
     /// only once that transaction is committed. A refusal rolls the transaction back and is the
     /// answer; a job that waited too long is dropped unanswered and nothing is written.
     ///
-    /// `at_work` is the session at work, whose open task an agent's note is taken to be.
+    /// `at_work` is the session at work, whose open task an agent's note is taken to be, and which
+    /// holds a claim; positions hold as `timing` says.
     ///
     /// # Errors
     ///
@@ -81,7 +94,7 @@ impl AskJob {
     pub(crate) fn carry_out(
         self,
         writer: &mut Writer,
-        (now_ms, at_work): (i64, Option<&Identifier>),
+        (now_ms, at_work, timing): (i64, Option<&Identifier>, &Timing),
     ) -> Result<(), StoreError> {
         if Instant::now() > self.start_by {
             return Ok(());
@@ -90,7 +103,7 @@ impl AskJob {
             .transaction()
             .map_err(Refused::from)
             .and_then(|mut transaction| {
-                let answer = answer(&mut transaction, &self.request, (now_ms, at_work))?;
+                let answer = answer(&mut transaction, &self.request, (now_ms, at_work, timing))?;
                 transaction.commit()?;
                 Ok(answer)
             });
@@ -111,23 +124,29 @@ impl AskJob {
     }
 }
 
-/// Answers `request` at `now_ms` in `transaction`, an agent's note in the open task of `at_work`.
+/// Answers `request` at `now_ms` in `transaction`, an agent's note in the open task of `at_work`,
+/// a claim held by it, positions holding as `timing` says.
 fn answer(
     transaction: &mut WriteTx<'_>,
     request: &Ask,
-    (now_ms, at_work): (i64, Option<&Identifier>),
+    (now_ms, at_work, timing): (i64, Option<&Identifier>, &Timing),
 ) -> Result<ResponseBody, Refused> {
     Ok(match request {
         Ask::Note(note) => ResponseBody::Facts(facts::noted(transaction, note, (now_ms, at_work))?),
         Ask::Facts(ask) => ResponseBody::Facts(facts::answer_ask(transaction, ask, now_ms)?),
+        Ask::Claim(at) => {
+            ResponseBody::Claims(claims::claimed(transaction, at, (now_ms, at_work, timing))?)
+        }
+        Ask::Release(at) => {
+            ResponseBody::Claims(claims::released(transaction, at, (now_ms, timing))?)
+        }
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use cortex_core::FactKind;
-    use cortex_core::FactSource;
     use cortex_core::ipc::FactsAnswer;
+    use cortex_core::{CoordinationConfig, FactKind, FactSource};
 
     use super::*;
     use crate::test_store::{TestResult, add_file, writer};
@@ -150,19 +169,20 @@ mod tests {
         late.start_by = Instant::now()
             .checked_sub(Duration::from_millis(1))
             .ok_or("no earlier instant")?;
-        late.carry_out(&mut writer, (5, None))?;
+        let timing = Timing::of(&CoordinationConfig::default());
+        late.carry_out(&mut writer, (5, None, &timing))?;
         assert!(matches!(
             answer.try_recv(),
             Err(mpsc::TryRecvError::Disconnected)
         ));
         let (unread, answer) = AskJob::new(note);
-        unread.carry_out(&mut writer, (6, None))?;
+        unread.carry_out(&mut writer, (6, None, &timing))?;
         assert_eq!(
             answer.try_recv()?,
             Err("src/money.py cannot anchor a fact: Cortex does not read it".to_owned())
         );
         let (in_time, answer) = AskJob::new(Ask::Facts(FactsAsk::List { all: true }));
-        in_time.carry_out(&mut writer, (7, None))?;
+        in_time.carry_out(&mut writer, (7, None, &timing))?;
         assert_eq!(
             answer.try_recv()?,
             Ok(ResponseBody::Facts(FactsAnswer::Listed {

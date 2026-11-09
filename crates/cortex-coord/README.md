@@ -7,7 +7,8 @@ told. The daemon asks these rules and gives the text in each agent's own hooks.
 - **Positions.** A read holds for 10 minutes; an edit 30 minutes after the session's last edit of
   the node, or 5 minutes after its task ended, whichever comes first; an advisory claim 2 hours. A
   session is live while it had an event in the last 15 minutes. Of a session's two positions on
-  one node, the one that holds longer is kept. Every number is a `coordination.*` setting.
+  one node, the one that holds longer is kept, except that a claim still holding is kept against
+  any read or edit. Every number is a `coordination.*` setting.
 - **Concerns.** An edit concerns each other live session holding the edited node, or a node linked
   to it by code (structural weight 0.8 or more) or by history (co-change 0.5 or more), once, by its
   strongest reason. Two sessions editing the same node within 10 minutes are both told first.

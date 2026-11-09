@@ -25,8 +25,7 @@ use cortex_index::{
 use cortex_learn::{Recorder, TaskState, review_facts};
 use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, SymbolChange, WriteTx, Writer};
 
-use crate::asked::AskJob;
-use crate::facts::NOTE_AT_WORK_WITHIN_MS;
+use crate::asked::{AT_WORK_WITHIN_MS, AskJob};
 use crate::given::{Given, Notices};
 use crate::graph::Snapshot;
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
@@ -413,8 +412,9 @@ impl<'a> Host<'a> {
     /// it is committed. A store error is the answer, and counted.
     fn carry_out_ask(&mut self, job: AskJob) {
         let now = now_ms();
-        let at_work = self.recorder.session_at_work(now, NOTE_AT_WORK_WITHIN_MS);
-        if let Err(error) = job.carry_out(&mut self.writer, (now, at_work.as_ref())) {
+        let at_work = self.recorder.session_at_work(now, AT_WORK_WITHIN_MS);
+        let timing = self.inbox.position_timing();
+        if let Err(error) = job.carry_out(&mut self.writer, (now, at_work.as_ref(), &timing)) {
             count_failed(self.inbox, "a request asked of the writer", &error);
         }
     }

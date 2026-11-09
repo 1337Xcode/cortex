@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::claims::{ClaimsAnswer, ClaimsAsk};
 use super::facts::{FactsAnswer, FactsAsk, Note};
 use super::version::Protocol;
 use crate::Event;
@@ -108,6 +109,9 @@ pub enum RequestBody {
     /// List the facts, or carry the user's word on one, and answer with the outcome (protocol 6.0
     /// added it).
     Facts(FactsAsk),
+    /// List the claims holding now, claim files for the session at work, or release claims
+    /// (protocol 9.0 added it).
+    Claims(ClaimsAsk),
     /// Report the daemon's state.
     Status,
     /// Stop gracefully. Frozen.
@@ -186,6 +190,8 @@ pub enum ResponseBody {
     /// What became of a note or of the user's word on the facts, or the facts listed (protocol 6.0
     /// added it).
     Facts(FactsAnswer),
+    /// The claims listed, or what became of a claim made or released (protocol 9.0 added it).
+    Claims(ClaimsAnswer),
     /// The request could not be served.
     Error {
         /// What went wrong, without file contents or prompt text.

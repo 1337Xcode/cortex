@@ -13,12 +13,6 @@ use cortex_store::{FactId, FactRow, NodeId, Queries, StoreError, WriteTx};
 
 use crate::asked::Refused;
 
-/// How long before an agent's note the session that noted it was last seen at work, at most, in
-/// milliseconds: the MCP call carries no session, so the note is taken to be the task of the
-/// session whose latest event came last within these five minutes, longer than an agent's turn
-/// spends between two tool calls.
-pub(crate) const NOTE_AT_WORK_WITHIN_MS: i64 = 5 * 60 * 1_000;
-
 /// Carries out the user's word `ask` on the facts at `now_ms` in `transaction`.
 pub(crate) fn answer_ask(
     transaction: &mut WriteTx<'_>,
@@ -221,8 +215,9 @@ fn listed(queries: Queries<'_>, all: bool) -> Result<Vec<FactLine>, StoreError> 
 
 #[cfg(test)]
 mod tests {
+    use cortex_coord::Timing;
     use cortex_core::ipc::ResponseBody;
-    use cortex_core::{Agent, ContentHash, FactKind, FileFlags, Ulid};
+    use cortex_core::{Agent, ContentHash, CoordinationConfig, FactKind, FileFlags, Ulid};
     use cortex_store::{FileIndex, FileRecord, SessionRecord, TaskRecord, Writer};
 
     use super::*;
@@ -298,7 +293,8 @@ mod tests {
         ];
         for (request, session) in cases {
             let (job, answer) = AskJob::new(request);
-            job.carry_out(&mut writer, (5, session))?;
+            let timing = Timing::of(&CoordinationConfig::default());
+            job.carry_out(&mut writer, (5, session, &timing))?;
             assert!(matches!(
                 answer.try_recv()?,
                 Ok(ResponseBody::Facts(FactsAnswer::Noted { .. }))

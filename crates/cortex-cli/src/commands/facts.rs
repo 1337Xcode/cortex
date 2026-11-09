@@ -72,7 +72,11 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         },
     };
     let root = repository::root(args.root.as_deref())?;
-    match answer_of(&root, &RequestBody::Facts(ask))? {
+    let answer = match answer_of(&root, &RequestBody::Facts(ask))? {
+        ResponseBody::Facts(answer) => answer,
+        other => bail!("the daemon answered with {other:?}"),
+    };
+    match answer {
         FactsAnswer::Listed { facts } if facts.is_empty() => output::line("no facts"),
         FactsAnswer::Listed { facts } => facts
             .iter()
@@ -86,14 +90,14 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     }
 }
 
-/// The daemon's answer to `body`, a fact request, for the repository at `root`: sent to one daemon
-/// only, since it may change what the daemon keeps.
+/// The daemon's answer to `body`, a request that may change what the daemon keeps (a note, the
+/// user's word on a fact, a claim), for the repository at `root`: sent to one daemon only.
 ///
 /// # Errors
 ///
 /// No home folder, a daemon that cannot be started or does not answer, or one that refused the
 /// request, in its words.
-pub(crate) fn answer_of(root: &Path, body: &RequestBody) -> anyhow::Result<FactsAnswer> {
+pub(crate) fn answer_of(root: &Path, body: &RequestBody) -> anyhow::Result<ResponseBody> {
     let user = UserFolder::of_current_user().context("finding the home folder")?;
     let asked = upgrade::ask_once_started(root, &user, body, Instant::now() + ANSWER_WITHIN);
     if let Some(old) = &asked.replaced {
@@ -108,9 +112,8 @@ pub(crate) fn answer_of(root: &Path, body: &RequestBody) -> anyhow::Result<Facts
         .answer
         .with_context(|| format!("asking the daemon of {}", root.display()))?;
     match answer.body {
-        ResponseBody::Facts(answer) => Ok(answer),
         ResponseBody::Error { message } => bail!("{message}"),
-        other => bail!("the daemon answered with {other:?}"),
+        body => Ok(body),
     }
 }
 

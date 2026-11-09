@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use cortex_core::ipc::{
-    CORTEX_VERSION, FrameError, LENGTH_PREFIX_BYTES, Mismatch, Protocol, Request, RequestBody,
-    Response, ResponseBody, StatusReport, Welcome, body_len, decode, encode,
+    CORTEX_VERSION, ClaimsAnswer, ClaimsAsk, FrameError, LENGTH_PREFIX_BYTES, Mismatch, Protocol,
+    Request, RequestBody, Response, ResponseBody, StatusReport, Welcome, body_len, decode, encode,
 };
 use cortex_core::{Event, HookKind};
 use cortex_retrieve::{Graph, Why};
@@ -383,6 +383,13 @@ impl Server {
             RequestBody::Why { target } => (self.explain(target).await, None),
             RequestBody::Note(note) => (self.ask_writer(Ask::Note(note)).await, None),
             RequestBody::Facts(ask) => (self.ask_writer(Ask::Facts(ask)).await, None),
+            RequestBody::Claims(ClaimsAsk::List) => (self.list_claims().await, None),
+            RequestBody::Claims(ClaimsAsk::Add { at }) => {
+                (self.ask_writer(Ask::Claim(at)).await, None)
+            }
+            RequestBody::Claims(ClaimsAsk::Release { at }) => {
+                (self.ask_writer(Ask::Release(at)).await, None)
+            }
             RequestBody::Event { event } => {
                 let hook = event.hook;
                 // The moment before a tool runs is answered, not recorded: the tool's result is,
@@ -648,6 +655,25 @@ impl Server {
                 let message = format!("{failure:#}");
                 tracing::warn!(error = %message, "a why was not answered");
                 self.inbox.note_error("a why was not answered", now_ms());
+                ResponseBody::Error { message }
+            }
+        }
+    }
+
+    /// The claims holding now, read from a kept store reader: the list, or why there is none.
+    async fn list_claims(&self) -> ResponseBody {
+        let now = now_ms();
+        let listed = self
+            .with_service(move |service, _, _| service.claims(now))
+            .await;
+        match listed {
+            Some(Ok(claims)) => ResponseBody::Claims(ClaimsAnswer::Listed { claims }),
+            None => error("the daemon is still starting: try again in a moment"),
+            Some(Err(failure)) => {
+                let message = format!("{failure:#}");
+                tracing::warn!(error = %message, "the claims were not listed");
+                self.inbox
+                    .note_error("the claims were not listed", now_ms());
                 ResponseBody::Error { message }
             }
         }

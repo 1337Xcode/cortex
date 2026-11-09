@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+cortex-coord = { path = "../cortex-coord" }
 cortex-core = { path = "../cortex-core" }
 cortex-daemon = { path = "../cortex-daemon" }
 cortex-git = { path = "../cortex-git" }

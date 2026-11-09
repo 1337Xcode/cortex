@@ -344,6 +344,7 @@ version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "clap",
+ "cortex-coord",
  "cortex-core",
  "cortex-daemon",
  "cortex-git",

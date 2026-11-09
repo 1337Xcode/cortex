@@ -79,10 +79,17 @@ impl<S, N> Position<S, N> {
 
     /// Of the position `kept` and the session's new one on the same node, the one that holds
     /// longer: so a read after an edit does not cut the edit short, and an edit that no longer
-    /// holds does not hide a later read. A tie keeps the new one, its time the later.
+    /// holds does not hide a later read. A tie keeps the new one, its time the later. A claim still
+    /// holding when the new one is taken is kept whatever the new one is: a claim is made on
+    /// purpose, and an edit that would seem to hold longer only does until its task ends.
     #[must_use]
     pub fn longer_of(kept: Option<Self>, new: Self, timing: &Timing) -> Self {
         match kept {
+            Some(kept)
+                if kept.mode == PositionMode::Claim && kept.holds_at(new.last_ms, timing) =>
+            {
+                kept
+            }
             Some(kept) if kept.until(timing) > new.until(timing) => kept,
             _ => new,
         }
@@ -158,8 +165,9 @@ mod tests {
 
     /// Worked by hand: an edit at minute 0 holds until 30, a read at 5 until 15: the edit is kept.
     /// A read at 25 holds until 35, past the edit's 30: the read is kept. A claim at 0 holds until
-    /// 120, an edit at 60 until 90: the claim is kept. With nothing kept, the new one; two reads,
-    /// the later.
+    /// 120, an edit at 60 until 90: the claim is kept; so is it against an edit at 95, which would
+    /// hold until 125 while its task is open; an edit at 120, when the claim no longer holds, is
+    /// kept. With nothing kept, the new one; two reads, the later.
     #[test]
     fn the_position_that_holds_longer_is_kept() {
         let timing = Timing::of(&CoordinationConfig::default());
@@ -170,6 +178,9 @@ mod tests {
         assert_eq!(longer(edit, late_read.clone()), late_read);
         let claim = at(PositionMode::Claim, 0);
         assert_eq!(longer(claim.clone(), at(PositionMode::Edit, 60)), claim);
+        assert_eq!(longer(claim.clone(), at(PositionMode::Edit, 95)), claim);
+        let after = at(PositionMode::Edit, 120);
+        assert_eq!(longer(claim, after.clone()), after);
         let read = at(PositionMode::Read, 3);
         assert_eq!(Position::longer_of(None, read.clone(), &timing), read);
         let later = at(PositionMode::Read, 4);
