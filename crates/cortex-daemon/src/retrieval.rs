@@ -31,7 +31,7 @@ use cortex_core::{
     Ulid, WarningsConfig, is_held_out, task_id_of_prompt,
 };
 use cortex_index::Grammars;
-use cortex_learn::{raise_of, recent_precision};
+use cortex_learn::{model_in_use, raise_of, recent_precision};
 use cortex_retrieve::{Graph, Outcome, Request, Retrieval, Span, locate, primer, retrieve};
 use cortex_store::{
     HandoffId, InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError, TaskRow,
@@ -163,6 +163,7 @@ impl Service {
             };
             let (task_id, is_holdout) = prompt_task(event, self.holdout_share);
             let check = queries.self_check()?;
+            let in_use = model_in_use(queries)?;
             let request = Request {
                 prompt,
                 session: Some(&event.session_id),
@@ -172,6 +173,7 @@ impl Service {
                 max_file_bytes: self.max_file_bytes,
                 raise: raise_of(&check),
                 recent_precision: recent_precision(&check),
+                model: in_use.model(),
                 deadline: Some(Instant::now() + SPREAD_FOR),
                 root: &self.root,
             };
@@ -183,7 +185,7 @@ impl Service {
                 at_ms: event.ts_ms,
                 files: files_of(&retrieval, graph),
                 tokens: rendered(&retrieval).map_or(0, |(_, tokens)| tokens),
-                confidence: None,
+                confidence: retrieval.confidence,
                 is_gated_out: rendered(&retrieval).is_none(),
                 is_holdout,
                 text_hash: rendered(&retrieval).map(|(text, _)| ContentHash::of(text.as_bytes())),
@@ -297,6 +299,7 @@ impl Service {
                 return Ok(None);
             };
             let check = queries.self_check()?;
+            let in_use = model_in_use(queries)?;
             let request = Request {
                 prompt: question,
                 session: None,
@@ -306,6 +309,7 @@ impl Service {
                 max_file_bytes: self.max_file_bytes,
                 raise: raise_of(&check),
                 recent_precision: recent_precision(&check),
+                model: in_use.model(),
                 deadline: Some(Instant::now() + SPREAD_FOR),
                 root: &self.root,
             };

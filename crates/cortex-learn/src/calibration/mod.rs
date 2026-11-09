@@ -8,7 +8,9 @@
 //! was fitted on, and the rest fits it. Its AUC on the held-out fifth is compared with the kept
 //! model's AUC on the same fifth, and it is kept only if it ranks better than chance and at most
 //! [`AUC_TOLERANCE`] worse than the kept one. A window without both labels on either side fits
-//! nothing. Until a model is kept the gate keeps its cold-start rule.
+//! nothing. Until a model is kept the gate keeps its cold-start rule, and so it does while the
+//! newest model kept is one this build cannot use ([`ModelInUse::Unusable`]), which upkeep then
+//! replaces at its next run.
 
 mod auc;
 mod fit;
@@ -150,7 +152,8 @@ pub fn calibrated(window: &[LabelledInjection], kept: Option<&ConfidenceModel>) 
 /// Fits a model in `transaction` at `now_ms` when it is due, keeping it as the newest when it is
 /// kept: what became of the fitting, or none when none was due. One is due once there are
 /// [`MIN_LABELLED`] labelled injections, and after that when more have been labelled since the
-/// last fitting and [`REFIT_AFTER_MS`] has passed since it.
+/// last fitting and [`REFIT_AFTER_MS`] has passed since it, or at once while the newest model kept
+/// is one this build cannot use.
 ///
 /// # Errors
 ///
@@ -162,15 +165,17 @@ pub fn calibrate(
     let queries = transaction.queries();
     let labelled = queries.labelled_injection_count()?;
     let is_enough = usize::try_from(labelled).is_ok_and(|count| count >= MIN_LABELLED);
-    let is_due = queries.calibration_attempt()?.is_none_or(|last| {
-        labelled != last.labelled && now_ms.saturating_sub(last.at_ms) >= REFIT_AFTER_MS
-    });
+    let in_use = model_in_use(queries)?;
+    let is_unusable = matches!(in_use, ModelInUse::Unusable { .. });
+    let is_due = is_unusable
+        || queries.calibration_attempt()?.is_none_or(|last| {
+            labelled != last.labelled && now_ms.saturating_sub(last.at_ms) >= REFIT_AFTER_MS
+        });
     if !is_enough || !is_due {
         return Ok(None);
     }
     let window = queries.labelled_injections(CALIBRATION_WINDOW)?;
-    let kept = model_in_use(queries)?;
-    let calibrated = calibrated(&window, kept.as_ref());
+    let calibrated = calibrated(&window, in_use.model());
     if let Calibrated::Kept(fitted) = calibrated {
         let coefficients = fitted.model.coefficients();
         transaction.add_calibration(
@@ -185,18 +190,70 @@ pub fn calibrate(
     Ok(Some(calibrated))
 }
 
-/// The model in use, read from what `queries` holds: none before one is kept, or when the one
-/// kept was fitted on other inputs than this build reads.
+/// The confidence model the store keeps, as this build can use it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ModelInUse {
+    /// None is kept yet: the gate keeps its cold-start rule.
+    None,
+    /// The newest model kept, which decides.
+    Kept {
+        /// The model.
+        model: ConfidenceModel,
+        /// Its version.
+        version: u32,
+        /// How many labelled injections it was fitted on.
+        samples: u32,
+        /// Its AUC on the labelled injections held out from its fitting.
+        auc: f64,
+    },
+    /// The newest model kept cannot be used by this build: it was fitted on other inputs than this
+    /// build reads, or its row cannot be read back. The gate keeps its cold-start rule until upkeep
+    /// fits a model this build can use.
+    Unusable {
+        /// Its version, as stored.
+        version: i64,
+    },
+}
+
+impl ModelInUse {
+    /// The model that decides, when one does.
+    #[must_use]
+    pub fn model(&self) -> Option<&ConfidenceModel> {
+        match self {
+            Self::Kept { model, .. } => Some(model),
+            Self::None | Self::Unusable { .. } => None,
+        }
+    }
+}
+
+/// The confidence model `queries` finds kept, as this build can use it. A row that cannot be read
+/// back is a model that cannot be used, not an error: what the gate does then is said, and the next
+/// fitting replaces it.
 ///
 /// # Errors
 ///
-/// The store's errors.
-pub fn model_in_use(
-    queries: cortex_store::Queries<'_>,
-) -> Result<Option<ConfidenceModel>, StoreError> {
-    Ok(queries
-        .calibration()?
-        .and_then(|record| ConfidenceModel::from_coefficients(&record.coefficients)))
+/// The store's errors, but those of a calibration row that cannot be read back.
+pub fn model_in_use(queries: cortex_store::Queries<'_>) -> Result<ModelInUse, StoreError> {
+    match queries.calibration() {
+        Ok(None) => Ok(ModelInUse::None),
+        Ok(Some(record)) => Ok(
+            match ConfidenceModel::from_coefficients(&record.coefficients) {
+                Some(model) => ModelInUse::Kept {
+                    model,
+                    version: record.version,
+                    samples: record.samples,
+                    auc: record.auc,
+                },
+                None => ModelInUse::Unusable {
+                    version: i64::from(record.version),
+                },
+            },
+        ),
+        Err(StoreError::Corrupt { column, row }) if column.starts_with("calibration.") => {
+            Ok(ModelInUse::Unusable { version: row })
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]

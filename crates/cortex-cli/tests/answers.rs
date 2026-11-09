@@ -47,14 +47,15 @@ const S1: &str = "00000000-0000-4000-8000-000000000001";
 /// mode, with `holdout_share` of tasks held out; its home folder; and its daemon, once the graph
 /// holds the co-change links.
 fn repository(holdout_share: &str) -> TestResult<(tempfile::TempDir, tempfile::TempDir, Daemon)> {
-    repository_with(holdout_share, None)
+    repository_with(holdout_share, (None, None))
 }
 
 /// The repository of [`repository`], its store first holding `found` as what the self-check last
-/// found, when given, written before the daemon starts.
+/// found and `model`'s coefficients as the confidence model kept, each when given, written before
+/// the daemon starts.
 fn repository_with(
     holdout_share: &str,
-    found: Option<SelfCheckRecord>,
+    (found, model): (Option<SelfCheckRecord>, Option<&[f64]>),
 ) -> TestResult<(tempfile::TempDir, tempfile::TempDir, Daemon)> {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
@@ -79,7 +80,7 @@ fn repository_with(
         root.join(".cortex/config.toml"),
         format!("mode = \"medium\"\n[holdout]\nshare = {holdout_share}\n"),
     )?;
-    if let Some(found) = found {
+    if found.is_some() || model.is_some() {
         let mut writer = Writer::open(&WriterOptions {
             folder: &root.join(".cortex"),
             repo_id: &RepoId::of(&canonical_root(root)?),
@@ -87,7 +88,12 @@ fn repository_with(
             now_ms: 1,
         })?;
         let mut transaction = writer.transaction()?;
-        transaction.set_self_check(&found)?;
+        if let Some(found) = found {
+            transaction.set_self_check(&found)?;
+        }
+        if let Some(model) = model {
+            transaction.add_calibration((model, 200, 0.9, 1), 30)?;
+        }
         transaction.commit()?;
     }
     let daemon = Daemon::start(root, home.path())?;
@@ -248,6 +254,50 @@ fn a_prompt_gets_its_work_order_and_leaves_its_injection() -> TestResult {
     assert_eq!(row.record.tokens, u32::try_from(estimate_tokens(&text))?);
     assert_eq!(row.record.text_hash, Some(ContentHash::of(text.as_bytes())));
     assert!(row.record.features.is_some());
+    Ok(())
+}
+
+/// Once a confidence model is kept it decides the work order, not the cold-start rule, and the chance
+/// it gave is recorded with the injection. A model whose intercept is -20 and every weight 0 gives
+/// every retrieval a chance of 1 / (1 + e^20), about 2e-9: the prompt that gets its work order above
+/// gets nothing, its injection recorded as kept back with that chance. One whose intercept is 20
+/// gives above 0.999: the work order comes under the header saying the model chose it.
+#[test]
+fn a_kept_model_decides_the_work_order() -> TestResult {
+    let unlikely = [-20.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let (repo, home, daemon) = repository_with("0", (None, Some(&unlikely)))?;
+    let root = repo.path();
+    let files = run_files(root, home.path())?;
+    let prompt = Event {
+        prompt_text: Some(PROMPT.to_owned()),
+        ..event(root, HookKind::Prompt, 20)?
+    };
+    assert_eq!(reply(&files, work_order_request(prompt.clone()))?, None);
+    let [row] = &injections_of(root, &prompt)?[..] else {
+        return Err("one injection".into());
+    };
+    assert!(row.record.is_gated_out && row.record.text_hash.is_none());
+    let chance = row.record.confidence.ok_or("the model's chance")?;
+    assert!(chance > 0.0 && chance < 1e-8, "{chance}");
+    drop(daemon);
+    let likely = [20.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let (repo, home, _daemon) = repository_with("0", (None, Some(&likely)))?;
+    let root = repo.path();
+    let files = run_files(root, home.path())?;
+    let prompt = Event {
+        prompt_text: Some(PROMPT.to_owned()),
+        ..event(root, HookKind::Prompt, 20)?
+    };
+    let text = reply(&files, work_order_request(prompt.clone()))?.ok_or("a work order")?;
+    assert!(
+        text.starts_with("[cortex] Work order · learned from earlier work here\n"),
+        "{text}"
+    );
+    let [row] = &injections_of(root, &prompt)?[..] else {
+        return Err("one injection".into());
+    };
+    assert!(!row.record.is_gated_out);
+    assert!(row.record.confidence.is_some_and(|chance| chance > 0.999));
     Ok(())
 }
 
@@ -529,7 +579,7 @@ fn a_prompt_is_weighed_with_what_the_self_check_found() -> TestResult {
         recent_labelled: 100,
         recent_used: 62,
     };
-    let (repo, home, _daemon) = repository_with("0", Some(found))?;
+    let (repo, home, _daemon) = repository_with("0", (Some(found), None))?;
     let root = repo.path();
     let files = run_files(root, home.path())?;
     let prompt = Event {

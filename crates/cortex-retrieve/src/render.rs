@@ -51,6 +51,9 @@ pub enum Basis {
     Agreement(Vec<&'static str>),
     /// The session is continuing its own work.
     Continuity,
+    /// The repository's confidence model, fitted on its earlier work orders, judged it likely
+    /// used.
+    Learned,
     /// The engine was asked directly, without the gate.
     Located {
         /// The kinds of evidence behind the best-supported top file, as the header names them.
@@ -412,10 +415,11 @@ impl Plan {
 fn heading(basis: &Basis) -> String {
     match basis {
         Basis::Continuity => "[cortex] Work order · continuing the work under way".to_owned(),
+        Basis::Learned => "[cortex] Work order · learned from earlier work here".to_owned(),
         Basis::Agreement(kinds) => format!("[cortex] Work order · {}", agreed(kinds)),
         Basis::Located { kinds, verdict } => {
             let gate = match verdict {
-                Verdict::Inject(Rule::Agreement) => "the gate would give it",
+                Verdict::Inject(Rule::Agreement | Rule::Calibrated) => "the gate would give it",
                 Verdict::Inject(Rule::Continuity) => {
                     "the gate would give it, the work under way going on"
                 }
@@ -424,6 +428,10 @@ fn heading(basis: &Basis) -> String {
                 }
                 Verdict::Silent(Shut::WeakMatch) => {
                     "the gate would stay silent: the words match no file strongly"
+                }
+                Verdict::Silent(Shut::Unlikely) => {
+                    "the gate would stay silent: the confidence model puts the chance these files \
+                     are used below its bar"
                 }
                 Verdict::Silent(Shut::OutOfTime) => {
                     // What a spreading cut short had found is the clock's doing: none of it is said.

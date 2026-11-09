@@ -6,7 +6,9 @@ mod common;
 
 use common::{Store, TestResult, start};
 use cortex_core::{ContentHash, GateFeatures, HookKind, Identifier, StartSource};
-use cortex_learn::{Calibrated, Commands, REFIT_AFTER_MS, Recorder, calibrate, model_in_use};
+use cortex_learn::{
+    Calibrated, Commands, ModelInUse, REFIT_AFTER_MS, Recorder, calibrate, model_in_use,
+};
 use cortex_store::{CalibrationAttempt, InjectionRecord};
 
 /// Records `count` injections of prompts in session `s0`, numbered from `first`, each labelled used
@@ -63,14 +65,22 @@ fn a_model_is_fitted_once_enough_are_labelled_and_then_daily() -> TestResult {
     labelled(&mut store, 0, 199)?;
     assert_eq!(calibrated(&mut store, 1_000)?, None);
     assert_eq!(store.writer.queries().calibration_attempt()?, None);
-    assert_eq!(model_in_use(store.writer.queries())?, None);
+    assert_eq!(model_in_use(store.writer.queries())?, ModelInUse::None);
     labelled(&mut store, 199, 51)?;
     let Some(Calibrated::Kept(first)) = calibrated(&mut store, 2_000)? else {
         return Err("a first model kept".into());
     };
     assert!((first.auc - 1.0).abs() < f64::EPSILON, "{first:?}");
     assert_eq!(first.samples, 200);
-    assert_eq!(model_in_use(store.writer.queries())?, Some(first.model));
+    assert_eq!(
+        model_in_use(store.writer.queries())?,
+        ModelInUse::Kept {
+            model: first.model,
+            version: 1,
+            samples: 200,
+            auc: first.auc,
+        }
+    );
     let kept = store
         .writer
         .queries()
@@ -97,5 +107,53 @@ fn a_model_is_fitted_once_enough_are_labelled_and_then_daily() -> TestResult {
         .calibration()?
         .ok_or("a second model")?;
     assert_eq!(newest.version, 2);
+    Ok(())
+}
+
+/// A newest model this build cannot use is told apart from none, and the next fitting replaces it
+/// at once, without waiting a day. With 250 labelled and a fitting just noted, a model of three
+/// coefficients (fitted on other inputs) is unusable, version 1; asked a moment later, a fitting
+/// runs all the same and keeps version 2, which is used. A row whose coefficients cannot be read
+/// back is unusable too, by its version, not an error, and is replaced the same way.
+#[test]
+fn a_model_this_build_cannot_use_is_replaced_at_once() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
+    store.record(&mut recorder, &[start("s0", 100, StartSource::Startup)?])?;
+    labelled(&mut store, 0, 250)?;
+    let mut transaction = store.writer.transaction()?;
+    transaction.add_calibration((&[0.5, 1.0, -1.0], 200, 0.8, 1_000), 30)?;
+    transaction.set_calibration_attempt(&CalibrationAttempt {
+        labelled: 250,
+        at_ms: 1_000,
+    })?;
+    transaction.commit()?;
+    assert_eq!(
+        model_in_use(store.writer.queries())?,
+        ModelInUse::Unusable { version: 1 }
+    );
+    assert!(matches!(
+        calibrated(&mut store, 1_001)?,
+        Some(Calibrated::Kept(_))
+    ));
+    assert!(matches!(
+        model_in_use(store.writer.queries())?,
+        ModelInUse::Kept { version: 2, .. }
+    ));
+    let database = store.root.path().join(".cortex").join("cortex.db");
+    rusqlite::Connection::open(&database)?
+        .execute_batch("UPDATE calibration SET coefficients = 'not numbers' WHERE version = 2")?;
+    assert_eq!(
+        model_in_use(store.writer.queries())?,
+        ModelInUse::Unusable { version: 2 }
+    );
+    assert!(matches!(
+        calibrated(&mut store, 1_002)?,
+        Some(Calibrated::Kept(_))
+    ));
+    assert!(matches!(
+        model_in_use(store.writer.queries())?,
+        ModelInUse::Kept { version: 3, .. }
+    ));
     Ok(())
 }

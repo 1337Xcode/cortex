@@ -8,6 +8,7 @@ use cortex_core::{
     EdgeType, FileFlags, HookKind, Identifier, RepoPath, RetrievalConfig, ScaleMode, SymbolKind,
     ToolKind,
 };
+use cortex_learn::{ConfidenceModel, MODEL_INPUTS};
 use cortex_retrieve::{
     GraphSettings, Location, Outcome, Reason, Request, Rule, Shut, Silence, Verdict, locate,
     read_graph, retrieve,
@@ -136,6 +137,7 @@ fn asked_while_changed(
         max_file_bytes: 1_048_576,
         raise: 0.0,
         recent_precision: None,
+        model: None,
         deadline: None,
         root: repo.root.path(),
     };
@@ -163,6 +165,7 @@ fn located(
         max_file_bytes: 1_048_576,
         raise: 0.0,
         recent_precision: None,
+        model: None,
         deadline: None,
         root: repo.root.path(),
     };
@@ -259,6 +262,7 @@ fn a_spreading_out_of_time_gives_nothing() -> TestResult {
             max_file_bytes: 1_048_576,
             raise: 0.0,
             recent_precision: None,
+            model: None,
             deadline: Some(std::time::Instant::now()),
             root: repo.root.path(),
         };
@@ -292,6 +296,7 @@ fn a_question_out_of_time_names_no_file() -> TestResult {
             max_file_bytes: 1_048_576,
             raise: 0.0,
             recent_precision: None,
+            model: None,
             deadline: None,
             root: repo.root.path(),
         };
@@ -326,6 +331,185 @@ fn one_kind_of_evidence_is_not_enough() -> TestResult {
     assert_eq!(
         retrieval.outcome,
         Outcome::Silent(Silence::Gate(Shut::TooFewKinds))
+    );
+    Ok(())
+}
+
+/// What `prompt` in session `s1` gives in `repo` in medium mode once the repository keeps
+/// `model`, a confidence model.
+fn asked_by_model(
+    repo: &Repo,
+    prompt: &str,
+    model: &ConfidenceModel,
+) -> TestResult<cortex_retrieve::Retrieval> {
+    asked_by_model_at(repo, prompt, model, (ScaleMode::Medium, 0.70, 0.0))
+}
+
+/// What `prompt` in session `s1` gives in `repo` once the repository keeps `model`, in `mode`, with
+/// `retrieval.min_confidence` set to `least` and the self-check's raise at `raise`.
+fn asked_by_model_at(
+    repo: &Repo,
+    prompt: &str,
+    model: &ConfidenceModel,
+    (mode, least, raise): (ScaleMode, f64, f64),
+) -> TestResult<cortex_retrieve::Retrieval> {
+    let reader = repo.reader()?;
+    let graph = read_graph(reader.queries(), &GraphSettings::default())?;
+    let session = Identifier::new("s1")?;
+    let settings = RetrievalConfig {
+        min_confidence: least,
+        ..RetrievalConfig::default()
+    };
+    let request = Request {
+        prompt,
+        session: Some(&session),
+        uncommitted: &[],
+        mode,
+        settings: &settings,
+        max_file_bytes: 1_048_576,
+        raise,
+        recent_precision: None,
+        model: Some(model),
+        deadline: None,
+        root: repo.root.path(),
+    };
+    Ok(retrieve(reader.queries(), &graph, &request)?)
+}
+
+/// What the engine finds without the gate for `question` in `repo` in medium mode, at most 5
+/// files, once the repository keeps `model`.
+fn located_by_model(repo: &Repo, question: &str, model: &ConfidenceModel) -> TestResult<Location> {
+    let reader = repo.reader()?;
+    let graph = read_graph(reader.queries(), &GraphSettings::default())?;
+    let settings = RetrievalConfig::default();
+    let request = Request {
+        prompt: question,
+        session: None,
+        uncommitted: &[],
+        mode: ScaleMode::Medium,
+        settings: &settings,
+        max_file_bytes: 1_048_576,
+        raise: 0.0,
+        recent_precision: None,
+        model: Some(model),
+        deadline: None,
+        root: repo.root.path(),
+    };
+    Ok(locate(reader.queries(), &graph, &request, 5)?)
+}
+
+/// A model of intercept `log_odds` and no weights: it gives every retrieval the same chance,
+/// 1 / (1 + e^-log_odds).
+fn constant_model(log_odds: f64) -> ConfidenceModel {
+    ConfidenceModel {
+        intercept: log_odds,
+        weights: [0.0; MODEL_INPUTS],
+    }
+}
+
+/// Once a model is kept it alone decides. The prompt the cold-start rule lets through (two kinds
+/// agree on the service) is kept back by a model giving every retrieval a chance of
+/// 1 / (1 + e^20), about 2e-9, under the bar of 0.70, its features and that chance recorded. The
+/// prompt the rule keeps back ("change rate": the tax file, one kind) goes through a model giving
+/// 1 / (1 + e^-20), above 0.999, under the header that says the model chose it. Typed by hand from
+/// the fixture: the tax file's `rate`, lines 1 to 2, which the plain word "rate" matches without
+/// naming it (as "orders" matches `Order` above), and its code.
+#[test]
+fn a_kept_model_decides_in_place_of_the_cold_start_rule() -> TestResult {
+    let repo = repository()?;
+    let kept_back = asked_by_model(
+        &repo,
+        "fix create_order in the orders service",
+        &constant_model(-20.0),
+    )?;
+    assert_eq!(
+        kept_back.outcome,
+        Outcome::Silent(Silence::Gate(Shut::Unlikely))
+    );
+    assert!(kept_back.features.is_some());
+    let chance = kept_back.confidence.ok_or("the model's chance")?;
+    assert!(chance > 0.0 && chance < 1e-8, "{chance}");
+    let given = asked_by_model(&repo, "change rate", &constant_model(20.0))?;
+    let Outcome::WorkOrder(rule, rendered) = &given.outcome else {
+        return Err(format!("{:?}", given.outcome).into());
+    };
+    assert_eq!(*rule, Rule::Calibrated);
+    let expected = "\
+[cortex] Work order · learned from earlier work here
+Start here:
+  1. src/billing/tax.py:1-2  rate  (matches rate)
+Current code:
+  src/billing/tax.py:1-2
+  1 | def rate():
+  2 |     return 0.2
+";
+    assert_eq!(rendered.text, expected);
+    assert!(given.confidence.is_some_and(|chance| chance > 0.999));
+    Ok(())
+}
+
+/// The bar the pipeline asks of a kept model follows the setting, the mode and the self-check's
+/// raise. A model of log-odds ln 3 gives every retrieval a chance of 1 / (1 + 1/3) = 0.75, between
+/// the bars: the familiar prompt goes through at the default bar of 0.70 in medium mode, and is kept
+/// back when the raise of 0.1 lifts the bar to 0.80, in small mode (at least 0.85), and with the
+/// setting at 0.80; each time with the same chance recorded.
+#[test]
+fn the_bar_follows_the_setting_the_mode_and_the_raise() -> TestResult {
+    let repo = repository()?;
+    let three_to_one = constant_model(3.0_f64.ln());
+    let prompt = "fix create_order in the orders service";
+    let cases = [
+        ((ScaleMode::Medium, 0.70, 0.0), true),
+        ((ScaleMode::Medium, 0.70, 0.1), false),
+        ((ScaleMode::Small, 0.70, 0.0), false),
+        ((ScaleMode::Medium, 0.80, 0.0), false),
+    ];
+    for (bar, is_given) in cases {
+        let retrieval = asked_by_model_at(&repo, prompt, &three_to_one, bar)?;
+        if is_given {
+            assert!(
+                matches!(retrieval.outcome, Outcome::WorkOrder(Rule::Calibrated, _)),
+                "{bar:?}: {:?}",
+                retrieval.outcome
+            );
+        } else {
+            assert_eq!(
+                retrieval.outcome,
+                Outcome::Silent(Silence::Gate(Shut::Unlikely)),
+                "{bar:?}"
+            );
+        }
+        let chance = retrieval.confidence.ok_or("the model's chance")?;
+        assert!((chance - 0.75).abs() < 1e-12, "{bar:?}: {chance}");
+    }
+    Ok(())
+}
+
+/// Asked directly, the engine says what a kept model would do: for the familiar question, which the
+/// prompt's words and the commit history agree on, "the gate would give it" under a model giving
+/// above 0.999, and that the chance is below the bar under one giving about 2e-9.
+#[test]
+fn a_question_says_what_a_kept_model_would_do() -> TestResult {
+    let repo = repository()?;
+    let question = "fix create_order in the orders service";
+    let heading = |location: &Location| -> TestResult<String> {
+        let rendered = location.rendered.as_ref().ok_or("an answer")?;
+        Ok(rendered.text.lines().next().unwrap_or_default().to_owned())
+    };
+    let given = located_by_model(&repo, question, &constant_model(20.0))?;
+    assert_eq!(
+        heading(&given)?,
+        "[cortex] Where · the prompt's words and the commit history agree · the gate would give it"
+    );
+    let kept_back = located_by_model(&repo, question, &constant_model(-20.0))?;
+    assert_eq!(
+        heading(&kept_back)?,
+        "[cortex] Where · the prompt's words and the commit history agree · the gate would stay \
+         silent: the confidence model puts the chance these files are used below its bar"
+    );
+    assert_eq!(
+        kept_back.judged.map(|(_, verdict)| verdict),
+        Some(Verdict::Silent(Shut::Unlikely))
     );
     Ok(())
 }

@@ -1,15 +1,17 @@
 //! The gate: whether what retrieval found is sure enough to hand an agent.
 //!
-//! Silence is the answer unless a rule clears. Until a model calibrated on the repository's own
-//! injections exists, the rule is the cold-start one: the signals agree, at least two independent
-//! kinds of evidence supporting one of the top three files while the prompt's words match some file
-//! strongly, or three kinds while they match some file at all; or the session is plainly continuing
-//! its own work. The more independent evidence agrees, the less the prompt's wording has to: a
+//! Silence is the answer unless a rule clears. Once a confidence model fitted on the repository's
+//! own labelled injections is kept, it alone decides: a work order is given when the model puts the
+//! chance that its task uses one of its first files at [`confidence_bar`] or more, and never
+//! otherwise; the cold-start rule is no fallback. Until then the rule is the cold-start one: the
+//! signals agree, at least two independent kinds of evidence supporting one of the top three files
+//! while the prompt's words match some file strongly, or three kinds while they match some file at
+//! all; or the session is plainly continuing its own work. The more independent evidence agrees, the less the prompt's wording has to: a
 //! prompt that names a change in its own words ("stop creating the stats file") matches the code
 //! weakly though the code it means is plain from the graph. A missing signal lowers nothing into
 //! a yes; it only leaves the gate shut.
 
-use cortex_core::GateFeatures;
+use cortex_core::{GateFeatures, ScaleMode};
 
 /// How many independent kinds of evidence must support one top file for them to agree.
 pub const AGREEING_KINDS: u8 = 2;
@@ -28,6 +30,22 @@ pub const STRONG_AGREEING_KINDS: u8 = 3;
 /// matched between 0.14 and 0.29 were each used.
 pub const STRONG_LEXICAL_BAR: f64 = 0.1;
 
+/// The least chance small mode asks of a confidence model, whatever `retrieval.min_confidence`
+/// says: a small repository gains less from a work order, so one is given only when surer.
+pub const SMALL_MODE_MIN_CONFIDENCE: f64 = 0.85;
+
+/// The most the self-check's raise lifts the chance a confidence model must give.
+pub const MAX_RAISED_CONFIDENCE: f64 = 0.9;
+
+/// What the repository's confidence model says of one retrieval.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Confidence {
+    /// The chance, from 0 to 1, it gives that the task uses one of the first files.
+    pub probability: f64,
+    /// The chance it must give for a work order, [`confidence_bar`].
+    pub bar: f64,
+}
+
 /// What the gate says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
@@ -44,6 +62,8 @@ pub enum Rule {
     Agreement,
     /// The session is continuing its own work.
     Continuity,
+    /// The repository's confidence model gave it a chance at its bar or above.
+    Calibrated,
 }
 
 /// Why the gate stayed shut.
@@ -56,15 +76,41 @@ pub enum Shut {
     /// The spreading ran out of its time before it finished: what it ranked would hang on how fast
     /// the machine was, so it is not shown.
     OutOfTime,
+    /// The repository's confidence model gave it a chance below its bar.
+    Unlikely,
 }
 
-/// Whether to hand over what `features` describe, the cold-start rule's lexical bars raised by
-/// `raise` (the self-check's). A raise only ever lifts the bars: one below zero counts as none. The
-/// continuity rule needs no lexical bar while there is no raise; once the self-check raises one,
-/// the prompt's best match must reach the raise there too, so work orders for continuing work that
-/// go unused are held back like the others.
+/// The chance a confidence model must give in `mode`: `min_confidence`, at least
+/// [`SMALL_MODE_MIN_CONFIDENCE`] in small mode, lifted by the self-check's `raise` to at most
+/// [`MAX_RAISED_CONFIDENCE`]. A raise never lowers it, nor does one below zero, and a bar set above
+/// the most a raise lifts it to stays where it was set.
 #[must_use]
-pub fn decide(features: &GateFeatures, raise: f64) -> Verdict {
+pub fn confidence_bar(min_confidence: f64, mode: ScaleMode, raise: f64) -> f64 {
+    let base = if mode == ScaleMode::Small {
+        min_confidence.max(SMALL_MODE_MIN_CONFIDENCE)
+    } else {
+        min_confidence
+    };
+    (base + raise.max(0.0)).min(MAX_RAISED_CONFIDENCE).max(base)
+}
+
+/// Whether to hand over what `features` describe: by `confidence`, what the repository's
+/// confidence model says of them, when one is kept; otherwise by the cold-start rule, its lexical
+/// bars raised by `raise` (the self-check's). A raise only ever lifts the bars: one below zero
+/// counts as none. The continuity rule needs no lexical bar while there is no raise; once the
+/// self-check raises one, the prompt's best match must reach the raise there too, so work orders
+/// for continuing work that go unused are held back like the others.
+#[must_use]
+pub fn decide(features: &GateFeatures, raise: f64, confidence: Option<Confidence>) -> Verdict {
+    if let Some(confidence) = confidence {
+        // INVARIANT: silent-when-unsure (a kept model alone decides: below its bar nothing is
+        // injected, and the cold-start rule is no fallback)
+        return if confidence.probability >= confidence.bar {
+            Verdict::Inject(Rule::Calibrated)
+        } else {
+            Verdict::Silent(Shut::Unlikely)
+        };
+    }
     let raise = raise.max(0.0);
     let is_agreed = features.agreeing_kinds >= AGREEING_KINDS;
     let is_strong = features.top_lexical >= LEXICAL_BAR + raise;
@@ -174,9 +220,66 @@ mod tests {
         ];
         for (features, raise, expected) in cases {
             assert_eq!(
-                decide(&features, raise),
+                decide(&features, raise, None),
                 expected,
                 "{features:?} raised {raise}"
+            );
+        }
+    }
+
+    /// A kept model alone decides: a chance at its bar or above injects, below it does not,
+    /// whatever the cold-start rule would say. Features the rule lets through (two kinds agreeing,
+    /// a match of 0.9) are kept back at a chance of 0.1 against a bar of 0.7; features it keeps
+    /// back (nothing behind them) go through at 0.95; a chance of exactly 0.7 reaches a bar of 0.7,
+    /// 0.69 does not, and the self-check's raise is in the bar, not added again.
+    #[test]
+    fn a_kept_model_decides_alone() {
+        let agreed = GateFeatures {
+            top_lexical: 0.9,
+            agreeing_kinds: 2,
+            supporting_kinds: 2,
+            ..none()
+        };
+        let at = |probability, bar| Some(Confidence { probability, bar });
+        let cases = [
+            (agreed, at(0.1, 0.7), Verdict::Silent(Shut::Unlikely)),
+            (none(), at(0.95, 0.7), Verdict::Inject(Rule::Calibrated)),
+            (none(), at(0.7, 0.7), Verdict::Inject(Rule::Calibrated)),
+            (agreed, at(0.69, 0.7), Verdict::Silent(Shut::Unlikely)),
+            (none(), at(0.85, 0.85), Verdict::Inject(Rule::Calibrated)),
+        ];
+        for (features, calibrated, expected) in cases {
+            assert_eq!(
+                decide(&features, 0.2, calibrated),
+                expected,
+                "{features:?} {calibrated:?}"
+            );
+        }
+    }
+
+    /// The bar, case by case: 0.70 in medium and huge mode; 0.85 in small mode, or the setting when
+    /// higher (0.9); a raise of 0.1 lifts 0.7 to 0.8 and 0.85 to 0.9, where it stops, so 0.2 on
+    /// 0.85 is 0.9 too; a bar set at 0.95 stays 0.95 under any raise; a raise below zero changes
+    /// nothing; a setting of 0.6 in medium mode is 0.6.
+    #[test]
+    fn the_bar_follows_the_setting_the_mode_and_the_raise() {
+        let cases = [
+            (0.7, ScaleMode::Medium, 0.0, 0.7),
+            (0.7, ScaleMode::Huge, 0.0, 0.7),
+            (0.7, ScaleMode::Small, 0.0, 0.85),
+            (0.9, ScaleMode::Small, 0.0, 0.9),
+            (0.7, ScaleMode::Medium, 0.1, 0.8),
+            (0.7, ScaleMode::Small, 0.1, 0.9),
+            (0.7, ScaleMode::Small, 0.2, 0.9),
+            (0.95, ScaleMode::Medium, 0.1, 0.95),
+            (0.7, ScaleMode::Medium, -0.5, 0.7),
+            (0.6, ScaleMode::Medium, 0.0, 0.6),
+        ];
+        for (min_confidence, mode, raise, expected) in cases {
+            let bar = confidence_bar(min_confidence, mode, raise);
+            assert!(
+                (bar - expected).abs() < 1e-12,
+                "{min_confidence} {mode:?} {raise}: {bar}"
             );
         }
     }

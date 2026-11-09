@@ -14,12 +14,13 @@ use std::path::Path;
 use std::time::Instant;
 
 use cortex_core::{GateFeatures, Identifier, RetrievalConfig, ScaleMode};
+use cortex_learn::ConfidenceModel;
 use cortex_store::{NodeId, Queries, StoreError};
 
 use crate::error::RetrieveError;
 use crate::facts::{ListedFile, OrderFact, order_facts};
 use crate::features::{Found, GATED_FILES, features_of};
-use crate::gate::{Rule, Shut, Verdict, decide};
+use crate::gate::{Confidence, Rule, Shut, Verdict, confidence_bar, decide};
 use crate::graph::Graph;
 use crate::items::{Listed, Listing, listed};
 use crate::prompt::PromptTerms;
@@ -53,6 +54,9 @@ pub struct Request<'a> {
     pub raise: f64,
     /// The share of the repository's latest delivered injections that were used, when known.
     pub recent_precision: Option<f64>,
+    /// The repository's confidence model, once one is kept; the gate keeps its cold-start rule
+    /// until then.
+    pub model: Option<&'a ConfidenceModel>,
     /// When spreading must stop, if it has not.
     pub deadline: Option<Instant>,
     /// The repository's root, where files are read from.
@@ -89,6 +93,9 @@ pub struct Retrieval {
     pub outcome: Outcome,
     /// The gate's features, when the retrieval reached the gate.
     pub features: Option<GateFeatures>,
+    /// The chance the repository's confidence model gave, when one is kept and the retrieval
+    /// reached the gate.
+    pub confidence: Option<f64>,
     /// The files the gate weighed, the three best, by node; none when it did not get that far.
     pub weighed: Vec<NodeId>,
     /// The files the work order lists, the best first, each with the spans whose lines it writes;
@@ -120,9 +127,10 @@ pub fn retrieve(
     graph: &Graph<NodeId>,
     request: &Request<'_>,
 ) -> Result<Retrieval, RetrieveError> {
-    let silent = |silence, features: Option<GateFeatures>, weighed: &[NodeId]| Retrieval {
+    let silent = |silence, judged: Option<Judged>, weighed: &[NodeId]| Retrieval {
         outcome: Outcome::Silent(silence),
-        features,
+        features: judged.map(|judged| judged.features),
+        confidence: judged.and_then(|judged| judged.confidence),
         weighed: weighed.to_vec(),
         listed: Vec::new(),
     };
@@ -134,12 +142,12 @@ pub fn retrieve(
     let Some(reached) = reached(queries, graph, request)? else {
         return Ok(silent(Silence::NothingFound, None, &[]));
     };
-    let (support, features, verdict) = reached.judged(graph, request);
+    let (support, judged, verdict) = reached.judged(graph, request);
     let weighed = reached.weighed(graph);
     let rule = match verdict {
         Verdict::Inject(rule) => rule,
         Verdict::Silent(shut) => {
-            return Ok(silent(Silence::Gate(shut), Some(features), &weighed));
+            return Ok(silent(Silence::Gate(shut), Some(judged), &weighed));
         }
     };
     let listing = Listing {
@@ -155,7 +163,7 @@ pub fn retrieve(
         (max_files, request.settings.span_max_lines),
     )?;
     if listed.is_empty() {
-        return Ok(silent(Silence::NothingToShow, Some(features), &weighed));
+        return Ok(silent(Silence::NothingToShow, Some(judged), &weighed));
     }
     let order = WorkOrder {
         basis: basis_of(rule, &reached.scored, &support),
@@ -163,17 +171,18 @@ pub fn retrieve(
         facts: facts_about(queries, graph, &listed)?,
     };
     let Some(rendered) = render(&order, request.root, &limits_of(request)) else {
-        return Ok(silent(Silence::NothingToShow, Some(features), &weighed));
+        return Ok(silent(Silence::NothingToShow, Some(judged), &weighed));
     };
     let listed = written_of(&listed, &rendered);
     // INVARIANT: silent-when-unsure (the gate weighed the three best files: a work order showing
     // none of them shows what the gate never weighed)
     if !shows_gated(&reached.scored, &listed) {
-        return Ok(silent(Silence::NothingToShow, Some(features), &weighed));
+        return Ok(silent(Silence::NothingToShow, Some(judged), &weighed));
     }
     Ok(Retrieval {
         outcome: Outcome::WorkOrder(rule, rendered),
-        features: Some(features),
+        features: Some(judged.features),
+        confidence: judged.confidence,
         weighed,
         listed,
     })
@@ -200,7 +209,7 @@ pub fn locate(
             rendered: None,
         });
     };
-    let (support, features, verdict) = reached.judged(graph, request);
+    let (support, judged, verdict) = reached.judged(graph, request);
     let listing = Listing {
         queries,
         graph,
@@ -230,10 +239,20 @@ pub fn locate(
         .map(|rendered| written_of(&listed, rendered))
         .unwrap_or_default();
     Ok(Location {
-        judged: Some((features, verdict)),
+        judged: Some((judged.features, verdict)),
         listed,
         rendered,
     })
+}
+
+/// What the gate weighed of one retrieval: its features, and the chance the repository's
+/// confidence model gave them when one is kept.
+#[derive(Debug, Clone, Copy)]
+struct Judged {
+    /// The gate's features.
+    features: GateFeatures,
+    /// The model's chance; none before a model is kept.
+    confidence: Option<f64>,
 }
 
 /// What a retrieval reached before the gate.
@@ -258,13 +277,13 @@ impl Reached {
             .collect()
     }
 
-    /// The evidence behind the files reached over `graph`, the gate's features, and what the gate
-    /// says, its bar raised as `request` asks.
+    /// The evidence behind the files reached over `graph`, what the gate weighed, and what the
+    /// gate says, its bar raised as `request` asks and decided by `request`'s model when it has one.
     fn judged<'a>(
         &'a self,
         graph: &'a Graph<NodeId>,
         request: &Request<'_>,
-    ) -> (Support<'a, NodeId>, GateFeatures, Verdict) {
+    ) -> (Support<'a, NodeId>, Judged, Verdict) {
         let support = Support::new(graph, &self.seeds);
         let found = Found {
             seeds: &self.seeds,
@@ -273,14 +292,22 @@ impl Reached {
             support: &support,
         };
         let features = features_of(&found, request.recent_precision);
+        let confidence = request.model.map(|model| Confidence {
+            probability: model.probability(&features),
+            bar: confidence_bar(request.settings.min_confidence, request.mode, request.raise),
+        });
         // INVARIANT: deterministic (a spreading the deadline cut short hangs on how fast the machine
         // was, so what it ranked is never shown: the gate stays shut and says why)
         let verdict = if self.is_out_of_time {
             Verdict::Silent(Shut::OutOfTime)
         } else {
-            decide(&features, request.raise)
+            decide(&features, request.raise, confidence)
         };
-        (support, features, verdict)
+        let judged = Judged {
+            features,
+            confidence: confidence.map(|confidence| confidence.probability),
+        };
+        (support, judged, verdict)
     }
 }
 
@@ -421,6 +448,7 @@ fn basis_of<Id: Ord + Copy>(rule: Rule, scored: &[ScoredFile], support: &Support
     match rule {
         Rule::Continuity => Basis::Continuity,
         Rule::Agreement => Basis::Agreement(most_kinds(scored, support)),
+        Rule::Calibrated => Basis::Learned,
     }
 }
 

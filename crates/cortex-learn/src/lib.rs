@@ -42,8 +42,8 @@ mod watcher_edits;
 pub use archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
 pub use calibration::{
     AUC_TOLERANCE, CALIBRATION_WINDOW, CHANCE_AUC, Calibrated, ConfidenceModel, Fitted,
-    HELD_OUT_EVERY, KEPT_MODELS, L2_PENALTY, MIN_LABELLED, MODEL_INPUTS, REFIT_AFTER_MS, Refusal,
-    auc, calibrate, calibrated, model_in_use, model_inputs,
+    HELD_OUT_EVERY, KEPT_MODELS, L2_PENALTY, MIN_LABELLED, MODEL_INPUTS, ModelInUse,
+    REFIT_AFTER_MS, Refusal, auc, calibrate, calibrated, model_in_use, model_inputs,
 };
 pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore, Told};
 pub use decay::{FADED_OUT_BELOW, decayed, has_faded_out};

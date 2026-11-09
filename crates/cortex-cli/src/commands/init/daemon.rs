@@ -68,11 +68,11 @@ pub(super) fn started_and_indexed(root: &Path) -> anyhow::Result<()> {
         Err(error) => return Err(error).context("starting the repository's daemon"),
     }
     waited(root, &user)?;
-    let mode = settings::load(root)?.config.mode;
+    let config = settings::load(root)?.config;
     // The status's first three lines say what the index holds (or its one line, why there is
     // none); the rest (learning, the gate, warnings) says nothing yet on a repository just set
     // up, and `cortex status` shows it.
-    for line in index_lines(root, mode)?.into_iter().take(3) {
+    for line in index_lines(root, &config)?.into_iter().take(3) {
         output::line(&line)?;
     }
     Ok(())

@@ -52,8 +52,9 @@ pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
 pub use facts::{FactAt, ListedFile, MAX_ORDER_FACTS, OrderFact, order_facts};
 pub use features::{Found, GATED_FILES, MASSED_FILES, features_of};
 pub use gate::{
-    AGREEING_KINDS, LEXICAL_BAR, Rule, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR, Shut, Verdict,
-    decide,
+    AGREEING_KINDS, Confidence, LEXICAL_BAR, MAX_RAISED_CONFIDENCE, Rule,
+    SMALL_MODE_MIN_CONFIDENCE, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR, Shut, Verdict,
+    confidence_bar, decide,
 };
 pub use graph::{Graph, GraphError, LinkInput, NodeInput, Standing, Weighing};
 pub use hints::{HINTED_ABOVE_LINES, HintQuery, MAX_HINT_TOKENS, MAX_HINTED_PARTS, read_hint};

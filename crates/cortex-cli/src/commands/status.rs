@@ -2,7 +2,9 @@
 //! what its co-change miner is doing, how long it takes to handle each hook and its latest errors;
 //! then whether the index is ready, the scale mode, how many files are stored, parsed and waiting
 //! to be parsed, how far the history is mined, what the gate asks before it hands a work order
-//! over, and what the self-check last found of the work orders given. The store is only read.
+//! over (the cold-start rule's bars, or the chance a kept confidence model must give, and whether a
+//! kept model cannot be used), and what the self-check last found of the work orders given. The
+//! store is only read.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -12,13 +14,13 @@ use cortex_core::ipc::{
     GitReport, GitState, GraphReport, HookLatency, RecentError, RequestBody, ResponseBody,
     StatusReport, UpkeepReport, WorktreeReport, WorktreeState,
 };
-use cortex_core::{FileFlags, ModeSetting, UserFolder, unix_millis};
+use cortex_core::{Config, FileFlags, ModeSetting, ScaleMode, UserFolder, unix_millis};
 use cortex_daemon::settings;
 use cortex_git::mine::Mark;
 use cortex_hook::{Answer, ClientError};
 use cortex_index::waits_to_be_parsed;
-use cortex_learn::{MAX_RAISE_STEPS, raise_of, recent_precision};
-use cortex_retrieve::{LEXICAL_BAR, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR};
+use cortex_learn::{MAX_RAISE_STEPS, ModelInUse, model_in_use, raise_of, recent_precision};
+use cortex_retrieve::{LEXICAL_BAR, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR, confidence_bar};
 use cortex_store::{
     FactHealth, MetaKey, Queries, Reader, SelfCheckRecord, StoreError, WarningCounts,
     is_writer_running,
@@ -53,19 +55,19 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     for line in daemon_lines(&root) {
         output::line(&line)?;
     }
-    for line in index_lines(&root, loaded.config.mode)? {
+    for line in index_lines(&root, &loaded.config)? {
         output::line(&line)?;
     }
     Ok(())
 }
 
-/// The lines saying how far the index of the repository at `root` is, with the mode `setting` the
-/// configuration gives, or that it has none, or that its writer is still setting up its store.
+/// The lines saying how far the index of the repository at `root` is, with the `config` in effect,
+/// or that it has none, or that its writer is still setting up its store.
 ///
 /// # Errors
 ///
 /// The store cannot be read.
-pub(crate) fn index_lines(root: &Path, setting: ModeSetting) -> anyhow::Result<Vec<String>> {
+pub(crate) fn index_lines(root: &Path, config: &Config) -> anyhow::Result<Vec<String>> {
     let folder = root.join(".cortex");
     let reader = match Reader::open(&folder, 0) {
         Ok(reader) => reader,
@@ -88,7 +90,7 @@ pub(crate) fn index_lines(root: &Path, setting: ModeSetting) -> anyhow::Result<V
                 .with_context(|| format!("reading the store in {}", folder.display()));
         }
     };
-    status_lines(&folder, reader.queries(), setting)
+    status_lines(&folder, reader.queries(), config)
 }
 
 /// The lines saying whether the daemon of the repository at `root` runs and, from its own answer,
@@ -368,11 +370,11 @@ fn ago(at_ms: i64, now_ms: i64) -> String {
     }
 }
 
-/// The status of the store in `folder` that `queries` reads, with the mode `setting`.
+/// The status of the store in `folder` that `queries` reads, with the `config` in effect.
 fn status_lines(
     folder: &Path,
     queries: Queries<'_>,
-    setting: ModeSetting,
+    config: &Config,
 ) -> anyhow::Result<Vec<String>> {
     let index = if queries.meta(MetaKey::CortexVersion)?.is_some() {
         "ready"
@@ -381,10 +383,13 @@ fn status_lines(
     } else {
         "not ready, the last index did not finish; the next one reads every file again"
     };
-    let mut mode = queries
-        .meta(MetaKey::ScaleMode)?
-        .unwrap_or_else(|| "not counted yet".to_owned());
-    if let ModeSetting::Pinned(pinned) = setting {
+    let stored_mode = queries.meta(MetaKey::ScaleMode)?;
+    let mode_now = match config.mode {
+        ModeSetting::Pinned(pinned) => Some(pinned),
+        ModeSetting::Auto => stored_mode.as_deref().and_then(ScaleMode::from_name),
+    };
+    let mut mode = stored_mode.unwrap_or_else(|| "not counted yet".to_owned());
+    if let ModeSetting::Pinned(pinned) = config.mode {
         mode.push_str(&format!(
             "; pinned to {} in the configuration",
             pinned.name()
@@ -411,7 +416,12 @@ fn status_lines(
         cochange_line(mark.as_ref(), unix_millis(SystemTime::now())),
     ];
     match queries.self_check() {
-        Ok(record) => lines.extend([gate_line(&record), self_check_line(&record)]),
+        Ok(record) => {
+            let in_use = model_in_use(queries)?;
+            let bar = (config.retrieval.min_confidence, mode_now);
+            lines.extend(gate_lines(&record, &in_use, bar));
+            lines.push(self_check_line(&record, in_use.model().is_some()));
+        }
         Err(StoreError::CorruptMeta { .. }) => {
             lines.push("gate: the self-check's record cannot be read".to_owned());
         }
@@ -468,18 +478,60 @@ fn health_line(health: FactHealth) -> Option<String> {
     })
 }
 
-/// What the gate asks before it hands a work order over: its bar for the prompt's words, raised as
-/// far as the self-check's `record` says, and the lower bar that holds when the most kinds of
-/// evidence agree.
-fn gate_line(record: &SelfCheckRecord) -> String {
+/// What the gate asks before it hands a work order over, with the self-check's `record` and the
+/// confidence model `in_use`. Once a model is kept: which, what it was fitted on and how well it
+/// ranked later work, and the chance it must give, from `retrieval.min_confidence` and the mode now
+/// (both chances, the other modes' and small mode's, while the mode is not known yet), raised as
+/// the record says. Before then: the cold-start rule's bar for the prompt's words, raised as the
+/// record says, and the lower bar that holds when the most kinds of evidence agree; and, when the
+/// newest model kept cannot be used, that the cold-start rule decides until upkeep fits another.
+fn gate_lines(
+    record: &SelfCheckRecord,
+    in_use: &ModelInUse,
+    (min_confidence, mode): (f64, Option<ScaleMode>),
+) -> Vec<String> {
     let raise = raise_of(record);
+    if let ModelInUse::Kept {
+        version,
+        samples,
+        auc,
+        ..
+    } = in_use
+    {
+        let chance = match mode {
+            Some(mode) => format!("{:.2}", confidence_bar(min_confidence, mode, raise)),
+            None => format!(
+                "{:.2} ({:.2} in small mode)",
+                confidence_bar(min_confidence, ScaleMode::Medium, raise),
+                confidence_bar(min_confidence, ScaleMode::Small, raise)
+            ),
+        };
+        let fitted = counted(
+            u64::from(*samples),
+            ("labelled retrieval", "labelled retrievals"),
+        );
+        return vec![format!(
+            "gate: confidence model {version}, fitted on {fitted} (AUC {auc:.2} on later ones); a \
+             work order needs a chance of {chance}"
+        )];
+    }
     let (bar, strong_bar) = (LEXICAL_BAR + raise, STRONG_LEXICAL_BAR + raise);
-    format!("gate: bar {bar:.2}, {strong_bar:.2} when {STRONG_AGREEING_KINDS} kinds agree")
+    let mut lines = vec![format!(
+        "gate: bar {bar:.2}, {strong_bar:.2} when {STRONG_AGREEING_KINDS} kinds agree"
+    )];
+    if let ModelInUse::Unusable { version } = in_use {
+        lines.push(format!(
+            "gate: confidence model {version} cannot be used by this build, so the bars above \
+             decide until upkeep fits a new one"
+        ));
+    }
+    lines
 }
 
 /// What the self-check last found, as its `record` keeps it: how often the latest work orders
-/// given were used, and how far it raised the gate's bar.
-fn self_check_line(record: &SelfCheckRecord) -> String {
+/// given were used, and how far it raised the gate's bar: by how much, while the cold-start rule
+/// decides (`is_model` false), since a kept model's bar stops at 0.9 and the gate line gives it.
+fn self_check_line(record: &SelfCheckRecord, is_model: bool) -> String {
     let found = match recent_precision(record) {
         None => "no work order given is labelled yet".to_owned(),
         Some(precision) => format!(
@@ -492,12 +544,18 @@ fn self_check_line(record: &SelfCheckRecord) -> String {
     };
     match record.raise_steps {
         0 => format!("self-check: {found}"),
-        steps => format!(
-            "self-check: {found}; the bar is raised {steps} of {MAX_RAISE_STEPS} steps, by {:.2}, \
-             last when {} had been labelled",
-            raise_of(record),
-            counted(record.raised_at, ("work order", "work orders")),
-        ),
+        steps => {
+            let by = if is_model {
+                String::new()
+            } else {
+                format!(", by {:.2}", raise_of(record))
+            };
+            format!(
+                "self-check: {found}; the bar is raised {steps} of {MAX_RAISE_STEPS} steps{by}, \
+                 last when {} had been labelled",
+                counted(record.raised_at, ("work order", "work orders")),
+            )
+        }
     }
 }
 
@@ -521,8 +579,91 @@ fn cochange_line(mark: Option<&Mark>, now_ms: i64) -> String {
 #[cfg(test)]
 mod tests {
     use cortex_core::ipc::{GitReport, Protocol};
+    use cortex_learn::{ConfidenceModel, MODEL_INPUTS};
 
     use super::*;
+
+    /// The gate's lines, case by case. With no model: the cold-start bars, 0.50 and 0.10, lifted by
+    /// a raise of two steps (0.10) to 0.60 and 0.20. With model 3, fitted on 1600 retrievals at an
+    /// AUC of 0.834: in medium mode the setting's 0.70; with two steps of raise, 0.80; in small
+    /// mode at least 0.85, and 0.85 + 0.10 stops at 0.90; with the mode not known yet, both. With
+    /// model 2 kept but not usable: the cold-start bars, and a line saying so.
+    #[test]
+    fn the_gate_lines_say_which_rule_decides_and_its_bar() {
+        let none = SelfCheckRecord::default();
+        let raised = SelfCheckRecord {
+            raise_steps: 2,
+            raised_at: 300,
+            ..none
+        };
+        let kept = ModelInUse::Kept {
+            model: ConfidenceModel {
+                intercept: 0.0,
+                weights: [0.0; MODEL_INPUTS],
+            },
+            version: 3,
+            samples: 1_600,
+            auc: 0.834,
+        };
+        let model_line = |chance: &str| {
+            vec![format!(
+                "gate: confidence model 3, fitted on 1600 labelled retrievals (AUC 0.83 on later \
+                 ones); a work order needs a chance of {chance}"
+            )]
+        };
+        let medium = Some(ScaleMode::Medium);
+        assert_eq!(
+            gate_lines(&none, &ModelInUse::None, (0.7, medium)),
+            ["gate: bar 0.50, 0.10 when 3 kinds agree"]
+        );
+        assert_eq!(
+            gate_lines(&raised, &ModelInUse::None, (0.7, medium)),
+            ["gate: bar 0.60, 0.20 when 3 kinds agree"]
+        );
+        assert_eq!(gate_lines(&none, &kept, (0.7, medium)), model_line("0.70"));
+        assert_eq!(
+            gate_lines(&raised, &kept, (0.7, medium)),
+            model_line("0.80")
+        );
+        assert_eq!(
+            gate_lines(&raised, &kept, (0.7, Some(ScaleMode::Small))),
+            model_line("0.90")
+        );
+        assert_eq!(
+            gate_lines(&none, &kept, (0.7, None)),
+            model_line("0.70 (0.85 in small mode)")
+        );
+        assert_eq!(
+            gate_lines(&none, &ModelInUse::Unusable { version: 2 }, (0.7, medium)),
+            [
+                "gate: bar 0.50, 0.10 when 3 kinds agree",
+                "gate: confidence model 2 cannot be used by this build, so the bars above decide \
+                 until upkeep fits a new one"
+            ]
+        );
+    }
+
+    /// With the bar raised two steps, the self-check says by how much while the cold-start rule
+    /// decides, and not once a model does, whose bar the gate line gives.
+    #[test]
+    fn the_self_check_line_says_the_raise_where_it_is_the_bar() {
+        let raised = SelfCheckRecord {
+            raise_steps: 2,
+            raised_at: 300,
+            recent_labelled: 100,
+            recent_used: 52,
+        };
+        assert_eq!(
+            self_check_line(&raised, false),
+            "self-check: precision 0.52 over the latest 100 work orders given; the bar is raised 2 \
+             of 4 steps, by 0.10, last when 300 work orders had been labelled"
+        );
+        assert_eq!(
+            self_check_line(&raised, true),
+            "self-check: precision 0.52 over the latest 100 work orders given; the bar is raised 2 \
+             of 4 steps, last when 300 work orders had been labelled"
+        );
+    }
 
     /// A report of a daemon of process 7, Cortex 1.2.3, up 61.5 s, with nothing waiting or lost.
     fn report() -> StatusReport {
