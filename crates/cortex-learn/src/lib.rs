@@ -12,12 +12,14 @@
 //! task before it in the same session, which only the next task's end can show was put back.
 //! [`assert_fact`] adds a project fact or recognizes one said again, [`review_facts`] keeps
 //! facts' statuses true to the code they are anchored to, and [`confirm_fact`], [`retire_fact`]
-//! and [`edit_fact`] carry the user's word on one.
+//! and [`edit_fact`] carry the user's word on one. [`calibrate`] fits the confidence model the gate
+//! uses once there are enough labelled injections, and [`model_in_use`] reads the one kept.
 
 #![warn(clippy::pedantic)]
 
 mod activity;
 mod archetype;
+mod calibration;
 mod commands;
 mod decay;
 mod episode;
@@ -38,6 +40,11 @@ mod warnings;
 mod watcher_edits;
 
 pub use archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
+pub use calibration::{
+    AUC_TOLERANCE, CALIBRATION_WINDOW, CHANCE_AUC, Calibrated, ConfidenceModel, Fitted,
+    HELD_OUT_EVERY, KEPT_MODELS, L2_PENALTY, MIN_LABELLED, MODEL_INPUTS, REFIT_AFTER_MS, Refusal,
+    auc, calibrate, calibrated, model_in_use, model_inputs,
+};
 pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore, Told};
 pub use decay::{FADED_OUT_BELOW, decayed, has_faded_out};
 pub use episode::episode_of;
