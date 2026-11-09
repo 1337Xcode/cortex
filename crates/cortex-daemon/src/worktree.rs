@@ -26,6 +26,7 @@ use cortex_store::{NodeId, Queries, Reader, StoreError};
 use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::paced::{Asks, Paced, Pacing};
+use crate::troubles::Step;
 
 /// How the looks are spaced: at least two seconds apart, since each runs git; at least four times
 /// as long after one as it took; after failures in a row four seconds after the first, twice as
@@ -210,7 +211,11 @@ pub(crate) fn watch(
             move |why: &str| {
                 failing.fail();
                 tracing::warn!(error = %why, "the work tree's changes are not read");
-                noting.note_error(&format!("the work tree's changes: {why}"), now_ms());
+                noting.note_trouble(
+                    Step::WorkTree,
+                    &format!("the work tree's changes: {why}"),
+                    now_ms(),
+                );
             },
         ),
     )

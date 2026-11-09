@@ -542,10 +542,18 @@ impl Server {
             );
         }
         let given = if is_probe { Vec::new() } else { answer.given };
+        // A session's start tells the user, never the model, which steps the daemon runs on its
+        // own failed since the user was last told; a probe's start is no user's, and a start
+        // answered too late reaches no one, so neither takes them.
+        let to_user = (matches!(asked, Asked::Primer)
+            && !is_probe
+            && !is_too_late_to_send(answer_by_ms, now_ms()))
+        .then(|| self.inbox.take_troubles(now_ms()))
+        .flatten();
         Answered {
             body: ResponseBody::Reply {
                 text: answer.text,
-                to_user: None,
+                to_user,
             },
             hook: Some(hook),
             given,

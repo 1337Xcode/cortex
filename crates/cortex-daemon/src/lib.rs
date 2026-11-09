@@ -45,6 +45,7 @@ mod stopped;
 #[cfg(test)]
 mod test_store;
 mod told;
+mod troubles;
 mod worktree;
 
 pub use instance::is_running;

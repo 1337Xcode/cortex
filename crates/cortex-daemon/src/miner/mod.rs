@@ -37,6 +37,7 @@ use self::retry::Retry;
 use self::source::{Program, read_history};
 use crate::host::now_ms;
 use crate::inbox::Inbox;
+use crate::troubles::Step;
 use crate::worktree::Worktree;
 
 /// How often the miner looks whether HEAD moved: reading HEAD's commit with `gix` takes about 2 ms,
@@ -82,7 +83,7 @@ impl Miner {
             Err(error) => {
                 let why = format!("the co-change miner could not start: {error}");
                 tracing::warn!(error = %why, "no history is mined");
-                inbox.note_error(&why, now_ms());
+                inbox.note_trouble(Step::Mining, &why, now_ms());
                 inbox.set_git(GitReport {
                     state: GitState::Failed,
                     detail: Some(why),
@@ -353,7 +354,8 @@ impl Looker {
     /// errors, and holds the next try back.
     fn fail(&mut self, failure: Failure, now: Instant, wall_ms: i64) {
         tracing::warn!(error = %failure.why, "mining the git history failed");
-        self.inbox.note_error(
+        self.inbox.note_trouble(
+            Step::Mining,
             &format!("mining the git history failed: {}", failure.why),
             wall_ms,
         );

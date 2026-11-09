@@ -7,9 +7,11 @@ mod common;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use common::git::{self, git};
-use common::{Daemon, TestResult, daemon_command, isolate, wait_for};
+use common::hook_call::hook;
+use common::{Daemon, TestResult, daemon_command, isolate, payloads, wait_for};
 use cortex_core::{EdgeType, Identifier, RepoId, RepoPath};
 use cortex_git::mine::Mark;
 use cortex_store::{FileId, MetaKey, NodeId, Reader};
@@ -457,5 +459,60 @@ fn the_graph_follows_the_index() -> TestResult {
         Ok(status_of(root, home.path())?
             .contains("\ngraph: 3 nodes, 4 links, without co-change links; built "))
     })?;
+    Ok(())
+}
+
+/// What `cortex hook` printed for Claude Code's session start `payload` for the user to see, with
+/// `home` as the home folder: the `systemMessage`, none when it printed none.
+fn told_at_start(payload: Vec<u8>, home: &Path) -> TestResult<Option<String>> {
+    let call = hook(
+        &["--agent", "claude", "--event", "SessionStart"],
+        payload,
+        Duration::ZERO,
+        home,
+    )?;
+    let printed = String::from_utf8(call.output.stdout)?;
+    if printed.is_empty() {
+        return Ok(None);
+    }
+    let value: serde_json::Value = serde_json::from_str(printed.trim_end())?;
+    Ok(value
+        .get("systemMessage")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned))
+}
+
+/// A step the daemon runs on its own fails: the repository's objects are gone after its commit, so
+/// git reads HEAD but not the history, and mining it fails. The next session's start tells the
+/// user, in Claude Code's `systemMessage` (which the model does not get), that reading the git
+/// history failed and why; the start right after tells nothing of it.
+#[test]
+fn a_background_step_that_failed_is_told_to_the_user_once() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, home.path(), &["init", "-q"])?;
+    commit(root, home.path(), "one", &["a.py"])?;
+    std::fs::remove_dir_all(root.join(".git/objects"))?;
+    std::fs::create_dir(root.join(".git/objects"))?;
+    let daemon = Daemon::start(root, home.path())?;
+    daemon.first_line()?;
+    wait_for(|| {
+        Ok(status_of(root, home.path())?
+            .contains("\ngit: not ready, mining failed and is tried again later"))
+    })?;
+    let start = payloads::payload_of("claude", "2.1.312", "session-start-startup.json", root)?;
+    let told = told_at_start(start.clone(), home.path())?.ok_or("nothing told at the start")?;
+    assert!(
+        told.starts_with(
+            "Cortex: reading the git history failed once in the last minute: mining the git \
+             history failed: "
+        ),
+        "{told}"
+    );
+    assert!(
+        told_at_start(start, home.path())?.is_none_or(|again| !again.contains("git history")),
+        "told twice"
+    );
     Ok(())
 }

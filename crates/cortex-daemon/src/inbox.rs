@@ -20,6 +20,7 @@ use cortex_store::CheckpointFailures;
 use crate::given::Given;
 
 use crate::recent_errors::RecentErrors;
+use crate::troubles::{Step, Troubles};
 
 /// How many hook events may wait for the writer. When the inbox is full, a read or a search gives
 /// way first: an arriving one is dropped, or the oldest waiting one makes room for an edit, a
@@ -65,6 +66,8 @@ struct State {
     failed_checkpoints: CheckpointFailures,
     /// The latest errors the writer and the connections met.
     errors: RecentErrors,
+    /// The steps the daemon runs on its own that failed since the user was last told.
+    troubles: Troubles,
     /// The watcher's changes, oldest first, each with when it arrived, in UTC milliseconds.
     changes: Vec<(Change, i64)>,
     /// Whether a change was dropped since the last drain.
@@ -236,6 +239,21 @@ impl Inbox {
         let mut state = self.lock();
         state.failed_batches += 1;
         state.errors.note(message, at_ms);
+        state.troubles.note(Step::Storing, message, at_ms);
+    }
+
+    /// Keeps `message` as an error met at `at_ms` in UTC milliseconds, and counts it as a
+    /// failure of `step`, which the next session's start tells the user of.
+    pub(crate) fn note_trouble(&self, step: Step, message: &str, at_ms: i64) {
+        let mut state = self.lock();
+        state.errors.note(message, at_ms);
+        state.troubles.note(step, message, at_ms);
+    }
+
+    /// What the user is told at `now_ms` of the steps that failed since last told, and from
+    /// then on nothing of those failures; none when none failed.
+    pub(crate) fn take_troubles(&self, now_ms: i64) -> Option<String> {
+        self.lock().troubles.take_said(now_ms)
     }
 
     /// Keeps `message` as an error met at `at_ms` in UTC milliseconds.
