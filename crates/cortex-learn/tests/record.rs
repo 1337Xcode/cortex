@@ -815,3 +815,30 @@ fn a_failing_shell_command_keeps_only_the_check_that_failed() -> TestResult {
     );
     Ok(())
 }
+
+/// The session at work at a moment is the one whose latest event came last within the window
+/// before it. `s1` prompts at 10 and `s2` at 20. At 25, within 10: `s2`. At 35, within 10: none,
+/// `s2`'s event being 15 before. At 25, within 100: `s2`, the later. At 15, within 10: `s1`, `s2`
+/// not yet seen. An ended session is not at work after its end: `s2` ends at 22, and at 25, within
+/// 100, `s1` is the one at work.
+#[test]
+fn the_session_at_work_is_the_one_seen_last() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
+    store.record(
+        &mut recorder,
+        &[prompt("s1", 10, "fix add")?, prompt("s2", 20, "fix mul")?],
+    )?;
+    let at_work = |recorder: &Recorder, at_ms, within_ms| {
+        recorder
+            .session_at_work(at_ms, within_ms)
+            .map(|session| session.as_str().to_owned())
+    };
+    assert_eq!(at_work(&recorder, 25, 10).as_deref(), Some("s2"));
+    assert_eq!(at_work(&recorder, 35, 10), None);
+    assert_eq!(at_work(&recorder, 25, 100).as_deref(), Some("s2"));
+    assert_eq!(at_work(&recorder, 15, 10).as_deref(), Some("s1"));
+    store.record(&mut recorder, &[end("s2", 22, "other")?])?;
+    assert_eq!(at_work(&recorder, 25, 100).as_deref(), Some("s1"));
+    Ok(())
+}

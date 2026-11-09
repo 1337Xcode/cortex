@@ -1,18 +1,22 @@
-//! The fact requests a `cortex` command sends a daemon and what it answers: a fact the user notes,
-//! the list of facts, and the user's word on one of them (protocol 6.0 added them).
+//! The fact requests a `cortex` command sends a daemon and what it answers: a fact the user or an
+//! agent notes, the list of facts, and the user's word on one of them (protocol 6.0 added them;
+//! 7.0 says who notes).
 
 use serde::{Deserialize, Serialize};
 
 use crate::named::named_kind;
-use crate::{FactKind, FactStatus};
+use crate::{FactKind, FactSource, FactStatus};
 
-/// A fact the user notes.
+/// A fact someone notes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Note {
     /// The rule, in words.
     pub text: String,
     /// What kind of rule it is.
     pub kind: FactKind,
+    /// Who notes it: the user (`cortex note`), an active fact; or an agent (the `cortex_note`
+    /// tool), a candidate.
+    pub source: FactSource,
     /// What it is about: each a repository path with `/` separators, optionally followed by `:`
     /// and the name of a symbol defined in that file.
     pub at: Vec<String>,

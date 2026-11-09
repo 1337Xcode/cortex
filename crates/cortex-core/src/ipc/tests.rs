@@ -464,6 +464,7 @@ fn fact_requests_and_answers_read_back() -> TestResult {
         body: RequestBody::Note(Note {
             text: "Money is kept in cents.".to_owned(),
             kind: crate::FactKind::Invariant,
+            source: crate::FactSource::Agent,
             at: vec!["src/money.py:Money".to_owned()],
         }),
     };
@@ -474,7 +475,7 @@ fn fact_requests_and_answers_read_back() -> TestResult {
     };
     assert_eq!(
         written(&note)?,
-        r#"{"request_id":4,"body":{"type":"note","text":"Money is kept in cents.","kind":"invariant","at":["src/money.py:Money"]}}"#
+        r#"{"request_id":4,"body":{"type":"note","text":"Money is kept in cents.","kind":"invariant","source":"agent","at":["src/money.py:Money"]}}"#
     );
     let edit = Request {
         request_id: 5,

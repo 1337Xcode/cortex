@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 
 use cortex_core::ipc::{FactLine, FactsAnswer, FactsAsk, Note, NoteOutcome};
-use cortex_core::{FactSource, FactStatus, RepoPath};
+use cortex_core::{FactSource, FactStatus, Identifier, RepoPath};
 use cortex_learn::{
     Asserted, Assertion, FactError, assert_fact, confirm_fact, edit_fact, retire_fact,
 };
@@ -20,6 +20,12 @@ pub(crate) const FACTS_START_WITHIN: Duration = Duration::from_secs(10);
 
 /// How long the writer has to answer a fact request it took: one transaction of a few rows.
 pub(crate) const FACTS_WRITE_WITHIN: Duration = Duration::from_secs(5);
+
+/// How long before an agent's note the session that noted it was last seen at work, at most, in
+/// milliseconds: the MCP call carries no session, so the note is taken to be the task of the
+/// session whose latest event came last within these five minutes, longer than an agent's turn
+/// spends between two tool calls.
+pub(crate) const NOTE_AT_WORK_WITHIN_MS: i64 = 5 * 60 * 1_000;
 
 /// A fact request, as the writer takes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,10 +66,16 @@ impl FactsJob {
     /// refusal rolls the transaction back and is the answer; a job that waited too long is dropped
     /// unanswered and nothing is written.
     ///
+    /// An agent's note is taken to be the open task of `at_work`, the session at work.
+    ///
     /// # Errors
     ///
     /// The store's errors, the commit's among them, which are also the job's answer.
-    pub(crate) fn carry_out(self, writer: &mut Writer, now_ms: i64) -> Result<(), StoreError> {
+    pub(crate) fn carry_out(
+        self,
+        writer: &mut Writer,
+        (now_ms, at_work): (i64, Option<&Identifier>),
+    ) -> Result<(), StoreError> {
         if Instant::now() > self.start_by {
             return Ok(());
         }
@@ -71,7 +83,7 @@ impl FactsJob {
             .transaction()
             .map_err(Refused::from)
             .and_then(|mut transaction| {
-                let answer = answer(&mut transaction, &self.request, now_ms)?;
+                let answer = answer(&mut transaction, &self.request, (now_ms, at_work))?;
                 transaction.commit()?;
                 Ok(answer)
             });
@@ -108,14 +120,14 @@ impl From<StoreError> for Refused {
     }
 }
 
-/// Answers `request` at `now_ms` in `transaction`.
+/// Answers `request` at `now_ms` in `transaction`, an agent's note in the open task of `at_work`.
 fn answer(
     transaction: &mut WriteTx<'_>,
     request: &FactsRequest,
-    now_ms: i64,
+    (now_ms, at_work): (i64, Option<&Identifier>),
 ) -> Result<FactsAnswer, Refused> {
     let ask = match request {
-        FactsRequest::Note(note) => return noted(transaction, note, now_ms),
+        FactsRequest::Note(note) => return noted(transaction, note, (now_ms, at_work)),
         FactsRequest::Ask(ask) => ask,
     };
     let done = match ask {
@@ -150,18 +162,35 @@ fn numbered(queries: Queries<'_>, id: i64) -> Result<FactId, Refused> {
         .ok_or_else(|| Refused::Named(format!("there is no fact {id}")))
 }
 
-/// States `note` as the user's at `now_ms` in `transaction`.
-fn noted(transaction: &mut WriteTx<'_>, note: &Note, now_ms: i64) -> Result<FactsAnswer, Refused> {
+/// States `note` at `now_ms` in `transaction`, as the user's or, in the open task of `at_work`,
+/// an agent's.
+fn noted(
+    transaction: &mut WriteTx<'_>,
+    note: &Note,
+    (now_ms, at_work): (i64, Option<&Identifier>),
+) -> Result<FactsAnswer, Refused> {
     let nodes = note
         .at
         .iter()
         .map(|anchor| anchor_of(transaction.queries(), anchor))
         .collect::<Result<Vec<_>, _>>()?;
+    // A note is the user's or an agent's; an import comes through another door.
+    let source = match note.source {
+        FactSource::Agent => FactSource::Agent,
+        FactSource::User | FactSource::Import => FactSource::User,
+    };
+    let task = match (source, at_work) {
+        (FactSource::Agent, Some(session)) => transaction
+            .queries()
+            .open_task(session)?
+            .map(|task| task.record.task_id),
+        _ => None,
+    };
     let assertion = Assertion {
         text: &note.text,
         kind: note.kind,
-        source: FactSource::User,
-        task: None,
+        source,
+        task,
         nodes: &nodes,
     };
     let (id, outcome) = match assert_fact(transaction, &assertion, now_ms) {
@@ -309,10 +338,110 @@ fn listed(queries: Queries<'_>, all: bool) -> Result<Vec<FactLine>, StoreError> 
 
 #[cfg(test)]
 mod tests {
-    use cortex_core::FactKind;
+    use cortex_core::{Agent, ContentHash, FactKind, FileFlags, Ulid};
+    use cortex_store::{FileIndex, FileRecord, SessionRecord, TaskRecord};
 
     use super::*;
     use crate::test_store::{TestResult, add_file, writer};
+
+    /// Stores `src/money.py`, read, holding "cents", and session `s1` with its open task, made at 1;
+    /// returns the task.
+    fn money_and_a_task(writer: &mut Writer) -> TestResult<Ulid> {
+        let task = Ulid::from_seed(1, b"task");
+        let session = Identifier::new("s1")?;
+        let mut transaction = writer.transaction()?;
+        transaction.replace_file(&FileIndex {
+            file: FileRecord {
+                path: RepoPath::new("src/money.py")?,
+                language: None,
+                size_bytes: 5,
+                line_count: Some(1),
+                content_hash: Some(ContentHash::of(b"cents")),
+                mtime_ns: 1,
+                flags: FileFlags::empty(),
+                indexed_at_ms: 1,
+            },
+            symbols: Vec::new(),
+            refs: Vec::new(),
+            passes_on: Vec::new(),
+        })?;
+        transaction.record_session(&SessionRecord {
+            session_id: session.clone(),
+            agent: Agent::Claude,
+            agent_version: None,
+            model: None,
+            parent_session_id: None,
+            cwd: None,
+            transcript_path: None,
+            started_at_ms: 1,
+        })?;
+        transaction.start_task(&TaskRecord {
+            task_id: task,
+            session_id: session,
+            started_at_ms: 1,
+            prompt_hash: None,
+            prompt_excerpt: None,
+            holdout: Some(false),
+        })?;
+        transaction.commit()?;
+        Ok(task)
+    }
+
+    /// An agent's note is a candidate, asserted in the open task of the session at work, `s1`;
+    /// with no session at work, in no task. A user's note is active, in no task, whoever is at work.
+    #[test]
+    fn an_agent_s_note_is_a_candidate_in_the_task_at_work() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut writer = writer(root.path())?;
+        let task = money_and_a_task(&mut writer)?;
+        let at_work = Identifier::new("s1")?;
+        let note = |text: &str, source| {
+            FactsRequest::Note(Note {
+                text: text.to_owned(),
+                kind: FactKind::Convention,
+                source,
+                at: vec!["src/money.py".to_owned()],
+            })
+        };
+        let cases = [
+            (
+                note("Money is kept in cents.", FactSource::Agent),
+                Some(&at_work),
+            ),
+            (note("Money never floats.", FactSource::Agent), None),
+            (note("Money is exact.", FactSource::User), Some(&at_work)),
+        ];
+        for (request, session) in cases {
+            let (job, answer) = FactsJob::new(request);
+            job.carry_out(&mut writer, (5, session))?;
+            assert!(matches!(answer.try_recv()?, Ok(FactsAnswer::Noted { .. })));
+        }
+        let facts: Vec<(String, FactStatus, Option<Ulid>)> = [1, 2, 3]
+            .into_iter()
+            .map(|number| {
+                let id = writer.queries().fact_id(number)?.ok_or("a fact")?;
+                let row = writer.queries().fact(id)?.ok_or("a fact")?;
+                Ok((row.record.text, row.record.status, row.record.task))
+            })
+            .collect::<TestResult<_>>()?;
+        assert_eq!(
+            facts,
+            [
+                (
+                    "Money is kept in cents.".to_owned(),
+                    FactStatus::Candidate,
+                    Some(task)
+                ),
+                (
+                    "Money never floats.".to_owned(),
+                    FactStatus::Candidate,
+                    None
+                ),
+                ("Money is exact.".to_owned(), FactStatus::Active, None),
+            ]
+        );
+        Ok(())
+    }
 
     /// A note the writer takes after its asker stopped waiting is dropped unanswered, which tells
     /// the asker it was not taken, and nothing is written; one taken in time is answered, and a
@@ -325,25 +454,26 @@ mod tests {
         let note = FactsRequest::Note(Note {
             text: "Money is kept in cents.".to_owned(),
             kind: FactKind::Convention,
+            source: FactSource::User,
             at: vec!["src/money.py".to_owned()],
         });
         let (mut late, answer) = FactsJob::new(note.clone());
         late.start_by = Instant::now()
             .checked_sub(Duration::from_millis(1))
             .ok_or("no earlier instant")?;
-        late.carry_out(&mut writer, 5)?;
+        late.carry_out(&mut writer, (5, None))?;
         assert!(matches!(
             answer.try_recv(),
             Err(mpsc::TryRecvError::Disconnected)
         ));
         let (unread, answer) = FactsJob::new(note);
-        unread.carry_out(&mut writer, 6)?;
+        unread.carry_out(&mut writer, (6, None))?;
         assert_eq!(
             answer.try_recv()?,
             Err("src/money.py cannot anchor a fact: Cortex does not read it".to_owned())
         );
         let (in_time, answer) = FactsJob::new(FactsRequest::Ask(FactsAsk::List { all: true }));
-        in_time.carry_out(&mut writer, 7)?;
+        in_time.carry_out(&mut writer, (7, None))?;
         assert_eq!(
             answer.try_recv()?,
             Ok(FactsAnswer::Listed { facts: Vec::new() })

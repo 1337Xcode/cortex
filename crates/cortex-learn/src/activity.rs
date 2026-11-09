@@ -113,8 +113,19 @@ impl Activity {
     /// it, the one with the latest event from [`ATTRIBUTION_WINDOW_MS`] before it to [`HOLD_MS`]
     /// after it; of two as late, the one whose id sorts first. `None` when none was at work then.
     pub(crate) fn owner_of(&self, seen_ms: i64) -> Option<Identifier> {
-        let around =
-            seen_ms.saturating_sub(ATTRIBUTION_WINDOW_MS)..=seen_ms.saturating_add(HOLD_MS);
+        self.at_work(seen_ms, (ATTRIBUTION_WINDOW_MS, HOLD_MS))
+    }
+
+    /// Of the sessions not ended before `at_ms`, the one with the latest event from `before_ms`
+    /// before it to `after_ms` after it; of two as late, the one whose id sorts first. `None` when
+    /// none was at work then.
+    pub(crate) fn at_work(
+        &self,
+        at_ms: i64,
+        (before_ms, after_ms): (i64, i64),
+    ) -> Option<Identifier> {
+        let seen_ms = at_ms;
+        let around = seen_ms.saturating_sub(before_ms)..=seen_ms.saturating_add(after_ms);
         self.sessions
             .iter()
             .filter(|(_, session)| session.ended_ms.is_none_or(|ended| ended >= seen_ms))

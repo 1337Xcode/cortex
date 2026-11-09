@@ -399,6 +399,15 @@ impl Recorder {
         self.open_tasks.insert(session_id.clone(), open);
     }
 
+    /// The session at work at `at_ms`: of those not ended before it, the one whose latest event
+    /// came within `within_ms` before it; of two as late, the one whose id sorts first. `None`
+    /// when none was at work then. A tool an agent calls in the middle of its turn, such as
+    /// `cortex_note`, is taken to be that session's.
+    #[must_use]
+    pub fn session_at_work(&self, at_ms: i64, within_ms: i64) -> Option<Identifier> {
+        self.activity.at_work(at_ms, (within_ms, 0))
+    }
+
     /// Ends, as left, each task not ended whose session has shown no sign of work since
     /// `quiet_since_ms`, as of its last sign, and returns what each did, to learn from. An agent
     /// killed, crashed or interrupted with no stop and no session end leaves its task open; only

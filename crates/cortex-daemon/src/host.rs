@@ -25,7 +25,7 @@ use cortex_index::{
 use cortex_learn::{Recorder, TaskState, review_facts};
 use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, SymbolChange, WriteTx, Writer};
 
-use crate::facts::FactsJob;
+use crate::facts::{FactsJob, NOTE_AT_WORK_WITHIN_MS};
 use crate::given::{Given, Notices};
 use crate::graph::Snapshot;
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
@@ -411,7 +411,9 @@ impl<'a> Host<'a> {
     /// Carries out a fact request in a transaction of its own, answered once it is committed. A
     /// store error is the answer, and counted.
     fn answer_facts(&mut self, job: FactsJob) {
-        if let Err(error) = job.carry_out(&mut self.writer, now_ms()) {
+        let now = now_ms();
+        let at_work = self.recorder.session_at_work(now, NOTE_AT_WORK_WITHIN_MS);
+        if let Err(error) = job.carry_out(&mut self.writer, (now, at_work.as_ref())) {
             count_failed(self.inbox, "a fact request", &error);
         }
     }

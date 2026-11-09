@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use cortex_core::ipc::{FactsAnswer, Note, NoteOutcome, RequestBody};
-use cortex_core::{FactKind, RepoPath};
+use cortex_core::{FactKind, FactSource, RepoPath};
 
 use crate::commands::facts::answer_of;
 use crate::{output, repository};
@@ -47,6 +47,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let note = Note {
         text: args.text.clone(),
         kind: args.kind,
+        source: FactSource::User,
         at,
     };
     match answer_of(&root, &RequestBody::Note(note))? {
