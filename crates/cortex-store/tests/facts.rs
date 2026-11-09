@@ -224,7 +224,8 @@ fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
 /// restamped with `Money`'s hash now: 2 and 4. Restamping a node fact 1 is not anchored to fails.
 /// Named as a note names them: `src/money.rs` and `src/money.rs:Money`; `tax.rs`, gone, is left
 /// out. Where they stand: both in `src/money.rs`, as the index holds it, the file's hash its
-/// content's first 16 bytes and `Money`'s its body's. Fact 1's number finds it; the number after
+/// content's first 16 bytes and `Money`'s its body's. The active facts about `money.rs`, on the
+/// file or on `Money`: fact 1; the suspect ones: fact 3. Fact 1's number finds it; the number after
 /// the last fact's finds none.
 #[test]
 fn anchors_are_compared_with_the_code_now() -> TestResult {
@@ -333,6 +334,14 @@ fn anchors_are_compared_with_the_code_now() -> TestResult {
     ];
     expected_states.sort_by_key(|state| state.node);
     assert_eq!(states, expected_states);
+    let in_money = writer
+        .queries()
+        .facts_in_files(&[money_file], FactStatus::Active)?;
+    assert_eq!(in_money, [first]);
+    let suspect_in_money = writer
+        .queries()
+        .facts_in_files(&[money_file], FactStatus::Suspect)?;
+    assert_eq!(suspect_in_money, [third]);
     assert_eq!(writer.queries().fact_id(first.get())?, Some(first));
     assert_eq!(writer.queries().fact_id(fourth.get() + 1)?, None);
     Ok(())

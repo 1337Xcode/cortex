@@ -338,6 +338,21 @@ impl Queries<'_> {
         Ok(ids.into_iter().map(FactId).collect())
     }
 
+    /// The ids of the current facts in `status` about any of the files whose nodes are `files`:
+    /// anchored to the file, or to a symbol it defines. Each once, in id order.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn facts_in_files(
+        self,
+        files: &[NodeId],
+        status: FactStatus,
+    ) -> Result<Vec<FactId>, StoreError> {
+        let listed = json_array(files.iter().map(|node| node.get().to_string()));
+        self.fact_ids(schema::FACTS_IN_FILES, (listed, status.name()))
+    }
+
     /// The ids of the current facts anchored to any of `nodes`, each once, in id order.
     ///
     /// # Errors

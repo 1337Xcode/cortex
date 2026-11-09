@@ -800,6 +800,16 @@ pub(crate) const FACTS_ANCHORED_TO: &str = "SELECT DISTINCT a.fact_id FROM fact_
      JOIN facts AS f ON f.fact_id = a.fact_id \
      WHERE a.node_id IN (SELECT value FROM json_each(?1)) AND f.superseded_by IS NULL \
      ORDER BY a.fact_id";
+/// The current facts of status ?2 with an anchor on a file of the JSON list ?1 of file nodes, or
+/// on a symbol defined in one, each once, in id order.
+pub(crate) const FACTS_IN_FILES: &str = "SELECT DISTINCT a.fact_id FROM fact_anchors AS a \
+     JOIN facts AS f ON f.fact_id = a.fact_id \
+     JOIN nodes AS n ON n.node_id = a.node_id \
+     LEFT JOIN symbols AS s ON n.kind = 'symbol' AND s.symbol_id = n.ref_id \
+     JOIN nodes AS file ON file.kind = 'file' \
+     AND file.ref_id = (CASE n.kind WHEN 'file' THEN n.ref_id ELSE s.file_id END) \
+     WHERE file.node_id IN (SELECT value FROM json_each(?1)) AND f.status = ?2 \
+     AND f.superseded_by IS NULL ORDER BY a.fact_id";
 /// Fact ?1's anchors, in node order.
 pub(crate) const FACT_ANCHORS_OF: &str =
     "SELECT node_id, anchor_hash FROM fact_anchors WHERE fact_id = ?1 ORDER BY node_id";
