@@ -5,8 +5,10 @@
 
 mod daemon;
 mod doctor;
+mod facts;
 mod init;
 mod mcp;
+mod note;
 mod receipts;
 mod status;
 mod uninstall;
@@ -37,6 +39,10 @@ pub(crate) enum Command {
     Where(where_::Args),
     /// Serve Cortex's MCP tools on stdio (started by the agent).
     Mcp(mcp::Args),
+    /// Note a project rule about files or symbols, given to agents working on them.
+    Note(note::Args),
+    /// List the project rules, or confirm, retire or correct one.
+    Facts(facts::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -55,5 +61,7 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Receipts(args) => receipts::run(&args),
         Command::Where(args) => where_::run(&args),
         Command::Mcp(args) => mcp::run(&args),
+        Command::Note(args) => note::run(&args),
+        Command::Facts(args) => facts::run(&args),
     }
 }
