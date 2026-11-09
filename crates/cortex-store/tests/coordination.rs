@@ -306,9 +306,10 @@ fn notice(to: &str, text: &str, at_ms: i64) -> TestResult<NoticeRecord> {
 }
 
 /// A notice is not queued when one sent since says as much: after Codex's edit of `calc/ops.py`
-/// changing `add` and `parse` at 1,000, neither its plain edit nor its change of `add` alone is
-/// queued; its change of `run` at 1,300, not told before, is. Its plain edit at 1,400 is queued
-/// when nothing sent since 1,301 says as much, and the change of `run` was sent at 1,300.
+/// changing `add` and `parse` at 1,000, neither its plain edit nor its change of `add` or of
+/// `parse` alone is queued; its change of `run` at 1,300, not told before, is. Its plain edit at
+/// 1,400 is queued when nothing sent since 1,301 says as much, and the change of `run` was sent at
+/// 1,300.
 #[test]
 fn a_notice_saying_no_more_than_one_sent_is_not_queued() -> TestResult {
     let scratch = Scratch::new()?;
@@ -328,6 +329,10 @@ fn a_notice_saying_no_more_than_one_sent_is_not_queued() -> TestResult {
     assert_eq!(transaction.queue_notice(&about(&[], 1_100)?, 500)?, None);
     assert_eq!(
         transaction.queue_notice(&about(&["add"], 1_200)?, 500)?,
+        None
+    );
+    assert_eq!(
+        transaction.queue_notice(&about(&["parse"], 1_250)?, 500)?,
         None
     );
     assert!(

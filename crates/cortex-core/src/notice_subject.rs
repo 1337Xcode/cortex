@@ -7,6 +7,10 @@ use crate::PositionMode;
 /// What separates the parts of a subject: no plain text holds a line break, so no part does.
 const PART_BREAK: &str = "\n";
 
+/// How many leading parts name the hold: the agent, the file, the mode, and whether at once with
+/// the session told. The changed signatures' names follow.
+const HOLD_PARTS: usize = 4;
+
 /// What a notice is about: the agent as the notice names it, the file, what the agent did there,
 /// whether it did so at once with the session told, and the signatures it changed there, sorted.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -49,16 +53,19 @@ impl NoticeSubject {
     }
 
     /// Whether a session told of this subject has nothing to learn from a notice about `later`:
-    /// the same subject, or the same hold with fewer of the changed signatures, those listed first
-    /// here. A notice that the agent edited a file says nothing new after one naming the
-    /// signatures it changed there; one naming a signature not named before does.
+    /// the same hold, naming no changed signature this one does not. A notice that the agent
+    /// edited a file says nothing new after one naming the signatures it changed there; one naming
+    /// a signature not named before does.
     #[must_use]
     pub fn covers(&self, later: &Self) -> bool {
-        self.0 == later.0
-            || self
-                .0
-                .strip_prefix(&later.0)
-                .is_some_and(|rest| rest.starts_with(PART_BREAK))
+        let mut mine = self.0.split(PART_BREAK);
+        let mut theirs = later.0.split(PART_BREAK);
+        let is_same_hold = mine
+            .by_ref()
+            .take(HOLD_PARTS)
+            .eq(theirs.by_ref().take(HOLD_PARTS));
+        let named: Vec<&str> = mine.collect();
+        is_same_hold && theirs.all(|name| named.contains(&name))
     }
 }
 
@@ -93,8 +100,8 @@ mod tests {
         assert_eq!(edit(&["evil\nname"]), None);
     }
 
-    /// A subject covers itself and the same hold naming fewer signatures, those it lists first; not
-    /// a hold naming one it does not, another mode, or a path that only starts like its own.
+    /// A subject covers itself and the same hold naming only signatures it names, in any order;
+    /// not a hold naming one it does not, another mode, or a path that only starts like its own.
     #[test]
     fn a_subject_covers_what_says_no_more() -> Result<(), &'static str> {
         let both = edit(&["add", "parse"]).ok_or("both")?;
@@ -104,7 +111,9 @@ mod tests {
         assert!(both.covers(&both));
         assert!(both.covers(&plain));
         assert!(both.covers(&add));
-        assert!(!both.covers(&parse));
+        assert!(both.covers(&parse));
+        assert!(!add.covers(&both));
+        assert!(!add.covers(&parse));
         assert!(!plain.covers(&add));
         let read = NoticeSubject::new(("Codex", "calc/ops.py"), (PositionMode::Read, false), &[])
             .ok_or("read")?;
