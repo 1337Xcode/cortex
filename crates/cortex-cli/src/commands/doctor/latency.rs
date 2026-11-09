@@ -77,7 +77,8 @@ const PROBED: [Probe; 5] = [
 pub(super) fn probes(context: &Context) -> Vec<Finding> {
     let (before, root) = match measurable(context) {
         Ok(measurable) => measurable,
-        Err(why) => return vec![Finding::Note(format!("not measured: {why}"))],
+        // The daemon check has said why no daemon answers this build: nothing more to say.
+        Err(_) => return Vec::new(),
     };
     let mut findings = Vec::new();
     let mut sent = 0;
@@ -148,7 +149,7 @@ fn judged(probe: &Probe, times: &mut [Duration]) -> Finding {
         Finding::Fail {
             what: line,
             fix: "see `cortex status` for the daemon's own time per hook, and its log in \
-                  ~/.cortex/logs; a slow disk or a busy machine slows every hook"
+                  ~/.cortex/logs"
                 .to_owned(),
         }
     }

@@ -55,8 +55,6 @@ pub(crate) enum Finding {
         /// What to do.
         fix: String,
     },
-    /// Something worth knowing that is not wrong.
-    Note(String),
 }
 
 /// A check: its name, and the function that makes its findings.
@@ -71,11 +69,6 @@ const CHECKS: &[Check] = &[
     ("daemon", daemon::answers),
     ("latency", latency::probes),
 ];
-
-/// What no check can see, said after them all.
-const UNSEEN: &str = "doctor cannot see whether Claude Code runs with --safe-mode, with --settings \
-     that turn hooks off, under settings an organization delivers by its server, MDM or registry, \
-     or in a folder it does not trust; each of these keeps every hook from running";
 
 /// Runs every check on the repository, prints each finding, and fails when any check did.
 ///
@@ -92,8 +85,8 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Runs every check on the repository whose canonical root is `root`, prints each finding and
-/// then what no check can see, and returns how many checks failed.
+/// Runs every check on the repository whose canonical root is `root`, prints each finding, and
+/// returns how many checks failed.
 ///
 /// # Errors
 ///
@@ -114,10 +107,8 @@ pub(crate) fn checked(root: PathBuf) -> anyhow::Result<usize> {
                     output::line(&format!("FAIL  {name}: {what}"))?;
                     output::line(&format!("      fix: {fix}"))?;
                 }
-                Finding::Note(what) => output::line(&format!("note  {name}: {what}"))?,
             }
         }
     }
-    output::line(&format!("note  {UNSEEN}"))?;
     Ok(failed)
 }

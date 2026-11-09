@@ -335,9 +335,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     };
     if failed > 0 {
         output::line(&format!(
-            "note: init is done, and {failed} of doctor's checks failed; each says what to do, \
-             and a latency check over its budget on a busy machine may pass when `cortex doctor` \
-             runs again"
+            "init is done; {failed} of doctor's checks failed, each with its fix above"
         ))?;
     }
     Ok(())
@@ -403,7 +401,7 @@ fn found_root(args: &Args) -> anyhow::Result<Root> {
     output::line(&format!("repository: {}", root.folder.display()))?;
     if let Some(why) = &root.without_git {
         output::line(&format!(
-            "note: {why}; Cortex sets up this folder alone, without git history"
+            "note: {why}; Cortex works here without git history"
         ))?;
     }
     Ok(root)
@@ -417,9 +415,11 @@ fn found_root(args: &Args) -> anyhow::Result<Root> {
 /// Claude Code is older than the oldest of `versions`, or stdout cannot be written.
 fn check_claude_code(root: &Root, versions: Versions) -> anyhow::Result<()> {
     match claude_code_version(&root.folder, versions) {
-        Finding::Fail { what, fix } => bail!("{what}; {fix}, then run `cortex init` again"),
-        Finding::Pass(what) => output::line(&what)?,
-        Finding::Note(what) => output::line(&format!("note: {what}"))?,
+        Some(Finding::Fail { what, fix }) => {
+            bail!("{what}; {fix}, then run `cortex init` again")
+        }
+        Some(Finding::Pass(what)) => output::line(&what)?,
+        None => {}
     }
     Ok(())
 }

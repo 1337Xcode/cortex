@@ -1,5 +1,5 @@
-//! The check on Claude Code's version: at least the oldest Cortex's hooks work with, and best one
-//! whose payloads Cortex's tests hold. Claude Code is asked with `claude --version`: the program
+//! The check on Claude Code's version: at least the oldest Cortex's hooks work with; any newer
+//! one works, as Cortex ignores what a newer version adds to its hooks. Claude Code is asked with `claude --version`: the program
 //! the user's `PATH` names, as a shell finds it (on Windows `claude.exe`, the native installer's,
 //! or `claude.cmd`, npm's), but never one inside the repository, run in its own folder for at most
 //! 5 s.
@@ -34,25 +34,20 @@ const PROGRAMS: &[&str] = if cfg!(windows) {
 pub(super) fn check(context: &Context) -> Vec<Finding> {
     cortex_hook::adapter("claude")
         .and_then(|adapter| adapter.versions())
-        .map(|versions| version(&context.root, versions))
+        .and_then(|versions| version(&context.root, versions))
         .into_iter()
         .collect()
 }
 
 /// What the version of Claude Code, the program the `PATH` names outside the repository at `root`,
-/// says against the `versions` Cortex knows: one older than the oldest fails, and one newer than
-/// the newest tested, none found and none said are notes. `cortex init` refuses on the failure.
-pub(crate) fn version(root: &Path, versions: Versions) -> Finding {
-    let Some(program) = cortex_core::find_program(PROGRAMS, root) else {
-        return Finding::Note(
-            "Claude Code is not on the PATH, so its version cannot be asked".to_owned(),
-        );
-    };
+/// says against the `versions` Cortex knows: one older than the oldest fails, any other passes.
+/// Nothing is said when no Claude Code is found or it gives no version Cortex can read (it may run
+/// from an editor, outside the `PATH`): nothing is known to be wrong. `cortex init` refuses on
+/// the failure.
+pub(crate) fn version(root: &Path, versions: Versions) -> Option<Finding> {
+    let program = cortex_core::find_program(PROGRAMS, root)?;
     let shown = one_line(&program.display().to_string(), MAX_PATH_CHARS);
-    match asked(&program) {
-        Ok(answer) => classified(&answer, &shown, versions),
-        Err(why) => Finding::Note(format!("{shown} did not say its version: {why}")),
-    }
+    classified(&asked(&program).ok()?, &shown, versions)
 }
 
 /// What `program --version` printed, run in the program's own folder so that nothing in the
@@ -75,21 +70,16 @@ fn asked(program: &Path) -> Result<String, String> {
 /// What the `answer` to `--version` of Claude Code's `program` says of it against the `versions`
 /// Cortex knows: `2.1.312 (Claude Code)` reads as 2.1.312. Claude Code's versions are semantic
 /// versions, ordered as Cortex's own are, and shown as Cortex reads them, so that nothing else
-/// the program printed reaches the terminal.
-fn classified(answer: &str, program: &str, versions: Versions) -> Finding {
+/// the program printed reaches the terminal. None when the answer holds no version.
+fn classified(answer: &str, program: &str, versions: Versions) -> Option<Finding> {
     let first = answer.split_whitespace().next().unwrap_or_default();
-    let read = (
+    let (Ok(found), Ok(oldest)) = (
         CortexVersion::parse(first),
         CortexVersion::parse(versions.oldest),
-        CortexVersion::parse(versions.newest_tested),
-    );
-    let (Ok(found), Ok(oldest), Ok(newest)) = read else {
-        return Finding::Note(format!(
-            "{program} gave its version as \"{}\", which Cortex cannot read",
-            one_line(answer.trim(), 80)
-        ));
+    ) else {
+        return None;
     };
-    if found < oldest {
+    Some(if found < oldest {
         Finding::Fail {
             what: format!(
                 "Claude Code {found} at {program} is older than {oldest}, the oldest Cortex's \
@@ -97,16 +87,9 @@ fn classified(answer: &str, program: &str, versions: Versions) -> Finding {
             ),
             fix: format!("update Claude Code to {oldest} or later"),
         }
-    } else if found > newest {
-        Finding::Pass(format!(
-            "Claude Code {found} at {program}, a version Cortex works with: newer than {newest}, \
-             the newest tested, and Cortex ignores what a newer version adds to its hooks"
-        ))
     } else {
-        Finding::Pass(format!(
-            "Claude Code {found} at {program}, a version Cortex works with"
-        ))
-    }
+        Finding::Pass(format!("Claude Code {found} at {program}"))
+    })
 }
 
 #[cfg(test)]
@@ -122,49 +105,33 @@ mod tests {
     /// Where the tests' Claude Code is.
     const AT: &str = "/usr/local/bin/claude";
 
-    /// One older than the oldest fails with an update as the fix; one between the two, either one
-    /// included, passes; a newer one is a note; build metadata, terminal control sequences in it
-    /// included, is read past and never shown; one that is no version is a note quoting it, cut
-    /// and on one line.
+    /// One older than the oldest fails with an update as the fix; the oldest and every later one,
+    /// newer than the newest tested included, passes; build metadata, terminal control sequences
+    /// in it included, is read past and never shown; an answer that is no version says nothing.
     #[test]
     fn versions_are_judged_against_the_known_ones() {
         assert_eq!(
             classified("2.1.294 (Claude Code)\n", AT, VERSIONS),
-            Finding::Fail {
+            Some(Finding::Fail {
                 what: "Claude Code 2.1.294 at /usr/local/bin/claude is older than 2.1.295, the \
                        oldest Cortex's hooks work with"
                     .to_owned(),
                 fix: "update Claude Code to 2.1.295 or later".to_owned(),
-            }
+            })
         );
         for (answer, version) in [
             ("2.1.295 (Claude Code)", "2.1.295"),
             ("2.1.312 (Claude Code)\r\n", "2.1.312"),
             ("2.1.300+\u{1b}]0;title\u{7} (Claude Code)", "2.1.300"),
+            ("2.2.0 (Claude Code)", "2.2.0"),
         ] {
             assert_eq!(
                 classified(answer, AT, VERSIONS),
-                Finding::Pass(format!(
-                    "Claude Code {version} at /usr/local/bin/claude, a version Cortex works with"
-                ))
+                Some(Finding::Pass(format!(
+                    "Claude Code {version} at /usr/local/bin/claude"
+                )))
             );
         }
-        assert_eq!(
-            classified("2.2.0 (Claude Code)", AT, VERSIONS),
-            Finding::Pass(
-                "Claude Code 2.2.0 at /usr/local/bin/claude, a version Cortex works with: newer \
-                 than 2.1.312, the newest tested, and Cortex ignores what a newer version adds to \
-                 its hooks"
-                    .to_owned()
-            )
-        );
-        assert_eq!(
-            classified("unknown\nversion", AT, VERSIONS),
-            Finding::Note(
-                "/usr/local/bin/claude gave its version as \"unknown version\", which Cortex \
-                 cannot read"
-                    .to_owned()
-            )
-        );
+        assert_eq!(classified("unknown\nversion", AT, VERSIONS), None);
     }
 }

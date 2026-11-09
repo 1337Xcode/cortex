@@ -59,9 +59,8 @@ fn repository() -> TestResult<(tempfile::TempDir, tempfile::TempDir)> {
 /// repository's local settings, nothing turns hooks off, they run this binary, the daemon of this
 /// build answers, and twenty probes of each of five events reach it, each event's 95th percentile
 /// printed against its budget (over it on a loaded machine is a failure, and the command's result
-/// follows). With no Claude Code on the PATH, init is asked for it by name, and its version is a
-/// note. What doctor cannot see is
-/// said last.
+/// follows). With no Claude Code on the PATH, init is asked for it by name, and doctor says nothing
+/// of its version: nothing is known to be wrong.
 #[test]
 fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
     let (repo, home) = repository()?;
@@ -95,7 +94,6 @@ fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
             "ok    hooks",
             "ok    silenced",
             "ok    binary",
-            "note  agent",
             "ok    daemon"
         ]
     );
@@ -134,18 +132,12 @@ fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
         "{:?}\n{}",
         run.lines, run.stderr
     );
-    assert_eq!(
-        starting(&run, "note  agent"),
-        ["note  agent: Claude Code is not on the PATH, so its version cannot be asked"]
-    );
-    assert_eq!(
-        run.lines.last().map(String::as_str),
-        Some(
-            "note  doctor cannot see whether Claude Code runs with --safe-mode, with --settings \
-             that turn hooks off, under settings an organization delivers by its server, MDM or \
-             registry, or in a folder it does not trust; each of these keeps every hook from \
-             running"
-        )
+    // No Claude Code on the PATH is nothing wrong (it may run from an editor): nothing is said,
+    // and no line follows the checks.
+    assert!(
+        run.lines.iter().all(|line| !line.starts_with("note")),
+        "{:?}",
+        run.lines
     );
     let binary = starting(&run, "ok    binary: the hooks run this binary, ");
     let [line] = binary.as_slice() else {
@@ -195,13 +187,11 @@ fn doctor_fails_without_hooks_or_daemon() -> TestResult {
         "{:?}",
         run.lines
     );
-    assert_eq!(
-        starting(&run, "note  binary"),
-        ["note  binary: no Cortex hook names a binary to check"]
-    );
-    assert_eq!(
-        starting(&run, "note  latency"),
-        ["note  latency: not measured: no daemon answers, and probes start none"]
+    // The two failures say what is wrong; nothing repeats them.
+    assert!(
+        run.lines.iter().all(|line| !line.starts_with("note")),
+        "{:?}",
+        run.lines
     );
     assert!(
         run.stderr.contains("2 of the checks failed"),

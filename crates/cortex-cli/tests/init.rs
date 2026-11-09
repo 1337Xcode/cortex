@@ -150,24 +150,14 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         *repository,
         format!("repository: {}", canonical_root(repo.path())?.display())
     );
-    // Git ends with 128 outside a repository, which Rust shows as an exit code on Windows and an
-    // exit status elsewhere.
-    let ended = if cfg!(windows) {
-        "exit code: 128"
-    } else {
-        "exit status: 128"
-    };
     assert_eq!(
         *no_git,
-        format!(
-            "note: git named no repository here (it ended with {ended}); Cortex sets up this \
-             folder alone, without git history"
-        )
+        "note: not a git repository; Cortex works here without git history"
     );
     assert_eq!(
         *claude,
         format!(
-            "Claude Code 2.1.312 at {}, a version Cortex works with",
+            "Claude Code 2.1.312 at {}",
             claude_in(home.path()).display()
         )
     );
@@ -317,8 +307,8 @@ fn init_never_follows_git_to_a_folder_outside() -> TestResult {
     assert_eq!(
         done.stdout.lines().nth(1),
         Some(
-            "note: git names a repository top that does not hold this folder; Cortex sets up \
-             this folder alone, without git history"
+            "note: git names a repository top that does not hold this folder; Cortex works here \
+             without git history"
         )
     );
     assert!(
@@ -349,7 +339,7 @@ fn init_never_sets_up_a_home_folder_repository() -> TestResult {
         [
             format!("repository: {}", canonical_root(&project)?.display()).as_str(),
             "note: git's repository here is the home folder or holds it, which Cortex never sets \
-             up; Cortex sets up this folder alone, without git history"
+             up; Cortex works here without git history"
         ]
     );
     assert!(
@@ -387,7 +377,7 @@ fn init_without_git_or_any_agent_says_so() -> TestResult {
     assert_eq!(
         lines,
         [
-            "note: git is not on the PATH; Cortex sets up this folder alone, without git history",
+            "note: git is not on the PATH; Cortex works here without git history",
             "note: no agent Cortex sets up was found on this machine, so no hooks are written; \
              once one is installed, run `cortex init` again, or name one with `--agents` (claude, \
              codex, qwen, gemini, droid, devin, augment, junie)"
@@ -419,8 +409,8 @@ fn init_prints_control_characters_escaped() -> TestResult {
 }
 
 /// A Claude Code older than the oldest version Cortex's hooks work with is refused before anything
-/// is written, the error naming it, where it is and the update; one of a version Cortex works with
-/// is named and the hooks are written.
+/// is written, the error naming it, where it is and the update; a later one is named and the hooks
+/// are written.
 #[test]
 fn init_refuses_an_older_claude_code() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -440,10 +430,7 @@ fn init_refuses_an_older_claude_code() -> TestResult {
     stand_in_claude(home.path(), "2.1.300")?;
     let done = init(repo.path(), home.path(), &[])?;
     assert!(done.is_success, "{}", done.stderr);
-    let named = format!(
-        "Claude Code 2.1.300 at {}, a version Cortex works with",
-        claude.display()
-    );
+    let named = format!("Claude Code 2.1.300 at {}", claude.display());
     assert!(
         done.stdout.lines().any(|line| line == named),
         "{}",
@@ -496,9 +483,9 @@ fn init_starts_the_daemon_and_runs_doctor() -> TestResult {
     let checks: Vec<&str> = lines
         .iter()
         .skip(index + 3)
-        // Doctor's own lines: init's closing note, when a check failed, is not one of them.
+        // Doctor's own lines: init's closing line, when a check failed, is not one of them.
         .filter(|line| {
-            ["ok    ", "FAIL  ", "note  "]
+            ["ok    ", "FAIL  "]
                 .iter()
                 .any(|kind| line.starts_with(kind))
         })
@@ -632,14 +619,14 @@ fn init_reports_doctor_s_failures_without_failing() -> TestResult {
         "{}",
         done.stdout
     );
-    let note = done
+    let closing = done
         .stdout
         .lines()
-        .find(|line| line.starts_with("note: init is done, and "))
+        .find(|line| line.starts_with("init is done; "))
         .ok_or_else(|| done.stdout.clone())?;
     assert!(
-        note.contains(" of doctor's checks failed; each says what to do"),
-        "{note}"
+        closing.ends_with(" of doctor's checks failed, each with its fix above"),
+        "{closing}"
     );
     Ok(())
 }

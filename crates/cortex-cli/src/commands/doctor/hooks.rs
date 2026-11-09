@@ -88,7 +88,7 @@ pub(super) fn registered(context: &Context) -> Vec<Finding> {
         }
         several => Finding::Fail {
             what: format!(
-                "Cortex's hooks are in {}: Claude Code may run each of them once for each file",
+                "Cortex's hooks are in {}: Claude Code runs each of them once for each file",
                 several
                     .iter()
                     .map(|(file, _)| file.path.display().to_string())
@@ -163,7 +163,7 @@ pub(super) fn silenced(context: &Context) -> Vec<Finding> {
     }
     if findings.is_empty() {
         findings.push(Finding::Pass(
-            "no settings file doctor can read keeps Claude Code from running hooks".to_owned(),
+            "hooks are not turned off in any settings file".to_owned(),
         ));
     }
     findings
@@ -184,9 +184,8 @@ pub(super) fn binary(context: &Context) -> Vec<Finding> {
         .flatten()
         .collect();
     if commands.is_empty() {
-        return vec![Finding::Note(
-            "no Cortex hook names a binary to check".to_owned(),
-        )];
+        // The hooks check has failed already: nothing more to say.
+        return Vec::new();
     }
     commands
         .into_iter()
@@ -203,8 +202,7 @@ pub(super) fn binary(context: &Context) -> Vec<Finding> {
             } else {
                 Finding::Fail {
                     what: format!(
-                        "the hooks run {command}, not this binary ({}); doctor does not run a \
-                         program a settings file names to ask its version",
+                        "the hooks run {command}, not this binary ({})",
                         context.program
                     ),
                     fix: "run `cortex init` with the binary the hooks should run".to_owned(),
@@ -248,14 +246,13 @@ mod tests {
         }
     }
 
-    /// The kind of each finding, `ok`, `FAIL` or `note`, with its text and fix.
+    /// The kind of each finding, `ok` or `FAIL`, with its text and fix.
     fn summary(findings: &[Finding]) -> Vec<String> {
         findings
             .iter()
             .map(|finding| match finding {
                 Finding::Pass(what) => format!("ok {what}"),
                 Finding::Fail { what, fix } => format!("FAIL {what} / {fix}"),
-                Finding::Note(what) => format!("note {what}"),
             })
             .collect()
     }
@@ -307,7 +304,7 @@ mod tests {
         assert_eq!(
             summary(&twice),
             [
-                "FAIL Cortex's hooks are in /Local.json and /User.json: Claude Code may run each of \
+                "FAIL Cortex's hooks are in /Local.json and /User.json: Claude Code runs each of \
               them once for each file / keep them in one file: remove Cortex's hooks from the \
               others, and run `cortex init` for the scope you keep"
             ]
@@ -334,7 +331,7 @@ mod tests {
                 (Scope::Local, on),
                 (Scope::User, off)
             ]))),
-            ["ok no settings file doctor can read keeps Claude Code from running hooks"]
+            ["ok hooks are not turned off in any settings file"]
         );
         let managed = silenced(&context(&[
             (
@@ -376,7 +373,7 @@ mod tests {
         );
         assert_eq!(
             summary(&binary(&context(&[(Scope::Local, "{}")]))),
-            ["note no Cortex hook names a binary to check"]
+            Vec::<String>::new()
         );
         Ok(())
     }

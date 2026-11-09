@@ -91,10 +91,7 @@ fn checked(root: Root, home: &Path) -> anyhow::Result<Root> {
 fn git_top(start: &Path, bound: &Path) -> Result<PathBuf, String> {
     let captured = git::run(&["rev-parse", "--show-toplevel"], start, bound)?;
     if !captured.status.success() {
-        return Err(format!(
-            "git named no repository here (it ended with {})",
-            captured.status
-        ));
+        return Err("not a git repository".to_owned());
     }
     if captured.is_cut {
         return Err("git's answer is longer than any path".to_owned());

@@ -69,7 +69,10 @@ pub(super) fn started_and_indexed(root: &Path) -> anyhow::Result<()> {
     }
     waited(root, &user)?;
     let mode = settings::load(root)?.config.mode;
-    for line in index_lines(root, mode)? {
+    // The status's first three lines say what the index holds (or its one line, why there is
+    // none); the rest (learning, the gate, warnings) says nothing yet on a repository just set
+    // up, and `cortex status` shows it.
+    for line in index_lines(root, mode)?.into_iter().take(3) {
         output::line(&line)?;
     }
     Ok(())
