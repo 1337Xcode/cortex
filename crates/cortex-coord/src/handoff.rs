@@ -86,10 +86,12 @@ fn text_of(
     (read, reads_named): (&[&str], usize),
 ) -> String {
     let ago = ago(handed.ago_ms);
+    // An answered task's session may still be open, only quiet: what is known is that the turn
+    // ended without a passing check, not that the session did.
     let how = if handed.is_cut_off {
         format!("stopped {ago} before finishing its task")
     } else {
-        format!("ended {ago} without a passing check")
+        format!("answered {ago} without a passing check")
     };
     let mut text = format!("[cortex] Handoff: a {} session {how}.", handed.agent);
     if !edited.is_empty() {
@@ -109,7 +111,9 @@ fn text_of(
             check_name(kind)
         ));
     }
+    // Warnings are about edits: with no edited file named, there is nothing they are about.
     match handed.open_warnings {
+        _ if edited.is_empty() => {}
         0 => {}
         1 => text.push_str(" 1 warning about its edits was still open."),
         count => text.push_str(&format!(
@@ -186,8 +190,10 @@ mod tests {
         );
     }
 
-    /// Only read files, one warning, no failure, two hours ago; seven edited files name five and
-    /// count two; a path that is not plain is left out, and with no plain path there is no text.
+    /// Only read files, one warning, no failure, two hours ago: the warning goes unsaid, since no
+    /// edited file is named for it to be about (its edited files gone); seven edited files name
+    /// five and count two; a path that is not plain is left out, and with no plain path there is no
+    /// text.
     #[test]
     fn a_handoff_names_what_fits() {
         let read_only = Handed {
@@ -203,7 +209,7 @@ mod tests {
             handoff_text(&read_only).as_deref(),
             Some(
                 "[cortex] Handoff: a Codex session stopped 2 hours ago before finishing its \
-                 task. It read a.py. 1 warning about its edits was still open."
+                 task. It read a.py."
             )
         );
         let many = Handed {
@@ -228,9 +234,9 @@ mod tests {
     }
 
     /// A task answered without a passing check, 40 minutes ago, that edited one file: the text
-    /// says the session ended, not that it stopped.
+    /// says the session answered, not that it stopped or that it ended (it may only be quiet).
     #[test]
-    fn an_answered_handoff_says_its_session_ended() {
+    fn an_answered_handoff_says_its_session_answered() {
         let handed = Handed {
             agent: "Codex",
             ago_ms: 40 * MINUTE_MS,
@@ -243,8 +249,8 @@ mod tests {
         assert_eq!(
             handoff_text(&handed).as_deref(),
             Some(
-                "[cortex] Handoff: a Codex session ended 40 minutes ago without a passing check. \
-                 It edited a.py."
+                "[cortex] Handoff: a Codex session answered 40 minutes ago without a passing \
+                 check. It edited a.py."
             )
         );
     }

@@ -613,7 +613,7 @@ fn a_handoff_waits_until_its_session_is_done() -> TestResult {
     assert_eq!(
         given("claude", &prompt_in(&repo, ASIDE, "Continue.")?, home)?,
         Some(
-            "[cortex] Handoff: a Claude Code session ended less than a minute ago without a \
+            "[cortex] Handoff: a Claude Code session answered less than a minute ago without a \
              passing check. It edited calc/ops.py. 1 warning about its edits was still open.\n"
                 .to_owned()
         )

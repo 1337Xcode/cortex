@@ -2,8 +2,10 @@
 //! session outside its own family that is done with it (it ended, it has been quiet for
 //! `coordination.handoff_idle_minutes`, or its turn stopped on an error), that the prompt concerns. A prompt concerns a handoff when one
 //! of the files its retrieval weighed (the three best, known whether or not the gate opened) is a
-//! file the stopped session edited or read, or when it asks to go on (continue, resume, pick up,
-//! carry on, finish). The handoff says what was left, and comes ahead of any work order. Each
+//! file the stopped session edited or read, or when it opens by asking to go on (continue,
+//! resume, pick up, carry on, keep going, finish up). A prompt that only asks to go on, naming no
+//! file of any handoff, is given one only when one alone applies: with several, which it means is
+//! a guess, and nothing is said. The handoff says what was left, and comes ahead of any work order. Each
 //! handoff is claimed when it is given, so two first prompts answered at once do not both get it;
 //! the claim is given back if its text never reaches the agent.
 
@@ -17,8 +19,20 @@ use crate::once::ClaimedOnce;
 /// How long a handoff is offered after its session stopped: a day, in milliseconds.
 const OFFERED_FOR_MS: i64 = 24 * 60 * 60 * 1_000;
 
-/// Words that ask to go on with earlier work, matched as whole words in any case.
-const GO_ON_WORDS: [&str; 5] = ["continue", "resume", "pick up", "carry on", "finish"];
+/// Phrases that ask to go on with earlier work when a prompt opens with them, in any case. A bare
+/// "finish" is not one: "Finish the CSV export" asks for new work as often as for old.
+const GO_ON_PHRASES: [&str; 7] = [
+    "continue",
+    "resume",
+    "pick up",
+    "carry on",
+    "keep going",
+    "finish up",
+    "finish it",
+];
+
+/// Words a prompt may open with before its go-on phrase ("please continue", "ok, carry on").
+const OPENERS: [&str; 5] = ["please", "ok", "okay", "now", "so"];
 
 /// The handoff the prompt `prompt` of `event`, starting the task `task_id`, is given, its retrieval
 /// having weighed `weighed`, a session counting as done once quiet for `idle_ms` and the handoffs
@@ -52,11 +66,10 @@ pub(super) fn handoff_for(
     let seen = queries.sessions_seen(&sessions)?;
     let family = family_of(event, &seen);
     let goes_on = asks_to_go_on(prompt);
+    let mut eligible: Vec<(&HandoffRow, &SeenSession, bool)> = Vec::new();
     for row in &open {
         let record = &row.record;
         let is_concerned = concerns(weighed, &record.edited, &record.read);
-        // INVARIANT: silent-when-unsure (a handoff only for a prompt that asks to go on or weighs
-        // one of its files, and never a session's own)
         if family.contains(&record.from_session) || !(goes_on || is_concerned) {
             continue;
         }
@@ -72,6 +85,23 @@ pub(super) fn handoff_for(
         {
             continue;
         }
+        eligible.push((row, from, is_concerned));
+    }
+    // INVARIANT: silent-when-unsure (a handoff only for a prompt that weighs one of its files, the
+    // newest first, or that only asks to go on when one handoff alone applies; never a session's
+    // own)
+    let concerned: Vec<&(&HandoffRow, &SeenSession, bool)> = eligible
+        .iter()
+        .filter(|(_, _, is_concerned)| *is_concerned)
+        .collect();
+    let chosen: Vec<&(&HandoffRow, &SeenSession, bool)> = if !concerned.is_empty() {
+        concerned
+    } else if eligible.len() == 1 {
+        eligible.iter().collect()
+    } else {
+        Vec::new()
+    };
+    for (row, from, _) in chosen {
         let agent = from.agent.title();
         if let Some(text) = text_of(queries, row, (agent, event.ts_ms))?
             && handed.claim(row.id)
@@ -139,18 +169,23 @@ fn concerns<T: PartialEq>(weighed: &[T], edited: &[T], read: &[T]) -> bool {
         .any(|node| edited.contains(node) || read.contains(node))
 }
 
-/// Whether `prompt` asks to go on with earlier work: one of [`GO_ON_WORDS`] as whole words.
+/// Whether `prompt` opens by asking to go on with earlier work: after any of [`OPENERS`], one of
+/// [`GO_ON_PHRASES`] as whole words. A phrase later in the prompt ("make the parser continue
+/// after a bad line") describes the work, and does not ask for an earlier session's.
 fn asks_to_go_on(prompt: &str) -> bool {
     let words: Vec<String> = prompt
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
         .map(str::to_lowercase)
         .collect();
-    GO_ON_WORDS.iter().any(|phrase| {
+    let opened = words
+        .iter()
+        .position(|word| !OPENERS.contains(&word.as_str()))
+        .and_then(|at| words.get(at..))
+        .unwrap_or_default();
+    GO_ON_PHRASES.iter().any(|phrase| {
         let phrase: Vec<&str> = phrase.split(' ').collect();
-        words
-            .windows(phrase.len())
-            .any(|window| window.iter().zip(&phrase).all(|(word, part)| word == part))
+        opened.len() >= phrase.len() && opened.iter().zip(&phrase).all(|(word, part)| word == part)
     })
 }
 
@@ -215,23 +250,29 @@ mod tests {
         assert!(!concerns(&[], &edited, &read));
     }
 
-    /// The words that ask to go on match whole, in any case, across punctuation; a word that only
-    /// holds one does not.
+    /// A prompt asks to go on when it opens with a go-on phrase, after any opener, in any case and
+    /// across punctuation; a phrase later in the prompt describes the work, a bare "finish" asks for
+    /// new work, and a word that only holds a phrase does not count.
     #[test]
-    fn a_prompt_asks_to_go_on_in_whole_words() {
+    fn a_prompt_asks_to_go_on_when_it_opens_with_it() {
         for prompt in [
             "Continue.",
             "please RESUME the change",
+            "Ok, carry on with divide",
             "pick up where it stopped",
-            "carry on with divide",
-            "finish the refactor",
+            "Keep going",
+            "finish up the refactor",
         ] {
             assert!(asks_to_go_on(prompt), "{prompt}");
         }
         for prompt in [
+            "Make the parser continue after a bad line",
+            "We should continue to support Python 3.8",
+            "Finish the CSV export",
             "continued fraction",
             "the finished parts",
             "pick the upper one",
+            "please",
             "",
         ] {
             assert!(!asks_to_go_on(prompt), "{prompt}");
@@ -320,6 +361,57 @@ mod tests {
         assert_eq!(given("s3")?, None);
         handed.release(&first);
         assert_eq!(given("s3")?, Some(first));
+        Ok(())
+    }
+
+    /// Two open handoffs, `s1`'s on `calc/ops.py` and `s4`'s on `main.py`, both sessions ended:
+    /// "Continue." alone could mean either, and is given neither; a prompt whose retrieval weighed
+    /// `main.py` is given `s4`'s.
+    #[test]
+    fn a_bare_go_on_with_two_handoffs_is_given_neither() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut store = crate::test_store::writer(root.path())?;
+        let ops = crate::test_store::add_file(&mut store, "calc/ops.py", 1)?;
+        let main = crate::test_store::add_file(&mut store, "main.py", 1)?;
+        let mut transaction = store.transaction()?;
+        let mut left = Vec::new();
+        for (session, file, at_ms) in [("s1", ops, 1_500), ("s4", main, 1_600)] {
+            transaction.record_session(&cortex_store::SessionRecord {
+                session_id: Identifier::new(session)?,
+                agent: cortex_core::Agent::Claude,
+                agent_version: None,
+                model: None,
+                parent_session_id: None,
+                cwd: None,
+                transcript_path: None,
+                started_at_ms: 100,
+            })?;
+            transaction.end_session(&Identifier::new(session)?, (at_ms, SessionStatus::Ended))?;
+            left.push(transaction.leave_handoff(&cortex_store::HandoffRecord {
+                from_session: Identifier::new(session)?,
+                task_id: Ulid::from_seed(u64::try_from(at_ms)?, session.as_bytes()),
+                end: HandoffEnd::Left,
+                edited: vec![file],
+                read: Vec::new(),
+                open_warnings: Vec::new(),
+                last_failure: None,
+                created_at_ms: at_ms,
+            })?);
+        }
+        transaction.commit()?;
+        let handed = ClaimedOnce::default();
+        let (event, task_id) = first_prompt("s2")?;
+        let given = |weighed: &[NodeId]| -> TestResult<Option<HandoffId>> {
+            let found = handoff_for(
+                store.queries(),
+                (&event, "Continue.", task_id),
+                weighed,
+                (30 * 60 * 1_000, &handed),
+            )?;
+            Ok(found.map(|(handoff, _)| handoff))
+        };
+        assert_eq!(given(&[])?, None);
+        assert_eq!(given(&[main])?, left.get(1).copied());
         Ok(())
     }
 }
