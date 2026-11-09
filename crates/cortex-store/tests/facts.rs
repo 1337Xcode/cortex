@@ -188,6 +188,8 @@ fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
 /// with another hash (suspect facts are not listed); 4 active on `tax.rs` with another hash.
 /// Changed: 4. `Money`'s body becomes `dollars`: 1 and 4. `tax.rs` goes: 1, 2 and 4. Fact 1
 /// restamped with `Money`'s hash now: 2 and 4. Restamping a node fact 1 is not anchored to fails.
+/// Named as a note names them: `src/money.rs` and `src/money.rs:Money`; `tax.rs`, gone, is left
+/// out. Fact 1's number finds it; the number after the last fact's finds none.
 #[test]
 fn anchors_are_compared_with_the_code_now() -> TestResult {
     let scratch = Scratch::new()?;
@@ -268,6 +270,16 @@ fn anchors_are_compared_with_the_code_now() -> TestResult {
     ));
     transaction.commit()?;
     assert_eq!(changed(&writer)?, [second, fourth]);
+    let names = writer.queries().anchor_names(&[tax, class, money_file])?;
+    let names: Vec<(NodeId, &str)> = names
+        .iter()
+        .map(|(node, name)| (*node, name.as_str()))
+        .collect();
+    let mut expected = vec![(money_file, "src/money.rs"), (class, "src/money.rs:Money")];
+    expected.sort_by_key(|(node, _)| *node);
+    assert_eq!(names, expected);
+    assert_eq!(writer.queries().fact_id(first.get())?, Some(first));
+    assert_eq!(writer.queries().fact_id(fourth.get() + 1)?, None);
     Ok(())
 }
 

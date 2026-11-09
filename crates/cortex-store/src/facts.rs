@@ -7,6 +7,8 @@
 //! when, is decided by the learner; the store keeps what it is told and refuses what it can never
 //! hold (text too long, no anchor).
 
+use std::collections::BTreeMap;
+
 use cortex_core::{FactKind, FactSource, FactStatus, MAX_FACT_CHARS, ShortHash, Ulid};
 use rusqlite::{Connection, OptionalExtension};
 
@@ -259,6 +261,48 @@ impl Queries<'_> {
         rows.into_iter()
             .map(|columns| self.row_of(columns))
             .collect()
+    }
+
+    /// The fact whose id is `number`, as a person typed it; none when no fact has it.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn fact_id(self, number: i64) -> Result<Option<FactId>, StoreError> {
+        Ok(self
+            .fact_ids(schema::FACT_ID_OF, [number])?
+            .into_iter()
+            .next())
+    }
+
+    /// Each of `nodes` that is a file or a symbol, named as a note names an anchor: the file's
+    /// path, and for a symbol `:` and its qualified name. A node that is gone, or neither, is left
+    /// out.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn anchor_names(self, nodes: &[NodeId]) -> Result<BTreeMap<NodeId, String>, StoreError> {
+        let listed = json_array(nodes.iter().map(|node| node.get().to_string()));
+        let rows: Vec<(i64, String, Option<String>)> = self
+            .connection()
+            .prepare_cached(schema::ANCHOR_NAMES_OF)
+            .and_then(|mut statement| {
+                statement
+                    .query_map([listed], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                    .collect::<Result<_, _>>()
+            })
+            .map_err(sqlite("naming anchors"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(node, path, symbol)| {
+                let name = match symbol {
+                    Some(symbol) => format!("{path}:{symbol}"),
+                    None => path,
+                };
+                (NodeId(node), name)
+            })
+            .collect())
     }
 
     /// The ids of the current candidate and active facts with an anchor whose node's hash is not

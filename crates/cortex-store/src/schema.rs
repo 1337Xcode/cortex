@@ -765,6 +765,17 @@ pub(crate) const FACTS_WITH_CHANGED_ANCHORS: &str = "SELECT DISTINCT a.fact_id \
 /// The current facts of status ?1 whose status was set at ?2 or before, in id order.
 pub(crate) const FACTS_WITH_STATUS_SINCE: &str = "SELECT fact_id FROM facts \
      WHERE status = ?1 AND superseded_by IS NULL AND status_at <= ?2 ORDER BY fact_id";
+/// The id of fact ?1, when one has it.
+pub(crate) const FACT_ID_OF: &str = "SELECT fact_id FROM facts WHERE fact_id = ?1";
+/// Each node of the JSON list ?1 that is a file or a symbol in one, with the file's path and, for a
+/// symbol, its qualified name, in node order.
+pub(crate) const ANCHOR_NAMES_OF: &str = "SELECT n.node_id, COALESCE(f.path, sf.path), \
+     s.qual_name FROM nodes AS n \
+     LEFT JOIN files AS f ON n.kind = 'file' AND f.file_id = n.ref_id \
+     LEFT JOIN symbols AS s ON n.kind = 'symbol' AND s.symbol_id = n.ref_id \
+     LEFT JOIN files AS sf ON sf.file_id = s.file_id \
+     WHERE n.node_id IN (SELECT value FROM json_each(?1)) \
+     AND COALESCE(f.path, sf.path) IS NOT NULL ORDER BY n.node_id";
 /// The hash an anchor on each node of the JSON list ?1 would keep now, in node order; a node with
 /// none is left out.
 pub(crate) const ANCHOR_HASHES_OF: &str = "SELECT node_id, hash FROM anchor_hashes \
