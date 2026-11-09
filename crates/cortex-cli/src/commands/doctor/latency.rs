@@ -74,8 +74,13 @@ const PROBED: [Probe; 5] = [
 ];
 
 /// Each probed event's 95th percentile is within its budget, and every probe reached the daemon.
+/// A repository whose path is not UTF-8 fails at once: no hook payload can name it, so no agent's
+/// hook ever reaches Cortex there.
 pub(super) fn probes(context: &Context) -> Vec<Finding> {
-    let (before, root) = match measurable(context) {
+    let Some(root) = context.root.to_str() else {
+        return vec![not_text()];
+    };
+    let before = match measurable(context) {
         Ok(measurable) => measurable,
         // The daemon check has said why no daemon answers this build: nothing more to say.
         Err(_) => return Vec::new(),
@@ -101,10 +106,9 @@ pub(super) fn probes(context: &Context) -> Vec<Finding> {
     findings
 }
 
-/// The daemon's status before the probes and the repository's root as a payload carries it, when
-/// the probes can measure: a daemon of the repository answers, it runs this build, and the root is
-/// text. Otherwise, why not.
-fn measurable(context: &Context) -> Result<(StatusReport, &str), String> {
+/// The daemon's status before the probes, when the probes can measure: a daemon of the repository
+/// answers and it runs this build. Otherwise, why not.
+fn measurable(context: &Context) -> Result<StatusReport, String> {
     let before = status(&context.root)
         .ok_or_else(|| "no daemon answers, and probes start none".to_owned())?;
     if before.cortex_version != CORTEX_VERSION {
@@ -113,10 +117,17 @@ fn measurable(context: &Context) -> Result<(StatusReport, &str), String> {
             one_line(&before.cortex_version, 40)
         ));
     }
-    let root = context.root.to_str().ok_or_else(|| {
-        "the repository's path is not UTF-8, which no hook payload can carry".to_owned()
-    })?;
-    Ok((before, root))
+    Ok(before)
+}
+
+/// The failure of a repository whose path is not UTF-8 text.
+fn not_text() -> Finding {
+    Finding::Fail {
+        what: "the repository's path is not UTF-8, which no hook payload can carry, so no \
+               agent's hook reaches Cortex here"
+            .to_owned(),
+        fix: "move or rename the repository's folder to a path of UTF-8 text".to_owned(),
+    }
 }
 
 /// Runs [`PROBES`] probes of `event` on `payload` with `program`, keeping how long each took in
@@ -357,5 +368,30 @@ mod tests {
             failure(unreached(&report(7, 3), Some(&report(8, 103)), 100)).as_deref(),
             Some("the daemon was replaced while the probes ran (process 7 became 8)")
         );
+    }
+
+    /// A repository whose path is not UTF-8 (an unpaired surrogate on Windows, a byte 0xff
+    /// elsewhere) fails at once with its fix, before any daemon is asked or probe sent.
+    #[test]
+    fn a_path_that_is_not_text_fails() {
+        #[cfg(windows)]
+        let root: std::ffi::OsString =
+            std::os::windows::ffi::OsStringExt::from_wide(&[u16::from(b'r'), 0xD800]);
+        #[cfg(not(windows))]
+        let root: std::ffi::OsString =
+            std::os::unix::ffi::OsStrExt::from_bytes(b"r\xff").to_owned();
+        let context = Context {
+            root: std::path::PathBuf::from(root),
+            program: "cortex".to_owned(),
+            files: Vec::new(),
+        };
+        assert_eq!(
+            failure(probes(&context).into_iter().next()).as_deref(),
+            Some(
+                "the repository's path is not UTF-8, which no hook payload can carry, so no \
+                 agent's hook reaches Cortex here"
+            )
+        );
+        assert_eq!(probes(&context).len(), 1);
     }
 }
