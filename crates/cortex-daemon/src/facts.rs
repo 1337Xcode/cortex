@@ -4,7 +4,7 @@
 //! retire, correct). Each request is answered in one transaction, refused in words the user reads
 //! when it names something wrongly.
 
-use cortex_core::ipc::{FactLine, FactsAnswer, FactsAsk, Note, NoteOutcome};
+use cortex_core::ipc::{FactLine, FactsAnswer, FactsAsk, GONE_ANCHOR, Note, NoteOutcome};
 use cortex_core::{FactSource, FactStatus, Identifier, RepoPath};
 use cortex_learn::{
     Asserted, Assertion, FactError, assert_fact, confirm_fact, edit_fact, retire_fact,
@@ -51,8 +51,8 @@ fn numbered(queries: Queries<'_>, id: i64) -> Result<FactId, Refused> {
         .ok_or_else(|| Refused::Named(format!("there is no fact {id}")))
 }
 
-/// States `note` at `now_ms` in `transaction`, as the user's or, in the open task of `at_work`,
-/// an agent's.
+/// States `note` at `now_ms` in `transaction`, as its source says: the user's, an import's (a
+/// teammate's fact, from `cortex import`), or, in the open task of `at_work`, an agent's.
 pub(crate) fn noted(
     transaction: &mut WriteTx<'_>,
     note: &Note,
@@ -63,11 +63,9 @@ pub(crate) fn noted(
         .iter()
         .map(|anchor| anchor_of(transaction.queries(), anchor))
         .collect::<Result<Vec<_>, _>>()?;
-    // A note is the user's or an agent's; an import comes through another door.
-    let source = match note.source {
-        FactSource::Agent => FactSource::Agent,
-        FactSource::User | FactSource::Import => FactSource::User,
-    };
+    // An import keeps its source: a teammate's fact is a candidate until a person here confirms
+    // it, never the user's own.
+    let source = note.source;
     let task = match (source, at_work) {
         (FactSource::Agent, Some(session)) => transaction
             .queries()
@@ -204,7 +202,7 @@ fn listed(queries: Queries<'_>, all: bool) -> Result<Vec<FactLine>, StoreError> 
                     names
                         .get(&anchor.node)
                         .cloned()
-                        .unwrap_or_else(|| "(gone)".to_owned())
+                        .unwrap_or_else(|| GONE_ANCHOR.to_owned())
                 })
                 .collect(),
             text: row.record.text,
@@ -269,6 +267,7 @@ mod tests {
 
     /// An agent's note is a candidate, asserted in the open task of the session at work, `s1`;
     /// with no session at work, in no task. A user's note is active, in no task, whoever is at work.
+    /// An import's is a candidate, in no task, whoever is at work, and its source stays an import.
     #[test]
     fn an_agent_s_note_is_a_candidate_in_the_task_at_work() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -290,6 +289,10 @@ mod tests {
             ),
             (note("Money never floats.", FactSource::Agent), None),
             (note("Money is exact.", FactSource::User), Some(&at_work)),
+            (
+                note("Money is never rounded.", FactSource::Import),
+                Some(&at_work),
+            ),
         ];
         for (request, session) in cases {
             let (job, answer) = AskJob::new(request);
@@ -300,7 +303,7 @@ mod tests {
                 Ok(ResponseBody::Facts(FactsAnswer::Noted { .. }))
             ));
         }
-        let facts: Vec<(String, FactStatus, Option<Ulid>)> = [1, 2, 3]
+        let facts: Vec<(String, FactStatus, Option<Ulid>)> = [1, 2, 3, 4]
             .into_iter()
             .map(|number| {
                 let id = writer.queries().fact_id(number)?.ok_or("a fact")?;
@@ -322,8 +325,16 @@ mod tests {
                     None
                 ),
                 ("Money is exact.".to_owned(), FactStatus::Active, None),
+                (
+                    "Money is never rounded.".to_owned(),
+                    FactStatus::Candidate,
+                    None
+                ),
             ]
         );
+        let imported = writer.queries().fact_id(4)?.ok_or("a fact")?;
+        let row = writer.queries().fact(imported)?.ok_or("a fact")?;
+        assert_eq!(row.record.source, FactSource::Import);
         Ok(())
     }
 }

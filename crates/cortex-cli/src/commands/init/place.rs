@@ -96,7 +96,7 @@ pub(super) fn file_beside(folder: &Path, name: &str) -> anyhow::Result<PathBuf> 
 /// # Errors
 ///
 /// The folder cannot be made or found, is a link, or leads elsewhere.
-pub(super) fn own_folder(parent: &Path, name: &str) -> anyhow::Result<PathBuf> {
+pub(crate) fn own_folder(parent: &Path, name: &str) -> anyhow::Result<PathBuf> {
     let folder = parent.join(name);
     match fs::symlink_metadata(&folder) {
         Ok(metadata) if metadata.file_type().is_symlink() => bail!(

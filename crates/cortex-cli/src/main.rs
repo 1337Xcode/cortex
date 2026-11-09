@@ -9,6 +9,7 @@ mod commands;
 mod output;
 mod program;
 mod repository;
+mod shared_facts;
 mod upgrade;
 
 use std::process::ExitCode;

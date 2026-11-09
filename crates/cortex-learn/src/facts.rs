@@ -103,7 +103,8 @@ pub struct Reviewed {
 }
 
 /// States `assertion` at `now_ms` in `transaction`: the fact it says again, made active when the
-/// assertion confirms it, or a new fact.
+/// assertion confirms it, or a new fact. An import of a fact retired here is that fact, left
+/// retired: a person here decided it no longer holds, and a teammate's file does not bring it back.
 ///
 /// # Errors
 ///
@@ -124,7 +125,14 @@ pub fn assert_fact(
     if is_global && nodes.len() > 1 {
         return Err(FactError::GlobalWithOthers);
     }
-    let Some(said) = said_before(transaction.queries(), assertion.text, &nodes)? else {
+    let current = said_before(transaction.queries(), assertion.text, &nodes, false)?;
+    if current.is_none() && assertion.source == FactSource::Import {
+        let retired = said_before(transaction.queries(), assertion.text, &nodes, true)?;
+        if let Some(retired) = retired.filter(|row| row.record.status == FactStatus::Retired) {
+            return Ok(Asserted::Merged(retired.id));
+        }
+    }
+    let Some(said) = current else {
         if is_global && global_facts(transaction.queries(), &listed)? >= MAX_GLOBAL_FACTS {
             return Err(FactError::TooManyGlobal);
         }
@@ -172,12 +180,14 @@ pub fn review_facts(transaction: &mut WriteTx<'_>, now_ms: i64) -> Result<Review
     Ok(Reviewed { suspected, retired })
 }
 
-/// The current fact, not retired, anchored to exactly `nodes`, whose words are at least
-/// [`MERGES_AT`] alike to `text`'s: the most alike, the oldest of equals; none when no fact is.
+/// The current fact, retired too when `has_retired`, anchored to exactly `nodes`, whose words are
+/// at least [`MERGES_AT`] alike to `text`'s: the most alike, the oldest of equals; none when no fact
+/// is.
 fn said_before(
     queries: Queries<'_>,
     text: &str,
     nodes: &BTreeSet<NodeId>,
+    has_retired: bool,
 ) -> Result<Option<FactRow>, StoreError> {
     let words = words_of(text);
     let listed: Vec<NodeId> = nodes.iter().copied().collect();
@@ -192,7 +202,7 @@ fn said_before(
             .iter()
             .map(|anchor| anchor.node)
             .collect();
-        if row.record.status == FactStatus::Retired || anchored != *nodes {
+        if (row.record.status == FactStatus::Retired && !has_retired) || anchored != *nodes {
             continue;
         }
         let likeness = jaccard(&words, &words_of(&row.record.text));
@@ -218,13 +228,19 @@ fn confirms(said: &FactRow, assertion: &Assertion<'_>) -> bool {
     }
 }
 
-/// Whether `assertion` confirms `said` as a candidate: the user's word, or an agent's in a task
-/// other than the one that first asserted it.
+/// Whether `assertion` confirms `said` as a candidate: the user's word; or, for an agent's own
+/// candidate, an agent's in a task other than the one that first asserted it. A teammate's fact,
+/// imported, waits for a person here: an agent saying it again, in any number of tasks, does not
+/// confirm it, since what an agent reads may have led it to.
 fn confirms_candidate(said: &FactRow, assertion: &Assertion<'_>) -> bool {
     match assertion.source {
         FactSource::User => true,
         FactSource::Agent => {
-            matches!((said.record.task, assertion.task), (Some(first), Some(now)) if first != now)
+            said.record.source != FactSource::Import
+                && matches!(
+                    (said.record.task, assertion.task),
+                    (Some(first), Some(now)) if first != now
+                )
         }
         FactSource::Import => false,
     }

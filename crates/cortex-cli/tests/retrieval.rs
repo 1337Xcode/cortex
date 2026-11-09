@@ -407,3 +407,88 @@ fn a_fact_is_given_while_its_code_holds_and_withheld_once_it_changes() -> TestRe
     assert!(again.contains(&line), "{again}");
     Ok(())
 }
+
+/// A teammate's rule comes in through `cortex import` as a candidate and is never given until a
+/// person here confirms it. A shared file that is not right is refused whole: `{` is no file, and
+/// nothing is noted. `.cortex/shared/facts.json` then holds the rule that `divide` rounds to two
+/// places, typed as `cortex export` writes it. Imported, it is fact 1, a candidate; a prompt naming
+/// `divide` from a new session gets a work order with no project facts. Confirmed, the same prompt
+/// from another new session gets the rule. Imported again, it is known already, and stays
+/// confirmed. `cortex export` writes the same bytes back and says so. Retired here, the fact
+/// imported again stays retired.
+#[test]
+fn an_imported_fact_is_given_only_once_confirmed() -> TestResult {
+    let (home, repo, _daemon) = started("0")?;
+    let home = home.path();
+    first_task(&repo, home)?;
+    let shared = repo.join(".cortex").join("shared");
+    std::fs::create_dir_all(&shared)?;
+    std::fs::write(shared.join("facts.json"), "{")?;
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command
+        .args(["import", "--root"])
+        .arg(&repo)
+        .current_dir(&repo);
+    isolate(&mut command, home);
+    let refused = printed(&mut command, b"")?;
+    assert!(!refused.is_success);
+    assert!(
+        refused
+            .stderr
+            .contains("facts.json: not a shared facts file"),
+        "{}",
+        refused.stderr
+    );
+    assert_eq!(cortex(&repo, home, &["facts", "list"])?, "no facts\n");
+
+    let rule = "divide rounds its result to two places.";
+    let file = format!(
+        "{{\n  \"version\": 1,\n  \"facts\": [\n    {{\n      \"text\": \"{rule}\",\n      \
+         \"kind\": \"convention\",\n      \"at\": [\n        \"calc/ops.py:divide\"\n      ]\n    \
+         }}\n  ]\n}}\n"
+    );
+    std::fs::write(shared.join("facts.json"), &file)?;
+    let confirm_line = "imported as candidates: `cortex facts list` shows them, and each is given \
+                        to agents only once `cortex facts confirm <number>` says it holds here\n";
+    assert_eq!(
+        cortex(&repo, home, &["import"])?,
+        format!("fact 1 added, a candidate: {rule}\n1 fact {confirm_line}")
+    );
+    assert!(cortex(&repo, home, &["facts", "list"])?.contains("   1  candidate  convention"));
+    let withheld = given(&later(&repo, FAMILIAR, LATER)?, home)?.ok_or("no work order")?;
+    assert!(!withheld.contains("Project facts"), "{withheld}");
+
+    assert_eq!(
+        cortex(&repo, home, &["facts", "confirm", "1"])?,
+        "fact 1 confirmed\n"
+    );
+    let line = format!("Project facts:\n  - {rule} (anchored to calc/ops.py:divide)\n");
+    let confirmed = given(&later(&repo, FAMILIAR, ELSEWHERE)?, home)?.ok_or("no work order")?;
+    assert!(confirmed.contains(&line), "{confirmed}");
+    assert_eq!(
+        cortex(&repo, home, &["import"])?,
+        format!("fact 1 says this already: {rule}\n0 facts {confirm_line}")
+    );
+    assert!(cortex(&repo, home, &["facts", "list"])?.contains("   1  active     convention"));
+
+    let canonical = cortex_core::canonical_root(&repo)?;
+    let written = canonical.join(".cortex").join("shared").join("facts.json");
+    assert_eq!(
+        cortex(&repo, home, &["export"])?,
+        format!("1 active fact in {}, as before\n", written.display())
+    );
+    assert_eq!(std::fs::read_to_string(shared.join("facts.json"))?, file);
+    assert_eq!(
+        cortex(&repo, home, &["facts", "retire", "1"])?,
+        "fact 1 retired
+"
+    );
+    assert_eq!(
+        cortex(&repo, home, &["import"])?,
+        format!(
+            "fact 1 was retired here, and stays so: {rule}
+0 facts {confirm_line}"
+        )
+    );
+    Ok(())
+}

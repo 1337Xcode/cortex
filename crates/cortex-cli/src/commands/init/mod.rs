@@ -47,6 +47,7 @@ use crate::output;
 use self::consent::{Answers, ConfigFile, Kept};
 use self::ignores::Ignored;
 pub(crate) use self::ignores::without_lines;
+pub(crate) use self::place::own_folder;
 use self::root::Root;
 
 /// The arguments of `cortex init`.

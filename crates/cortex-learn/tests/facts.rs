@@ -99,11 +99,12 @@ fn a_candidate_said_in_a_second_task_turns_active() -> TestResult {
 }
 
 /// An import says "Tax rounds half up." on `tax.py` at 10: a candidate, asserted in no task. An
-/// agent says it in task 1 at 20 (merged; task 1 is now its first), the import again at 25
-/// (merged), the agent in task 1 at 30 (merged), in task 2 at 40: active. Another candidate, an
-/// agent's from task 3 on `money.py`, turns active the moment the user says it, at 50.
+/// agent says it in task 1 at 20 (merged), the import again at 25 (merged), the agent in task 1 at
+/// 30 and in task 2 at 40 (merged both times: an imported fact waits for a person), and the user at
+/// 45: active. Another candidate, an agent's from task 3 on `money.py`, turns active the moment the
+/// user says it, at 50.
 #[test]
-fn an_import_turns_active_in_an_agent_s_second_task_and_the_user_confirms_at_once() -> TestResult {
+fn an_import_waits_for_the_user_and_the_user_confirms_at_once() -> TestResult {
     let mut store = Store::new()?;
     let nodes = store.index_text(&[("src/tax.py", "half up"), ("src/money.py", "cents")])?;
     let (tax, money) = (&nodes[..1], &nodes[1..]);
@@ -113,12 +114,13 @@ fn an_import_turns_active_in_an_agent_s_second_task_and_the_user_confirms_at_onc
         ((FactSource::Agent, Some(1)), 20, Asserted::Merged(fact)),
         ((FactSource::Import, None), 25, Asserted::Merged(fact)),
         ((FactSource::Agent, Some(1)), 30, Asserted::Merged(fact)),
-        ((FactSource::Agent, Some(2)), 40, Asserted::Activated(fact)),
+        ((FactSource::Agent, Some(2)), 40, Asserted::Merged(fact)),
+        ((FactSource::User, None), 45, Asserted::Activated(fact)),
     ];
     for ((source, task), at_ms, expected) in steps {
         assert_eq!(say(&mut store, (rule, source, task), tax, at_ms)?, expected);
     }
-    assert_eq!(status(&store, fact)?, (FactStatus::Active, 40));
+    assert_eq!(status(&store, fact)?, (FactStatus::Active, 45));
     let cents = "Money is kept in cents.";
     let other = added(say(
         &mut store,
@@ -129,6 +131,35 @@ fn an_import_turns_active_in_an_agent_s_second_task_and_the_user_confirms_at_onc
     let confirmed = say(&mut store, (cents, FactSource::User, None), money, 50)?;
     assert_eq!(confirmed, Asserted::Activated(other));
     assert_eq!(status(&store, other)?, (FactStatus::Active, 50));
+    Ok(())
+}
+
+/// A fact retired here and imported again stays retired: the import is that fact, merged. Said
+/// again by the user, the same words make a new fact, as any rule said after its retirement does.
+#[test]
+fn an_import_of_a_fact_retired_here_leaves_it_retired() -> TestResult {
+    let mut store = Store::new()?;
+    let nodes = store.index_text(&[("src/tax.py", "half up")])?;
+    let rule = "Tax rounds half up.";
+    let fact = added(say(
+        &mut store,
+        (rule, FactSource::Import, None),
+        &nodes,
+        10,
+    )?)?;
+    let mut transaction = store.writer.transaction()?;
+    transaction.set_fact_status(fact, FactStatus::Retired, 20)?;
+    transaction.commit()?;
+    assert_eq!(
+        say(&mut store, (rule, FactSource::Import, None), &nodes, 30)?,
+        Asserted::Merged(fact)
+    );
+    assert_eq!(status(&store, fact)?, (FactStatus::Retired, 20));
+    let again = say(&mut store, (rule, FactSource::User, None), &nodes, 40)?;
+    assert!(
+        matches!(again, Asserted::Added(new) if new != fact),
+        "{again:?}"
+    );
     Ok(())
 }
 

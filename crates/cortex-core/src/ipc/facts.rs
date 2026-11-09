@@ -97,6 +97,9 @@ pub enum FactsAnswer {
     },
 }
 
+/// How the list names an anchor whose code the index no longer holds.
+pub const GONE_ANCHOR: &str = "(gone)";
+
 /// One fact as the list shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FactLine {
