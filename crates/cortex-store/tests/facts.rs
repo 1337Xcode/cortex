@@ -6,8 +6,10 @@
 mod common;
 
 use common::{Scratch, TestResult, index, symbol};
-use cortex_core::{FactKind, FactSource, FactStatus, MAX_FACT_CHARS, ShortHash, SymbolKind, Ulid};
-use cortex_store::{FactAnchor, FactId, FactRecord, NodeId, StoreError, Writer};
+use cortex_core::{
+    ContentHash, FactKind, FactSource, FactStatus, MAX_FACT_CHARS, ShortHash, SymbolKind, Ulid,
+};
+use cortex_store::{AnchorState, FactAnchor, FactId, FactRecord, NodeId, StoreError, Writer};
 
 /// Files `paths` stored, their nodes in the same order.
 fn files(writer: &mut Writer, paths: &[&str]) -> TestResult<Vec<NodeId>> {
@@ -221,7 +223,9 @@ fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
 /// Changed: 4. `Money`'s body becomes `dollars`: 1 and 4. `tax.rs` goes: 1, 2 and 4. Fact 1
 /// restamped with `Money`'s hash now: 2 and 4. Restamping a node fact 1 is not anchored to fails.
 /// Named as a note names them: `src/money.rs` and `src/money.rs:Money`; `tax.rs`, gone, is left
-/// out. Fact 1's number finds it; the number after the last fact's finds none.
+/// out. Where they stand: both in `src/money.rs`, as the index holds it, the file's hash its
+/// content's first 16 bytes and `Money`'s its body's. Fact 1's number finds it; the number after
+/// the last fact's finds none.
 #[test]
 fn anchors_are_compared_with_the_code_now() -> TestResult {
     let scratch = Scratch::new()?;
@@ -310,6 +314,25 @@ fn anchors_are_compared_with_the_code_now() -> TestResult {
     let mut expected = vec![(money_file, "src/money.rs"), (class, "src/money.rs:Money")];
     expected.sort_by_key(|(node, _)| *node);
     assert_eq!(names, expected);
+    let states = writer.queries().anchor_states(&[class, money_file])?;
+    let mut expected_states = vec![
+        AnchorState {
+            node: money_file,
+            path: common::path("src/money.rs")?,
+            content: Some(ContentHash::of(b"src/money.rs")),
+            symbol: None,
+            hash: Some(ShortHash::of(b"src/money.rs")),
+        },
+        AnchorState {
+            node: class,
+            path: common::path("src/money.rs")?,
+            content: Some(ContentHash::of(b"src/money.rs")),
+            symbol: Some(common::name("Money")?),
+            hash: Some(ShortHash::of(b"dollars")),
+        },
+    ];
+    expected_states.sort_by_key(|state| state.node);
+    assert_eq!(states, expected_states);
     assert_eq!(writer.queries().fact_id(first.get())?, Some(first));
     assert_eq!(writer.queries().fact_id(fourth.get() + 1)?, None);
     Ok(())
