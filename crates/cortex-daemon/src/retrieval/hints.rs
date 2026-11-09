@@ -6,7 +6,7 @@
 use cortex_core::{Event, ScaleMode};
 use cortex_retrieve::{HintQuery, read_hint};
 
-use super::{Answer, Service, mode_of};
+use super::{Answer, Service, mode_of, open_task_of};
 use crate::given::{Given, text_record};
 
 impl Service {
@@ -34,7 +34,7 @@ impl Service {
             if mode == ScaleMode::Tiny {
                 return Ok(Answer::default());
             }
-            let task = queries.open_task(&event.session_id)?;
+            let task = open_task_of(queries, event)?;
             // INVARIANT: silent-when-unsure (a held-out task is given nothing Cortex would say)
             if task
                 .as_ref()

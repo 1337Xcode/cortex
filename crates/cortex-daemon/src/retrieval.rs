@@ -333,10 +333,32 @@ fn prompt_task(event: &Event, holdout_share: f64) -> (Ulid, bool) {
     (task_id, is_held_out(task_id, holdout_share))
 }
 
+/// The open task an answer to `event` belongs to: its session's, or for a subagent's event the
+/// open task of the session that started it, as the event names it or else as the store keeps
+/// it. A subagent works in its parent's task: the recorder counts its events there, and its
+/// answers follow that task, held out with it.
+///
+/// # Errors
+///
+/// The store's errors.
+pub(crate) fn open_task_of(
+    queries: Queries<'_>,
+    event: &Event,
+) -> Result<Option<TaskRow>, StoreError> {
+    let owner = match &event.parent_session_id {
+        Some(parent) => parent.clone(),
+        None => queries
+            .session(&event.session_id)?
+            .and_then(|stored| stored.record.parent_session_id)
+            .unwrap_or_else(|| event.session_id.clone()),
+    };
+    queries.open_task(&owner)
+}
+
 /// The task the answer to `event` belongs to, and whether it is held out at `holdout_share`. A
 /// prompt starts a task of its own ([`prompt_task`]), whatever its session's previous task was:
-/// the writer records it only after the answer. Any other event belongs to its session's open
-/// task, if it has one.
+/// the writer records it only after the answer. Any other event belongs to the open task
+/// [`open_task_of`] finds, if there is one.
 ///
 /// # Errors
 ///
@@ -350,7 +372,7 @@ pub(crate) fn task_of_answer(
         let (task_id, is_holdout) = prompt_task(event, holdout_share);
         return Ok((Some(task_id), is_holdout));
     }
-    let task = queries.open_task(&event.session_id)?;
+    let task = open_task_of(queries, event)?;
     let is_holdout = task
         .as_ref()
         .is_some_and(|task| held_out(task, holdout_share));

@@ -16,7 +16,7 @@ use cortex_index::{Extractor, open_regular};
 use cortex_retrieve::{EditQuery, edit_facts, task_so_far, warnings_after_edit};
 use cortex_store::{FileRecord, FileRow, Queries, StoreError, SymbolId, TaskRow};
 
-use super::{Answer, Coordination, Service, mode_of};
+use super::{Answer, Coordination, Service, mode_of, open_task_of};
 use crate::claim::Claim;
 use crate::given::{Given, text_record};
 use crate::signatures::Signatures;
@@ -43,7 +43,7 @@ impl Service {
             let Some(mode) = mode_of(queries)? else {
                 return Ok(Answer::default());
             };
-            let task = queries.open_task(&event.session_id)?;
+            let task = open_task_of(queries, event)?;
             let row = queries.file(path)?;
             let drifted = match (&task, &row) {
                 (Some(task), Some(row)) => {

@@ -541,3 +541,39 @@ fn a_task_left_unfinished_is_handed_to_the_next_session() -> TestResult {
     );
     Ok(())
 }
+
+/// Claude Code starts a task and its subagent edits `calc/ops.py`, with the parent named by `<session>/<agent>`.
+fn subagent_edits_ops(repo: &Path, home: &Path) -> TestResult<Option<String>> {
+    given(
+        "claude",
+        &prompt_in(repo, S1, "Make divide return true division.")?,
+        home,
+    )?;
+    let parent = Identifier::new(S1)?;
+    wait_for(|| read(repo, |queries| Ok(queries.open_task(&parent)?.is_some())))?;
+    std::fs::write(repo.join("calc/ops.py"), OPS_FIXED)?;
+    let mut edit = captured("post-tool-use-edit.json", repo)?;
+    edit["agent_id"] = Value::from("worker1");
+    edit["agent_type"] = Value::from("general-purpose");
+    given("claude", &edit, home)
+}
+
+/// A subagent works in the task of the session that started it: its edit of `calc/ops.py` names
+/// the file's tests, as the parent's own edit would.
+#[test]
+fn a_subagent_s_edit_is_answered_in_its_parent_s_task() -> TestResult {
+    let (home, repo, _daemon) = started(0)?;
+    assert_eq!(
+        subagent_edits_ops(&repo, home.path())?,
+        Some("[cortex] Tests for calc/ops.py: tests/test_ops.py\n".to_owned())
+    );
+    Ok(())
+}
+
+/// Every task held out: the subagent's edit is held out with its parent's task and told nothing.
+#[test]
+fn a_subagent_is_held_out_with_its_parent() -> TestResult {
+    let (home, repo, _daemon) = started(1)?;
+    assert_eq!(subagent_edits_ops(&repo, home.path())?, None);
+    Ok(())
+}
