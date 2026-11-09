@@ -7,11 +7,10 @@
 //! when, is decided by the learner; the store keeps what it is told and refuses what it can never
 //! hold (text too long, blank or not plain, no anchor).
 
-use std::collections::BTreeMap;
-
 use cortex_core::{FactKind, FactSource, FactStatus, MAX_FACT_CHARS, ShortHash, Ulid, is_plain};
 use rusqlite::{Connection, OptionalExtension};
 
+use crate::anchors::anchor;
 use crate::error::{StoreError, sqlite};
 use crate::ids::{FactId, NodeId};
 use crate::queries::{Queries, json_array};
@@ -296,36 +295,6 @@ impl Queries<'_> {
             .next())
     }
 
-    /// Each of `nodes` that is a file or a symbol, named as a note names an anchor: the file's
-    /// path, and for a symbol `:` and its qualified name. A node that is gone, or neither, is left
-    /// out.
-    ///
-    /// # Errors
-    ///
-    /// SQLite errors.
-    pub fn anchor_names(self, nodes: &[NodeId]) -> Result<BTreeMap<NodeId, String>, StoreError> {
-        let listed = json_array(nodes.iter().map(|node| node.get().to_string()));
-        let rows: Vec<(i64, String, Option<String>)> = self
-            .connection()
-            .prepare_cached(schema::ANCHOR_NAMES_OF)
-            .and_then(|mut statement| {
-                statement
-                    .query_map([listed], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-                    .collect::<Result<_, _>>()
-            })
-            .map_err(sqlite("naming anchors"))?;
-        Ok(rows
-            .into_iter()
-            .map(|(node, path, symbol)| {
-                let name = match symbol {
-                    Some(symbol) => format!("{path}:{symbol}"),
-                    None => path,
-                };
-                (NodeId(node), name)
-            })
-            .collect())
-    }
-
     /// The ids of the current candidate and active facts with an anchor whose node's hash is not
     /// the one kept, or that has none now (the node is gone, or its contents are not read), in
     /// id order.
@@ -349,29 +318,6 @@ impl Queries<'_> {
         at_ms: i64,
     ) -> Result<Vec<FactId>, StoreError> {
         self.fact_ids(schema::FACTS_WITH_STATUS_SINCE, (status.name(), at_ms))
-    }
-
-    /// The hash an anchor on each of `nodes` would keep now, in node order: the first 16 bytes of
-    /// a file's content hash, a symbol's body hash. A node with none (a folder, a file whose
-    /// contents are not read, a node that does not exist) is left out.
-    ///
-    /// # Errors
-    ///
-    /// SQLite errors, or a hash that is not what the store writes.
-    pub fn anchor_hashes(self, nodes: &[NodeId]) -> Result<Vec<FactAnchor>, StoreError> {
-        let listed = json_array(nodes.iter().map(|node| node.get().to_string()));
-        let rows: Vec<(i64, Vec<u8>)> = self
-            .connection()
-            .prepare_cached(schema::ANCHOR_HASHES_OF)
-            .and_then(|mut statement| {
-                statement
-                    .query_map([listed], |row| Ok((row.get(0)?, row.get(1)?)))?
-                    .collect::<Result<_, _>>()
-            })
-            .map_err(sqlite("reading anchor hashes"))?;
-        rows.into_iter()
-            .map(|(node, hash)| anchor(node, hash, "anchor_hashes.hash", node))
-            .collect()
     }
 
     /// The fact ids `sql` selects with `parameters`.
@@ -463,21 +409,4 @@ fn columns_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Columns> {
         row.get(10)?,
         row.get(11)?,
     ))
-}
-
-/// The anchor on `node` whose stored hash is `hash`, which must be 16 bytes; `column` of `row`
-/// is corrupt otherwise.
-fn anchor(
-    node: i64,
-    hash: Vec<u8>,
-    column: &'static str,
-    row: i64,
-) -> Result<FactAnchor, StoreError> {
-    let hash: [u8; 16] = hash
-        .try_into()
-        .map_err(|_| StoreError::Corrupt { column, row })?;
-    Ok(FactAnchor {
-        node: NodeId(node),
-        hash: ShortHash::from_bytes(hash),
-    })
 }

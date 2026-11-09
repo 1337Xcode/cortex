@@ -780,10 +780,12 @@ pub(crate) const FACTS_WITH_STATUS_SINCE: &str = "SELECT fact_id FROM facts \
      WHERE status = ?1 AND superseded_by IS NULL AND status_at <= ?2 ORDER BY fact_id";
 /// The id of fact ?1, when one has it.
 pub(crate) const FACT_ID_OF: &str = "SELECT fact_id FROM facts WHERE fact_id = ?1";
-/// Each node of the JSON list ?1 that is a file or a symbol in one, with the file's path and, for a
-/// symbol, its qualified name, in node order.
-pub(crate) const ANCHOR_NAMES_OF: &str = "SELECT n.node_id, COALESCE(f.path, sf.path), \
-     s.qual_name FROM nodes AS n \
+/// Each node of the JSON list ?1 that is a file or a symbol in one: the file's path and what the
+/// index holds for it, for a symbol its qualified name, and the hash an anchor on the node would
+/// keep now, looked up by node, in node order.
+pub(crate) const ANCHOR_STATES_OF: &str = "SELECT n.node_id, COALESCE(f.path, sf.path), \
+     COALESCE(f.content_hash, sf.content_hash), s.qual_name, \
+     (SELECT h.hash FROM anchor_hashes AS h WHERE h.node_id = n.node_id) FROM nodes AS n \
      LEFT JOIN files AS f ON n.kind = 'file' AND f.file_id = n.ref_id \
      LEFT JOIN symbols AS s ON n.kind = 'symbol' AND s.symbol_id = n.ref_id \
      LEFT JOIN files AS sf ON sf.file_id = s.file_id \
