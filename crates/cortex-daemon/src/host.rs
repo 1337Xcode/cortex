@@ -3,7 +3,9 @@
 //! what the tasks that end teach and the usage the stops' transcripts report, the huge mode crawl
 //! between them, and the idle stop. While the writer indexes or stores a mining, the work lets it
 //! in between its write transactions, and the events waiting and the edits due are recorded
-//! there; the tasks they end and the transcripts they name wait until the writer is free.
+//! there; the tasks they end and the transcripts they name wait until the writer is free. After
+//! every index the facts are reviewed, so a fact whose code the index found changed turns
+//! suspect.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -20,7 +22,7 @@ use cortex_index::{
     Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, OnChanged, index_paths,
     index_repository,
 };
-use cortex_learn::{Recorder, TaskState};
+use cortex_learn::{Recorder, TaskState, review_facts};
 use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, SymbolChange, WriteTx, Writer};
 
 use crate::given::{Given, Notices};
@@ -362,8 +364,28 @@ impl<'a> Host<'a> {
             index(root, &grammars, writer, &options)
         });
         self.recorder.index_done();
+        self.review_facts();
         self.snapshot.changed();
         indexed
+    }
+
+    /// Makes suspect, in a transaction of its own, the facts whose code changed or is gone, and
+    /// retires the facts suspect long enough. A review that fails is logged; the next index
+    /// reviews again, and a fact is checked against its code again whenever it is rendered.
+    fn review_facts(&mut self) {
+        let reviewed = self.writer.transaction().and_then(|mut transaction| {
+            let reviewed = review_facts(&mut transaction, now_ms())?;
+            transaction.commit()?;
+            Ok(reviewed)
+        });
+        match reviewed {
+            Ok(reviewed) => tracing::debug!(
+                suspected = reviewed.suspected.len(),
+                retired = reviewed.retired.len(),
+                "facts reviewed"
+            ),
+            Err(error) => tracing::warn!(error = %error, "facts could not be reviewed"),
+        }
     }
 
     /// Stores what the miner found in turns, with the pause of [`Host::with_pause`], and tells the
@@ -650,10 +672,11 @@ mod tests {
     use std::path::PathBuf;
 
     use cortex_core::{
-        Agent, ContentHash, EventKind, EventSource, FileContent, HookKind, Identifier, LineRange,
-        RepoId, TaskOutcome, ToolKind, ToolResult, ToolTarget, Ulid,
+        Agent, ContentHash, EventKind, EventSource, FactKind, FactSource, FactStatus, FileContent,
+        HookKind, Identifier, LineRange, RepoId, TaskOutcome, ToolKind, ToolResult, ToolTarget,
+        Ulid,
     };
-    use cortex_learn::{Commands, HOLD_MS};
+    use cortex_learn::{Asserted, Assertion, Commands, HOLD_MS, assert_fact};
     use cortex_store::{Pacer, WriterOptions};
 
     use super::*;
@@ -930,6 +953,54 @@ mod tests {
         let mut host = Host::new(root, grammars, (config, discover(config)), parts);
         host.index(&[])?;
         Ok(host)
+    }
+
+    /// A fact on `a.py` stays active through an index that finds `a.py` as it was, and turns
+    /// suspect at the index that finds it changed.
+    #[test]
+    fn an_index_that_changes_a_fact_s_file_makes_it_suspect() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (config, inbox) = (Config::default(), Inbox::default());
+        let snapshot = Snapshot::default();
+        let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
+        let path = RepoPath::new("a.py")?;
+        let mut transaction = host.writer.transaction()?;
+        let node = transaction
+            .queries()
+            .file_node_at(&path)?
+            .ok_or("a.py has no node")?;
+        let assertion = Assertion {
+            text: "a is one.",
+            kind: FactKind::Convention,
+            source: FactSource::User,
+            task: None,
+            nodes: &[node],
+        };
+        let Asserted::Added(fact) = assert_fact(&mut transaction, &assertion, 1)? else {
+            return Err("the fact was not added".into());
+        };
+        transaction.commit()?;
+        let status = |host: &Host<'_>| -> Result<FactStatus, Box<dyn std::error::Error>> {
+            Ok(host
+                .writer
+                .queries()
+                .fact(fact)?
+                .ok_or("no fact")?
+                .record
+                .status)
+        };
+        let changed = [path];
+        let index_a = |host: &mut Host<'_>| {
+            host.indexing(NonZeroUsize::MIN, |root, grammars, writer, options| {
+                index_paths(root, grammars, writer, options, &changed)
+            })
+        };
+        index_a(&mut host)?;
+        assert_eq!(status(&host)?, FactStatus::Active);
+        std::fs::write(root.path().join("a.py"), "a = 2\n")?;
+        index_a(&mut host)?;
+        assert_eq!(status(&host)?, FactStatus::Suspect);
+        Ok(())
     }
 
     /// The signature changes an index writes are kept before the index ends: an edit's warnings
