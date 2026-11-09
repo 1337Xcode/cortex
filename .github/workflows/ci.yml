@@ -1,21 +1,24 @@
-# Every push to main and every pull request runs the command a contributor runs, `cargo xtask
-# verify`, on each platform Cortex supports at once. Branch protection requires only the job named
+# Every pull request, every night that main moved, and any run started by hand runs the command a
+# contributor runs, `cargo xtask verify`, on each platform Cortex supports at once. A push to main
+# runs nothing: each batch pushed was verified locally first, and the nightly run covers the
+# platforms the local check cannot. Branch protection requires only the job named
 # `Check`, which passes when every other job passed or was skipped on purpose, so jobs can be added
 # or renamed without touching the branch rules.
 name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
-  # A newer push to the same pull request replaces the run; runs on main always finish.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # A newer push to the same pull request, or a newer run on main, replaces the run.
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -36,9 +39,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # A pull request that changes only prose skips the build. A push to main, a diff that cannot
-      # be read, any other file, or any file under a `tests/` folder (Markdown there is test input)
-      # runs everything.
+      # A pull request that changes only prose skips the build, and so does a nightly run when main
+      # has no commit from the last day. A run started by hand, a diff that cannot be read, any
+      # other file, or any file under a `tests/` folder (Markdown there is test input) runs
+      # everything.
       - id: paths
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
@@ -50,6 +54,9 @@ jobs:
               && ! printf '%s\n' "$files" | grep -qE '(^|/)tests/'; then
               code=false
             fi
+          fi
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && [ -z "$(git log -1 --since='25 hours ago' --format=%H)" ]; then
+            code=false
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
 

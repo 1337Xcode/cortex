@@ -1,18 +1,12 @@
 # Fuzzes the two parsers that read bytes Cortex does not control: an agent's hook payload and the
-# daemon's frames. A change to the targets or the crates they reach gets a short run with a fixed
-# seed, so the same commit always runs the same inputs; every night a longer run explores. A crash
-# keeps its input as an artifact, and `cargo +nightly fuzz run <target> <file>` replays it.
+# daemon's frames. A pull request changing the targets or the crates they reach gets a short run
+# with a fixed seed, so the same commit always runs the same inputs; every night a longer run
+# explores. A crash keeps its input as an artifact, and `cargo +nightly fuzz run <target> <file>`
+# replays it.
 name: Fuzz
 
 on:
   pull_request:
-    paths:
-      - "fuzz/**"
-      - "crates/cortex-core/**"
-      - "crates/cortex-hook/**"
-      - ".github/workflows/fuzz.yml"
-  push:
-    branches: [main]
     paths:
       - "fuzz/**"
       - "crates/cortex-core/**"
