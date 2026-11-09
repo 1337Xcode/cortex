@@ -379,7 +379,7 @@ mod tests {
             std::os::windows::ffi::OsStringExt::from_wide(&[u16::from(b'r'), 0xD800]);
         #[cfg(not(windows))]
         let root: std::ffi::OsString =
-            std::os::unix::ffi::OsStrExt::from_bytes(b"r\xff").to_owned();
+            <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"r\xff").to_owned();
         let context = Context {
             root: std::path::PathBuf::from(root),
             program: "cortex".to_owned(),
