@@ -144,6 +144,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
         ("post-tool-use-grep.json", &main),
         ("post-tool-use-grep-subagent.json", &main),
         ("subagent-stop.json", &subagent),
+        ("pre-compact-manual.json", &main),
         ("stop.json", &main),
     ] {
         let payload = payloads::as_session(CAPTURED, name, &repo, (S1, transcript))?;
@@ -199,6 +200,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             "subagents",
             "tool_calls",
             "outside_tool_calls",
+            "compactions_left_out",
             "primer_tokens",
             "injected_tokens"
         ]
@@ -211,6 +213,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
             json!(1),
             json!(2),
             json!(0),
+            json!(1),
             json!(PRIMER_TOKENS),
             json!(PRIMER_TOKENS)
         ]
@@ -256,7 +259,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     assert!(printed.status.success(), "{printed:?}");
     let text = String::from_utf8(printed.stdout)?;
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 9, "{text}");
+    assert_eq!(lines.len(), 10, "{text}");
     assert_eq!(
         lines[..4],
         [
@@ -300,6 +303,7 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
                  cache, 60,334 written to it), 927 output tokens, about $0.2368; 2 tool calls; \
                  {PRIMER_TOKENS} tokens injected by Cortex"
             ),
+            "  not in the total: 1 compaction, which the transcript does not record".to_owned(),
         ]
     );
 

@@ -154,6 +154,9 @@ pub(crate) const TOOL_CALLS_OUTSIDE_TASKS: &str = "SELECT count(*) FROM (SELECT 
      AND kind IN ('read', 'search', 'edit', 'shell', 'tool') \
      AND coalesce(json_extract(meta, '$.source'), 'hook') = 'hook' \
      GROUP BY ts, kind, path, CASE WHEN range_start IS NULL THEN rowid END)";
+/// How many times session ?1 compacted its conversation; its rows are found by their index.
+pub(crate) const COMPACTIONS_OF_SESSION: &str =
+    "SELECT count(*) FROM events WHERE session_id = ?1 AND kind = 'compact'";
 /// How many of the repository's tasks were held out from Cortex, and how many were not, among
 /// those decided.
 pub(crate) const HOLDOUT_ARMS: &str = "SELECT coalesce(sum(holdout = 1), 0), \

@@ -171,6 +171,7 @@ fn responses_add_up_by_task() -> TestResult {
         ],
         tool_calls: BTreeMap::from([(first.record.task_id, 4)]),
         outside_tool_calls: 2,
+        compactions: 0,
         injections: Vec::new(),
     };
     let receipt = receipt(&activity, Some(&prices));
@@ -257,6 +258,7 @@ fn without_prices_or_tasks_counts_stand_alone() -> TestResult {
         ],
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
+        compactions: 0,
         injections: Vec::new(),
     };
     let receipt = receipt(&activity, None);
@@ -280,11 +282,43 @@ fn an_agent_whose_transcripts_are_not_read_is_not_metered() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
+        compactions: 0,
         injections: Vec::new(),
     };
     let receipt = receipt(&activity, None);
     assert_eq!((receipt.agent, receipt.is_metered), ("cursor", false));
     assert_eq!(receipt.total, tally([0, 0, 0, 0, 0, 0], None));
+    Ok(())
+}
+
+/// Compactions are left out of the counts where the agent's transcripts do not record their
+/// calls: both of a Claude Code session's two, none of a Codex session's two, whose rollouts count
+/// them, and none of a Cursor session's, whose usage is not read at all.
+#[test]
+fn compactions_a_transcript_does_not_record_are_left_out() -> TestResult {
+    let left_out = |agent: Agent| -> TestResult<u64> {
+        let mut session = session()?;
+        session.record.agent = agent;
+        let activity = Activity {
+            session,
+            subagents: 0,
+            tasks: Vec::new(),
+            usage: Vec::new(),
+            tool_calls: BTreeMap::new(),
+            outside_tool_calls: 0,
+            compactions: 2,
+            injections: Vec::new(),
+        };
+        Ok(receipt(&activity, None).compactions_left_out)
+    };
+    assert_eq!(
+        [
+            left_out(Agent::Claude)?,
+            left_out(Agent::Codex)?,
+            left_out(Agent::Cursor)?
+        ],
+        [2, 0, 0]
+    );
     Ok(())
 }
 
@@ -309,6 +343,7 @@ fn arms_are_shown_and_counted_as_decided() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
+        compactions: 0,
         injections: Vec::new(),
     };
     let shown: Vec<Option<bool>> = receipt(&activity, None)
@@ -370,6 +405,7 @@ fn only_what_reached_the_agent_counts_as_injected() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
+        compactions: 0,
         injections,
     };
     let receipt = receipt(&activity, None);
@@ -420,6 +456,7 @@ fn every_text_a_task_was_given_counts() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
+        compactions: 0,
         injections,
     };
     let receipt = receipt(&activity, None);

@@ -261,7 +261,8 @@ fn sessions(queries: Queries<'_>, args: &Args) -> anyhow::Result<Vec<SessionRow>
 }
 
 /// What `session` did: its tasks, its responses and its subagents', each task's tool calls, the
-/// calls it and its subagents made while it had no task, and what Cortex gave it.
+/// calls it and its subagents made while it had no task, their compactions, and what Cortex gave
+/// it.
 ///
 /// # Errors
 ///
@@ -273,11 +274,14 @@ fn activity(queries: Queries<'_>, session: SessionRow) -> anyhow::Result<Activit
     let subagents = queries.sessions_started_by(id).with_context(reading)?;
     let mut usage = queries.usage_of_session(id).with_context(reading)?;
     let mut outside_tool_calls = queries.tool_calls_outside_tasks(id).with_context(reading)?;
+    let mut compactions = queries.compactions_of_session(id).with_context(reading)?;
     for subagent in &subagents {
         let subagent = &subagent.record.session_id;
         usage.extend(queries.usage_of_session(subagent).with_context(reading)?);
         let calls = queries.tool_calls_outside_tasks(subagent);
         outside_tool_calls = outside_tool_calls.saturating_add(calls.with_context(reading)?);
+        let compacted = queries.compactions_of_session(subagent);
+        compactions = compactions.saturating_add(compacted.with_context(reading)?);
     }
     let task_ids: Vec<Ulid> = tasks.iter().map(|task| task.record.task_id).collect();
     let tool_calls = queries
@@ -296,6 +300,7 @@ fn activity(queries: Queries<'_>, session: SessionRow) -> anyhow::Result<Activit
         usage,
         tool_calls,
         outside_tool_calls,
+        compactions,
         injections,
     })
 }

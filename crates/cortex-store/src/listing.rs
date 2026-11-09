@@ -1,6 +1,7 @@
 //! Lists of what agents did, as receipts read them: the sessions that started in a span of time,
 //! the subagents a session started, a session's tasks, how many tool calls each task made and each
-//! session made outside its tasks, and how many tasks were held out from Cortex.
+//! session made outside its tasks, how many times a session compacted, and how many tasks were held
+//! out from Cortex.
 
 use std::collections::BTreeMap;
 
@@ -100,6 +101,24 @@ impl Queries<'_> {
         u64::try_from(calls).map_err(|_| StoreError::Corrupt {
             column: "events.task_id",
             row: calls,
+        })
+    }
+
+    /// How many times `session_id` compacted its conversation, by the compactions its agent's
+    /// hooks reported before each began.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and a count that is not one.
+    pub fn compactions_of_session(self, session_id: &Identifier) -> Result<u64, StoreError> {
+        let compactions: i64 = self
+            .connection()
+            .prepare_cached(schema::COMPACTIONS_OF_SESSION)
+            .and_then(|mut statement| statement.query_row([session_id.as_str()], |row| row.get(0)))
+            .map_err(sqlite("counting compactions"))?;
+        u64::try_from(compactions).map_err(|_| StoreError::Corrupt {
+            column: "events.kind",
+            row: compactions,
         })
     }
 

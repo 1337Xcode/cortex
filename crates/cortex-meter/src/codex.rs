@@ -69,6 +69,11 @@ impl TranscriptFormat for Codex {
             service: Service::default(),
         })
     }
+
+    fn records_compaction(&self) -> bool {
+        // Codex writes a token count for the compaction call's response as for any other.
+        true
+    }
 }
 
 /// The fields of a rollout line a response or a model is read from; every other field is ignored.

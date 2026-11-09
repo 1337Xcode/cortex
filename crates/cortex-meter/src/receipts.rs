@@ -81,6 +81,9 @@ pub struct Activity {
     pub tool_calls: BTreeMap<Ulid, u64>,
     /// How many tool calls the session and its subagents made while it had no task.
     pub outside_tool_calls: u64,
+    /// How many times the session and its subagents compacted their conversations, as their hooks
+    /// reported it.
+    pub compactions: u64,
     /// What Cortex gave the session's agent or weighed for it: its primers, its prompts' work
     /// orders, and the warnings, read hints, recaps and stop reasons its tasks were given, whether
     /// they reached the agent or not.
@@ -115,6 +118,10 @@ pub struct SessionReceipt {
     pub outside_tool_calls: u64,
     /// Every response of the session and its subagents.
     pub total: Tally,
+    /// How many compactions the session and its subagents ran whose calls their agent's
+    /// transcripts do not record, so that no tally counts them; none when the transcripts record
+    /// them or are not read.
+    pub compactions_left_out: u64,
     /// The tokens of the primers that reached the agent at the session's starts.
     pub primer_tokens: u64,
     /// Every token Cortex added to the session's context that reached the agent: its primers, and
@@ -199,10 +206,12 @@ pub fn receipt(activity: &Activity, prices: Option<&PriceTable>) -> SessionRecei
         .map(|(task, usage)| task_receipt(task, usage, &activity.tool_calls, &delivered))
         .collect();
     let session = &activity.session;
+    let format = format_of(session.record.agent);
+    let leaves_out_compaction = format.is_some_and(|format| !format.records_compaction());
     SessionReceipt {
         session_id: session.record.session_id.clone(),
         agent: session.record.agent.name(),
-        is_metered: format_of(session.record.agent).is_some(),
+        is_metered: format.is_some(),
         started_at_ms: session.record.started_at_ms,
         ended_at_ms: session.ended_at_ms,
         status: session.status.name(),
@@ -215,6 +224,11 @@ pub fn receipt(activity: &Activity, prices: Option<&PriceTable>) -> SessionRecei
         outside_tasks,
         outside_tool_calls: activity.outside_tool_calls,
         total,
+        compactions_left_out: if leaves_out_compaction {
+            activity.compactions
+        } else {
+            0
+        },
         primer_tokens: delivered.primers,
         injected_tokens: delivered.all,
     }

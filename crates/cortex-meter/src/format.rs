@@ -21,6 +21,10 @@ pub trait TranscriptFormat: Sync {
     /// where the environment, read with `variable`, moves them. A transcript named anywhere else
     /// is not the agent's.
     fn folders(&self, home: &Path, variable: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf>;
+
+    /// Whether a transcript records the model call that compacts its session's conversation.
+    /// When it does not, the usage read from it leaves each such call out.
+    fn records_compaction(&self) -> bool;
 }
 
 /// What earlier lines of a transcript said that a later line's response needs.

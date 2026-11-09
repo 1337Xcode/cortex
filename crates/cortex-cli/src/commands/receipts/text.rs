@@ -1,6 +1,7 @@
 //! The receipts as lines of text: what the costs were estimated from, how far the held-out tasks
 //! are from being enough to compare with the rest, how precise the work orders given were, then
-//! each session with its primers, its tasks, the work outside any task, and its total.
+//! each session with its primers, its tasks, the work outside any task, its total, and the
+//! compactions its total leaves out.
 
 use std::path::Path;
 
@@ -172,8 +173,9 @@ fn warning_line(precision: Precision) -> String {
     }
 }
 
-/// The lines of one session: itself, each task, the work outside any task, and its total. A
-/// session whose agent is not metered leaves usage out of every line, as Cortex reads none.
+/// The lines of one session: itself, each task, the work outside any task, its total, and the
+/// compactions the total leaves out. A session whose agent is not metered leaves usage out of
+/// every line, as Cortex reads none.
 fn session_lines(session: &SessionReceipt) -> Vec<String> {
     let usage = |tally: &Tally| session.is_metered.then(|| usage(tally));
     let mut lines = vec![format!(
@@ -211,6 +213,12 @@ fn session_lines(session: &SessionReceipt) -> Vec<String> {
         ),
     ];
     lines.push(format!("  total: {}", joined(usage(&session.total), rest)));
+    if session.compactions_left_out > 0 {
+        lines.push(format!(
+            "  not in the total: {}, which the transcript does not record",
+            counted(session.compactions_left_out, "compaction", "compactions")
+        ));
+    }
     lines
 }
 
@@ -496,6 +504,7 @@ mod tests {
             outside_tasks: nothing.clone(),
             outside_tool_calls: 1,
             total: nothing,
+            compactions_left_out: 0,
             primer_tokens: 0,
             injected_tokens: 0,
         };
@@ -512,16 +521,17 @@ mod tests {
         let claude = SessionReceipt {
             agent: "claude",
             is_metered: true,
+            compactions_left_out: 1,
             ..codex
         };
         let said = session_lines(&claude);
         assert_eq!(
-            said.get(2).map(String::as_str),
-            Some("  outside any task: no usage recorded; 1 tool call")
-        );
-        assert_eq!(
-            said.get(3).map(String::as_str),
-            Some("  total: no usage recorded; 3 tool calls; 0 tokens injected by Cortex")
+            said[2..],
+            [
+                "  outside any task: no usage recorded; 1 tool call",
+                "  total: no usage recorded; 3 tool calls; 0 tokens injected by Cortex",
+                "  not in the total: 1 compaction, which the transcript does not record",
+            ]
         );
         Ok(())
     }

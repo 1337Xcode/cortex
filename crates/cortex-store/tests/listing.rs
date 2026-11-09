@@ -1,5 +1,6 @@
 //! The lists receipts read: sessions by start, a session's subagents and tasks, the tool calls
-//! each task made and each session made outside its tasks, and the arms of the held-out tasks.
+//! each task made and each session made outside its tasks, a session's compactions, and the arms
+//! of the held-out tasks.
 
 mod common;
 
@@ -229,6 +230,45 @@ fn tool_calls_count_each_report_once() -> TestResult {
     assert!(queries.tool_calls_of_tasks(&[])?.is_empty());
     assert_eq!(queries.tool_calls_outside_tasks(&name("s1")?)?, 2);
     assert_eq!(queries.tool_calls_outside_tasks(&name("s1/agent-1")?)?, 0);
+    Ok(())
+}
+
+/// A session's compactions are its own compact rows, in a task or outside one: two for `s1`,
+/// whose read and prompt are not compactions, one for its subagent, none for `s2`.
+#[test]
+fn compactions_count_a_session_s_own() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let tasks = [task(b"first", "s1", 100)?];
+    let first = tasks[0].task_id;
+    let mut transaction = writer.transaction()?;
+    transaction.record_session(&session("s1", None, 50)?)?;
+    transaction.record_session(&session("s1/agent-1", Some("s1"), 60)?)?;
+    transaction.record_session(&session("s2", None, 70)?)?;
+    append(
+        &mut transaction,
+        &tasks,
+        &[
+            EventRecord {
+                task_id: None,
+                ..event(first, 80, EventKind::Compact, None)?
+            },
+            event(first, 110, EventKind::Prompt, None)?,
+            event(first, 120, EventKind::Read, Some(("src/lib.rs", None)))?,
+            event(first, 130, EventKind::Compact, None)?,
+            EventRecord {
+                session_id: Some(name("s1/agent-1")?),
+                ..event(first, 140, EventKind::Compact, None)?
+            },
+        ],
+    )?;
+    transaction.commit()?;
+    let queries = writer.queries();
+    let count = |id: &str| -> TestResult<u64> { Ok(queries.compactions_of_session(&name(id)?)?) };
+    assert_eq!(
+        [count("s1")?, count("s1/agent-1")?, count("s2")?],
+        [2, 1, 0]
+    );
     Ok(())
 }
 

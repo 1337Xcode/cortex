@@ -59,6 +59,12 @@ impl TranscriptFormat for Claude {
             service: usage.service(),
         })
     }
+
+    fn records_compaction(&self) -> bool {
+        // The call that summarizes a session at a compaction writes no line: Claude Code's own
+        // cost total, read after a `/compact`, exceeds the transcript's sum by that one call.
+        false
+    }
 }
 
 /// The fields of a transcript line a response is read from; every other field is ignored.
