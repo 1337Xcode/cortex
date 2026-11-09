@@ -14,6 +14,7 @@ mod status;
 mod uninstall;
 mod version;
 mod where_;
+mod why;
 
 use clap::Subcommand;
 
@@ -37,6 +38,9 @@ pub(crate) enum Command {
     /// Show the code the retrieval engine finds for a question, with its reasons and what the
     /// gate would say.
     Where(where_::Args),
+    /// Show why code is where it is: its links, the rules about it, who works on it now and its
+    /// open warnings.
+    Why(why::Args),
     /// Serve Cortex's MCP tools on stdio (started by the agent).
     Mcp(mcp::Args),
     /// Note a project rule about files or symbols, given to agents working on them.
@@ -60,6 +64,7 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Uninstall(args) => uninstall::run(&args),
         Command::Receipts(args) => receipts::run(&args),
         Command::Where(args) => where_::run(&args),
+        Command::Why(args) => why::run(&args),
         Command::Mcp(args) => mcp::run(&args),
         Command::Note(args) => note::run(&args),
         Command::Facts(args) => facts::run(&args),

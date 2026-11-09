@@ -277,7 +277,7 @@ fn indexing() -> StatusReport {
 }
 
 /// The kind of each request, for comparing: `hello`, `event`, `retrieve`, `primer`, `post_edit`,
-/// `read_hint`, `stop_reason`, `where`, `note`, `facts`, `status` or `shutdown`.
+/// `read_hint`, `stop_reason`, `where`, `why`, `note`, `facts`, `status` or `shutdown`.
 pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
     requests
         .iter()
@@ -290,6 +290,7 @@ pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
             RequestBody::ReadHint { .. } => "read_hint",
             RequestBody::StopReason { .. } => "stop_reason",
             RequestBody::Where { .. } => "where",
+            RequestBody::Why { .. } => "why",
             RequestBody::Note(_) => "note",
             RequestBody::Facts(_) => "facts",
             RequestBody::Status => "status",

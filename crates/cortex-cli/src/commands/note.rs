@@ -81,20 +81,36 @@ pub(crate) fn anchor_of(root: &Path, given: &str) -> anyhow::Result<String> {
         }
         return Ok(".".to_owned());
     }
-    let (file, symbol) = match given.rsplit_once(':') {
+    match file_target(root, given) {
+        Some(anchor) => anchor,
+        None => bail!("{given}: a fact is about a file, or a symbol in one, and this is neither"),
+    }
+}
+
+/// `given` as the daemon reads it when it names a file inside the repository at `root`: the
+/// file's repository path, and what follows the file's name after a `:` (a symbol or a line). The
+/// file is a path from the current folder, `given` whole when it is a file, else up to its last
+/// `:`. None when `given` names no file that way.
+///
+/// # Errors
+///
+/// Inside the option: a file outside the repository, or one that cannot be found again.
+pub(crate) fn file_target(root: &Path, given: &str) -> Option<anyhow::Result<String>> {
+    let (file, rest) = match given.rsplit_once(':') {
         _ if Path::new(given).is_file() => (given, None),
-        Some((file, symbol)) if !symbol.is_empty() && Path::new(file).is_file() => {
-            (file, Some(symbol))
-        }
-        _ => bail!("{given}: a fact is about a file, or a symbol in one, and this is neither"),
+        Some((file, rest)) if !rest.is_empty() && Path::new(file).is_file() => (file, Some(rest)),
+        _ => return None,
     };
-    let full = std::fs::canonicalize(file).with_context(|| format!("finding {file}"))?;
-    let path = RepoPath::from_native(root, &full)
-        .with_context(|| format!("{file} is not inside the repository"))?;
-    Ok(match symbol {
-        Some(symbol) => format!("{}:{symbol}", path.as_str()),
-        None => path.as_str().to_owned(),
-    })
+    let in_repository = || -> anyhow::Result<String> {
+        let full = std::fs::canonicalize(file).with_context(|| format!("finding {file}"))?;
+        let path = RepoPath::from_native(root, &full)
+            .with_context(|| format!("{file} is not inside the repository"))?;
+        Ok(match rest {
+            Some(rest) => format!("{}:{rest}", path.as_str()),
+            None => path.as_str().to_owned(),
+        })
+    };
+    Some(in_repository())
 }
 
 /// A fact kind from its name.

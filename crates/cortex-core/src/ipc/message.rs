@@ -96,6 +96,13 @@ pub enum RequestBody {
         /// The most files to name, from 1 to 5.
         limit: u8,
     },
+    /// Answer why a file or a symbol is where it is, as `cortex why` asks: what its file is linked
+    /// to and how strongly, the facts about it, the sessions on its file now and the warnings
+    /// about it (protocol 8.0 added it).
+    Why {
+        /// A repository path, that path and `:line` or `:symbol`, or a symbol's name.
+        target: String,
+    },
     /// Note a fact of the user's, and answer with what became of it (protocol 6.0 added it).
     Note(Note),
     /// List the facts, or carry the user's word on one, and answer with the outcome (protocol 6.0

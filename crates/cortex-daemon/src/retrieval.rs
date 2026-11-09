@@ -18,6 +18,7 @@ mod hints;
 mod recap;
 mod stop;
 mod warnings;
+mod why;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};

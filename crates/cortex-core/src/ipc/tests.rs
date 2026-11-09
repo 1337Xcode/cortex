@@ -322,6 +322,18 @@ fn text_requests_and_replies_read_back() -> TestResult {
         )
     );
     assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, ask);
+    let why = Request {
+        request_id: 3,
+        body: RequestBody::Why {
+            target: "calc/ops.py:12".to_owned(),
+        },
+    };
+    let frame = encode(&why)?;
+    assert_eq!(
+        frame.get(LENGTH_PREFIX_BYTES..),
+        Some(r#"{"request_id":3,"body":{"type":"why","target":"calc/ops.py:12"}}"#.as_bytes())
+    );
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, why);
     for text in [Some("[cortex] Work order".to_owned()), None] {
         let reply = Response {
             request_id: 2,

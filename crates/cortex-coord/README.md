@@ -30,6 +30,8 @@ told. The daemon asks these rules and gives the text in each agent's own hooks.
   positions, each session's last event and the edited node's links.
 - `to_editor`, `to_holder`, `Notice`: what each side is told, with its subject, so that one
   happening told from either side, or in other words, is told to a session once.
+- `ago`: how long ago something happened, in whole minutes or hours, as text an agent reads says
+  it.
 
 ## Tests
 

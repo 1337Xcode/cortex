@@ -1,6 +1,7 @@
-//! `cortex where` through the binary: what the engine finds for a question, as the daemon writes
-//! it; what it says when there is nothing to show, before the daemon's graph and after; and that a
-//! question the daemon could not answer fails the command.
+//! `cortex where` and `cortex why` through the binary: what the engine finds for a question, as
+//! the daemon writes it; what it says when there is nothing to show, before the daemon's graph and
+//! after; that a question the daemon could not answer fails the command; and why code is where it
+//! is, or the daemon's refusal of a target that names nothing.
 
 mod common;
 
@@ -9,7 +10,7 @@ use std::process::{Command, Output};
 
 use common::fake_daemon::{FakeDaemon, Script, kinds};
 use common::git::{commit, git};
-use common::{Daemon, TestResult, graph_of, isolate, wait_for};
+use common::{Daemon, Printed, TestResult, graph_of, isolate, printed, wait_for};
 use cortex_core::{RepoId, canonical_root};
 use cortex_store::{Writer, WriterOptions};
 
@@ -161,6 +162,51 @@ fn a_limit_outside_one_to_five_is_refused() -> TestResult {
         let output = cortex_where(repo.path(), home.path(), &[QUESTION, "--limit", limit])?;
         assert_eq!(output.status.code(), Some(2), "{limit}: {output:?}");
     }
+    Ok(())
+}
+
+/// Runs `cortex` with `args` from the folder `cwd`, `home` being the home folder.
+fn cortex_in(cwd: &Path, home: &Path, args: &[&str]) -> TestResult<Printed> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command.args(args).current_dir(cwd);
+    isolate(&mut command, home);
+    printed(&mut command, b"")
+}
+
+/// `cortex why`, worked by hand from [`repository`]: both commits changed the service and the
+/// model together, so each changed with the other in 2 of its 2 commits, a confidence of 1.00; no
+/// reference ties them and no task has run, so nothing else links them. A rule noted on
+/// `create_order` is a fact about it. Asked of `service.py:2` from the service's own folder, the
+/// target is `create_order` (lines 1 to 3), and the answer names the model and the rule. A name
+/// nothing has is refused: the command fails with the daemon's words and prints nothing else.
+#[test]
+fn why_names_what_code_is_linked_to_and_the_rules_about_it() -> TestResult {
+    let (repo, home, _daemon) = repository(None)?;
+    let (root, home) = (repo.path(), home.path());
+    let rule = "Orders are summed in cents.";
+    let at = "src/orders/service.py:create_order";
+    let noted = cortex_in(root, home, &["note", rule, "--at", at])?;
+    assert_eq!(noted.stdout, "fact 1 added\n", "{}", noted.stderr);
+    let root_text = root.to_str().ok_or("a root that is not text")?;
+    let why = ["why", "service.py:2", "--root", root_text];
+    let answer = cortex_in(&root.join("src/orders"), home, &why)?;
+    assert!(answer.is_success, "{}", answer.stderr);
+    assert_eq!(answer.stderr, "");
+    assert_eq!(
+        answer.stdout,
+        format!(
+            "[cortex] Why · {at} · what is known of its file, its own facts first\n\
+             Changed together in history:\n  - src/orders/model.py (1.00)\n\
+             Project facts:\n  - {rule} (anchored to {at})\n"
+        )
+    );
+    let refused = cortex_in(root, home, &["why", "refund"])?;
+    assert!(!refused.is_success, "{}", refused.stdout);
+    assert_eq!(refused.stdout, "");
+    assert_eq!(
+        refused.stderr,
+        "cortex: error: refund names no file or symbol Cortex indexes\n"
+    );
     Ok(())
 }
 

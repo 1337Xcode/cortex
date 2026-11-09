@@ -17,7 +17,7 @@ use cortex_core::ipc::{
     Response, ResponseBody, StatusReport, Welcome, body_len, decode, encode,
 };
 use cortex_core::{Event, HookKind};
-use cortex_retrieve::Graph;
+use cortex_retrieve::{Graph, Why};
 use cortex_store::NodeId;
 use interprocess::local_socket::tokio::{Listener, Stream};
 use interprocess::local_socket::traits::tokio::Listener as _;
@@ -380,6 +380,7 @@ impl Server {
                 (answered.body, answered.hook)
             }
             RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
+            RequestBody::Why { target } => (self.explain(target).await, None),
             RequestBody::Note(note) => (self.ask_writer(FactsRequest::Note(note)).await, None),
             RequestBody::Facts(ask) => (self.ask_writer(FactsRequest::Ask(ask)).await, None),
             RequestBody::Event { event } => {
@@ -624,6 +625,29 @@ impl Server {
                 tracing::warn!(error = %message, "a question was not answered");
                 self.inbox
                     .note_error("a question was not answered", now_ms());
+                ResponseBody::Error { message }
+            }
+        }
+    }
+
+    /// Why `target` is where it is, as the store and the files on disk say now: the answer as text,
+    /// or why there is none as an error the asker reads.
+    async fn explain(&self, target: String) -> ResponseBody {
+        let now = now_ms();
+        let explained = self
+            .with_service(move |service, _, _| service.why(&target, now))
+            .await;
+        match explained {
+            Some(Ok(Why::Answer(text))) => ResponseBody::Reply {
+                text: Some(text),
+                to_user: None,
+            },
+            Some(Ok(Why::Refused(message))) => ResponseBody::Error { message },
+            None => error("the daemon is still starting: try again in a moment"),
+            Some(Err(failure)) => {
+                let message = format!("{failure:#}");
+                tracing::warn!(error = %message, "a why was not answered");
+                self.inbox.note_error("a why was not answered", now_ms());
                 ResponseBody::Error { message }
             }
         }
