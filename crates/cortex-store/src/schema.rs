@@ -87,10 +87,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 18,
         sql: include_str!("../migrations/0018_root_anchor.sql"),
     },
+    Migration {
+        version: 19,
+        sql: include_str!("../migrations/0019_facts_given.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 18;
+pub(crate) const SCHEMA_VERSION: u32 = 19;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -758,6 +762,12 @@ pub(crate) const FACT_ANCHOR_RESTAMP: &str =
 /// Marks fact ?1 superseded by fact ?2.
 pub(crate) const FACT_SUPERSEDE: &str =
     "UPDATE facts SET superseded_by = ?2 WHERE fact_id = ?1 AND superseded_by IS NULL";
+/// Records that task ?1 was given each fact in the JSON list ?2, once each.
+pub(crate) const FACTS_GIVEN_ADD: &str = "INSERT OR IGNORE INTO facts_given (task_id, fact_id) \
+     SELECT ?1, value FROM json_each(?2)";
+/// The facts task ?1 was given, in id order.
+pub(crate) const FACTS_GIVEN_IN_TASK: &str =
+    "SELECT fact_id FROM facts_given WHERE task_id = ?1 ORDER BY fact_id";
 /// Counts one more use of each fact in the JSON list ?1.
 pub(crate) const FACT_COUNT_USES: &str =
     "UPDATE facts SET uses = uses + 1 WHERE fact_id IN (SELECT value FROM json_each(?1))";
@@ -1255,9 +1265,13 @@ mod tests {
         Ok(())
     }
 
-    /// The fact tables, column by column: facts and their anchors.
-    fn expected_fact_columns() -> [(&'static str, Vec<Column>); 2] {
+    /// The fact tables, column by column: facts, their anchors, and the facts each task was given.
+    fn expected_fact_columns() -> [(&'static str, Vec<Column>); 3] {
         [
+            (
+                "facts_given",
+                column_list(&[("task_id", "TEXT", 1), ("fact_id", "INTEGER", 2)]),
+            ),
             (
                 "facts",
                 column_list(&[
@@ -1581,6 +1595,7 @@ mod tests {
                 "events",
                 "fact_anchors",
                 "facts",
+                "facts_given",
                 "file_commits",
                 "files",
                 "git_state",

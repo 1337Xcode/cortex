@@ -166,7 +166,9 @@ fn current_facts_are_read_with_their_anchors() -> TestResult {
     Ok(())
 }
 
-/// A use is counted once a fact is injected: twice for fact 1, once for fact 2. Made suspect at
+/// A use is counted once a fact is injected, once a giving however often it is listed: twice for
+/// fact 1 (given in a task, then outside one), once for fact 2; the task was given both, each once,
+/// and another task none. Made suspect at
 /// 10 and again at 11, its confirmation stays at its making (1), its status dates from 11 and it
 /// was active before; made active again at 20, it is confirmed at 20 and holds no earlier status.
 /// Suspect since 10 or before: none; since 11: fact 1.
@@ -178,8 +180,9 @@ fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
     let mut transaction = writer.transaction()?;
     let first = transaction.add_fact(&fact("Money is in cents.", FactSource::User, 1, &nodes))?;
     let second = transaction.add_fact(&fact("Tax rounds half up.", FactSource::User, 1, &nodes))?;
-    transaction.count_fact_uses(&[first, second])?;
-    transaction.count_fact_uses(&[first])?;
+    let task = Ulid::from_seed(5, b"task");
+    transaction.give_facts(Some(task), &[first, second, first])?;
+    transaction.give_facts(None, &[first])?;
     transaction.set_fact_status(first, FactStatus::Suspect, 10)?;
     transaction.set_fact_status(first, FactStatus::Suspect, 11)?;
     transaction.commit()?;
@@ -189,6 +192,9 @@ fn uses_are_counted_and_a_confirmation_stamped() -> TestResult {
     };
     assert_eq!(before(first)?, Some(FactStatus::Active));
     assert_eq!(read(&writer, second)?, (1, FactStatus::Active, 1));
+    assert_eq!(writer.queries().facts_given_in(task)?, [first, second]);
+    let other_task = Ulid::from_seed(6, b"task");
+    assert_eq!(writer.queries().facts_given_in(other_task)?, []);
     let status_at =
         |id| -> TestResult<i64> { Ok(writer.queries().fact(id)?.ok_or("a fact")?.status_at_ms) };
     assert_eq!((status_at(first)?, status_at(second)?), (11, 1));

@@ -196,7 +196,7 @@ impl Service {
                 && !is_holdout
                 && !rendered.facts.is_empty()
             {
-                given.push(Given::Facts(rendered.facts.clone()));
+                given.push(Given::Facts(Some(task_id), rendered.facts.clone()));
             }
             // A held-out task gets no handoff either: it stays open for the next session.
             let handoff = if is_holdout {

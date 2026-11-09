@@ -778,7 +778,7 @@ mod tests {
     fn injected_at(given: &Given) -> Option<i64> {
         match given {
             Given::Injection(injection) => Some(injection.at_ms),
-            Given::Warnings(..) | Given::Notices(_) | Given::Handoff(..) | Given::Facts(_) => None,
+            Given::Warnings(..) | Given::Notices(_) | Given::Handoff(..) | Given::Facts(..) => None,
         }
     }
 

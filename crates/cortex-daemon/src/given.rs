@@ -23,9 +23,9 @@ pub(crate) enum Given {
     /// record of its text. Recorded only once the text reached the agent, which closes that
     /// handoff and no other.
     Handoff(HandoffId, Identifier, InjectionRecord),
-    /// The project facts a work order carried, each counted as used once the text reached the
-    /// agent.
-    Facts(Vec<FactId>),
+    /// The project facts a work order carried in a task, each counted as used, and kept as given
+    /// in the task, once the text reached the agent.
+    Facts(Option<Ulid>, Vec<FactId>),
 }
 
 /// What one answer did with coordination notices: those it gave and those it queued.
@@ -56,7 +56,7 @@ impl Given {
                 "an answer's coordination notices were not recorded: too many waited"
             }
             Self::Handoff(..) => "a handoff given was not recorded: too many waited",
-            Self::Facts(_) => "the facts a work order gave were not counted: too many waited",
+            Self::Facts(..) => "the facts a work order gave were not counted: too many waited",
         }
     }
 }
@@ -118,8 +118,8 @@ pub(crate) fn recorded(
         Given::Handoff(handoff, by, text) if reached => Some(Given::Handoff(handoff, by, text)),
         Given::Handoff(..) => None,
         // A fact counts as used only when the text that carried it reached the agent.
-        Given::Facts(facts) if reached => Some(Given::Facts(facts)),
-        Given::Facts(_) => None,
+        Given::Facts(task, facts) if reached => Some(Given::Facts(task, facts)),
+        Given::Facts(..) => None,
         Given::Notices(notices) if reached => Some(Given::Notices(notices)),
         // Nothing given reached the agent: what was given waits again, and only what was queued
         // for the other sessions stands.
@@ -305,7 +305,7 @@ mod tests {
             }],
         })?;
         transaction.commit()?;
-        let given = || Given::Facts(vec![fact]);
+        let given = || Given::Facts(Some(Ulid::from_seed(1, b"task")), vec![fact]);
         assert_eq!(recorded(given(), true, true, false), Some(given()));
         assert_eq!(recorded(given(), true, true, true), None);
         assert_eq!(recorded(given(), true, false, false), None);

@@ -553,13 +553,14 @@ impl WriteTx<'_> {
         self.atomically(|connection| facts::restamp(connection, id, anchors))
     }
 
-    /// Counts one injection of each of `ids`.
+    /// Counts one use of each of `ids`, given to an agent, and records that `task` was given them
+    /// when they were given in one.
     ///
     /// # Errors
     ///
     /// [`StoreError::TransactionLost`] and SQLite errors.
-    pub fn count_fact_uses(&mut self, ids: &[FactId]) -> Result<(), StoreError> {
-        self.atomically(|connection| facts::count_uses(connection, ids))
+    pub fn give_facts(&mut self, task: Option<Ulid>, ids: &[FactId]) -> Result<(), StoreError> {
+        self.atomically(|connection| facts::give(connection, task, ids))
     }
 
     /// Marks notice `id` delivered at `at_ms`. Whether it was waiting.

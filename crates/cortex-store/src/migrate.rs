@@ -702,7 +702,10 @@ mod tests {
     fn the_eighteenth_schema_anchors_the_root() -> Result<(), Box<dyn std::error::Error>> {
         let (folder, mut connection) = database()?;
         let backups = folder.path().join("backups");
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let eighteenth = MIGRATIONS
+            .get(..18)
+            .ok_or("fewer than eighteen migrations")?;
+        migrate(&mut connection, eighteenth, &backups)?;
         assert_eq!(schema_version(&connection)?, 18);
         connection.execute_batch(
             "INSERT INTO nodes (kind, ref_id, path) VALUES ('dir', NULL, ''); \
@@ -719,6 +722,17 @@ mod tests {
             hashes,
             [(String::new(), Some(vec![0; 16])), ("src".to_owned(), None)]
         );
+        Ok(())
+    }
+
+    /// The nineteenth schema adds the facts each task was given.
+    #[test]
+    fn the_nineteenth_schema_keeps_the_facts_given() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 19);
+        assert!(objects(&connection)?.contains(&"facts_given".to_owned()));
         Ok(())
     }
 

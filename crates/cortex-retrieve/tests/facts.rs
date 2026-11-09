@@ -94,7 +94,7 @@ fn the_facts_about_the_listed_files_rank_by_closeness() -> TestResult {
     ];
     let mut transaction = repo.writer.transaction()?;
     for given in [&[ids[3], ids[5]][..], &[ids[3], ids[5]], &[ids[3]]] {
-        transaction.count_fact_uses(given)?;
+        transaction.give_facts(None, given)?;
     }
     transaction.commit()?;
     let files = [

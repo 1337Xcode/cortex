@@ -208,17 +208,28 @@ pub(crate) fn supersede(
     Ok(changed == 1)
 }
 
-/// Counts one more injection of each of `ids`, each once however often it is listed.
+/// Counts one more use of each of `ids`, each once however often it is listed, and records that
+/// `task` was given them, when they were given in one.
 ///
 /// # Errors
 ///
 /// SQLite errors.
-pub(crate) fn count_uses(connection: &Connection, ids: &[FactId]) -> Result<(), StoreError> {
+pub(crate) fn give(
+    connection: &Connection,
+    task: Option<Ulid>,
+    ids: &[FactId],
+) -> Result<(), StoreError> {
     let listed = json_array(ids.iter().map(|id| id.get().to_string()));
     connection
         .prepare_cached(schema::FACT_COUNT_USES)
-        .and_then(|mut statement| statement.execute([listed]))
+        .and_then(|mut statement| statement.execute([&listed]))
         .map_err(sqlite("counting facts' uses"))?;
+    if let Some(task) = task {
+        connection
+            .prepare_cached(schema::FACTS_GIVEN_ADD)
+            .and_then(|mut statement| statement.execute((task.to_string(), &listed)))
+            .map_err(sqlite("recording the facts a task was given"))?;
+    }
     Ok(())
 }
 
@@ -351,6 +362,15 @@ impl Queries<'_> {
     ) -> Result<Vec<FactId>, StoreError> {
         let listed = json_array(files.iter().map(|node| node.get().to_string()));
         self.fact_ids(schema::FACTS_IN_FILES, (listed, status.name()))
+    }
+
+    /// The facts task `task` was given, each once, in id order.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn facts_given_in(self, task: Ulid) -> Result<Vec<FactId>, StoreError> {
+        self.fact_ids(schema::FACTS_GIVEN_IN_TASK, [task.to_string()])
     }
 
     /// The ids of the current facts anchored to any of `nodes`, each once, in id order.
