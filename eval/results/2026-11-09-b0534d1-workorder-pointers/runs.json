@@ -1,0 +1,3087 @@
+[
+  {
+    "task": "activation-command-cwd",
+    "kind": "add a field end to end",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 107355,
+        "uncached_input": 4037,
+        "output": 1453,
+        "cost_usd": 0.0658128,
+        "duration_ms": 11371,
+        "texts": {
+          "pre_tool": {
+            "count": 1,
+            "tokens": 42
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 128
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 2,
+        "tool_calls": 1,
+        "cumulative_input": 69828,
+        "uncached_input": 3953,
+        "output": 512,
+        "cost_usd": 0.0447802,
+        "duration_ms": 5372,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 125
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 16,
+        "tool_calls": 15,
+        "cumulative_input": 291651,
+        "uncached_input": 4037,
+        "output": 3227,
+        "cost_usd": 0.1317433,
+        "duration_ms": 25481,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 125
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "activation-command-cwd",
+    "kind": "add a field end to end",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 10,
+        "tool_calls": 9,
+        "cumulative_input": 198534,
+        "uncached_input": 4041,
+        "output": 2866,
+        "cost_usd": 0.11416869999999998,
+        "duration_ms": 20539,
+        "texts": {
+          "pre_tool": {
+            "count": 1,
+            "tokens": 42
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 128
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 2,
+        "tool_calls": 1,
+        "cumulative_input": 69555,
+        "uncached_input": 3953,
+        "output": 514,
+        "cost_usd": 0.0437082,
+        "duration_ms": 6458,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 125
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 15,
+        "tool_calls": 14,
+        "cumulative_input": 201352,
+        "uncached_input": 4033,
+        "output": 3020,
+        "cost_usd": 0.11737150000000002,
+        "duration_ms": 20632,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 125
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "answer-chars-default",
+    "kind": "change a default",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 109420,
+        "uncached_input": 4041,
+        "output": 1407,
+        "cost_usd": 0.0693382,
+        "duration_ms": 11676,
+        "texts": {
+          "pre_tool": {
+            "count": 1,
+            "tokens": 38
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 117
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 141419,
+        "uncached_input": 4025,
+        "output": 1056,
+        "cost_usd": 0.06029679999999999,
+        "duration_ms": 7984,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 127
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "answer-chars-default",
+    "kind": "change a default",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 139159,
+        "uncached_input": 4043,
+        "output": 1026,
+        "cost_usd": 0.0571491,
+        "duration_ms": 8611,
+        "texts": {
+          "pre_tool": {
+            "count": 1,
+            "tokens": 38
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 117
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 104819,
+        "uncached_input": 4024,
+        "output": 898,
+        "cost_usd": 0.053725,
+        "duration_ms": 6649,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 128
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "atomic-write-text-encoding",
+    "kind": "rename a parameter its callers pass",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 141274,
+        "uncached_input": 3985,
+        "output": 1233,
+        "cost_usd": 0.06350120000000001,
+        "duration_ms": 12905,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 130
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 20,
+        "tool_calls": 19,
+        "cumulative_input": 349210,
+        "uncached_input": 4196,
+        "output": 3638,
+        "cost_usd": 0.12989150000000002,
+        "duration_ms": 25325,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 94
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 124
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 3,
+        "labelled": 3,
+        "resolved": 3
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 1
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "atomic-write-text-encoding",
+    "kind": "rename a parameter its callers pass",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 107774,
+        "uncached_input": 3983,
+        "output": 1187,
+        "cost_usd": 0.060806700000000005,
+        "duration_ms": 10874,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 130
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 22,
+        "tool_calls": 21,
+        "cumulative_input": 373218,
+        "uncached_input": 4196,
+        "output": 3640,
+        "cost_usd": 0.142776,
+        "duration_ms": 28753,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 94
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 124
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 3,
+        "labelled": 3,
+        "resolved": 3
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 1
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "content-around-line-rename",
+    "kind": "change a signature and its call sites",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 106151,
+        "uncached_input": 4081,
+        "output": 1461,
+        "cost_usd": 0.0647913,
+        "duration_ms": 12635,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 61
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 110
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 150329,
+        "uncached_input": 4114,
+        "output": 1936,
+        "cost_usd": 0.088639,
+        "duration_ms": 14338,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 18
+          },
+          "pre_tool": {
+            "count": 1,
+            "tokens": 33
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 120
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 53
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "content-around-line-rename",
+    "kind": "change a signature and its call sites",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 105759,
+        "uncached_input": 4081,
+        "output": 1308,
+        "cost_usd": 0.0616933,
+        "duration_ms": 9643,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 61
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 110
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 154342,
+        "uncached_input": 4114,
+        "output": 1871,
+        "cost_usd": 0.0911515,
+        "duration_ms": 14136,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 18
+          },
+          "pre_tool": {
+            "count": 1,
+            "tokens": 33
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 120
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 53
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "derive-key-value-error",
+    "kind": "change an error and the tests that expect it",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 12,
+        "tool_calls": 11,
+        "cumulative_input": 260327,
+        "uncached_input": 3803,
+        "output": 2283,
+        "cost_usd": 0.09253,
+        "duration_ms": 20033,
+        "texts": {
+          "session_start": {
+            "count": 1,
+            "tokens": 40
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 0,
+      "labelled": 0,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "derive-key-value-error",
+    "kind": "change an error and the tests that expect it",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 12,
+        "tool_calls": 11,
+        "cumulative_input": 259119,
+        "uncached_input": 3803,
+        "output": 2357,
+        "cost_usd": 0.0916555,
+        "duration_ms": 21489,
+        "texts": {
+          "session_start": {
+            "count": 1,
+            "tokens": 40
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 0,
+      "labelled": 0,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "glob-braces-literal",
+    "kind": "change a behaviour its tests assert",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 2,
+        "tool_calls": 1,
+        "cumulative_input": 70291,
+        "uncached_input": 4028,
+        "output": 931,
+        "cost_usd": 0.0506995,
+        "duration_ms": 7864,
+        "texts": {
+          "pre_tool": {
+            "count": 1,
+            "tokens": 30
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 121
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 9,
+        "tool_calls": 8,
+        "cumulative_input": 150023,
+        "uncached_input": 4149,
+        "output": 2291,
+        "cost_usd": 0.0906493,
+        "duration_ms": 14760,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 73
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 133
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "glob-braces-literal",
+    "kind": "change a behaviour its tests assert",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 2,
+        "tool_calls": 1,
+        "cumulative_input": 70291,
+        "uncached_input": 4028,
+        "output": 1056,
+        "cost_usd": 0.0519495,
+        "duration_ms": 8359,
+        "texts": {
+          "pre_tool": {
+            "count": 1,
+            "tokens": 30
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 121
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 9,
+        "tool_calls": 8,
+        "cumulative_input": 184333,
+        "uncached_input": 4151,
+        "output": 2213,
+        "cost_usd": 0.0875009,
+        "duration_ms": 15170,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 73
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 133
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "hook-deny-interval-default",
+    "kind": "change a default",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 155399,
+        "uncached_input": 4098,
+        "output": 1789,
+        "cost_usd": 0.0943029,
+        "duration_ms": 13233,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 56
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 112
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 11,
+        "tool_calls": 10,
+        "cumulative_input": 224111,
+        "uncached_input": 4178,
+        "output": 1864,
+        "cost_usd": 0.0928097,
+        "duration_ms": 15686,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 47
+          },
+          "pre_tool": {
+            "count": 1,
+            "tokens": 31
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 124
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 50
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "cochange": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "hook-deny-interval-default",
+    "kind": "change a default",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 152714,
+        "uncached_input": 4161,
+        "output": 1916,
+        "cost_usd": 0.094843,
+        "duration_ms": 15263,
+        "texts": {
+          "pre_tool": {
+            "count": 3,
+            "tokens": 84
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 112
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 9,
+        "tool_calls": 8,
+        "cumulative_input": 219830,
+        "uncached_input": 4178,
+        "output": 1834,
+        "cost_usd": 0.0858104,
+        "duration_ms": 14919,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 47
+          },
+          "pre_tool": {
+            "count": 1,
+            "tokens": 31
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 124
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 50
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "cochange": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "interprompt-list-fallback",
+    "kind": "fix a bug",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 106687,
+        "uncached_input": 3977,
+        "output": 710,
+        "cost_usd": 0.0559595,
+        "duration_ms": 6691,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 125
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 180643,
+        "uncached_input": 4136,
+        "output": 962,
+        "cost_usd": 0.06786980000000001,
+        "duration_ms": 9570,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 71
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 131
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "cochange": {
+        "given": 2,
+        "labelled": 2,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "interprompt-list-fallback",
+    "kind": "fix a bug",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 107083,
+        "uncached_input": 3977,
+        "output": 947,
+        "cost_usd": 0.06058430000000001,
+        "duration_ms": 8320,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 125
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 181530,
+        "uncached_input": 4159,
+        "output": 905,
+        "cost_usd": 0.06837599999999999,
+        "duration_ms": 10220,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 71
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 131
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 54
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "cochange": {
+        "given": 2,
+        "labelled": 2,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "ls-settings-get-list",
+    "kind": "add a method following conventions",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 113701,
+        "uncached_input": 3990,
+        "output": 1626,
+        "cost_usd": 0.07943710000000001,
+        "duration_ms": 12774,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 135
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 11,
+        "tool_calls": 10,
+        "cumulative_input": 158615,
+        "uncached_input": 4087,
+        "output": 2686,
+        "cost_usd": 0.1072786,
+        "duration_ms": 19879,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 25
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 131
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 61
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "ls-settings-get-list",
+    "kind": "add a method following conventions",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 110191,
+        "uncached_input": 3990,
+        "output": 1450,
+        "cost_usd": 0.0704465,
+        "duration_ms": 11233,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 135
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 11,
+        "tool_calls": 10,
+        "cumulative_input": 203780,
+        "uncached_input": 4089,
+        "output": 2540,
+        "cost_usd": 0.1126906,
+        "duration_ms": 15857,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 25
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 131
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 61
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "match-path-root",
+    "kind": "rename a parameter its callers pass",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 2,
+        "tool_calls": 1,
+        "cumulative_input": 70002,
+        "uncached_input": 3960,
+        "output": 989,
+        "cost_usd": 0.05029070000000001,
+        "duration_ms": 8320,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 119
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 17,
+        "tool_calls": 16,
+        "cumulative_input": 226456,
+        "uncached_input": 4136,
+        "output": 3529,
+        "cost_usd": 0.1195789,
+        "duration_ms": 23222,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 91
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 123
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 4,
+        "labelled": 4,
+        "resolved": 4
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 1
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "match-path-root",
+    "kind": "rename a parameter its callers pass",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 105181,
+        "uncached_input": 3962,
+        "output": 1303,
+        "cost_usd": 0.0597136,
+        "duration_ms": 9829,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 119
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 13,
+        "tool_calls": 12,
+        "cumulative_input": 183148,
+        "uncached_input": 4134,
+        "output": 2288,
+        "cost_usd": 0.08783099999999999,
+        "duration_ms": 16653,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 91
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 123
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 4,
+        "labelled": 4,
+        "resolved": 4
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 1
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "memory-exists-method",
+    "kind": "add a method following conventions",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 115761,
+        "uncached_input": 3968,
+        "output": 1706,
+        "cost_usd": 0.0912628,
+        "duration_ms": 11522,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 133
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 117103,
+        "uncached_input": 3986,
+        "output": 1205,
+        "cost_usd": 0.0801851,
+        "duration_ms": 9794,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 126
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 55
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "memory-exists-method",
+    "kind": "add a method following conventions",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 111961,
+        "uncached_input": 3968,
+        "output": 1913,
+        "cost_usd": 0.0850631,
+        "duration_ms": 14465,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 133
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 113596,
+        "uncached_input": 3986,
+        "output": 948,
+        "cost_usd": 0.0704004,
+        "duration_ms": 7474,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 126
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 55
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "mode-show-command",
+    "kind": "add a method following conventions",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 9,
+        "tool_calls": 8,
+        "cumulative_input": 185687,
+        "uncached_input": 4093,
+        "output": 2346,
+        "cost_usd": 0.09225690000000002,
+        "duration_ms": 16978,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 54
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 116
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 14,
+        "tool_calls": 13,
+        "cumulative_input": 329122,
+        "uncached_input": 4035,
+        "output": 2815,
+        "cost_usd": 0.12762260000000003,
+        "duration_ms": 20786,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 120
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 50
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "mode-show-command",
+    "kind": "add a method following conventions",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 228502,
+        "uncached_input": 4095,
+        "output": 2134,
+        "cost_usd": 0.1016333,
+        "duration_ms": 16605,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 54
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 116
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 10,
+        "tool_calls": 9,
+        "cumulative_input": 277942,
+        "uncached_input": 4033,
+        "output": 2059,
+        "cost_usd": 0.1059162,
+        "duration_ms": 18014,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 120
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 50
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "shell-include-stderr-rename",
+    "kind": "rename a parameter its callers pass",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 104190,
+        "uncached_input": 3978,
+        "output": 789,
+        "cost_usd": 0.0503865,
+        "duration_ms": 6613,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 119
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 179718,
+        "uncached_input": 4044,
+        "output": 1386,
+        "cost_usd": 0.0699003,
+        "duration_ms": 11403,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 23
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 119
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "shell-include-stderr-rename",
+    "kind": "rename a parameter its callers pass",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 104030,
+        "uncached_input": 3978,
+        "output": 859,
+        "cost_usd": 0.0507585,
+        "duration_ms": 8093,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 119
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 21,
+        "tool_calls": 20,
+        "cumulative_input": 344004,
+        "uncached_input": 4181,
+        "output": 4121,
+        "cost_usd": 0.13370829999999995,
+        "duration_ms": 29743,
+        "texts": {
+          "post_tool": {
+            "count": 2,
+            "tokens": 94
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 119
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 1
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "shell-timeout-param",
+    "kind": "add a parameter end to end",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 106903,
+        "uncached_input": 3980,
+        "output": 1793,
+        "cost_usd": 0.0707363,
+        "duration_ms": 13284,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 120
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 18,
+        "tool_calls": 17,
+        "cumulative_input": 302579,
+        "uncached_input": 4221,
+        "output": 4608,
+        "cost_usd": 0.1668233,
+        "duration_ms": 29996,
+        "texts": {
+          "post_tool": {
+            "count": 2,
+            "tokens": 94
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 126
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "shell-timeout-param",
+    "kind": "add a parameter end to end",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 107864,
+        "uncached_input": 3980,
+        "output": 1893,
+        "cost_usd": 0.0719299,
+        "duration_ms": 15327,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 120
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 17,
+        "tool_calls": 16,
+        "cumulative_input": 282770,
+        "uncached_input": 4221,
+        "output": 4511,
+        "cost_usd": 0.1489705,
+        "duration_ms": 28951,
+        "texts": {
+          "post_tool": {
+            "count": 2,
+            "tokens": 94
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 126
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "task-cancel-pending",
+    "kind": "add a method following conventions",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 2,
+        "tool_calls": 1,
+        "cumulative_input": 72571,
+        "uncached_input": 3960,
+        "output": 2255,
+        "cost_usd": 0.07308629999999999,
+        "duration_ms": 18258,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 116
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 115443,
+        "uncached_input": 4025,
+        "output": 1449,
+        "cost_usd": 0.08002160000000001,
+        "duration_ms": 12210,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 21
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 125
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "task-cancel-pending",
+    "kind": "add a method following conventions",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 74317,
+        "uncached_input": 3960,
+        "output": 2175,
+        "cost_usd": 0.07927029999999999,
+        "duration_ms": 16297,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 116
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 115508,
+        "uncached_input": 4025,
+        "output": 1460,
+        "cost_usd": 0.08039160000000001,
+        "duration_ms": 11645,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 21
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 125
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "text-coordinates-unique-only",
+    "kind": "rename a parameter its callers pass",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 246991,
+        "uncached_input": 4173,
+        "output": 2114,
+        "cost_usd": 0.1159221,
+        "duration_ms": 15666,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 69
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 121
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 17,
+        "tool_calls": 16,
+        "cumulative_input": 257252,
+        "uncached_input": 4373,
+        "output": 2883,
+        "cost_usd": 0.1052491,
+        "duration_ms": 19374,
+        "texts": {
+          "post_tool": {
+            "count": 2,
+            "tokens": 132
+          },
+          "pre_tool": {
+            "count": 1,
+            "tokens": 38
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 134
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 3,
+        "labelled": 3,
+        "resolved": 2
+      },
+      "cochange": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "text-coordinates-unique-only",
+    "kind": "rename a parameter its callers pass",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 203994,
+        "uncached_input": 4118,
+        "output": 2201,
+        "cost_usd": 0.1135813,
+        "duration_ms": 15902,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 66
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 121
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 24,
+        "tool_calls": 23,
+        "cumulative_input": 220669,
+        "uncached_input": 4414,
+        "output": 4156,
+        "cost_usd": 0.1206543,
+        "duration_ms": 24041,
+        "texts": {
+          "post_tool": {
+            "count": 2,
+            "tokens": 132
+          },
+          "pre_tool": {
+            "count": 1,
+            "tokens": 38
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 134
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 3,
+        "labelled": 3,
+        "resolved": 2
+      },
+      "cochange": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      },
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "timestamp-signer-clock",
+    "kind": "add an option to a class",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 222945,
+        "uncached_input": 3803,
+        "output": 2066,
+        "cost_usd": 0.087745,
+        "duration_ms": 16952,
+        "texts": {
+          "session_start": {
+            "count": 1,
+            "tokens": 40
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 0,
+      "labelled": 0,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "timestamp-signer-clock",
+    "kind": "add an option to a class",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 180947,
+        "uncached_input": 3757,
+        "output": 2373,
+        "cost_usd": 0.08337270000000001,
+        "duration_ms": 19172,
+        "texts": {
+          "session_start": {
+            "count": 1,
+            "tokens": 40
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 0,
+      "labelled": 0,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "usage-stats-no-create",
+    "kind": "fix a bug",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 7,
+        "tool_calls": 6,
+        "cumulative_input": 114764,
+        "uncached_input": 4148,
+        "output": 1957,
+        "cost_usd": 0.0867065,
+        "duration_ms": 13107,
+        "texts": {
+          "pre_tool": {
+            "count": 2,
+            "tokens": 69
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 134
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 105673,
+        "uncached_input": 4030,
+        "output": 548,
+        "cost_usd": 0.0497563,
+        "duration_ms": 6320,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 19
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 115
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 51
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "usage-stats-no-create",
+    "kind": "fix a bug",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 152890,
+        "uncached_input": 4065,
+        "output": 2371,
+        "cost_usd": 0.0912293,
+        "duration_ms": 17836,
+        "texts": {
+          "pre_tool": {
+            "count": 1,
+            "tokens": 31
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 134
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 106542,
+        "uncached_input": 4030,
+        "output": 689,
+        "cost_usd": 0.05307450000000001,
+        "duration_ms": 6670,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 19
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 115
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 51
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "version-missing-components",
+    "kind": "fix a bug",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 105954,
+        "uncached_input": 3988,
+        "output": 1001,
+        "cost_usd": 0.0549015,
+        "duration_ms": 8566,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 123
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 145291,
+        "uncached_input": 3962,
+        "output": 2504,
+        "cost_usd": 0.0841274,
+        "duration_ms": 17164,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 115
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "version-missing-components",
+    "kind": "fix a bug",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 105954,
+        "uncached_input": 3988,
+        "output": 1031,
+        "cost_usd": 0.0552015,
+        "duration_ms": 8982,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 123
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 144715,
+        "uncached_input": 3962,
+        "output": 2335,
+        "cost_usd": 0.0804298,
+        "duration_ms": 16389,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 115
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "want-bytes-keyword-only",
+    "kind": "change a signature its callers use",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 5,
+        "tool_calls": 4,
+        "cumulative_input": 174429,
+        "uncached_input": 3890,
+        "output": 911,
+        "cost_usd": 0.0565249,
+        "duration_ms": 11260,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 65
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 40
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 0,
+      "labelled": 0,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 2,
+        "labelled": 2,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  },
+  {
+    "task": "want-bytes-keyword-only",
+    "kind": "change a signature its callers use",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 210513,
+        "uncached_input": 3892,
+        "output": 1166,
+        "cost_usd": 0.0637206,
+        "duration_ms": 15426,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 65
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 40
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 0,
+      "labelled": 0,
+      "used": 0
+    },
+    "shown": {
+      "lines": 0,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "call_site": {
+        "given": 2,
+        "labelled": 2,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "retrieval.max_code_spans = 0"
+    ]
+  }
+]

@@ -1,0 +1,76 @@
+{
+  "runs": 39,
+  "incomplete": [
+    {
+      "task": "shell-timeout-param",
+      "run": 1
+    }
+  ],
+  "success": {
+    "value": 1.0,
+    "low": 1.0,
+    "high": 1.0
+  },
+  "delivered": 33,
+  "labelled": 33,
+  "used": 29,
+  "precision": {
+    "value": 0.8787878787878788,
+    "low": 0.7058823529411765,
+    "high": 1.0
+  },
+  "median_cumulative_input": 190423.0,
+  "median_turns": 8.0,
+  "median_tool_calls": 7.0,
+  "cost_usd": 6.162892299999998,
+  "agents": [
+    "2.1.318 claude-sonnet-5-5 via none"
+  ],
+  "failed_sessions": 0,
+  "shown": {
+    "lines": 2147,
+    "differ": 0,
+    "unread_sessions": 0
+  },
+  "texts": {
+    "post_tool": {
+      "count": 32,
+      "tokens": 1471
+    },
+    "pre_tool": {
+      "count": 34,
+      "tokens": 1122
+    },
+    "prompt": {
+      "count": 68,
+      "tokens": 40990
+    },
+    "session_start": {
+      "count": 74,
+      "tokens": 3178
+    }
+  },
+  "texts_share": 0.02947765708245632,
+  "warnings": {
+    "call_site": {
+      "given": 23,
+      "labelled": 23,
+      "resolved": 16
+    },
+    "cochange": {
+      "given": 8,
+      "labelled": 8,
+      "resolved": 0
+    },
+    "test": {
+      "given": 23,
+      "labelled": 23,
+      "resolved": 3
+    }
+  },
+  "warning_precision": {
+    "value": 0.35185185185185186,
+    "low": 0.06666666666666667,
+    "high": 0.5735294117647058
+  }
+}
