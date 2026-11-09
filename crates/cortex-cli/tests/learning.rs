@@ -169,6 +169,7 @@ impl Nodes {
 /// 0.02 x 0.995 less the same leaves nothing, its second observation, as of the second task. It
 /// edited one file, so no pair of edited files is weakened besides.
 #[test]
+#[ignore = "timing under load: its premise (an idle index when the first edit is recorded) needs an idle machine; `cargo xtask verify --full` runs it"]
 fn a_session_s_tasks_are_learned_from_as_they_end() -> TestResult {
     let (home, repo) = repository()?;
     let daemon = Daemon::start(&repo, home.path())?;

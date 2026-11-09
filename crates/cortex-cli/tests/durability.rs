@@ -313,6 +313,7 @@ fn usage_stored(root: &Path) -> TestResult<usize> {
 /// every event it took more than a second earlier is in the store; at the end every response of
 /// the transcript has its row.
 #[test]
+#[ignore = "timing under load: its premise (twenty events sent while the transcript is read) needs an idle machine; `cargo xtask verify --full` runs it"]
 fn events_are_stored_within_a_second_while_a_long_transcript_is_read() -> TestResult {
     let _alone = alone();
     let home = tempfile::tempdir()?;

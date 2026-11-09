@@ -117,6 +117,7 @@ fn strict_mode_gives_a_stop_its_reason_once() -> TestResult {
 
 /// With strict mode off, the same stop is given nothing, and ends the task.
 #[test]
+#[ignore = "timing under load: its premise (the edit re-indexed within the edit's budget) needs an idle machine; `cargo xtask verify --full` runs it"]
 fn without_strict_mode_a_stop_is_given_nothing() -> TestResult {
     let (stop, home, _daemon) = edited_task("mode = \"medium\"\n[holdout]\nshare = 0\n")?;
     assert_eq!(given(&stop, home.path())?, None);
