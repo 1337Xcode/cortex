@@ -122,3 +122,26 @@ impl Adapter for OpenHands {
             .then(|| output::top_level("additionalContext", text))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hook of `name`.
+    fn entry(name: &str) -> Option<&'static HookEntry> {
+        HOOKS.iter().find(|entry| entry.event_name == name)
+    }
+
+    /// At a prompt the text goes back as a top-level `additionalContext`; past 10,000 characters
+    /// nothing is given.
+    #[test]
+    fn the_text_is_a_top_level_additional_context() -> Result<(), &'static str> {
+        let prompt = entry("UserPromptSubmit").ok_or("UserPromptSubmit")?;
+        assert_eq!(
+            OpenHands.context_output(prompt, "a \"b\"\n").as_deref(),
+            Some(r#"{"additionalContext":"a \"b\"\n"}"#)
+        );
+        assert_eq!(OpenHands.context_output(prompt, &"x".repeat(10_001)), None);
+        Ok(())
+    }
+}

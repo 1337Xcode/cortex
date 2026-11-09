@@ -140,3 +140,28 @@ impl Adapter for Cursor {
             .then(|| output::top_level("additional_context", text))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hook of `name`.
+    fn entry(name: &str) -> Option<&'static HookEntry> {
+        HOOKS.iter().find(|entry| entry.event_name == name)
+    }
+
+    /// After a tool the text goes back as a top-level `additional_context`, quotes and line breaks
+    /// escaped; past 10,000 characters, and at a hook that gives none, nothing is given.
+    #[test]
+    fn the_text_is_a_top_level_additional_context() -> Result<(), &'static str> {
+        let after = entry("postToolUse").ok_or("postToolUse")?;
+        assert_eq!(
+            Cursor.context_output(after, "a \"b\"\n").as_deref(),
+            Some(r#"{"additional_context":"a \"b\"\n"}"#)
+        );
+        assert_eq!(Cursor.context_output(after, &"x".repeat(10_001)), None);
+        let stop = entry("stop").ok_or("stop")?;
+        assert_eq!(Cursor.context_output(stop, "a"), None);
+        Ok(())
+    }
+}
