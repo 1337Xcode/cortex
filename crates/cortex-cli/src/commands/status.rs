@@ -18,7 +18,7 @@ use cortex_git::mine::Mark;
 use cortex_hook::{Answer, ClientError};
 use cortex_index::waits_to_be_parsed;
 use cortex_learn::{MAX_RAISE_STEPS, raise_of, recent_precision};
-use cortex_retrieve::{AGREEING_KINDS, LEXICAL_BAR};
+use cortex_retrieve::{AGREEING_KINDS, LEXICAL_BAR, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR};
 use cortex_store::{
     MetaKey, Queries, Reader, SelfCheckRecord, StoreError, WarningCounts, is_writer_running,
 };
@@ -396,10 +396,12 @@ fn warnings_line(counts: WarningCounts) -> String {
 /// What the gate asks before it hands a work order over, its bar for the prompt's words raised as
 /// far as the self-check's `record` says.
 fn gate_line(record: &SelfCheckRecord) -> String {
-    let bar = LEXICAL_BAR + raise_of(record);
+    let raise = raise_of(record);
+    let (bar, strong_bar) = (LEXICAL_BAR + raise, STRONG_LEXICAL_BAR + raise);
     format!(
         "gate: a work order when the prompt's words match a file at {bar:.2} or more and \
-         {AGREEING_KINDS} kinds of evidence agree, or when a session goes on with its own work"
+         {AGREEING_KINDS} kinds of evidence agree, or at {strong_bar:.2} or more and \
+         {STRONG_AGREEING_KINDS} agree, or when a session goes on with its own work"
     )
 }
 

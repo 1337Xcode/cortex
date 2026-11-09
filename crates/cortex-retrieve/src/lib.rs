@@ -47,7 +47,10 @@ pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
 pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
 pub use features::{Found, GATED_FILES, MASSED_FILES, features_of};
-pub use gate::{AGREEING_KINDS, LEXICAL_BAR, Rule, Shut, Verdict, decide};
+pub use gate::{
+    AGREEING_KINDS, LEXICAL_BAR, Rule, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR, Shut, Verdict,
+    decide,
+};
 pub use graph::{Graph, GraphError, LinkInput, NodeInput, Standing, Weighing};
 pub use hints::{HINTED_ABOVE_LINES, HintQuery, MAX_HINT_TOKENS, MAX_HINTED_PARTS, read_hint};
 pub use items::{LOOKED_AT_PER_LISTED, Listed, Listing, listed};
