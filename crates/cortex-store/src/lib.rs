@@ -46,6 +46,7 @@ mod rows;
 mod schema;
 mod search;
 mod self_check;
+mod symbol_names;
 mod usage;
 mod values;
 mod warnings;

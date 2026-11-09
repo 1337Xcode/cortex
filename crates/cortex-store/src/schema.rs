@@ -307,6 +307,12 @@ pub(crate) const FILES_OF_NODES: &str = "SELECT f.file_id, f.path, f.lang, f.byt
 pub(crate) const SYMBOLS_NAMED: &str =
     concat!(symbol_columns!(), "WHERE name = ?1 ORDER BY symbol_id");
 
+/// The symbols with a name or a qualified name, oldest first.
+pub(crate) const SYMBOLS_CALLED: &str = concat!(
+    symbol_columns!(),
+    "WHERE qual_name = ?1 OR name = ?1 ORDER BY symbol_id"
+);
+
 /// Every symbol's id, file, file language and name, and whether it is defined directly in its
 /// file (in no other definition, its qualified name its name), by id.
 pub(crate) const SYMBOL_NAMES: &str = "SELECT s.symbol_id, s.file_id, f.lang, s.name, \

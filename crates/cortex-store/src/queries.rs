@@ -739,7 +739,7 @@ impl<'c> Queries<'c> {
     }
 
     /// The symbols `sql` selects with `key`.
-    fn symbols(
+    pub(crate) fn symbols(
         self,
         sql: &'static str,
         key: impl rusqlite::ToSql,

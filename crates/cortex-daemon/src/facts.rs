@@ -257,19 +257,7 @@ fn anchor_of(queries: Queries<'_>, anchor: &str) -> Result<NodeId, Refused> {
     else {
         return Err(not_indexed(path_text));
     };
-    let symbols = queries.symbols_in_file(file)?;
-    let by_qualified: Vec<_> = symbols
-        .iter()
-        .filter(|row| row.qual_name.as_str() == symbol)
-        .collect();
-    let named = if by_qualified.is_empty() {
-        symbols
-            .iter()
-            .filter(|row| row.name.as_str() == symbol)
-            .collect()
-    } else {
-        by_qualified
-    };
+    let named = queries.symbols_in_file_called(file, symbol)?;
     let path = path.as_str();
     match named.as_slice() {
         [only] => queries
