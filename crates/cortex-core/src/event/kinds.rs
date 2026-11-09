@@ -83,6 +83,14 @@ impl Agent {
             Self::Other => "Another agent",
         }
     }
+
+    /// Whether the agent's hooks can show a message to the user that the model does not see
+    /// (Claude Code's and Codex's `systemMessage`): what the user alone is to be told is kept for a
+    /// session of one that can.
+    #[must_use]
+    pub fn shows_user_messages(self) -> bool {
+        matches!(self, Self::Claude | Self::Codex)
+    }
 }
 
 named_kind! {

@@ -188,3 +188,28 @@ pub enum NormalizeError {
     #[error("the payload names no usable session")]
     NoSession,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ADAPTERS;
+
+    /// The daemon keeps what the user alone is to be told for a session of an agent that can show
+    /// it (`Agent::shows_user_messages`), and each adapter prints it or not: the two agree for
+    /// every agent, so nothing kept for a user is dropped by an adapter that cannot show it.
+    #[test]
+    fn an_agent_shows_user_messages_exactly_when_its_adapter_prints_them() {
+        for adapter in ADAPTERS {
+            let shows = adapter.hooks().iter().any(|entry| {
+                adapter
+                    .message_output(entry, None, "Cortex: a message for the user")
+                    .is_some()
+            });
+            assert_eq!(
+                shows,
+                adapter.agent().shows_user_messages(),
+                "{}",
+                adapter.agent().title()
+            );
+        }
+    }
+}

@@ -32,6 +32,7 @@ use crate::inbox::Inbox;
 use crate::latency::Latencies;
 use crate::retrieval::Service;
 use crate::signatures::Signatures;
+use crate::troubles::Taken;
 use crate::worktree::Worktree;
 
 /// Most connections served at once. Hooks and commands hold a connection for one exchange, so more
@@ -182,6 +183,8 @@ struct Undo {
     claims: Vec<Claim>,
     /// The stop the answer held back.
     stop: Option<Event>,
+    /// The failures the answer took to tell the user.
+    troubles: Option<Taken>,
 }
 
 impl Server {
@@ -485,6 +488,7 @@ impl Server {
             );
         }
         let stop = (is_stop && !is_probe).then(|| event.clone());
+        let agent = event.agent;
         let signatures = Arc::clone(&self.signatures);
         let claims = self.claims.clone();
         let mut answer = self
@@ -545,13 +549,16 @@ impl Server {
         }
         let given = if is_probe { Vec::new() } else { answer.given };
         // A session's start tells the user, never the model, which steps the daemon runs on its
-        // own failed since the user was last told; a probe's start is no user's, and a start
-        // answered too late reaches no one, so neither takes them.
-        let to_user = (matches!(asked, Asked::Primer)
+        // own failed since the user was last told; a probe's start is no user's, a start answered
+        // too late reaches no one, and an agent that shows its user no hook's message cannot tell
+        // them, so none of those takes them.
+        let (to_user, troubles) = (matches!(asked, Asked::Primer)
             && !is_probe
+            && agent.shows_user_messages()
             && !is_too_late_to_send(answer_by_ms, now_ms()))
         .then(|| self.inbox.take_troubles(now_ms()))
-        .flatten();
+        .flatten()
+        .map_or((None, None), |(text, taken)| (Some(text), Some(taken)));
         Answered {
             body: ResponseBody::Reply {
                 text: answer.text,
@@ -562,6 +569,7 @@ impl Server {
             undo: Undo {
                 claims: if is_probe { Vec::new() } else { answer.claims },
                 stop: held_stop,
+                troubles,
             },
         }
     }
@@ -576,6 +584,9 @@ impl Server {
         {
             self.inbox
                 .note_error("a stop was not recorded: the daemon is stopping", now_ms());
+        }
+        if let Some(taken) = undo.troubles {
+            self.inbox.put_back_troubles(taken);
         }
     }
 

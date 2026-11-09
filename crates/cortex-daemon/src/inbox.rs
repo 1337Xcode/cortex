@@ -20,7 +20,7 @@ use cortex_store::CheckpointFailures;
 use crate::given::Given;
 
 use crate::recent_errors::RecentErrors;
-use crate::troubles::{Step, Troubles};
+use crate::troubles::{Step, Taken, Troubles};
 
 /// How many hook events may wait for the writer. When the inbox is full, a read or a search gives
 /// way first: an arriving one is dropped, or the oldest waiting one makes room for an edit, a
@@ -188,6 +188,12 @@ impl Inbox {
         }
         if state.events.len() >= MAX_EVENTS {
             state.events_dropped += 1;
+            // A hook event lost is storing that failed: the user is told at the next start.
+            state.troubles.note(
+                Step::Storing,
+                "too many hook events waited to be recorded, and one was dropped",
+                event.ts_ms,
+            );
             if is_droppable(&event) {
                 return true;
             }
@@ -214,6 +220,9 @@ impl Inbox {
             && let Some(oldest) = state.given.pop_front()
         {
             state.errors.note(oldest.dropped_message(), at_ms);
+            state
+                .troubles
+                .note(Step::Storing, oldest.dropped_message(), at_ms);
             tracing::warn!("too many records of what was given waiting: the oldest dropped");
         }
         state.given.push_back(given);
@@ -250,10 +259,16 @@ impl Inbox {
         state.troubles.note(step, message, at_ms);
     }
 
-    /// What the user is told at `now_ms` of the steps that failed since last told, and from
-    /// then on nothing of those failures; none when none failed.
-    pub(crate) fn take_troubles(&self, now_ms: i64) -> Option<String> {
+    /// What the user is told at `now_ms` of the steps that failed since last told, with what was
+    /// taken to say it, and from then on nothing of those failures unless they are put back;
+    /// none when none failed.
+    pub(crate) fn take_troubles(&self, now_ms: i64) -> Option<(String, Taken)> {
         self.lock().troubles.take_said(now_ms)
+    }
+
+    /// Puts back the failures `taken`, whose telling never reached the user.
+    pub(crate) fn put_back_troubles(&self, taken: Taken) {
+        self.lock().troubles.put_back(taken);
     }
 
     /// Keeps `message` as an error met at `at_ms` in UTC milliseconds.

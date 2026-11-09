@@ -483,8 +483,9 @@ fn told_at_start(payload: Vec<u8>, home: &Path) -> TestResult<Option<String>> {
 }
 
 /// A step the daemon runs on its own fails: the repository's objects are gone after its commit, so
-/// git reads HEAD but not the history, and mining it fails. The next session's start tells the
-/// user, in Claude Code's `systemMessage` (which the model does not get), that reading the git
+/// git reads HEAD but not the history, and mining it fails. A Gemini CLI session's start, whose
+/// hooks show the user no message, leaves the failure untold; the next Claude Code session's start
+/// tells the user, in its `systemMessage` (which the model does not get), that reading the git
 /// history failed and why; the start right after tells nothing of it.
 #[test]
 fn a_background_step_that_failed_is_told_to_the_user_once() -> TestResult {
@@ -501,6 +502,17 @@ fn a_background_step_that_failed_is_told_to_the_user_once() -> TestResult {
         Ok(status_of(root, home.path())?
             .contains("\ngit: not ready, mining failed and is tried again later"))
     })?;
+    let gemini = payloads::payload_of("gemini", "docs-2026-11-06", "session-start.json", root)?;
+    let shown = hook(
+        &["--agent", "gemini", "--event", "SessionStart"],
+        gemini,
+        Duration::ZERO,
+        home.path(),
+    )?;
+    assert!(
+        !String::from_utf8(shown.output.stdout)?.contains("git history"),
+        "told through an agent that shows no message"
+    );
     let start = payloads::payload_of("claude", "2.1.312", "session-start-startup.json", root)?;
     let told = told_at_start(start.clone(), home.path())?.ok_or("nothing told at the start")?;
     assert!(

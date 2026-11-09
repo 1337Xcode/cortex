@@ -71,12 +71,13 @@ impl Troubles {
             });
     }
 
-    /// What the user is told at `now_ms`, one line a step that failed, and from then on nothing of
-    /// those failures; none when no step failed since.
-    pub(crate) fn take_said(&mut self, now_ms: i64) -> Option<String> {
+    /// What the user is told at `now_ms`, one line a step that failed, with what was taken to say
+    /// it; from then on nothing of those failures, unless they are put back. None when no step
+    /// failed since.
+    pub(crate) fn take_said(&mut self, now_ms: i64) -> Option<(String, Taken)> {
         let taken = std::mem::take(&mut self.by_step);
         let lines: Vec<String> = taken
-            .into_iter()
+            .iter()
             .map(|(step, trouble)| {
                 format!(
                     "Cortex: {} failed {} {}: {}. `cortex status` shows more.",
@@ -87,9 +88,28 @@ impl Troubles {
                 )
             })
             .collect();
-        (!lines.is_empty()).then(|| lines.join("\n"))
+        (!lines.is_empty()).then(|| (lines.join("\n"), Taken(taken)))
+    }
+
+    /// Puts back `taken`, whose telling never reached the user: each step's count adds to the
+    /// failures since, its first time is the earlier one, and its last error stays the latest.
+    pub(crate) fn put_back(&mut self, taken: Taken) {
+        for (step, trouble) in taken.0 {
+            self.by_step
+                .entry(step)
+                .and_modify(|since| {
+                    since.count = since.count.saturating_add(trouble.count);
+                    since.first_ms = since.first_ms.min(trouble.first_ms);
+                })
+                .or_insert(trouble);
+        }
     }
 }
+
+/// The failures taken to tell the user, kept so that they can be put back if the telling never
+/// reaches them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Taken(BTreeMap<Step, Trouble>);
 
 /// How many times, in words.
 fn times(count: u64) -> String {
@@ -100,12 +120,17 @@ fn times(count: u64) -> String {
     }
 }
 
-/// Over how long, `ago_ms` back from now, in whole minutes or hours.
+/// Over how long, `ago_ms` back from now, in whole minutes or hours rounded up: the span said
+/// must hold the first failure, so 61 seconds is "the last 2 minutes" and 121 minutes "the last 3
+/// hours".
 fn since(ago_ms: i64) -> String {
-    match ago_ms.max(0) / MINUTE_MS {
+    let minutes = u64::try_from(ago_ms.max(0))
+        .unwrap_or(0)
+        .div_ceil(MINUTE_MS.unsigned_abs());
+    match minutes {
         0 | 1 => "in the last minute".to_owned(),
-        minutes @ 2..=119 => format!("in the last {minutes} minutes"),
-        minutes => format!("in the last {} hours", minutes / 60),
+        2..=119 => format!("in the last {minutes} minutes"),
+        _ => format!("in the last {} hours", minutes.div_ceil(60)),
     }
 }
 
@@ -113,9 +138,9 @@ fn since(ago_ms: i64) -> String {
 mod tests {
     use super::*;
 
-    /// Storing failed twice, first 12 minutes and 30 seconds before it is said, then mining once
-    /// just before: one line each, storing first, its last error shown; then nothing more until a
-    /// step fails again.
+    /// Storing failed twice, first 12 minutes and 30 seconds before it is said (said as the last
+    /// 13 minutes, rounded up to hold it), then mining once 51 seconds before: one line each,
+    /// storing first, its last error shown; then nothing more until a step fails again.
     #[test]
     fn failures_are_said_once_a_step() {
         let mut troubles = Troubles::default();
@@ -131,22 +156,60 @@ mod tests {
             600_000,
         );
         assert_eq!(
-            troubles.take_said(751_000).as_deref(),
+            said(&mut troubles, 751_000).as_deref(),
             Some(
-                "Cortex: storing what agents did failed 2 times in the last 12 minutes: recording \
+                "Cortex: storing what agents did failed 2 times in the last 13 minutes: recording \
                  an injection failed: database is locked. `cortex status` shows more.\n\
                  Cortex: reading the git history failed once in the last minute: reading the \
                  history: bad object. `cortex status` shows more."
             )
         );
-        assert_eq!(troubles.take_said(752_000), None);
+        assert_eq!(said(&mut troubles, 752_000), None);
         troubles.note(Step::WorkTree, "git status: timed out", 800_000);
         assert_eq!(
-            troubles.take_said(800_000 + 3 * 60 * MINUTE_MS).as_deref(),
+            said(&mut troubles, 800_000 + 3 * 60 * MINUTE_MS).as_deref(),
             Some(
                 "Cortex: reading the work tree's changes failed once in the last 3 hours: git \
                  status: timed out. `cortex status` shows more."
             )
         );
+    }
+
+    /// The text of what `troubles` says at `now_ms`, what it took dropped.
+    fn said(troubles: &mut Troubles, now_ms: i64) -> Option<String> {
+        troubles.take_said(now_ms).map(|(text, _)| text)
+    }
+
+    /// Failures taken whose telling never reached the user are put back: with a failure of the
+    /// same step since, the counts add (1 + 1), the first time is the earlier (1,000), the last
+    /// error the latest; said at 121,000, two minutes after the first.
+    #[test]
+    fn failures_put_back_are_said_again() {
+        let mut troubles = Troubles::default();
+        troubles.note(Step::Mining, "reading the history: bad object", 1_000);
+        let (_, taken) = troubles.take_said(2_000).unwrap_or_default();
+        troubles.note(Step::Mining, "reading the history: timed out", 60_000);
+        troubles.put_back(taken);
+        assert_eq!(
+            said(&mut troubles, 121_000).as_deref(),
+            Some(
+                "Cortex: reading the git history failed 2 times in the last 2 minutes: reading \
+                 the history: timed out. `cortex status` shows more."
+            )
+        );
+    }
+
+    /// The span said rounds up and holds the first failure: 0 and 60 seconds are the last minute,
+    /// 61 seconds the last 2, 119 minutes the last 119, 120 minutes the last 2 hours and 121 the
+    /// last 3.
+    #[test]
+    fn the_span_said_holds_the_first_failure() {
+        let at = |seconds: i64| since(seconds * 1_000);
+        assert_eq!(at(0), "in the last minute");
+        assert_eq!(at(60), "in the last minute");
+        assert_eq!(at(61), "in the last 2 minutes");
+        assert_eq!(at(119 * 60), "in the last 119 minutes");
+        assert_eq!(at(120 * 60), "in the last 2 hours");
+        assert_eq!(at(121 * 60), "in the last 3 hours");
     }
 }
