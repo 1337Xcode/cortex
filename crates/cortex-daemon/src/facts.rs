@@ -186,6 +186,9 @@ fn refused(queries: Queries<'_>, error: FactError) -> Refused {
         FactError::Store(StoreError::FactUnanchored) => {
             Refused::Named("a fact needs a file or a symbol it is about".to_owned())
         }
+        FactError::Store(error @ (StoreError::FactBlank | StoreError::FactNotPlain)) => {
+            Refused::Named(error.to_string())
+        }
         FactError::Store(error) => Refused::Store(error),
         FactError::Unanchorable { node } => match queries.anchor_names(&[node]) {
             Err(error) => Refused::Store(error),

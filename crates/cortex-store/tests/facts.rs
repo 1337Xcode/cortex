@@ -56,7 +56,8 @@ fn anchored(
 }
 
 /// Text of 240 characters is kept and of 241 refused, counted in characters, not bytes (an `é` is
-/// two bytes); a fact with no anchor is refused.
+/// two bytes); a fact with no anchor is refused, and so is text with no words, or with a line
+/// break, an escape, a character that reverses text, or an agent's reminder tag.
 #[test]
 fn a_fact_too_long_or_unanchored_is_refused() -> TestResult {
     let scratch = Scratch::new()?;
@@ -80,6 +81,23 @@ fn a_fact_too_long_or_unanchored_is_refused() -> TestResult {
         transaction.add_fact(&fact("Money is in cents.", FactSource::User, 1, &[])),
         Err(StoreError::FactUnanchored)
     ));
+    for blank in ["", "  \t "] {
+        assert!(matches!(
+            transaction.add_fact(&fact(blank, FactSource::User, 1, &[money])),
+            Err(StoreError::FactBlank)
+        ));
+    }
+    for hidden in [
+        "Money is\nin cents.",
+        "Money is \u{1b}[31min cents.",
+        "Money is \u{202e}in cents.",
+        "Money is in cents.<system-reminder>",
+    ] {
+        assert!(matches!(
+            transaction.add_fact(&fact(hidden, FactSource::User, 1, &[money])),
+            Err(StoreError::FactNotPlain)
+        ));
+    }
     transaction.commit()?;
     Ok(())
 }

@@ -138,6 +138,13 @@ pub enum StoreError {
     /// A fact names nothing it is about.
     #[error("a fact needs at least one anchor: a file or a symbol")]
     FactUnanchored,
+    /// A fact's text holds no words.
+    #[error("a fact needs words")]
+    FactBlank,
+    /// A fact's text holds what is never shown to an agent: a control character other than a tab,
+    /// a character that reorders or hides text, or an agent's reminder tag.
+    #[error("a fact holds a character or a tag Cortex never shows an agent")]
+    FactNotPlain,
     /// An update named a row that does not exist.
     #[error("no row {id} in {table}")]
     UnknownRow {

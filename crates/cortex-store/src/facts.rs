@@ -5,11 +5,11 @@
 //! hash an anchor would keep now. A corrected fact is superseded by the one that corrects it: the
 //! old one stays, hidden from every reader of current facts. Which status a fact moves to, and
 //! when, is decided by the learner; the store keeps what it is told and refuses what it can never
-//! hold (text too long, no anchor).
+//! hold (text too long, blank or not plain, no anchor).
 
 use std::collections::BTreeMap;
 
-use cortex_core::{FactKind, FactSource, FactStatus, MAX_FACT_CHARS, ShortHash, Ulid};
+use cortex_core::{FactKind, FactSource, FactStatus, MAX_FACT_CHARS, ShortHash, Ulid, is_plain};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{StoreError, sqlite};
@@ -71,11 +71,21 @@ pub struct FactRow {
 /// # Errors
 ///
 /// [`StoreError::FactTooLong`] for text over [`MAX_FACT_CHARS`] characters,
-/// [`StoreError::FactUnanchored`] for no anchor, or SQLite errors.
+/// [`StoreError::FactBlank`] for text with no words, [`StoreError::FactNotPlain`] for text that
+/// could not be shown to an agent as it is, [`StoreError::FactUnanchored`] for no anchor, or
+/// SQLite errors.
 pub(crate) fn add(connection: &Connection, record: &FactRecord) -> Result<FactId, StoreError> {
     let chars = record.text.chars().count();
     if chars > MAX_FACT_CHARS {
         return Err(StoreError::FactTooLong { chars });
+    }
+    if record.text.trim().is_empty() {
+        return Err(StoreError::FactBlank);
+    }
+    // Refused where every fact is written, so no fact can hide an instruction from the person
+    // reading the list or split a line of what an agent is given.
+    if !is_plain(&record.text) {
+        return Err(StoreError::FactNotPlain);
     }
     if record.anchors.is_empty() {
         return Err(StoreError::FactUnanchored);
