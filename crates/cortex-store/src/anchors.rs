@@ -1,8 +1,10 @@
-//! Where facts' anchors stand now. An anchor is a file or a symbol; what it stands on is read in
-//! one place, the `anchor_hashes` view and [`Queries::anchor_states`]: the file's path, what the
-//! index holds for it, the symbol's qualified name, and the hash an anchor on the node would keep
-//! now (a file's first 16 content-hash bytes, a symbol's body hash). A reader that shows a fact
-//! compares that hash with the one the fact kept, and the file on disk with what the index holds.
+//! Where facts' anchors stand now. An anchor is a file, a symbol, or the repository's root for a
+//! fact about the whole repository; what it stands on is read in one place, the `anchor_hashes`
+//! view and [`Queries::anchor_states`]: the file's path, what the index holds for it, the symbol's
+//! qualified name, and the hash an anchor on the node would keep now (a file's first 16
+//! content-hash bytes, a symbol's body hash, [`ROOT_ANCHOR_HASH`] for the root, which does not
+//! change as code does). A reader that shows a fact compares that hash with the one the fact kept,
+//! and the file on disk with what the index holds.
 
 use std::collections::BTreeMap;
 
@@ -14,12 +16,16 @@ use crate::ids::NodeId;
 use crate::queries::{Queries, json_array};
 use crate::{schema, values};
 
+/// The hash an anchor on the repository's root keeps: 16 zero bytes, since the root does not change
+/// as code does.
+pub const ROOT_ANCHOR_HASH: [u8; 16] = [0; 16];
+
 /// Where one anchor stands now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnchorState {
     /// The file or symbol.
     pub node: NodeId,
-    /// The file, the symbol's for a symbol.
+    /// The file, the symbol's for a symbol; the root itself for the root.
     pub path: RepoPath,
     /// What the index holds for that file; none when it does not read its contents.
     pub content: Option<ContentHash>,
@@ -30,11 +36,13 @@ pub struct AnchorState {
 }
 
 impl AnchorState {
-    /// The anchor as a note names it: the file's path, and for a symbol `:` and its qualified name.
+    /// The anchor as a note names it: the file's path, and for a symbol `:` and its qualified name;
+    /// `.` for the repository's root.
     #[must_use]
     pub fn name(&self) -> String {
         match &self.symbol {
             Some(symbol) => format!("{}:{}", self.path.as_str(), symbol.as_str()),
+            None if self.path.is_root() => ".".to_owned(),
             None => self.path.as_str().to_owned(),
         }
     }
@@ -50,8 +58,8 @@ type StateColumns = (
 );
 
 impl Queries<'_> {
-    /// Where each of `nodes` that is a file or a symbol in one stands now, in node order. A node
-    /// that is gone, or neither, is left out.
+    /// Where each of `nodes` that is a file, a symbol in one or the repository's root stands now,
+    /// in node order. A node that is gone, or none of these, is left out.
     ///
     /// # Errors
     ///

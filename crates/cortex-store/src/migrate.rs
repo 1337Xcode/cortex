@@ -683,13 +683,42 @@ mod tests {
              last_verified_at) VALUES ('kept', 'convention', 'user', 'suspect', 2, 1, 1)",
             [],
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let seventeenth = MIGRATIONS
+            .get(..17)
+            .ok_or("fewer than seventeen migrations")?;
+        migrate(&mut connection, seventeenth, &backups)?;
         assert_eq!(schema_version(&connection)?, 17);
         let kept: (String, Option<String>) =
             connection.query_row("SELECT text, before_suspect FROM facts", [], |row| {
                 Ok((row.get(0)?, row.get(1)?))
             })?;
         assert_eq!(kept, ("kept".to_owned(), None));
+        Ok(())
+    }
+
+    /// The eighteenth schema gives the repository's root, and no other folder, an anchor hash of
+    /// 16 zero bytes, and keeps a file's and a symbol's as they were.
+    #[test]
+    fn the_eighteenth_schema_anchors_the_root() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 18);
+        connection.execute_batch(
+            "INSERT INTO nodes (kind, ref_id, path) VALUES ('dir', NULL, ''); \
+             INSERT INTO nodes (kind, ref_id, path) VALUES ('dir', NULL, 'src');",
+        )?;
+        let hashes: Vec<(String, Option<Vec<u8>>)> = connection
+            .prepare(
+                "SELECT n.path, h.hash FROM anchor_hashes AS h \
+                 JOIN nodes AS n ON n.node_id = h.node_id ORDER BY n.path",
+            )?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert_eq!(
+            hashes,
+            [(String::new(), Some(vec![0; 16])), ("src".to_owned(), None)]
+        );
         Ok(())
     }
 

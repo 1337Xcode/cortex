@@ -83,10 +83,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 17,
         sql: include_str!("../migrations/0017_fact_standing.sql"),
     },
+    Migration {
+        version: 18,
+        sql: include_str!("../migrations/0018_root_anchor.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 17;
+pub(crate) const SCHEMA_VERSION: u32 = 18;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -780,17 +784,19 @@ pub(crate) const FACTS_WITH_STATUS_SINCE: &str = "SELECT fact_id FROM facts \
      WHERE status = ?1 AND superseded_by IS NULL AND status_at <= ?2 ORDER BY fact_id";
 /// The id of fact ?1, when one has it.
 pub(crate) const FACT_ID_OF: &str = "SELECT fact_id FROM facts WHERE fact_id = ?1";
-/// Each node of the JSON list ?1 that is a file or a symbol in one: the file's path and what the
-/// index holds for it, for a symbol its qualified name, and the hash an anchor on the node would
-/// keep now, looked up by node, in node order.
-pub(crate) const ANCHOR_STATES_OF: &str = "SELECT n.node_id, COALESCE(f.path, sf.path), \
+/// Each node of the JSON list ?1 that is a file, a symbol in one or the repository's root: the
+/// file's path (empty for the root) and what the index holds for it, for a symbol its qualified
+/// name, and the hash an anchor on the node would keep now, looked up by node, in node order.
+pub(crate) const ANCHOR_STATES_OF: &str = "SELECT n.node_id, \
+     COALESCE(f.path, sf.path, CASE WHEN n.kind = 'dir' AND n.path = '' THEN '' END), \
      COALESCE(f.content_hash, sf.content_hash), s.qual_name, \
      (SELECT h.hash FROM anchor_hashes AS h WHERE h.node_id = n.node_id) FROM nodes AS n \
      LEFT JOIN files AS f ON n.kind = 'file' AND f.file_id = n.ref_id \
      LEFT JOIN symbols AS s ON n.kind = 'symbol' AND s.symbol_id = n.ref_id \
      LEFT JOIN files AS sf ON sf.file_id = s.file_id \
      WHERE n.node_id IN (SELECT value FROM json_each(?1)) \
-     AND COALESCE(f.path, sf.path) IS NOT NULL ORDER BY n.node_id";
+     AND COALESCE(f.path, sf.path, CASE WHEN n.kind = 'dir' AND n.path = '' THEN '' END) \
+     IS NOT NULL ORDER BY n.node_id";
 /// The hash an anchor on each node of the JSON list ?1 would keep now, in node order; a node with
 /// none is left out.
 pub(crate) const ANCHOR_HASHES_OF: &str = "SELECT node_id, hash FROM anchor_hashes \

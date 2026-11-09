@@ -53,7 +53,7 @@ mod writer;
 pub use activity::{
     EventRecord, EventRow, QuietTask, SessionRecord, SessionRow, TaskRecord, TaskRow,
 };
-pub use anchors::AnchorState;
+pub use anchors::{AnchorState, ROOT_ANCHOR_HASH};
 pub use archetype::ArchetypeRecord;
 pub use checkpoint::CheckpointFailures;
 pub use cochange::{CountedFile, FileCommitsRow, GitStateKey, PairRow};

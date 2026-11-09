@@ -352,3 +352,34 @@ fn read(writer: &Writer, id: FactId) -> TestResult<(u64, FactStatus, i64)> {
     let row = writer.queries().fact(id)?.ok_or("a fact")?;
     Ok((row.uses, row.record.status, row.last_verified_at_ms))
 }
+
+/// The repository's root stands as an anchor that never changes: no file content, no symbol, the
+/// hash of 16 zero bytes, named `.`. A fact on it keeps that hash and is never found changed.
+#[test]
+fn the_root_is_an_anchor_that_never_changes() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let root = transaction.folder_node(&cortex_core::RepoPath::root())?;
+    transaction.commit()?;
+    let states = writer.queries().anchor_states(&[root])?;
+    let expected = AnchorState {
+        node: root,
+        path: cortex_core::RepoPath::root(),
+        content: None,
+        symbol: None,
+        hash: Some(ShortHash::from_bytes(cortex_store::ROOT_ANCHOR_HASH)),
+    };
+    assert_eq!(states, [expected]);
+    assert_eq!(states[0].name(), ".");
+    let anchors = writer.queries().anchor_hashes(&[root])?;
+    let mut transaction = writer.transaction()?;
+    transaction.add_fact(&anchored(
+        "Every module has tests.",
+        (FactSource::User, 1),
+        anchors,
+    ))?;
+    transaction.commit()?;
+    assert_eq!(writer.queries().facts_with_changed_anchors()?, []);
+    Ok(())
+}
