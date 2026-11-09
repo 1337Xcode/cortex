@@ -98,9 +98,9 @@ fn classified(answer: &str, program: &str, versions: Versions) -> Finding {
             fix: format!("update Claude Code to {oldest} or later"),
         }
     } else if found > newest {
-        Finding::Note(format!(
-            "Claude Code {found} at {program} is newer than {newest}, the newest Cortex was \
-             tested with; its hooks may send what Cortex does not read yet"
+        Finding::Pass(format!(
+            "Claude Code {found} at {program}, a version Cortex works with: newer than {newest}, \
+             the newest tested, and Cortex ignores what a newer version adds to its hooks"
         ))
     } else {
         Finding::Pass(format!(
@@ -151,9 +151,10 @@ mod tests {
         }
         assert_eq!(
             classified("2.2.0 (Claude Code)", AT, VERSIONS),
-            Finding::Note(
-                "Claude Code 2.2.0 at /usr/local/bin/claude is newer than 2.1.312, the newest \
-                 Cortex was tested with; its hooks may send what Cortex does not read yet"
+            Finding::Pass(
+                "Claude Code 2.2.0 at /usr/local/bin/claude, a version Cortex works with: newer \
+                 than 2.1.312, the newest tested, and Cortex ignores what a newer version adds to \
+                 its hooks"
                     .to_owned()
             )
         );

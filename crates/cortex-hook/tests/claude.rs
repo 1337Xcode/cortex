@@ -569,6 +569,42 @@ fn a_turn_ended_on_an_error_is_a_stop_naming_it() -> TestResult {
     Ok(())
 }
 
+/// A later Claude Code adds fields: 2.1.318 added `background_tasks` to a stop and a
+/// `description` to a Bash call, and Cortex needed no change. Every newest payload, with a field
+/// Cortex does not know added at its top and inside every object it holds, makes the same event as
+/// the payload as captured, so an update that adds fields changes nothing Cortex does.
+#[test]
+fn fields_a_later_claude_code_adds_change_nothing() -> TestResult {
+    /// Adds an unknown key to `value` and to every object inside it.
+    fn widen(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for inner in fields.values_mut() {
+                    widen(inner);
+                }
+                fields.insert(
+                    "cortex_test_unknown".to_owned(),
+                    serde_json::json!({"added": [1, "two", null]}),
+                );
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(widen),
+            _ => {}
+        }
+    }
+    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
+    let newest = claude.versions().ok_or("no versions")?.newest_tested;
+    for name in fixture_names(&fixtures_of(newest))? {
+        let payload = payload_of(newest, &name)?;
+        let event = event_name(&payload)?;
+        let as_captured = claude.normalize(&event, &payload, &locate, stamp())?;
+        let mut value: serde_json::Value = serde_json::from_slice(&payload)?;
+        widen(&mut value);
+        let widened = claude.normalize(&event, &serde_json::to_vec(&value)?, &locate, stamp())?;
+        assert_eq!(widened, as_captured, "{name}");
+    }
+    Ok(())
+}
+
 /// The newest version's payloads, captured from the same steps as the table's, make the same
 /// events as the table's in all but their values: the same fields filled, the hook among them, and
 /// no event where the table's make none.
