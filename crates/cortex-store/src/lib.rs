@@ -43,6 +43,7 @@ mod raw;
 mod reader;
 mod records;
 mod replace;
+mod retention;
 mod rows;
 mod schema;
 mod search;

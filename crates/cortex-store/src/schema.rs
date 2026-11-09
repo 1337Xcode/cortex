@@ -672,6 +672,28 @@ pub(crate) const WARNING_INSERT: &str = "INSERT INTO warnings \
 /// Sets whether one warning was resolved.
 pub(crate) const WARNING_RESOLVE: &str = "UPDATE warnings SET resolved = ?2 WHERE warning_id = ?1";
 
+/// Deletes at most ?2 events older than ?1, the first recorded first.
+pub(crate) const EVENTS_DELETE_BEFORE: &str = "DELETE FROM events WHERE seq IN \
+     (SELECT seq FROM events WHERE ts < ?1 ORDER BY seq LIMIT ?2)";
+/// Deletes at most ?2 of the episodes past the ?1 most worth keeping: those of an unknown outcome
+/// first, then the oldest.
+pub(crate) const EPISODES_OVER_CAP: &str = "DELETE FROM episodes WHERE episode_id IN \
+     (SELECT episode_id FROM episodes ORDER BY outcome != 'unknown', created_at, episode_id \
+     LIMIT min(?2, max(0, (SELECT count(*) FROM episodes) - ?1)))";
+/// Deletes the positions last taken before ?1.
+pub(crate) const POSITIONS_DELETE_BEFORE: &str = "DELETE FROM positions WHERE last_ts < ?1";
+/// At most ?2 facts retired before ?1, by id.
+pub(crate) const FACTS_RETIRED_BEFORE: &str = "SELECT fact_id FROM facts \
+     WHERE status = 'retired' AND status_at < ?1 ORDER BY fact_id LIMIT ?2";
+/// Deletes the anchors of the facts in the JSON array ?1.
+pub(crate) const FACT_ANCHORS_DELETE: &str =
+    "DELETE FROM fact_anchors WHERE fact_id IN (SELECT value FROM json_each(?1))";
+/// Deletes the record of the tasks the facts in the JSON array ?1 were given in.
+pub(crate) const FACTS_GIVEN_DELETE: &str =
+    "DELETE FROM facts_given WHERE fact_id IN (SELECT value FROM json_each(?1))";
+/// Deletes the facts in the JSON array ?1.
+pub(crate) const FACTS_DELETE: &str =
+    "DELETE FROM facts WHERE fact_id IN (SELECT value FROM json_each(?1))";
 /// Removes the claims, positions of mode claim, last taken at ?2 or later, on the nodes in the JSON
 /// array ?1, or on every node when ?1 is NULL.
 pub(crate) const CLAIMS_RELEASE: &str = "DELETE FROM positions WHERE mode = 'claim' \

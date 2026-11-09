@@ -30,6 +30,7 @@ use crate::migrate;
 use crate::queries::Queries;
 use crate::records::{EdgeRecord, FileChange, FileIndex, FileRemoval, Resolved};
 use crate::replace;
+use crate::retention;
 use crate::schema;
 use crate::self_check::{self, SelfCheckRecord};
 use crate::usage::{self, UsageRow};
@@ -449,6 +450,50 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn keep_position(&mut self, record: &PositionRecord) -> Result<(), StoreError> {
         self.atomically(|connection| coordination::keep_position(connection, record))
+    }
+
+    /// Deletes at most `limit` events older than `before_ms`, the first recorded first: how many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn delete_events_before(&mut self, before_ms: i64, limit: u64) -> Result<u64, StoreError> {
+        self.atomically(|connection| retention::delete_events(connection, (before_ms, limit)))
+    }
+
+    /// Deletes at most `limit` episodes past the `keep` most worth keeping, those whose outcome is
+    /// unknown first, then the oldest: how many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn cap_episodes(&mut self, keep: u64, limit: u64) -> Result<u64, StoreError> {
+        self.atomically(|connection| retention::cap_episodes(connection, (keep, limit)))
+    }
+
+    /// Deletes the positions last taken before `before_ms`, which can no longer hold: how many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn delete_positions_before(&mut self, before_ms: i64) -> Result<u64, StoreError> {
+        self.atomically(|connection| retention::delete_positions(connection, before_ms))
+    }
+
+    /// Deletes at most `limit` facts retired before `before_ms`, with their anchors and the
+    /// record of the tasks they were given in: how many facts.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn delete_retired_facts_before(
+        &mut self,
+        before_ms: i64,
+        limit: u64,
+    ) -> Result<u64, StoreError> {
+        self.atomically(|connection| {
+            retention::delete_retired_facts(connection, (before_ms, limit))
+        })
     }
 
     /// Releases the claims taken at `since_ms` or later on `nodes`, whoever holds them, or on every
