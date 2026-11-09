@@ -106,6 +106,24 @@ impl Queries<'_> {
         })
     }
 
+    /// The warnings not resolved yet, their task not ended, that name the file at node `file` or a
+    /// symbol in it, as the edited code or the code warned of, the latest first.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn open_warnings_about(self, file: NodeId) -> Result<Vec<WarningRow>, StoreError> {
+        let mut statement = self
+            .connection()
+            .prepare_cached(schema::OPEN_WARNINGS_ABOUT)
+            .map_err(sqlite("reading open warnings"))?;
+        let rows = statement
+            .query_map([file.get()], read)
+            .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
+            .map_err(sqlite("reading open warnings"))?;
+        rows.into_iter().map(RawWarning::check).collect()
+    }
+
     /// The warnings of task `task_id`, in the order they were recorded.
     ///
     /// # Errors

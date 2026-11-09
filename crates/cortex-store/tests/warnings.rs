@@ -247,3 +247,44 @@ fn warnings_are_counted() -> TestResult {
     );
     Ok(())
 }
+
+/// Worked by hand. Files `a.py`, `b.py`, `c.py`; warnings of the first task: 1 from an edit of
+/// `a.py` naming `b.py` at 10, 2 from `b.py` naming `a.py` at 20, 3 from `c.py` naming `b.py` at
+/// 30, 4 from `a.py` naming `c.py` at 40, then resolved. Open about `a.py`: 2 then 1, the latest
+/// first; 3 is about other files and 4 is resolved.
+#[test]
+fn the_open_warnings_about_a_file_are_read_latest_first() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let task = Ulid::parse(FIRST)?;
+    let nodes = store_with(&mut writer, &["a.py", "b.py", "c.py"], &[task])?;
+    let (a, b, c) = (nodes[0], nodes[1], nodes[2]);
+    let warning = |at_ms, (source, target)| WarningRecord {
+        task_id: task,
+        at_ms,
+        kind: WarningKind::CoChange,
+        source,
+        target,
+        strength: 0.5,
+    };
+    let ids = record_all(
+        &mut writer,
+        &[
+            warning(10, (a, b)),
+            warning(20, (b, a)),
+            warning(30, (c, b)),
+            warning(40, (a, c)),
+        ],
+    )?;
+    let mut transaction = writer.transaction()?;
+    transaction.resolve_warning(ids[3], true)?;
+    transaction.commit()?;
+    let open: Vec<WarningId> = writer
+        .queries()
+        .open_warnings_about(a)?
+        .iter()
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(open, [ids[1], ids[0]]);
+    Ok(())
+}

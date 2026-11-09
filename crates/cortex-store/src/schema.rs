@@ -839,6 +839,25 @@ pub(crate) const WARNING_COUNTS: &str =
 /// reads them.
 pub(crate) const WARNINGS_OF_TASK: &str = "SELECT warning_id, task_id, ts, kind, src_node, \
     dst_node, strength, resolved FROM warnings WHERE task_id = ?1 ORDER BY warning_id";
+/// The warnings not resolved yet (their task not ended) that name, as edited or as warned of, the
+/// file at node ?1 or a symbol in it, the latest first.
+pub(crate) const OPEN_WARNINGS_ABOUT: &str = "WITH mine AS (SELECT node_id FROM nodes \
+    WHERE kind != 'dir' AND path = (SELECT path FROM nodes WHERE node_id = ?1 AND kind = 'file')) \
+    SELECT warning_id, task_id, ts, kind, src_node, dst_node, strength, resolved FROM warnings \
+    WHERE resolved IS NULL AND (src_node IN (SELECT node_id FROM mine) \
+    OR dst_node IN (SELECT node_id FROM mine)) ORDER BY ts DESC, warning_id DESC";
+/// The other files the file at node ?1, or a symbol in it, is linked to by an edge of type ?2, ?3
+/// or ?4 either way, each with the strongest such edge's weight, by type, then strongest first,
+/// then by path.
+pub(crate) const LINKS_OF_FILE: &str = "WITH me AS (SELECT path FROM nodes \
+    WHERE node_id = ?1 AND kind = 'file'), \
+    mine AS (SELECT node_id FROM nodes WHERE kind != 'dir' AND path = (SELECT path FROM me)), \
+    linked AS (SELECT o.path, e.type, e.w FROM mine AS m JOIN edges AS e ON e.src = m.node_id \
+    JOIN nodes AS o ON o.node_id = e.dst WHERE e.type IN (?2, ?3, ?4) AND o.kind != 'dir' \
+    UNION ALL SELECT o.path, e.type, e.w FROM mine AS m JOIN edges AS e ON e.dst = m.node_id \
+    JOIN nodes AS o ON o.node_id = e.src WHERE e.type IN (?2, ?3, ?4) AND o.kind != 'dir') \
+    SELECT path, type, max(w) AS w FROM linked WHERE path != (SELECT path FROM me) \
+    GROUP BY path, type ORDER BY type, w DESC, path";
 
 #[cfg(test)]
 mod tests {

@@ -20,6 +20,7 @@ mod coordination;
 mod episode;
 mod error;
 mod facts;
+mod file_links;
 mod folders;
 mod graph;
 mod handoffs;
@@ -66,6 +67,7 @@ pub use episode::{
 };
 pub use error::StoreError;
 pub use facts::{FactAnchor, FactRecord, FactRow};
+pub use file_links::FileLink;
 pub use graph::GraphNodeRow;
 pub use handoffs::{HandoffEnd, HandoffRecord, HandoffRow, LastFailure};
 pub use ids::{
