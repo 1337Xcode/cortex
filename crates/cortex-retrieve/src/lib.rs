@@ -60,7 +60,7 @@ pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};
 pub use pipeline::{
     Location, Outcome, Request, Retrieval, SMALL_MODE_MAX_TOKENS, Silence, locate, retrieve,
 };
-pub use primer::{MAX_PRIMER_LANDMARKS, MAX_PRIMER_TOKENS, primer};
+pub use primer::{MAX_PRIMER_LANDMARKS, MAX_PRIMER_RULES, MAX_PRIMER_TOKENS, primer};
 pub use prompt::{Mention, PromptTerms};
 pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, Network, SPREAD_THRESHOLD, spread};
 pub use read::{GraphSettings, read_graph};

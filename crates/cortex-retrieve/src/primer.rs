@@ -1,15 +1,19 @@
 //! The session primer: what an agent is told when a session starts. The repository's mode and
-//! size, its landmark files, and one line on what Cortex adds from then on.
+//! size, its landmark files, the project rules that hold for the whole repository, and one line on
+//! what Cortex adds from then on.
 //!
 //! The primer stays byte for byte the same from one session to the next, so it keeps an agent's
 //! cached prompt warm: it holds nothing of the session or the time, its sizes are rounded to two
-//! significant digits so that small growth changes nothing, and its landmarks, at most eight, are
-//! listed by path. It changes only when the mode, a rounded size or the landmarks do.
+//! significant digits so that small growth changes nothing, its landmarks, at most eight, are
+//! listed by path, and its rules, at most six, the oldest first. It changes only when the mode, a
+//! rounded size, the landmarks or the rules do. Over its cap, its rules are shed from the last.
 
 use std::fmt::Write as _;
 
-use cortex_core::{FileFlags, InterestTier, NodeKind, ScaleMode, estimate_tokens};
-use cortex_store::{MetaKey, NodeId, Queries, StoreError};
+use cortex_core::{
+    FactStatus, FileFlags, InterestTier, NodeKind, RepoPath, ScaleMode, estimate_tokens,
+};
+use cortex_store::{MetaKey, NodeId, Queries, ROOT_ANCHOR_HASH, StoreError};
 
 use crate::graph::Graph;
 use cortex_core::is_plain;
@@ -19,6 +23,9 @@ pub const MAX_PRIMER_LANDMARKS: usize = 8;
 
 /// Most tokens the primer may take, as estimated.
 pub const MAX_PRIMER_TOKENS: usize = 400;
+
+/// Most project rules about the whole repository the primer carries, the oldest first.
+pub const MAX_PRIMER_RULES: usize = 6;
 
 /// The primer for the repository the store `queries` reads holds, its landmarks from `graph`;
 /// none while the store has no mode yet, the first index not done.
@@ -46,14 +53,63 @@ pub fn primer(queries: Queries<'_>, graph: &Graph<NodeId>) -> Result<Option<Stri
     if !landmarks.is_empty() {
         let _ = writeln!(text, "Landmarks: {}", landmarks.join(", "));
     }
-    text.push_str(match mode {
+    let closing = match mode {
         ScaleMode::Tiny => {
             "Cortex records what agents do here; with this little code it adds nothing to prompts.\n"
         }
-        _ => "Cortex adds the code a prompt points at before the agent starts, when the evidence agrees.\n",
-    });
-    // INVARIANT: budgeted (the primer is held to its cap: a primer past it is not given)
-    Ok((estimate_tokens(&text) <= MAX_PRIMER_TOKENS).then_some(text))
+        _ => {
+            "Cortex adds the code a prompt points at before the agent starts, when the evidence agrees.\n"
+        }
+    };
+    let mut rules = rules(queries)?;
+    loop {
+        let mut primer = text.clone();
+        if !rules.is_empty() {
+            primer.push_str("Project rules:\n");
+            for rule in &rules {
+                let _ = writeln!(primer, "  - {rule}");
+            }
+        }
+        primer.push_str(closing);
+        // INVARIANT: budgeted (the primer is held to its cap, its rules shed from the last: a
+        // primer past it without them is not given)
+        if estimate_tokens(&primer) <= MAX_PRIMER_TOKENS {
+            return Ok(Some(primer));
+        }
+        if rules.pop().is_none() {
+            return Ok(None);
+        }
+    }
+}
+
+/// The texts of the active facts about the whole repository, anchored to its root alone, the
+/// oldest first, at most [`MAX_PRIMER_RULES`]; a text that is not plain is left out.
+fn rules(queries: Queries<'_>) -> Result<Vec<String>, StoreError> {
+    let Some(root) = queries.folder_node_at(&RepoPath::root())? else {
+        return Ok(Vec::new());
+    };
+    let mut rules = Vec::new();
+    for id in queries.facts_anchored_to(&[root])? {
+        if rules.len() >= MAX_PRIMER_RULES {
+            break;
+        }
+        let Some(row) = queries.fact(id)? else {
+            continue;
+        };
+        // INVARIANT: true-at-render (a rule is given only while active and anchored to the root
+        // alone, the root's hash the one it keeps; a crafted text cannot add a line or a tag)
+        let is_about_the_root = matches!(
+            row.record.anchors.as_slice(),
+            [anchor] if anchor.node == root && anchor.hash.as_bytes() == &ROOT_ANCHOR_HASH
+        );
+        if row.record.status == FactStatus::Active
+            && is_about_the_root
+            && is_plain(&row.record.text)
+        {
+            rules.push(row.record.text);
+        }
+    }
+    Ok(rules)
 }
 
 /// The paths of the landmark files, at most [`MAX_PRIMER_LANDMARKS`] of the most interesting, by
