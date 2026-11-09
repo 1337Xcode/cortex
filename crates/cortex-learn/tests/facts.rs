@@ -244,6 +244,61 @@ fn a_suspect_candidate_turns_active_only_as_a_candidate_would() -> TestResult {
     Ok(())
 }
 
+/// Facts about the whole repository are anchored to its root alone, at most ten not retired.
+/// Ten rules noted: each added. An eleventh: refused. The first said again: merged, not refused.
+/// The first retired: the eleventh is added. The root named with `money.py`: refused.
+#[test]
+fn facts_about_the_whole_repository_are_capped_at_ten() -> TestResult {
+    let mut store = Store::new()?;
+    let money = store.index_text(&[("src/money.py", "cents")])?;
+    let root = store.folder_node("")?;
+    let user = |text: &'static str| (text, FactSource::User, None);
+    let rules = [
+        "Every module has tests.",
+        "Errors carry the operation.",
+        "Times are UTC milliseconds.",
+        "Paths use forward slashes.",
+        "No network calls in tests.",
+        "Configs are written atomically.",
+        "Logs never hold code.",
+        "Hashes are BLAKE3.",
+        "Each crate has a README.",
+        "Commits are atomic.",
+    ];
+    let mut ids = Vec::new();
+    for (at, rule) in rules.iter().enumerate() {
+        ids.push(added(say(
+            &mut store,
+            user(rule),
+            &[root],
+            10 + i64::try_from(at)?,
+        )?)?);
+    }
+    let eleventh = user("Docs describe what was run.");
+    assert!(matches!(
+        say(&mut store, eleventh, &[root], 30),
+        Err(FactError::TooManyGlobal)
+    ));
+    assert_eq!(
+        say(&mut store, user(rules[0]), &[root], 31)?,
+        Asserted::Merged(ids[0])
+    );
+    word(&mut store, |transaction| {
+        retire_fact(transaction, ids[0], 32)
+    })?;
+    added(say(&mut store, eleventh, &[root], 33)?)?;
+    assert!(matches!(
+        say(
+            &mut store,
+            user("Money is kept in cents."),
+            &[root, money[0]],
+            34
+        ),
+        Err(FactError::GlobalWithOthers)
+    ));
+    Ok(())
+}
+
 /// A file whose contents are not read and a folder have no hash to keep: a fact on either is
 /// refused, naming the node, and nothing is stored.
 #[test]

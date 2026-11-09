@@ -2,7 +2,9 @@
 //! is that fact said again, not a new one: a candidate turns active when the user says it, or an
 //! agent says it in a second task; a suspect one turns active again when the user or an agent says
 //! it against the code as it is now, its anchors stamped with today's hashes. Otherwise the fact is
-//! added, active when the user wrote it and a candidate when an agent or an import did.
+//! added, active when the user wrote it and a candidate when an agent or an import did. A fact about
+//! the whole repository is anchored to its root alone, and the repository holds at most
+//! [`MAX_GLOBAL_FACTS`] of them that are not retired.
 //!
 //! [`review_facts`] keeps statuses true to the code: a candidate or active fact with an anchor whose
 //! code changed, or is gone, turns suspect; a fact suspect for 14 days retires. The user's own word
@@ -10,13 +12,18 @@
 
 use std::collections::BTreeSet;
 
-use cortex_core::{FactKind, FactSource, FactStatus, Ulid, identifier_tokens, jaccard};
+use cortex_core::{FactKind, FactSource, FactStatus, RepoPath, Ulid, identifier_tokens, jaccard};
 use cortex_store::{FactAnchor, FactId, FactRecord, FactRow, NodeId, Queries, StoreError, WriteTx};
 
 /// How alike two facts' words must be for one to be the other said again: 80% of the words they
 /// hold between them shared, as Jaccard measures it, after the case and the marks between words
 /// are set aside.
 pub const MERGES_AT: f64 = 0.8;
+
+/// Most facts about the whole repository it holds that are not retired: a few rules every task
+/// should know, which every session's start carries. A new one past this is refused until one is
+/// retired.
+pub const MAX_GLOBAL_FACTS: usize = 10;
 
 /// How long a fact stays suspect before it retires on its own: 14 days, in milliseconds. Long
 /// enough for the user to look at what changed and confirm the rule or retire it.
@@ -63,6 +70,16 @@ pub enum FactError {
         /// The fact asked for.
         fact: FactId,
     },
+    /// A fact about the whole repository names something else too: it is anchored to the root
+    /// alone.
+    #[error("a fact about the whole repository is anchored to it alone")]
+    GlobalWithOthers,
+    /// The repository holds as many facts about the whole of it as it may.
+    #[error(
+        "the repository holds {} facts about the whole of it already: retire one first",
+        MAX_GLOBAL_FACTS
+    )]
+    TooManyGlobal,
     /// The fact was corrected by another, which is the one to change.
     #[error("fact {} was corrected by fact {}", fact.get(), by.get())]
     Superseded {
@@ -90,8 +107,10 @@ pub struct Reviewed {
 ///
 /// # Errors
 ///
-/// [`FactError::Unanchorable`] for a node that cannot anchor a fact, and the store's errors
-/// (among them text that is too long and no node at all).
+/// [`FactError::Unanchorable`] for a node that cannot anchor a fact,
+/// [`FactError::GlobalWithOthers`] for the root named with anything else,
+/// [`FactError::TooManyGlobal`] for a new fact about the whole repository past
+/// [`MAX_GLOBAL_FACTS`], and the store's errors (among them text that is too long and no node).
 pub fn assert_fact(
     transaction: &mut WriteTx<'_>,
     assertion: &Assertion<'_>,
@@ -100,7 +119,15 @@ pub fn assert_fact(
     let nodes: BTreeSet<NodeId> = assertion.nodes.iter().copied().collect();
     let listed: Vec<NodeId> = nodes.iter().copied().collect();
     let anchors = anchors_now(transaction.queries(), &listed)?;
+    let root = transaction.queries().folder_node_at(&RepoPath::root())?;
+    let is_global = root.is_some_and(|root| nodes.contains(&root));
+    if is_global && nodes.len() > 1 {
+        return Err(FactError::GlobalWithOthers);
+    }
     let Some(said) = said_before(transaction.queries(), assertion.text, &nodes)? else {
+        if is_global && global_facts(transaction.queries(), &listed)? >= MAX_GLOBAL_FACTS {
+            return Err(FactError::TooManyGlobal);
+        }
         let id = transaction.add_fact(&FactRecord {
             text: assertion.text.to_owned(),
             kind: assertion.kind,
@@ -201,6 +228,20 @@ fn confirms_candidate(said: &FactRow, assertion: &Assertion<'_>) -> bool {
         }
         FactSource::Import => false,
     }
+}
+
+/// How many current facts not retired are anchored to `root`, the repository's root node alone.
+fn global_facts(queries: Queries<'_>, root: &[NodeId]) -> Result<usize, StoreError> {
+    let mut count = 0;
+    for id in queries.facts_anchored_to(root)? {
+        if queries
+            .fact(id)?
+            .is_some_and(|row| row.record.status != FactStatus::Retired)
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 /// The anchors on `nodes`, each once in node order, with the hashes they hold now.

@@ -43,8 +43,8 @@ pub use decay::decayed;
 pub use episode::episode_of;
 pub use fact_word::{confirm_fact, edit_fact, retire_fact};
 pub use facts::{
-    Asserted, Assertion, FactError, MERGES_AT, Reviewed, SUSPECT_RETIRES_AFTER_MS, assert_fact,
-    review_facts,
+    Asserted, Assertion, FactError, MAX_GLOBAL_FACTS, MERGES_AT, Reviewed,
+    SUSPECT_RETIRES_AFTER_MS, assert_fact, review_facts,
 };
 pub use interest::{EarnedInterest, add_interest, interest_of, tier_now};
 pub use labels::{LABELLED_FILES, label_injections};
