@@ -153,6 +153,24 @@ pub(crate) fn restamp(
     Ok(())
 }
 
+/// Records `task` as the one that first asserted fact `id`, unless one already is. Whether it
+/// was recorded.
+///
+/// # Errors
+///
+/// SQLite errors.
+pub(crate) fn note_task(
+    connection: &Connection,
+    id: FactId,
+    task: Ulid,
+) -> Result<bool, StoreError> {
+    let changed = connection
+        .prepare_cached(schema::FACT_NOTE_TASK)
+        .and_then(|mut statement| statement.execute((id.get(), task.to_string())))
+        .map_err(sqlite("noting a fact's task"))?;
+    Ok(changed == 1)
+}
+
 /// Marks fact `old` superseded by fact `new`, which corrects it. Whether it was current.
 ///
 /// # Errors

@@ -532,6 +532,16 @@ impl WriteTx<'_> {
         self.atomically(|connection| facts::supersede(connection, old, new))
     }
 
+    /// Records `task` as the one that first asserted fact `id`, unless one already is: an
+    /// imported fact an agent asserts in a task. Whether it was recorded.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn note_fact_task(&mut self, id: FactId, task: Ulid) -> Result<bool, StoreError> {
+        self.atomically(|connection| facts::note_task(connection, id, task))
+    }
+
     /// Gives each of fact `id`'s `anchors` its hash there, as when the fact is confirmed against
     /// the code as it is now.
     ///

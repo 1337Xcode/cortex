@@ -736,6 +736,9 @@ pub(crate) const FACT_ANCHOR_ADD: &str =
 /// Sets fact ?1's status to ?2 at ?3; one made active counts as confirmed then (?4 is 1).
 pub(crate) const FACT_SET_STATUS: &str = "UPDATE facts SET status = ?2, status_at = ?3, \
      last_verified_at = CASE WHEN ?4 THEN ?3 ELSE last_verified_at END WHERE fact_id = ?1";
+/// Records task ?2 as the one that first asserted fact ?1, unless one already is.
+pub(crate) const FACT_NOTE_TASK: &str =
+    "UPDATE facts SET asserted_in = ?2 WHERE fact_id = ?1 AND asserted_in IS NULL";
 /// Gives fact ?1's anchor on node ?2 the hash ?3.
 pub(crate) const FACT_ANCHOR_RESTAMP: &str =
     "UPDATE fact_anchors SET anchor_hash = ?3 WHERE fact_id = ?1 AND node_id = ?2";

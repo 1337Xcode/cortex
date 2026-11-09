@@ -1,0 +1,189 @@
+//! The life of a fact. A fact asserted on the same anchors as a current one, in words alike enough,
+//! is that fact said again, not a new one: a candidate turns active when the user says it, or an
+//! agent says it in a second task; a suspect one turns active again when the user or an agent says
+//! it against the code as it is now, its anchors stamped with today's hashes. Otherwise the fact is
+//! added, active when the user wrote it and a candidate when an agent or an import did.
+//!
+//! [`review_facts`] keeps statuses true to the code: a candidate or active fact with an anchor whose
+//! code changed, or is gone, turns suspect; a fact suspect for 14 days retires.
+
+use std::collections::BTreeSet;
+
+use cortex_core::{FactKind, FactSource, FactStatus, Ulid, identifier_tokens, jaccard};
+use cortex_store::{FactId, FactRecord, FactRow, NodeId, Queries, StoreError, WriteTx};
+
+/// How alike two facts' words must be for one to be the other said again: 80% of the words they
+/// hold between them shared, as Jaccard measures it, after the case and the marks between words
+/// are set aside.
+pub const MERGES_AT: f64 = 0.8;
+
+/// How long a fact stays suspect before it retires on its own: 14 days, in milliseconds. Long
+/// enough for the user to look at what changed and confirm the rule or retire it.
+pub const SUSPECT_RETIRES_AFTER_MS: i64 = 14 * 24 * 60 * 60 * 1_000;
+
+/// A fact as someone states it.
+#[derive(Debug, Clone, Copy)]
+pub struct Assertion<'a> {
+    /// The rule, in words.
+    pub text: &'a str,
+    /// What kind of rule it is.
+    pub kind: FactKind,
+    /// Who states it.
+    pub source: FactSource,
+    /// The task it is stated in: none for the user's and for an import.
+    pub task: Option<Ulid>,
+    /// What it is about: files and symbols, each once.
+    pub nodes: &'a [NodeId],
+}
+
+/// What became of an assertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Asserted {
+    /// A new fact, in its source's first status.
+    Added(FactId),
+    /// A fact said again that stays as it was.
+    Merged(FactId),
+    /// A fact said again that is now active, its anchors stamped with the hashes they have now.
+    Activated(FactId),
+}
+
+/// Why an assertion was refused.
+#[derive(Debug, thiserror::Error)]
+pub enum AssertError {
+    /// A node has no hash to keep: not a file whose contents are read, nor a symbol.
+    #[error("node {node_id} cannot anchor a fact: only a read file or a symbol can")]
+    Unanchorable {
+        /// The node's id.
+        node_id: i64,
+    },
+    /// The store failed.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
+/// What a review of the facts changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Reviewed {
+    /// The facts that turned suspect, in id order.
+    pub suspected: Vec<FactId>,
+    /// The facts that retired, in id order.
+    pub retired: Vec<FactId>,
+}
+
+/// States `assertion` at `now_ms` in `transaction`: the fact it says again, made active when the
+/// assertion confirms it, or a new fact.
+///
+/// # Errors
+///
+/// [`AssertError::Unanchorable`] for a node that cannot anchor a fact, and the store's errors
+/// (among them text that is too long and no node at all).
+pub fn assert_fact(
+    transaction: &mut WriteTx<'_>,
+    assertion: &Assertion<'_>,
+    now_ms: i64,
+) -> Result<Asserted, AssertError> {
+    let nodes: BTreeSet<NodeId> = assertion.nodes.iter().copied().collect();
+    let listed: Vec<NodeId> = nodes.iter().copied().collect();
+    let anchors = transaction.queries().anchor_hashes(&listed)?;
+    if let Some(node) = listed
+        .iter()
+        .find(|node| !anchors.iter().any(|anchor| anchor.node == **node))
+    {
+        return Err(AssertError::Unanchorable {
+            node_id: node.get(),
+        });
+    }
+    let Some(said) = said_before(transaction.queries(), assertion.text, &nodes)? else {
+        let id = transaction.add_fact(&FactRecord {
+            text: assertion.text.to_owned(),
+            kind: assertion.kind,
+            source: assertion.source,
+            status: assertion.source.first_status(),
+            created_at_ms: now_ms,
+            task: assertion.task,
+            anchors,
+        })?;
+        return Ok(Asserted::Added(id));
+    };
+    if !confirms(&said, assertion) {
+        if let Some(task) = assertion.task {
+            transaction.note_fact_task(said.id, task)?;
+        }
+        return Ok(Asserted::Merged(said.id));
+    }
+    transaction.restamp_fact(said.id, &anchors)?;
+    transaction.set_fact_status(said.id, FactStatus::Active, now_ms)?;
+    Ok(Asserted::Activated(said.id))
+}
+
+/// Makes suspect, at `now_ms` in `transaction`, each candidate or active fact with an anchor whose
+/// code changed or is gone, and retires each fact suspect for [`SUSPECT_RETIRES_AFTER_MS`] or
+/// longer.
+///
+/// # Errors
+///
+/// The store's errors.
+pub fn review_facts(transaction: &mut WriteTx<'_>, now_ms: i64) -> Result<Reviewed, StoreError> {
+    let suspected = transaction.queries().facts_with_changed_anchors()?;
+    for id in &suspected {
+        transaction.set_fact_status(*id, FactStatus::Suspect, now_ms)?;
+    }
+    let due = now_ms.saturating_sub(SUSPECT_RETIRES_AFTER_MS);
+    let retired = transaction
+        .queries()
+        .facts_with_status_since(FactStatus::Suspect, due)?;
+    for id in &retired {
+        transaction.set_fact_status(*id, FactStatus::Retired, now_ms)?;
+    }
+    Ok(Reviewed { suspected, retired })
+}
+
+/// The current fact, not retired, anchored to exactly `nodes`, whose words are at least
+/// [`MERGES_AT`] alike to `text`'s: the most alike, the oldest of equals; none when no fact is.
+fn said_before(
+    queries: Queries<'_>,
+    text: &str,
+    nodes: &BTreeSet<NodeId>,
+) -> Result<Option<FactRow>, StoreError> {
+    let words = words_of(text);
+    let listed: Vec<NodeId> = nodes.iter().copied().collect();
+    let mut best: Option<(f64, FactRow)> = None;
+    for id in queries.facts_anchored_to(&listed)? {
+        let Some(row) = queries.fact(id)? else {
+            continue;
+        };
+        let anchored: BTreeSet<NodeId> = row
+            .record
+            .anchors
+            .iter()
+            .map(|anchor| anchor.node)
+            .collect();
+        if row.record.status == FactStatus::Retired || anchored != *nodes {
+            continue;
+        }
+        let likeness = jaccard(&words, &words_of(&row.record.text));
+        if likeness >= MERGES_AT && best.as_ref().is_none_or(|(top, _)| likeness > *top) {
+            best = Some((likeness, row));
+        }
+    }
+    Ok(best.map(|(_, row)| row))
+}
+
+/// Whether `assertion`, saying `said` again, makes it active: a candidate the user states, or one
+/// an agent states in a task other than the one that first asserted it; a suspect fact the user or
+/// an agent states against the code as it is now. An import confirms nothing.
+fn confirms(said: &FactRow, assertion: &Assertion<'_>) -> bool {
+    match (said.record.status, assertion.source) {
+        (FactStatus::Candidate, FactSource::User)
+        | (FactStatus::Suspect, FactSource::User | FactSource::Agent) => true,
+        (FactStatus::Candidate, FactSource::Agent) => {
+            matches!((said.record.task, assertion.task), (Some(first), Some(now)) if first != now)
+        }
+        (FactStatus::Active | FactStatus::Retired, _) | (_, FactSource::Import) => false,
+    }
+}
+
+/// The words of `text`, lower case, as a set: what two facts are compared by.
+fn words_of(text: &str) -> BTreeSet<String> {
+    identifier_tokens(text).into_iter().collect()
+}

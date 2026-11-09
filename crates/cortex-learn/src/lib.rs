@@ -10,6 +10,8 @@
 //! record of what the task did, and [`archetypes_of`] clusters those records into the shapes of
 //! task a repository has. [`Learner`] does all of that as each task ends, and looks again at the
 //! task before it in the same session, which only the next task's end can show was put back.
+//! [`assert_fact`] adds a project fact or recognizes one said again, and [`review_facts`] keeps
+//! facts' statuses true to the code they are anchored to.
 
 #![warn(clippy::pedantic)]
 
@@ -18,6 +20,7 @@ mod archetype;
 mod commands;
 mod decay;
 mod episode;
+mod facts;
 mod given;
 mod handoff;
 mod interest;
@@ -36,6 +39,10 @@ pub use archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
 pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore, Told};
 pub use decay::decayed;
 pub use episode::episode_of;
+pub use facts::{
+    AssertError, Asserted, Assertion, MERGES_AT, Reviewed, SUSPECT_RETIRES_AFTER_MS, assert_fact,
+    review_facts,
+};
 pub use interest::{EarnedInterest, add_interest, interest_of, tier_now};
 pub use labels::{LABELLED_FILES, label_injections};
 pub use links::{EarnedLinks, Linking, MAX_LINK_WEIGHT, add_links, links_of};
