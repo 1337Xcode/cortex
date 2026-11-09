@@ -34,7 +34,9 @@ use crate::meter::Transcript;
 use crate::pending::Pending;
 use crate::positions;
 use crate::signatures::Signatures;
-use crate::upkeep::{Ended, UPKEEP_RUN_BUDGET, Upkeep, UpkeepClock, UpkeepSettings};
+use crate::upkeep::{
+    Ended, LOG_LIMIT_BYTES, UPKEEP_RUN_BUDGET, Upkeep, UpkeepClock, UpkeepSettings,
+};
 
 /// How often the crawler takes a batch of `index.crawl_files_per_second` files.
 const CRAWL_PERIOD: Duration = Duration::from_secs(1);
@@ -298,6 +300,7 @@ impl<'a> Host<'a> {
             link_decay: self.config.link_decay,
             interest_decay: self.config.interest_decay,
             longest_hold_ms: self.inbox.position_timing().longest_ms(),
+            log_limit_bytes: LOG_LIMIT_BYTES,
         };
         let inbox = self.inbox;
         let should_stop = || inbox.has_work_waiting();
@@ -334,11 +337,11 @@ impl<'a> Host<'a> {
                     pages: swept.pages,
                     is_done: ended == Ended::Done,
                 });
-                self.upkeep_clock.ran(ended);
+                self.upkeep_clock.ran(ended, Instant::now());
             }
             Err(error) => {
                 count_failed(inbox, "upkeep", &error);
-                self.upkeep_clock.ran(Ended::OutOfTime);
+                self.upkeep_clock.ran(Ended::OutOfTime, Instant::now());
             }
         }
     }
@@ -1459,7 +1462,7 @@ def g():
         let snapshot = Snapshot::default();
         let mut host = indexed_host(root.path(), (&config, &inbox, &snapshot))?;
         // Upkeep has run in this quiet spell: it is not due until the next event.
-        host.upkeep_clock.ran(Ended::Done);
+        host.upkeep_clock.ran(Ended::Done, Instant::now());
         let idle_at = Instant::now() + Duration::from_secs(600);
         let sweep_at = idle_at + Duration::from_secs(60);
         assert_eq!(

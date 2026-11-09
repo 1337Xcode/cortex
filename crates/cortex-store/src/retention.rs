@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use crate::error::{StoreError, sqlite};
 use crate::schema;
 
-/// Deletes at most `limit` events older than `before_ms`, the first recorded first: how many.
+/// Deletes those of the `limit` first events recorded that are older than `before_ms`: how many.
 ///
 /// # Errors
 ///
@@ -103,22 +103,29 @@ fn as_sql(count: u64) -> i64 {
     i64::try_from(count).unwrap_or(i64::MAX)
 }
 
-/// Refreshes the query planner's statistics where they are stale, and gives back to the file
-/// system at most `pages` free pages of the database (none from a database that does not vacuum
-/// incrementally): how many pages it gave back.
+/// Refreshes the query planner's statistics where they are stale.
 ///
 /// # Errors
 ///
 /// SQLite errors.
-pub(crate) fn optimize(connection: &Connection, pages: u32) -> Result<u64, StoreError> {
+pub(crate) fn optimize(connection: &Connection) -> Result<(), StoreError> {
+    connection
+        .execute_batch(schema::OPTIMIZE)
+        .map_err(sqlite("optimizing the database"))
+}
+
+/// Gives back to the file system at most `pages` free pages of the database (none from a
+/// database that does not vacuum incrementally): how many it gave back.
+///
+/// # Errors
+///
+/// SQLite errors.
+pub(crate) fn vacuum(connection: &Connection, pages: u32) -> Result<u64, StoreError> {
     let free = |connection: &Connection| -> Result<i64, StoreError> {
         connection
             .query_row(schema::FREE_PAGES, [], |row| row.get(0))
             .map_err(sqlite("reading the free pages"))
     };
-    connection
-        .execute_batch(schema::OPTIMIZE)
-        .map_err(sqlite("optimizing the database"))?;
     let before = free(connection)?;
     // The pragma takes its count inline: no parameter can stand for it. It gives back one page
     // each time it is stepped, so it is stepped until it is done.

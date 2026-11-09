@@ -685,13 +685,19 @@ pub(crate) const INTEREST_AFTER: &str = "SELECT node_id, score, last_seq, tier F
 /// Removes the interest of the nodes in the JSON array ?1.
 pub(crate) const INTEREST_REMOVE: &str =
     "DELETE FROM interest WHERE node_id IN (SELECT value FROM json_each(?1))";
-/// Lets SQLite refresh the statistics its query planner reads, when they are stale.
-pub(crate) const OPTIMIZE: &str = "PRAGMA optimize";
+/// Lets SQLite refresh the statistics its query planner reads, when they are stale, reading at
+/// most 400 rows of each index it analyzes: a fifth of what the pragma reads on its own, so that
+/// on a store not in the system's cache it keeps a hook event waiting no longer than a batch of
+/// upkeep. The limit holds for the connection, whose only analysis this is.
+pub(crate) const OPTIMIZE: &str = "PRAGMA analysis_limit = 400; PRAGMA optimize";
 /// How many pages of the database file are free.
 pub(crate) const FREE_PAGES: &str = "PRAGMA freelist_count";
-/// Deletes at most ?2 events older than ?1, the first recorded first.
+/// Deletes those of the ?2 first events recorded that are older than ?1. Events are recorded as
+/// their hooks send them, moments after they happen, so the oldest come first; reading no more
+/// than ?2 rows, a batch takes as long however many events the store keeps. An event recorded
+/// after a later one keeps the older ones behind it until it is old enough itself.
 pub(crate) const EVENTS_DELETE_BEFORE: &str = "DELETE FROM events WHERE seq IN \
-     (SELECT seq FROM events WHERE ts < ?1 ORDER BY seq LIMIT ?2)";
+     (SELECT seq FROM events ORDER BY seq LIMIT ?2) AND ts < ?1";
 /// Deletes at most ?2 of the episodes past the ?1 most worth keeping: those of an unknown outcome
 /// first, then the oldest.
 pub(crate) const EPISODES_OVER_CAP: &str = "DELETE FROM episodes WHERE episode_id IN \

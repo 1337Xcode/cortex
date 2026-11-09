@@ -7,6 +7,11 @@ pub(crate) fn database(folder: &Path) -> PathBuf {
     folder.join("cortex.db")
 }
 
+/// The write-ahead log of the database inside `folder`, named as SQLite names it.
+pub(crate) fn log(folder: &Path) -> PathBuf {
+    folder.join("cortex.db-wal")
+}
+
 /// The writer's lock file inside `folder`.
 pub(crate) fn writer_lock(folder: &Path) -> PathBuf {
     folder.join("writer.lock")

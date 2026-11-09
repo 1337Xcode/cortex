@@ -1,13 +1,16 @@
 //! What upkeep stops keeping, deleted in bounded batches, worked out by hand: events past their
 //! retention, episodes past their cap (unknown outcomes first, then the oldest), positions that
-//! can no longer hold, and facts retired long ago with their anchors and where they were given.
+//! can no longer hold, and facts retired long ago with their anchors and where they were given;
+//! and the write-ahead log's file, which upkeep paces itself by.
 
 mod common;
+
+use std::time::{Duration, Instant};
 
 use common::{Scratch, TestResult, index};
 use cortex_core::{
     Agent, EventKind, EventMeta, FactKind, FactSource, FactStatus, Identifier, PositionMode,
-    TaskOutcome, Ulid,
+    RepoPath, TaskOutcome, Ulid,
 };
 use cortex_store::{
     EpisodeRecord, EventRecord, FactRecord, Pitfalls, PositionRecord, SessionRecord, TaskRecord,
@@ -56,7 +59,10 @@ fn tasks_with_episodes(
 }
 
 /// Worked by hand. Events at 1,000, 2,000 and 3,000: deleting those before 2,500 one at a time
-/// takes the one at 1,000, then 2,000, then none; 3,000 is kept. Episodes of four tasks, made at
+/// takes the one at 1,000, then 2,000, then none; 3,000 is kept. Then events at 4,000 and 3,500
+/// are recorded, in that order. Deleting those before 3,750 two at a time takes 3,000 alone (4,000
+/// is newer); one at a time, none: 3,500 waits behind 4,000, recorded before it. Before 5,000,
+/// both go. Episodes of four tasks, made at
 /// 2,000 to 2,003, outcomes success, unknown, failure, unknown: kept to two, the unknown ones go
 /// (2,001 and 2,003), leaving the first and third; kept to two again, none. Positions last at 100
 /// and 900: those before 500 go, one.
@@ -83,6 +89,22 @@ fn old_events_episodes_past_the_cap_and_old_positions_are_deleted() -> TestResul
     assert_eq!(transaction.delete_events_before(2_500, 1)?, 1);
     assert_eq!(transaction.delete_events_before(2_500, 1)?, 1);
     assert_eq!(transaction.delete_events_before(2_500, 1)?, 0);
+    for ts_ms in [4_000, 3_500] {
+        transaction.append_event(&EventRecord {
+            task_id: None,
+            session_id: None,
+            ts_ms,
+            kind: EventKind::Read,
+            node_id: None,
+            path: None,
+            range: None,
+            meta: EventMeta::default(),
+        })?;
+    }
+    assert_eq!(transaction.delete_events_before(3_750, 2)?, 1);
+    assert_eq!(transaction.delete_events_before(3_750, 1)?, 0);
+    assert_eq!(transaction.delete_events_before(5_000, 2)?, 2);
+    assert_eq!(transaction.delete_events_before(5_000, 2)?, 0);
     let outcomes = [
         TaskOutcome::Success,
         TaskOutcome::Unknown,
@@ -118,8 +140,9 @@ fn old_events_episodes_past_the_cap_and_old_positions_are_deleted() -> TestResul
 }
 
 /// A new store gives back the pages deletions free: after 2,000 events are deleted some pages are
-/// free, and optimizing gives back every one its statistics do not take. It would give none back
-/// from a store that does not vacuum incrementally.
+/// free; a vacuum of one page gives back one, and a vacuum of as many as there are gives back the
+/// rest, leaving none. It would give none back from a store that does not vacuum incrementally.
+/// Refreshing the planner's statistics before the vacuum may take a free page or two for them.
 #[test]
 fn a_new_store_gives_back_the_pages_deletions_free() -> TestResult {
     let scratch = Scratch::new()?;
@@ -141,12 +164,14 @@ fn a_new_store_gives_back_the_pages_deletions_free() -> TestResult {
     let mut transaction = writer.transaction()?;
     assert_eq!(transaction.delete_events_before(2_000, 5_000)?, 2_000);
     transaction.commit()?;
-    let free = writer.queries().free_pages()?;
-    assert!(free > 0, "{free}");
     let mut transaction = writer.transaction()?;
-    // Refreshing the planner's statistics may take a free page or two for them first.
-    let given = transaction.optimize(u32::MAX)?;
-    assert!(given > 0 && given <= free, "{given} of {free}");
+    transaction.optimize()?;
+    transaction.commit()?;
+    let free = writer.queries().free_pages()?;
+    assert!(free > 1, "{free}");
+    let mut transaction = writer.transaction()?;
+    assert_eq!(transaction.vacuum(1)?, 1);
+    assert_eq!(transaction.vacuum(u32::MAX)?, free - 1);
     transaction.commit()?;
     assert_eq!(writer.queries().free_pages()?, 0);
     Ok(())
@@ -190,4 +215,45 @@ fn facts_retired_long_ago_are_deleted_with_their_anchors() -> TestResult {
     assert_eq!(transaction.delete_retired_facts_before(500, 10)?, 0);
     transaction.commit()?;
     Ok(())
+}
+
+/// The log's file is how much the log holds past 4 MiB: 2,000 events of a 4,000-byte path each,
+/// about 8 MB, leave it larger than 4 MiB; once the checkpointer (every second) has copied the
+/// log, the next commit starts it afresh and SQLite cuts the file back to 4 MiB. Small commits
+/// are made until then, for at most 30 s.
+#[test]
+fn the_log_file_is_cut_back_once_the_log_is_copied() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let event = |path: Option<RepoPath>| EventRecord {
+        task_id: None,
+        session_id: None,
+        ts_ms: 1,
+        kind: EventKind::Read,
+        node_id: None,
+        path,
+        range: None,
+        meta: EventMeta::default(),
+    };
+    let long = RepoPath::new(&format!("src/{}.py", "a".repeat(4_000)))?;
+    let mut transaction = writer.transaction()?;
+    for _ in 0..2_000 {
+        transaction.append_event(&event(Some(long.clone())))?;
+    }
+    transaction.commit()?;
+    let kept_bytes = 4 * 1_024 * 1_024;
+    assert!(writer.log_bytes()? > kept_bytes);
+    let start = Instant::now();
+    loop {
+        let mut transaction = writer.transaction()?;
+        transaction.append_event(&event(None))?;
+        transaction.commit()?;
+        if writer.log_bytes()? <= kept_bytes {
+            return Ok(());
+        }
+        if start.elapsed() > Duration::from_secs(30) {
+            return Err(format!("the log's file still holds {} bytes", writer.log_bytes()?).into());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }

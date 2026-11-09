@@ -1,6 +1,6 @@
 //! The one writer of a repository's database, and its transactions.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cortex_core::{
     EdgeType, FactStatus, Identifier, RepoId, RepoPath, ScaleMode, SessionStatus, TaskOutcome, Ulid,
@@ -64,6 +64,8 @@ pub struct Writer {
     connection: Connection,
     /// The lock that makes this the only writer.
     _lock: WriterLock,
+    /// The write-ahead log's file.
+    log: PathBuf,
 }
 
 impl Writer {
@@ -100,6 +102,7 @@ impl Writer {
             checkpointer,
             connection,
             _lock: lock,
+            log: layout::log(options.folder),
         })
     }
 
@@ -114,6 +117,23 @@ impl Writer {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite("starting a transaction"))?;
         Ok(WriteTx { transaction })
+    }
+
+    /// How many bytes the write-ahead log's file holds, 0 when there is none. SQLite cuts the
+    /// file back to 4 MiB on the first commit after the log starts afresh, so past that its size
+    /// is how much the log holds.
+    ///
+    /// # Errors
+    ///
+    /// I/O errors other than the file not being there.
+    pub fn log_bytes(&self) -> Result<u64, StoreError> {
+        match std::fs::metadata(&self.log) {
+            Ok(metadata) => Ok(metadata.len()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+            Err(error) => Err(io("reading the size of the write-ahead log", &self.log)(
+                error,
+            )),
+        }
     }
 
     /// Read queries over the committed database.
@@ -453,14 +473,23 @@ impl WriteTx<'_> {
         self.atomically(|connection| coordination::keep_position(connection, record))
     }
 
-    /// Refreshes the query planner's statistics where they are stale and gives back at most
-    /// `pages` free pages of the database file: how many it gave back.
+    /// Refreshes the query planner's statistics where they are stale.
     ///
     /// # Errors
     ///
     /// [`StoreError::TransactionLost`] and SQLite errors.
-    pub fn optimize(&mut self, pages: u32) -> Result<u64, StoreError> {
-        self.atomically(|connection| retention::optimize(connection, pages))
+    pub fn optimize(&mut self) -> Result<(), StoreError> {
+        self.atomically(retention::optimize)
+    }
+
+    /// Gives back to the file system at most `pages` free pages of the database file (none from
+    /// a database made before it vacuumed incrementally): how many it gave back.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn vacuum(&mut self, pages: u32) -> Result<u64, StoreError> {
+        self.atomically(|connection| retention::vacuum(connection, pages))
     }
 
     /// Removes the links of use from each pair's first node to its second: how many.
@@ -481,7 +510,8 @@ impl WriteTx<'_> {
         self.atomically(|connection| fading::remove_interest(connection, nodes))
     }
 
-    /// Deletes at most `limit` events older than `before_ms`, the first recorded first: how many.
+    /// Deletes those of the `limit` first events recorded that are older than `before_ms`: how
+    /// many. An event recorded after a later one keeps the older ones behind it.
     ///
     /// # Errors
     ///

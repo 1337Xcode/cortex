@@ -5,8 +5,13 @@
 //! for 90 days deleted; events older than 90 days are deleted, episodes kept to 50,000 (unknown
 //! outcomes first) and positions that can no longer hold removed; last, the query planner's
 //! statistics are refreshed and up to [`VACUUM_PAGES`] free pages given back to the file system.
-//! Between batches a run stops when a hook event or a request waits, or after
-//! [`UPKEEP_RUN_BUDGET`], and the next run carries on where it stopped.
+//! Between batches a run stops when a hook event or a request waits, after
+//! [`UPKEEP_RUN_BUDGET`], or when the write-ahead log holds more than its limit; the next run
+//! carries on where it stopped, [`PACE_WAIT`] later after the last, by when the checkpointer has
+//! copied the log and the next commit starts it afresh, so that upkeep's commits leave the
+//! copying to the checkpointer. A reader that holds the log, or a writer whose commits keep
+//! coming, can keep it from starting afresh; each run after a pace then writes one batch and
+//! waits again.
 
 use std::time::{Duration, Instant};
 
@@ -19,6 +24,15 @@ pub(crate) const QUIET_BEFORE_UPKEEP: Duration = Duration::from_secs(10 * 60);
 /// The longest one run of upkeep goes on before it stops and leaves the rest for the next.
 pub(crate) const UPKEEP_RUN_BUDGET: Duration = Duration::from_secs(120);
 
+/// How much the write-ahead log may hold before upkeep waits: 32 MiB, half the 64 MiB at which
+/// the writer checkpoints it inside a commit, which in the upkeep benchmark kept a hook event
+/// waiting 65 to 204 ms, and seconds while the disk was busy. A batch writes a few MiB at most.
+pub(crate) const LOG_LIMIT_BYTES: u64 = 32 * 1_024 * 1_024;
+
+/// How long upkeep waits once the log holds too much: two of the checkpointer's one-second
+/// periods, so that it has copied every page upkeep wrote.
+pub(crate) const PACE_WAIT: Duration = Duration::from_secs(2);
+
 /// Rows weighed or deleted in one batch: a transaction short enough that a hook event waiting
 /// behind it is recorded within milliseconds.
 const BATCH_ROWS: u64 = 500;
@@ -29,12 +43,17 @@ const KEPT_FOR_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
 /// The most episodes kept.
 const MAX_EPISODES: u64 = 50_000;
 
-/// The most free pages of the database a run gives back: 2,000 pages, 8 MiB at SQLite's usual
-/// page size, a short step however much was deleted; the rest goes at the next runs.
-const VACUUM_PAGES: u32 = 2_000;
+/// The most free pages of the database upkeep gives back each time through its jobs: 2,000
+/// pages, 8 MiB at SQLite's usual page size, however much was deleted; the rest goes next time.
+const VACUUM_PAGES: u64 = 2_000;
 
-/// What upkeep weighs with: the settings that say how links and interest fade, and how long a
-/// position can hold at the longest.
+/// Free pages given back in one batch, a quarter of the most each time: a hook event waiting behind
+/// the vacuum waits for a quarter of it (8 to 83 ms a batch on the upkeep benchmark's large store,
+/// where refreshing the statistics and giving back 2,000 pages in one batch took up to 215 ms).
+const VACUUM_BATCH_PAGES: u32 = 500;
+
+/// What upkeep weighs with: the settings that say how links and interest fade, how long a
+/// position can hold at the longest, and how much the write-ahead log may hold.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct UpkeepSettings {
     /// `learning.link_decay`.
@@ -43,6 +62,8 @@ pub(crate) struct UpkeepSettings {
     pub(crate) interest_decay: f64,
     /// The longest any position holds, in milliseconds.
     pub(crate) longest_hold_ms: i64,
+    /// How much the write-ahead log may hold before a run stops, [`LOG_LIMIT_BYTES`].
+    pub(crate) log_limit_bytes: u64,
 }
 
 /// What a run removed or changed.
@@ -73,11 +94,14 @@ pub(crate) enum Ended {
     Yielded,
     /// The run used its budget: the next quiet spell carries on.
     OutOfTime,
+    /// The write-ahead log holds more than its limit: the next run carries on [`PACE_WAIT`]
+    /// later.
+    Paced,
 }
 
 /// When upkeep is due: once the repository has been quiet for [`QUIET_BEFORE_UPKEEP`] since the
 /// last hook event, again only after another event; at once after a session ended or when asked;
-/// and again at once after a run that yielded to other work.
+/// again at once after a run that yielded to other work, and [`PACE_WAIT`] after one that paced.
 #[derive(Debug)]
 pub(crate) struct UpkeepClock {
     /// When the last hook event was recorded.
@@ -86,6 +110,8 @@ pub(crate) struct UpkeepClock {
     has_run: bool,
     /// Whether a run is asked for now: a session ended, or a person asked.
     is_asked: bool,
+    /// Not before then: the last run paced.
+    paced_until: Option<Instant>,
 }
 
 impl UpkeepClock {
@@ -95,6 +121,7 @@ impl UpkeepClock {
             quiet_since: now,
             has_run: false,
             is_asked: false,
+            paced_until: None,
         }
     }
 
@@ -107,10 +134,14 @@ impl UpkeepClock {
 
     /// When upkeep is due next, at `now` or later; none until the next hook event.
     pub(crate) fn due_at(&self, now: Instant) -> Option<Instant> {
-        if self.is_asked {
-            return Some(now);
-        }
-        (!self.has_run).then(|| self.quiet_since + QUIET_BEFORE_UPKEEP)
+        let due = if self.is_asked {
+            now
+        } else if self.has_run {
+            return None;
+        } else {
+            self.quiet_since + QUIET_BEFORE_UPKEEP
+        };
+        Some(self.paced_until.map_or(due, |until| due.max(until)))
     }
 
     /// Notes that a person asked for upkeep now.
@@ -118,9 +149,10 @@ impl UpkeepClock {
         self.is_asked = true;
     }
 
-    /// Notes how a run ended.
-    pub(crate) fn ran(&mut self, ended: Ended) {
-        if ended != Ended::Yielded {
+    /// Notes how a run that ended at `now` ended.
+    pub(crate) fn ran(&mut self, ended: Ended, now: Instant) {
+        self.paced_until = (ended == Ended::Paced).then(|| now + PACE_WAIT);
+        if matches!(ended, Ended::Done | Ended::OutOfTime) {
             self.has_run = true;
             self.is_asked = false;
         }
@@ -142,8 +174,10 @@ enum Step {
     Episodes,
     /// Positions that no longer hold.
     Positions,
-    /// The planner's statistics and the free pages.
+    /// The planner's statistics.
     Optimize,
+    /// The free pages, this many given back so far.
+    Vacuum(u64),
 }
 
 /// Upkeep's place between runs.
@@ -151,6 +185,10 @@ enum Step {
 pub(crate) struct Upkeep {
     /// The next batch to run.
     step: Step,
+    /// Whether the last run paced and no batch has run since: the next run writes a batch before
+    /// it looks at the log, since SQLite cuts the log's file back only on a commit after the log
+    /// starts afresh, and a run that looked first would pace again without writing.
+    has_paced: bool,
 }
 
 impl Default for Upkeep {
@@ -158,14 +196,15 @@ impl Default for Upkeep {
     fn default() -> Self {
         Self {
             step: Step::Links(None),
+            has_paced: false,
         }
     }
 }
 
 impl Upkeep {
     /// Runs upkeep at `now_ms` with `writer`, from where the last run stopped, until every job is
-    /// done, `deadline` passes or `should_stop` says other work waits: what it removed, and which
-    /// of these ended it.
+    /// done, `deadline` passes, `should_stop` says other work waits or the write-ahead log holds
+    /// more than `settings` lets it: what it removed, and which of these ended it.
     ///
     /// # Errors
     ///
@@ -184,7 +223,13 @@ impl Upkeep {
             if Instant::now() >= deadline {
                 return Ok((swept, Ended::OutOfTime));
             }
-            match self.batch(writer, (now_ms, settings), &mut swept)? {
+            if !self.has_paced && writer.log_bytes()? > settings.log_limit_bytes {
+                self.has_paced = true;
+                return Ok((swept, Ended::Paced));
+            }
+            let next = self.batch(writer, (now_ms, settings), &mut swept)?;
+            self.has_paced = false;
+            match next {
                 Some(next) => self.step = next,
                 None => {
                     self.step = Step::Links(None);
@@ -274,9 +319,18 @@ impl Upkeep {
                 Step::Optimize
             }
             Step::Optimize => {
-                swept.pages += transaction.optimize(VACUUM_PAGES)?;
-                transaction.commit()?;
-                return Ok(None);
+                transaction.optimize()?;
+                Step::Vacuum(0)
+            }
+            Step::Vacuum(given) => {
+                let freed = transaction.vacuum(VACUUM_BATCH_PAGES)?;
+                swept.pages += freed;
+                let given = given + freed;
+                if freed < u64::from(VACUUM_BATCH_PAGES) || given >= VACUUM_PAGES {
+                    transaction.commit()?;
+                    return Ok(None);
+                }
+                Step::Vacuum(given)
             }
         };
         transaction.commit()?;
@@ -293,7 +347,7 @@ fn is_full(rows: usize) -> bool {
 mod tests {
     use std::cell::Cell;
 
-    use cortex_core::{EdgeType, EventKind, EventMeta};
+    use cortex_core::{EdgeType, EventKind, EventMeta, RepoPath};
     use cortex_store::{EdgeRecord, EventRecord};
 
     use super::*;
@@ -302,11 +356,13 @@ mod tests {
     /// A day in milliseconds.
     const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
 
-    /// Links fade by half for each task; interest too; positions hold a minute at the longest.
+    /// Links fade by half for each task; interest too; positions hold a minute at the longest;
+    /// the log may hold 32 MiB.
     const SETTINGS: UpkeepSettings = UpkeepSettings {
         link_decay: 0.5,
         interest_decay: 0.5,
         longest_hold_ms: 60_000,
+        log_limit_bytes: LOG_LIMIT_BYTES,
     };
 
     /// A store holding `a.py`, `b.py` and `c.py`, links of use `a`-`b` 0.004 and `a`-`c` 0.5 (no
@@ -410,7 +466,8 @@ mod tests {
     /// Worked by hand: quiet from 0, upkeep is due at 10 minutes; an event at 3 minutes moves it
     /// to 13; a run done leaves none due until the next event; a session's end asks for one at
     /// once; a run that yielded leaves it due at once; one out of time does not; asked, it is due
-    /// at once.
+    /// at once; a run that paced at 19 minutes leaves it due 2 s later, and one that paced in a
+    /// quiet spell too.
     #[test]
     fn upkeep_is_due_after_a_quiet_spell_or_when_asked() {
         let start = Instant::now();
@@ -419,15 +476,122 @@ mod tests {
         assert_eq!(clock.due_at(start), Some(minutes(10)));
         clock.heard(minutes(3), false);
         assert_eq!(clock.due_at(minutes(3)), Some(minutes(13)));
-        clock.ran(Ended::Done);
+        clock.ran(Ended::Done, minutes(13));
         assert_eq!(clock.due_at(minutes(14)), None);
         clock.heard(minutes(15), true);
         assert_eq!(clock.due_at(minutes(15)), Some(minutes(15)));
-        clock.ran(Ended::Yielded);
+        clock.ran(Ended::Yielded, minutes(16));
         assert_eq!(clock.due_at(minutes(16)), Some(minutes(16)));
-        clock.ran(Ended::OutOfTime);
+        clock.ran(Ended::OutOfTime, minutes(17));
         assert_eq!(clock.due_at(minutes(17)), None);
         clock.ask();
         assert_eq!(clock.due_at(minutes(18)), Some(minutes(18)));
+        let two_seconds_on = minutes(19) + Duration::from_secs(2);
+        clock.ran(Ended::Paced, minutes(19));
+        assert_eq!(clock.due_at(minutes(19)), Some(two_seconds_on));
+        clock.ran(Ended::Done, two_seconds_on);
+        clock.heard(minutes(20), false);
+        clock.ran(Ended::Paced, minutes(30));
+        assert_eq!(
+            clock.due_at(minutes(30)),
+            Some(minutes(30) + Duration::from_secs(2))
+        );
+    }
+
+    /// The log is held to a limit of nothing at all, so that it always holds too much. A run that
+    /// yields after its first batch removes the faded link. The next run looks at the log before
+    /// writing and paces at once, at the same step; the one after a pace writes a batch first
+    /// (interest, which holds nothing) and then paces. With the usual limit the next run carries
+    /// on and finishes, removing the old event.
+    #[test]
+    fn a_run_waits_while_the_log_holds_too_much() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut writer = store(root.path())?;
+        assert!(writer.log_bytes()? > 0);
+        let mut upkeep = Upkeep::default();
+        let far = Instant::now() + Duration::from_secs(60);
+        let now = (200 * DAY_MS, &SETTINGS);
+        let asked = Cell::new(0);
+        let after_one = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 1
+        };
+        let (swept, ended) = upkeep.run(&mut writer, now, (far, &after_one))?;
+        assert_eq!(ended, Ended::Yielded);
+        assert_eq!(
+            swept,
+            Swept {
+                links: 1,
+                ..Swept::default()
+            }
+        );
+        let full = UpkeepSettings {
+            log_limit_bytes: 0,
+            ..SETTINGS
+        };
+        let full = (200 * DAY_MS, &full);
+        let (swept, ended) = upkeep.run(&mut writer, full, (far, &|| false))?;
+        assert_eq!((swept, ended), (Swept::default(), Ended::Paced));
+        assert_eq!(upkeep.step, Step::Interest(None));
+        let (swept, ended) = upkeep.run(&mut writer, full, (far, &|| false))?;
+        assert_eq!((swept, ended), (Swept::default(), Ended::Paced));
+        assert_eq!(upkeep.step, Step::Facts);
+        let (swept, ended) = upkeep.run(&mut writer, now, (far, &|| false))?;
+        assert_eq!(ended, Ended::Done);
+        assert_eq!(
+            swept,
+            Swept {
+                events: 1,
+                ..Swept::default()
+            }
+        );
+        Ok(())
+    }
+
+    /// A store whose deleted events left more than 2,000 free pages (10,000 events of a 1,000-byte
+    /// path each, about 10 MB, in 4 KiB pages). From the vacuum step, a run that yields after one
+    /// batch gives back 500 pages and stays at the vacuum, 500 given; the next gives back the
+    /// 1,500 the cap leaves, and is done with free pages still left.
+    #[test]
+    fn the_vacuum_gives_pages_back_500_at_a_time_up_to_2000() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut writer = writer(root.path())?;
+        let path = RepoPath::new(&format!("src/{}.py", "a".repeat(1_000)))?;
+        let mut transaction = writer.transaction()?;
+        for ts_ms in 0..10_000 {
+            transaction.append_event(&EventRecord {
+                task_id: None,
+                session_id: None,
+                ts_ms,
+                kind: EventKind::Read,
+                node_id: None,
+                path: Some(path.clone()),
+                range: None,
+                meta: EventMeta::default(),
+            })?;
+        }
+        transaction.commit()?;
+        let mut transaction = writer.transaction()?;
+        assert_eq!(transaction.delete_events_before(10_000, 10_000)?, 10_000);
+        transaction.commit()?;
+        assert!(writer.queries().free_pages()? > 2_000);
+        let mut upkeep = Upkeep {
+            step: Step::Vacuum(0),
+            has_paced: false,
+        };
+        let far = Instant::now() + Duration::from_secs(60);
+        let now = (DAY_MS, &SETTINGS);
+        let asked = Cell::new(0);
+        let after_one = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 1
+        };
+        let (swept, ended) = upkeep.run(&mut writer, now, (far, &after_one))?;
+        assert_eq!((swept.pages, ended), (500, Ended::Yielded));
+        assert_eq!(upkeep.step, Step::Vacuum(500));
+        let (swept, ended) = upkeep.run(&mut writer, now, (far, &|| false))?;
+        assert_eq!((swept.pages, ended), (1_500, Ended::Done));
+        assert!(writer.queries().free_pages()? > 0);
+        Ok(())
     }
 }
