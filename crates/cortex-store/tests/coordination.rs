@@ -139,6 +139,56 @@ fn positions_are_kept_once_and_read_back_with_their_task_s_end() -> TestResult {
     Ok(())
 }
 
+/// Worked by hand: `s1` claims `a.py` and `b.py` and reads `c.py`; `s2` claims `a.py` and reads
+/// `b.py`. Releasing the claims on `a.py` removes both sessions' claims there, two, and nothing
+/// else; releasing every claim then removes `s1`'s on `b.py`, one, and leaves the two reads;
+/// releasing again removes none.
+#[test]
+fn claims_are_released_by_file_or_all_at_once() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let [a, b, c] = store_with(&mut writer, &["a.py", "b.py", "c.py"])?[..] else {
+        return Err("three nodes".into());
+    };
+    let claim = PositionMode::Claim;
+    let read = PositionMode::Read;
+    let mut transaction = writer.transaction()?;
+    for (session, node, mode) in [
+        ("s1", a, claim),
+        ("s1", b, claim),
+        ("s1", c, read),
+        ("s2", a, claim),
+        ("s2", b, read),
+    ] {
+        transaction.keep_position(&position(session, node, mode, (1_000, 1_000))?)?;
+    }
+    assert_eq!(transaction.release_claims(Some(&[a]))?, 2);
+    let held = |transaction: &mut cortex_store::WriteTx<'_>| -> TestResult<Vec<(String, NodeId)>> {
+        Ok(transaction
+            .queries()
+            .positions_since(0)?
+            .into_iter()
+            .map(|row| (row.record.session_id.as_str().to_owned(), row.record.node))
+            .collect())
+    };
+    assert_eq!(
+        held(&mut transaction)?,
+        [
+            ("s1".to_owned(), b),
+            ("s1".to_owned(), c),
+            ("s2".to_owned(), b)
+        ]
+    );
+    assert_eq!(transaction.release_claims(None)?, 1);
+    assert_eq!(
+        held(&mut transaction)?,
+        [("s1".to_owned(), c), ("s2".to_owned(), b)]
+    );
+    assert_eq!(transaction.release_claims(None)?, 0);
+    transaction.commit()?;
+    Ok(())
+}
+
 /// What the store knows of each session, by session: `s1` (Claude Code, no parent, open) with
 /// events at 1,100 and 2,100 was last heard from at 2,100; `s2` (Codex, started by `s1`, ended at
 /// 3,000) at 900; `s3`, never stored, is left out.

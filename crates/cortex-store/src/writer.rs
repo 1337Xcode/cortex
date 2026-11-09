@@ -10,6 +10,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 use crate::activity::{self, EventRecord, SessionRecord, TaskRecord};
 use crate::archetype::{self, ArchetypeRecord};
 use crate::checkpoint::{CheckpointFailures, Checkpointer};
+use crate::claims;
 use crate::cochange::{self, FileCommitsRow, GitStateKey, PairRow};
 use crate::connection::{self, Access};
 use crate::coordination::{self, NoticeRecord, PositionRecord};
@@ -448,6 +449,16 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn keep_position(&mut self, record: &PositionRecord) -> Result<(), StoreError> {
         self.atomically(|connection| coordination::keep_position(connection, record))
+    }
+
+    /// Releases the claims on `nodes`, whoever holds them, or every claim when `nodes` is none:
+    /// how many were released.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn release_claims(&mut self, nodes: Option<&[NodeId]>) -> Result<u64, StoreError> {
+        self.atomically(|connection| claims::release(connection, nodes))
     }
 
     /// Queues `notice` for its session's next hook that carries text, unless the session was sent

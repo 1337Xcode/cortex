@@ -672,6 +672,10 @@ pub(crate) const WARNING_INSERT: &str = "INSERT INTO warnings \
 /// Sets whether one warning was resolved.
 pub(crate) const WARNING_RESOLVE: &str = "UPDATE warnings SET resolved = ?2 WHERE warning_id = ?1";
 
+/// Removes the claims, positions of mode claim, on the nodes in the JSON array ?1, or every claim
+/// when ?1 is NULL.
+pub(crate) const CLAIMS_RELEASE: &str = "DELETE FROM positions WHERE mode = 'claim' \
+     AND (?1 IS NULL OR node_id IN (SELECT value FROM json_each(?1)))";
 /// Keeps a session's position on a node, in place of the one kept before.
 pub(crate) const POSITION_KEEP: &str = "INSERT OR REPLACE INTO positions \
      (session_id, node_id, mode, since, last_ts) VALUES (?1, ?2, ?3, ?4, ?5)";

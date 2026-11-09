@@ -14,6 +14,7 @@ mod activity;
 mod anchors;
 mod archetype;
 mod checkpoint;
+mod claims;
 mod cochange;
 mod connection;
 mod coordination;
