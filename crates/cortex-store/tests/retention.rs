@@ -117,6 +117,41 @@ fn old_events_episodes_past_the_cap_and_old_positions_are_deleted() -> TestResul
     Ok(())
 }
 
+/// A new store gives back the pages deletions free: after 2,000 events are deleted some pages are
+/// free, and optimizing gives back every one its statistics do not take. It would give none back
+/// from a store that does not vacuum incrementally.
+#[test]
+fn a_new_store_gives_back_the_pages_deletions_free() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    for ts_ms in 0..2_000 {
+        transaction.append_event(&EventRecord {
+            task_id: None,
+            session_id: Some(Identifier::new("a-session-with-a-long-name")?),
+            ts_ms,
+            kind: EventKind::Read,
+            node_id: None,
+            path: None,
+            range: None,
+            meta: EventMeta::default(),
+        })?;
+    }
+    transaction.commit()?;
+    let mut transaction = writer.transaction()?;
+    assert_eq!(transaction.delete_events_before(2_000, 5_000)?, 2_000);
+    transaction.commit()?;
+    let free = writer.queries().free_pages()?;
+    assert!(free > 0, "{free}");
+    let mut transaction = writer.transaction()?;
+    // Refreshing the planner's statistics may take a free page or two for them first.
+    let given = transaction.optimize(u32::MAX)?;
+    assert!(given > 0 && given <= free, "{given} of {free}");
+    transaction.commit()?;
+    assert_eq!(writer.queries().free_pages()?, 0);
+    Ok(())
+}
+
 /// Worked by hand. Three facts on `a.py`, each given in a task: fact 1 retired at 100, fact 2
 /// retired at 900, fact 3 active. Deleting the facts retired before 500 removes fact 1 alone, with
 /// its anchor and the record of where it was given; facts 2 and 3 keep theirs.

@@ -103,6 +103,37 @@ fn as_sql(count: u64) -> i64 {
     i64::try_from(count).unwrap_or(i64::MAX)
 }
 
+/// Refreshes the query planner's statistics where they are stale, and gives back to the file
+/// system at most `pages` free pages of the database (none from a database that does not vacuum
+/// incrementally): how many pages it gave back.
+///
+/// # Errors
+///
+/// SQLite errors.
+pub(crate) fn optimize(connection: &Connection, pages: u32) -> Result<u64, StoreError> {
+    let free = |connection: &Connection| -> Result<i64, StoreError> {
+        connection
+            .query_row(schema::FREE_PAGES, [], |row| row.get(0))
+            .map_err(sqlite("reading the free pages"))
+    };
+    connection
+        .execute_batch(schema::OPTIMIZE)
+        .map_err(sqlite("optimizing the database"))?;
+    let before = free(connection)?;
+    // The pragma takes its count inline: no parameter can stand for it. It gives back one page
+    // each time it is stepped, so it is stepped until it is done.
+    connection
+        .prepare(&format!("PRAGMA incremental_vacuum({pages})"))
+        .and_then(|mut statement| {
+            let mut rows = statement.query([])?;
+            while rows.next()?.is_some() {}
+            Ok(())
+        })
+        .map_err(sqlite("giving back free pages"))?;
+    let after = free(connection)?;
+    Ok(u64::try_from(before.saturating_sub(after)).unwrap_or(0))
+}
+
 /// Runs the deletion `sql` with `params`: how many rows it removed.
 fn run(
     connection: &Connection,

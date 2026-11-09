@@ -738,6 +738,19 @@ impl<'c> Queries<'c> {
             .collect()
     }
 
+    /// How many pages of the database file are free, given back by upkeep a few at a time.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn free_pages(self) -> Result<u64, StoreError> {
+        let free: i64 = self
+            .connection
+            .query_row(schema::FREE_PAGES, [], |row| row.get(0))
+            .map_err(sqlite("reading the free pages"))?;
+        Ok(u64::try_from(free).unwrap_or(0))
+    }
+
     /// The symbols `sql` selects with `key`.
     pub(crate) fn symbols(
         self,

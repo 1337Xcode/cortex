@@ -685,6 +685,10 @@ pub(crate) const INTEREST_AFTER: &str = "SELECT node_id, score, last_seq, tier F
 /// Removes the interest of the nodes in the JSON array ?1.
 pub(crate) const INTEREST_REMOVE: &str =
     "DELETE FROM interest WHERE node_id IN (SELECT value FROM json_each(?1))";
+/// Lets SQLite refresh the statistics its query planner reads, when they are stale.
+pub(crate) const OPTIMIZE: &str = "PRAGMA optimize";
+/// How many pages of the database file are free.
+pub(crate) const FREE_PAGES: &str = "PRAGMA freelist_count";
 /// Deletes at most ?2 events older than ?1, the first recorded first.
 pub(crate) const EVENTS_DELETE_BEFORE: &str = "DELETE FROM events WHERE seq IN \
      (SELECT seq FROM events WHERE ts < ?1 ORDER BY seq LIMIT ?2)";

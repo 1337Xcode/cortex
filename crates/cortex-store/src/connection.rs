@@ -71,6 +71,9 @@ pub(crate) fn configure(
     access: Access,
     mmap_bytes: u64,
 ) -> Result<(), StoreError> {
+    if access == Access::ReadWrite {
+        vacuum_incrementally_when_new(connection)?;
+    }
     // The journal mode is stored in the database file, so only the writer sets it; a reader
     // checks that the writer did.
     let journal_mode: String = match access {
@@ -103,6 +106,20 @@ pub(crate) fn configure(
     let mmap_size = crate::values::integer(mmap_bytes, "mmap_size")?;
     set(connection, "mmap_size", mmap_size, mmap_size)?;
     set(connection, "temp_store", "MEMORY", 2)
+}
+
+/// Has a database that holds no table yet free its unused pages when asked, a few at a time
+/// (`auto_vacuum` INCREMENTAL), so that upkeep can give back what it deleted without rewriting the
+/// file. SQLite takes the setting only before the first table is created: a database made by an
+/// earlier build keeps its setting.
+fn vacuum_incrementally_when_new(connection: &Connection) -> Result<(), StoreError> {
+    let tables: i64 = connection
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
+        .map_err(sqlite("reading whether the database is new"))?;
+    if tables == 0 {
+        set(connection, "auto_vacuum", "INCREMENTAL", 2)?;
+    }
+    Ok(())
 }
 
 /// Sets the pragma `name` to `value` and checks that it reads back as `expected`.

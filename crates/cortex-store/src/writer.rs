@@ -453,6 +453,16 @@ impl WriteTx<'_> {
         self.atomically(|connection| coordination::keep_position(connection, record))
     }
 
+    /// Refreshes the query planner's statistics where they are stale and gives back at most
+    /// `pages` free pages of the database file: how many it gave back.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn optimize(&mut self, pages: u32) -> Result<u64, StoreError> {
+        self.atomically(|connection| retention::optimize(connection, pages))
+    }
+
     /// Removes the links of use from each pair's first node to its second: how many.
     ///
     /// # Errors
