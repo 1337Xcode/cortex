@@ -16,6 +16,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, bail};
+use cortex_core::ipc::UpkeepReport;
 use cortex_core::{Config, Event, HookKind, RepoPath, unix_millis};
 use cortex_git::mine;
 use cortex_index::{
@@ -234,6 +235,7 @@ impl<'a> Host<'a> {
                     self.carry_out_ask(*job);
                     last_activity = Instant::now();
                 }
+                Work::Upkeep => self.upkeep_clock.ask(),
                 Work::Timeout if self.waiting() > 0 && Instant::now() >= next_crawl => {
                     next_crawl = Instant::now() + CRAWL_PERIOD;
                     self.crawl_batch()?;
@@ -320,6 +322,16 @@ impl<'a> Host<'a> {
                 if swept.links > 0 || swept.interest > 0 {
                     self.snapshot.changed();
                 }
+                inbox.note_upkeep(UpkeepReport {
+                    at_ms: now_ms(),
+                    links: swept.links,
+                    interest: swept.interest,
+                    facts: swept.facts,
+                    events: swept.events,
+                    episodes: swept.episodes,
+                    positions: swept.positions,
+                    is_done: ended == Ended::Done,
+                });
                 self.upkeep_clock.ran(ended);
             }
             Err(error) => {

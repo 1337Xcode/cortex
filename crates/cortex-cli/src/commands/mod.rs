@@ -4,6 +4,7 @@
 //! [`run`]. Removing a command means deleting all three.
 
 mod claims;
+mod consolidate;
 mod daemon;
 mod doctor;
 mod facts;
@@ -51,6 +52,8 @@ pub(crate) enum Command {
     /// List advisory claims on files, claim files for the agent session at work, or release
     /// claims.
     Claims(claims::Args),
+    /// Ask the daemon to run upkeep now.
+    Consolidate(consolidate::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -73,5 +76,6 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Note(args) => note::run(&args),
         Command::Facts(args) => facts::run(&args),
         Command::Claims(args) => claims::run(&args),
+        Command::Consolidate(args) => consolidate::run(&args),
     }
 }

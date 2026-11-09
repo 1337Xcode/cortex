@@ -69,7 +69,7 @@ pub(crate) enum Ended {
 }
 
 /// When upkeep is due: once the repository has been quiet for [`QUIET_BEFORE_UPKEEP`] since the
-/// last hook event, again only after another event; at once after a session ended;
+/// last hook event, again only after another event; at once after a session ended or when asked;
 /// and again at once after a run that yielded to other work.
 #[derive(Debug)]
 pub(crate) struct UpkeepClock {
@@ -77,7 +77,7 @@ pub(crate) struct UpkeepClock {
     quiet_since: Instant,
     /// Whether a run ended, done or out of time, since then.
     has_run: bool,
-    /// Whether a run is asked for now: a session ended.
+    /// Whether a run is asked for now: a session ended, or a person asked.
     is_asked: bool,
 }
 
@@ -104,6 +104,11 @@ impl UpkeepClock {
             return Some(now);
         }
         (!self.has_run).then(|| self.quiet_since + QUIET_BEFORE_UPKEEP)
+    }
+
+    /// Notes that a person asked for upkeep now.
+    pub(crate) fn ask(&mut self) {
+        self.is_asked = true;
     }
 
     /// Notes how a run ended.
@@ -391,7 +396,8 @@ mod tests {
 
     /// Worked by hand: quiet from 0, upkeep is due at 10 minutes; an event at 3 minutes moves it
     /// to 13; a run done leaves none due until the next event; a session's end asks for one at
-    /// once; a run that yielded leaves it due at once; one out of time does not.
+    /// once; a run that yielded leaves it due at once; one out of time does not; asked, it is due
+    /// at once.
     #[test]
     fn upkeep_is_due_after_a_quiet_spell_or_when_asked() {
         let start = Instant::now();
@@ -408,5 +414,7 @@ mod tests {
         assert_eq!(clock.due_at(minutes(16)), Some(minutes(16)));
         clock.ran(Ended::OutOfTime);
         assert_eq!(clock.due_at(minutes(17)), None);
+        clock.ask();
+        assert_eq!(clock.due_at(minutes(18)), Some(minutes(18)));
     }
 }

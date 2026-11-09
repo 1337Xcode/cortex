@@ -112,6 +112,8 @@ pub enum RequestBody {
     /// List the claims holding now, claim files for the session at work, or release claims
     /// (protocol 9.0 added it).
     Claims(ClaimsAsk),
+    /// Run upkeep as soon as the writer is free, answered at once (protocol 10.0 added it).
+    Consolidate,
     /// Report the daemon's state.
     Status,
     /// Stop gracefully. Frozen.
@@ -272,6 +274,31 @@ pub struct StatusReport {
     /// ended, or from a daemon that does not say (protocol 2.2 added it).
     #[serde(default)]
     pub worktree: Option<WorktreeReport>,
+    /// What the last run of upkeep did; none before the first, or from a daemon that predates
+    /// upkeep.
+    #[serde(default)]
+    pub upkeep: Option<UpkeepReport>,
+}
+
+/// What a run of upkeep removed, and whether it finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpkeepReport {
+    /// When it ended, in UTC milliseconds.
+    pub at_ms: i64,
+    /// Links of use removed, faded to nothing.
+    pub links: u64,
+    /// Nodes whose interest was removed, faded to nothing.
+    pub interest: u64,
+    /// Facts deleted, retired long ago.
+    pub facts: u64,
+    /// Events deleted, past their retention.
+    pub events: u64,
+    /// Episodes deleted, past their cap.
+    pub episodes: u64,
+    /// Positions removed, no longer holding.
+    pub positions: u64,
+    /// Whether every job was done; otherwise the next run carries on.
+    pub is_done: bool,
 }
 
 /// What a daemon's graph holds, as last built, and how its rebuilds went, for its status. With no

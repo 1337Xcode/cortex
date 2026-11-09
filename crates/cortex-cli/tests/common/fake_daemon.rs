@@ -273,12 +273,13 @@ fn indexing() -> StatusReport {
         git: Some(GitReport::default()),
         graph: None,
         worktree: None,
+        upkeep: None,
     }
 }
 
 /// The kind of each request, for comparing: `hello`, `event`, `retrieve`, `primer`, `post_edit`,
-/// `read_hint`, `stop_reason`, `where`, `why`, `note`, `facts`, `claims`, `status` or
-/// `shutdown`.
+/// `read_hint`, `stop_reason`, `where`, `why`, `note`, `facts`, `claims`, `consolidate`,
+/// `status` or `shutdown`.
 pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
     requests
         .iter()
@@ -295,6 +296,7 @@ pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
             RequestBody::Note(_) => "note",
             RequestBody::Facts(_) => "facts",
             RequestBody::Claims(_) => "claims",
+            RequestBody::Consolidate => "consolidate",
             RequestBody::Status => "status",
             RequestBody::Shutdown => "shutdown",
         })

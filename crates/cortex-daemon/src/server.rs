@@ -318,6 +318,10 @@ impl Server {
         let mut reads_until_ms = None;
         let (body, hook) = match request.body {
             RequestBody::Status => (ResponseBody::Status(self.report()), None),
+            RequestBody::Consolidate => {
+                self.inbox.ask_upkeep();
+                (ResponseBody::Ack, None)
+            }
             RequestBody::Shutdown => (ResponseBody::Ack, None),
             RequestBody::Hello(_) => {
                 // Kept before the refusal is written, so that a client that reads it finds the
@@ -758,6 +762,7 @@ impl Server {
             git: Some(self.inbox.git()),
             graph: self.snapshot.report(),
             worktree: self.worktree.report(),
+            upkeep: self.inbox.upkeep(),
         }
     }
 

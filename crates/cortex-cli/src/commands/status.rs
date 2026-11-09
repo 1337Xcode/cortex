@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::Context;
 use cortex_core::ipc::{
     GitReport, GitState, GraphReport, HookLatency, RecentError, RequestBody, ResponseBody,
-    StatusReport, WorktreeReport, WorktreeState,
+    StatusReport, UpkeepReport, WorktreeReport, WorktreeState,
 };
 use cortex_core::{FileFlags, ModeSetting, UserFolder, unix_millis};
 use cortex_daemon::settings;
@@ -138,6 +138,7 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
         git_line(report.git.as_ref()),
         graph_line(report.graph.as_ref()),
         worktree_line(report.worktree.as_ref()),
+        upkeep_line(report.upkeep.as_ref(), now_ms),
     ];
     if report.latencies.is_empty() {
         lines.push("daemon latency: no hook request handled yet".to_owned());
@@ -238,6 +239,40 @@ pub(crate) fn counted(count: u64, (one, many): (&str, &str)) -> String {
         1 => format!("1 {one}"),
         count => format!("{count} {many}"),
     }
+}
+
+/// What the last run of upkeep removed, how long before `now_ms` it ended and whether it finished,
+/// as a line; that none ran when none did.
+fn upkeep_line(report: Option<&UpkeepReport>, now_ms: i64) -> String {
+    let Some(report) = report else {
+        return "upkeep: not run since the daemon started".to_owned();
+    };
+    let removed = [
+        (report.links, ("link of use", "links of use")),
+        (report.interest, ("interest score", "interest scores")),
+        (report.facts, ("retired fact", "retired facts")),
+        (report.events, ("old event", "old events")),
+        (report.episodes, ("episode", "episodes")),
+        (report.positions, ("position", "positions")),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, names)| counted(count, names))
+    .collect::<Vec<_>>();
+    let removed = if removed.is_empty() {
+        "nothing to remove".to_owned()
+    } else {
+        format!("removed {}", removed.join(", "))
+    };
+    let finished = if report.is_done {
+        "done"
+    } else {
+        "not finished, carries on at its next run"
+    };
+    format!(
+        "upkeep: last ran {} ago, {removed}; {finished}",
+        ago(report.at_ms, now_ms)
+    )
 }
 
 /// What the daemon's co-change miner is doing, as a line, or that the daemon did not say.
@@ -481,6 +516,7 @@ mod tests {
             git: Some(GitReport::default()),
             graph: None,
             worktree: None,
+            upkeep: None,
         }
     }
 
@@ -496,9 +532,36 @@ mod tests {
                 "git: not ready, waiting for the first index",
                 "graph: none built yet",
                 "work tree: not looked at yet",
+                "upkeep: not run since the daemon started",
                 "daemon latency: no hook request handled yet",
                 "errors: none",
             ]
+        );
+    }
+
+    /// Worked by hand: a run that ended 180 s before now, having removed one link of use and two
+    /// old events, done, is said in minutes with what it removed; one that removed nothing and
+    /// yielded says so and that it carries on.
+    #[test]
+    fn the_last_upkeep_run_says_what_it_removed() {
+        let ran = |links, events, is_done| UpkeepReport {
+            at_ms: 1_000,
+            links,
+            interest: 0,
+            facts: 0,
+            events,
+            episodes: 0,
+            positions: 0,
+            is_done,
+        };
+        assert_eq!(
+            upkeep_line(Some(&ran(1, 2, true)), 181_000),
+            "upkeep: last ran 3 min ago, removed 1 link of use, 2 old events; done"
+        );
+        assert_eq!(
+            upkeep_line(Some(&ran(0, 0, false)), 181_000),
+            "upkeep: last ran 3 min ago, nothing to remove; not finished, carries on at its next \
+             run"
         );
     }
 
@@ -578,7 +641,7 @@ mod tests {
             "error: second (3 min ago, 3 times)",
             "error: third (12 s ago)",
         ];
-        assert_eq!(lines.get(5..), Some(expected.map(str::to_owned).as_slice()));
+        assert_eq!(lines.get(6..), Some(expected.map(str::to_owned).as_slice()));
     }
 
     /// Ages cross from seconds to minutes at two minutes and to hours at two hours; a time ahead

@@ -602,3 +602,32 @@ fn claims_requests_and_answers_read_back() -> TestResult {
     }
     Ok(())
 }
+
+/// Asking for upkeep is written as typed here, and a status carrying the last run reads back as
+/// it was; one from a daemon that does not report upkeep reads as none.
+#[test]
+fn consolidate_and_the_upkeep_report_read_back() -> TestResult {
+    let ask = Request {
+        request_id: 10,
+        body: RequestBody::Consolidate,
+    };
+    let frame = encode(&ask)?;
+    assert_eq!(
+        frame.get(LENGTH_PREFIX_BYTES..),
+        Some(r#"{"request_id":10,"body":{"type":"consolidate"}}"#.as_bytes())
+    );
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, ask);
+    let report = UpkeepReport {
+        at_ms: 5,
+        links: 1,
+        interest: 2,
+        facts: 3,
+        events: 4,
+        episodes: 5,
+        positions: 6,
+        is_done: false,
+    };
+    let encoded = serde_json::to_value(report)?;
+    assert_eq!(serde_json::from_value::<UpkeepReport>(encoded)?, report);
+    Ok(())
+}

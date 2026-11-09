@@ -19,7 +19,7 @@ pub use self::frame::{
 };
 pub use self::message::{
     GitReport, GitState, GraphReport, Hello, HookLatency, Mismatch, RecentError, Request,
-    RequestBody, Response, ResponseBody, Role, StatusReport, Welcome, WorktreeReport,
+    RequestBody, Response, ResponseBody, Role, StatusReport, UpkeepReport, Welcome, WorktreeReport,
     WorktreeState,
 };
 pub use self::version::{

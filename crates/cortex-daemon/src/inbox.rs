@@ -11,7 +11,7 @@ use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
 use cortex_coord::Timing;
-use cortex_core::ipc::{GitReport, RecentError, ResponseBody};
+use cortex_core::ipc::{GitReport, RecentError, ResponseBody, UpkeepReport};
 use cortex_core::{CoordinationConfig, Event, HookKind, RepoPath, ToolKind};
 use cortex_git::mine::Mining;
 use cortex_index::Change;
@@ -89,6 +89,10 @@ struct State {
     mining: Option<MiningJob>,
     /// Requests waiting for the writer, oldest first, at most [`MAX_ASKS_WAITING`].
     asked: VecDeque<AskJob>,
+    /// Whether a person asked for upkeep and the writer has not been told yet.
+    is_upkeep_asked: bool,
+    /// What the last run of upkeep did.
+    last_upkeep: Option<UpkeepReport>,
     /// What the co-change miner is doing.
     git: GitReport,
     /// Whether the daemon was asked to stop.
@@ -118,6 +122,8 @@ pub(crate) enum Work {
     Mining(Box<MiningJob>),
     /// Answer a request of a person or an agent.
     Ask(Box<AskJob>),
+    /// Run upkeep: a person asked for it.
+    Upkeep,
     /// The watcher stopped: changes are no longer seen.
     WatcherStopped,
     /// Nothing arrived before the deadline.
@@ -339,6 +345,22 @@ impl Inbox {
         self.lock().last_request
     }
 
+    /// Tells the writer a person asked for upkeep, to run as soon as it is free.
+    pub(crate) fn ask_upkeep(&self) {
+        self.lock().is_upkeep_asked = true;
+        self.arrived.notify_one();
+    }
+
+    /// Keeps what a run of upkeep did, for the daemon's status.
+    pub(crate) fn note_upkeep(&self, report: UpkeepReport) {
+        self.lock().last_upkeep = Some(report);
+    }
+
+    /// What the last run of upkeep did, if one ran.
+    pub(crate) fn upkeep(&self) -> Option<UpkeepReport> {
+        self.lock().last_upkeep
+    }
+
     /// Whether work the writer should do before upkeep waits: hook events to record, what was
     /// given to record, a request asked of it, or a stop.
     pub(crate) fn has_work_waiting(&self) -> bool {
@@ -443,6 +465,10 @@ impl Inbox {
             }
             if let Some(job) = state.asked.pop_front() {
                 return Work::Ask(Box::new(job));
+            }
+            if state.is_upkeep_asked {
+                state.is_upkeep_asked = false;
+                return Work::Upkeep;
             }
             if let Some(job) = state.mining.take() {
                 return Work::Mining(Box::new(job));

@@ -24,7 +24,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use cortex_core::ipc::ResponseBody;
-use cortex_core::ipc::{GitReport, GraphReport, RequestBody, Role, StatusReport, WorktreeReport};
+use cortex_core::ipc::{
+    GitReport, GraphReport, RequestBody, Role, StatusReport, UpkeepReport, WorktreeReport,
+};
 use cortex_core::{RepoId, RunFiles, UserFolder, canonical_root};
 use cortex_daemon::is_running;
 use cortex_hook::{ClientError, ask};
@@ -344,6 +346,16 @@ fn status_report(root: &Path, home: &Path) -> TestResult<StatusReport> {
         ResponseBody::Status(report) => Ok(report),
         other => Err(format!("the daemon answered its status with {other:?}").into()),
     }
+}
+
+/// What the last run of upkeep did, as the daemon of the repository at `root` reports it; none
+/// before the first run.
+///
+/// # Errors
+///
+/// The daemon does not answer its status.
+pub fn upkeep_of(root: &Path, home: &Path) -> TestResult<Option<UpkeepReport>> {
+    Ok(status_report(root, home)?.upkeep)
 }
 
 /// Waits until `condition` holds, for at most [`SEEN_WITHIN`].
