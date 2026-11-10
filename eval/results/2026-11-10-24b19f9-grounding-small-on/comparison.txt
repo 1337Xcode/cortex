@@ -1,0 +1,15 @@
+every task, paired tasks: 3
+  measured session, cumulative input tokens: 207886 with Cortex, 194798 held out; difference +13087 (95% interval +551 to +35190, resampling tasks)
+  measured session, uncached input tokens: 4069 with Cortex, 3916 held out; difference +153 (95% interval +129 to +177, resampling tasks)
+  measured session, turns: 6.89 with Cortex, 6.56 held out; difference +0.33 (95% interval -1.00 to +1.33, resampling tasks)
+  measured session, tool calls: 5.89 with Cortex, 5.56 held out; difference +0.33 (95% interval -1.00 to +1.33, resampling tasks)
+  every session of the run, US dollars: 0.074 with Cortex, 0.070 held out; difference +0.004 (95% interval +0.003 to +0.005, resampling tasks)
+  check passed, share of runs: 1.00 with Cortex, 1.00 held out; difference +0.00 (95% interval +0.00 to +0.00, resampling tasks)
+tasks whose treated runs got a work order, paired tasks: 3
+  measured session, cumulative input tokens: 207886 with Cortex, 194798 held out; difference +13087 (95% interval +551 to +35190, resampling tasks)
+  measured session, uncached input tokens: 4069 with Cortex, 3916 held out; difference +153 (95% interval +129 to +177, resampling tasks)
+  measured session, turns: 6.89 with Cortex, 6.56 held out; difference +0.33 (95% interval -1.00 to +1.33, resampling tasks)
+  measured session, tool calls: 5.89 with Cortex, 5.56 held out; difference +0.33 (95% interval -1.00 to +1.33, resampling tasks)
+  every session of the run, US dollars: 0.074 with Cortex, 0.070 held out; difference +0.004 (95% interval +0.003 to +0.005, resampling tasks)
+  check passed, share of runs: 1.00 with Cortex, 1.00 held out; difference +0.00 (95% interval +0.00 to +0.00, resampling tasks)
+tasks whose treated runs got none, paired tasks: 0

@@ -1,0 +1,494 @@
+[
+  {
+    "task": "signer-bytes-key-rotation",
+    "kind": "fix a failing test",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 9,
+        "tool_calls": 8,
+        "cumulative_input": 254202,
+        "uncached_input": 3989,
+        "output": 1790,
+        "cost_usd": 0.08596419999999999,
+        "duration_ms": 24075,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 22
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 324
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 41
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 16,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "mode = \"small\""
+    ],
+    "facts": true,
+    "notes": 0
+  },
+  {
+    "task": "signer-bytes-key-rotation",
+    "kind": "fix a failing test",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 7,
+        "tool_calls": 6,
+        "cumulative_input": 252622,
+        "uncached_input": 3930,
+        "output": 1293,
+        "cost_usd": 0.07824369999999999,
+        "duration_ms": 22542,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 324
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 41
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 16,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "mode = \"small\""
+    ],
+    "facts": true,
+    "notes": 0
+  },
+  {
+    "task": "signer-bytes-key-rotation",
+    "kind": "fix a failing test",
+    "run": 3,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 8,
+        "tool_calls": 7,
+        "cumulative_input": 216571,
+        "uncached_input": 3987,
+        "output": 1413,
+        "cost_usd": 0.07760829999999999,
+        "duration_ms": 20405,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 22
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 324
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 41
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 16,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "mode = \"small\""
+    ],
+    "facts": true,
+    "notes": 0
+  },
+  {
+    "task": "fallback-signer-tuple",
+    "kind": "fix a failing test",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 4,
+        "tool_calls": 3,
+        "cumulative_input": 141030,
+        "uncached_input": 3824,
+        "output": 691,
+        "cost_usd": 0.0557151,
+        "duration_ms": 15633,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 279
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 41
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 11,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "mode = \"small\""
+    ],
+    "facts": true,
+    "notes": 0
+  },
+  {
+    "task": "fallback-signer-tuple",
+    "kind": "fix a failing test",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 175206,
+        "uncached_input": 3887,
+        "output": 1300,
+        "cost_usd": 0.0656622,
+        "duration_ms": 17578,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 279
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 41
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 11,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "mode = \"small\""
+    ],
+    "facts": true,
+    "notes": 0
+  },
+  {
+    "task": "fallback-signer-tuple",
+    "kind": "fix a failing test",
+    "run": 3,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 217530,
+        "uncached_input": 3828,
+        "output": 1093,
+        "cost_usd": 0.07310620000000001,
+        "duration_ms": 23740,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 279
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 41
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 11,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {},
+    "config": [
+      "mode = \"small\""
+    ],
+    "facts": true,
+    "notes": 0
+  },
+  {
+    "task": "int-bytes-struct-error",
+    "kind": "fix a failing test",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 177619,
+        "uncached_input": 3935,
+        "output": 925,
+        "cost_usd": 0.06370329999999999,
+        "duration_ms": 20848,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 23
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 325
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 41
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 16,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "mode = \"small\""
+    ],
+    "facts": true,
+    "notes": 0
+  },
+  {
+    "task": "int-bytes-struct-error",
+    "kind": "fix a failing test",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 7,
+        "tool_calls": 6,
+        "cumulative_input": 176045,
+        "uncached_input": 3935,
+        "output": 1147,
+        "cost_usd": 0.0649547,
+        "duration_ms": 20216,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 23
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 325
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 41
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 16,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "mode = \"small\""
+    ],
+    "facts": true,
+    "notes": 0
+  },
+  {
+    "task": "int-bytes-struct-error",
+    "kind": "fix a failing test",
+    "run": 3,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 142358,
+        "uncached_input": 3933,
+        "output": 1094,
+        "cost_usd": 0.06270579999999999,
+        "duration_ms": 17880,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 23
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 325
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 41
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 16,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "config": [
+      "mode = \"small\""
+    ],
+    "facts": true,
+    "notes": 0
+  }
+]
