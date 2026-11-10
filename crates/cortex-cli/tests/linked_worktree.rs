@@ -356,21 +356,16 @@ fn init_first_in_a_linked_working_tree_and_uninstall_from_it() -> TestResult {
     Ok(())
 }
 
-/// `cortex init` in the main tree, then in the linked working tree: the second names the main tree
-/// as the repository and the linked working tree as one of it, writes Claude Code's hooks in the
-/// linked working tree, makes no `.cortex` there, and adds its ignore lines to the exclude file
-/// `git rev-parse --git-path info/exclude` names, never a `.gitignore`: git finds nothing
-/// uncommitted there. A session reading `calc/ops.py` in the main tree and one in the linked
-/// working tree each keep a position naming its working tree and branch; the linked session's edit
-/// of the file is told that the other, in the main working tree on `main`, read it, and the other
-/// is sent that the linked session, in worktree `wt` on `feature`, edited it.
-#[test]
-fn init_and_positions_in_a_linked_working_tree_name_where_they_are() -> TestResult {
-    let (home, repo, linked) = repositories()?;
-    let home = home.path();
+/// A repository set up by `cortex init` in its main tree and then in its linked working tree,
+/// checked as the test below says, with a session in each tree that read `calc/ops.py` and the
+/// positions each keeps; with the home folder, the main tree, the linked working tree and the
+/// guard that stops the daemon.
+fn initialized_and_positioned() -> TestResult<(tempfile::TempDir, PathBuf, PathBuf, StopsDaemon)> {
+    let (home_dir, repo, linked) = repositories()?;
+    let home = home_dir.path();
     std::fs::create_dir_all(repo.join(".cortex"))?;
     std::fs::write(repo.join(".cortex/config.toml"), "mode = \"medium\"\n")?;
-    let _daemon = StopsDaemon::of(&repo, home);
+    let daemon = StopsDaemon::of(&repo, home);
     let main_init = init(&repo, home, &[])?;
     assert!(main_init.is_success, "{}", main_init.stderr);
     let linked_init = init(&linked, home, &[])?;
@@ -435,6 +430,52 @@ fn init_and_positions_in_a_linked_working_tree_name_where_they_are() -> TestResu
         [(Some("linked:wt".to_owned()), Some("feature".to_owned()))]
     );
 
+    Ok((home_dir, repo, linked, daemon))
+}
+
+/// `cortex init` in the main tree, then in the linked working tree: the second names the main tree
+/// as the repository and the linked working tree as one of it, writes Claude Code's hooks in the
+/// linked working tree, makes no `.cortex` there, and adds its ignore lines to the exclude file
+/// `git rev-parse --git-path info/exclude` names, never a `.gitignore`: git finds nothing
+/// uncommitted there. A session reading `calc/ops.py` in the main tree and one in the linked
+/// working tree each keep a position naming its working tree and branch; when the linked session
+/// edits the file, the other is sent that the linked session, in worktree `wt` on `feature`,
+/// edited it.
+#[test]
+fn init_and_positions_in_a_linked_working_tree_name_where_they_are() -> TestResult {
+    let (home_dir, repo, linked, _daemon) = initialized_and_positioned()?;
+    let home = home_dir.path();
+    std::fs::write(linked.join("calc/ops.py"), OPS_FIXED)?;
+    given(
+        &in_session(captured("post-tool-use-edit.json", &linked)?, IN_LINKED),
+        home,
+    )?;
+    let session = Identifier::new(IN_MAIN)?;
+    wait_for(|| {
+        let reader = Reader::open(&repo.join(".cortex"), 0)?;
+        Ok(reader
+            .queries()
+            .notices_waiting(&session, 0)?
+            .iter()
+            .any(|notice| {
+                notice.text.contains(
+                    "Another Claude Code session in worktree wt on branch feature edited \
+                     calc/ops.py",
+                )
+            }))
+    })?;
+    Ok(())
+}
+
+/// The linked session's edit of `calc/ops.py` is told, in its own answer, that the session in the
+/// main working tree on `main` read it. The answer must come within the edit hook's 500 ms
+/// budget, which a full parallel test run's load can exceed.
+#[test]
+#[ignore = "timing under load: the edit's own answer must come within its 500 ms budget while \
+            other test binaries run; `cargo xtask verify --full` runs it"]
+fn a_linked_working_tree_s_edit_is_told_where_the_other_session_is() -> TestResult {
+    let (home_dir, repo, linked, _daemon) = initialized_and_positioned()?;
+    let home = home_dir.path();
     std::fs::write(linked.join("calc/ops.py"), OPS_FIXED)?;
     let edited = given(
         &in_session(captured("post-tool-use-edit.json", &linked)?, IN_LINKED),
@@ -456,20 +497,6 @@ fn init_and_positions_in_a_linked_working_tree_name_where_they_are() -> TestResu
         ),
         "{edited}"
     );
-    let session = Identifier::new(IN_MAIN)?;
-    wait_for(|| {
-        let reader = Reader::open(&repo.join(".cortex"), 0)?;
-        Ok(reader
-            .queries()
-            .notices_waiting(&session, 0)?
-            .iter()
-            .any(|notice| {
-                notice.text.contains(
-                    "Another Claude Code session in worktree wt on branch feature edited \
-                     calc/ops.py",
-                )
-            }))
-    })?;
     Ok(())
 }
 
