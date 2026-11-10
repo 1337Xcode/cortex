@@ -75,6 +75,7 @@ impl Repo {
             parent_session_id: None,
             cwd: self.root.clone(),
             repo_root: self.root.clone(),
+            worktree_root: None,
             hook,
             source: None,
             tool: None,

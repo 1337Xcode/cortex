@@ -161,12 +161,24 @@ pub struct Versions {
 pub struct Located {
     /// The working folder, canonical.
     pub cwd: PathBuf,
-    /// The repository's root folder, canonical.
+    /// The top of the working tree it is in, canonical, which paths are relative to: the
+    /// repository's root, or a linked working tree's own top.
     pub root: PathBuf,
-    /// The repository's root as the agent spells it: its working folder, less as many folders as
-    /// lie between the canonical working folder and the canonical root. The agent writes tool paths
-    /// under this spelling.
+    /// That top as the agent spells it: its working folder, less as many folders as lie between
+    /// the canonical working folder and the canonical top. The agent writes tool paths under this
+    /// spelling.
     pub agent_root: PathBuf,
+    /// For a linked working tree (`git worktree add`), the repository's main working tree,
+    /// canonical, which is set up for Cortex and whose daemon serves both; none otherwise.
+    pub main_root: Option<PathBuf>,
+}
+
+impl Located {
+    /// The repository's root: its main working tree, for a linked working tree.
+    #[must_use]
+    pub fn repository_root(&self) -> &Path {
+        self.main_root.as_deref().unwrap_or(&self.root)
+    }
 }
 
 /// What names an event: its id and the time the hook process started.

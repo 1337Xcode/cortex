@@ -54,11 +54,11 @@ enum Action {
 /// a daemon that cannot be started or does not answer, a request it refused (no session at work, a
 /// file it does not index), or stdout that cannot be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let root = repository::root(args.root.as_deref())?;
+    let (root, worktree) = repository::root_and_worktree(args.root.as_deref())?;
     let files_of = |given: &[String]| -> anyhow::Result<Vec<String>> {
         given
             .iter()
-            .map(|file| match file_target(&root, file) {
+            .map(|file| match file_target(&worktree, file) {
                 // A claim is on a whole file, never on a line or a symbol of one.
                 Some(found) if Path::new(file).is_file() => found,
                 _ => bail!("{file}: a claim is on a file, and this is none"),

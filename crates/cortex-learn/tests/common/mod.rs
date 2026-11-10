@@ -44,6 +44,7 @@ pub fn event(hook: HookKind, session: &str, ts_ms: i64) -> TestResult<Event> {
         parent_session_id: None,
         cwd: PathBuf::from("/repo"),
         repo_root: PathBuf::from("/repo"),
+        worktree_root: None,
         hook,
         source: None,
         tool: None,
@@ -156,6 +157,7 @@ pub fn shell(session: &str, ts_ms: i64, line: &str, exit_code: Option<i32>) -> T
     Ok(Event {
         cwd: root.clone(),
         repo_root: root,
+        worktree_root: None,
         ..tool(
             HookKind::PostTool,
             (session, ts_ms),

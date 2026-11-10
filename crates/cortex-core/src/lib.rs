@@ -6,8 +6,8 @@
 //! index stores, each record kind such as [`SymbolKind`] has a fixed stored name or number, and
 //! [`Config`] holds every setting with its default, [`identifier_tokens`] splits names and paths
 //! into the words a search matches, and [`estimate_tokens`] sizes the text Cortex injects. Its
-//! only I/O is what every process needs alike: canonicalizing a repository's folder, creating
-//! folders and files only their user can read, reading a small text file whole, and finding and
+//! only I/O is what every process needs alike: canonicalizing a repository's folder, reading where
+//! git keeps a working tree's repository, creating folders and files only their user can read, reading a small text file whole, and finding and
 //! running another program, bounded in time and output.
 
 #![warn(clippy::pedantic)]
@@ -21,6 +21,7 @@ mod estimate;
 mod event;
 mod fact;
 mod file_content;
+mod git_layout;
 mod hash;
 mod identifier;
 mod ignore_block;
@@ -62,7 +63,7 @@ pub use config::{
     ModeSetting, RetrievalConfig, TypeWeights, WarningsConfig, keys_set as config_keys_set,
     load as load_config,
 };
-pub use coordination::PositionMode;
+pub use coordination::{PositionMode, WorkingTree};
 pub use estimate::estimate_tokens;
 pub use event::{
     Agent, CheckCounts, CompactTrigger, Event, FailedOutput, FailedOutputError, HookKind,
@@ -72,6 +73,7 @@ pub use event::{
 };
 pub use fact::{FactKind, FactSource, FactStatus, MAX_FACT_ANCHORS, MAX_FACT_CHARS};
 pub use file_content::FileContent;
+pub use git_layout::{GitLayout, MAX_GIT_FILE_BYTES, git_layout};
 pub use hash::{ContentHash, ShortHash};
 pub use identifier::{Identifier, IdentifierError, MAX_IDENTIFIER_BYTES};
 pub use ignore_block::{

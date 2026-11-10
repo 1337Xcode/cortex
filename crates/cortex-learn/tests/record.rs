@@ -751,6 +751,7 @@ fn a_shell_command_keeps_the_check_it_vouches_for() -> TestResult {
         events.push(Event {
             cwd: root.clone(),
             repo_root: root.clone(),
+            worktree_root: None,
             ..tool(
                 HookKind::PostTool,
                 ("s1", 1_000 + at * 100),

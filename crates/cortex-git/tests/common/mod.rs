@@ -170,6 +170,12 @@ impl Repo {
     }
 }
 
+/// Runs git with `args` in `folder`, any folder of a test's own, as [`Repo::git`] runs it with
+/// `home` as the home folder.
+pub fn git_in(folder: &Path, home: &Path, args: &[&str]) -> TestResult<String> {
+    run_git(folder, home, args, None, None)
+}
+
 /// The major and minor version of the git on the `PATH`, from `git version`.
 pub fn git_version() -> TestResult<(u32, u32)> {
     let output = Command::new("git").arg("version").output()?;

@@ -203,7 +203,12 @@ impl Inbox {
     fn counts_of(&self, event: &Event, output: &str) -> Option<CheckCounts> {
         let commands = self.commands.get()?;
         let command = event.tool_target.as_ref()?.command.as_ref()?;
-        let read = read_line_failure(commands, command, (&event.repo_root, &event.cwd), output)?;
+        let read = read_line_failure(
+            commands,
+            command,
+            (event.worktree_top(), &event.cwd),
+            output,
+        )?;
         read.failures.counts
     }
 
@@ -742,6 +747,7 @@ mod tests {
             parent_session_id: None,
             cwd: std::path::PathBuf::from("/repo"),
             repo_root: std::path::PathBuf::from("/repo"),
+            worktree_root: None,
             hook,
             source: None,
             tool,

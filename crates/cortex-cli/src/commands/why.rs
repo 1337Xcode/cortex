@@ -36,13 +36,16 @@ pub(crate) struct Args {
 /// from, a daemon that cannot be started or does not answer, a target it refused (naming nothing,
 /// or several things), or stdout that cannot be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let root = repository::root(args.root.as_deref())?;
+    let (root, worktree) = repository::root_and_worktree(args.root.as_deref())?;
     let user = UserFolder::of_current_user().context("finding the home folder")?;
-    let target = match file_target(&root, &args.target) {
+    let target = match file_target(&worktree, &args.target) {
         Some(target) => target?,
         None => args.target.clone(),
     };
-    let body = RequestBody::Why { target };
+    let body = RequestBody::Why {
+        target,
+        worktree_root: repository::linked(&root, worktree),
+    };
     let asked = upgrade::ask_started(&root, &user, &body, Instant::now() + ANSWER_WITHIN);
     if let Some(old) = &asked.replaced {
         output::note(&format!("replaced a daemon of Cortex {old}"))?;

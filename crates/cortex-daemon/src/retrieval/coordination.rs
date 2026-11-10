@@ -2,10 +2,11 @@
 //! other sessions an edit concerns, the lines the editing session is told at once and the notice
 //! each concerned session is told at its next hook, and the notices a session is given ahead of the
 //! rest of an answer. Positions come from the store, as the writer kept them; how files are linked
-//! from the store's edges; the rules and the words from `cortex-coord`. Nothing here writes: what
-//! to queue, tell and mark delivered goes to the writer with the answer.
+//! from the store's edges; the rules and the words from `cortex-coord`. A session working in
+//! another working tree or on another branch than the one told is named with its place. Nothing
+//! here writes: what to queue, tell and mark delivered goes to the writer with the answer.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_coord::{EditAt, Link, Notice, Party, Position, Thresholds, Timing, concerned};
 use cortex_core::{
@@ -18,6 +19,7 @@ use super::{Answer, Service, task_of_answer};
 use crate::claim::Claim;
 use crate::given::{Given, Notices, text_record};
 use crate::noticed::{Giving, Noticed};
+use crate::place::Place;
 
 /// What an edit's coordination found, before it is given.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -40,6 +42,10 @@ struct Around {
     nodes: Vec<NodeId>,
     /// What the store knows of every session holding one, and of the editing session.
     seen: Vec<SeenSession>,
+    /// Where each session holding one works, as its latest position says.
+    places: BTreeMap<Identifier, Place>,
+    /// Where the editing session works.
+    mine: Place,
 }
 
 /// What an edit's coordination found so far: the lines its session could be told and the
@@ -78,6 +84,7 @@ impl Around {
         sessions.dedup();
         let seen = queries.sessions_seen(&sessions)?;
         let family = family_of(event, &seen);
+        let places = places_of(&positions);
         let held: Vec<Position<Identifier, NodeId>> = positions
             .into_iter()
             .filter(|row| !family.contains(&row.record.session_id))
@@ -86,7 +93,13 @@ impl Around {
         let mut nodes: Vec<NodeId> = held.iter().map(|position| position.node).collect();
         nodes.sort_unstable();
         nodes.dedup();
-        Ok(Some(Self { held, nodes, seen }))
+        Ok(Some(Self {
+            held,
+            nodes,
+            seen,
+            places,
+            mine: Place::of(event),
+        }))
     }
 
     /// Adds to `found` what `event`'s edit of `path` concerns, `names` being the definitions whose
@@ -127,9 +140,10 @@ impl Around {
             let Some((_, held_path)) = queries.node_file(concern.held)? else {
                 continue;
             };
+            let (their_place, my_place) = self.places_said(&concern.session);
             let (other_name, editor_name) = (
-                name_of(other.agent, event.agent),
-                name_of(event.agent, other.agent),
+                format!("{}{their_place}", name_of(other.agent, event.agent)),
+                format!("{}{my_place}", name_of(event.agent, other.agent)),
             );
             let them = Party {
                 agent: &other_name,
@@ -154,6 +168,22 @@ impl Around {
             }
         }
         Ok(())
+    }
+
+    /// The words naming where `session` works and where the editing session does, each after an
+    /// agent's name, when both places are known and differ: none for either otherwise, nor for a
+    /// place that is not plain text.
+    fn places_said(&self, session: &Identifier) -> (String, String) {
+        let differs = self.places.get(session).filter(|theirs| {
+            **theirs != self.mine && theirs.worktree.is_some() && self.mine.worktree.is_some()
+        });
+        let Some(theirs) = differs else {
+            return (String::new(), String::new());
+        };
+        (
+            theirs.said().unwrap_or_default(),
+            self.mine.said().unwrap_or_default(),
+        )
     }
 }
 
@@ -350,6 +380,27 @@ fn last_event_of(session: &Identifier, seen: &[SeenSession]) -> Option<i64> {
     seen.iter()
         .find(|seen| seen.session_id == *session)?
         .heard_from_ms()
+}
+
+/// Where each session holding one of `positions` works, as its latest position says.
+fn places_of(positions: &[PositionRow]) -> BTreeMap<Identifier, Place> {
+    let mut latest: BTreeMap<Identifier, (i64, Place)> = BTreeMap::new();
+    for row in positions {
+        let record = &row.record;
+        let is_later = latest
+            .get(&record.session_id)
+            .is_none_or(|(last_ms, _)| record.last_ms > *last_ms);
+        if is_later {
+            latest.insert(
+                record.session_id.clone(),
+                (record.last_ms, Place::of_position(record)),
+            );
+        }
+    }
+    latest
+        .into_iter()
+        .map(|(session, (_, place))| (session, place))
+        .collect()
 }
 
 /// How a session of `agent` is named to a session of `to`: by its agent's name, or as another

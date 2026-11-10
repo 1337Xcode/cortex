@@ -174,11 +174,13 @@ async fn a_question_is_answered_as_the_daemon_wrote_it() -> TestResult {
         [
             RequestBody::Where {
                 query: "where is divide".to_owned(),
-                limit: 3
+                limit: 3,
+                worktree_root: None
             },
             RequestBody::Where {
                 query: "divide".to_owned(),
-                limit: 5
+                limit: 5,
+                worktree_root: None
             },
         ]
     );
@@ -361,7 +363,8 @@ async fn a_why_is_answered_as_the_daemon_wrote_it() -> TestResult {
     assert_eq!(
         asked,
         [RequestBody::Why {
-            target: "calc/ops.py".to_owned()
+            target: "calc/ops.py".to_owned(),
+            worktree_root: None
         }]
     );
     let refused = Ok(ResponseBody::Error {

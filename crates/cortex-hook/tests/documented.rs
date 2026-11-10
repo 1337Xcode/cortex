@@ -58,6 +58,7 @@ fn base(agent: Agent, hook: HookKind, transcript: Option<&str>) -> TestResult<Ev
         parent_session_id: None,
         cwd: root(),
         repo_root: root(),
+        worktree_root: None,
         hook,
         source: None,
         tool: None,

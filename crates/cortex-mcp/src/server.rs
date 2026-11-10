@@ -102,6 +102,7 @@ impl Server {
         let body = RequestBody::Where {
             query: input.query,
             limit,
+            worktree_root: None,
         };
         // The daemon is asked over a blocking connection, off the session's thread.
         let asked = tokio::task::spawn_blocking(move || daemon.ask(body)).await;
@@ -137,6 +138,7 @@ impl Server {
         let daemon = Arc::clone(&self.daemon);
         let body = RequestBody::Why {
             target: input.target,
+            worktree_root: None,
         };
         let asked = tokio::task::spawn_blocking(move || daemon.ask(body)).await;
         let text = match asked {

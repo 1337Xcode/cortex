@@ -119,6 +119,7 @@ fn event(root: &Path, hook: HookKind, ts_ms: i64) -> TestResult<Event> {
         parent_session_id: None,
         cwd: root.clone(),
         repo_root: root,
+        worktree_root: None,
         hook,
         source: None,
         tool: None,
@@ -374,6 +375,7 @@ fn a_session_gets_its_primer_and_a_question_its_answer() -> TestResult {
         RequestBody::Where {
             query: PROMPT.to_owned(),
             limit: 1,
+            worktree_root: None,
         },
     )?
     .ok_or("an answer")?;

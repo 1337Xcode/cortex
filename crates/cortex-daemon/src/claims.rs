@@ -36,6 +36,16 @@ pub(crate) fn claimed(
         return Err(Refused::Named("name the files to claim".to_owned()));
     }
     let nodes = files_at(transaction.queries(), at)?;
+    // A claim is made from a shell, which names no working tree: it is taken where the session's
+    // latest position was.
+    let latest = transaction
+        .queries()
+        .positions_since(0)?
+        .into_iter()
+        .filter(|row| row.record.session_id == *session)
+        .max_by_key(|row| row.record.last_ms);
+    let (worktree, branch) =
+        latest.map_or((None, None), |row| (row.record.worktree, row.record.branch));
     for node in &nodes {
         let kept = transaction.queries().position_of(session, *node)?;
         let since_ms = kept
@@ -49,6 +59,8 @@ pub(crate) fn claimed(
             mode: PositionMode::Claim,
             since_ms,
             last_ms: now_ms,
+            worktree: worktree.clone(),
+            branch: branch.clone(),
         })?;
     }
     let seen = transaction
@@ -224,6 +236,8 @@ mod tests {
                 mode,
                 since_ms: minute * MINUTE_MS,
                 last_ms: minute * MINUTE_MS,
+                worktree: None,
+                branch: None,
             })?;
         }
         let now_ms = 200 * MINUTE_MS;

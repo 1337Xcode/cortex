@@ -11,8 +11,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
 use cortex_core::ipc::{
-    GitReport, GitState, GraphReport, HookLatency, RecentError, RequestBody, ResponseBody,
-    StatusReport, UpkeepReport, WorktreeReport, WorktreeState,
+    GitReport, GitState, GraphReport, HookLatency, LinkedWorktreeReport, RecentError, RequestBody,
+    ResponseBody, StatusReport, UpkeepReport, WorktreeReport, WorktreeState,
 };
 use cortex_core::{Config, FileFlags, ModeSetting, ScaleMode, UserFolder, unix_millis};
 use cortex_daemon::settings;
@@ -143,6 +143,7 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
         worktree_line(report.worktree.as_ref()),
         upkeep_line(report.upkeep.as_ref(), now_ms),
     ];
+    lines.extend(report.linked_worktrees.iter().map(linked_line));
     if report.latencies.is_empty() {
         lines.push("daemon latency: no hook request handled yet".to_owned());
     }
@@ -195,6 +196,16 @@ fn worktree_line(report: Option<&WorktreeReport>) -> String {
         failed => format!("; {} failed", counted(failed, ("look", "looks"))),
     };
     format!("work tree: {}{failed}", worktree_said(report))
+}
+
+/// What the daemon read of a linked working tree's uncommitted changes, as a line naming its top,
+/// as the work tree's line says them.
+fn linked_line(linked: &LinkedWorktreeReport) -> String {
+    let said = linked
+        .worktree
+        .as_ref()
+        .map_or_else(|| "not looked at yet".to_owned(), worktree_said);
+    format!("linked work tree {}: {said}", linked.root.display())
 }
 
 /// What the work tree's line says of `report`'s state.
@@ -716,6 +727,7 @@ mod tests {
             git: Some(GitReport::default()),
             graph: None,
             worktree: None,
+            linked_worktrees: Vec::new(),
             upkeep: None,
         }
     }
@@ -1000,6 +1012,36 @@ mod tests {
             "work tree: unknown, as the latest look failed; 4 looks failed"
         );
         assert_eq!(worktree_line(None), "work tree: not looked at yet");
+    }
+
+    /// Each linked working tree an agent worked in gets a line of its own, naming its top, before
+    /// its first look and after.
+    #[test]
+    fn each_linked_working_tree_is_reported_in_a_line() {
+        let top = std::path::PathBuf::from("wt");
+        let waiting = LinkedWorktreeReport {
+            root: top.clone(),
+            worktree: None,
+        };
+        assert_eq!(
+            linked_line(&waiting),
+            "linked work tree wt: not looked at yet"
+        );
+        let read = LinkedWorktreeReport {
+            root: top,
+            worktree: Some(WorktreeReport {
+                state: WorktreeState::Read,
+                uncommitted_files: 1,
+                listed_files: 1,
+                looks: 2,
+                failed_looks: 0,
+            }),
+        };
+        assert_eq!(
+            linked_line(&read),
+            "linked work tree wt: 1 uncommitted file kept to seed retrievals, as of the latest of \
+             2 looks"
+        );
     }
 
     /// The graph's line, as typed out here: its size, one of a kind in the singular, whether it

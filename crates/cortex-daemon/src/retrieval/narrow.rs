@@ -29,8 +29,12 @@ impl Service {
         else {
             return Answer::default();
         };
-        let Some(run) = whole_suite(&self.failures.commands, command, &self.root, &event.cwd)
-        else {
+        let Some(run) = whole_suite(
+            &self.failures.commands,
+            command,
+            self.root_for(event),
+            &event.cwd,
+        ) else {
             return Answer::default();
         };
         let answered = self.with_reader(|queries| {

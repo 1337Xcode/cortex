@@ -1,11 +1,12 @@
 //! What git leaves out of a repository of what Cortex writes there, and the lines its `.gitignore`
-//! gets when git does not leave it out yet: `.cortex/` (or, when the team shares facts, all of
-//! `.cortex/` but `.cortex/shared/`, which is committed), and an agent's local file of the
-//! repository's (Claude Code's `.claude/settings.local.json`) when init makes that file. Git says what it ignores (`git check-ignore`), whichever file makes it;
-//! lines are only ever added, at the end, after a comment naming Cortex, by which `cortex
-//! uninstall` finds them again.
+//! gets when git does not leave it out yet (in a linked working tree, the exclude file git names
+//! for it, since its `.gitignore` belongs to its branch): `.cortex/` (or, when the team shares
+//! facts, all of `.cortex/` but `.cortex/shared/`, which is committed), and an agent's local file
+//! of the repository's (Claude Code's `.claude/settings.local.json`) when init makes that file. Git
+//! says what it ignores (`git check-ignore`), whichever file makes it; lines are only ever added,
+//! at the end, after a comment naming Cortex, by which `cortex uninstall` finds them again.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::bail;
 use cortex_core::{
@@ -68,6 +69,33 @@ pub(super) fn read(root: &Path, bound: &Path) -> anyhow::Result<Ignored> {
             .filter(|file| is_listed(file))
             .collect(),
     })
+}
+
+/// The file of ignore rules git reads for the working tree at `top` and never commits, as `git
+/// rev-parse --git-path info/exclude` names it there, git run as [`git::run`] runs it, outside
+/// `bound`: a linked working tree's lines go there, not to its `.gitignore`.
+///
+/// # Errors
+///
+/// Git did not run, ended with an error, or named no path.
+pub(super) fn exclude_file(top: &Path, bound: &Path) -> anyhow::Result<PathBuf> {
+    let captured = git::run(&["rev-parse", "--git-path", "info/exclude"], top, bound)
+        .map_err(anyhow::Error::msg)?;
+    if !captured.status.success() || captured.is_cut {
+        bail!(
+            "git could not name the exclude file of {} (it ended with {})",
+            top.display(),
+            captured.status
+        );
+    }
+    let named = String::from_utf8(captured.stdout)
+        .map_err(|_| anyhow::anyhow!("git named an exclude file that is not UTF-8 text"))?;
+    let named = named.trim_end_matches(['\n', '\r']);
+    if named.is_empty() || named.contains(['\n', '\r']) {
+        bail!("git named no exclude file for {}", top.display());
+    }
+    // Git names it relative to the working tree when it is inside it.
+    Ok(top.join(named))
 }
 
 /// The lines `.gitignore` needs, from what git `ignored`, whether the team shares facts

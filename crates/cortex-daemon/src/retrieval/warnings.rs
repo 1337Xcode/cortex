@@ -48,7 +48,7 @@ impl Service {
             let drifted = match (&task, &row) {
                 (Some(task), Some(row)) => {
                     let since = (signatures, (task.record.started_at_ms, event.ts_ms));
-                    self.drifted(queries, row, since)?
+                    self.drifted(queries, (row, self.root_for(event)), since)?
                 }
                 _ => Vec::new(),
             };
@@ -90,7 +90,7 @@ impl Service {
     ) -> Result<Answer, cortex_retrieve::RetrieveError> {
         let task_id = task.record.task_id;
         let asked = EditQuery {
-            root: &self.root,
+            root: self.root_for(event),
             edited: &row.file.path,
             drifted,
             link_decay: self.edits.link_decay,
@@ -125,21 +125,21 @@ impl Service {
         })
     }
 
-    /// The stored symbols of `row`'s file whose signature the file on disk changed: read again and
-    /// compared, or, when the store already holds the file as it is, those `signatures` says an
+    /// The stored symbols of `row`'s file whose signature the file on disk, in the working tree at
+    /// `root`, changed: read again and compared, or, when the store already holds the file as it is, those `signatures` says an
     /// index changed between the task's start and now (`since_ms`, `now_ms`). None for a file the
     /// index did not parse (a secret's name, too large, binary, generated or of no known language),
     /// which is never opened here, or one that cannot be read or parsed in time.
     fn drifted(
         &self,
         queries: Queries<'_>,
-        row: &FileRow,
+        (row, root): (&FileRow, &Path),
         (signatures, (since_ms, now_ms)): (&Signatures, (i64, i64)),
     ) -> Result<Vec<SymbolId>, cortex_retrieve::RetrieveError> {
         let Some(language) = row.file.language else {
             return Ok(Vec::new());
         };
-        let Some(bytes) = parsed_bytes(&self.root, &row.file, self.max_file_bytes) else {
+        let Some(bytes) = parsed_bytes(root, &row.file, self.max_file_bytes) else {
             return Ok(Vec::new());
         };
         if row.file.content_hash == Some(ContentHash::of(&bytes)) {

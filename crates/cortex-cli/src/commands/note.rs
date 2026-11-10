@@ -39,11 +39,11 @@ pub(crate) struct Args {
 /// cannot be started or does not answer, a note it refused (a file it does not index, a symbol the
 /// file does not define, a text too long), or stdout that cannot be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let root = repository::root(args.root.as_deref())?;
+    let (root, worktree) = repository::root_and_worktree(args.root.as_deref())?;
     let at = args
         .at
         .iter()
-        .map(|anchor| anchor_of(&root, anchor))
+        .map(|anchor| anchor_of(&worktree, anchor))
         .collect::<anyhow::Result<Vec<_>>>()?;
     // Text in a repository can lead an agent to run this command: what an agent notes is the
     // agent's, never the user's.
@@ -76,8 +76,9 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     }
 }
 
-/// The anchor `given` names, as the daemon reads it: `.` for the repository's root folder `root`,
-/// or the repository path of a file inside it, and the symbol after it. `given` is a path from the
+/// The anchor `given` names, as the daemon reads it: `.` for the working tree's top `root` (the
+/// repository's root, or a linked working tree's), or the repository path of a file inside it, and
+/// the symbol after it. `given` is a path from the
 /// current folder, whole when it is a file or a folder, else up to its last `:`, which is followed
 /// by the symbol.
 ///

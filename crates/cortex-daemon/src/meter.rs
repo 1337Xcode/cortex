@@ -451,6 +451,7 @@ mod tests {
             parent_session_id: None,
             cwd: PathBuf::from("/repo"),
             repo_root: PathBuf::from("/repo"),
+            worktree_root: None,
             hook,
             source: None,
             tool: None,

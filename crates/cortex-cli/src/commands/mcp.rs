@@ -36,7 +36,8 @@ impl Daemon for RepositoryDaemon {
     /// A note's anchors are read from the repository's root as `cortex note` reads them from its
     /// folder, and the note goes to one daemon only, since it changes what the daemon keeps.
     fn ask(&self, body: RequestBody) -> Result<ResponseBody, String> {
-        let root = repository::root(self.root.as_deref()).map_err(|error| format!("{error:#}"))?;
+        let (root, worktree) = repository::root_and_worktree(self.root.as_deref())
+            .map_err(|error| format!("{error:#}"))?;
         let user = UserFolder::of_current_user().ok_or("no home folder to find the daemon from")?;
         let deadline = Instant::now() + ANSWER_WITHIN;
         let asked = match body {
@@ -45,30 +46,42 @@ impl Daemon for RepositoryDaemon {
                     .at
                     .iter()
                     .map(|anchor| {
-                        // An agent names files from the repository's root, whatever folder the
+                        // An agent names files from its working tree's top, whatever folder the
                         // server was started in; an absolute path stays as it is.
-                        let joined = root.join(anchor);
+                        let joined = worktree.join(anchor);
                         let joined = joined.to_str().ok_or_else(|| {
                             anyhow::anyhow!("{anchor}: not a path Cortex can read")
                         })?;
-                        anchor_of(&root, joined)
+                        anchor_of(&worktree, joined)
                     })
                     .collect::<anyhow::Result<Vec<_>>>()
                     .map_err(|error| format!("{error:#}"))?;
                 upgrade::ask_once_started(&root, &user, &RequestBody::Note(note), deadline)
             }
-            RequestBody::Why { target } => {
-                // A file is named from the repository's root, as a note's anchor is; anything
+            RequestBody::Why { target, .. } => {
+                // A file is named from the working tree's top, as a note's anchor is; anything
                 // else, a symbol's name, goes as it is.
-                let joined = root.join(&target);
+                let joined = worktree.join(&target);
                 let target = match joined
                     .to_str()
-                    .and_then(|joined| file_target(&root, joined))
+                    .and_then(|joined| file_target(&worktree, joined))
                 {
                     Some(found) => found.map_err(|error| format!("{error:#}"))?,
                     None => target,
                 };
-                upgrade::ask_started(&root, &user, &RequestBody::Why { target }, deadline)
+                let body = RequestBody::Why {
+                    target,
+                    worktree_root: repository::linked(&root, worktree),
+                };
+                upgrade::ask_started(&root, &user, &body, deadline)
+            }
+            RequestBody::Where { query, limit, .. } => {
+                let body = RequestBody::Where {
+                    query,
+                    limit,
+                    worktree_root: repository::linked(&root, worktree),
+                };
+                upgrade::ask_started(&root, &user, &body, deadline)
             }
             body => upgrade::ask_started(&root, &user, &body, deadline),
         };

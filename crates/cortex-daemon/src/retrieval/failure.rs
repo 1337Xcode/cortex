@@ -54,7 +54,7 @@ impl Service {
             }
             let task_id = task.map(|task| task.record.task_id);
             let query = FailureQuery {
-                root: &self.root,
+                root: self.root_for(event),
                 cwd: &event.cwd,
                 max_file_bytes: self.max_file_bytes,
             };
@@ -110,7 +110,7 @@ impl Service {
         let ran = self
             .failures
             .commands
-            .recognise(command, &self.root, &event.cwd);
+            .recognise(command, self.root_for(event), &event.cwd);
         let runners: Vec<&str> = ran
             .iter()
             .filter_map(|ran| match ran {
@@ -136,7 +136,7 @@ impl Service {
         let read = read_line_failure(
             &self.failures.commands,
             command,
-            (&self.root, &event.cwd),
+            (self.root_for(event), &event.cwd),
             output.as_str(),
         )?;
         Some(ReadFailure {

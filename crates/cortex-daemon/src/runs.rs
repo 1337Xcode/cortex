@@ -328,6 +328,7 @@ mod tests {
             parent_session_id: None,
             cwd: PathBuf::from("/repo"),
             repo_root: PathBuf::from("/repo"),
+            worktree_root: None,
             hook: HookKind::PreTool,
             source: None,
             tool: Some(cortex_core::ToolKind::Shell),

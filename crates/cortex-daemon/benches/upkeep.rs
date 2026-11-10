@@ -232,6 +232,8 @@ fn add_positions_and_facts(transaction: &mut WriteTx<'_>, nodes: &[NodeId]) -> B
                 mode: PositionMode::Read,
                 since_ms: last_ms,
                 last_ms,
+                worktree: None,
+                branch: None,
             })?;
         }
     }

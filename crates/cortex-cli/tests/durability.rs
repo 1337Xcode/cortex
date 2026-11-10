@@ -74,6 +74,7 @@ fn read_event(root: &Path, ts_ms: i64) -> TestResult<Event> {
         parent_session_id: None,
         cwd: root.to_path_buf(),
         repo_root: root.to_path_buf(),
+        worktree_root: None,
         hook: HookKind::PostTool,
         source: None,
         tool: Some(ToolKind::Read),

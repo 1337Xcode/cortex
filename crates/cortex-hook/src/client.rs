@@ -37,6 +37,13 @@ pub enum ClientError {
     /// No answer came before the deadline.
     #[error("the daemon did not answer in time")]
     TimedOut,
+    /// The daemon speaks a protocol whose minor version cannot serve the request, which was not
+    /// sent.
+    #[error(
+        "the daemon (Cortex {}) speaks protocol {}.{}, which cannot serve this request",
+        .0.cortex_version, .0.protocol.major, .0.protocol.minor
+    )]
+    Unserved(Welcome),
     /// The daemon speaks a protocol this client cannot.
     #[error(
         "the daemon (Cortex {}) speaks protocol {}.{}, this client {}.{}",
@@ -109,6 +116,72 @@ pub fn ask(
     let daemon_pid_path = files.pid_path();
     on_thread(remaining, move || {
         exchange(&endpoint, &daemon_pid_path, &frames, remaining)
+    })
+}
+
+/// Connects to the daemon whose run files are `files` as [`ask`] does, but sends `body` only once
+/// the daemon's handshake shows a protocol that `serves` it: a request that an earlier minor
+/// version would misread is never handed to such a daemon, which then reads nothing but the
+/// handshake. Two writes instead of one, so only a request that needs it is sent this way.
+///
+/// # Errors
+///
+/// [`ClientError::Unserved`] with the daemon's welcome when `serves` refuses its protocol, and
+/// those of [`ask`].
+pub fn ask_served(
+    files: &RunFiles,
+    role: Role,
+    body: RequestBody,
+    (deadline, serves): (Instant, fn(Protocol) -> bool),
+) -> Result<Answer, ClientError> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or(ClientError::TimedOut)?;
+    let greeting = encoded(&hello(role))?;
+    let request = encoded(&Request {
+        request_id: REQUEST_ID,
+        body,
+    })?;
+    let endpoint = files.endpoint();
+    let daemon_pid_path = files.pid_path();
+    on_thread(remaining, move || {
+        let mut stream = connect(&endpoint, &daemon_pid_path, remaining)?;
+        write_all(&mut stream, &greeting)?;
+        let welcome = read_handshake(&mut stream)?.map_err(ClientError::Mismatch)?;
+        if !serves(welcome.protocol) {
+            return Err(ClientError::Unserved(welcome));
+        }
+        write_all(&mut stream, &request)?;
+        answer_after(&mut stream, welcome)
+    })
+}
+
+/// Writes `frames` to `stream` and flushes them.
+///
+/// # Errors
+///
+/// The write's.
+fn write_all(stream: &mut Stream, frames: &[u8]) -> Result<(), ClientError> {
+    stream
+        .write_all(frames)
+        .and_then(|()| stream.flush())
+        .map_err(ClientError::Io)
+}
+
+/// Reads the answer to the request sent after the handshake that gave `welcome`.
+///
+/// # Errors
+///
+/// An answer that names another request, and the frame's errors.
+fn answer_after(stream: &mut Stream, welcome: Welcome) -> Result<Answer, ClientError> {
+    let answer = read_frame::<Response>(stream)?;
+    if answer.request_id != REQUEST_ID {
+        return Err(ClientError::Protocol("an answer names another request"));
+    }
+    Ok(Answer {
+        welcome,
+        body: answer.body,
     })
 }
 
@@ -213,19 +286,9 @@ fn exchange(
     connect_within: Duration,
 ) -> Result<Answer, ClientError> {
     let mut stream = connect(endpoint, daemon_pid_path, connect_within)?;
-    stream
-        .write_all(frames)
-        .and_then(|()| stream.flush())
-        .map_err(ClientError::Io)?;
+    write_all(&mut stream, frames)?;
     let welcome = read_handshake(&mut stream)?.map_err(ClientError::Mismatch)?;
-    let answer = read_frame::<Response>(&mut stream)?;
-    if answer.request_id != REQUEST_ID {
-        return Err(ClientError::Protocol("an answer names another request"));
-    }
-    Ok(Answer {
-        welcome,
-        body: answer.body,
-    })
+    answer_after(&mut stream, welcome)
 }
 
 /// Refuses an endpoint held by a process other than the daemon. On Windows any local user can

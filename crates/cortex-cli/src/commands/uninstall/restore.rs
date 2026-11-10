@@ -30,7 +30,8 @@ use crate::commands::init::without_lines;
 /// kind; or the run's copy is gone or does not hold what init copied. The file is left as it is.
 pub(super) fn undo(run: &Run, change: &Changed, program: &str) -> anyhow::Result<Option<String>> {
     let path = PathBuf::from(&change.path);
-    if let Some(bound) = &run.bound {
+    let bound = bound_of(run, &path)?;
+    if let Some(bound) = bound {
         checked_inside(&path, bound)?;
     }
     let Some(current) = read_plain(&path)? else {
@@ -45,9 +46,40 @@ pub(super) fn undo(run: &Run, change: &Changed, program: &str) -> anyhow::Result
         return Ok(None);
     }
     if hash == change.written_blake3 {
-        return restored(run, change, &path, &current).map(Some);
+        return restored((run, bound), change, &path, &current).map(Some);
     }
     taken_out(&change.kind, &path, &current, program)
+}
+
+/// The folder among `run`'s bounds that `path` is in, the innermost when it is in more than one
+/// (a linked working tree inside the repository's folder); none for a run on the user's own files,
+/// which has none.
+///
+/// # Errors
+///
+/// `path` is in none of them.
+fn bound_of<'r>(run: &'r Run, path: &Path) -> anyhow::Result<Option<&'r Path>> {
+    if run.bounds.is_empty() {
+        return Ok(None);
+    }
+    let folder = path.parent();
+    let inside = run
+        .bounds
+        .iter()
+        .filter(|bound| folder.is_some_and(|folder| folder.starts_with(bound)))
+        .max_by_key(|bound| bound.components().count());
+    match inside {
+        Some(bound) => Ok(Some(bound)),
+        None => bail!(
+            "{} is outside {}, where init writes; it is left as it is",
+            path.display(),
+            run.bounds
+                .iter()
+                .map(|bound| bound.display().to_string())
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ),
+    }
 }
 
 /// Refuses `path`, a file of the repository at `bound`, when it is outside the repository or its
@@ -100,15 +132,21 @@ fn read_plain(path: &Path) -> anyhow::Result<Option<String>> {
 }
 
 /// Gives the file at `path`, which still holds `current`, what `change` wrote, back what it held
-/// before, or removes it when `run` made it, and says which.
+/// before, or removes it when `run` made it, and says which; `bound` is the folder of the run's
+/// that `path` is in, whose `.claude` folder is removed when that leaves it empty.
 ///
 /// # Errors
 ///
 /// As [`undo`].
-fn restored(run: &Run, change: &Changed, path: &Path, current: &str) -> anyhow::Result<String> {
+fn restored(
+    (run, bound): (&Run, Option<&Path>),
+    change: &Changed,
+    path: &Path,
+    current: &str,
+) -> anyhow::Result<String> {
     let Some(copy) = &change.backup else {
         remove_unchanged(path, current)?;
-        if let Some(bound) = &run.bound {
+        if let Some(bound) = bound {
             remove_claude_left_empty(path, bound)?;
         }
         return Ok(format!("removed {}, which init made", path.display()));

@@ -339,6 +339,7 @@ mod tests {
             git: None,
             graph: None,
             worktree: None,
+            linked_worktrees: Vec::new(),
             upkeep: None,
         }
     }

@@ -62,6 +62,7 @@ fn base(hook: HookKind, session: &str, transcript: Option<PathBuf>) -> TestResul
         parent_session_id: None,
         cwd: root(),
         repo_root: root(),
+        worktree_root: None,
         hook,
         source: None,
         tool: None,

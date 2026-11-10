@@ -4,6 +4,8 @@
 //! request on a connection is a Hello. The envelope, Hello, Mismatch and Shutdown never change
 //! shape, so a process of any version can tell a daemon of any other version to stop.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use super::claims::{ClaimsAnswer, ClaimsAsk};
@@ -109,6 +111,10 @@ pub enum RequestBody {
         query: String,
         /// The most files to name, from 1 to 5.
         limit: u8,
+        /// Asked from a linked working tree, its top, whose files the answer shows (protocol 11.1
+        /// added it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worktree_root: Option<PathBuf>,
     },
     /// Answer why a file or a symbol is where it is, as `cortex why` asks: what its file is linked
     /// to and how strongly, the facts about it, the sessions on its file now and the warnings
@@ -116,6 +122,10 @@ pub enum RequestBody {
     Why {
         /// A repository path, that path and `:line` or `:symbol`, or a symbol's name.
         target: String,
+        /// Asked from a linked working tree, its top, whose files the answer checks facts against
+        /// (protocol 11.1 added it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worktree_root: Option<PathBuf>,
     },
     /// Note a fact of the user's, and answer with what became of it (protocol 6.0 added it).
     Note(Note),
@@ -287,6 +297,10 @@ pub struct StatusReport {
     /// ended, or from a daemon that does not say (protocol 2.2 added it).
     #[serde(default)]
     pub worktree: Option<WorktreeReport>,
+    /// What the daemon read of each linked working tree an agent worked in since it started, by
+    /// its top (protocol 11.1 added it).
+    #[serde(default)]
+    pub linked_worktrees: Vec<LinkedWorktreeReport>,
     /// What the last run of upkeep did; none before the first, or from a daemon that predates
     /// upkeep.
     #[serde(default)]
@@ -334,6 +348,17 @@ pub struct GraphReport {
     /// How many rebuilds failed since the daemon started; each was tried again.
     #[serde(default)]
     pub failed_builds: u64,
+}
+
+/// What a daemon read of one linked working tree's uncommitted changes (`git worktree add`), which
+/// seed the retrievals of that working tree's prompts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkedWorktreeReport {
+    /// The linked working tree's top.
+    pub root: PathBuf,
+    /// What its looks read; none before its first look ended.
+    #[serde(default)]
+    pub worktree: Option<WorktreeReport>,
 }
 
 /// What a daemon read of its work tree's uncommitted changes, and how its looks went, for its

@@ -15,7 +15,7 @@ use std::thread::{self, JoinHandle};
 pub mod fixture;
 
 use cortex_core::ipc::{
-    Protocol, Request, Response, ResponseBody, Welcome, read_frame, write_frame,
+    Protocol, Request, RequestBody, Response, ResponseBody, Welcome, read_frame, write_frame,
 };
 use cortex_core::{Endpoint, RepoId, RunFiles, UserFolder};
 use interprocess::local_socket::traits::Listener as _;
@@ -39,6 +39,9 @@ pub enum Script {
     Close,
     /// Reads the two requests and writes these bytes.
     Raw(Vec<u8>),
+    /// Reads the handshake and answers it with this welcome, then answers each request that
+    /// follows with `Ack`, until the client hangs up; returns every request read.
+    Welcome(Welcome),
 }
 
 /// The run files of a repository of its own under a temporary home, the run folder created and
@@ -78,6 +81,19 @@ pub fn serve(files: &RunFiles, script: Script) -> TestResult<JoinHandle<Served>>
         };
         match script {
             Script::Close => Ok(Vec::new()),
+            Script::Welcome(welcome) => {
+                let mut requests = Vec::new();
+                while let Ok(request) = read_frame::<Request>(&mut stream) {
+                    let body = match request.body {
+                        RequestBody::Hello(_) => ResponseBody::Welcome(welcome.clone()),
+                        _ => ResponseBody::Ack,
+                    };
+                    write_frame(&mut stream, &response(request.request_id, body))
+                        .map_err(|error| error.to_string())?;
+                    requests.push(request);
+                }
+                Ok(requests)
+            }
             Script::Answer(responses) => {
                 let requests = read()?;
                 for response in responses {

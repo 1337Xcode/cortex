@@ -29,6 +29,7 @@ fn shell(session: &str, ts_ms: i64, line: &str, exit_code: i32) -> TestResult<Ev
     Ok(Event {
         cwd: root.clone(),
         repo_root: root,
+        worktree_root: None,
         ..tool(
             HookKind::PostTool,
             (session, ts_ms),

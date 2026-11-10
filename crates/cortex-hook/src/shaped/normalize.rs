@@ -63,6 +63,12 @@ pub(crate) fn event(
             .failed_output(entry.event_name, &payload)
             .and_then(|text| FailedOutput::tail_of(&text));
     }
+    // A linked working tree's event goes to its repository's main tree, with the paths it holds
+    // relative to its own top.
+    let (repo_root, worktree_root) = match located.main_root {
+        Some(main_root) => (main_root, Some(located.root)),
+        None => (located.root, None),
+    };
     Ok(Some(Event {
         event_id: stamp.event_id,
         ts_ms: stamp.ts_ms,
@@ -71,7 +77,8 @@ pub(crate) fn event(
         session_id: session.id,
         parent_session_id: session.parent,
         cwd: located.cwd,
-        repo_root: located.root,
+        repo_root,
+        worktree_root,
         hook: entry.hook,
         source: payload
             .source

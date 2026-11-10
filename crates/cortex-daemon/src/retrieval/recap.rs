@@ -26,7 +26,8 @@ impl Service {
             if self.is_held_out_task(&task) {
                 return Ok(Answer::default());
             }
-            let Some(text) = recap(queries, &task, (&self.root, self.max_file_bytes))? else {
+            let Some(text) = recap(queries, &task, (self.root_for(event), self.max_file_bytes))?
+            else {
                 return Ok(Answer::default());
             };
             if !recapped.claim(&event.session_id, event.event_id) {

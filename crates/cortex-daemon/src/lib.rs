@@ -31,6 +31,7 @@ mod inbox;
 mod instance;
 mod latency;
 mod learning;
+mod linked;
 mod listener;
 mod log;
 mod meter;
@@ -39,6 +40,7 @@ mod noticed;
 mod once;
 mod paced;
 mod pending;
+mod place;
 mod positions;
 mod recapped;
 mod recent_errors;
@@ -74,6 +76,7 @@ use self::graph::{Snapshot, rebuild, store_reads};
 use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
+use self::linked::Linked;
 use self::meter::Meter;
 use self::miner::Miner;
 use self::pending::Pending;
@@ -142,7 +145,12 @@ fn listen_and_serve(
         .enable_all()
         .build()
         .context("starting the server's runtime")?;
-    let shared = Shared::default();
+    let inbox = Arc::new(Inbox::default());
+    let shared = Shared {
+        linked: Arc::new(Linked::new(root, Arc::clone(&inbox))),
+        inbox,
+        ..Shared::default()
+    };
     let listener = {
         let _inside = runtime.enter();
         listener::bind(&user.run_files(repo_id)).context("listening for hooks")?
@@ -152,6 +160,7 @@ fn listen_and_serve(
         (
             Arc::clone(&shared.snapshot),
             Arc::clone(&shared.worktree),
+            Arc::clone(&shared.linked),
             Arc::clone(&shared.signatures),
         ),
         Arc::clone(&shared.service),
@@ -166,8 +175,8 @@ fn listen_and_serve(
 }
 
 /// What the server and the writer share: the writer's inbox, the graph, the work tree's
-/// uncommitted diff, the signature changes the writer's indexes found lately, and what answers with
-/// text once the first index is done.
+/// uncommitted diff and those of the linked working trees agents work in, the signature changes the
+/// writer's indexes found lately, and what answers with text once the first index is done.
 #[derive(Debug, Default)]
 struct Shared {
     /// The writer's inbox.
@@ -176,6 +185,8 @@ struct Shared {
     snapshot: Arc<Snapshot>,
     /// The work tree's uncommitted diff, which seeds retrievals.
     worktree: Arc<Worktree>,
+    /// The linked working trees agents work in, and their own uncommitted diffs.
+    linked: Arc<Linked>,
     /// The signature changes the writer's indexes found lately, for an edit's warnings.
     signatures: Arc<Signatures>,
     /// What answers with text.
@@ -305,12 +316,14 @@ fn index_and_serve(
     // told to stop when dropped.
     snapshot.follow(shared.worktree.asks());
     let looker = worktree::watch(&shared.worktree, root, (&folder, config.mmap_bytes), inbox);
+    shared.linked.read_store(&folder, config.mmap_bytes);
     or_close(note(&ready_line(&report, host.waiting())), || host.close())?;
     // The history is mined once the files that count are stored; told to stop when dropped. A
     // miner that cannot start leaves the daemon without co-change, as its status says.
     let miner = Miner::start(root, &config, inbox, &shared.worktree);
     host.serve()?;
     drop(miner);
+    shared.linked.stop();
     drop(looker);
     drop(rebuilder);
     drop(watcher);

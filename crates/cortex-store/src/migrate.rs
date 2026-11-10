@@ -744,9 +744,39 @@ mod tests {
     fn the_twenty_first_schema_adds_transitions() -> Result<(), Box<dyn std::error::Error>> {
         let (folder, mut connection) = database()?;
         let backups = folder.path().join("backups");
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let twenty_first = MIGRATIONS
+            .get(..21)
+            .ok_or("fewer than twenty-one migrations")?;
+        migrate(&mut connection, twenty_first, &backups)?;
         assert_eq!(schema_version(&connection)?, 21);
         assert!(objects(&connection)?.contains(&"transitions".to_owned()));
+        Ok(())
+    }
+
+    /// The twenty-second schema names where each position was taken, and a position kept by a
+    /// twenty-first-schema store reads back as taken in the main working tree, on no branch named.
+    #[test]
+    fn the_twenty_second_schema_names_a_position_s_working_tree()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let twenty_first = MIGRATIONS
+            .get(..21)
+            .ok_or("fewer than twenty-one migrations")?;
+        migrate(&mut connection, twenty_first, &backups)?;
+        connection.execute(
+            "INSERT INTO positions (session_id, node_id, mode, since, last_ts) \
+             VALUES ('s1', 7, 'read', 1, 2)",
+            [],
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 22);
+        let place: (Option<String>, Option<String>) = connection.query_row(
+            "SELECT worktree, branch FROM positions WHERE session_id = 's1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(place, (None, None));
         Ok(())
     }
 

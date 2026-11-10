@@ -1,10 +1,13 @@
 //! Coordination across sessions as the store keeps it: each session's position on a node (the
-//! one that holds longest, which the caller decides), what the store knows of the sessions holding
+//! one that holds longest, which the caller decides, with the linked working tree and branch it was
+//! taken in), what the store knows of the sessions holding
 //! them, how strongly an edited file is linked to the files they hold, and the notices sessions
 //! were sent or given. A notice's text names agents, files, symbols and links, never code, prompt
 //! text or a command; what it is about is a key made of the same names.
 
-use cortex_core::{Agent, EdgeType, Identifier, NoticeSubject, PositionMode, SessionStatus};
+use cortex_core::{
+    Agent, EdgeType, Identifier, NoticeSubject, PositionMode, SessionStatus, WorkingTree,
+};
 use rusqlite::Connection;
 
 use crate::error::{StoreError, sqlite};
@@ -25,6 +28,12 @@ pub struct PositionRecord {
     pub since_ms: i64,
     /// When it last did, in UTC milliseconds.
     pub last_ms: i64,
+    /// The working tree it was taken in; none when that is not known, as for a position kept
+    /// before working trees were.
+    pub worktree: Option<WorkingTree>,
+    /// The branch the working tree had checked out then; none when its HEAD was detached or could
+    /// not be read.
+    pub branch: Option<Identifier>,
 }
 
 /// A position read back with when the task the session had at its last time ended, if it has.
@@ -118,6 +127,8 @@ pub(crate) fn keep_position(
                 record.mode.name(),
                 record.since_ms,
                 record.last_ms,
+                record.worktree.as_ref().map(stored_tree),
+                record.branch.as_ref().map(Identifier::as_str),
             ))
         })
         .map_err(sqlite("keeping a position"))?;
@@ -194,6 +205,57 @@ pub(crate) fn deliver_notice(
     Ok(changed == 1)
 }
 
+/// How the main working tree is stored.
+const MAIN_TREE: &str = "main";
+
+/// What a linked working tree's stored form starts with, its name, if any, following.
+const LINKED_TREE: &str = "linked:";
+
+/// `tree` as a position stores it: `main`, or `linked:` and its name.
+fn stored_tree(tree: &WorkingTree) -> String {
+    match tree {
+        WorkingTree::Main => MAIN_TREE.to_owned(),
+        WorkingTree::Linked(name) => {
+            format!(
+                "{LINKED_TREE}{}",
+                name.as_ref().map_or("", Identifier::as_str)
+            )
+        }
+    }
+}
+
+/// The working tree and branch a position of node `node` names, as stored.
+///
+/// # Errors
+///
+/// A stored working tree or name that is not one.
+fn place_of(
+    (worktree, branch): (Option<String>, Option<String>),
+    node: i64,
+) -> Result<(Option<WorkingTree>, Option<Identifier>), StoreError> {
+    let tree = worktree
+        .map(|stored| {
+            if stored == MAIN_TREE {
+                return Ok(WorkingTree::Main);
+            }
+            let name = stored
+                .strip_prefix(LINKED_TREE)
+                .ok_or(StoreError::Corrupt {
+                    column: "positions.worktree",
+                    row: node,
+                })?;
+            let name = (!name.is_empty())
+                .then(|| values::identifier(name, "positions.worktree", node))
+                .transpose()?;
+            Ok(WorkingTree::Linked(name))
+        })
+        .transpose()?;
+    let branch = branch
+        .map(|name| values::identifier(&name, "positions.branch", node))
+        .transpose()?;
+    Ok((tree, branch))
+}
+
 /// `values` as a JSON array, for a statement that reads a list through `json_each`.
 fn json_list<T: serde::Serialize>(
     values: &[T],
@@ -224,6 +286,11 @@ impl Queries<'_> {
             return Ok(None);
         };
         let mode: String = row.get(0).map_err(sqlite("reading a position"))?;
+        let place = (
+            row.get(4).map_err(sqlite("reading a position"))?,
+            row.get(5).map_err(sqlite("reading a position"))?,
+        );
+        let (worktree, branch) = place_of(place, node.get())?;
         Ok(Some(PositionRow {
             record: PositionRecord {
                 session_id: session_id.clone(),
@@ -231,6 +298,8 @@ impl Queries<'_> {
                 mode: values::kind(&mode, PositionMode::from_name, "positions.mode", node.get())?,
                 since_ms: row.get(1).map_err(sqlite("reading a position"))?,
                 last_ms: row.get(2).map_err(sqlite("reading a position"))?,
+                worktree,
+                branch,
             },
             task_ended_ms: row.get(3).map_err(sqlite("reading a position"))?,
         }))
@@ -255,13 +324,18 @@ impl Queries<'_> {
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
                     row.get::<_, Option<i64>>(5)?,
+                    (
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                    ),
                 ))
             })
             .map_err(sqlite("reading positions"))?;
         let mut positions = Vec::new();
         for row in rows {
-            let (session, node, mode, since_ms, last_ms, task_ended_ms) =
+            let (session, node, mode, since_ms, last_ms, task_ended_ms, place) =
                 row.map_err(sqlite("reading positions"))?;
+            let (worktree, branch) = place_of(place, node)?;
             positions.push(PositionRow {
                 record: PositionRecord {
                     session_id: values::identifier(&session, "positions.session_id", node)?,
@@ -269,6 +343,8 @@ impl Queries<'_> {
                     mode: values::kind(&mode, PositionMode::from_name, "positions.mode", node)?,
                     since_ms,
                     last_ms,
+                    worktree,
+                    branch,
                 },
                 task_ended_ms,
             });
@@ -418,5 +494,32 @@ impl Queries<'_> {
             .map_err(sqlite("reading notices"))?;
         rows.collect::<Result<_, _>>()
             .map_err(sqlite("reading notices"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each working tree reads back as it was kept: the main one as `main`, a linked one as
+    /// `linked:` and its name, or `linked:` alone when its name was not known; nothing kept reads
+    /// as not known. A stored form that is neither is refused.
+    #[test]
+    fn working_trees_read_back_as_kept() -> Result<(), Box<dyn std::error::Error>> {
+        let named = WorkingTree::Linked(Some(Identifier::new("wt")?));
+        for (tree, stored) in [
+            (WorkingTree::Main, "main"),
+            (WorkingTree::Linked(None), "linked:"),
+            (named, "linked:wt"),
+        ] {
+            assert_eq!(stored_tree(&tree), stored);
+            assert_eq!(
+                place_of((Some(stored.to_owned()), None), 1)?,
+                (Some(tree), None)
+            );
+        }
+        assert_eq!(place_of((None, None), 1)?, (None, None));
+        assert!(place_of((Some("wt".to_owned()), None), 1).is_err());
+        Ok(())
     }
 }

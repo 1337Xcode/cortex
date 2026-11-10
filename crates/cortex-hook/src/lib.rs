@@ -40,7 +40,7 @@ mod stop;
 mod trae;
 
 pub use adapter::{Adapter, HookEntry, Located, NormalizeError, Stamp, Versions, adapter};
-pub use client::{Answer, ClientError, ask};
+pub use client::{Answer, ClientError, ask, ask_served};
 pub use plugin::PluginFile;
 pub use relaunch::RELAUNCH_FLAG;
 #[cfg(windows)]

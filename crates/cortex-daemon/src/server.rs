@@ -8,6 +8,7 @@
 //! daemon's status.
 
 use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant};
@@ -32,6 +33,7 @@ use crate::graph::Snapshot;
 use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
+use crate::linked::Linked;
 use crate::retrieval::Service;
 use crate::runs::Runs;
 use crate::signatures::Signatures;
@@ -57,6 +59,8 @@ pub(crate) struct Server {
     snapshot: Arc<Snapshot>,
     /// The work tree's uncommitted diff, which seeds retrievals.
     worktree: Arc<Worktree>,
+    /// The linked working trees agents work in, and their own uncommitted diffs.
+    linked: Arc<Linked>,
     /// The signature changes the writer's indexes found lately, for an edit's warnings.
     signatures: Arc<Signatures>,
     /// What answers claimed: the pairs each task was warned of, the compactions recapped, the
@@ -89,6 +93,10 @@ fn is_past(reads_until_ms: Option<i64>, at_ms: i64) -> bool {
 fn is_too_late_to_send(reads_until_ms: Option<i64>, now_ms: i64) -> bool {
     is_past(reads_until_ms, now_ms.saturating_add(SEND_MARGIN_MS))
 }
+
+/// Why an event naming a linked working tree is refused: git's files do not say it is one of this
+/// repository's.
+const NOT_OURS: &str = "the event names a working tree that is not one of this repository's";
 
 /// The most files a question asked directly names.
 const MAX_WHERE_FILES: u8 = 5;
@@ -199,11 +207,16 @@ struct Undo {
 
 impl Server {
     /// A server for a daemon started now, whose writer reads `inbox`, answering from the graph of
-    /// `snapshot`, the uncommitted diff of `worktree` and the signature changes `signatures` holds
-    /// with `service`.
+    /// `snapshot`, the uncommitted diff of `worktree` or of the event's working tree among
+    /// `linked`, and the signature changes `signatures` holds, with `service`.
     pub(crate) fn new(
         inbox: Arc<Inbox>,
-        (snapshot, worktree, signatures): (Arc<Snapshot>, Arc<Worktree>, Arc<Signatures>),
+        (snapshot, worktree, linked, signatures): (
+            Arc<Snapshot>,
+            Arc<Worktree>,
+            Arc<Linked>,
+            Arc<Signatures>,
+        ),
         service: Arc<OnceLock<Service>>,
     ) -> Self {
         Self {
@@ -211,6 +224,7 @@ impl Server {
             inbox,
             snapshot,
             worktree,
+            linked,
             signatures,
             claims: Claims::default(),
             service,
@@ -404,8 +418,15 @@ impl Server {
                 (given, undo) = (answered.given, answered.undo);
                 (answered.body, answered.hook)
             }
-            RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
-            RequestBody::Why { target } => (self.explain(target).await, None),
+            RequestBody::Where {
+                query,
+                limit,
+                worktree_root,
+            } => (self.locate((query, limit), worktree_root).await, None),
+            RequestBody::Why {
+                target,
+                worktree_root,
+            } => (self.explain(target, worktree_root).await, None),
             RequestBody::Note(note) => (self.ask_writer(Ask::Note(note)).await, None),
             RequestBody::Facts(ask) => (self.ask_writer(Ask::Facts(ask)).await, None),
             RequestBody::Claims(ClaimsAsk::List) => (self.list_claims().await, None),
@@ -417,25 +438,13 @@ impl Server {
             }
             RequestBody::Event { event } => {
                 let hook = event.hook;
-                // The moment before a tool runs is answered, not recorded: the tool's result is,
-                // once it ran. A probe, `cortex doctor`'s, is answered like the agent's and
-                // recorded never: no session, task or event of it reaches the store. It is
-                // counted, so that doctor sees its probes arrive.
-                let is_taken = if event.is_probe {
-                    self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
-                    true
-                } else {
-                    // A result sent without asking for text, as a failed shell that printed
-                    // nothing is, is not read for the note a check run again gets: the line's
-                    // earlier run no longer says what it gives.
-                    self.runs.forget_result_of(&event);
-                    hook == HookKind::PreTool || self.record_event(*event)
-                };
-                // A daemon that is stopping records nothing more, and says so rather than take an
-                // event it would lose.
-                let body = if is_taken {
+                let body = if !self.is_ours(event.worktree_root.as_deref()).await {
+                    error(NOT_OURS)
+                } else if self.take_event(*event) {
                     ResponseBody::Ack
                 } else {
+                    // A daemon that is stopping records nothing more, and says so rather than take
+                    // an event it would lose.
                     error("the daemon is stopping and records no more events")
                 };
                 (body, Some(hook))
@@ -493,6 +502,50 @@ impl Server {
         Ok(!is_shutdown)
     }
 
+    /// Takes `event`, an event request's, and returns whether it was taken: not when the daemon is
+    /// stopping. The moment before a tool runs is answered, not recorded: the tool's result is,
+    /// once it ran. A probe, `cortex doctor`'s, is answered like the agent's and recorded never:
+    /// no session, task or event of it reaches the store; it is counted, so that doctor sees its
+    /// probes arrive. A linked working tree's event asks for a look at its diff, which the watcher
+    /// of the main tree never sees change.
+    fn take_event(&self, event: Event) -> bool {
+        if event.is_probe {
+            self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
+            return true;
+        }
+        // A result sent without asking for text, as a failed shell that printed nothing is, is
+        // not read for the note a check run again gets: the line's earlier run no longer says
+        // what it gives.
+        self.runs.forget_result_of(&event);
+        if let Some(top) = &event.worktree_root {
+            self.linked.uncommitted(top);
+        }
+        event.hook == HookKind::PreTool || self.record_event(event)
+    }
+
+    /// The uncommitted diff of the working tree a request names (`top`, a linked working tree's,
+    /// or none, the main one's), as last read, a look at a linked working tree's asked for: none
+    /// before a look ended.
+    fn uncommitted_of(&self, top: Option<&Path>) -> Option<Arc<Vec<NodeId>>> {
+        match top {
+            Some(top) => self.linked.uncommitted(top),
+            None => self.worktree.uncommitted(),
+        }
+    }
+
+    /// Whether a request naming the working tree `top` may be answered, as [`Linked::is_ours`]
+    /// says, worked out on the blocking pool, since it reads git's files; not when that work
+    /// failed.
+    async fn is_ours(&self, top: Option<&Path>) -> bool {
+        let Some(top) = top else {
+            return true;
+        };
+        let (linked, top) = (Arc::clone(&self.linked), top.to_path_buf());
+        tokio::task::spawn_blocking(move || linked.is_ours(Some(&top)))
+            .await
+            .unwrap_or(false)
+    }
+
     /// Records `event` as an event request does, then works out the text `asked` names on the
     /// blocking pool, returning the answer and what is to be recorded of it once the answer is
     /// written. Text that cannot reach the hook by `answer_by_ms`, when the hook stops reading, is
@@ -519,6 +572,9 @@ impl Server {
                 hook,
             );
         }
+        if !self.is_ours(event.worktree_root.as_deref()).await {
+            return Answered::refused(error(NOT_OURS), hook);
+        }
         // The moment before a tool runs is answered, not recorded, as for an event request. A stop
         // is recorded once its answer is known: one given a reason to go on did not happen, and
         // its task goes on; and the reason is worked out before the stop could end the task.
@@ -538,8 +594,9 @@ impl Server {
         let (failed, runs) = (Arc::clone(&self.failed), Arc::clone(&self.runs));
         // Read once the event is handed to the writer: an edit's own result counts as a change.
         let changes = self.inbox.source_changes();
+        let uncommitted = self.uncommitted_of(event.worktree_root.as_deref());
         let mut answer = self
-            .with_service(move |service, graph, uncommitted| {
+            .with_service(uncommitted, move |service, graph, uncommitted| {
                 let answer = match asked {
                     Asked::WorkOrder => {
                         service.prompt(&event, (graph, uncommitted), (&claims.handed, &failed))
@@ -669,13 +726,23 @@ impl Server {
         }
     }
 
-    /// What the engine finds for `query` without the gate, at most `limit` files (1 to 5): an
-    /// error, kept among the recent errors, when the engine could not look.
-    async fn locate(&self, query: String, limit: u8) -> ResponseBody {
+    /// What the engine finds for `query` without the gate, at most `limit` files (1 to 5), asked
+    /// from the linked working tree `worktree` or the main one: an error, kept among the recent
+    /// errors, when the engine could not look, and one when the working tree is not this
+    /// repository's.
+    async fn locate(
+        &self,
+        (query, limit): (String, u8),
+        worktree: Option<PathBuf>,
+    ) -> ResponseBody {
+        if !self.is_ours(worktree.as_deref()).await {
+            return error(NOT_OURS);
+        }
         let limit = usize::from(limit.clamp(1, MAX_WHERE_FILES));
+        let uncommitted = self.uncommitted_of(worktree.as_deref());
         let located = self
-            .with_service(move |service, graph, uncommitted| {
-                service.locate(&query, limit, (graph, uncommitted))
+            .with_service(uncommitted, move |service, graph, uncommitted| {
+                service.locate((&query, limit), (graph, uncommitted), worktree.as_deref())
             })
             .await;
         match located {
@@ -697,12 +764,18 @@ impl Server {
         }
     }
 
-    /// Why `target` is where it is, as the store and the files on disk say now: the answer as text,
-    /// or why there is none as an error the asker reads.
-    async fn explain(&self, target: String) -> ResponseBody {
+    /// Why `target` is where it is, as the store and the files on disk say now (those of the
+    /// linked working tree `worktree`, asked from one): the answer as text, or why there is none
+    /// as an error the asker reads.
+    async fn explain(&self, target: String, worktree: Option<PathBuf>) -> ResponseBody {
+        if !self.is_ours(worktree.as_deref()).await {
+            return error(NOT_OURS);
+        }
         let now = now_ms();
         let explained = self
-            .with_service(move |service, _, _| service.why(&target, now))
+            .with_service(None, move |service, _, _| {
+                service.why(&target, now, worktree.as_deref())
+            })
             .await;
         match explained {
             Some(Ok(Why::Answer(text))) => ResponseBody::Reply {
@@ -724,7 +797,7 @@ impl Server {
     async fn list_claims(&self) -> ResponseBody {
         let now = now_ms();
         let listed = self
-            .with_service(move |service, _, _| service.claims(now))
+            .with_service(None, move |service, _, _| service.claims(now))
             .await;
         match listed {
             Some(Ok(claims)) => ResponseBody::Claims(ClaimsAnswer::Listed { claims }),
@@ -760,16 +833,16 @@ impl Server {
         }
     }
 
-    /// Runs `work` with the service, the graph as it stands and the uncommitted diff's file nodes
-    /// as last read (none before the first look) on the blocking pool, so that no connection's
-    /// worker waits on the store; none before the service is installed, or when the work panicked,
-    /// which is kept among the recent errors.
+    /// Runs `work` with the service, the graph as it stands and `uncommitted`, the file nodes of
+    /// an uncommitted diff as last read (none before a look ended), on the blocking pool, so that
+    /// no connection's worker waits on the store; none before the service is installed, or when
+    /// the work panicked, which is kept among the recent errors.
     async fn with_service<T: Send + 'static>(
         &self,
+        uncommitted: Option<Arc<Vec<NodeId>>>,
         work: impl FnOnce(&Service, Option<&Arc<Graph<NodeId>>>, &[NodeId]) -> T + Send + 'static,
     ) -> Option<T> {
         let graph = self.snapshot.graph();
-        let uncommitted = self.worktree.uncommitted();
         let service = Arc::clone(&self.service);
         let done = tokio::task::spawn_blocking(move || {
             let nodes = uncommitted.as_deref().map_or(&[][..], Vec::as_slice);
@@ -818,6 +891,7 @@ impl Server {
             git: Some(self.inbox.git()),
             graph: self.snapshot.report(),
             worktree: self.worktree.report(),
+            linked_worktrees: self.linked.reports(),
             upkeep: self.inbox.upkeep(),
         }
     }
@@ -1047,6 +1121,7 @@ mod tests {
             parent_session_id: None,
             cwd: std::path::PathBuf::from("/repo"),
             repo_root: std::path::PathBuf::from("/repo"),
+            worktree_root: None,
             hook: HookKind::Stop,
             source: None,
             tool: None,

@@ -132,6 +132,8 @@ fn old_events_episodes_past_the_cap_and_old_positions_are_deleted() -> TestResul
             mode: PositionMode::Read,
             since_ms: last_ms,
             last_ms,
+            worktree: None,
+            branch: None,
         })?;
     }
     assert_eq!(transaction.delete_positions_before(500)?, 1);

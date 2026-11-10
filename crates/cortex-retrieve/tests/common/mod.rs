@@ -334,6 +334,7 @@ pub fn event(session: &str, ts_ms: i64, hook: HookKind) -> TestResult<Event> {
         parent_session_id: None,
         cwd: std::path::PathBuf::from("/repo"),
         repo_root: std::path::PathBuf::from("/repo"),
+        worktree_root: None,
         hook,
         source: None,
         tool: None,

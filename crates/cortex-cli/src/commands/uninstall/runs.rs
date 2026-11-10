@@ -21,9 +21,10 @@ pub(super) struct Run {
     pub(super) manifest_path: PathBuf,
     /// The folder its backup copies are in.
     pub(super) copies: PathBuf,
-    /// The repository every file it changed is in; `None` for a run on the user's own files, which
-    /// may be wherever a link led init.
-    pub(super) bound: Option<PathBuf>,
+    /// The folders every file it changed is in: the repository, and the linked working tree it
+    /// started in when it started in one; none for a run on the user's own files, which may be
+    /// wherever a link led init.
+    pub(super) bounds: Vec<PathBuf>,
     /// What it changed.
     pub(super) manifest: Manifest,
 }
@@ -53,11 +54,13 @@ pub(super) fn of_repository(
         if Path::new(&manifest.repository) != root {
             continue;
         }
+        let mut bounds = vec![root.to_path_buf()];
+        bounds.extend(manifest.worktree.as_ref().map(PathBuf::from));
         runs.push(Run {
             started,
             manifest_path: path,
             copies: root.join(".cortex").join("backups").join(&name),
-            bound: Some(root.to_path_buf()),
+            bounds,
             manifest,
         });
     }
@@ -84,7 +87,7 @@ pub(super) fn of_user(user: &UserFolder, notes: &mut Vec<String>) -> anyhow::Res
             started,
             manifest_path: path,
             copies: backups.join(&name),
-            bound: None,
+            bounds: Vec::new(),
             manifest,
         });
     }

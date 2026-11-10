@@ -13,11 +13,11 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use cortex_core::ipc::{RequestBody, ResponseBody, Role, is_older_than_this_build};
+use cortex_core::ipc::{Protocol, RequestBody, ResponseBody, Role, is_older_than_this_build};
 use cortex_core::{Event, HookKind, RepoId, RunFiles, Ulid, UserFolder, unix_millis};
 
 use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter, shortest_hard_timeout};
-use crate::client::{Answer, ClientError, ask};
+use crate::client::{Answer, ClientError, ask, ask_served};
 use crate::fail_open::{self, Outcome};
 use crate::stdin::{self, StdinError};
 use crate::{log, root, spawn, stop};
@@ -39,6 +39,13 @@ const WORK_MARGIN: Duration = Duration::from_millis(10);
 /// How long before an event's hard timeout a note the hook's own thread writes is given up, once
 /// the work was: the process keeps that long to exit.
 const NOTE_MARGIN: Duration = Duration::from_millis(5);
+
+/// The protocol that added a linked working tree's top to an event: a daemon of an earlier one
+/// would read such an event as its main tree's, so it is sent none.
+const LINKED_WORKTREES: Protocol = Protocol {
+    major: 11,
+    minor: 1,
+};
 
 /// Why a hook call recorded nothing. Each message names what failed, never the payload's text.
 #[derive(Debug, thiserror::Error)]
@@ -187,10 +194,18 @@ impl Hook {
         let files = user.run_files(&RepoId::of(&event.repo_root));
         let root = event.repo_root.clone();
         let is_probe = event.is_probe;
+        let is_linked = event.worktree_root.is_some();
         let body = request_of(entry, event);
         let asks_for_text = !matches!(body, RequestBody::Event { .. });
         let deadline = deadline(self.started, entry);
-        let answer = ask(&files, Role::Hook, body, deadline);
+        // INVARIANT: true-at-render. A daemon before linked working trees would take a linked
+        // working tree's event as its main tree's and answer from the main tree's files: it is sent
+        // nothing but the handshake.
+        let answer = if is_linked {
+            ask_served(&files, Role::Hook, body, (deadline, reads_linked))
+        } else {
+            ask(&files, Role::Hook, body, deadline)
+        };
         if is_probe {
             return probed(answer, asks_for_text).map(|()| None);
         }
@@ -216,6 +231,12 @@ impl Hook {
             Err(ClientError::Mismatch(theirs)) => {
                 stop_older(&files, &theirs.cortex_version, deadline)?;
                 Err(ClientError::Mismatch(theirs).into())
+            }
+            // A daemon that cannot serve a linked working tree took nothing; an older one is told
+            // to stop, as one of another protocol is.
+            Err(ClientError::Unserved(theirs)) => {
+                stop_older(&files, &theirs.cortex_version, deadline)?;
+                Err(ClientError::Unserved(theirs).into())
             }
             Err(error) => Err(error.into()),
         }
@@ -257,6 +278,11 @@ fn stop_older(files: &RunFiles, version: &str, deadline: Instant) -> Result<(), 
     }
     stop::stop_if_older(files, Role::Hook, deadline)?;
     Ok(())
+}
+
+/// Whether a daemon speaking `protocol` reads a linked working tree's top on an event.
+fn reads_linked(protocol: Protocol) -> bool {
+    (protocol.major, protocol.minor) >= (LINKED_WORKTREES.major, LINKED_WORKTREES.minor)
 }
 
 /// What became of a probe, `cortex doctor`'s, by the daemon's `answer` to a request that asked
@@ -475,6 +501,18 @@ mod tests {
         }
     }
 
+    /// A linked working tree's event is sent only to a daemon of protocol 11.1 or later, which
+    /// reads its top: 11.0 does not, 11.1, 11.2 and 12.0 do.
+    #[test]
+    fn only_a_daemon_that_reads_linked_working_trees_is_sent_their_events() {
+        let protocol = |major, minor| Protocol { major, minor };
+        assert!(!reads_linked(protocol(11, 0)));
+        assert!(!reads_linked(protocol(10, 3)));
+        for reads in [protocol(11, 1), protocol(11, 2), protocol(12, 0)] {
+            assert!(reads_linked(reads), "{reads:?}");
+        }
+    }
+
     /// The daemon's answer is due 15 ms before the hard timeout: 485 ms after the start for a
     /// tool's result, 285 ms before a read, 1,485 ms at a session's start.
     #[test]
@@ -510,6 +548,7 @@ mod tests {
             parent_session_id: None,
             cwd: PathBuf::from("/repo"),
             repo_root: PathBuf::from("/repo"),
+            worktree_root: None,
             hook: HookKind::PostTool,
             source: None,
             tool: Some(tool),

@@ -293,6 +293,7 @@ fn indexing() -> StatusReport {
         git: Some(GitReport::default()),
         graph: None,
         worktree: None,
+        linked_worktrees: Vec::new(),
         upkeep: None,
     }
 }

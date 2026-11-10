@@ -78,6 +78,8 @@ fn position(
         mode,
         since_ms,
         last_ms,
+        worktree: None,
+        branch: None,
     })
 }
 

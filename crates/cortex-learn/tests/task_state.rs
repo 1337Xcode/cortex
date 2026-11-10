@@ -70,6 +70,7 @@ fn shell(session: &str, ts_ms: i64, line: &str, result: Option<ToolResult>) -> T
     Ok(Event {
         cwd: root.clone(),
         repo_root: root,
+        worktree_root: None,
         ..tool(
             HookKind::PostTool,
             (session, ts_ms),

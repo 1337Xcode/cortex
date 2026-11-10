@@ -818,6 +818,7 @@ mod tests {
             parent_session_id: None,
             cwd: PathBuf::from("/repo"),
             repo_root: PathBuf::from("/repo"),
+            worktree_root: None,
             hook,
             source: None,
             tool: None,
@@ -1247,6 +1248,7 @@ def g():
         Ok(Event {
             cwd: root.to_path_buf(),
             repo_root: root.to_path_buf(),
+            worktree_root: None,
             tool: Some(ToolKind::Edit),
             tool_target: Some(ToolTarget {
                 path: Some(RepoPath::new("a.py")?),

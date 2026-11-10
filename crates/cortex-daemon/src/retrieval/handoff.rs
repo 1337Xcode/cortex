@@ -292,6 +292,7 @@ mod tests {
             parent_session_id: None,
             cwd: std::path::PathBuf::from("/repo"),
             repo_root: std::path::PathBuf::from("/repo"),
+            worktree_root: None,
             hook: cortex_core::HookKind::Prompt,
             source: None,
             tool: None,

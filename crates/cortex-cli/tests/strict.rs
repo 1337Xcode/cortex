@@ -147,6 +147,7 @@ fn event_now(root: &Path, hook: HookKind) -> TestResult<Event> {
         parent_session_id: None,
         cwd: root.clone(),
         repo_root: root,
+        worktree_root: None,
         hook,
         source: None,
         tool: None,

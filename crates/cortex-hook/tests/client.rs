@@ -12,7 +12,7 @@ use cortex_core::ipc::{
     CORTEX_VERSION, Hello, Mismatch, Protocol, Request, RequestBody, ResponseBody, Role,
 };
 use cortex_core::{Agent, Event, HookKind, Identifier, Ulid};
-use cortex_hook::{ClientError, ask};
+use cortex_hook::{ClientError, ask, ask_served};
 #[cfg(windows)]
 use {
     cortex_core::{Endpoint, RunFiles},
@@ -88,6 +88,52 @@ fn a_mismatch_is_reported_with_the_daemon_s_versions() -> TestResult {
         "{result:?}"
     );
     drop(daemon.join());
+    Ok(())
+}
+
+/// A request sent only to a daemon that can serve it: a daemon whose welcome the client refuses
+/// reads the handshake and nothing else, and the client returns its welcome; one it accepts reads
+/// the request and answers it.
+#[test]
+fn a_request_a_daemon_cannot_serve_is_never_sent() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let files = run_files(home.path())?;
+    let older = cortex_core::ipc::Welcome {
+        protocol: Protocol {
+            major: Protocol::CURRENT.major,
+            minor: 0,
+        },
+        ..welcome()
+    };
+    let daemon = serve(&files, Script::Welcome(older.clone()))?;
+    let refuses_minor_0 = |protocol: Protocol| protocol.minor > 0;
+    let result = ask_served(
+        &files,
+        Role::Hook,
+        RequestBody::Status,
+        (in_millis(5_000), refuses_minor_0),
+    );
+    assert!(
+        matches!(&result, Err(ClientError::Unserved(found)) if *found == older),
+        "{result:?}"
+    );
+    let read = daemon.join().map_err(|_| "the daemon thread panicked")??;
+    assert_eq!(read.len(), 1, "{read:?}");
+    assert!(matches!(
+        read.first().map(|request| &request.body),
+        Some(RequestBody::Hello(_))
+    ));
+
+    let daemon = serve(&files, Script::Welcome(welcome()))?;
+    let answer = ask_served(
+        &files,
+        Role::Hook,
+        RequestBody::Status,
+        (in_millis(5_000), |_| true),
+    )?;
+    assert_eq!(answer.body, ResponseBody::Ack);
+    let read = daemon.join().map_err(|_| "the daemon thread panicked")??;
+    assert_eq!(read.len(), 2, "{read:?}");
     Ok(())
 }
 
@@ -179,6 +225,7 @@ fn a_request_too_long_is_never_sent() -> TestResult {
         parent_session_id: None,
         cwd: PathBuf::from("/repo"),
         repo_root: PathBuf::from("/repo"),
+        worktree_root: None,
         hook: HookKind::Prompt,
         source: None,
         tool: None,

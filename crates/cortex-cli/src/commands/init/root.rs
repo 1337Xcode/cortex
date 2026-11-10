@@ -4,11 +4,16 @@
 //! folder (a repository's `core.worktree` can name any folder), or names the user's home folder or
 //! a folder holding it. Never the home folder itself or a folder holding it: the home folder's
 //! `.cortex` is the user's own, and no repository Cortex serves is there.
+//!
+//! In a linked working tree (`git worktree add`) of a repository with a main working tree, the
+//! repository Cortex sets up is the main tree, which every working tree of it shares, and the
+//! linked working tree is where the agents' own files go: no `.cortex` is made in it, which would
+//! make it a repository of its own.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
-use cortex_core::canonical_root;
+use cortex_core::{canonical_root, git_layout};
 
 use super::git;
 
@@ -23,6 +28,16 @@ pub(super) struct Root {
     /// The folder no git that runs for this repository may be inside (see
     /// [`repositories_around`]).
     pub(super) git_bound: PathBuf,
+    /// The linked working tree init started in, canonical, when it started in one: `folder` is
+    /// then its repository's main working tree.
+    pub(super) linked: Option<PathBuf>,
+}
+
+impl Root {
+    /// The working tree init started in: where the agents' files of the repository go.
+    pub(super) fn worktree(&self) -> &Path {
+        self.linked.as_deref().unwrap_or(&self.folder)
+    }
 }
 
 /// Where `cortex init`, started from the folder `start`, sets Cortex up for the user whose home
@@ -37,6 +52,7 @@ pub(super) fn find(start: &Path, home: &Path) -> anyhow::Result<Root> {
     let home = canonical_root(home)
         .with_context(|| format!("finding the home folder {}", home.display()))?;
     let git_bound = repositories_around(&start, &home).to_path_buf();
+    let mut linked = None;
     let (folder, without_git) = match git_top(&start, &git_bound) {
         Ok(top) if !start.starts_with(&top) => (
             start,
@@ -48,13 +64,20 @@ pub(super) fn find(start: &Path, home: &Path) -> anyhow::Result<Root> {
                 "git's repository here is the home folder or holds it, which Cortex never sets up",
             ),
         ),
-        Ok(top) => (top, None),
+        Ok(top) => match main_tree_of(&top) {
+            Some(main) => {
+                linked = Some(top);
+                (main, None)
+            }
+            None => (top, None),
+        },
         Err(why) => {
             return checked(
                 Root {
                     folder: start,
                     without_git: Some(why),
                     git_bound,
+                    linked: None,
                 },
                 &home,
             );
@@ -65,9 +88,18 @@ pub(super) fn find(start: &Path, home: &Path) -> anyhow::Result<Root> {
             folder,
             without_git: without_git.map(str::to_owned),
             git_bound,
+            linked,
         },
         &home,
     )
+}
+
+/// The main working tree of the repository whose linked working tree's top is `top`; none for a
+/// main working tree, or a linked one whose repository has no main working tree (a bare one).
+fn main_tree_of(top: &Path) -> Option<PathBuf> {
+    git_layout(top)
+        .filter(cortex_core::GitLayout::is_linked)?
+        .main_root
 }
 
 /// `root`, unless its folder is the home folder `home` or holds it.

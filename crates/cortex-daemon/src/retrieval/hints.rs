@@ -56,7 +56,7 @@ impl Service {
             let text = read_hint(
                 queries,
                 &HintQuery {
-                    root: &self.root,
+                    root: self.root_for(event),
                     path,
                     asked,
                     session: &event.session_id,
@@ -115,7 +115,7 @@ impl Service {
             return;
         }
         // The file is read and hashed last, only for a line about to be given.
-        let Some(next) = candidate.checked(&self.root, self.max_file_bytes) else {
+        let Some(next) = candidate.checked(self.root_for(event), self.max_file_bytes) else {
             read_next.release(&(task_id, node));
             return;
         };

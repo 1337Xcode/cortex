@@ -121,6 +121,7 @@ pub fn locate(_: &Path) -> Option<Located> {
         cwd: root(),
         root: root(),
         agent_root: root(),
+        main_root: None,
     })
 }
 

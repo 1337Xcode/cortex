@@ -11,7 +11,7 @@ mod failed_output;
 mod kinds;
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -66,8 +66,14 @@ pub struct Event {
     pub parent_session_id: Option<Identifier>,
     /// The agent's working folder, canonical.
     pub cwd: PathBuf,
-    /// The repository's root folder, canonical.
+    /// The repository's root folder, canonical: for an event of a linked working tree, the
+    /// repository's main working tree, whose daemon serves every working tree of it.
     pub repo_root: PathBuf,
+    /// For an event of a linked working tree (`git worktree add`), its top, canonical: the
+    /// event's paths are relative to it, and its files are the ones read for the agent. None for
+    /// the main working tree (protocol 11.1 added it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_root: Option<PathBuf>,
     /// The point in the agent's loop the event comes from.
     pub hook: HookKind,
     /// Why the session started, for a session start.
@@ -108,6 +114,13 @@ pub struct Event {
 }
 
 impl Event {
+    /// The top of the working tree the event comes from, which its paths are relative to: its
+    /// linked working tree's, or else the repository's root.
+    #[must_use]
+    pub fn worktree_top(&self) -> &Path {
+        self.worktree_root.as_deref().unwrap_or(&self.repo_root)
+    }
+
     /// The file this event says a tool changed: a tool's result, successful, of a tool that edits,
     /// naming a file inside the repository.
     #[must_use]
@@ -386,6 +399,7 @@ impl fmt::Debug for Event {
             .field("parent_session_id", &self.parent_session_id)
             .field("cwd", &self.cwd)
             .field("repo_root", &self.repo_root)
+            .field("worktree_root", &self.worktree_root)
             .field("hook", &self.hook)
             .field("source", &self.source)
             .field("tool", &self.tool)

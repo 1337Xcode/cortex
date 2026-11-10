@@ -8,6 +8,13 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Linked working trees (`git worktree add`): an agent working in one reaches the repository's
+  daemon, store and what Cortex learned, never a second setup of its own; its work orders,
+  warnings and hints show and check its own files' lines, its uncommitted changes are its own,
+  positions and coordination notices name the working tree and branch, and `cortex init` there
+  registers the agents' hooks in it, makes no `.cortex` there, and writes its ignore lines to the
+  exclude file git keeps for every working tree of the repository instead of a branch's
+  `.gitignore`; `cortex uninstall` undoes both.
 - `cortex init` sets a repository up for Claude Code: it finds the repository with git, checks
   Claude Code's version, asks two questions once (the holdout, team sharing),
   registers Cortex's hooks in `.claude/settings.local.json` (or `~/.claude/settings.json` with

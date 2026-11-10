@@ -57,6 +57,7 @@ fn event(root: &Path, (hook, ts_ms): (HookKind, i64), prompt: Option<&str>) -> T
         parent_session_id: None,
         cwd: root.to_path_buf(),
         repo_root: root.to_path_buf(),
+        worktree_root: None,
         hook,
         source: None,
         tool: None,

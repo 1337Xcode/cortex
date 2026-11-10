@@ -99,10 +99,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 21,
         sql: include_str!("../migrations/0021_transitions.sql"),
     },
+    Migration {
+        version: 22,
+        sql: include_str!("../migrations/0022_position_worktree.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 21;
+pub(crate) const SCHEMA_VERSION: u32 = 22;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -803,13 +807,14 @@ pub(crate) const CLAIMS_RELEASE: &str = "DELETE FROM positions WHERE mode = 'cla
      AND last_ts >= ?2 AND (?1 IS NULL OR node_id IN (SELECT value FROM json_each(?1)))";
 /// Keeps a session's position on a node, in place of the one kept before.
 pub(crate) const POSITION_KEEP: &str = "INSERT OR REPLACE INTO positions \
-     (session_id, node_id, mode, since, last_ts) VALUES (?1, ?2, ?3, ?4, ?5)";
+     (session_id, node_id, mode, since, last_ts, worktree, branch) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
 /// Session ?1's position on node ?2, if one is kept, with when its task ended, as for
 /// [`POSITIONS_SINCE`].
 pub(crate) const POSITION_OF: &str = "SELECT p.mode, p.since, p.last_ts, \
      (SELECT CASE WHEN t.ended_at >= p.last_ts THEN t.ended_at END FROM tasks t \
      WHERE t.session_id = p.session_id AND t.started_at <= p.last_ts \
-     ORDER BY t.started_at DESC LIMIT 1) \
+     ORDER BY t.started_at DESC LIMIT 1), p.worktree, p.branch \
      FROM positions p WHERE p.session_id = ?1 AND p.node_id = ?2";
 /// The positions last taken at ?1 or later, with when the task the session had then ended: the
 /// latest task of the session started by then, when it ended at the position's last time or
@@ -817,7 +822,7 @@ pub(crate) const POSITION_OF: &str = "SELECT p.mode, p.since, p.last_ts, \
 pub(crate) const POSITIONS_SINCE: &str = "SELECT p.session_id, p.node_id, p.mode, p.since, \
      p.last_ts, (SELECT CASE WHEN t.ended_at >= p.last_ts THEN t.ended_at END FROM tasks t \
      WHERE t.session_id = p.session_id AND t.started_at <= p.last_ts \
-     ORDER BY t.started_at DESC LIMIT 1) \
+     ORDER BY t.started_at DESC LIMIT 1), p.worktree, p.branch \
      FROM positions p WHERE p.last_ts >= ?1 ORDER BY p.session_id, p.node_id";
 /// Each session in the JSON array ?1 that is stored: its agent, its parent, when it ended and its
 /// last event.
@@ -1478,6 +1483,8 @@ mod tests {
                     ("mode", "TEXT", 0),
                     ("since", "INTEGER", 0),
                     ("last_ts", "INTEGER", 0),
+                    ("worktree", "TEXT", 0),
+                    ("branch", "TEXT", 0),
                 ]),
             ),
             (

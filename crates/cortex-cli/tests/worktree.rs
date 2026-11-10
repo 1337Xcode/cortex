@@ -86,6 +86,7 @@ fn prompt(root: &Path, ts_ms: i64) -> TestResult<Event> {
         parent_session_id: None,
         cwd: root.clone(),
         repo_root: root,
+        worktree_root: None,
         hook: HookKind::Prompt,
         source: None,
         tool: None,

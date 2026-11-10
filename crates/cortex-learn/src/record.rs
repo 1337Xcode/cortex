@@ -551,7 +551,7 @@ fn cleaned_by(event: &Event, commands: &Commands) -> Option<Cleaned> {
         return None;
     }
     let command = event.tool_target.as_ref()?.command.as_ref()?;
-    clean_command(commands, command, &event.repo_root, &event.cwd)
+    clean_command(commands, command, event.worktree_top(), &event.cwd)
 }
 
 /// What `event`'s shell command tells of what it ran, as `commands` tells it: what its exit of 0
@@ -561,7 +561,7 @@ fn told_by(event: &Event, commands: &Commands) -> Told {
         .tool_target
         .as_ref()
         .and_then(|target| target.command.as_ref())
-        .map(|command| commands.tell(command, &event.repo_root, &event.cwd))
+        .map(|command| commands.tell(command, event.worktree_top(), &event.cwd))
         .unwrap_or_default()
 }
 

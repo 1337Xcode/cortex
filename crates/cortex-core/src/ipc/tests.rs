@@ -80,6 +80,7 @@ fn event_of(hook: HookKind) -> Result<Event, Box<dyn std::error::Error>> {
         parent_session_id: None,
         cwd: PathBuf::from("/repo"),
         repo_root: PathBuf::from("/repo"),
+        worktree_root: None,
         hook,
         source: None,
         tool: None,
@@ -311,6 +312,7 @@ fn text_requests_and_replies_read_back() -> TestResult {
         body: RequestBody::Where {
             query: "where is create_order".to_owned(),
             limit: 3,
+            worktree_root: None,
         },
     };
     let frame = encode(&ask)?;
@@ -326,6 +328,7 @@ fn text_requests_and_replies_read_back() -> TestResult {
         request_id: 3,
         body: RequestBody::Why {
             target: "calc/ops.py:12".to_owned(),
+            worktree_root: None,
         },
     };
     let frame = encode(&why)?;

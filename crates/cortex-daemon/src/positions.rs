@@ -1,11 +1,14 @@
 //! The positions each session holds, kept by the writer as it records each tool call: the node of
 //! every file a session read, or edited, with the position that holds longer of the one kept and
 //! the new one, the kept one held as its task's end allows. A call that failed changed nothing and
-//! moves no position.
+//! moves no position. Each position names the linked working tree it was taken in, if any, and the
+//! branch that working tree had checked out, read from git's files when it is kept.
 
 use cortex_coord::{Position, PositionMode, Timing};
 use cortex_core::{Event, HookKind, ToolKind};
 use cortex_store::{PositionRecord, PositionRow, StoreError, WriteTx};
+
+use crate::place::Place;
 
 /// Keeps the positions `event` gives its session in `transaction`: a read of a file, or an edit of
 /// one or several; nothing for any other event.
@@ -24,6 +27,7 @@ pub(crate) fn keep(
     let Some(target) = &event.tool_target else {
         return Ok(());
     };
+    let place = Place::of(event);
     for path in target.paths() {
         let Some(node) = transaction.queries().file_node_at(path)? else {
             continue;
@@ -37,6 +41,8 @@ pub(crate) fn keep(
                 mode,
                 since_ms: event.ts_ms,
                 last_ms: event.ts_ms,
+                worktree: place.worktree.clone(),
+                branch: place.branch.clone(),
             },
             task_ended_ms: None,
         };

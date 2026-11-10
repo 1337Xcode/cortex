@@ -235,6 +235,8 @@ fn session(
         mode,
         since_ms: last_ms,
         last_ms,
+        worktree: None,
+        branch: None,
     })?;
     transaction.commit()?;
     Ok(())
@@ -329,6 +331,8 @@ fn fixture() -> TestResult<(Repo, Nodes)> {
             mode: PositionMode::Edit,
             since_ms: minute * MINUTE_MS,
             last_ms: minute * MINUTE_MS,
+            worktree: None,
+            branch: None,
         })?;
     }
     transaction.commit()?;

@@ -494,6 +494,7 @@ fn retrieve(files: &RunFiles, root: &Path, session: u64) -> (Duration, bool) {
         parent_session_id: None,
         cwd: root.clone(),
         repo_root: root,
+        worktree_root: None,
         hook: HookKind::Prompt,
         source: None,
         tool: None,

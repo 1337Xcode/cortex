@@ -27,7 +27,7 @@ mod stop;
 mod warnings;
 mod why;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -225,7 +225,7 @@ impl Service {
                 recent_precision: recent_precision(&check),
                 model: in_use.model(),
                 deadline: Some(Instant::now() + SPREAD_FOR),
-                root: &self.root,
+                root: self.root_for(event),
             };
             let retrieval = retrieve(queries, graph, &request)?;
             let injection = retrieval.features.map(|features| InjectionRecord {
@@ -321,6 +321,15 @@ impl Service {
         })
     }
 
+    /// The working tree whose files the answer to `event` reads and checks what it shows against:
+    /// a linked working tree's own, for its event (the server took it only once it named this
+    /// repository), and the repository's otherwise.
+    fn root_for<'e>(&'e self, event: &'e Event) -> &'e Path {
+        // INVARIANT: true-at-render. A linked working tree's lines are checked against its own
+        // files, never against the main tree's.
+        event.worktree_root.as_deref().unwrap_or(&self.root)
+    }
+
     /// Whether `task` is held out, as its record says, or, for a task stored without that, as its
     /// id falls against `holdout.share`: a held-out task is given nothing Cortex would say, so
     /// that it can be compared with the rest.
@@ -329,17 +338,18 @@ impl Service {
     }
 
     /// What the engine finds for `question` without the gate, at most `limit` files, over `graph`
-    /// and seeded with `uncommitted`, as text; none before the graph or the first index, or when it
-    /// finds nothing to show.
+    /// and seeded with `uncommitted`, as text, its lines read from the linked working tree at
+    /// `worktree` when asked from one, else from the repository; none before the graph or the
+    /// first index, or when it finds nothing to show.
     ///
     /// # Errors
     ///
     /// The store's errors, and a self-check record that is not one.
     pub(crate) fn locate(
         &self,
-        question: &str,
-        limit: usize,
+        (question, limit): (&str, usize),
         (graph, uncommitted): (Option<&Arc<Graph<NodeId>>>, &[NodeId]),
+        worktree: Option<&Path>,
     ) -> Result<Option<String>, cortex_retrieve::RetrieveError> {
         let Some(graph) = graph else {
             return Ok(None);
@@ -362,7 +372,8 @@ impl Service {
                 recent_precision: recent_precision(&check),
                 model: in_use.model(),
                 deadline: Some(Instant::now() + SPREAD_FOR),
-                root: &self.root,
+                // INVARIANT: true-at-render. The lines shown are the asker's working tree's.
+                root: worktree.unwrap_or(&self.root),
             };
             let location = locate(queries, graph, &request, limit)?;
             Ok(location.rendered.map(|rendered| rendered.text))

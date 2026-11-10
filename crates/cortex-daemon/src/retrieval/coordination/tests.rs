@@ -41,6 +41,7 @@ fn edit_in(session: &str, parent: Option<&str>) -> TestResult<Event> {
         parent_session_id: parent.map(Identifier::new).transpose()?,
         cwd: PathBuf::from("/repo"),
         repo_root: PathBuf::from("/repo"),
+        worktree_root: None,
         hook: HookKind::PostTool,
         source: None,
         tool: None,

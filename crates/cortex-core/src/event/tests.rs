@@ -33,6 +33,7 @@ fn full_event() -> Result<Event, Box<dyn std::error::Error>> {
         parent_session_id: Some(Identifier::new("parent-1")?),
         cwd: PathBuf::from("/repo/src"),
         repo_root: PathBuf::from("/repo"),
+        worktree_root: None,
         hook: HookKind::PostTool,
         source: Some(StartSource::Startup),
         tool: Some(ToolKind::Edit),

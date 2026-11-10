@@ -82,6 +82,7 @@ fn base(hook: HookKind, session: &str) -> TestResult<Event> {
         parent_session_id: None,
         cwd: root(),
         repo_root: root(),
+        worktree_root: None,
         hook,
         source: None,
         tool: None,
@@ -861,6 +862,7 @@ fn tool_paths_under_either_spelling_of_the_root() -> TestResult {
             cwd: root().join("calc"),
             root: root(),
             agent_root: PathBuf::from(native(r"C:\repo-link")),
+            main_root: None,
         })
     };
     let cwd = native(r"C:\repo-link\calc");

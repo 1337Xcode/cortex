@@ -186,14 +186,13 @@ impl Files {
         let ignores = match root.without_git {
             Some(_) => None,
             None => {
-                let ignored = ignores::read(&root.folder, &root.git_bound)?;
-                let file = place::unlinked_file_in(&root.folder, ".gitignore")?;
-                Some((ignored, Found::read(file)?))
+                let ignored = ignores::read(root.worktree(), &root.git_bound)?;
+                Some((ignored, Found::read(ignore_file(root)?)?))
             }
         };
         let (mut settings, mut set_up, mut not_set_up) = (Vec::new(), Vec::new(), Vec::new());
         for &setup in setups {
-            match hooks::planned(scope, &root.folder, setup) {
+            match hooks::planned(scope, root.worktree(), setup) {
                 Ok(planned) => {
                     settings.extend(planned);
                     set_up.push(setup);
@@ -324,7 +323,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let mut terminal = stdin.is_terminal().then(|| stdin.lock());
     let answers = consent::answers(kept, args.yes, terminal.as_mut())?;
     let changes = files.changes(kept, answers)?;
-    apply(&root.folder, changes)?;
+    apply(&root, changes)?;
     daemon::started_and_indexed(&root.folder)?;
     for setup in &set_up {
         for step in setup.told {
@@ -403,6 +402,14 @@ fn found_root(args: &Args) -> anyhow::Result<Root> {
     let home = std::env::home_dir().context("finding the home folder")?;
     let root = root::find(&start, &home)?;
     output::line(&format!("repository: {}", root.folder.display()))?;
+    if let Some(linked) = &root.linked {
+        output::line(&format!(
+            "note: {} is a linked working tree of this repository; its agents share the \
+             repository's daemon and what it learns, and its ignore lines go to the exclude file \
+             git keeps for every working tree of the repository, never to a branch's .gitignore",
+            linked.display()
+        ))?;
+    }
     if let Some(why) = &root.without_git {
         output::line(&format!(
             "note: {why}; Cortex works here without git history"
@@ -428,6 +435,26 @@ fn check_claude_code(root: &Root, versions: Versions) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The file init adds its ignore lines to for `root`: the `.gitignore` at its top, or, in a linked
+/// working tree, whose `.gitignore` belongs to its branch, the exclude file git names for it.
+///
+/// # Errors
+///
+/// The file is a link, or cannot be found; git cannot name the exclude file.
+fn ignore_file(root: &Root) -> anyhow::Result<PathBuf> {
+    match &root.linked {
+        None => place::unlinked_file_in(&root.folder, ".gitignore"),
+        Some(linked) => {
+            let file = ignores::exclude_file(linked, &root.git_bound)?;
+            let (folder, name) = file
+                .parent()
+                .zip(file.file_name().and_then(|name| name.to_str()))
+                .with_context(|| format!("{} names no file", file.display()))?;
+            place::unlinked_file_in(folder, name)
+        }
+    }
+}
+
 /// The change that adds `lines` to the `.gitignore` `found`, or none when there are none to add.
 fn ignore_change(found: Found, lines: &[&str]) -> Option<Change> {
     if lines.is_empty() {
@@ -449,17 +476,22 @@ fn ignore_change(found: Found, lines: &[&str]) -> Option<Change> {
     })
 }
 
-/// Writes each of `changes` for the repository whose canonical root is `root`, each backed up
-/// first: the repository's files in a folder of this run's own in its `.cortex/backups/`, with
-/// the manifest also in the user's `~/.cortex/backups/`, and the user's files there, each folder
-/// made when a first file for it changes. Then says what it wrote and where the backups are, so
-/// that a closed stdout never stops it partway.
+/// Writes each of `changes` for the repository `root`, each backed up first: the repository's
+/// files in a folder of this run's own in its `.cortex/backups/`, with the manifest also in the
+/// user's `~/.cortex/backups/`, and the user's files there, each folder made when a first file for
+/// it changes, an agent's folder of the repository's in the working tree init started in. Then
+/// says what it wrote and where the backups are, so that a closed stdout never stops it partway.
 ///
 /// # Errors
 ///
 /// A folder or a backup cannot be made, a file changed since it was read, a write fails, or stdout
 /// cannot be written.
-fn apply(root: &Path, changes: Vec<Change>) -> anyhow::Result<()> {
+fn apply(root: &Root, changes: Vec<Change>) -> anyhow::Result<()> {
+    let (worktree, linked, root) = (
+        root.worktree(),
+        root.linked.as_deref(),
+        root.folder.as_path(),
+    );
     let now_ms = unix_millis(SystemTime::now());
     let mut repository: Option<Backup> = None;
     let mut user: Option<Backup> = None;
@@ -468,12 +500,26 @@ fn apply(root: &Path, changes: Vec<Change>) -> anyhow::Result<()> {
         let backup = match change.owner {
             Owner::Repository { folder } => {
                 if let Some(folder) = folder {
-                    place::own_folder(root, folder)?;
+                    // The folder goes in the working tree its file is in: an agent's hooks in the
+                    // linked working tree init started in, Cortex's configuration in the
+                    // repository's main tree. A linked working tree never gets a `.cortex`, which
+                    // would make it a repository of its own.
+                    let tree = if change.file.starts_with(worktree) {
+                        worktree
+                    } else {
+                        root
+                    };
+                    place::own_folder(tree, folder)?;
                 }
                 made(&mut repository, || {
                     let backups =
                         place::own_folder(&place::own_folder(root, ".cortex")?, "backups")?;
-                    Ok(Backup::new(&backups, now_ms, root)?.with_users_copy(&user_backups()?))
+                    let backup =
+                        Backup::new(&backups, now_ms, root)?.with_users_copy(&user_backups()?);
+                    match linked {
+                        Some(linked) => backup.with_worktree(linked),
+                        None => Ok(backup),
+                    }
                 })?
             }
             Owner::User => {

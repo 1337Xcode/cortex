@@ -62,6 +62,10 @@ struct Written {
 pub(crate) struct Manifest {
     /// The canonical root of the repository the run set up.
     pub(crate) repository: String,
+    /// The canonical top of the linked working tree the run started in, whose agent files it
+    /// changed, when it started in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) worktree: Option<String>,
     /// Each file changed, in the order it was.
     pub(crate) files: Vec<Changed>,
 }
@@ -132,6 +136,7 @@ impl Backup {
             run,
             manifest: Manifest {
                 repository: repository.to_owned(),
+                worktree: None,
                 files: Vec::new(),
             },
         })
@@ -143,6 +148,20 @@ impl Backup {
         let path = user_backups.join(&self.run).join(REPOSITORY_MANIFEST);
         self.written_to.insert(0, Written { path, bytes: None });
         self
+    }
+
+    /// This backup, its manifest naming `worktree`, the linked working tree the run started in,
+    /// whose files uninstall may then restore too.
+    ///
+    /// # Errors
+    ///
+    /// The working tree's path is not UTF-8.
+    pub(crate) fn with_worktree(mut self, worktree: &Path) -> anyhow::Result<Self> {
+        let worktree = worktree
+            .to_str()
+            .with_context(|| format!("{} is not UTF-8 text", worktree.display()))?;
+        self.manifest.worktree = Some(worktree.to_owned());
+        Ok(self)
     }
 
     /// The folder the copies and the manifest are in.

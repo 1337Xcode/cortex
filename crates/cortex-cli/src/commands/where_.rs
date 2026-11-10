@@ -40,11 +40,12 @@ pub(crate) struct Args {
 /// A root that is not a folder, no home folder to find the daemon from, a daemon that cannot be
 /// started or does not answer, a question it could not answer, or stdout that cannot be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let root = repository::root(args.root.as_deref())?;
+    let (root, worktree) = repository::root_and_worktree(args.root.as_deref())?;
     let user = UserFolder::of_current_user().context("finding the home folder")?;
     let body = RequestBody::Where {
         query: args.query.clone(),
         limit: args.limit,
+        worktree_root: repository::linked(&root, worktree),
     };
     let asked = upgrade::ask_started(&root, &user, &body, Instant::now() + ANSWER_WITHIN);
     if let Some(old) = &asked.replaced {
