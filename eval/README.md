@@ -10,8 +10,9 @@ the agent's version and model, and where its credentials came from.
 | Path | Holds |
 | --- | --- |
 | `testbeds.toml` | Each testbed: a git repository at a pinned commit |
-| `tasks/<id>.toml` | One task: its testbed, its kind, the prompts of its warm-up sessions, the prompt of its measured session, the success check, the files a correct solution touches, the tools the agent may use, and any project rules (`[[notes]]`: a rule's text, what it is about as `cortex note --at` takes it, and its kind) |
+| `tasks/<id>.toml` | One task: its testbed, its kind, the prompts of its warm-up sessions, the prompt of its measured session, the success check, the files a correct solution touches, the tools the agent may use, any project rules (`[[notes]]`: a rule's text, what it is about as `cortex note --at` takes it, and its kind), and optionally a regression (`regression = "<file name>"`) |
 | `checks/<id>.py` | Each task's success check, run from the repository's root after the sessions; exit code 0 is success |
+| `regressions/<file name>` | A unified diff a task names with `regression`: a small bug in the testbed's library code, so that the task starts from a broken state |
 | `results/<date>-<commit>/` | An evaluation's `runs.json` (each run's counts), `summary.json` and `summary.txt`, named for the day it ran and the commit it measured |
 
 A task's warm-up sessions work in the same area first, as earlier days of work would. The last
@@ -39,7 +40,13 @@ keeps the runs that could not complete from the summary written when the evaluat
 refuses when that summary is missing.
 
 Each run clones its testbed at the pinned commit, or copies a folder holding it
-(`--from serena=<folder>`, leaving `.git/` and `.cortex/` behind), writes the arm's holdout share (0 for `treated`, 1 for `held-out`),
+(`--from serena=<folder>`, leaving `.git/` and `.cortex/` behind). A task with a `regression` has
+its diff applied to the copy with `git apply` and committed with the message "an earlier change"
+and a fixed author, so the break is history and the work tree is clean; a diff that does not apply
+fails that run. `cortex-eval check` refuses a regression that is not a plain file name or names no
+file in `regressions/`. In the suite's regression tasks the prompt describes the symptom and names
+a failing test, not the file at fault, and the check runs the tests and refuses a change to them. The run then writes
+the arm's holdout share (0 for `treated`, 1 for `held-out`),
 runs `cortex init --yes`, and waits until the index and graph are ready. Unless the arm runs with
 `--without-facts`, it then notes the task's project rules with `cortex note`, as a user would, so
 they are confirmed before the first session; the summary counts the rules noted and the runs that

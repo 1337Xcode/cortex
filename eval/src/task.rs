@@ -1,12 +1,13 @@
 //! An evaluation task, as `eval/tasks/<id>.toml` writes it: the testbed it runs in, the sessions an
 //! agent works through in turn, the check that says whether it succeeded, the files a correct
-//! solution touches, and the project rules a run may note before its first session.
+//! solution touches, the project rules a run may note before its first session, and the
+//! regression, if any, that breaks the copy before its sessions begin.
 //!
 //! Every session but the last is a warm-up, work in the area that makes it familiar, as a
 //! developer's earlier days would. The last is the measured one, a new session in the familiar
 //! area: only its work orders count for precision.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use cortex_core::FactKind;
@@ -38,6 +39,11 @@ pub(crate) struct Task {
     /// notes them: rules the code at the edit does not show.
     #[serde(default)]
     pub(crate) notes: Vec<Note>,
+    /// The name of a file in the suite's `regressions` folder holding a unified diff: a change
+    /// committed into the copy, as earlier history, before Cortex is installed, so that the task
+    /// starts from a broken state its agent's own test run shows.
+    #[serde(default)]
+    pub(crate) regression: Option<String>,
 }
 
 /// A project rule, as `cortex note` takes it.
@@ -95,13 +101,52 @@ impl Task {
         for note in &task.notes {
             check_note(&task.id, note)?;
         }
+        if let Some(name) = task
+            .regression
+            .as_deref()
+            .filter(|name| !is_file_name(name))
+        {
+            bail!(
+                "the task {} has the regression {name}, not a file name in the regressions folder",
+                task.id
+            );
+        }
         Ok(task)
+    }
+
+    /// The file holding the task's regression in `folder`, the suite's regressions folder; none
+    /// for a task that starts from the testbed as it is.
+    pub(crate) fn regression_in(&self, folder: &Path) -> Option<PathBuf> {
+        self.regression.as_ref().map(|name| folder.join(name))
+    }
+
+    /// Refuses the task when its regression names a file that is not in `folder`, the suite's
+    /// regressions folder.
+    ///
+    /// # Errors
+    ///
+    /// The regression's file is missing.
+    pub(crate) fn check_regression(&self, folder: &Path) -> anyhow::Result<()> {
+        match self.regression_in(folder) {
+            Some(path) if !path.is_file() => bail!(
+                "the task {} names the regression {}, which is not a file",
+                self.id,
+                path.display()
+            ),
+            _ => Ok(()),
+        }
     }
 }
 
 /// Whether `path` is a path inside the repository, written with `/`.
 fn is_repository_path(path: &str) -> bool {
     !(path.contains('\\') || path.starts_with('/') || path.contains(".."))
+}
+
+/// Whether `name` is the name of a file directly in a folder: no separator, no drive, not empty and
+/// not a way up.
+fn is_file_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains(['/', '\\', ':']) && name != "." && name != ".."
 }
 
 /// Refuses `note` of task `id` when it has no text, is about nothing, names a path outside the
@@ -203,6 +248,50 @@ mod tests {
         );
         assert_eq!(Task::parse(TASK, Path::new("fix-tax.toml"))?.notes, []);
         Ok(())
+    }
+
+    /// A task's regression is read as written and found in the regressions folder; a task without
+    /// one has none, and a regression whose file is missing is refused.
+    #[test]
+    fn a_regression_is_read_and_found_in_its_folder() -> anyhow::Result<()> {
+        let file = Path::new("fix-tax.toml");
+        let text = format!("{TASK}regression = \"tax-rounding.patch\"\n");
+        let task = Task::parse(&text, file)?;
+        assert_eq!(task.regression.as_deref(), Some("tax-rounding.patch"));
+        assert_eq!(Task::parse(TASK, file)?.regression, None);
+
+        let folder = tempfile::tempdir()?;
+        assert!(task.check_regression(folder.path()).is_err());
+        std::fs::write(folder.path().join("tax-rounding.patch"), "a diff\n")?;
+        task.check_regression(folder.path())?;
+        assert_eq!(
+            task.regression_in(folder.path()),
+            Some(folder.path().join("tax-rounding.patch"))
+        );
+        let plain = Task::parse(TASK, file)?;
+        plain.check_regression(folder.path())?;
+        assert_eq!(plain.regression_in(folder.path()), None);
+        Ok(())
+    }
+
+    /// A regression that is not a plain file name, so that it could leave the regressions folder,
+    /// is refused.
+    #[test]
+    fn a_regression_outside_its_folder_is_refused() {
+        let file = Path::new("fix-tax.toml");
+        for name in [
+            "../tax.patch",
+            "..",
+            ".",
+            "sub/tax.patch",
+            "sub\\\\tax.patch",
+            "/etc/tax.patch",
+            "C:tax.patch",
+            "",
+        ] {
+            let text = format!("{TASK}regression = \"{name}\"\n");
+            assert!(Task::parse(&text, file).is_err(), "{name}");
+        }
     }
 
     /// A note with no text, about nothing, about a path outside the repository, of a kind

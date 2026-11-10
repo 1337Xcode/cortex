@@ -4,8 +4,8 @@
 //! `cortex-eval report` rebuilds a results folder's summary from its runs; `cortex-eval compare`
 //! sets a treated arm's runs beside a held-out arm's, paired by task.
 //!
-//! The suite's files are this crate's own: `testbeds.toml`, `tasks/<id>.toml` and the checks in
-//! `checks/`.
+//! The suite's files are this crate's own: `testbeds.toml`, `tasks/<id>.toml`, the checks in
+//! `checks/` and the regression diffs in `regressions/`.
 
 mod agent;
 mod compare;
@@ -33,6 +33,9 @@ use crate::testbed::Testbed;
 
 /// The suite's own folder.
 const SUITE: &str = env!("CARGO_MANIFEST_DIR");
+
+/// The suite's folder of regression diffs, which tasks name by file.
+const REGRESSIONS: &str = "regressions";
 
 /// The command line.
 #[derive(Debug, Parser)]
@@ -167,7 +170,8 @@ fn config_lines(set: &[String]) -> anyhow::Result<Vec<String>> {
 ///
 /// # Errors
 ///
-/// A file that cannot be read or is not what it should be, or a task naming no listed testbed.
+/// A file that cannot be read or is not what it should be, a task naming no listed testbed, or a
+/// task whose regression is not a file in `regressions/`.
 fn suite(folder: &Path) -> anyhow::Result<(Vec<Testbed>, BTreeMap<String, Task>)> {
     let beds_file = folder.join("testbeds.toml");
     let text = std::fs::read_to_string(&beds_file)
@@ -185,6 +189,7 @@ fn suite(folder: &Path) -> anyhow::Result<(Vec<Testbed>, BTreeMap<String, Task>)
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
         let task = Task::parse(&text, &path)?;
+        task.check_regression(&folder.join(REGRESSIONS))?;
         if !testbeds.iter().any(|bed| bed.name == task.testbed) {
             bail!(
                 "the task {} names no listed testbed: {}",
@@ -236,6 +241,7 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
             .unwrap_or_else(|| home.join(".claude")),
         base: args.base.clone(),
         checks: Path::new(SUITE).join("checks"),
+        regressions: Path::new(SUITE).join(REGRESSIONS),
         holdout_share: match args.arm {
             Arm::Treated => 0.0,
             Arm::HeldOut => 1.0,

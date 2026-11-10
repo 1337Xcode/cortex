@@ -1,7 +1,8 @@
 //! The testbeds tasks run in, as `eval/testbeds.toml` lists them: each a git repository at a pinned
 //! commit, and how a run gets its own copy, cloned from the repository or copied from a folder
 //! holding that commit, its `.git` left behind. A copy with no history is made a repository of one
-//! commit, since Cortex reads the git history of what it works in.
+//! commit, since Cortex reads the git history of what it works in. A task's regression, a diff that
+//! breaks the copy, is applied and committed on top of that.
 
 use std::path::Path;
 use std::process::Command;
@@ -79,6 +80,38 @@ impl Testbed {
             }
         }
     }
+}
+
+/// The message of the commit a regression becomes: history that was there before the run began.
+const REGRESSION_MESSAGE: &str = "an earlier change";
+
+/// Applies the unified diff in `patch` to the copy in `repo` and commits it, as a fixed author, so
+/// that the broken state is history and not work the agent left uncommitted.
+///
+/// # Errors
+///
+/// The diff does not apply to the copy, or git cannot stage or commit it.
+pub(crate) fn apply_regression(repo: &Path, patch: &Path) -> anyhow::Result<()> {
+    let patch_arg = patch.to_string_lossy();
+    git(repo, &["apply", &patch_arg]).with_context(|| {
+        format!(
+            "applying the regression {} to {}",
+            patch.display(),
+            repo.display()
+        )
+    })?;
+    git(repo, &["add", "--all"])?;
+    git(
+        repo,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            REGRESSION_MESSAGE,
+        ],
+    )
 }
 
 /// Runs git with `args` in `folder`, as a fixed author.
@@ -177,6 +210,71 @@ mod tests {
             .current_dir(to.path())
             .output()?;
         assert_eq!(String::from_utf8(log.stdout)?.lines().count(), 1);
+        Ok(())
+    }
+
+    /// A repository of one commit holding `a.txt` as `one`, its line endings left as written.
+    fn tiny_repository() -> anyhow::Result<tempfile::TempDir> {
+        let repo = tempfile::tempdir()?;
+        git(repo.path(), &["init", "-q"])?;
+        git(repo.path(), &["config", "core.autocrlf", "false"])?;
+        std::fs::write(repo.path().join("a.txt"), "one\n")?;
+        git(repo.path(), &["add", "--all"])?;
+        git(
+            repo.path(),
+            &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "first"],
+        )?;
+        Ok(repo)
+    }
+
+    /// What git prints for `args` in `repo`.
+    fn git_output(repo: &Path, args: &[&str]) -> anyhow::Result<String> {
+        let output = Command::new("git").args(args).current_dir(repo).output()?;
+        Ok(String::from_utf8(output.stdout)?)
+    }
+
+    /// The diff changing `a.txt`'s one line from `one` to `two`, written by hand.
+    const ONE_TO_TWO: &str = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n\
+                              @@ -1 +1 @@\n-one\n+two\n";
+
+    /// A regression changes the file and is committed under the fixed author with its fixed
+    /// message, so the copy has two commits and a clean work tree.
+    #[test]
+    fn a_regression_is_applied_and_committed() -> anyhow::Result<()> {
+        let repo = tiny_repository()?;
+        let patches = tempfile::tempdir()?;
+        let patch = patches.path().join("one-to-two.patch");
+        std::fs::write(&patch, ONE_TO_TWO)?;
+        apply_regression(repo.path(), &patch)?;
+        let text = std::fs::read_to_string(repo.path().join("a.txt"))?;
+        assert_eq!(text, "two\n");
+        assert_eq!(git_output(repo.path(), &["status", "--porcelain"])?, "");
+        let log = git_output(repo.path(), &["log", "--format=%an <%ae> %s"])?;
+        assert_eq!(
+            log,
+            "Cortex Evaluation <eval@cortex.invalid> an earlier change\n\
+             Cortex Evaluation <eval@cortex.invalid> first\n"
+        );
+        Ok(())
+    }
+
+    /// A diff that does not apply to the copy fails the run and leaves the copy as it was.
+    #[test]
+    fn a_regression_that_does_not_apply_is_refused() -> anyhow::Result<()> {
+        let repo = tiny_repository()?;
+        let patches = tempfile::tempdir()?;
+        let patch = patches.path().join("wrong.patch");
+        std::fs::write(&patch, ONE_TO_TWO.replace("-one", "-zero"))?;
+        let error = apply_regression(repo.path(), &patch)
+            .err()
+            .map(|error| format!("{error:#}"))
+            .unwrap_or_default();
+        assert!(error.contains("applying the regression"), "{error}");
+        let text = std::fs::read_to_string(repo.path().join("a.txt"))?;
+        assert_eq!(text, "one\n");
+        assert_eq!(git_output(repo.path(), &["status", "--porcelain"])?, "");
+        let log = git_output(repo.path(), &["log", "--oneline"])?;
+        assert_eq!(log.lines().count(), 1);
         Ok(())
     }
 }

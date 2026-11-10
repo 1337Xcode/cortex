@@ -1,0 +1,13 @@
+diff --git a/src/itsdangerous/serializer.py b/src/itsdangerous/serializer.py
+index 5ed949c..faee0c4 100644
+--- a/src/itsdangerous/serializer.py
++++ b/src/itsdangerous/serializer.py
+@@ -299,7 +299,7 @@ class Serializer(t.Generic[_TSerialized]):
+                 kwargs = fallback
+                 fallback = self.signer
+             elif isinstance(fallback, tuple):
+-                fallback, kwargs = fallback
++                kwargs, fallback = fallback
+             else:
+                 kwargs = self.signer_kwargs
+ 

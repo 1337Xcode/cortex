@@ -1,0 +1,9 @@
+id = "signer-bytes-key-rotation"
+testbed = "itsdangerous"
+kind = "fix a failing test"
+regression = "signer-bytes-key-rotation.patch"
+warmups = []
+prompt = "Since an earlier change, loading a value with a serializer that has `fallback_signers` fails: `PYTHONPATH=src python -m pytest tests/test_itsdangerous/test_serializer.py -k fallback_signers` ends in a TypeError instead of returning the value. Run it, find the cause in the library and fix it there. Do not change the tests."
+check = ["python", "{checks}/signer-bytes-key-rotation.py"]
+touches = ["src/itsdangerous/signer.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]

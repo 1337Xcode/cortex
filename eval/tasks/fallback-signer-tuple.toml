@@ -1,0 +1,9 @@
+id = "fallback-signer-tuple"
+testbed = "itsdangerous"
+kind = "fix a failing test"
+regression = "fallback-signer-tuple.patch"
+warmups = []
+prompt = "Since an earlier change, a serializer whose `fallback_signers` holds a `(signer class, options)` tuple raises a TypeError when its unsigners are walked, instead of trying that fallback. `PYTHONPATH=src python -m pytest tests/test_itsdangerous/test_serializer.py -k iter_unsigners` shows it. Run it, find the cause in the library and fix it there. Do not change the tests."
+check = ["python", "{checks}/fallback-signer-tuple.py"]
+touches = ["src/itsdangerous/serializer.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]

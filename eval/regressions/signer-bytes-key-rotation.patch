@@ -1,0 +1,13 @@
+diff --git a/src/itsdangerous/signer.py b/src/itsdangerous/signer.py
+index e324dc0..aaae88c 100644
+--- a/src/itsdangerous/signer.py
++++ b/src/itsdangerous/signer.py
+@@ -67,7 +67,7 @@ class HMACAlgorithm(SigningAlgorithm):
+ def _make_keys_list(
+     secret_key: str | bytes | cabc.Iterable[str] | cabc.Iterable[bytes],
+ ) -> list[bytes]:
+-    if isinstance(secret_key, (str, bytes)):
++    if isinstance(secret_key, str):
+         return [want_bytes(secret_key)]
+ 
+     return [want_bytes(s) for s in secret_key]  # pyright: ignore

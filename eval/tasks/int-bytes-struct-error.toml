@@ -1,0 +1,9 @@
+id = "int-bytes-struct-error"
+testbed = "itsdangerous"
+kind = "fix a failing test"
+regression = "int-bytes-struct-error.patch"
+warmups = []
+prompt = "Since an earlier change, reading a number back from its bytes fails with `struct.error: unpack requires a buffer of 8 bytes`, so a `TimestampSigner` can no longer unsign what it signed. `PYTHONPATH=src python -m pytest tests/test_itsdangerous/test_encoding.py -k int_bytes` shows it. Run it, find the cause in the library and fix it there. Do not change the tests."
+check = ["python", "{checks}/int-bytes-struct-error.py"]
+touches = ["src/itsdangerous/encoding.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]

@@ -1,0 +1,10 @@
+diff --git a/src/itsdangerous/encoding.py b/src/itsdangerous/encoding.py
+index f5ca80f..0f43bca 100644
+--- a/src/itsdangerous/encoding.py
++++ b/src/itsdangerous/encoding.py
+@@ -51,4 +51,4 @@ def int_to_bytes(num: int) -> bytes:
+ 
+ 
+ def bytes_to_int(bytestr: bytes) -> int:
+-    return _bytes_to_int(bytestr.rjust(8, b"\x00"))[0]
++    return _bytes_to_int(bytestr.rjust(4, b"\x00"))[0]

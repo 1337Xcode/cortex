@@ -1,4 +1,5 @@
-//! One run of one task: a fresh copy of its testbed with Cortex installed for the arm, the task's
+//! One run of one task: a fresh copy of its testbed, broken by the task's regression when it has
+//! one, with Cortex installed for the arm, the task's
 //! project rules noted unless the arm leaves them out, the agent's sessions in turn, the success check, what Cortex gave the measured session and what its end
 //! made of it, read from the copy's store, and whether every code line a session was shown was the
 //! line its file held when the session began.
@@ -22,7 +23,7 @@ use crate::process::{run_logged, tail_of};
 use crate::shown::{self, Shown};
 use crate::snapshot::Snapshot;
 use crate::task::Task;
-use crate::testbed::Testbed;
+use crate::testbed::{Testbed, apply_regression};
 use crate::texts::{Texts, texts_of};
 use crate::warned::{Warnings, warnings_of};
 
@@ -51,6 +52,8 @@ pub(crate) struct Settings {
     pub(crate) base: PathBuf,
     /// The folder the check scripts are in.
     pub(crate) checks: PathBuf,
+    /// The folder the tasks' regression diffs are in.
+    pub(crate) regressions: PathBuf,
     /// The share of tasks Cortex holds out: 0 for the treated arm, 1 for the held-out arm.
     pub(crate) holdout_share: f64,
     /// Cortex configuration lines every run's copy gets besides the holdout share, each
@@ -114,8 +117,8 @@ pub(crate) struct TaskRun {
 ///
 /// # Errors
 ///
-/// A copy, Cortex's install or its readiness, an agent that cannot be started, or a store that
-/// cannot be read.
+/// A copy, a regression that does not apply, Cortex's install or its readiness, an agent that
+/// cannot be started, or a store that cannot be read.
 pub(crate) fn run_task(
     (task, testbed): (&Task, &Testbed),
     from: Option<&Path>,
@@ -126,6 +129,9 @@ pub(crate) fn run_task(
     let (repo, home) = (folder.join("repo"), folder.join("home"));
     std::fs::create_dir_all(&home).with_context(|| format!("making {}", home.display()))?;
     testbed.prepare(from, &repo)?;
+    if let Some(patch) = task.regression_in(&settings.regressions) {
+        apply_regression(&repo, &patch)?;
+    }
     install((&repo, &home), &folder, settings)?;
     let notes = if settings.facts {
         note_rules(task, (&repo, &home), &folder, settings)?
