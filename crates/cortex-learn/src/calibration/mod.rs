@@ -163,14 +163,20 @@ pub fn calibrate(
     now_ms: i64,
 ) -> Result<Option<Calibrated>, StoreError> {
     let queries = transaction.queries();
-    let labelled = queries.labelled_injection_count()?;
-    let is_enough = usize::try_from(labelled).is_ok_and(|count| count >= MIN_LABELLED);
     let in_use = model_in_use(queries)?;
     let is_unusable = matches!(in_use, ModelInUse::Unusable { .. });
+    let attempt = queries.calibration_attempt()?;
+    let is_within_the_day =
+        |last: CalibrationAttempt| now_ms.saturating_sub(last.at_ms) < REFIT_AFTER_MS;
+    // A fitting within the day, while the model kept can be used, makes none due, whatever was
+    // labelled since: the labelled injections are counted only when a fitting may be due.
+    if !is_unusable && attempt.is_some_and(is_within_the_day) {
+        return Ok(None);
+    }
+    let labelled = queries.labelled_injection_count()?;
+    let is_enough = usize::try_from(labelled).is_ok_and(|count| count >= MIN_LABELLED);
     let is_due = is_unusable
-        || queries.calibration_attempt()?.is_none_or(|last| {
-            labelled != last.labelled && now_ms.saturating_sub(last.at_ms) >= REFIT_AFTER_MS
-        });
+        || attempt.is_none_or(|last| labelled != last.labelled && !is_within_the_day(last));
     if !is_enough || !is_due {
         return Ok(None);
     }
