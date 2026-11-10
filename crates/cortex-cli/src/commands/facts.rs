@@ -1,13 +1,13 @@
 //! `cortex facts list|confirm|retire|edit`: the project rules the daemon keeps, listed, and the
-//! user's word on one of them. The daemon, the store's one writer, carries it out, and is started
-//! when none runs.
+//! user's word on one of them, refused from inside a coding agent's shell. The daemon, the store's
+//! one writer, carries it out, and is started when none runs.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use cortex_core::UserFolder;
 use cortex_core::ipc::{FactLine, FactsAnswer, FactsAsk, RequestBody, ResponseBody};
+use cortex_core::{UserFolder, is_agent_shell};
 
 use crate::{output, repository, upgrade};
 
@@ -62,6 +62,14 @@ enum Action {
 /// a request it refused (no such fact, a fact corrected since, a file gone), or stdout that cannot
 /// be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
+    let is_word = !matches!(args.action, Action::List { .. });
+    // INVARIANT: no rule an agent states is the user's (an agent's shell gives no person's word)
+    if is_word && is_agent_shell(|name| std::env::var_os(name)) {
+        bail!(
+            "a person confirms, retires or corrects a fact, not a coding agent: run this in your \
+             own terminal"
+        );
+    }
     let ask = match &args.action {
         Action::List { all } => FactsAsk::List { all: *all },
         Action::Confirm { id } => FactsAsk::Confirm { id: *id },

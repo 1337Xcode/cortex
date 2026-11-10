@@ -1,6 +1,7 @@
 //! `cortex note` and `cortex facts` through the binary, against a real daemon: facts noted on a
 //! file and on a symbol, a note said again, the list, a correction, a retirement, a fact turned
-//! suspect by an edit of its file and confirmed again, and each refusal in the user's words.
+//! suspect by an edit of its file and confirmed again, and each refusal in the user's words; from
+//! inside a coding agent's shell, a note is the agent's and the user's word is refused.
 
 mod common;
 
@@ -208,6 +209,73 @@ fn a_note_or_a_word_that_names_something_wrongly_is_refused() -> TestResult {
     assert_eq!(
         said(root, home, &["facts", "list", "--all"])?,
         "   2  active     convention  Money is kept in whole cents.  (at src/money.py)\n"
+    );
+    Ok(())
+}
+
+/// From inside Claude Code's shell (`CLAUDE_CODE_CHILD_SESSION` set, as Claude Code sets it on the
+/// commands its tools run): a note is fact 1, added as a candidate, which the list shows; confirming
+/// it there is refused in the user's words, and the fact stays a candidate. The same confirmation
+/// from a person's terminal makes it active. From Codex's shell (`CODEX_THREAD_ID` set), a note is
+/// a candidate too.
+#[test]
+fn a_note_from_an_agent_s_shell_waits_for_a_person() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(root.join("src/money.py"), MONEY)?;
+    std::fs::write(root.join("src/tax.py"), TAX)?;
+    let daemon = Daemon::start(root, home.path())?;
+    daemon.first_line()?;
+    wait_for(|| Ok(graph_of(root, home.path())?.is_some()))?;
+    let home = home.path();
+    let in_shell = |marker: &str, args: &[&str]| -> TestResult<Printed> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+        command.args(args).current_dir(root);
+        isolate(&mut command, home);
+        command.env(marker, "1");
+        printed(&mut command, b"")
+    };
+    let note = ["note", "Money is kept in cents.", "--at", "src/money.py"];
+    let noted = in_shell("CLAUDE_CODE_CHILD_SESSION", &note)?;
+    assert!(noted.is_success, "{}", noted.stderr);
+    assert_eq!(
+        noted.stdout,
+        "fact 1 added as a candidate: noted from a coding agent's shell, it waits for a person to \
+         confirm it with `cortex facts confirm 1`\n"
+    );
+    assert_eq!(
+        said(root, home, &["facts", "list"])?,
+        "   1  candidate  convention  Money is kept in cents.  (at src/money.py)\n"
+    );
+    let confirm = in_shell("CLAUDE_CODE_CHILD_SESSION", &["facts", "confirm", "1"])?;
+    assert!(!confirm.is_success);
+    assert!(
+        confirm.stderr.contains(
+            "a person confirms, retires or corrects a fact, not a coding agent: run this in your \
+             own terminal"
+        ),
+        "{}",
+        confirm.stderr
+    );
+    assert_eq!(
+        said(root, home, &["facts", "confirm", "1"])?,
+        "fact 1 confirmed\n"
+    );
+    let codex = in_shell(
+        "CODEX_THREAD_ID",
+        &["note", "Tax rounds half up.", "--at", "src/tax.py"],
+    )?;
+    assert!(
+        codex.stdout.starts_with("fact 2 added as a candidate"),
+        "{}",
+        codex.stdout
+    );
+    assert_eq!(
+        said(root, home, &["facts", "list"])?,
+        "   1  active     convention  Money is kept in cents.  (at src/money.py)\n   \
+         2  candidate  convention  Tax rounds half up.  (at src/tax.py)\n"
     );
     Ok(())
 }

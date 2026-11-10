@@ -194,7 +194,8 @@ pub(crate) fn taken_folders(base: &Path, tasks: &[&str], runs: u32) -> Vec<PathB
         .collect()
 }
 
-/// The `cortex` command, run in `repo` with `home` as the home folder.
+/// The `cortex` command, run in `repo` with `home` as the home folder, as a person would from their
+/// own terminal, whoever runs the evaluation.
 fn cortex(settings: &Settings, repo: &Path, home: &Path) -> Command {
     let mut command = Command::new(&settings.cortex);
     command
@@ -202,6 +203,9 @@ fn cortex(settings: &Settings, repo: &Path, home: &Path) -> Command {
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("CLAUDE_CONFIG_DIR", &settings.claude_config);
+    for name in cortex_core::AGENT_SHELL_MARKERS {
+        command.env_remove(name);
+    }
     command
 }
 

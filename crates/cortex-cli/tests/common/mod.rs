@@ -125,6 +125,10 @@ pub fn isolate(command: &mut Command, home: &Path) {
     ] {
         command.env_remove(name);
     }
+    // A command a test runs stands for one a person types, whoever runs the tests.
+    for name in cortex_core::AGENT_SHELL_MARKERS {
+        command.env_remove(name);
+    }
 }
 
 /// A PATH for a test's command: `home`'s `bin` folder, where a test puts the programs it stands in

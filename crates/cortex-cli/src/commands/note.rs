@@ -1,5 +1,6 @@
 //! `cortex note "text" --at path[:symbol]...`: a project rule of the user's, active at once,
-//! anchored to the files and symbols it is about. Each anchor is a file inside the repository,
+//! anchored to the files and symbols it is about; noted from inside a coding agent's shell, the
+//! agent's, a candidate until a person confirms it. Each anchor is a file inside the repository,
 //! given from the current folder, optionally followed by `:` and a symbol it defines; or the
 //! repository's root folder itself, for a rule about the whole repository. The daemon writes it,
 //! and is started when none runs.
@@ -8,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use cortex_core::ipc::{FactsAnswer, Note, NoteOutcome, RequestBody, ResponseBody};
-use cortex_core::{FactKind, FactSource, RepoPath};
+use cortex_core::{FactKind, FactSource, RepoPath, is_agent_shell};
 
 use crate::commands::facts::answer_of;
 use crate::{output, repository};
@@ -44,10 +45,17 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         .iter()
         .map(|anchor| anchor_of(&root, anchor))
         .collect::<anyhow::Result<Vec<_>>>()?;
+    // INVARIANT: no rule an agent states is the user's (text in a repository can lead an agent to
+    // run this command)
+    let is_agents = is_agent_shell(|name| std::env::var_os(name));
     let note = Note {
         text: args.text.clone(),
         kind: args.kind,
-        source: FactSource::User,
+        source: if is_agents {
+            FactSource::Agent
+        } else {
+            FactSource::User
+        },
         at,
     };
     let answer = match answer_of(&root, &RequestBody::Note(note))? {
@@ -56,6 +64,10 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     };
     match answer {
         FactsAnswer::Noted { id, outcome } => output::line(&match outcome {
+            NoteOutcome::Added if is_agents => format!(
+                "fact {id} added as a candidate: noted from a coding agent's shell, it waits for a \
+                 person to confirm it with `cortex facts confirm {id}`"
+            ),
             NoteOutcome::Added => format!("fact {id} added"),
             NoteOutcome::Merged => format!("fact {id} says this already"),
             NoteOutcome::Activated => format!("fact {id} says this already, and is now confirmed"),

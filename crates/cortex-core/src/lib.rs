@@ -13,6 +13,7 @@
 #![warn(clippy::pedantic)]
 
 mod activity;
+mod agent_shell;
 mod child;
 mod config;
 mod coordination;
@@ -52,6 +53,7 @@ pub use activity::{
     CommandKind, EventKind, EventMeta, EventSource, PROMPT_EXCERPT_CHARS, PromptExcerpt,
     SessionStatus, TaskOutcome,
 };
+pub use agent_shell::{AGENT_SHELL_MARKERS, is_agent_shell};
 pub use child::{Captured, capture, time_fed};
 pub use config::{
     Config, ConfigError, ConfigLayer, CoordinationConfig, DEFAULT_HOLDOUT_SHARE,
