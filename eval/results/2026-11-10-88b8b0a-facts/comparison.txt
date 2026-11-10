@@ -1,0 +1,15 @@
+every task, paired tasks: 3
+  measured session, cumulative input tokens: 271408 with facts, 262844 without facts; difference +8563 (95% interval -68443 to +69262, resampling tasks)
+  measured session, uncached input tokens: 4558 with facts, 4472 without facts; difference +87 (95% interval +15 to +140, resampling tasks)
+  measured session, turns: 13.11 with facts, 11.89 without facts; difference +1.22 (95% interval -2.00 to +3.00, resampling tasks)
+  measured session, tool calls: 12.11 with facts, 10.89 without facts; difference +1.22 (95% interval -2.00 to +3.00, resampling tasks)
+  every session of the run, US dollars: 0.232 with facts, 0.226 without facts; difference +0.006 (95% interval -0.022 to +0.026, resampling tasks)
+  check passed, share of runs: 1.00 with facts, 0.89 without facts; difference +0.11 (95% interval +0.00 to +0.33, resampling tasks)
+tasks whose treated runs got a work order, paired tasks: 3
+  measured session, cumulative input tokens: 271408 with facts, 262844 without facts; difference +8563 (95% interval -68443 to +69262, resampling tasks)
+  measured session, uncached input tokens: 4558 with facts, 4472 without facts; difference +87 (95% interval +15 to +140, resampling tasks)
+  measured session, turns: 13.11 with facts, 11.89 without facts; difference +1.22 (95% interval -2.00 to +3.00, resampling tasks)
+  measured session, tool calls: 12.11 with facts, 10.89 without facts; difference +1.22 (95% interval -2.00 to +3.00, resampling tasks)
+  every session of the run, US dollars: 0.232 with facts, 0.226 without facts; difference +0.006 (95% interval -0.022 to +0.026, resampling tasks)
+  check passed, share of runs: 1.00 with facts, 0.89 without facts; difference +0.11 (95% interval +0.00 to +0.33, resampling tasks)
+tasks whose treated runs got none, paired tasks: 0

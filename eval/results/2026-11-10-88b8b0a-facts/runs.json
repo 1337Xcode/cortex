@@ -1,0 +1,716 @@
+[
+  {
+    "task": "heartbeat-timeout-setting",
+    "kind": "add a setting",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 75239,
+        "uncached_input": 4227,
+        "output": 1191,
+        "cost_usd": 0.1867841,
+        "duration_ms": 10714,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 573
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 15,
+        "tool_calls": 14,
+        "cumulative_input": 363529,
+        "uncached_input": 4418,
+        "output": 2762,
+        "cost_usd": 0.13186550000000002,
+        "duration_ms": 20938,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "pre_tool": {
+            "count": 1,
+            "tokens": 29
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 610
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 52
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 60,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "facts": true,
+    "notes": 1
+  },
+  {
+    "task": "heartbeat-timeout-setting",
+    "kind": "add a setting",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 75261,
+        "uncached_input": 4227,
+        "output": 1346,
+        "cost_usd": 0.07485800000000001,
+        "duration_ms": 11272,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 573
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 12,
+        "tool_calls": 11,
+        "cumulative_input": 236454,
+        "uncached_input": 4412,
+        "output": 2404,
+        "cost_usd": 0.1094319,
+        "duration_ms": 20451,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "pre_tool": {
+            "count": 1,
+            "tokens": 29
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 610
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 52
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 60,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "facts": true,
+    "notes": 1
+  },
+  {
+    "task": "heartbeat-timeout-setting",
+    "kind": "add a setting",
+    "run": 3,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 75272,
+        "uncached_input": 4227,
+        "output": 1449,
+        "cost_usd": 0.0759242,
+        "duration_ms": 12589,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 573
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 10,
+        "tool_calls": 9,
+        "cumulative_input": 154973,
+        "uncached_input": 4408,
+        "output": 2010,
+        "cost_usd": 0.09241440000000001,
+        "duration_ms": 15285,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "pre_tool": {
+            "count": 1,
+            "tokens": 29
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 610
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 52
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 60,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "facts": true,
+    "notes": 1
+  },
+  {
+    "task": "ls-shutdown-timeout-setting",
+    "kind": "add a setting",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 13,
+        "tool_calls": 12,
+        "cumulative_input": 201554,
+        "uncached_input": 3338,
+        "output": 3470,
+        "cost_usd": 0.1221468,
+        "duration_ms": 22999,
+        "texts": {
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 22,
+        "tool_calls": 21,
+        "cumulative_input": 396056,
+        "uncached_input": 4812,
+        "output": 5557,
+        "cost_usd": 0.1884375,
+        "duration_ms": 37203,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "pre_tool": {
+            "count": 5,
+            "tokens": 179
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 705
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 52
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 30,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 1
+      }
+    },
+    "facts": true,
+    "notes": 1
+  },
+  {
+    "task": "ls-shutdown-timeout-setting",
+    "kind": "add a setting",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 13,
+        "tool_calls": 12,
+        "cumulative_input": 241017,
+        "uncached_input": 3340,
+        "output": 3263,
+        "cost_usd": 0.12545430000000002,
+        "duration_ms": 23764,
+        "texts": {
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 21,
+        "tool_calls": 20,
+        "cumulative_input": 457213,
+        "uncached_input": 4771,
+        "output": 5701,
+        "cost_usd": 0.22563719999999998,
+        "duration_ms": 39797,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "pre_tool": {
+            "count": 4,
+            "tokens": 132
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 705
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 52
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 30,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 1
+      }
+    },
+    "facts": true,
+    "notes": 1
+  },
+  {
+    "task": "ls-shutdown-timeout-setting",
+    "kind": "add a setting",
+    "run": 3,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 17,
+        "tool_calls": 16,
+        "cumulative_input": 430381,
+        "uncached_input": 3392,
+        "output": 4613,
+        "cost_usd": 0.18383869999999997,
+        "duration_ms": 34051,
+        "texts": {
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 19,
+        "tool_calls": 18,
+        "cumulative_input": 317647,
+        "uncached_input": 4753,
+        "output": 4636,
+        "cost_usd": 0.1774794,
+        "duration_ms": 30307,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 24
+          },
+          "pre_tool": {
+            "count": 4,
+            "tokens": 145
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 705
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 42
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 1
+    },
+    "shown": {
+      "lines": 30,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 1
+      }
+    },
+    "facts": true,
+    "notes": 1
+  },
+  {
+    "task": "health-check-url-changelog",
+    "kind": "fix a message",
+    "run": 1,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 3,
+        "tool_calls": 2,
+        "cumulative_input": 75362,
+        "uncached_input": 4284,
+        "output": 940,
+        "cost_usd": 0.0710997,
+        "duration_ms": 9243,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 571
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 87
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 186044,
+        "uncached_input": 4496,
+        "output": 1137,
+        "cost_usd": 0.0769981,
+        "duration_ms": 13414,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 21
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 619
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 97
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 63,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "facts": true,
+    "notes": 1
+  },
+  {
+    "task": "health-check-url-changelog",
+    "kind": "fix a message",
+    "run": 2,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 2,
+        "tool_calls": 1,
+        "cumulative_input": 70022,
+        "uncached_input": 4284,
+        "output": 845,
+        "cost_usd": 0.0487858,
+        "duration_ms": 8284,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 571
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 87
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 7,
+        "tool_calls": 6,
+        "cumulative_input": 187671,
+        "uncached_input": 4479,
+        "output": 1373,
+        "cost_usd": 0.08261630000000002,
+        "duration_ms": 10583,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 21
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 619
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 87
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 63,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "facts": true,
+    "notes": 1
+  },
+  {
+    "task": "health-check-url-changelog",
+    "kind": "fix a message",
+    "run": 3,
+    "holdout_share": 0.0,
+    "sessions": [
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 2,
+        "tool_calls": 1,
+        "cumulative_input": 69684,
+        "uncached_input": 4284,
+        "output": 914,
+        "cost_usd": 0.04811990000000001,
+        "duration_ms": 8882,
+        "texts": {
+          "prompt": {
+            "count": 1,
+            "tokens": 571
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 87
+          }
+        }
+      },
+      {
+        "agent_version": "2.1.318",
+        "model": "claude-sonnet-5-5",
+        "api_key_source": "none",
+        "is_error": false,
+        "turns": 6,
+        "tool_calls": 5,
+        "cumulative_input": 143081,
+        "uncached_input": 4477,
+        "output": 1107,
+        "cost_usd": 0.0648387,
+        "duration_ms": 10658,
+        "texts": {
+          "post_tool": {
+            "count": 1,
+            "tokens": 21
+          },
+          "prompt": {
+            "count": 1,
+            "tokens": 619
+          },
+          "session_start": {
+            "count": 1,
+            "tokens": 87
+          }
+        }
+      }
+    ],
+    "is_success": true,
+    "given": {
+      "delivered": 1,
+      "labelled": 1,
+      "used": 0
+    },
+    "shown": {
+      "lines": 63,
+      "differ": 0,
+      "unread_sessions": 0
+    },
+    "warnings": {
+      "test": {
+        "given": 1,
+        "labelled": 1,
+        "resolved": 0
+      }
+    },
+    "facts": true,
+    "notes": 1
+  }
+]

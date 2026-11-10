@@ -1,0 +1,139 @@
+[
+  {
+    "name": "every task",
+    "tasks": 3,
+    "measures": [
+      {
+        "measure": "measured session, cumulative input tokens",
+        "treated": 271407.55555555556,
+        "held_out": 262844.11111111107,
+        "difference": {
+          "value": 8563.444444444447,
+          "low": -68443.33333333331,
+          "high": 69262.33333333331
+        }
+      },
+      {
+        "measure": "measured session, uncached input tokens",
+        "treated": 4558.444444444445,
+        "held_out": 4471.555555555556,
+        "difference": {
+          "value": 86.88888888888899,
+          "low": 15.33333333333303,
+          "high": 139.66666666666697
+        }
+      },
+      {
+        "measure": "measured session, turns",
+        "treated": 13.111111111111112,
+        "held_out": 11.888888888888891,
+        "difference": {
+          "value": 1.2222222222222223,
+          "low": -2.000000000000001,
+          "high": 3.0
+        }
+      },
+      {
+        "measure": "measured session, tool calls",
+        "treated": 12.111111111111112,
+        "held_out": 10.888888888888891,
+        "difference": {
+          "value": 1.2222222222222225,
+          "low": -2.0,
+          "high": 3.0
+        }
+      },
+      {
+        "measure": "every session of the run, US dollars",
+        "treated": 0.23185894444444446,
+        "held_out": 0.22610662222222222,
+        "difference": {
+          "value": 0.0057523222222222265,
+          "low": -0.022473833333333332,
+          "high": 0.025987966666666695
+        }
+      },
+      {
+        "measure": "check passed, share of runs",
+        "treated": 1.0,
+        "held_out": 0.8888888888888888,
+        "difference": {
+          "value": 0.11111111111111112,
+          "low": 0.0,
+          "high": 0.3333333333333333
+        }
+      }
+    ]
+  },
+  {
+    "name": "tasks whose treated runs got a work order",
+    "tasks": 3,
+    "measures": [
+      {
+        "measure": "measured session, cumulative input tokens",
+        "treated": 271407.55555555556,
+        "held_out": 262844.11111111107,
+        "difference": {
+          "value": 8563.444444444447,
+          "low": -68443.33333333331,
+          "high": 69262.33333333331
+        }
+      },
+      {
+        "measure": "measured session, uncached input tokens",
+        "treated": 4558.444444444445,
+        "held_out": 4471.555555555556,
+        "difference": {
+          "value": 86.88888888888899,
+          "low": 15.33333333333303,
+          "high": 139.66666666666697
+        }
+      },
+      {
+        "measure": "measured session, turns",
+        "treated": 13.111111111111112,
+        "held_out": 11.888888888888891,
+        "difference": {
+          "value": 1.2222222222222223,
+          "low": -2.000000000000001,
+          "high": 3.0
+        }
+      },
+      {
+        "measure": "measured session, tool calls",
+        "treated": 12.111111111111112,
+        "held_out": 10.888888888888891,
+        "difference": {
+          "value": 1.2222222222222225,
+          "low": -2.0,
+          "high": 3.0
+        }
+      },
+      {
+        "measure": "every session of the run, US dollars",
+        "treated": 0.23185894444444446,
+        "held_out": 0.22610662222222222,
+        "difference": {
+          "value": 0.0057523222222222265,
+          "low": -0.022473833333333332,
+          "high": 0.025987966666666695
+        }
+      },
+      {
+        "measure": "check passed, share of runs",
+        "treated": 1.0,
+        "held_out": 0.8888888888888888,
+        "difference": {
+          "value": 0.11111111111111112,
+          "low": 0.0,
+          "high": 0.3333333333333333
+        }
+      }
+    ]
+  },
+  {
+    "name": "tasks whose treated runs got none",
+    "tasks": 0,
+    "measures": []
+  }
+]
