@@ -1,0 +1,129 @@
+{
+  "runs": 45,
+  "incomplete": [
+    {
+      "task": "ls-settings-get-list",
+      "run": 1
+    },
+    {
+      "task": "ls-settings-get-list",
+      "run": 2
+    },
+    {
+      "task": "ls-settings-get-list",
+      "run": 3
+    },
+    {
+      "task": "task-cancel-pending",
+      "run": 1
+    },
+    {
+      "task": "task-cancel-pending",
+      "run": 2
+    },
+    {
+      "task": "task-cancel-pending",
+      "run": 3
+    },
+    {
+      "task": "text-coordinates-unique-only",
+      "run": 1
+    },
+    {
+      "task": "text-coordinates-unique-only",
+      "run": 2
+    },
+    {
+      "task": "text-coordinates-unique-only",
+      "run": 3
+    },
+    {
+      "task": "usage-stats-no-create",
+      "run": 1
+    },
+    {
+      "task": "usage-stats-no-create",
+      "run": 2
+    },
+    {
+      "task": "usage-stats-no-create",
+      "run": 3
+    },
+    {
+      "task": "version-missing-components",
+      "run": 1
+    },
+    {
+      "task": "version-missing-components",
+      "run": 2
+    },
+    {
+      "task": "version-missing-components",
+      "run": 3
+    }
+  ],
+  "success": {
+    "value": 1.0,
+    "low": 1.0,
+    "high": 1.0
+  },
+  "delivered": 36,
+  "labelled": 36,
+  "used": 28,
+  "precision": {
+    "value": 0.7777777777777778,
+    "low": 0.5333333333333333,
+    "high": 1.0
+  },
+  "median_cumulative_input": 190258.0,
+  "median_turns": 10.0,
+  "median_tool_calls": 9.0,
+  "cost_usd": 8.029026400000001,
+  "agents": [
+    "2.1.318 claude-sonnet-5-5 via none"
+  ],
+  "failed_sessions": 0,
+  "shown": {
+    "lines": 2504,
+    "differ": 0,
+    "unread_sessions": 0
+  },
+  "texts": {
+    "post_tool": {
+      "count": 40,
+      "tokens": 1548
+    },
+    "pre_tool": {
+      "count": 51,
+      "tokens": 1653
+    },
+    "prompt": {
+      "count": 81,
+      "tokens": 47826
+    },
+    "session_start": {
+      "count": 93,
+      "tokens": 4332
+    }
+  },
+  "texts_share": 0.02664825106198012,
+  "warnings": {
+    "call_site": {
+      "given": 27,
+      "labelled": 27,
+      "resolved": 24
+    },
+    "test": {
+      "given": 34,
+      "labelled": 34,
+      "resolved": 8
+    }
+  },
+  "warning_precision": {
+    "value": 0.5245901639344263,
+    "low": 0.07142857142857142,
+    "high": 0.7777777777777778
+  },
+  "notes": 9,
+  "without_facts": 0
+}

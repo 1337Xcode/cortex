@@ -1,0 +1,21 @@
+every task, paired tasks: 15
+  measured session, cumulative input tokens: 232883 with Cortex, 214801 held out; difference +18082 (95% interval +2239 to +34850, resampling tasks)
+  measured session, uncached input tokens: 4197 with Cortex, 4218 held out; difference -21 (95% interval -69 to +54, resampling tasks)
+  measured session, turns: 11.60 with Cortex, 10.71 held out; difference +0.89 (95% interval +0.29 to +1.67, resampling tasks)
+  measured session, tool calls: 10.60 with Cortex, 9.71 held out; difference +0.89 (95% interval +0.22 to +1.64, resampling tasks)
+  every session of the run, US dollars: 0.184 with Cortex, 0.178 held out; difference +0.005 (95% interval -0.000 to +0.011, resampling tasks)
+  check passed, share of runs: 1.00 with Cortex, 1.00 held out; difference +0.00 (95% interval +0.00 to +0.00, resampling tasks)
+tasks whose treated runs got a work order, paired tasks: 12
+  measured session, cumulative input tokens: 220327 with Cortex, 201939 held out; difference +18388 (95% interval +551 to +38665, resampling tasks)
+  measured session, uncached input tokens: 4385 with Cortex, 4411 held out; difference -25 (95% interval -81 to +66, resampling tasks)
+  measured session, turns: 11.39 with Cortex, 10.33 held out; difference +1.06 (95% interval +0.31 to +1.89, resampling tasks)
+  measured session, tool calls: 10.39 with Cortex, 9.33 held out; difference +1.06 (95% interval +0.31 to +1.97, resampling tasks)
+  every session of the run, US dollars: 0.182 with Cortex, 0.174 held out; difference +0.008 (95% interval +0.003 to +0.014, resampling tasks)
+  check passed, share of runs: 1.00 with Cortex, 1.00 held out; difference +0.00 (95% interval +0.00 to +0.00, resampling tasks)
+tasks whose treated runs got none, paired tasks: 3
+  measured session, cumulative input tokens: 283109 with Cortex, 266250 held out; difference +16859 (95% interval -3670 to +51405, resampling tasks)
+  measured session, uncached input tokens: 3443 with Cortex, 3448 held out; difference -5 (95% interval -15 to +15, resampling tasks)
+  measured session, turns: 12.44 with Cortex, 12.22 held out; difference +0.22 (95% interval -0.33 to +1.00, resampling tasks)
+  measured session, tool calls: 11.44 with Cortex, 11.22 held out; difference +0.22 (95% interval -0.33 to +1.00, resampling tasks)
+  every session of the run, US dollars: 0.190 with Cortex, 0.196 held out; difference -0.006 (95% interval -0.011 to -0.001, resampling tasks)
+  check passed, share of runs: 1.00 with Cortex, 1.00 held out; difference +0.00 (95% interval +0.00 to +0.00, resampling tasks)

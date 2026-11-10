@@ -1,0 +1,93 @@
+{
+  "runs": 54,
+  "incomplete": [
+    {
+      "task": "ls-settings-get-list",
+      "run": 1
+    },
+    {
+      "task": "ls-settings-get-list",
+      "run": 2
+    },
+    {
+      "task": "ls-settings-get-list",
+      "run": 3
+    },
+    {
+      "task": "version-missing-components",
+      "run": 1
+    },
+    {
+      "task": "version-missing-components",
+      "run": 2
+    },
+    {
+      "task": "version-missing-components",
+      "run": 3
+    }
+  ],
+  "success": {
+    "value": 1.0,
+    "low": 1.0,
+    "high": 1.0
+  },
+  "delivered": 42,
+  "labelled": 42,
+  "used": 34,
+  "precision": {
+    "value": 0.8095238095238095,
+    "low": 0.6,
+    "high": 1.0
+  },
+  "median_cumulative_input": 193940.5,
+  "median_turns": 9.5,
+  "median_tool_calls": 8.5,
+  "cost_usd": 9.810192999999998,
+  "agents": [
+    "2.1.318 claude-sonnet-5-5 via none"
+  ],
+  "failed_sessions": 0,
+  "shown": {
+    "lines": 3357,
+    "differ": 0,
+    "unread_sessions": 0
+  },
+  "texts": {
+    "post_tool": {
+      "count": 50,
+      "tokens": 1944
+    },
+    "pre_tool": {
+      "count": 51,
+      "tokens": 1667
+    },
+    "prompt": {
+      "count": 96,
+      "tokens": 58149
+    },
+    "session_start": {
+      "count": 111,
+      "tokens": 5069
+    }
+  },
+  "texts_share": 0.02749880534716028,
+  "warnings": {
+    "call_site": {
+      "given": 32,
+      "labelled": 32,
+      "resolved": 26
+    },
+    "test": {
+      "given": 44,
+      "labelled": 44,
+      "resolved": 13
+    }
+  },
+  "warning_precision": {
+    "value": 0.5131578947368421,
+    "low": 0.16666666666666666,
+    "high": 0.7403846153846154
+  },
+  "notes": 9,
+  "without_facts": 0
+}
