@@ -28,7 +28,7 @@ use crate::links::{EarnedLinks, Linking, add_links, links_of};
 use crate::outcome::{FileNow, judge, reverted_after};
 use crate::self_check::check_self;
 use crate::task_state::TaskState;
-use crate::transitions::add_transitions;
+use crate::transitions::{add_transitions, take_back_transitions};
 use crate::warnings::resolve_warnings;
 
 /// Most sessions whose last ended task is kept for the look the session's next task's end takes
@@ -142,7 +142,11 @@ impl Learner {
             (judgement.outcome, ended_at_ms),
         )?;
         transaction.replace_episode(&record)?;
-        add_transitions(transaction, &record, (row.seq, config.link_decay))?;
+        add_transitions(
+            transaction,
+            state,
+            (row.seq, judgement.outcome, config.link_decay),
+        )?;
         let reverted_before = match previous {
             Some(earlier) => revert_before(transaction, (earlier, state), &now, (config, row.seq))?,
             None => None,
@@ -244,7 +248,8 @@ fn files_now(
 /// Whether the task `earlier` was put back, as the end of `next`, the task after it in the same
 /// session, shows with `now`; when it was, and was not judged so already, judges it reverted in
 /// `transaction`, takes from the links what its end gave them and weakens the links between the
-/// files it edited, both as of task `seq`, and writes its record's outcome again. The task's id
+/// files it edited, both as of task `seq`, takes back what it added to the ways tasks read on, and
+/// writes its record's outcome again. The task's id
 /// when it was.
 fn revert_before(
     transaction: &mut WriteTx<'_>,
@@ -281,6 +286,13 @@ fn revert_before(
         *links.entry(pair).or_insert(0.0) += weaken;
     }
     add_links(transaction, &linking, &links)?;
+    if let Some(outcome) = was {
+        take_back_transitions(
+            transaction,
+            earlier,
+            (*earlier_seq, outcome, seq, config.link_decay),
+        )?;
+    }
     if let Some(mut record) = transaction.queries().episode_of_task(task_id)? {
         record.outcome = TaskOutcome::Reverted;
         transaction.replace_episode(&record)?;

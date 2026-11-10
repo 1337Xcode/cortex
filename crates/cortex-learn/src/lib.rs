@@ -68,6 +68,6 @@ pub use task_state::{
     FileNode, MAX_TASK_HIT_BYTES, MAX_TASK_ROWS, MAX_TASK_STATES, RunCheck, Step, TaskEnd,
     TaskState,
 };
-pub use transitions::{add_transitions, transitions_of};
+pub use transitions::{MAX_WALKED_READS, add_transitions, take_back_transitions, transitions_of};
 pub use warnings::{resolve_warnings, resolves};
 pub use watcher_edits::{ATTRIBUTION_WINDOW_MS, HOLD_MS, HeldEdit, WatcherEdit};
