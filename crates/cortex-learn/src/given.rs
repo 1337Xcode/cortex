@@ -1,9 +1,10 @@
-//! What a task's prompt was given: the files of its injections whose text reached the agent, each
+//! What a task's prompt was given: the files of its work orders whose text reached the agent, each
 //! with the lines of the spans the text showed. What the task then did with them earns interest
 //! and gives them a part in the task's working set. A held-out task's injection, and a retrieval
-//! the gate kept back, gave nothing.
+//! the gate kept back, gave nothing; nor did the other texts a task is given (a read's line naming
+//! the file earlier tasks read next names a file, but did not give it to the prompt).
 
-use cortex_core::{LineRange, Ulid};
+use cortex_core::{HookKind, LineRange, Ulid};
 use cortex_store::{NodeId, Queries, StoreError};
 
 /// One file a task's prompt was given.
@@ -15,7 +16,7 @@ pub(crate) struct GivenFile {
     pub(crate) spans: Vec<LineRange>,
 }
 
-/// The files the injections of task `task_id` that reached the agent gave, in the order they were
+/// The files the work orders of task `task_id` that reached the agent gave, in the order they were
 /// given; a span whose lines are no range of lines is left out.
 ///
 /// # Errors
@@ -25,7 +26,7 @@ pub(crate) fn given_to(queries: Queries<'_>, task_id: Ulid) -> Result<Vec<GivenF
     Ok(queries
         .injections_of_task(task_id)?
         .into_iter()
-        .filter(|row| row.record.was_delivered())
+        .filter(|row| row.record.hook == HookKind::Prompt && row.record.was_delivered())
         .flat_map(|row| row.record.files)
         .map(|file| GivenFile {
             node: file.node,

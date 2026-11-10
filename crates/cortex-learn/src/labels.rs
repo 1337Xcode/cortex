@@ -85,7 +85,11 @@ pub fn count_next_file_use(
             .files
             .iter()
             .filter(|file| file.reason == Some(ReasonKind::ReadNext))
-            .filter(|file| roles.contains_key(&file.node))
+            .filter(|file| {
+                roles
+                    .get(&file.node)
+                    .is_some_and(|role| role.is_read_or_edited())
+            })
             .count();
         transaction.count_injection_use(row.id, u32::try_from(used).unwrap_or(u32::MAX))?;
     }
