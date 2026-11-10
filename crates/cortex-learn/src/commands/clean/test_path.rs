@@ -16,7 +16,7 @@ use super::detectors;
 use super::render::MAX_KEPT_CHARS;
 
 /// What separates a test file from the test id after it.
-const TEST_ID_MARK: &str = "::";
+pub(super) const TEST_ID_MARK: &str = "::";
 
 /// The extensions of source files that hold tests.
 const TEST_FILE_EXTENSIONS: &[&str] = &[
@@ -62,6 +62,6 @@ fn is_test_name(stem: &str) -> bool {
 }
 
 /// A byte a kept path may hold: a letter, digit, `_`, `-`, `.` or `/`.
-fn is_path_byte(byte: u8) -> bool {
+pub(super) fn is_path_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/')
 }

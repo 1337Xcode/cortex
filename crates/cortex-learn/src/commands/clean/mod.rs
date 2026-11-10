@@ -5,18 +5,21 @@
 //! program as the shell passed it and the arguments after it. The variable assignments before it
 //! and the programs that only run another (`env A=1`, `env -i`, `timeout 60`, `uv run`,
 //! `python -m`) are left out, and so is every other command of the line, a `$env:NAME='...'`
-//! prefix of Windows' shell among them. Each argument a credential detector matches becomes
-//! [`REDACTED`], in part or whole; the detectors are a table in `detectors`.
+//! prefix of Windows' shell among them. An argument's path written from the top of the machine
+//! (`/home/dev/repo/tests`) is kept as the way to it from the folder the command ran in
+//! (`tests`), see `paths`. Each argument a credential detector matches becomes [`REDACTED`], in
+//! part or whole; the detectors are a table in `detectors`.
 //!
 //! When anything about the command is uncertain, only the runner's name and the test file it
 //! named are kept, or the name alone: the check runs inside a group (`(cd x && pytest)`) or reads
 //! from a pipe (`cat ids | pytest`); an argument is one the shell expands (`$VAR`, a command
-//! substitution, a glob); a word holds a control, bidirectional or invisible character; a
-//! detector finds a credential whose value it cannot bound; or the command does not fit in
-//! `render::MAX_KEPT_CHARS` even cut after its program. A line the shell reader
-//! refuses tells no check at all, so nothing is kept of it, and neither is anything of a line
-//! whose check is not a runner's. Redirections are dropped by the reader with their targets, so
-//! they are never kept.
+//! substitution, a glob); an argument names a path from the machine's top outside the
+//! repository, or one that cannot be rewritten; a word holds a control, bidirectional or
+//! invisible character; a detector finds a credential whose value it cannot bound; or the
+//! command does not fit in `render::MAX_KEPT_CHARS` even cut after its program. A line the shell
+//! reader refuses tells no check at all, so nothing is kept of it, and neither is anything of a
+//! line whose check is not a runner's. Redirections are dropped by the reader with their targets,
+//! so they are never kept.
 //!
 //! What is kept is a command, a path or a name. Nothing here keeps a check's output.
 
@@ -27,6 +30,7 @@ mod flags;
 mod jwt;
 mod keys;
 mod names;
+mod paths;
 mod prefixes;
 mod redact;
 mod render;
@@ -40,6 +44,7 @@ use std::path::Path;
 
 use cortex_core::ShellCommand;
 
+use self::paths::Places;
 use super::shell::{self, Word};
 use super::target::{self, Located};
 use super::{CONFIGURED, Check, Commands, argv};
@@ -51,7 +56,8 @@ pub const REDACTED: &str = "<redacted>";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cleaned {
     /// The runner's program and its arguments, joined by single spaces, each as the shell passed
-    /// it, quoted when it holds anything but letters, digits and `_-./:=@%+,`, every secret in it
+    /// it but for a path from the machine's top, written from the folder the command ran in,
+    /// quoted when it holds anything but letters, digits and `_-./:=@%+,`, every secret in it
     /// [`REDACTED`], cut at an argument to at most 200 characters, ending ` ...`, when it is
     /// longer.
     Command(String),
@@ -105,16 +111,22 @@ pub fn clean_command(
         return Some(Cleaned::Runner(check.runner));
     };
     Some(match target::locate(&list, check, told.failure.is_some()) {
-        Some(located) => clean_located(check, &located),
+        Some(located) => {
+            let places = Places::new(&list, located.words, root, cwd);
+            clean_located(check, &located, &places)
+        }
         None => Cleaned::Runner(check.runner),
     })
 }
 
-/// What is kept of the simple command `located`, which ran `check`.
-fn clean_located(check: Check, located: &Located<'_>) -> Cleaned {
+/// What is kept of the simple command `located`, which ran `check` with its paths in `places`.
+fn clean_located(check: Check, located: &Located<'_>, places: &Places<'_>) -> Cleaned {
     let is_sure = check.runner != CONFIGURED && !located.is_grouped && !located.is_piped_into;
     let kept = if is_sure {
         runner_words(located.words)
+            // INVARIANT: no-content-stored (no folder above the repository is kept, and so no
+            // user's name in one)
+            .and_then(|words| paths::relativized(words, places))
             .and_then(|words| redact::redact(&words))
             .and_then(|words| render::command(&words))
     } else {

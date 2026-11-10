@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use cortex_core::RepoPath;
 
 use super::argv::after_assignments;
-use super::shell::Word;
+use super::shell::{Command, List, Word};
 use super::tail;
 
 /// A command's working folder: an absolute path without `.` or `..`, or unknown.
@@ -29,6 +29,11 @@ impl Folder {
     /// The folder `cwd`, unknown when it is not absolute.
     pub(super) fn new(cwd: &Path) -> Self {
         Self(cwd.is_absolute().then(|| normalized(cwd)).flatten())
+    }
+
+    /// The folder's absolute path, `None` when it is unknown.
+    pub(super) fn path(&self) -> Option<&Path> {
+        self.0.as_deref()
     }
 
     /// The folder after the simple command `words`, when it changes the folder: `cd` or `pushd`
@@ -88,9 +93,29 @@ impl Folder {
     }
 }
 
+/// Walks the commands of `list` in order, moving `folder` by each `cd` that moves the shell of
+/// the line, until `target`; whether it was found with no group before it.
+pub(super) fn walk(list: &List, target: &[Word], folder: &mut Folder) -> bool {
+    for pipeline in list.items.iter().flat_map(|item| &item.pipelines) {
+        let is_alone = pipeline.commands.len() == 1;
+        for command in &pipeline.commands {
+            let Command::Simple(words) = command else {
+                return false;
+            };
+            if std::ptr::eq(words.as_slice(), target) {
+                return true;
+            }
+            if let Some(moved) = folder.after(words).filter(|_| is_alone) {
+                *folder = moved;
+            }
+        }
+    }
+    false
+}
+
 /// `path` without `.` and `..`, each `..` taking off the name before it; `None` when a `..` would
 /// climb above the root.
-fn normalized(path: &Path) -> Option<PathBuf> {
+pub(super) fn normalized(path: &Path) -> Option<PathBuf> {
     let mut clean = PathBuf::new();
     for component in path.components() {
         match component {

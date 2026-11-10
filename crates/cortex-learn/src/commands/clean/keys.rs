@@ -8,17 +8,20 @@
 //! take in more than the value (the rest of a JSON object), which only redacts more; a value that
 //! stopped short would leave part of the secret. With nothing after the separator the value may
 //! be the next word or empty, which cannot be told. A `::` is a path's separator
-//! (`tests/test_auth.py::test_token`), not a name's, and a URL's text is the `urls` detector's.
+//! (`tests/test_auth.py::test_token`), not a name's. A URL's text is the `urls` detector's, but
+//! only its text: a credential named after it in the word (`BASE=https://h,API_TOKEN=abc`) is
+//! still this one's.
 
 use super::detectors::{Finding, run_end};
 use super::names;
-use super::urls::URL_MARK;
+use super::urls;
 
 /// The credential values named in `word`.
 pub(super) fn find(word: &str) -> Vec<Finding> {
     let bytes = word.as_bytes();
-    let before_url = word.find(URL_MARK).unwrap_or(word.len());
-    (0..before_url)
+    let in_urls = urls::spans(word);
+    (0..bytes.len())
+        .filter(|at| !in_urls.iter().any(|span| span.contains(at)))
         .filter(|&at| is_separator(bytes, at))
         .filter(|&at| names::is_credential(name_before(word, at)))
         .map(|at| value_after(bytes, at + 1))
@@ -66,6 +69,6 @@ fn value_after(bytes: &[u8], from: usize) -> Finding {
 }
 
 /// A byte of a name: a letter, digit, `_`, `-` or `.`.
-fn is_name_byte(byte: u8) -> bool {
+pub(super) fn is_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
 }

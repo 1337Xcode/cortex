@@ -5,8 +5,8 @@ use std::path::Path;
 
 use cortex_core::RepoPath;
 
-use crate::commands::folder::{Folder, Named};
-use crate::commands::shell::{Command, List, Word};
+use crate::commands::folder::{Folder, Named, walk};
+use crate::commands::shell::{List, Word};
 
 /// Where a check ran.
 #[derive(Debug)]
@@ -35,26 +35,6 @@ pub(super) fn of(list: &List, target: &[Word], root: &Path, cwd: &Path) -> Optio
         dir,
         enter: (!way.is_empty()).then_some(way),
     })
-}
-
-/// Walks the commands of `list` in order, moving `folder` by each `cd` that moves the shell of
-/// the line, until `target`; whether it was found with no group before it.
-fn walk(list: &List, target: &[Word], folder: &mut Folder) -> bool {
-    for pipeline in list.items.iter().flat_map(|item| &item.pipelines) {
-        let is_alone = pipeline.commands.len() == 1;
-        for command in &pipeline.commands {
-            let Command::Simple(words) = command else {
-                return false;
-            };
-            if std::ptr::eq(words.as_slice(), target) {
-                return true;
-            }
-            if let Some(moved) = folder.after(words).filter(|_| is_alone) {
-                *folder = moved;
-            }
-        }
-    }
-    false
 }
 
 /// The repository path of `folder`.

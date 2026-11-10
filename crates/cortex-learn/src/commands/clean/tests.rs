@@ -1,7 +1,8 @@
 //! What a handoff keeps of real command lines, typed by hand: each detector, each way of setting
-//! the environment on bash, zsh and `PowerShell`, harmless arguments kept as written, the
-//! fallbacks and the cap; and properties that no secret of any detector's shape survives,
-//! wherever it stands in a command or its environment.
+//! the environment on bash, zsh and `PowerShell`, harmless arguments kept as written, paths from
+//! the machine's top rewritten or refused, the fallbacks and the cap; and properties that no
+//! secret of any detector's shape, nor a user's name in a path, survives, wherever it stands in a
+//! command or its environment.
 //!
 //! A fixture writes each secret as `«name»`, filled in from [`secret`] when the test runs. Every
 //! secret is assembled there from pieces, so that no token of a service's shape is written whole
@@ -246,6 +247,34 @@ fn fixtures() -> Vec<(&'static str, Option<Cleaned>)> {
             "pytest tests/test_ops.py --header 'X-Api-Key: «pw»'",
             command("pytest tests/test_ops.py --header 'X-Api-Key: <redacted>'"),
         ),
+        // A credential named after a URL in the same word: the URL ends at the quote, the comma
+        // or the space, and the name after it is read.
+        (
+            r#"npm test -- --env='{"API_URL":"https://x","API_KEY":"«pw»"}'"#,
+            command(r#"npm test -- '--env={"API_URL":"https://x","API_KEY":<redacted>'"#),
+        ),
+        (
+            "pytest tests/test_ops.py -o 'env=BASE=https://h,API_TOKEN=«pw»'",
+            command("pytest tests/test_ops.py -o env=BASE=https://h,API_TOKEN=<redacted>"),
+        ),
+        (
+            "pytest tests/test_ops.py --header 'X-Url: https://h X-Api-Key: «pw»'",
+            command("pytest tests/test_ops.py --header 'X-Url: https://h X-Api-Key: <redacted>'"),
+        ),
+        // A credential's pair inside a URL with no `?` before it: in the fragment, after `&`,
+        // after `+`; the pair after it kept.
+        (
+            "pytest tests/test_ops.py '--cb=https://h/cb#access_token=«pw»&state=1'",
+            command("pytest tests/test_ops.py '--cb=https://h/cb#access_token=<redacted>&state=1'"),
+        ),
+        (
+            "pytest tests/test_ops.py '--url=https://h&API_TOKEN=«pw»'",
+            command("pytest tests/test_ops.py '--url=https://h&API_TOKEN=<redacted>'"),
+        ),
+        (
+            "pytest tests/test_ops.py '--env=URL=https://h+API_KEY=«pw»'",
+            command("pytest tests/test_ops.py --env=URL=https://h+API_KEY=<redacted>"),
+        ),
         // URLs: user information redacted, the scheme and host kept; credential query values.
         (
             "pytest tests/test_sync.py --remote https://«userinfo»@git.example.com/repo.git",
@@ -413,6 +442,96 @@ fn fixtures() -> Vec<(&'static str, Option<Cleaned>)> {
             test_path("pytest", "tests/test_ops.py"),
         ),
         ("pytest 'tests/test_\u{202E}ops.py'", runner("pytest")),
+        // A path from the machine's top outside the repository, from a home folder or on another
+        // machine, which may hold a user's name; a path where it cannot be rewritten; a `file:`
+        // URL. On Windows the paths without a drive are not placed, and elsewhere those with one.
+        (
+            "python -m pytest /home/alice/repo/tests/test_ops.py -x",
+            runner("pytest"),
+        ),
+        (
+            "cargo test --manifest-path /Users/alice/x/Cargo.toml",
+            runner("cargo"),
+        ),
+        (
+            "pytest --rootdir=/home/alice/repo tests/test_ops.py",
+            test_path("pytest", "tests/test_ops.py"),
+        ),
+        ("make test ROOT=/home/alice/repo", runner("make")),
+        (
+            "pytest tests/test_ops.py '--basetemp=~/tmp'",
+            test_path("pytest", "tests/test_ops.py"),
+        ),
+        (
+            "pytest tests/test_ops.py --basetemp '~alice/tmp'",
+            test_path("pytest", "tests/test_ops.py"),
+        ),
+        (
+            r"pytest tests/test_ops.py --basetemp '\\server\share\alice'",
+            test_path("pytest", "tests/test_ops.py"),
+        ),
+        (
+            r"pytest 'C:\Users\alice\repo\tests\test_ops.py'",
+            runner("pytest"),
+        ),
+        (
+            "pytest C:/Users/alice/repo/tests/test_ops.py -x",
+            runner("pytest"),
+        ),
+        (
+            "pytest tests/test_ops.py -c/home/alice/pytest.ini",
+            test_path("pytest", "tests/test_ops.py"),
+        ),
+        (
+            "pytest tests/test_ops.py --cov=src,/home/alice/lib",
+            test_path("pytest", "tests/test_ops.py"),
+        ),
+        (
+            "pytest tests/test_ops.py '--opt=ROOT=/home/alice'",
+            test_path("pytest", "tests/test_ops.py"),
+        ),
+        (
+            "pytest '/repo/tests/test_ops.py::test_x[/home/alice]'",
+            runner("pytest"),
+        ),
+        (
+            "pytest tests/test_ops.py --remote file:///home/alice/repo.git",
+            test_path("pytest", "tests/test_ops.py"),
+        ),
+        // A drive with a doubled slash is a path, not a URL; a drive with no separator after it
+        // is read from a folder the line does not tell.
+        (
+            "pytest C://Users/bob/proj/tests/test_x.py",
+            runner("pytest"),
+        ),
+        (
+            "pytest tests/test_x.py --basetemp=C://Users/bob/tmp",
+            test_path("pytest", "tests/test_x.py"),
+        ),
+        (
+            "pytest tests/test_x.py '-k=C://Users/bob'",
+            test_path("pytest", "tests/test_x.py"),
+        ),
+        (r"pytest 'C:..\..\bob\tests\test_x.py'", runner("pytest")),
+        (
+            r"pytest tests/test_x.py --basetemp 'C:bob\tmp'",
+            test_path("pytest", "tests/test_x.py"),
+        ),
+        // A relative path whose `..` climbs above the repository's top, read from the top; one
+        // that stays inside is kept as written.
+        ("pytest ../../bob/proj/tests/test_x.py", runner("pytest")),
+        (
+            "pytest tests/test_x.py --rootdir=../bob",
+            test_path("pytest", "tests/test_x.py"),
+        ),
+        (
+            "pytest tests/test_x.py -c../../bob/pytest.ini",
+            test_path("pytest", "tests/test_x.py"),
+        ),
+        (
+            "pytest tests/../tests/test_ops.py",
+            command("pytest tests/../tests/test_ops.py"),
+        ),
         // Two runs of one check and neither the line's exit: which one is not known.
         (
             "pytest tests/test_a.py; pytest tests/test_b.py &",
@@ -478,6 +597,168 @@ fn each_fixture_keeps_its_hand_written_form_and_no_secret() -> TestResult {
         }
     }
     Ok(())
+}
+
+/// Lines naming paths from the machine's top inside the repository, whose top is [`ROOT`], and
+/// what is kept of them run at the top: the way to each path from there, read off by hand.
+fn inside_fixtures() -> Vec<(String, Option<Cleaned>)> {
+    let mut rows = vec![
+        (
+            format!("python -m pytest '{ROOT}/tests/test_ops.py' -x"),
+            command("python -m pytest tests/test_ops.py -x"),
+        ),
+        (
+            format!("cargo test --manifest-path '{ROOT}/crates/core/Cargo.toml'"),
+            command("cargo test --manifest-path crates/core/Cargo.toml"),
+        ),
+        (
+            format!("pytest '--rootdir={ROOT}' tests/test_ops.py"),
+            command("pytest --rootdir=. tests/test_ops.py"),
+        ),
+        (
+            format!("make test 'TOP={ROOT}/calc'"),
+            command("make test TOP=calc"),
+        ),
+        (
+            format!("pytest tests/test_ops.py '-c{ROOT}/pytest.ini'"),
+            command("pytest tests/test_ops.py -cpytest.ini"),
+        ),
+        (
+            format!("pytest '{ROOT}/tests/test_ops.py::TestX::test_y' -q"),
+            command("pytest tests/test_ops.py::TestX::test_y -q"),
+        ),
+        (
+            format!("pytest '{ROOT}/tests/../tests/test_ops.py'"),
+            command("pytest tests/test_ops.py"),
+        ),
+        // Out of the repository by `..`, or into a folder whose name only starts as the top's.
+        (
+            format!("pytest '{ROOT}/../alice/tests/test_ops.py'"),
+            runner("pytest"),
+        ),
+        (
+            format!("pytest '{ROOT}2/tests/test_ops.py'"),
+            runner("pytest"),
+        ),
+    ];
+    // Windows: either separator, and the top in any letters' case; the names after it as written.
+    #[cfg(windows)]
+    rows.extend([
+        (
+            r"pytest 'C:\repo\tests\test_ops.py'".to_owned(),
+            command("pytest tests/test_ops.py"),
+        ),
+        (
+            "pytest C:/repo/tests/test_ops.py".to_owned(),
+            command("pytest tests/test_ops.py"),
+        ),
+        (
+            r"pytest 'c:\REPO\Tests\test_ops.py'".to_owned(),
+            command("pytest Tests/test_ops.py"),
+        ),
+        (
+            "pytest c:/Repo/tests/test_ops.py".to_owned(),
+            command("pytest tests/test_ops.py"),
+        ),
+        (
+            "pytest C://repo//tests/test_ops.py".to_owned(),
+            command("pytest tests/test_ops.py"),
+        ),
+        // Read as a URL, the drive's text would hide the path in its test id.
+        (
+            "pytest 'C://repo/tests/test_ops.py::test_y[/home/alice]'".to_owned(),
+            runner("pytest"),
+        ),
+        (
+            r"pytest '--rootdir=C:\REPO\tests'".to_owned(),
+            command("pytest --rootdir=tests"),
+        ),
+        (
+            "pytest /repo/tests/test_ops.py".to_owned(),
+            runner("pytest"),
+        ),
+    ]);
+    // Elsewhere a path's case is part of its name, and a drive places nothing.
+    #[cfg(not(windows))]
+    rows.extend([
+        (
+            "pytest /repo/tests/test_ops.py".to_owned(),
+            command("pytest tests/test_ops.py"),
+        ),
+        (
+            "pytest /REPO/tests/test_ops.py".to_owned(),
+            runner("pytest"),
+        ),
+        (
+            "pytest C://repo/tests/test_ops.py".to_owned(),
+            runner("pytest"),
+        ),
+        (
+            r"pytest 'C:\repo\tests\test_ops.py'".to_owned(),
+            runner("pytest"),
+        ),
+    ]);
+    rows
+}
+
+/// A path from the machine's top inside the repository is kept as the way to it from the top.
+#[test]
+fn a_path_inside_the_repository_is_kept_from_where_the_command_ran() {
+    let commands = Commands::default();
+    for (line, expected) in inside_fixtures() {
+        assert_eq!(cleaned_by(&commands, &line), expected, "{line}");
+    }
+}
+
+/// The way to a path is written from the folder the command ran in: the agent's working folder,
+/// moved by each `cd` before the command. A folder the line does not tell places nothing.
+#[test]
+fn a_path_is_written_from_the_folder_the_command_ran_in() {
+    let commands = Commands::default();
+    let root = Path::new(ROOT);
+    let calc = root.join("calc");
+    let kept =
+        |line: String, cwd: &Path| clean_command(&commands, &ShellCommand::cut(&line), root, cwd);
+    assert_eq!(
+        kept(format!("pytest '{ROOT}/calc/tests/test_ops.py'"), &calc),
+        command("pytest tests/test_ops.py")
+    );
+    assert_eq!(
+        kept(format!("pytest '{ROOT}/tests/test_ops.py'"), &calc),
+        command("pytest ../tests/test_ops.py")
+    );
+    assert_eq!(
+        kept(format!("pytest '{ROOT}/calc'"), &calc),
+        command("pytest .")
+    );
+    assert_eq!(
+        kept(
+            format!("cd calc && pytest '{ROOT}/calc/tests/test_ops.py'"),
+            root
+        ),
+        command("pytest tests/test_ops.py")
+    );
+    assert_eq!(
+        kept(
+            format!("cd $DIR && pytest '{ROOT}/calc/tests/test_ops.py'"),
+            root
+        ),
+        runner("pytest")
+    );
+    // A relative `..` stays inside from `calc` and is kept; one more climbs out; from a folder
+    // the line does not tell, any `..` might.
+    assert_eq!(
+        kept("pytest ../tests/test_ops.py".to_owned(), &calc),
+        command("pytest ../tests/test_ops.py")
+    );
+    assert_eq!(
+        kept("pytest ../../bob/tests/test_ops.py".to_owned(), &calc),
+        runner("pytest")
+    );
+    assert_eq!(
+        kept("cd $DIR && pytest ../tests/test_ops.py".to_owned(), root),
+        runner("pytest")
+    );
 }
 
 /// A check of the user's patterns keeps its runner's name and test file, never its command: the
@@ -564,6 +845,19 @@ const CREDENTIAL_OPTIONS: &[&str] = &[
 /// The ends of credentials' variable names.
 const KEY_ENDS: &[&str] = &["_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "PASSWD"];
 
+/// Paths from the machine's top outside the repository, `{user}` standing for a user's name.
+const OUTSIDE_PATHS: &[&str] = &[
+    "/home/{user}/repo/tests/test_ops.py",
+    "--rootdir=/Users/{user}/repo",
+    "C:/Users/{user}/repo/tests",
+    "-c/home/{user}/pytest.ini",
+    "../../{user}/proj/tests/test_x.py",
+    "--rootdir=../../{user}",
+    "C://Users/{user}/repo/tests",
+    "--basetemp=C://Users/{user}/tmp",
+    "C:../../{user}/tests",
+];
+
 /// A credential's value: long enough not to be found in a command by chance.
 fn credential_value() -> impl Strategy<Value = String> {
     "[A-Za-z0-9]{12,30}"
@@ -649,6 +943,10 @@ fn carrier() -> impl Strategy<Value = (Vec<String>, Vec<String>)> {
         web_token().prop_map(|token| (vec![token.clone()], vec![token])),
         random_token().prop_map(|token| (vec![token.clone()], vec![token])),
         commit_id().prop_map(|id| (vec![id.clone()], vec![id])),
+        (prop::sample::select(OUTSIDE_PATHS), "[0-9]{6}").prop_map(|(path, digits)| {
+            let user = format!("user{digits}");
+            (vec![path.replace("{user}", &user)], vec![user])
+        }),
     ]
 }
 
@@ -676,9 +974,10 @@ fn line_with(lead: &str, args: &[&str], at: usize, carried: &[String]) -> String
 }
 
 proptest! {
-    /// However a secret of any detector's shape is put among a runner's arguments, the stored
-    /// form never holds it, a command kept holds [`REDACTED`] in its place, and nothing kept is
-    /// longer than the cap.
+    /// However a secret of any detector's shape, or a path outside the repository with a user's
+    /// name in it, is put among a runner's arguments, the stored form never holds the secret or
+    /// the name, a command kept holds [`REDACTED`] in its place, and nothing kept is longer than
+    /// the cap.
     #[test]
     fn no_secret_among_the_arguments_is_stored(
         base in prop::sample::select(BASES),
