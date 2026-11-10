@@ -5,20 +5,26 @@
 //! 2 seconds, as a branch switch or a large checkout makes, or a change to a file of rules the walk
 //! reads (`.gitignore`, `.cortexignore`, `.gitattributes`, `.git/info`; not one in a folder the
 //! walk leaves out), is reported as a change to everything, to be looked at whole rather than path
-//! by path. So is an error from the watcher, which may have lost events. Opening, reading and
-//! closing a file without writing it change nothing and are dropped first.
+//! by path. So is an error from the watcher, or its notice that events were lost and the tree
+//! must be looked at again (a rescan, as an overflowing queue of the system's events gives).
+//! Opening, reading and closing a file without writing it change nothing and are dropped first;
+//! so is a change to a folder that is still there, other than its renaming (its times or
+//! attributes, as Windows reports when an entry in it was touched): what changed inside it is
+//! reported by the entries' own events, and a file created and removed again in a moment changed
+//! nothing.
 //!
 //! Events are sorted on a thread of the watcher's own, which keeps the rules of each folder it
 //! has looked at; they are loaded again when a file of rules changes.
 
 use std::collections::{BTreeSet, VecDeque};
+use std::fs;
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use cortex_core::RepoPath;
-use notify::event::{AccessKind, AccessMode};
+use notify::event::{AccessKind, AccessMode, ModifyKind};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, NoCache, new_debouncer_opt};
 use thiserror::Error;
@@ -137,10 +143,22 @@ fn sort_events(
             report(Change::Everything);
             continue;
         };
+        // Events were lost: any file, a file of rules among them, may have changed unreported.
+        if events.iter().any(|event| event.need_rescan()) {
+            filter.reload();
+            recent.clear();
+            report(Change::Everything);
+            continue;
+        }
         let natives = events
             .iter()
             .filter(|event| is_change(event.kind))
-            .flat_map(|event| event.paths.iter());
+            .flat_map(|event| {
+                event
+                    .paths
+                    .iter()
+                    .filter(|path| !is_folder_touched(event.kind, path))
+            });
         let paths: BTreeSet<RepoPath> = natives
             .filter_map(|native| filter.relative(native))
             .collect();
@@ -174,6 +192,14 @@ fn sort_events(
     }
 }
 
+/// Whether an event of `kind` at `path` only touched a folder that is still there: a change of its
+/// times or attributes, not a renaming, of a path that is a folder now (not followed when a link).
+fn is_folder_touched(kind: EventKind, path: &Path) -> bool {
+    let is_touch =
+        matches!(kind, EventKind::Modify(modify) if !matches!(modify, ModifyKind::Name(_)));
+    is_touch && fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
+}
+
 /// Whether an event of `kind` may have changed its path. Opening, reading and closing a file
 /// unwritten change nothing: Linux reports every open, so the index's own reads of the files and
 /// rules it indexes would each start another index, and the daemon would never be idle. A close
@@ -191,7 +217,7 @@ mod tests {
     use std::error::Error;
 
     use notify::Event;
-    use notify::event::{DataChange, ModifyKind};
+    use notify::event::{DataChange, Flag, ModifyKind};
     use notify_debouncer_full::DebouncedEvent;
 
     use super::*;
@@ -250,6 +276,90 @@ mod tests {
             Ok(Change::Paths(BTreeSet::from([RepoPath::new(name)?])))
         };
         assert_eq!(changes, [one("a.py")?, one("b.py")?]);
+        Ok(())
+    }
+
+    /// A folder that is still there, changed but not renamed, reports nothing; renamed, it is
+    /// reported, as is a file changed in it.
+    #[test]
+    fn a_folder_touched_is_no_change() -> Result<(), Box<dyn Error>> {
+        let repo = tempfile::tempdir()?;
+        let root = repo.path();
+        std::fs::create_dir(root.join("tests"))?;
+        std::fs::write(root.join("tests").join("a.py"), "a = 1\n")?;
+        let options = DiscoverOptions {
+            max_file_bytes: 1_048_576,
+            extra_ignores: &[],
+            global_gitignore: None,
+        };
+        let event = |kind, path: &Path| {
+            DebouncedEvent::new(
+                Event::new(kind).add_path(path.to_path_buf()),
+                Instant::now(),
+            )
+        };
+        let folder = root.join("tests");
+        let batches = [
+            vec![event(EventKind::Modify(ModifyKind::Any), &folder)],
+            vec![event(
+                EventKind::Modify(ModifyKind::Metadata(notify::event::MetadataKind::Any)),
+                &folder,
+            )],
+            vec![event(
+                EventKind::Modify(ModifyKind::Name(notify::event::RenameMode::To)),
+                &folder,
+            )],
+            vec![event(
+                EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+                &folder.join("a.py"),
+            )],
+        ];
+        let (sender, receiver) = mpsc::sync_channel(batches.len());
+        for batch in batches {
+            sender.send(Ok(batch))?;
+        }
+        drop(sender);
+        let mut changes = Vec::new();
+        sort_events(&receiver, WalkRules::of(root, &options), |change| {
+            changes.push(change);
+        });
+        let one = |name: &str| -> Result<Change, Box<dyn Error>> {
+            Ok(Change::Paths(BTreeSet::from([RepoPath::new(name)?])))
+        };
+        assert_eq!(changes, [one("tests")?, one("tests/a.py")?]);
+        Ok(())
+    }
+
+    /// A notice that events were lost, which names no path, is a change to everything; the batch
+    /// after it is read as usual.
+    #[test]
+    fn a_rescan_is_a_change_to_everything() -> Result<(), Box<dyn Error>> {
+        let repo = tempfile::tempdir()?;
+        let root = repo.path();
+        std::fs::write(root.join("a.py"), "a = 1\n")?;
+        let options = DiscoverOptions {
+            max_file_bytes: 1_048_576,
+            extra_ignores: &[],
+            global_gitignore: None,
+        };
+        let rescan = Event::new(EventKind::Other).set_flag(Flag::Rescan);
+        let write = Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any)))
+            .add_path(root.join("a.py"));
+        let (sender, receiver) = mpsc::sync_channel(2);
+        sender.send(Ok(vec![DebouncedEvent::new(rescan, Instant::now())]))?;
+        sender.send(Ok(vec![DebouncedEvent::new(write, Instant::now())]))?;
+        drop(sender);
+        let mut changes = Vec::new();
+        sort_events(&receiver, WalkRules::of(root, &options), |change| {
+            changes.push(change);
+        });
+        assert_eq!(
+            changes,
+            [
+                Change::Everything,
+                Change::Paths(BTreeSet::from([RepoPath::new("a.py")?]))
+            ]
+        );
         Ok(())
     }
 }
