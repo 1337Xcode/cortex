@@ -1,7 +1,7 @@
 //! The receipts as lines of text: what the costs were estimated from, how far the held-out tasks
 //! are from being enough to compare with the rest, how precise the work orders given were, then
-//! each session with its primers, its tasks, the work outside any task, its total, and the
-//! compactions its total leaves out.
+//! each session with its primers, its tasks, the work outside any task, its total, the
+//! compactions its total leaves out, and how well it used the prompt cache.
 
 use std::path::Path;
 
@@ -9,6 +9,7 @@ use cortex_meter::{
     Compared, Estimate, Precision, SessionReceipt, Tally, TaskReceipt, Unpriced, utc_text,
 };
 
+use super::cache::cache_lines;
 use super::{Holdout, Prices, Report};
 
 /// A hundredth of a cent, the smallest amount receipts show, in picodollars.
@@ -173,8 +174,8 @@ fn warning_line(precision: Precision) -> String {
     }
 }
 
-/// The lines of one session: itself, each task, the work outside any task, its total, and the
-/// compactions the total leaves out. A session whose agent is not metered leaves usage out of
+/// The lines of one session: itself, each task, the work outside any task, its total, the
+/// compactions the total leaves out, and its prompt cache's health. A session whose agent is not metered leaves usage out of
 /// every line, as Cortex reads none.
 fn session_lines(session: &SessionReceipt) -> Vec<String> {
     let usage = |tally: &Tally| session.is_metered.then(|| usage(tally));
@@ -219,6 +220,7 @@ fn session_lines(session: &SessionReceipt) -> Vec<String> {
             counted(session.compactions_left_out, "compaction", "compactions")
         ));
     }
+    lines.extend(cache_lines(session));
     lines
 }
 
@@ -321,7 +323,7 @@ fn amount(picodollars: u128) -> String {
 
 /// The UTC minute `millis` falls in, as `2026-11-03 07:12 UTC`, or the milliseconds themselves
 /// when they name no time the form can write.
-fn when(millis: i64) -> String {
+pub(super) fn when(millis: i64) -> String {
     let Some(text) = utc_text(millis) else {
         return format!("{millis} ms after 1970");
     };
@@ -332,7 +334,7 @@ fn when(millis: i64) -> String {
 }
 
 /// `count` followed by `one` or `many`, its digits grouped.
-fn counted(count: u64, one: &str, many: &str) -> String {
+pub(super) fn counted(count: u64, one: &str, many: &str) -> String {
     let noun = if count == 1 { one } else { many };
     format!("{} {noun}", grouped(count))
 }
@@ -412,6 +414,7 @@ mod tests {
         assert_eq!(usage(&tally(0, None)), "no usage recorded");
         let unpriced = Estimate {
             picodollars: 0,
+            cache_write_picodollars: 0,
             priced_turns: 0,
             unpriced_turns: BTreeMap::from([(Unpriced::Model, 2)]),
         };
@@ -505,6 +508,7 @@ mod tests {
             outside_tool_calls: 1,
             total: nothing,
             compactions_left_out: 0,
+            cache_breaks: Vec::new(),
             primer_tokens: 0,
             injected_tokens: 0,
         };

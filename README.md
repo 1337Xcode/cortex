@@ -60,7 +60,8 @@ each failure.
 
 `cortex where` prints what Cortex would give an agent for a question: the work order, or why there
 is none. `cortex receipts` shows each session's token usage and estimated cost from Claude Code's
-transcripts, the tokens Cortex added, and the share of its work orders the task then used.
+transcripts, the tokens Cortex added, how well the session used the prompt cache (and where it
+lost it), and the share of its work orders the task then used.
 `cortex uninstall` puts back every file `init` changed and stops the daemon; `--purge` also deletes
 the repository's `.cortex/` folder.
 

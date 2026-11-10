@@ -181,6 +181,7 @@ fn only_ended_decided_tasks_are_weighed() -> TestResult {
         outside_tool_calls: 0,
         total: usage.clone(),
         compactions_left_out: 0,
+        cache_breaks: Vec::new(),
         primer_tokens: 0,
         injected_tokens: 0,
     };

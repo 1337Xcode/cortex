@@ -16,8 +16,12 @@ pub fn run(root: &Path, home: &Path, extra: &[&str]) -> TestResult<Output> {
 }
 
 /// The JSON of `turns` responses that took `[input in all, uncached, read from the cache,
-/// written to it, output]` tokens, every one priced, at `cost` picodollars.
-pub fn tally(turns: u64, [input, uncached, reads, writes, output]: [u64; 5], cost: u64) -> Value {
+/// written to it, output]` tokens, every one priced, at `[cost, of it cache writes]` picodollars.
+pub fn tally(
+    turns: u64,
+    [input, uncached, reads, writes, output]: [u64; 5],
+    [cost, cache_write_cost]: [u64; 2],
+) -> Value {
     json!({
         "turns": turns,
         "cumulative_input": input,
@@ -25,6 +29,11 @@ pub fn tally(turns: u64, [input, uncached, reads, writes, output]: [u64; 5], cos
         "cache_reads": reads,
         "cache_writes": writes,
         "output": output,
-        "estimate": {"picodollars": cost, "priced_turns": turns, "unpriced_turns": {}},
+        "estimate": {
+            "picodollars": cost,
+            "cache_write_picodollars": cache_write_cost,
+            "priced_turns": turns,
+            "unpriced_turns": {},
+        },
     })
 }

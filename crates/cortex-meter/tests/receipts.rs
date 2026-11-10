@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 
 use cortex_core::{Agent, ContentHash, HookKind, Identifier, SessionStatus, TaskOutcome, Ulid};
 use cortex_meter::{
-    Activity, Arms, Estimate, Precision, PriceTable, SHIPPED_PRICES, Tally, Unpriced, receipt,
+    Activity, Arms, BreakCause, CacheBreak, Estimate, Precision, PriceTable, SHIPPED_PRICES, Tally,
+    Unpriced, receipt,
 };
 use cortex_store::{InjectionRecord, SessionRecord, SessionRow, TaskRecord, TaskRow, UsageRow};
 
@@ -97,14 +98,16 @@ fn tally(
     }
 }
 
-/// An estimate of `picodollars` over `priced_turns`, leaving out `unpriced` responses.
+/// An estimate of `[picodollars, cache_write_picodollars]` over `priced_turns`, leaving out
+/// `unpriced` responses.
 fn estimate(
-    picodollars: u128,
+    [picodollars, cache_write_picodollars]: [u128; 2],
     priced_turns: u64,
     unpriced: &[(Unpriced, u64)],
 ) -> Option<Estimate> {
     Some(Estimate {
         picodollars,
+        cache_write_picodollars,
         priced_turns,
         unpriced_turns: unpriced.iter().copied().collect(),
     })
@@ -128,11 +131,13 @@ fn estimate(
 /// - at 9,000,000, still in the open second task, at the priority tier: 4 input, 6 output,
 ///   unpriced.
 ///
+/// Of those, cache writes cost 5,000,000,000 at 1,000 and 800,000,000 x 1.1 = 880,000,000 at 3,000.
+///
 /// The first task: 3 turns, input 1,100 + 7 + 1,002 = 2,109, uncached 100 + 7 + 2 = 109, 1,000
-/// read, 1,000 written, 18 output, 5,908,000,000 over 2 turns. The second: 2 turns, input
+/// read, 1,000 written, 18 output, 5,908,000,000 over 2 turns, 5,000,000,000 of it writes. The second: 2 turns, input
 /// 2,103 + 4 = 2,107, uncached 7, 2,000 read, 100 written, 26 output. Outside: 2 turns, input
 /// 10 + 51 = 61, uncached 11, 50 written, 3 output. In all: 7 turns, 4,277 input, 127 uncached,
-/// 3,000 read, 1,150 written, 47 output, 7,741,200,000 over 4 turns. The first task made 4 tool
+/// 3,000 read, 1,150 written, 47 output, 7,741,200,000 over 4 turns, 5,880,000,000 of it writes. The first task made 4 tool
 /// calls and the session 2 outside any task: 6 in all.
 #[test]
 fn responses_add_up_by_task() -> TestResult {
@@ -171,7 +176,7 @@ fn responses_add_up_by_task() -> TestResult {
         ],
         tool_calls: BTreeMap::from([(first.record.task_id, 4)]),
         outside_tool_calls: 2,
-        compactions: 0,
+        compactions_at_ms: BTreeMap::new(),
         injections: Vec::new(),
     };
     let receipt = receipt(&activity, Some(&prices));
@@ -190,11 +195,11 @@ fn responses_add_up_by_task() -> TestResult {
     assert_eq!(tasks, [(1, Some("success"), 4, 0), (2, None, 0, 0)]);
     let first_tally = tally(
         [3, 2_109, 109, 1_000, 1_000, 18],
-        estimate(5_908_000_000, 2, &[(Unpriced::Model, 1)]),
+        estimate([5_908_000_000, 5_000_000_000], 2, &[(Unpriced::Model, 1)]),
     );
     let second_tally = tally(
         [2, 2_107, 7, 2_000, 100, 26],
-        estimate(1_773_200_000, 1, &[(Unpriced::Tier, 1)]),
+        estimate([1_773_200_000, 880_000_000], 1, &[(Unpriced::Tier, 1)]),
     );
     assert_eq!(receipt.tasks[0].usage, first_tally);
     assert_eq!(receipt.tasks[1].usage, second_tally);
@@ -202,7 +207,7 @@ fn responses_add_up_by_task() -> TestResult {
         receipt.outside_tasks,
         tally(
             [2, 61, 11, 0, 50, 3],
-            estimate(60_000_000, 1, &[(Unpriced::CacheSplit, 1)])
+            estimate([60_000_000, 0], 1, &[(Unpriced::CacheSplit, 1)])
         )
     );
     assert_eq!(
@@ -210,7 +215,7 @@ fn responses_add_up_by_task() -> TestResult {
         tally(
             [7, 4_277, 127, 3_000, 1_150, 47],
             estimate(
-                7_741_200_000,
+                [7_741_200_000, 5_880_000_000],
                 4,
                 &[
                     (Unpriced::Model, 1),
@@ -237,6 +242,7 @@ fn responses_add_up_by_task() -> TestResult {
         serde_json::to_value(&receipt.outside_tasks.estimate)?,
         serde_json::json!({
             "picodollars": 60_000_000,
+            "cache_write_picodollars": 0,
             "priced_turns": 1,
             "unpriced_turns": {"cache_split": 1},
         })
@@ -258,7 +264,7 @@ fn without_prices_or_tasks_counts_stand_alone() -> TestResult {
         ],
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
-        compactions: 0,
+        compactions_at_ms: BTreeMap::new(),
         injections: Vec::new(),
     };
     let receipt = receipt(&activity, None);
@@ -282,7 +288,7 @@ fn an_agent_whose_transcripts_are_not_read_is_not_metered() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
-        compactions: 0,
+        compactions_at_ms: BTreeMap::new(),
         injections: Vec::new(),
     };
     let receipt = receipt(&activity, None);
@@ -292,7 +298,7 @@ fn an_agent_whose_transcripts_are_not_read_is_not_metered() -> TestResult {
 }
 
 /// Compactions are left out of the counts where the agent's transcripts do not record their
-/// calls: both of a Claude Code session's two, none of a Codex session's two, whose rollouts count
+/// calls: both of a Claude Code session's two (one its own, one its subagent's), none of a Codex session's two, whose rollouts count
 /// them, and none of a Cursor session's, whose usage is not read at all.
 #[test]
 fn compactions_a_transcript_does_not_record_are_left_out() -> TestResult {
@@ -306,7 +312,10 @@ fn compactions_a_transcript_does_not_record_are_left_out() -> TestResult {
             usage: Vec::new(),
             tool_calls: BTreeMap::new(),
             outside_tool_calls: 0,
-            compactions: 2,
+            compactions_at_ms: BTreeMap::from([
+                (Identifier::new("s1")?, vec![1_000]),
+                (Identifier::new("s1/agent-1")?, vec![1_500]),
+            ]),
             injections: Vec::new(),
         };
         Ok(receipt(&activity, None).compactions_left_out)
@@ -343,7 +352,7 @@ fn arms_are_shown_and_counted_as_decided() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
-        compactions: 0,
+        compactions_at_ms: BTreeMap::new(),
         injections: Vec::new(),
     };
     let shown: Vec<Option<bool>> = receipt(&activity, None)
@@ -405,7 +414,7 @@ fn only_what_reached_the_agent_counts_as_injected() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
-        compactions: 0,
+        compactions_at_ms: BTreeMap::new(),
         injections,
     };
     let receipt = receipt(&activity, None);
@@ -456,7 +465,7 @@ fn every_text_a_task_was_given_counts() -> TestResult {
         usage: Vec::new(),
         tool_calls: BTreeMap::new(),
         outside_tool_calls: 0,
-        compactions: 0,
+        compactions_at_ms: BTreeMap::new(),
         injections,
     };
     let receipt = receipt(&activity, None);
@@ -484,4 +493,70 @@ fn precision_is_the_share_used() {
         used: 0,
     };
     assert_eq!(none.share(), None);
+}
+
+/// A receipt lists where its conversations lost the prompt cache. Session `s1` reads 1,000 at
+/// 1,000, then at 2,000 reads 100 and writes 900: a break, after a work order that reached the
+/// agent at 1,500. At 3,000 it reads 1,000 again, and at 4,000 breaks the same way, after only a
+/// work order the gate kept back at 3,500, which never reached the agent: nothing explains it. Its
+/// subagent's lone response breaks nothing, and the subagent's compaction at 3,500 is not `s1`'s.
+#[test]
+fn a_receipt_lists_its_cache_breaks_with_their_causes() -> TestResult {
+    let numbered = |turn: u32, at_ms: i64, tokens: [u64; 4]| -> TestResult<UsageRow> {
+        Ok(UsageRow {
+            turn,
+            ..response(at_ms, tokens)?
+        })
+    };
+    let subagent = Identifier::new("s1/agent-1")?;
+    let given = |at_ms: i64, is_gated_out: bool| -> TestResult<InjectionRecord> {
+        Ok(InjectionRecord {
+            task_id: None,
+            session_id: Identifier::new("s1")?,
+            hook: HookKind::Prompt,
+            at_ms,
+            files: Vec::new(),
+            tokens: 100,
+            confidence: None,
+            is_gated_out,
+            is_holdout: false,
+            text_hash: (!is_gated_out).then(|| ContentHash::of(b"the text given")),
+            features: None,
+        })
+    };
+    let activity = Activity {
+        session: session()?,
+        subagents: 1,
+        tasks: Vec::new(),
+        usage: vec![
+            numbered(1, 1_000, [10, 0, 1_000, 1])?,
+            numbered(2, 2_000, [10, 900, 100, 1])?,
+            UsageRow {
+                session_id: subagent.clone(),
+                ..numbered(1, 2_500, [10, 900, 0, 1])?
+            },
+            numbered(3, 3_000, [10, 0, 1_000, 1])?,
+            numbered(4, 4_000, [10, 900, 100, 1])?,
+        ],
+        tool_calls: BTreeMap::new(),
+        outside_tool_calls: 0,
+        compactions_at_ms: BTreeMap::from([(subagent, vec![3_500])]),
+        injections: vec![given(1_500, false)?, given(3_500, true)?],
+    };
+    let at = |turn: u32, at_ms: i64, cause: Option<BreakCause>| -> TestResult<CacheBreak> {
+        Ok(CacheBreak {
+            session_id: Identifier::new("s1")?,
+            turn,
+            at_ms,
+            cause,
+        })
+    };
+    assert_eq!(
+        receipt(&activity, None).cache_breaks,
+        [
+            at(2, 2_000, Some(BreakCause::HookText))?,
+            at(4, 4_000, None)?
+        ]
+    );
+    Ok(())
 }

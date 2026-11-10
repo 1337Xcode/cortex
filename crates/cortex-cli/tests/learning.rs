@@ -784,7 +784,9 @@ fn assert_tasks(root: &Path) -> TestResult {
 }
 
 /// Checks what `cortex receipts` shows of the session, as worked out on
-/// [`a_repository_s_history_and_tasks_are_learned_and_metered`].
+/// [`a_repository_s_history_and_tasks_are_learned_and_metered`]. Every cache write there is for an
+/// hour, at 4,000,000 picodollars a token: 29,797, 3,819 and 155 + 763 = 918 written cost
+/// 119,188,000,000, 15,276,000,000 and 3,672,000,000, together 138,136,000,000.
 fn assert_receipts(root: &Path, home: &Path) -> TestResult {
     let printed = receipts::run(root, home, &["--json"])?;
     assert!(printed.status.success(), "{printed:?}");
@@ -806,19 +808,31 @@ fn assert_receipts(root: &Path, home: &Path) -> TestResult {
                 json!(1),
                 json!("success"),
                 json!(6),
-                receipts::tally(1, [33_499, 3_702, 0, 29_797, 100], 127_592_000_000)
+                receipts::tally(
+                    1,
+                    [33_499, 3_702, 0, 29_797, 100],
+                    [127_592_000_000, 119_188_000_000]
+                )
             ],
             [
                 json!(2),
                 json!("failure"),
                 json!(3),
-                receipts::tally(1, [33_618, 2, 29_797, 3_819, 95], 19_209_700_000)
+                receipts::tally(
+                    1,
+                    [33_618, 2, 29_797, 3_819, 95],
+                    [19_209_700_000, 15_276_000_000]
+                )
             ],
             [
                 json!(3),
                 json!("reverted"),
                 json!(2),
-                receipts::tally(2, [68_309, 4, 67_387, 918, 363], 14_048_700_000)
+                receipts::tally(
+                    2,
+                    [68_309, 4, 67_387, 918, 363],
+                    [14_048_700_000, 3_672_000_000]
+                )
             ],
         ]
     );
@@ -827,7 +841,11 @@ fn assert_receipts(root: &Path, home: &Path) -> TestResult {
         [
             json!(11),
             json!(0),
-            receipts::tally(4, [135_426, 3_708, 97_184, 34_534, 558], 160_850_400_000)
+            receipts::tally(
+                4,
+                [135_426, 3_708, 97_184, 34_534, 558],
+                [160_850_400_000, 138_136_000_000]
+            )
         ]
     );
     assert_eq!(

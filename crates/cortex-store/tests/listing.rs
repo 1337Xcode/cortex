@@ -233,8 +233,9 @@ fn tool_calls_count_each_report_once() -> TestResult {
     Ok(())
 }
 
-/// A session's compactions are its own compact rows, in a task or outside one: two for `s1`,
-/// whose read and prompt are not compactions, one for its subagent, none for `s2`.
+/// A session's compactions are its own compact rows, in a task or outside one, earliest first: two
+/// for `s1` at 80 and 130, whose read and prompt are not compactions, one for its subagent at 140,
+/// none for `s2`.
 #[test]
 fn compactions_count_a_session_s_own() -> TestResult {
     let scratch = Scratch::new()?;
@@ -264,11 +265,11 @@ fn compactions_count_a_session_s_own() -> TestResult {
     )?;
     transaction.commit()?;
     let queries = writer.queries();
-    let count = |id: &str| -> TestResult<u64> { Ok(queries.compactions_of_session(&name(id)?)?) };
-    assert_eq!(
-        [count("s1")?, count("s1/agent-1")?, count("s2")?],
-        [2, 1, 0]
-    );
+    let times =
+        |id: &str| -> TestResult<Vec<i64>> { Ok(queries.compactions_of_session(&name(id)?)?) };
+    assert_eq!(times("s1")?, [80, 130]);
+    assert_eq!(times("s1/agent-1")?, [140]);
+    assert_eq!(times("s2")?, Vec::<i64>::new());
     Ok(())
 }
 

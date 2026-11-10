@@ -225,6 +225,32 @@ impl PriceTable {
     /// The [`Unpriced`] reason, the first of its model, tier, region, cache split and speed that
     /// the table or the transcript leaves unknown.
     pub fn estimate(&self, billed: &Billed<'_>) -> Result<Cost, Unpriced> {
+        let priced = self.priced(billed)?;
+        let rates = &priced.rates;
+        let picodollars = priced.cache_writes(billed)
+            + cost(billed.input, rates.input)
+            + cost(billed.cache_read, rates.cache_read)
+            + cost(billed.output, rates.output);
+        // Rounded down to a whole picodollar, which the shipped prices never need.
+        Ok(Cost(picodollars * priced.per_mille / PER_MILLE))
+    }
+
+    /// The part of [`Self::estimate`] that is the response `billed`'s cache writes, at the rates
+    /// the whole response is billed at: a long prompt changes them.
+    ///
+    /// # Errors
+    ///
+    /// The [`Unpriced`] reason, as [`Self::estimate`] gives it.
+    pub(crate) fn estimate_cache_writes(&self, billed: &Billed<'_>) -> Result<Cost, Unpriced> {
+        let priced = self.priced(billed)?;
+        Ok(Cost(
+            priced.cache_writes(billed) * priced.per_mille / PER_MILLE,
+        ))
+    }
+
+    /// The rates, region multiplier and cache split the response `billed` is priced with, or why
+    /// it has no price.
+    fn priced(&self, billed: &Billed<'_>) -> Result<Priced, Unpriced> {
         let prices = self.model(billed.model).ok_or(Unpriced::Model)?;
         if billed.service_tier != Some("standard") {
             return Err(Unpriced::Tier);
@@ -244,15 +270,37 @@ impl PriceTable {
             Some("standard") => prices.at_standard_speed(billed),
             _ => return Err(Unpriced::Speed),
         };
-        let cost = |tokens: u64, rate: u64| u128::from(tokens) * u128::from(rate);
-        let picodollars = cost(billed.input, rates.input)
-            + cost(billed.cache_write - one_hour, rates.cache_write_5m)
-            + cost(one_hour, rates.cache_write_1h)
-            + cost(billed.cache_read, rates.cache_read)
-            + cost(billed.output, rates.output);
-        // Rounded down to a whole picodollar, which the shipped prices never need.
-        Ok(Cost(picodollars * per_mille / PER_MILLE))
+        Ok(Priced {
+            rates,
+            per_mille,
+            one_hour,
+        })
     }
+}
+
+/// What the price of a response depends on once the table and the transcript have given it all.
+struct Priced {
+    /// The rates it is billed at.
+    rates: Rates,
+    /// The region's multiplier, in thousandths.
+    per_mille: u128,
+    /// Of its cache writes, those written for an hour.
+    one_hour: u64,
+}
+
+impl Priced {
+    /// What the cache writes of `billed` cost before the region's multiplier, in picodollars.
+    fn cache_writes(&self, billed: &Billed<'_>) -> u128 {
+        cost(
+            billed.cache_write - self.one_hour,
+            self.rates.cache_write_5m,
+        ) + cost(self.one_hour, self.rates.cache_write_1h)
+    }
+}
+
+/// What `tokens` cost at `rate` picodollars a token.
+fn cost(tokens: u64, rate: u64) -> u128 {
+    u128::from(tokens) * u128::from(rate)
 }
 
 /// Whether `text` is a day of the Gregorian calendar written `YYYY-MM-DD`.

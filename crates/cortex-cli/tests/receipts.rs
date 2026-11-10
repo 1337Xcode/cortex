@@ -82,15 +82,23 @@ fn moved_transcript(name: &str, to: &Path, times: &[(&str, i64)]) -> TestResult 
 /// 4,000,000, 100,000 and 10,000,000 picodollars a token.
 ///
 /// - Outside the task, the first response: 3,702 input, 29,797 written for an hour, 100 output:
-///   7,404,000,000 + 119,188,000,000 + 1,000,000,000 = 127,592,000,000 ($0.1276).
+///   7,404,000,000 + 119,188,000,000 + 1,000,000,000 = 127,592,000,000 ($0.1276), of it
+///   119,188,000,000 cache writes.
 /// - In the task, the session's next three: 2 input, 3,819 written for an hour, 29,797 read, 95
 ///   output = 19,209,700,000; 2, 155, 33,616, 360 = 7,585,600,000; 2, 763, 33,771, 3 =
 ///   6,463,100,000. The subagent's two, written for five minutes: 2,716 input, 22,837 written,
 ///   148 output = 64,004,500,000; 2, 2,963 written, 22,837 read, 221 output = 11,905,200,000.
 ///   Five turns; input 33,618 + 33,773 + 34,536 + 25,553 + 25,802 = 153,282, of it 2,724
-///   uncached, 120,021 read and 30,537 written; 827 output; 109,168,100,000 ($0.1092).
+///   uncached, 120,021 read and 30,537 written; 827 output; 109,168,100,000 ($0.1092). Of it,
+///   cache writes: (3,819 + 155 + 763) x 4,000,000 + (22,837 + 2,963) x 2,500,000 =
+///   18,948,000,000 + 64,500,000,000 = 83,448,000,000.
 /// - The total: 6 turns, 186,781 input, 6,426 uncached, 120,021 read, 60,334 written, 927
-///   output, 236,760,100,000 ($0.2368); two tool calls.
+///   output, 236,760,100,000 ($0.2368), of it 119,188,000,000 + 83,448,000,000 = 202,636,000,000
+///   cache writes; two tool calls.
+/// - The prompt cache: 120,021 of 186,781 input read from it, 64.3%, shown as 64%; writes
+///   202,636,000,000 of 236,760,100,000, 85.6%, shown as 86%. No response lost the cache: each
+///   after a conversation's first reads all the one before it read, or more, and writes a
+///   fraction of it.
 #[test]
 fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     let (home, repo) = repository()?;
@@ -244,22 +252,34 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
     let usage = receipts::tally;
     assert_eq!(
         field(task, "usage"),
-        usage(5, [153_282, 2_724, 120_021, 30_537, 827], 109_168_100_000)
+        usage(
+            5,
+            [153_282, 2_724, 120_021, 30_537, 827],
+            [109_168_100_000, 83_448_000_000]
+        )
     );
     assert_eq!(
         field(session, "outside_tasks"),
-        usage(1, [33_499, 3_702, 0, 29_797, 100], 127_592_000_000)
+        usage(
+            1,
+            [33_499, 3_702, 0, 29_797, 100],
+            [127_592_000_000, 119_188_000_000]
+        )
     );
     assert_eq!(
         field(session, "total"),
-        usage(6, [186_781, 6_426, 120_021, 60_334, 927], 236_760_100_000)
+        usage(
+            6,
+            [186_781, 6_426, 120_021, 60_334, 927],
+            [236_760_100_000, 202_636_000_000]
+        )
     );
 
     let printed = receipts::run(&repo, home.path(), &[])?;
     assert!(printed.status.success(), "{printed:?}");
     let text = String::from_utf8(printed.stdout)?;
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 10, "{text}");
+    assert_eq!(lines.len(), 11, "{text}");
     assert_eq!(
         lines[..4],
         [
@@ -304,11 +324,15 @@ fn receipts_show_each_task_s_usage_and_cost() -> TestResult {
                  {PRIMER_TOKENS} tokens injected by Cortex"
             ),
             "  not in the total: 1 compaction, which the transcript does not record".to_owned(),
+            "  prompt cache: 64% of input read from it; writing to it about 86% of the estimated \
+             cost; never lost"
+                .to_owned(),
         ]
     );
 
     let one = receipts::run(&repo, home.path(), &["--session", S1, "--json"])?;
     assert_eq!(serde_json::from_slice::<Value>(&one.stdout)?, report);
+    assert_eq!(session.get("cache_breaks"), Some(&json!([])));
     let none = receipts::run(&repo, home.path(), &["--session", "nobody"])?;
     assert!(!none.status.success());
     let error = String::from_utf8(none.stderr)?;

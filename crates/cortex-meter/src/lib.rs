@@ -12,6 +12,7 @@
 
 #![warn(clippy::pedantic)]
 
+mod cache_breaks;
 mod claude;
 mod codex;
 mod error;
@@ -24,6 +25,7 @@ mod response;
 mod tail;
 mod timestamp;
 
+pub use cache_breaks::{BreakCause, BreakContext, CacheBreak, cache_breaks};
 pub use claude::Claude;
 pub use codex::Codex;
 pub use error::MeterError;

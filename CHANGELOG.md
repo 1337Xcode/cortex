@@ -44,6 +44,13 @@ All notable changes to this project are documented in this file. The format is b
 - The gate's self-check raises the bar when the work orders given go unused.
 - `cortex where "<question>"` prints what the engine finds for a question, or why it finds
   nothing.
+- `cortex receipts` shows each session's prompt-cache health: the share of its input read from
+  the cache, the share of its estimated cost spent writing to it (when every response is priced),
+  and how often a conversation (the session's or a subagent's) lost its cache, by the likeliest
+  cause (a model switch, a compaction, idling past the cache's lifetime, which is an hour when
+  every write was for an hour and five minutes otherwise, or text Cortex gave just before),
+  the losses with no known cause listed by turn and time. A loss is a response that wrote over
+  half its cached input anew while reading under half of what the response before it read.
 - `cortex receipts` shows each session's and task's token usage and estimated cost, read from
   Claude Code's transcripts, the tokens Cortex injected, the share of its work orders that were
   used, and, once each arm has at least 30 ended tasks, the difference between the tasks Cortex

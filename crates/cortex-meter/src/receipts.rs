@@ -12,6 +12,11 @@
 //!
 //! What Cortex itself added to the context is counted from what reached the agent: a work order or
 //! a primer the gate kept back, held out, or not written in time added nothing.
+//!
+//! How well the session used the prompt cache is read from the same counts: the share of input
+//! read from the cache, the share of the estimated cost spent writing to it, and the responses
+//! where a conversation lost its cache (`cache_breaks`), each with the cause that most likely lost
+//! it.
 
 use std::collections::BTreeMap;
 
@@ -19,6 +24,7 @@ use cortex_core::{HookKind, Identifier, TaskOutcome, Ulid};
 use cortex_store::{InjectionRecord, SessionRow, TaskRow, UsageRow};
 use serde::Serialize;
 
+use crate::cache_breaks::{BreakContext, CacheBreak, cache_breaks};
 use crate::format::format_of;
 use crate::pricing::{Billed, Cost, PriceTable, Unpriced};
 
@@ -81,9 +87,9 @@ pub struct Activity {
     pub tool_calls: BTreeMap<Ulid, u64>,
     /// How many tool calls the session and its subagents made while it had no task.
     pub outside_tool_calls: u64,
-    /// How many times the session and its subagents compacted their conversations, as their hooks
-    /// reported it.
-    pub compactions: u64,
+    /// When the session and each of its subagents compacted their conversations, as their hooks
+    /// reported it, in UTC milliseconds, by session; a session left out never did.
+    pub compactions_at_ms: BTreeMap<Identifier, Vec<i64>>,
     /// What Cortex gave the session's agent or weighed for it: its primers, its prompts' work
     /// orders, and the warnings, read hints, recaps and stop reasons its tasks were given, whether
     /// they reached the agent or not.
@@ -122,6 +128,9 @@ pub struct SessionReceipt {
     /// transcripts do not record, so that no tally counts them; none when the transcripts record
     /// them or are not read.
     pub compactions_left_out: u64,
+    /// The responses of the session and its subagents where a conversation lost its prompt
+    /// cache, earliest first; none when the transcripts are not read.
+    pub cache_breaks: Vec<CacheBreak>,
     /// The tokens of the primers that reached the agent at the session's starts.
     pub primer_tokens: u64,
     /// Every token Cortex added to the session's context that reached the agent: its primers, and
@@ -178,6 +187,8 @@ pub struct Tally {
 pub struct Estimate {
     /// The cost of the responses that have a price, in picodollars.
     pub picodollars: u128,
+    /// Of `picodollars`, what went on writing to the prompt cache.
+    pub cache_write_picodollars: u128,
     /// How many responses have a price.
     pub priced_turns: u64,
     /// How many responses have no price, by the reason why.
@@ -200,6 +211,16 @@ pub fn receipt(activity: &Activity, prices: Option<&PriceTable>) -> SessionRecei
         total.add(row, prices);
     }
     let delivered = Delivered::of(&activity.injections);
+    let texts_given_at_ms: Vec<i64> = activity
+        .injections
+        .iter()
+        .filter(|injection| injection.was_delivered())
+        .map(|injection| injection.at_ms)
+        .collect();
+    let context = BreakContext {
+        compactions_at_ms: &activity.compactions_at_ms,
+        texts_given_at_ms: &texts_given_at_ms,
+    };
     let tasks: Vec<TaskReceipt> = tasks
         .iter()
         .zip(tallies)
@@ -225,10 +246,15 @@ pub fn receipt(activity: &Activity, prices: Option<&PriceTable>) -> SessionRecei
         outside_tool_calls: activity.outside_tool_calls,
         total,
         compactions_left_out: if leaves_out_compaction {
-            activity.compactions
+            activity
+                .compactions_at_ms
+                .values()
+                .flatten()
+                .fold(0, |count: u64, _| count.saturating_add(1))
         } else {
             0
         },
+        cache_breaks: cache_breaks(&activity.usage, &context),
         primer_tokens: delivered.primers,
         injected_tokens: delivered.all,
     }
@@ -335,8 +361,11 @@ impl Tally {
         self.output = self.output.saturating_add(row.output);
         if let (Some(estimate), Some(prices)) = (self.estimate.as_mut(), prices) {
             match price(row, prices) {
-                Ok(cost) => {
+                Ok((cost, cache_writes)) => {
                     estimate.picodollars = estimate.picodollars.saturating_add(cost.picodollars());
+                    estimate.cache_write_picodollars = estimate
+                        .cache_write_picodollars
+                        .saturating_add(cache_writes.picodollars());
                     estimate.priced_turns += 1;
                 }
                 Err(reason) => *estimate.unpriced_turns.entry(reason).or_insert(0) += 1,
@@ -345,10 +374,10 @@ impl Tally {
     }
 }
 
-/// The estimated cost of the response `row`, or why it has none.
-fn price(row: &UsageRow, prices: &PriceTable) -> Result<Cost, Unpriced> {
+/// What the response `row` is billed as, or [`Unpriced::Model`] when its model is not named.
+fn billed(row: &UsageRow) -> Result<Billed<'_>, Unpriced> {
     let model = row.model.as_ref().ok_or(Unpriced::Model)?;
-    prices.estimate(&Billed {
+    Ok(Billed {
         model: model.as_str(),
         input: row.input,
         cache_write: row.cache_write,
@@ -359,4 +388,14 @@ fn price(row: &UsageRow, prices: &PriceTable) -> Result<Cost, Unpriced> {
         speed: row.speed.as_ref().map(Identifier::as_str),
         inference_geo: row.inference_geo.as_ref().map(Identifier::as_str),
     })
+}
+
+/// The estimated cost of the response `row` and the part of it that went on cache writes, or why
+/// it has none.
+fn price(row: &UsageRow, prices: &PriceTable) -> Result<(Cost, Cost), Unpriced> {
+    let billed = billed(row)?;
+    Ok((
+        prices.estimate(&billed)?,
+        prices.estimate_cache_writes(&billed)?,
+    ))
 }

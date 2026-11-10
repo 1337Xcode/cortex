@@ -104,22 +104,21 @@ impl Queries<'_> {
         })
     }
 
-    /// How many times `session_id` compacted its conversation, by the compactions its agent's
-    /// hooks reported before each began.
+    /// When `session_id` compacted its conversation, in UTC milliseconds, earliest first: the
+    /// times its agent's hooks reported each compaction before it began.
     ///
     /// # Errors
     ///
-    /// SQLite errors and a count that is not one.
-    pub fn compactions_of_session(self, session_id: &Identifier) -> Result<u64, StoreError> {
-        let compactions: i64 = self
+    /// SQLite errors.
+    pub fn compactions_of_session(self, session_id: &Identifier) -> Result<Vec<i64>, StoreError> {
+        let mut statement = self
             .connection()
             .prepare_cached(schema::COMPACTIONS_OF_SESSION)
-            .and_then(|mut statement| statement.query_row([session_id.as_str()], |row| row.get(0)))
-            .map_err(sqlite("counting compactions"))?;
-        u64::try_from(compactions).map_err(|_| StoreError::Corrupt {
-            column: "events.kind",
-            row: compactions,
-        })
+            .map_err(sqlite("reading compactions"))?;
+        statement
+            .query_map([session_id.as_str()], |row| row.get(0))
+            .and_then(Iterator::collect)
+            .map_err(sqlite("reading compactions"))
     }
 
     /// How many of the repository's tasks were held out from Cortex and how many were not, among

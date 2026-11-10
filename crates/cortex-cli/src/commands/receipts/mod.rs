@@ -4,8 +4,10 @@
 //! rest. The store is only read. The user's price table is written from the one
 //! this build ships the first time it is needed, and read from then on, so that edits to it win.
 
+mod cache;
 mod text;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -274,14 +276,16 @@ fn activity(queries: Queries<'_>, session: SessionRow) -> anyhow::Result<Activit
     let subagents = queries.sessions_started_by(id).with_context(reading)?;
     let mut usage = queries.usage_of_session(id).with_context(reading)?;
     let mut outside_tool_calls = queries.tool_calls_outside_tasks(id).with_context(reading)?;
-    let mut compactions = queries.compactions_of_session(id).with_context(reading)?;
+    let mut compactions_at_ms = BTreeMap::new();
+    let compacted = queries.compactions_of_session(id).with_context(reading)?;
+    compactions_at_ms.insert(id.clone(), compacted);
     for subagent in &subagents {
         let subagent = &subagent.record.session_id;
         usage.extend(queries.usage_of_session(subagent).with_context(reading)?);
         let calls = queries.tool_calls_outside_tasks(subagent);
         outside_tool_calls = outside_tool_calls.saturating_add(calls.with_context(reading)?);
         let compacted = queries.compactions_of_session(subagent);
-        compactions = compactions.saturating_add(compacted.with_context(reading)?);
+        compactions_at_ms.insert(subagent.clone(), compacted.with_context(reading)?);
     }
     let task_ids: Vec<Ulid> = tasks.iter().map(|task| task.record.task_id).collect();
     let tool_calls = queries
@@ -300,7 +304,7 @@ fn activity(queries: Queries<'_>, session: SessionRow) -> anyhow::Result<Activit
         usage,
         tool_calls,
         outside_tool_calls,
-        compactions,
+        compactions_at_ms,
         injections,
     })
 }
