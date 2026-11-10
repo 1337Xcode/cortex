@@ -326,6 +326,7 @@ impl<'a> Host<'a> {
                     injections = swept.injections,
                     episodes = swept.episodes,
                     positions = swept.positions,
+                    handoff_failures = swept.handoff_failures,
                     pages = swept.pages,
                     ended = ?ended,
                     "upkeep ran"

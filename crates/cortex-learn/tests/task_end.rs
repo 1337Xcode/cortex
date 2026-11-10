@@ -673,6 +673,9 @@ fn a_task_that_did_not_succeed_leaves_a_handoff() -> TestResult {
             kind: CommandKind::Test,
             exit_code: 1,
             counts: None,
+            // The failed line, `cargo test`, kept as the runner's own words.
+            command: Some("cargo test".to_owned()),
+            test_path: None,
         }),
         created_at_ms: 1_500,
     };

@@ -47,7 +47,9 @@ pub use calibration::{
     HELD_OUT_EVERY, KEPT_MODELS, L2_PENALTY, MIN_LABELLED, MODEL_INPUTS, ModelInUse,
     REFIT_AFTER_MS, Refusal, auc, calibrate, calibrated, model_in_use, model_inputs,
 };
-pub use commands::{CONFIGURED, Check, Commands, PatternError, Ran, Restore, Told};
+pub use commands::{
+    CONFIGURED, Check, Cleaned, Commands, PatternError, REDACTED, Ran, Restore, Told, clean_command,
+};
 pub use decay::{FADED_OUT_BELOW, decayed, has_faded_out};
 pub use episode::episode_of;
 pub use fact_word::{confirm_fact, edit_fact, retire_fact};

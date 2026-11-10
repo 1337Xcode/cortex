@@ -51,6 +51,35 @@ pub struct FailedCheck<'h> {
     pub exit_code: i32,
     /// The counts its output printed, when they were read.
     pub counts: Option<CheckCounts>,
+    /// Its command, cleaned of what must not be kept, when it could be.
+    pub command: Option<&'h str>,
+    /// The test file it ran, when its command could not be kept.
+    pub test_path: Option<&'h str>,
+}
+
+/// The sentence naming `failed`: its command when it was kept (`Its last test run failed: `pytest
+/// tests/test_ops.py` (1 failed, 7 passed).`), else its runner and test file, else its runner and
+/// exit code; the counts in parentheses when they were read. A command or path that is not plain
+/// text, or holds a backquote, which would end the quote, is left out.
+fn failure_sentence(failed: &FailedCheck<'_>) -> String {
+    let check = check_name(failed.kind);
+    let counts = failed
+        .counts
+        .map_or(String::new(), |counts| format!(" ({counts})"));
+    let is_quotable = |text: &&str| is_plain(text) && !text.contains('`');
+    if let Some(command) = failed.command.filter(is_quotable) {
+        return format!(" Its last {check} failed: `{command}`{counts}.");
+    }
+    if let Some(path) = failed.test_path.filter(is_quotable) {
+        return format!(
+            " Its last {check} ({}) on {path} failed with exit code {}{counts}.",
+            failed.runner, failed.exit_code
+        );
+    }
+    format!(
+        " Its last {check} ({}) failed with exit code {}{counts}.",
+        failed.runner, failed.exit_code
+    )
 }
 
 /// The handoff's text, within [`MAX_HANDOFF_TOKENS`]: fewer files named until it fits. None when
@@ -119,16 +148,7 @@ fn text_of(
         text.push_str(&format!(" {had} {}.", listed(read, reads_named)));
     }
     if let Some(failed) = handed.failure {
-        text.push_str(&format!(
-            " Its last {} ({}) failed with exit code {}",
-            check_name(failed.kind),
-            failed.runner,
-            failed.exit_code
-        ));
-        match failed.counts {
-            Some(counts) => text.push_str(&format!(": {counts}.")),
-            None => text.push('.'),
-        }
+        text.push_str(&failure_sentence(&failed));
     }
     // Warnings are about edits: with no edited file named, there is nothing they are about.
     match handed.open_warnings {
@@ -201,6 +221,8 @@ mod tests {
                 kind: "test",
                 exit_code: 1,
                 counts: None,
+                command: None,
+                test_path: None,
             }),
             open_warnings: 2,
         };
@@ -225,6 +247,8 @@ mod tests {
                 runner: "pytest",
                 kind: "test",
                 exit_code: 1,
+                command: None,
+                test_path: None,
             }),
             ..handed
         };
@@ -233,9 +257,53 @@ mod tests {
             Some(
                 "[cortex] Handoff: a Claude Code session stopped 4 minutes ago before finishing \
                  its task. It edited calc/ops.py and main.py. It had read tests/test_ops.py. Its \
-                 last test run (pytest) failed with exit code 1: 1 failed, 7 passed. 2 warnings \
+                 last test run (pytest) failed with exit code 1 (1 failed, 7 passed). 2 warnings \
                  about its edits were still open."
             )
+        );
+    }
+
+    /// A failed check is named by its cleaned command when it was kept, quoted, with its counts;
+    /// by its runner and test file when only that was; and a command holding a backquote, which
+    /// would end the quote, is not quoted at all.
+    #[test]
+    fn a_failed_check_is_named_by_what_was_kept() {
+        let failed = FailedCheck {
+            runner: "pytest",
+            kind: "test",
+            exit_code: 1,
+            counts: Some(CheckCounts {
+                failed: 1,
+                passed: Some(7),
+                errors: 0,
+                skipped: 0,
+            }),
+            command: Some("pytest tests/test_ops.py"),
+            test_path: None,
+        };
+        assert_eq!(
+            failure_sentence(&failed),
+            " Its last test run failed: `pytest tests/test_ops.py` (1 failed, 7 passed)."
+        );
+        let path_only = FailedCheck {
+            command: None,
+            test_path: Some("tests/test_ops.py"),
+            ..failed
+        };
+        assert_eq!(
+            failure_sentence(&path_only),
+            " Its last test run (pytest) on tests/test_ops.py failed with exit code 1 \
+             (1 failed, 7 passed)."
+        );
+        let quoted = FailedCheck {
+            command: Some("pytest -k `x`"),
+            test_path: None,
+            counts: None,
+            ..failed
+        };
+        assert_eq!(
+            failure_sentence(&quoted),
+            " Its last test run (pytest) failed with exit code 1."
         );
     }
 
@@ -328,6 +396,8 @@ mod tests {
                     errors: 12,
                     skipped: 0,
                 }),
+                command: None,
+                test_path: None,
             }),
             open_warnings: 3,
         };

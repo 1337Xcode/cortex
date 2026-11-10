@@ -207,6 +207,7 @@ fn a_task_s_state_holds_what_it_did_in_order() -> TestResult {
                 exit_code: Some(0),
                 restores: Vec::new(),
                 counts: None,
+                cleaned: None,
             },
             Step::Run {
                 at_ms: 1_500,
@@ -214,6 +215,7 @@ fn a_task_s_state_holds_what_it_did_in_order() -> TestResult {
                 exit_code: Some(0),
                 restores: vec![Restore::Paths(vec![RepoPath::new("calc/ops.py")?])],
                 counts: None,
+                cleaned: None,
             },
             Step::Run {
                 at_ms: 1_550,
@@ -221,6 +223,7 @@ fn a_task_s_state_holds_what_it_did_in_order() -> TestResult {
                 exit_code: Some(1),
                 restores: Vec::new(),
                 counts: None,
+                cleaned: None,
             },
             Step::Read {
                 at_ms: 1_600,
@@ -295,6 +298,7 @@ fn a_task_open_across_a_restart_is_rebuilt_from_its_rows() -> TestResult {
                     exit_code: Some(0),
                     restores: Vec::new(),
                     counts: None,
+                    cleaned: None,
                 },
                 Step::Edit {
                     at_ms: 1_400,

@@ -18,9 +18,12 @@
 //! needs (`cd x && pytest` and `pytest | tail` print pytest's output, though neither line's exit
 //! is pytest's alone).
 //!
-//! Nothing here keeps the command's text: the caller keeps what was told, never the line.
+//! Nothing here keeps the command's text: the caller keeps what was told, never the line, but for
+//! the cleaned form of a failed check's command a handoff keeps ([`clean_command`]): the runner's
+//! own words, their secrets redacted.
 
 mod argv;
+mod clean;
 mod folder;
 mod restore;
 mod runners;
@@ -32,6 +35,7 @@ use cortex_core::{CommandKind, RepoPath, ShellCommand};
 use regex::Regex;
 use thiserror::Error;
 
+pub use self::clean::{Cleaned, REDACTED, clean_command};
 use self::folder::Folder;
 use self::shell::{AndOr, Command, Join, List, Pipeline, Word};
 

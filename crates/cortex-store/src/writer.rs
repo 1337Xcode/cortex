@@ -610,6 +610,16 @@ impl WriteTx<'_> {
         self.atomically(|connection| retention::delete_injections(connection, (before_ms, limit)))
     }
 
+    /// Clears the last failure, with the command it may hold, of every handoff left before
+    /// `before_ms`: how many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn forget_handoff_failures_before(&mut self, before_ms: i64) -> Result<u64, StoreError> {
+        self.atomically(|connection| handoffs::forget_failures(connection, before_ms))
+    }
+
     /// Deletes at most `limit` episodes past the `keep` most worth keeping, those whose outcome is
     /// unknown first, then the oldest: how many.
     ///

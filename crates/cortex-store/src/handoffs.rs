@@ -25,6 +25,11 @@ pub struct LastFailure {
     pub exit_code: i32,
     /// The counts its output printed, when they were read.
     pub counts: Option<CheckCounts>,
+    /// Its command, cleaned of what must not be kept (`cortex_learn::clean_command`), when it
+    /// could be: kept until the handoff closes or a day passes.
+    pub command: Option<String>,
+    /// The test file it ran, when its command could not be kept.
+    pub test_path: Option<String>,
 }
 
 /// How the task a handoff was left by ended.
@@ -100,6 +105,12 @@ struct Failure {
     /// The counts its output printed; none in a row written before they were kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     counts: Option<CheckCounts>,
+    /// The cleaned command; none when it could not be kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    /// The test file, when the command could not be kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    test_path: Option<String>,
 }
 
 /// Leaves `record` as its session's open handoff, in place of any it left before.
@@ -125,6 +136,8 @@ pub(crate) fn leave(
                 kind: failure.kind.name().to_owned(),
                 exit_code: failure.exit_code,
                 counts: failure.counts,
+                command: failure.command.clone(),
+                test_path: failure.test_path.clone(),
             })
         })
         .transpose()
@@ -243,6 +256,8 @@ fn row_of(
                 kind,
                 exit_code: failure.exit_code,
                 counts: failure.counts,
+                command: failure.command,
+                test_path: failure.test_path,
             })
         })
         .transpose()?;
@@ -259,4 +274,13 @@ fn row_of(
             created_at_ms,
         },
     })
+}
+
+/// Clears the last failure of every handoff left before `before_ms`: how many.
+pub(crate) fn forget_failures(connection: &Connection, before_ms: i64) -> Result<u64, StoreError> {
+    connection
+        .prepare_cached(schema::HANDOFFS_FORGET_FAILURES_BEFORE)
+        .and_then(|mut statement| statement.execute([before_ms]))
+        .map(|cleared| u64::try_from(cleared).unwrap_or(u64::MAX))
+        .map_err(sqlite("forgetting old handoffs' failures"))
 }

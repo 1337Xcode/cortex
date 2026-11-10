@@ -78,7 +78,12 @@ All notable changes to this project are documented in this file. The format is b
   passed), the next session's first prompt is told once what was left: the agent and when, the
   files it edited and read, its last check when it failed, with the counts the check's output
   printed (`1 failed, 7 passed`, read in memory; the output is never stored), and how many
-  warnings about its edits were still open.
+  warnings about its edits were still open. The failed check is named by its command, cleaned:
+  only a known runner's own words are kept, by the program's name alone, without environment
+  assignments, and every argument a credential detector matches (token shapes, JWTs, `Bearer`
+  values, values of credential options and keys, URL credentials, long high-entropy strings) is
+  replaced by `<redacted>`; when the command cannot be cleaned with certainty only the runner and
+  its test file are kept. The command is cleared when the handoff is taken, and after a day.
 - `hints.runtime_grounding = true` gives a failed check the repository lines its stack ran
   through, beside its output: when a test or build command the agent ran fails (Claude Code's
   failure hook, Codex's shell result with a non-zero exit), its output is read in memory by the

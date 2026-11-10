@@ -856,11 +856,15 @@ pub(crate) const NOTICES_WAITING: &str = "SELECT notice_id, about, text, created
 pub(crate) const HANDOFF_LEAVE: &str = "INSERT INTO handoffs (from_session, task_id, \
      working_set, open_warnings, last_failure, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
 /// Closes the open handoffs session ?1 left, as replaced by the one it leaves now.
-pub(crate) const HANDOFFS_REPLACE_OF_SESSION: &str =
-    "UPDATE handoffs SET consumed_by = ?1 WHERE from_session = ?1 AND consumed_by IS NULL";
-/// Closes handoff ?1, as picked up by session ?2, unless it was already closed.
-pub(crate) const HANDOFF_CLOSE: &str =
-    "UPDATE handoffs SET consumed_by = ?2 WHERE handoff_id = ?1 AND consumed_by IS NULL";
+pub(crate) const HANDOFFS_REPLACE_OF_SESSION: &str = "UPDATE handoffs SET consumed_by = ?1, \
+     last_failure = NULL WHERE from_session = ?1 AND consumed_by IS NULL";
+/// Closes handoff ?1, as picked up by session ?2, unless it was already closed: its last failure,
+/// which may hold a command, goes with it.
+pub(crate) const HANDOFF_CLOSE: &str = "UPDATE handoffs SET consumed_by = ?2, last_failure = NULL \
+     WHERE handoff_id = ?1 AND consumed_by IS NULL";
+/// Clears the last failure of every handoff left before ?1: a command is kept a day at most.
+pub(crate) const HANDOFFS_FORGET_FAILURES_BEFORE: &str = "UPDATE handoffs SET last_failure = NULL \
+     WHERE last_failure IS NOT NULL AND created_at < ?1";
 /// The open handoffs left at ?1 or later, the newest first.
 pub(crate) const HANDOFFS_OPEN_SINCE: &str = "SELECT handoff_id, from_session, task_id, \
      working_set, open_warnings, last_failure, created_at FROM handoffs \

@@ -518,6 +518,8 @@ fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
                     errors: 0,
                     skipped: 2,
                 }),
+                command: None,
+                test_path: None,
             }),
             created_at_ms: at_ms,
         })
@@ -534,7 +536,6 @@ fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
     );
     let second = HandoffRecord {
         end: HandoffEnd::Answered,
-        last_failure: None,
         read: Vec::new(),
         ..left(&s1, SECOND, 2_500)?
     };
@@ -577,6 +578,48 @@ fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
         .into_iter()
         .map(|row| row.record)
         .collect();
-    assert_eq!(open, [other]);
+    assert_eq!(open, std::slice::from_ref(&other));
+    // A handoff closed or replaced keeps no failure, with the command it may hold: the first
+    // (replaced) and the second (closed) hold none, the open one still does.
+    let failures = |scratch: &Scratch| -> TestResult<Vec<(String, bool)>> {
+        let connection = rusqlite::Connection::open(scratch.folder.join("cortex.db"))?;
+        let mut statement = connection.prepare(
+            "SELECT task_id, last_failure IS NOT NULL FROM handoffs ORDER BY handoff_id",
+        )?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    };
+    assert_eq!(
+        failures(&scratch)?,
+        [
+            (FIRST.to_owned(), false),
+            (SECOND.to_owned(), false),
+            (FIRST.to_owned(), true),
+        ]
+    );
+    // A day on, upkeep forgets an open handoff's failure too: the one left at 2,000, forgotten
+    // before 2,100, is still open, without its failure; before 1,900, nothing is forgotten.
+    let mut transaction = writer.transaction()?;
+    let forgotten = (
+        transaction.forget_handoff_failures_before(1_900)?,
+        transaction.forget_handoff_failures_before(2_100)?,
+    );
+    transaction.commit()?;
+    assert_eq!(forgotten, (0, 1));
+    let open: Vec<HandoffRecord> = writer
+        .queries()
+        .open_handoffs_since(0)?
+        .into_iter()
+        .map(|row| row.record)
+        .collect();
+    assert_eq!(
+        open,
+        [HandoffRecord {
+            last_failure: None,
+            ..other
+        }]
+    );
     Ok(())
 }

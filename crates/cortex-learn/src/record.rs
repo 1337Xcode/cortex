@@ -20,7 +20,7 @@ use cortex_core::{
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
 
 use crate::activity::Activity;
-use crate::commands::{Check, Commands, Ran, Restore, Told};
+use crate::commands::{Check, Cleaned, Commands, Ran, Restore, Told, clean_command};
 use crate::task_state::{TaskEnd, TaskState, TaskStates, Unkept};
 use crate::watcher_edits::WatcherEdits;
 
@@ -218,6 +218,7 @@ impl Recorder {
             hits: target.map(|target| target.hits.clone()).unwrap_or_default(),
             restores: restores_of(told.ran),
             counts: event.tool_result.and_then(|result| result.counts),
+            cleaned: cleaned_by(event, &self.commands),
             before: match &path {
                 Some(path) => self.before_of(transaction, (event, kind), path)?,
                 None => None,
@@ -540,6 +541,17 @@ fn ranges_of(event: &Event) -> Vec<Option<LineRange>> {
         return vec![None];
     }
     ranges.iter().copied().map(Some).collect()
+}
+
+/// What a handoff may keep of `event`'s shell command, cleaned by `commands`: only for a command
+/// that exited otherwise than 0, so only a failed check's.
+fn cleaned_by(event: &Event, commands: &Commands) -> Option<Cleaned> {
+    let exit_code = event.tool_result.and_then(|result| result.exit_code)?;
+    if exit_code == 0 {
+        return None;
+    }
+    let command = event.tool_target.as_ref()?.command.as_ref()?;
+    clean_command(commands, command, &event.repo_root, &event.cwd)
 }
 
 /// What `event`'s shell command tells of what it ran, as `commands` tells it: what its exit of 0

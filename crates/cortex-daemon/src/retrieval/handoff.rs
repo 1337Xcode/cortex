@@ -136,6 +136,8 @@ fn text_of(
         kind: failure.kind.name(),
         exit_code: failure.exit_code,
         counts: failure.counts,
+        command: failure.command.as_deref(),
+        test_path: failure.test_path.as_deref(),
     });
     Ok(handoff_text(&Handed {
         agent,

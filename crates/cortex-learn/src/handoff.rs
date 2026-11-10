@@ -10,6 +10,7 @@
 use cortex_core::{Identifier, TaskOutcome};
 use cortex_store::{HandoffEnd, HandoffRecord, LastFailure, NodeId, StoreError, WriteTx};
 
+use crate::commands::Cleaned;
 use crate::task_state::{Step, TaskEnd, TaskState};
 
 /// Leaves the handoff `state`, a task of session `session` that ended at `ended_at_ms` judged
@@ -95,24 +96,33 @@ fn files_of(state: &TaskState) -> (Vec<NodeId>, Vec<NodeId>) {
     (edited, read)
 }
 
-/// The last check command `state` ran, when it failed: its runner, kind and exit code, and the
-/// counts its output printed when the daemon read them. None when the last check passed, ran in
+/// The last check command `state` ran, when it failed: its runner, kind and exit code, the
+/// counts its output printed when the daemon read them, and its cleaned command or test file. None when the last check passed, ran in
 /// the background, or there was none.
 fn last_failure(state: &TaskState) -> Option<LastFailure> {
-    let (check, exit_code, counts) = state.steps().iter().rev().find_map(|step| match step {
-        Step::Run {
-            check: Some(check),
-            exit_code,
-            counts,
-            ..
-        } => Some((check, *exit_code, *counts)),
-        _ => None,
-    })?;
+    let (check, exit_code, counts, cleaned) =
+        state.steps().iter().rev().find_map(|step| match step {
+            Step::Run {
+                check: Some(check),
+                exit_code,
+                counts,
+                cleaned,
+                ..
+            } => Some((check, *exit_code, *counts, cleaned)),
+            _ => None,
+        })?;
     let exit_code = exit_code.filter(|code| *code != 0)?;
+    let (command, test_path) = match cleaned {
+        Some(Cleaned::Command(command)) => (Some(command.clone()), None),
+        Some(Cleaned::TestPath { path, .. }) => (None, Some(path.clone())),
+        Some(Cleaned::Runner(_)) | None => (None, None),
+    };
     Some(LastFailure {
         runner: check.runner.clone(),
         kind: check.kind,
         exit_code,
         counts,
+        command,
+        test_path,
     })
 }

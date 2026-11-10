@@ -169,7 +169,7 @@ fn skip_options<'a>(words: &'a [Word], with_value: &[&str]) -> &'a [Word] {
 }
 
 /// Whether the program `name` is a Python interpreter: `python`, `python3`, `python3.12`, `py`.
-fn is_python(name: &str) -> bool {
+pub(super) fn is_python(name: &str) -> bool {
     name == "py"
         || name
             .strip_prefix("python")

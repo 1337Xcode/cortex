@@ -20,7 +20,7 @@ use cortex_core::{
 };
 use cortex_store::{EventRecord, NodeId, Queries, StoreError};
 
-use crate::commands::Restore;
+use crate::commands::{Cleaned, Restore};
 
 /// Most event rows of one task its state is built from. A task with more keeps the steps of its
 /// first rows and is marked partial, so that one endless task cannot take the daemon's memory.
@@ -109,6 +109,9 @@ pub enum Step {
         /// The counts its output printed, when it failed a check and the daemon read them while it
         /// ran; none in a state rebuilt from rows.
         counts: Option<CheckCounts>,
+        /// What a handoff may keep of its command, when it failed a check, as seen while the daemon
+        /// ran; none in a state rebuilt from rows.
+        cleaned: Option<Cleaned>,
     },
 }
 
@@ -132,6 +135,8 @@ pub(crate) struct Unkept {
     pub(crate) restores: Vec<Restore>,
     /// The counts a failed check's output printed.
     pub(crate) counts: Option<CheckCounts>,
+    /// What a handoff may keep of a failed check's command.
+    pub(crate) cleaned: Option<Cleaned>,
     /// What an edited file held before the edit, when known.
     pub(crate) before: Option<FileContent>,
 }
@@ -229,7 +234,14 @@ impl TaskState {
             return;
         }
         self.rows += 1;
-        let Some(mut step) = step_of(row, unkept.hits, unkept.restores, unkept.counts) else {
+        let Unkept {
+            hits,
+            restores,
+            counts,
+            cleaned,
+            before,
+        } = unkept;
+        let Some(mut step) = step_of(row, (hits, restores), (counts, cleaned)) else {
             return;
         };
         match &mut step {
@@ -237,7 +249,7 @@ impl TaskState {
             Step::Edit { file, .. } => {
                 let path = &file.path;
                 if !self.before.contains_key(path) && !self.unknown_before.contains(path) {
-                    match unkept.before {
+                    match before {
                         Some(before) => {
                             self.before.insert(path.clone(), before);
                         }
@@ -401,9 +413,8 @@ fn keep_within(hits: &mut Vec<FileNode>, held_bytes: usize) -> usize {
 /// row of another kind, and for a read, edit or search that failed.
 fn step_of(
     row: &EventRecord,
-    hits: Vec<RepoPath>,
-    restores: Vec<Restore>,
-    counts: Option<CheckCounts>,
+    (hits, restores): (Vec<RepoPath>, Vec<Restore>),
+    (counts, cleaned): (Option<CheckCounts>, Option<Cleaned>),
 ) -> Option<Step> {
     let at_ms = row.ts_ms;
     let has_failed = row.meta.is_success == Some(false);
@@ -447,6 +458,7 @@ fn step_of(
                 Vec::new()
             },
             counts,
+            cleaned,
         },
         _ => return None,
     })

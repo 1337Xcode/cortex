@@ -75,8 +75,8 @@ const SETTLE: Duration = Duration::from_secs(5);
 /// day 1, every even one of each session's 100 (5,000); and 2,000 free pages, the most upkeep
 /// gives back each time through its jobs, of the more than 2,400 the events alone leave (100,000
 /// rows of over 100 bytes each, in 4 KiB pages).
-const SWEPT: [u64; 9] = [
-    100_000, 40_000, 10_000, 500, 100_000, 0, 10_000, 5_000, 2_000,
+const SWEPT: [u64; 10] = [
+    100_000, 40_000, 10_000, 500, 100_000, 0, 10_000, 5_000, 0, 2_000,
 ];
 
 /// How many ways each file has to the files tasks read after it.
@@ -323,7 +323,7 @@ fn copy_store(from: &Path, to: &Path) -> BenchResult {
 }
 
 /// What `swept` removed, in the order of [`SWEPT`].
-fn counts(swept: Swept) -> [u64; 9] {
+fn counts(swept: Swept) -> [u64; 10] {
     let Swept {
         links,
         transitions,
@@ -333,6 +333,7 @@ fn counts(swept: Swept) -> [u64; 9] {
         injections,
         episodes,
         positions,
+        handoff_failures,
         pages,
     } = swept;
     [
@@ -344,6 +345,7 @@ fn counts(swept: Swept) -> [u64; 9] {
         injections,
         episodes,
         positions,
+        handoff_failures,
         pages,
     ]
 }
@@ -394,7 +396,7 @@ fn run_once(template: &Path, copy: &Path, repo: &RepoId) -> BenchResult<Run> {
         log_limit_bytes: LOG_LIMIT_BYTES,
     };
     let mut upkeep = Upkeep::default();
-    let mut removed = [0; 9];
+    let mut removed = [0; 10];
     let mut runs = Run {
         took: Duration::ZERO,
         longest_batch: Duration::ZERO,

@@ -44,6 +44,10 @@ const BATCH_ROWS: u64 = 500;
 /// How long events, injections and facts retired are kept: 90 days, in milliseconds.
 const KEPT_FOR_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
 
+/// How long a handoff keeps its failed check's command: a day, after which a session that has not
+/// picked the handoff up is told of the check without it.
+const HANDOFF_FAILURE_KEPT_MS: i64 = 24 * 60 * 60 * 1_000;
+
 /// The most episodes kept.
 const MAX_EPISODES: u64 = 50_000;
 
@@ -89,6 +93,8 @@ pub struct Swept {
     pub episodes: u64,
     /// Positions removed.
     pub positions: u64,
+    /// Handoffs whose failed check, with its command, was forgotten a day on.
+    pub handoff_failures: u64,
     /// Free pages given back to the file system.
     pub pages: u64,
 }
@@ -199,6 +205,8 @@ enum Step {
     Episodes,
     /// Positions that no longer hold.
     Positions,
+    /// Handoffs' failed checks a day old.
+    Handoffs,
     /// The planner's statistics.
     Optimize,
     /// The free pages, this many given back so far.
@@ -233,6 +241,7 @@ impl Step {
             Self::Injections => "injections",
             Self::Episodes => "episodes",
             Self::Positions => "positions",
+            Self::Handoffs => "handoffs",
             Self::Optimize => "optimize",
             Self::Vacuum(_) => "vacuum",
         }
@@ -250,6 +259,7 @@ impl Step {
             "injections" => Self::Injections,
             "episodes" => Self::Episodes,
             "positions" => Self::Positions,
+            "handoffs" => Self::Handoffs,
             "optimize" => Self::Optimize,
             "vacuum" => Self::Vacuum(0),
             _ => return None,
@@ -267,7 +277,8 @@ impl Step {
             Self::Events => Self::Injections,
             Self::Injections => Self::Episodes,
             Self::Episodes => Self::Positions,
-            Self::Positions => Self::Optimize,
+            Self::Positions => Self::Handoffs,
+            Self::Handoffs => Self::Optimize,
             Self::Optimize => Self::Vacuum(0),
             Self::Vacuum(_) => return None,
         })
@@ -474,6 +485,12 @@ impl Upkeep {
                     .delete_positions_before(now_ms.saturating_sub(settings.longest_hold_ms))?;
                 self.step.following()
             }
+            Step::Handoffs => {
+                swept.handoff_failures += transaction.forget_handoff_failures_before(
+                    now_ms.saturating_sub(HANDOFF_FAILURE_KEPT_MS),
+                )?;
+                self.step.following()
+            }
             Step::Optimize => {
                 transaction.optimize()?;
                 self.step.following()
@@ -515,6 +532,36 @@ mod tests {
 
     /// A day in milliseconds.
     const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
+
+    /// Every step, walked from the first, is kept under a name that reads back as the step's
+    /// start, each name once, the handoffs' step between the positions and the planner's.
+    #[test]
+    fn every_step_reads_back_by_its_name() {
+        let mut names = Vec::new();
+        let mut step = Some(Step::FIRST);
+        while let Some(at) = step {
+            assert_eq!(Step::from_name(at.name()).map(Step::name), Some(at.name()));
+            names.push(at.name());
+            step = at.following();
+        }
+        assert_eq!(
+            names,
+            [
+                "links",
+                "transitions",
+                "interest",
+                "facts",
+                "calibration",
+                "events",
+                "injections",
+                "episodes",
+                "positions",
+                "handoffs",
+                "optimize",
+                "vacuum"
+            ]
+        );
+    }
 
     /// Links fade by half for each task; interest too; positions hold a minute at the longest;
     /// the log may hold 32 MiB.

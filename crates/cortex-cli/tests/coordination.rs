@@ -523,8 +523,9 @@ fn open_handoffs(root: &Path) -> TestResult<usize> {
 /// Claude Code reads the tests, runs a test that fails, edits `calc/ops.py`, and its turn stops on
 /// a usage limit before it finishes. A session that was already at work asks to continue and is
 /// told nothing. Codex's first prompt asks the same and is told, once, what was left: the agent,
-/// when, the file edited, the file read, and the failed run with the counts its output printed
-/// (unittest ran 1 test, `FAILED (failures=1)`: 1 failed; no warning was open). Codex's next prompt is told nothing, and
+/// when, the file edited, the file read, and the failed run by its cleaned command, with the
+/// counts its output printed (unittest ran 1 test, `FAILED (failures=1)`: 1 failed; no warning
+/// was open). Codex's next prompt is told nothing, and
 /// neither is a later session asking the same, the handoff having been taken.
 #[test]
 fn a_task_left_unfinished_is_handed_to_the_next_session() -> TestResult {
@@ -575,7 +576,7 @@ fn a_task_left_unfinished_is_handed_to_the_next_session() -> TestResult {
         Some(
             "[cortex] Handoff: a Claude Code session stopped less than a minute ago before \
              finishing its task. It edited calc/ops.py. It had read tests/test_ops.py. Its last \
-             test run (unittest) failed with exit code 1: 1 failed.\n"
+             test run failed: `python -m unittest tests.test_fail -q` (1 failed).\n"
                 .to_owned()
         )
     );

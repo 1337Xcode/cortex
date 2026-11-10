@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a937965ff5886f38d77d21f908bdda57fce25a62b6c77ba33be73c0c8c8d4ee8 # shrinks to base = ("python -m pytest", ["-x", "tests"], "pytest -x tests"), form = 0, name = "A", value = "0A0aa0aA00Aa"
