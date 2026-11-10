@@ -131,7 +131,7 @@ fn an_edit_is_warned_of_its_callers_and_its_tests() -> TestResult {
     assert_eq!(
         given(&add, home)?.as_deref(),
         Some(
-            "[cortex] add's signature changed; 2 call sites still use the old one: main.py:3, \
+            "[cortex] add's signature changed; check 2 call sites: main.py:3, \
              tests/test_ops.py:8\n\
              [cortex] Tests for calc/ops.py: tests/test_ops.py\n"
         )
@@ -163,8 +163,7 @@ fn an_edit_is_warned_of_its_callers_and_its_tests() -> TestResult {
         [
             None,
             Some(
-                "[cortex] mul's signature changed; 1 call site still uses the old one: \
-                 tests/test_ops.py:11\n"
+                "[cortex] mul's signature changed; check 1 call site: tests/test_ops.py:11\n"
                     .to_owned()
             )
         ]

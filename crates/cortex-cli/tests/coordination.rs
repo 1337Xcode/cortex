@@ -47,8 +47,8 @@ const TOLD_CLAUDE: &str = "[cortex] Coordination: Codex changed the signature of
 
 /// What Codex's edit of `add` is warned of besides coordination: the calls to it in `main.py`
 /// and the tests, both tied through their imports, and the file's tests.
-const ADD_WARNINGS: &str = "[cortex] add's signature changed; 2 call sites still use the old \
-                            one: main.py:3, tests/test_ops.py:8\n\
+const ADD_WARNINGS: &str = "[cortex] add's signature changed; check 2 call sites: main.py:3, \
+                            tests/test_ops.py:8\n\
                             [cortex] Tests for calc/ops.py: tests/test_ops.py\n";
 
 /// Runs `cortex hook` as `agent` on `payload`, and returns what it gave the agent.

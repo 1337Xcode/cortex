@@ -37,8 +37,8 @@ use cortex_retrieve::{
 /// `src/services/orders/service.py` (30), its tests `tests/services/orders/test_service.py` (37)
 /// and its partner `src/services/orders/models.py` (29). An edit's warnings are three lines, each
 /// `[cortex] ` and a line break around its text: the drift of `create_order`, called from seven
-/// files of which five are listed with their line (`path:NNN`) and then `, ...` (278 bytes); the
-/// tests (89); the partner, in 8 of 11 changes (133): 500 bytes, 125 tokens. Strict mode's reason
+/// files of which five are listed with their line (`path:NNN`) and then `, ...` (262 bytes); the
+/// tests (89); the partner, in 8 of 11 changes (133): 484 bytes, 121 tokens. Strict mode's reason
 /// is its 116-byte opening, then the files of thirty call-site warnings, the latest first, as many
 /// as fit in 250 tokens: 24 (24 paths and 23 separators of 2) and ` and 6 more.` and a line break:
 /// 967 bytes, 242 tokens. The recap is its header (54), the edited line naming twelve of thirteen
@@ -48,7 +48,7 @@ use cortex_retrieve::{
 const RECORD: &[(&str, usize, usize)] = &[
     (PRIMER, 444, 111),
     (WORK_ORDER, 2_572, 643),
-    (WARNINGS, 500, 125),
+    (WARNINGS, 484, 121),
     (STOP_REASON, 967, 242),
     (RECAP, 1_434, 359),
     (READ_HINT, 161, 41),

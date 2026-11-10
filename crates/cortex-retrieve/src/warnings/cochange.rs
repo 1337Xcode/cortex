@@ -7,13 +7,6 @@ use cortex_learn::MAX_LINK_WEIGHT;
 use super::{EditFacts, NamedFile, TaskSoFar, Warning};
 use cortex_core::is_plain;
 
-/// The least weight, after fading, a co-access link needs before an edit that leaves its other
-/// file untouched is worth a warning: about ten successful tasks that edited both files.
-pub const MIN_LINK_WEIGHT: f64 = 1.0;
-
-/// The fewest tasks that must have drawn a co-access link before it is worth a warning.
-pub const MIN_LINK_TASKS: u32 = 3;
-
 /// A warning for each partner of the edited file strong enough in history or past work and not
 /// touched in the task, each partner once a task, whichever file it was named for: by history when
 /// both say so. A partner by history must hold from both sides: a file that changes with everything
@@ -59,8 +52,8 @@ pub(super) fn warnings(
         .linked
         .iter()
         .filter(|linked| {
-            linked.weight >= MIN_LINK_WEIGHT
-                && linked.tasks >= MIN_LINK_TASKS
+            linked.weight >= config.cochange_min_link_weight
+                && linked.tasks >= config.cochange_min_link_tasks
                 && is_open(&linked.file)
         })
         .map(|linked| {

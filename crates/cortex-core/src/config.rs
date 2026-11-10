@@ -482,6 +482,8 @@ mod tests {
                     max_per_edit: 3,
                     cochange_min_confidence: 0.5,
                     cochange_min_count: 3,
+                    cochange_min_link_weight: 1.0,
+                    cochange_min_link_tasks: 3,
                 },
                 coordination: CoordinationConfig {
                     read_minutes: 10,
@@ -523,7 +525,7 @@ mod tests {
              [retrieval.type_weights]\nstructural = 0\ncochange = 1\ncoaccess = 0.25\nabout = 0.5\n\
              containment = 0.05\n\
              [warnings]\nmax_per_edit = 0\ncochange_min_confidence = 1\n\
-             cochange_min_count = 7\n\
+             cochange_min_count = 7\ncochange_min_link_weight = 2.5\ncochange_min_link_tasks = 6\n\
              [coordination]\nread_minutes = 1\nedit_minutes = 2\nedit_after_task_minutes = 3\n\
              claim_minutes = 1440\nlive_minutes = 4\nsame_file_minutes = 6\n\
              handoff_idle_minutes = 45\n\
@@ -570,6 +572,8 @@ mod tests {
                     max_per_edit: 0,
                     cochange_min_confidence: 1.0,
                     cochange_min_count: 7,
+                    cochange_min_link_weight: 2.5,
+                    cochange_min_link_tasks: 6,
                 },
                 coordination: CoordinationConfig {
                     read_minutes: 1,
@@ -958,6 +962,16 @@ mod tests {
             (
                 "warnings.cochange_min_count = 4294967296",
                 "warnings.cochange_min_count",
+                "a whole number above 0",
+            ),
+            (
+                "warnings.cochange_min_link_weight = -1",
+                "warnings.cochange_min_link_weight",
+                "a number of 0 or more",
+            ),
+            (
+                "warnings.cochange_min_link_tasks = 0",
+                "warnings.cochange_min_link_tasks",
                 "a whole number above 0",
             ),
             ("strict_mode = \"yes\"", "strict_mode", "true or false"),

@@ -18,6 +18,15 @@ pub const DEFAULT_COCHANGE_MIN_CONFIDENCE: f64 = 0.5;
 /// The default for `warnings.cochange_min_count`: how many commits must have changed both files.
 pub const DEFAULT_COCHANGE_MIN_COUNT: u32 = 3;
 
+/// The default for `warnings.cochange_min_link_weight`: the least weight, after fading, a link of
+/// agents' past work needs before an edit that leaves its other file untouched is worth a warning:
+/// about ten successful tasks that edited both files.
+pub const DEFAULT_COCHANGE_MIN_LINK_WEIGHT: f64 = 1.0;
+
+/// The default for `warnings.cochange_min_link_tasks`: the fewest tasks that must have drawn such a
+/// link.
+pub const DEFAULT_COCHANGE_MIN_LINK_TASKS: u32 = 3;
+
 /// The settings the warning rules read.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WarningsConfig {
@@ -30,6 +39,12 @@ pub struct WarningsConfig {
     /// `warnings.cochange_min_count`: the fewest commits changing both files, above 0. Default
     /// [`DEFAULT_COCHANGE_MIN_COUNT`].
     pub cochange_min_count: u32,
+    /// `warnings.cochange_min_link_weight`: the least faded weight of a link of agents' past work
+    /// worth a warning, 0 or more. Default [`DEFAULT_COCHANGE_MIN_LINK_WEIGHT`].
+    pub cochange_min_link_weight: f64,
+    /// `warnings.cochange_min_link_tasks`: the fewest tasks that drew that link, above 0. Default
+    /// [`DEFAULT_COCHANGE_MIN_LINK_TASKS`].
+    pub cochange_min_link_tasks: u32,
 }
 
 impl Default for WarningsConfig {
@@ -39,6 +54,8 @@ impl Default for WarningsConfig {
             max_per_edit: DEFAULT_MAX_PER_EDIT,
             cochange_min_confidence: DEFAULT_COCHANGE_MIN_CONFIDENCE,
             cochange_min_count: DEFAULT_COCHANGE_MIN_COUNT,
+            cochange_min_link_weight: DEFAULT_COCHANGE_MIN_LINK_WEIGHT,
+            cochange_min_link_tasks: DEFAULT_COCHANGE_MIN_LINK_TASKS,
         }
     }
 }
@@ -66,6 +83,16 @@ impl WarningsConfig {
                 .map(|confidence| self.cochange_min_confidence = confidence),
             "warnings.cochange_min_count" => count(1, u32::MAX, "a whole number above 0")
                 .map(|fewest| self.cochange_min_count = fewest),
+            "warnings.cochange_min_link_weight" => match value {
+                toml::Value::Float(number) => Some(*number),
+                toml::Value::Integer(number) => i32::try_from(*number).ok().map(f64::from),
+                _ => None,
+            }
+            .filter(|weight| weight.is_finite() && *weight >= 0.0)
+            .ok_or("a number of 0 or more")
+            .map(|least| self.cochange_min_link_weight = least),
+            "warnings.cochange_min_link_tasks" => count(1, u32::MAX, "a whole number above 0")
+                .map(|fewest| self.cochange_min_link_tasks = fewest),
             _ => return None,
         };
         Some(set)

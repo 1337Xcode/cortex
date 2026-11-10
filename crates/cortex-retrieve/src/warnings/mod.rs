@@ -18,7 +18,6 @@ use cortex_core::{RepoPath, ScaleMode, Ulid, WarningKind, WarningsConfig, estima
 use cortex_store::{NodeId, WarningRecord};
 
 pub use call_site::MAX_LISTED_CALL_SITES;
-pub use cochange::{MIN_LINK_TASKS, MIN_LINK_WEIGHT};
 pub use facts::{EditQuery, MAX_CHECKED_CALLER_FILES, edit_facts, task_so_far};
 pub use test_companion::MAX_LISTED_TESTS;
 
@@ -163,13 +162,9 @@ struct Rule {
     find: fn(&EditFacts, &TaskSoFar, &WarningsConfig) -> Vec<Warning>,
 }
 
-/// Every rule.
+/// Every rule, in the order their warnings come within an edit's cap: by how often agents followed
+/// them up on the evaluation suite (call sites most, then the tests, then co-change partners).
 const RULES: &[Rule] = &[
-    Rule {
-        kind: WarningKind::CoChange,
-        is_on_when_tiny: false,
-        find: cochange::warnings,
-    },
     Rule {
         kind: WarningKind::CallSite,
         is_on_when_tiny: true,
@@ -179,6 +174,11 @@ const RULES: &[Rule] = &[
         kind: WarningKind::Test,
         is_on_when_tiny: false,
         find: test_companion::warnings,
+    },
+    Rule {
+        kind: WarningKind::CoChange,
+        is_on_when_tiny: false,
+        find: cochange::warnings,
     },
 ];
 
@@ -213,8 +213,9 @@ impl Warned {
 }
 
 /// The warnings the edit `facts` describes gets in the task `task`: every rule's that runs in
-/// `mode`, the strongest first, at most `config.max_per_edit` of them and no more than fit in
-/// [`MAX_WARNING_TOKENS`], each a line of the text.
+/// `mode`, by kind in the order of [`RULES`] and the strongest first within a kind, at most
+/// `config.max_per_edit` of them and no more than fit in [`MAX_WARNING_TOKENS`], each a line of the
+/// text. Strengths of different kinds are on scales of their own, so a kind's place comes first.
 #[must_use]
 pub fn warnings_after_edit(
     facts: &EditFacts,
@@ -227,13 +228,12 @@ pub fn warnings_after_edit(
         .filter(|rule| rule.is_on_when_tiny || mode != ScaleMode::Tiny)
         .flat_map(|rule| (rule.find)(facts, task, config))
         .collect();
-    // INVARIANT: deterministic (a total order: strength, then kind, what the warning is about and
+    // INVARIANT: deterministic (a total order: kind, then strength, what the warning is about and
     // the files it names)
     found.sort_by(|left, right| {
-        right
-            .strength
-            .total_cmp(&left.strength)
-            .then_with(|| kind_rank(left.kind).cmp(&kind_rank(right.kind)))
+        kind_rank(left.kind)
+            .cmp(&kind_rank(right.kind))
+            .then_with(|| right.strength.total_cmp(&left.strength))
             .then_with(|| left.source.cmp(&right.source))
             .then_with(|| left.targets.cmp(&right.targets))
     });
@@ -246,7 +246,7 @@ pub fn warnings_after_edit(
     Warned { given: found, text }
 }
 
-/// A kind's place among the rules, for ordering warnings of equal strength.
+/// A kind's place among the rules, which orders warnings before their strength does.
 fn kind_rank(kind: WarningKind) -> usize {
     RULES
         .iter()

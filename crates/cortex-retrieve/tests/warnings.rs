@@ -130,8 +130,8 @@ fn an_edit_gets_its_strongest_three_warnings() -> TestResult {
     assert_eq!(
         lines(&warned),
         [
-            "[cortex] createOrder's signature changed; 2 call sites still use the old one: \
-             api/admin.ts:12, api/orders/route.ts:31",
+            "[cortex] createOrder's signature changed; check 2 call sites: api/admin.ts:12, \
+             api/orders/route.ts:31",
             "[cortex] Tests for src/orders/service.ts: src/orders/service.test.ts",
             "[cortex] Edits to src/orders/service.ts usually come with prisma/schema.prisma \
              (8 of 11 changes); not touched yet.",
@@ -189,6 +189,15 @@ fn past_work_names_a_companion() -> TestResult {
             tasks,
         }];
         assert_eq!(warn(&weak), Warned::default(), "{weight} {tasks}");
+        // The thresholds are settings: at a weight of 0.9 and 2 tasks, both links are named.
+        let lower = WarningsConfig {
+            cochange_min_link_weight: 0.9,
+            cochange_min_link_tasks: 2,
+            ..WarningsConfig::default()
+        };
+        let named_now =
+            warnings_after_edit(&weak, &TaskSoFar::default(), &lower, ScaleMode::Medium);
+        assert_eq!(named_now.given.len(), 1, "{weight} {tasks}");
     }
     facts.partners = vec![Partner {
         file: file(&named, 4)?,
@@ -403,6 +412,7 @@ fn the_settings_move_the_caps_and_thresholds() -> TestResult {
         max_per_edit: 10,
         cochange_min_confidence: 0.4,
         cochange_min_count: 2,
+        ..WarningsConfig::default()
     });
     let partners: Vec<f64> = loose
         .given
@@ -444,7 +454,7 @@ fn unchecked_calls_make_the_count_at_least() -> TestResult {
     assert_eq!(
         lines(&warned),
         [
-            "[cortex] createOrder's signature changed; at least 2 call sites still use the old one: \
+            "[cortex] createOrder's signature changed; check at least 2 call sites: \
              api/admin.ts:12, api/orders/route.ts:31"
         ]
     );
@@ -477,7 +487,7 @@ fn many_call_sites_are_counted_and_five_listed() -> TestResult {
     assert_eq!(
         lines(&warned),
         [
-            "[cortex] createOrder's signature changed; 7 call sites still use the old one: \
+            "[cortex] createOrder's signature changed; check 7 call sites: \
           prisma/schema.prisma:10, src/util.ts:20, docs/orders.md:30, src/billing.ts:40, \
           api/admin.ts:50, ..."
         ]
@@ -602,8 +612,8 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
     /// Whatever the partners, links, call sites and tests: at most `max_per_edit` warnings, within
-    /// the token cap, the strongest first, each a single line of the text, and the same output for
-    /// the same input.
+    /// the token cap, by kind (call sites, tests, co-change) and the strongest first within a kind,
+    /// each a single line of the text, and the same output for the same input.
     #[test]
     fn the_caps_hold_for_any_edit(
         partners in prop::collection::vec((1usize..9, 0u32..40, 0.0f64..=1.0), 0..12),
@@ -651,9 +661,18 @@ proptest! {
         prop_assert!(estimate_tokens(&text) <= MAX_WARNING_TOKENS);
         prop_assert_eq!(text.lines().count(), warned.given.len());
         prop_assert_eq!(warned.text.is_none(), warned.given.is_empty());
+        let rank = |kind: WarningKind| match kind {
+            WarningKind::CallSite => 0,
+            WarningKind::Test => 1,
+            _ => 2,
+        };
         for pair in warned.given.windows(2) {
-            if let [stronger, weaker] = pair {
-                prop_assert!(stronger.strength >= weaker.strength);
+            if let [first, second] = pair {
+                let (first_rank, second_rank) = (rank(first.kind), rank(second.kind));
+                prop_assert!(
+                    first_rank < second_rank
+                        || (first_rank == second_rank && first.strength >= second.strength)
+                );
             }
         }
         for warning in &warned.given {
@@ -664,4 +683,60 @@ proptest! {
         let again = warnings_after_edit(&facts, &TaskSoFar::default(), &config, mode);
         prop_assert_eq!(&again, &warned);
     }
+}
+
+/// Kinds come before strength. With the call site at `api/admin.ts` told already, the call site
+/// left is tied at 0.8; `src/util.ts`, a history partner at 0.9 once two commits count, is
+/// stronger on its own scale. Kept to one warning, the edit is told of the call site.
+#[test]
+fn a_call_site_is_told_before_a_stronger_partner() -> TestResult {
+    let (_repo, named) = files()?;
+    let task = TaskSoFar {
+        warned: [(
+            WarningKind::CallSite,
+            symbol_node(&named)?,
+            file(&named, 5)?.node,
+        )]
+        .into(),
+        ..TaskSoFar::default()
+    };
+    let warned = warnings_after_edit(
+        &facts(&named)?,
+        &task,
+        &WarningsConfig {
+            max_per_edit: 1,
+            cochange_min_count: 2,
+            ..WarningsConfig::default()
+        },
+        ScaleMode::Medium,
+    );
+    let kinds: Vec<(WarningKind, f64)> = warned
+        .given
+        .iter()
+        .map(|warning| (warning.kind, warning.strength))
+        .collect();
+    assert_eq!(kinds, [(WarningKind::CallSite, 0.8)]);
+    Ok(())
+}
+
+/// A call site in a file the task read is in the agent's context already: with `api/admin.ts`
+/// read, only `api/orders/route.ts` is listed.
+#[test]
+fn a_call_site_the_task_read_is_not_listed() -> TestResult {
+    let (_repo, named) = files()?;
+    let task = TaskSoFar {
+        touched: [file(&named, 5)?.node].into(),
+        ..TaskSoFar::default()
+    };
+    let warned = warnings_after_edit(
+        &facts(&named)?,
+        &task,
+        &WarningsConfig::default(),
+        ScaleMode::Tiny,
+    );
+    assert_eq!(
+        lines(&warned),
+        ["[cortex] createOrder's signature changed; check 1 call site: api/orders/route.ts:31"]
+    );
+    Ok(())
 }

@@ -1,5 +1,6 @@
 //! Call-site drift: a symbol whose signature the edit changed, still called from files the task has
-//! not edited, by references tied firmly enough to be stated.
+//! neither read nor edited (those are in the agent's context already), by references tied firmly
+//! enough to be stated.
 
 use std::fmt::Write as _;
 
@@ -13,8 +14,8 @@ use cortex_core::is_plain;
 /// The most call sites one warning lists; the count says how many there are.
 pub const MAX_LISTED_CALL_SITES: usize = 5;
 
-/// A warning for each changed symbol still called from a file the task has not edited, naming
-/// those files not named for that symbol before in the task.
+/// A warning for each changed symbol still called from a file the task has neither read nor
+/// edited, naming those files not named for that symbol before in the task.
 pub(super) fn warnings(facts: &EditFacts, task: &TaskSoFar, _: &WarningsConfig) -> Vec<Warning> {
     facts
         .drifts
@@ -35,7 +36,7 @@ fn warning(facts: &EditFacts, task: &TaskSoFar, drift: &Drift) -> Option<Warning
             let file = site.file.node;
             site.confidence >= STRUCTURAL_FLOOR
                 && file != facts.edited.node
-                && !task.edited.contains(&file)
+                && !task.touched.contains(&file)
                 && task.is_new(WarningKind::CallSite, drift.symbol, file)
                 && is_plain(site.file.path.as_str())
         })
@@ -54,15 +55,14 @@ fn warning(facts: &EditFacts, task: &TaskSoFar, drift: &Drift) -> Option<Warning
         }
     }
     let at_least = if drift.unchecked > 0 { "at least " } else { "" };
-    let (count, uses) = if sites.len() == 1 {
-        (format!("{at_least}1 call site"), "uses")
+    let count = if sites.len() == 1 {
+        format!("{at_least}1 call site")
     } else {
-        (format!("{at_least}{} call sites", sites.len()), "use")
+        format!("{at_least}{} call sites", sites.len())
     };
-    let mut line = format!(
-        "{}'s signature changed; {count} still {uses} the old one: ",
-        drift.name
-    );
+    // The index knows a file refers to the symbol, not whether the call still fits: the line says
+    // what to look at, never that the call is broken.
+    let mut line = format!("{}'s signature changed; check {count}: ", drift.name);
     for (at, site) in listed.iter().enumerate() {
         let comma = if at == 0 { "" } else { ", " };
         let _ = write!(line, "{comma}{}:{}", site.file.path, site.line);
