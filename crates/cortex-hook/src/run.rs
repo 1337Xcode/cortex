@@ -273,8 +273,8 @@ fn probed(answer: Result<Answer, ClientError>, asks_for_text: bool) -> Result<()
 /// The request the hook makes of the daemon with `event` at the hook `entry`: the text Cortex
 /// gives the agent there, where it gives some (the primer at a session's start, the work order at
 /// a prompt, the warnings after an edit, the hint before a read, strict mode's reason at a stop,
-/// and at a prompt or after any tool the coordination notices waiting), saying when the hook stops
-/// reading the answer; the event alone otherwise.
+/// the keep-list before a compaction, and at a prompt or after any tool the coordination notices
+/// waiting), saying when the hook stops reading the answer; the event alone otherwise.
 fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
     // The event's time is the clock at the hook's start, from which its deadline counts.
     let wait = entry.hard_timeout.saturating_sub(EXIT_MARGIN);
@@ -300,6 +300,10 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
             }
         }
         HookKind::Stop if entry.gives_context => RequestBody::StopReason {
+            event,
+            answer_by_ms,
+        },
+        HookKind::Compact if entry.gives_context => RequestBody::KeepList {
             event,
             answer_by_ms,
         },
@@ -527,7 +531,8 @@ mod tests {
     /// the event's 1,000): an edit's warnings and the notices waiting, and after a read the notices
     /// waiting; `PostToolUseFailure` asks for its map only for a failed command that printed
     /// something, and is otherwise the event alone. Before a read, `PreToolUse` asks for its hint,
-    /// and at a stop, `Stop` for strict mode's reason.
+    /// at a stop, `Stop` for strict mode's reason, and before a compaction, `PreCompact` for its
+    /// keep-list; Codex's `PreCompact`, whose output Codex does not read, sends the event alone.
     #[test]
     fn a_tool_s_result_asks_for_its_text() -> Result<(), Box<dyn std::error::Error>> {
         use cortex_core::ToolKind;
@@ -593,6 +598,34 @@ mod tests {
             RequestBody::StopReason {
                 event: Box::new(stop),
                 answer_by_ms: Some(1_285),
+            }
+        );
+        // Before a compaction, by 285 ms after the event's 1,000: its keep-list.
+        let compaction = Event {
+            hook: HookKind::Compact,
+            tool: None,
+            tool_target: None,
+            tool_result: None,
+            compact_trigger: Some(cortex_core::CompactTrigger::Manual),
+            ..tool_result(ToolKind::Read, true)?
+        };
+        assert_eq!(
+            request_of(entry("PreCompact")?, compaction.clone()),
+            RequestBody::KeepList {
+                event: Box::new(compaction.clone()),
+                answer_by_ms: Some(1_285),
+            }
+        );
+        let (_, codex) = hook_of(&args(&["--agent", "codex", "--event", "PreCompact"]))
+            .map_err(|failure| failure.to_string())?;
+        let compaction = Event {
+            agent: cortex_core::Agent::Codex,
+            ..compaction
+        };
+        assert_eq!(
+            request_of(codex, compaction.clone()),
+            RequestBody::Event {
+                event: Box::new(compaction)
             }
         );
         Ok(())

@@ -248,7 +248,8 @@ fn serve(listener: &Listener, script: Script) -> Result<Vec<Request>, String> {
                     _,
                     RequestBody::PostEdit { .. }
                     | RequestBody::ReadHint { .. }
-                    | RequestBody::StopReason { .. },
+                    | RequestBody::StopReason { .. }
+                    | RequestBody::KeepList { .. },
                 ) => ResponseBody::Reply {
                     text: None,
                     to_user: None,
@@ -297,8 +298,8 @@ fn indexing() -> StatusReport {
 }
 
 /// The kind of each request, for comparing: `hello`, `event`, `retrieve`, `primer`, `post_edit`,
-/// `read_hint`, `stop_reason`, `where`, `why`, `note`, `facts`, `claims`, `consolidate`,
-/// `status` or `shutdown`.
+/// `read_hint`, `stop_reason`, `keep_list`, `where`, `why`, `note`, `facts`, `claims`,
+/// `consolidate`, `status` or `shutdown`.
 pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
     requests
         .iter()
@@ -310,6 +311,7 @@ pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
             RequestBody::PostEdit { .. } => "post_edit",
             RequestBody::ReadHint { .. } => "read_hint",
             RequestBody::StopReason { .. } => "stop_reason",
+            RequestBody::KeepList { .. } => "keep_list",
             RequestBody::Where { .. } => "where",
             RequestBody::Why { .. } => "why",
             RequestBody::Note(_) => "note",

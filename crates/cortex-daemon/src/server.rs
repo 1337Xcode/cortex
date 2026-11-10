@@ -103,6 +103,8 @@ enum Asked {
     ReadHint,
     /// The reason strict mode gives a stop to go on.
     StopReason,
+    /// The keep-list a compaction's summary is given, before it runs.
+    KeepList,
 }
 
 /// A request as read, with when the first byte of its frame arrived.
@@ -387,6 +389,16 @@ impl Server {
                 (given, undo) = (answered.given, answered.undo);
                 (answered.body, answered.hook)
             }
+            RequestBody::KeepList {
+                event,
+                answer_by_ms,
+            } => {
+                reads_until_ms = answer_by_ms;
+                let asked = (Asked::KeepList, answer_by_ms);
+                let answered = self.answer_with_text(*event, asked).await;
+                (given, undo) = (answered.given, answered.undo);
+                (answered.body, answered.hook)
+            }
             RequestBody::Where { query, limit } => (self.locate(query, limit).await, None),
             RequestBody::Why { target } => (self.explain(target).await, None),
             RequestBody::Note(note) => (self.ask_writer(Ask::Note(note)).await, None),
@@ -408,12 +420,7 @@ impl Server {
                     self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
                     true
                 } else {
-                    // A compaction is heard of as it is reported, before the writer records it:
-                    // the start that follows may come first.
-                    if hook == HookKind::Compact {
-                        self.claims.recapped.compacted(&event.session_id);
-                    }
-                    hook == HookKind::PreTool || self.inbox.push_event(*event)
+                    hook == HookKind::PreTool || self.record_event(*event)
                 };
                 // A daemon that is stopping records nothing more, and says so rather than take an
                 // event it would lose.
@@ -495,6 +502,7 @@ impl Server {
             Asked::Warnings => HookKind::PostTool,
             Asked::ReadHint => HookKind::PreTool,
             Asked::StopReason => HookKind::Stop,
+            Asked::KeepList => HookKind::Compact,
         };
         if hook != expected {
             return Answered::refused(
@@ -508,7 +516,7 @@ impl Server {
         let is_stop = hook == HookKind::Stop;
         if is_probe {
             self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
-        } else if hook != HookKind::PreTool && !is_stop && !self.inbox.push_event(event.clone()) {
+        } else if hook != HookKind::PreTool && !is_stop && !self.record_event(event.clone()) {
             return Answered::refused(
                 error("the daemon is stopping and records no more events"),
                 hook,
@@ -537,10 +545,13 @@ impl Server {
                     }
                     Asked::ReadHint => service.read_hint(&event, &claims.read_next),
                     Asked::StopReason => service.stop_reason(&event, &claims.stopped),
+                    Asked::KeepList => service.keep_list(&event),
                 };
-                // Notices go with every text but a stop's, which would hold the stop back. A
-                // probe's session is no agent's: it is given no notice and leaves none.
-                let has_notices = !matches!(asked, Asked::StopReason) && !is_probe;
+                // Notices go with every text but a stop's, which would hold the stop back, and a
+                // compaction's, which goes to its summary and not to the agent. A probe's session
+                // is no agent's: it is given no notice and leaves none.
+                let has_notices =
+                    !matches!(asked, Asked::StopReason | Asked::KeepList) && !is_probe;
                 if has_notices {
                     service.with_notices(&event, answer, &claims.noticed)
                 } else {
@@ -608,6 +619,16 @@ impl Server {
                 troubles,
             },
         }
+    }
+
+    /// Hands `event`, an agent's and not a probe's, to the writer, and returns whether it was taken:
+    /// not when the daemon is stopping. A compaction is heard of here, as it is reported, before
+    /// the writer records it: the start that follows may come first.
+    fn record_event(&self, event: Event) -> bool {
+        if event.hook == HookKind::Compact {
+            self.claims.recapped.compacted(&event.session_id);
+        }
+        self.inbox.push_event(event)
     }
 
     /// Undoes `undo`: gives back its claim and records the stop it held back.

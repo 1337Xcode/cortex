@@ -89,6 +89,17 @@ pub enum RequestBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answer_by_ms: Option<i64>,
     },
+    /// Record a compaction about to run, and answer with the keep-list its summary is given, if
+    /// any: what the session's open task did, for the summary to keep (protocol 11.0 added it).
+    KeepList {
+        /// The compaction's event.
+        event: Box<Event>,
+        /// When the hook stops reading the answer, in UTC milliseconds by the wall clock, as for
+        /// `Retrieve`: a keep-list that cannot reach the hook by then is not sent, and recorded as
+        /// not delivered. None from a client that waits as long as it takes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_by_ms: Option<i64>,
+    },
     /// Answer a question with what the engine finds for it without the gate, as `cortex where`
     /// asks: the files, their code and their reasons, and what the gate would have said.
     Where {

@@ -1,8 +1,8 @@
 //! The daemon's answers that are text: the work order a prompt gets, the primer a session's start
 //! gets, or the recap when its context was compacted, the warnings an edit gets, the hint a read
-//! gets, strict mode's reason at a stop, the map a failed check gets beside its output, the
-//! coordination notices a prompt, an edit or a read gets ahead of the rest, and what the engine
-//! finds for a question asked of it directly.
+//! gets, strict mode's reason at a stop, the keep-list a compaction's summary gets before it runs,
+//! the map a failed check gets beside its output, the coordination notices a prompt, an edit or a
+//! read gets ahead of the rest, and what the engine finds for a question asked of it directly.
 //! Each is worked out with a reader of the store and the graph as it stands, never waiting for the
 //! writer; what a prompt's retrieval gave or weighed, the primer or recap given and the warnings
 //! given are returned for the writer to record after the event they answer.
@@ -18,6 +18,7 @@ mod coordination;
 mod failure;
 mod handoff;
 mod hints;
+mod keep;
 mod narrow;
 mod recap;
 mod stop;
@@ -78,6 +79,8 @@ pub(crate) struct Service {
     coordination: CoordinationConfig,
     /// What a failed check is read with.
     failures: FailureSettings,
+    /// `compaction.keep_list`: whether a compaction's summary is given the open task's keep-list.
+    is_keep_list: bool,
     /// Readers not in use.
     readers: Mutex<Vec<Reader>>,
 }
@@ -159,6 +162,8 @@ pub(crate) struct Settings {
     pub(crate) coordination: CoordinationConfig,
     /// What a failed check is read with.
     pub(crate) failures: FailureSettings,
+    /// `compaction.keep_list`: whether a compaction's summary is given the open task's keep-list.
+    pub(crate) is_keep_list: bool,
 }
 
 impl Service {
@@ -174,6 +179,7 @@ impl Service {
             edits: settings.edits,
             coordination: settings.coordination,
             failures: settings.failures,
+            is_keep_list: settings.is_keep_list,
             readers: Mutex::new(Vec::new()),
         }
     }

@@ -290,6 +290,7 @@ fn index_and_serve(
             is_runtime_grounding: config.hints.is_runtime_grounding,
             is_narrow_tests: config.hints.is_narrow_tests,
         },
+        is_keep_list: config.compaction.is_keep_list,
     })));
     // The graph is built once the first index is done, before which a retrieval would find
     // nothing; told to stop when dropped.

@@ -7,6 +7,7 @@
 //! out of range is an error that names the file and the key: Cortex never guesses what a broken
 //! setting meant.
 
+mod compaction;
 mod coordination;
 mod hints;
 mod retrieval;
@@ -14,6 +15,7 @@ mod warnings;
 
 use thiserror::Error;
 
+pub use self::compaction::CompactionConfig;
 pub use self::coordination::CoordinationConfig;
 pub use self::hints::HintsConfig;
 pub use self::retrieval::{MAX_WORK_ORDER_TOKENS, RetrievalConfig, TypeWeights};
@@ -150,6 +152,8 @@ pub struct Config {
     pub is_strict_mode: bool,
     /// The `hints.*` keys: which texts about a check's run are on.
     pub hints: HintsConfig,
+    /// The `compaction.*` keys: what a compaction is given.
+    pub compaction: CompactionConfig,
 }
 
 impl Default for Config {
@@ -178,6 +182,7 @@ impl Default for Config {
             coordination: CoordinationConfig::default(),
             is_strict_mode: false,
             hints: HintsConfig::default(),
+            compaction: CompactionConfig::default(),
         }
     }
 }
@@ -378,6 +383,7 @@ impl Config {
                 .or_else(|| self.warnings.apply(key, value))
                 .or_else(|| self.coordination.apply(key, value))
                 .or_else(|| self.hints.apply(key, value))
+                .or_else(|| self.compaction.apply(key, value))
             {
                 Some(set) => set.map_err(refuse)?,
                 None => return Ok(false),
@@ -507,6 +513,7 @@ mod tests {
                 },
                 is_strict_mode: false,
                 hints: HintsConfig::default(),
+                compaction: CompactionConfig::default(),
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -519,7 +526,7 @@ mod tests {
         let user = layer(
             "user",
             "mode = \"small\"\nstrict_mode = true\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n\
-             [hints]\nruntime_grounding = true\nnarrow_tests = true\n",
+             [hints]\nruntime_grounding = true\nnarrow_tests = true\n[compaction]\nkeep_list = true\n",
         );
         let repository = layer(
             "repository",
@@ -602,6 +609,7 @@ mod tests {
                     is_runtime_grounding: true,
                     is_narrow_tests: true,
                 },
+                compaction: CompactionConfig { is_keep_list: true },
             }
         );
         Ok(())
@@ -996,6 +1004,11 @@ mod tests {
             (
                 "hints.narrow_tests = \"yes\"",
                 "hints.narrow_tests",
+                "true or false",
+            ),
+            (
+                "compaction.keep_list = 1",
+                "compaction.keep_list",
                 "true or false",
             ),
         ]);

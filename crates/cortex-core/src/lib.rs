@@ -56,7 +56,7 @@ pub use activity::{
 pub use agent_shell::{AGENT_SHELL_MARKERS, is_agent_shell};
 pub use child::{Captured, capture, time_fed};
 pub use config::{
-    Config, ConfigError, ConfigLayer, CoordinationConfig, DEFAULT_HOLDOUT_SHARE,
+    CompactionConfig, Config, ConfigError, ConfigLayer, CoordinationConfig, DEFAULT_HOLDOUT_SHARE,
     DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES, DEFAULT_MMAP_BYTES,
     DEFAULT_PARSE_TIMEOUT_MS, HintsConfig, LoadedConfig, MAX_MMAP_BYTES, MAX_WORK_ORDER_TOKENS,
     ModeSetting, RetrievalConfig, TypeWeights, WarningsConfig, keys_set as config_keys_set,

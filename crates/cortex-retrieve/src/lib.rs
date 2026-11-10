@@ -26,6 +26,7 @@ mod grounded_failure;
 mod hints;
 mod innermost;
 mod items;
+mod keep_list;
 mod lexical;
 mod narrow_tests;
 mod next_file;
@@ -50,6 +51,7 @@ mod two_stage;
 mod uncommitted;
 mod warnings;
 mod why;
+mod working_set;
 
 pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
@@ -69,6 +71,7 @@ pub use grounded_failure::{
 };
 pub use hints::{HINTED_ABOVE_LINES, HintQuery, MAX_HINT_TOKENS, MAX_HINTED_PARTS, read_hint};
 pub use items::{LOOKED_AT_PER_LISTED, Listed, Listing, listed};
+pub use keep_list::{MAX_KEEP_LIST_CHARS, keep_list};
 pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};
 pub use narrow_tests::{
     MAX_NARROW_HINT_TOKENS, MAX_NARROW_TESTS, NarrowTest, narrow_hint, narrow_tests,
@@ -84,7 +87,7 @@ pub use prompt::{Mention, PromptTerms};
 pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, Network, SPREAD_THRESHOLD, spread};
 pub use read::{GraphSettings, read_graph};
 pub use reasons::{ItemEvidence, MAX_REASON_CHARS, Reason, reason_of};
-pub use recap::{MAX_RECAP_TOKENS, MAX_RECAPPED_FILES, MAX_RECAPPED_WARNINGS, recap};
+pub use recap::{MAX_RECAP_TOKENS, recap};
 pub use render::{
     Basis, Item, ItemSpan, Limits, MAX_WORK_ORDER_CHARS, Rendered, WorkOrder, render,
 };
@@ -107,3 +110,4 @@ pub use warnings::{
 pub use why::{
     MAX_LINKS_PER_KIND, MAX_WHY_SESSIONS, MAX_WHY_TOKENS, MAX_WHY_WARNINGS, Why, WhyAt, why,
 };
+pub use working_set::{MAX_RECAPPED_FILES, MAX_RECAPPED_WARNINGS};

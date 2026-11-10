@@ -442,6 +442,34 @@ fn a_stop_s_request_reads_back_as_written() -> TestResult {
     Ok(())
 }
 
+/// A compaction's request for its keep-list, as the hook writes it before Claude Code compacts:
+/// its type, its event and until when the hook reads the answer, read back as written.
+#[test]
+fn a_compaction_s_request_reads_back_as_written() -> TestResult {
+    let compaction = Request {
+        request_id: 4,
+        body: RequestBody::KeepList {
+            event: Box::new(event_of(HookKind::Compact)?),
+            answer_by_ms: Some(1_700_000_000_070),
+        },
+    };
+    let frame = encode(&compaction)?;
+    let json = std::str::from_utf8(frame.get(LENGTH_PREFIX_BYTES..).ok_or("a body")?)?;
+    assert!(
+        json.starts_with(r#"{"request_id":4,"body":{"type":"keep_list","event":{"#),
+        "{json}"
+    );
+    assert!(
+        json.ends_with(r#","answer_by_ms":1700000000070}}"#),
+        "{json}"
+    );
+    assert_eq!(
+        decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?,
+        compaction
+    );
+    Ok(())
+}
+
 /// A read's request for its hint, as the hook writes it before a read: its type, its event and until
 /// when the hook reads the answer, read back as written.
 #[test]

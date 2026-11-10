@@ -1,5 +1,6 @@
 //! The Claude Code adapter: the hooks Cortex registers with Claude Code, its payloads turned into
-//! normalized events, and the text Cortex gives it written as its hook JSON.
+//! normalized events, and the text Cortex gives it written as its hook JSON, or before a compaction
+//! as plain text, which Claude Code takes as instructions for the compaction's summary.
 
 mod tool;
 
@@ -42,7 +43,8 @@ pub(crate) struct Claude;
 /// (`PostToolUse`, `PostToolUseFailure`): a shell that fails reports its exit code only there. A
 /// turn that ends on an API error (a usage limit, a billing error, an overloaded service) sends
 /// `StopFailure` instead of `Stop`, whose output Claude Code ignores: a stop whose end reason is
-/// the error, so that its task ends unfinished.
+/// the error, so that its task ends unfinished. `PreCompact` gives the compaction's summary its
+/// keep-list.
 const HOOKS: &[HookEntry] = &[
     HookEntry {
         event_name: "SessionStart",
@@ -84,7 +86,7 @@ const HOOKS: &[HookEntry] = &[
         matcher: None,
         hook: HookKind::Compact,
         hard_timeout: OTHER_HARD_TIMEOUT,
-        gives_context: false,
+        gives_context: true,
     },
     HookEntry {
         event_name: "Stop",
@@ -160,6 +162,9 @@ impl Adapter for Claude {
         if holds_reminder_tag(text) {
             return None;
         }
+        if entry.hook == HookKind::Compact {
+            return compaction_output(text);
+        }
         Some(output::context(entry.event_name, text))
     }
 
@@ -169,6 +174,11 @@ impl Adapter for Claude {
         text: Option<&str>,
         message: &str,
     ) -> Option<String> {
+        // INVARIANT: fail-open. A compaction's stdout is read as instructions for its summary, and
+        // hook JSON there could block the compaction: it is never given a message for the user.
+        if entry.hook == HookKind::Compact {
+            return None;
+        }
         // The same limits as the context's: each string is capped alike, and a context that
         // would not be taken leaves the whole answer to `context_output`.
         if message.encode_utf16().count() > MAX_CONTEXT_CHARS {
@@ -181,15 +191,27 @@ impl Adapter for Claude {
     }
 }
 
+/// `text` as a `PreCompact` hook prints it: plain, since Claude Code takes a `PreCompact` hook's
+/// stdout as instructions for the compaction's summary, without its last line break, which the
+/// hook writes after what it prints. None for a text that starts with `{`: Claude Code would read
+/// it as hook JSON.
+fn compaction_output(text: &str) -> Option<String> {
+    if text.trim_start().starts_with('{') {
+        return None;
+    }
+    Some(text.strip_suffix('\n').unwrap_or(text).to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// Cortex gives Claude Code text at a session's start, at a prompt, before a read (its hint),
-    /// after a tool succeeded (an edit's warnings), after a tool failed (a failed check's map)
-    /// and at a stop (strict mode's reason), and at no other hook.
+    /// after a tool succeeded (an edit's warnings), after a tool failed (a failed check's map),
+    /// before a compaction (its keep-list) and at a stop (strict mode's reason), and at no other
+    /// hook.
     #[test]
-    fn a_session_start_a_prompt_a_read_a_tool_s_result_and_a_stop_give_context() {
+    fn a_session_start_a_prompt_a_read_a_tool_s_result_a_compaction_and_a_stop_give_context() {
         let giving: Vec<&str> = HOOKS
             .iter()
             .filter(|entry| entry.gives_context)
@@ -203,9 +225,52 @@ mod tests {
                 "PreToolUse",
                 "PostToolUse",
                 "PostToolUseFailure",
+                "PreCompact",
                 "Stop"
             ]
         );
+    }
+
+    /// Before a compaction the text is printed as it is, less its last line break, not in hook
+    /// JSON; under the same caps as any other hook's text; and not at all when it would read as
+    /// hook JSON. Every other hook still gets its JSON.
+    #[test]
+    fn a_compaction_gets_its_text_plain() -> Result<(), String> {
+        let at = |name: &str| {
+            HOOKS
+                .iter()
+                .find(|entry| entry.event_name == name)
+                .ok_or(format!("no {name} hook"))
+        };
+        let compaction = at("PreCompact")?;
+        let text =
+            "[cortex] Keep in the summary that the task in progress:\n- edited calc/ops.py\n";
+        assert_eq!(
+            Claude.context_output(compaction, text).as_deref(),
+            Some("[cortex] Keep in the summary that the task in progress:\n- edited calc/ops.py")
+        );
+        assert_eq!(Claude.context_output(compaction, &"x".repeat(10_001)), None);
+        assert_eq!(
+            Claude.context_output(compaction, "- <system-reminder>\n"),
+            None
+        );
+        assert_eq!(
+            Claude.context_output(compaction, " {\"decision\":\"block\"}\n"),
+            None
+        );
+        // A message for the user would make the output hook JSON, which a compaction must never
+        // print: the whole answer is given up instead.
+        assert_eq!(
+            Claude.message_output(compaction, Some(text), "Cortex: a message"),
+            None
+        );
+        assert_eq!(
+            Claude.context_output(at("Stop")?, "go on\n").as_deref(),
+            Some(
+                r#"{"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":"go on\n"}}"#
+            )
+        );
+        Ok(())
     }
 
     /// Claude Code takes 10,000 characters whole: a text of 10,000 is given and one of 10,001 is

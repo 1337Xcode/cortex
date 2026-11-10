@@ -141,8 +141,9 @@ pub struct HookEntry {
     /// margin, and the agent's own timeout is set at or above it.
     pub hard_timeout: Duration,
     /// Whether Cortex gives the agent text here: the agent adds what the hook prints to its
-    /// context, and the hook asks the daemon for the text its event gets (the primer at a
-    /// session's start, the work order at a prompt) instead of handing it the event alone.
+    /// context (before a compaction, to the instructions for the compaction's summary), and the
+    /// hook asks the daemon for the text its event gets (the primer at a session's start, the work
+    /// order at a prompt) instead of handing it the event alone.
     pub gives_context: bool,
 }
 

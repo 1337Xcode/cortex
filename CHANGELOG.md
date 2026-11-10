@@ -91,6 +91,13 @@ All notable changes to this project are documented in this file. The format is b
   values, values of credential options and keys, URL credentials, long high-entropy strings) is
   replaced by `<redacted>`; when the command cannot be cleaned with certainty only the runner and
   its test file are kept. The command is cleared when the handoff is taken, and after a day.
+- `compaction.keep_list = true`: just before Claude Code compacts a session's context, its
+  `PreCompact` hook prints, as instructions for the compaction's summary, what the session's open
+  task has done: the files it edited, the files it was warned of and has not read or edited since,
+  the project facts it was given that still hold, and the start of its prompt when the user's
+  settings keep one: the lines the recap after a compaction gives, at most 600 characters. Nothing
+  is printed in a tiny repository, outside a task or for a held-out task. Codex ignores a
+  compaction hook's output and is given nothing. Off by default until measured.
 - `hints.narrow_tests = true`: after a run of a whole test suite (`pytest` with no path, `cargo
   test` with no filter, `go test ./...`, `npx jest`), the task is told once the test files of the
   files it edited, each file's own tests first, at most three, and the command that runs only them
