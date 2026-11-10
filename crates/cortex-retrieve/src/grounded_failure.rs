@@ -155,35 +155,10 @@ fn repository_paths(printed: &str, query: &FailureQuery<'_>) -> Vec<RepoPath> {
     paths
 }
 
-/// The repository path of `path`, inside `root`, or `None` outside it.
+/// The repository path of `path`, inside `root` (written in any letters' case on Windows, as a
+/// traceback prints a folder the way the command line spelled it), or `None` outside it.
 fn under_root(root: &Path, path: &Path) -> Option<RepoPath> {
-    RepoPath::from_native(root, path)
-        .ok()
-        .or_else(|| under_root_in_any_case(root, path))
-}
-
-/// Windows' file systems ignore the case of letters, and a traceback prints a folder as the
-/// command line spelled it (`c:\users\dev\repo`): there a root written in other letters' case
-/// is the root still. Only the root's part is compared so; the rest must match the index's names.
-#[cfg(windows)]
-fn under_root_in_any_case(root: &Path, path: &Path) -> Option<RepoPath> {
-    let root_text = root.to_str()?;
-    let root_text = root_text.strip_prefix(r"\\?\").unwrap_or(root_text);
-    let text = path.to_str()?;
-    let rest = text.get(root_text.len()..)?;
-    let is_root = text
-        .get(..root_text.len())
-        .is_some_and(|head| head.eq_ignore_ascii_case(root_text));
-    if !is_root || !rest.starts_with(['\\', '/']) {
-        return None;
-    }
-    RepoPath::from_native(root, &root.join(rest.trim_start_matches(['\\', '/']))).ok()
-}
-
-/// Elsewhere a path's case is part of its name.
-#[cfg(not(windows))]
-fn under_root_in_any_case(_: &Path, _: &Path) -> Option<RepoPath> {
-    None
+    RepoPath::from_native_in_any_case(root, path)
 }
 
 /// `path` with its `.` components dropped and each `..` taking away the name before it, without

@@ -98,6 +98,19 @@ impl RepoPath {
         Self::new(&names.join("/"))
     }
 
+    /// The repository path of `path`, as [`Self::from_native`] gives it, or, on Windows, when
+    /// `path` starts with `root` written in other letters' case or with the other separator:
+    /// Windows' file systems ignore case, and a command line or a traceback spells a folder as its
+    /// writer typed it (`c:\users\dev\repo`). Only the root's part is compared so; the names
+    /// after it are kept as written. Elsewhere a path's case is part of its name, and only
+    /// [`Self::from_native`]'s answer counts. `None` for a path outside `root`.
+    #[must_use]
+    pub fn from_native_in_any_case(root: &Path, path: &Path) -> Option<Self> {
+        Self::from_native(root, path)
+            .ok()
+            .or_else(|| under_root_in_any_case(root, path))
+    }
+
     /// The path as stored, such as `src/lib.rs`; empty for the root.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -215,6 +228,34 @@ impl fmt::Debug for RepoPath {
     }
 }
 
+/// The repository path of `path` when it starts with `root` in any letters' case and either
+/// separator.
+#[cfg(windows)]
+fn under_root_in_any_case(root: &Path, path: &Path) -> Option<RepoPath> {
+    let root_text = root.to_str()?;
+    let root_text = root_text
+        .strip_prefix(r"\\?\")
+        .unwrap_or(root_text)
+        .trim_end_matches(['\\', '/']);
+    let text = path.to_str()?;
+    let head = text.get(..root_text.len())?;
+    let rest = text.get(root_text.len()..)?;
+    let is_root = head.bytes().zip(root_text.bytes()).all(|(found, wanted)| {
+        found.eq_ignore_ascii_case(&wanted)
+            || (matches!(found, b'\\' | b'/') && matches!(wanted, b'\\' | b'/'))
+    });
+    if !is_root || !(rest.is_empty() || rest.starts_with(['\\', '/'])) {
+        return None;
+    }
+    RepoPath::from_native(root, &root.join(rest.trim_start_matches(['\\', '/']))).ok()
+}
+
+/// Elsewhere a path's case is part of its name.
+#[cfg(not(windows))]
+fn under_root_in_any_case(_: &Path, _: &Path) -> Option<RepoPath> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,5 +371,44 @@ mod tests {
             assert_eq!(RepoPath::from_native(root, path)?.as_str(), "src/lib.rs");
         }
         Ok(())
+    }
+
+    /// On Windows a root spelled in other letters' case or with the other separator is the root
+    /// still, and the names after it are kept as written; a folder that only starts with the
+    /// root's name is not inside it, and the root itself is the repository's top.
+    #[cfg(windows)]
+    #[test]
+    fn windows_finds_the_root_in_any_case() {
+        let root = Path::new(r"C:\Work\Repo");
+        let found = |path: &str| {
+            RepoPath::from_native_in_any_case(root, Path::new(path)).map(|repo| repo.0)
+        };
+        assert_eq!(
+            found(r"c:\work\repo\Src\lib.rs").as_deref(),
+            Some("Src/lib.rs")
+        );
+        assert_eq!(
+            found("C:/WORK/REPO/src/lib.rs").as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(found(r"\\?\C:\Work\Repo\a.rs").as_deref(), Some("a.rs"));
+        assert_eq!(found(r"c:\work\repo").as_deref(), Some(""));
+        assert_eq!(found(r"c:\work\repository\a.rs"), None);
+        assert_eq!(found(r"D:\work\repo\a.rs"), None);
+    }
+
+    /// Elsewhere a path's case is part of its name: only the root as written holds the path.
+    #[cfg(not(windows))]
+    #[test]
+    fn elsewhere_the_root_s_case_counts() {
+        let root = Path::new("/work/repo");
+        let found = |path: &str| {
+            RepoPath::from_native_in_any_case(root, Path::new(path)).map(|repo| repo.0)
+        };
+        assert_eq!(
+            found("/work/repo/src/lib.rs").as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(found("/WORK/REPO/src/lib.rs"), None);
     }
 }
