@@ -76,10 +76,22 @@ impl FakeDaemon {
     /// The requests the fake daemon read. While it still waits for a client, a connection of the
     /// test's own, which sends nothing, ends its wait, so a client that never came fails the test
     /// instead of hanging it.
+    ///
+    /// The fake daemon may still be reading the last client's connection when the test asks. On
+    /// Windows a connection made and closed before the fake daemon accepts again is thrown away
+    /// by the pipe library, which then waits for another client (seen hanging a test for 20
+    /// minutes on a loaded machine). So the test's own connection is made again every
+    /// [`OWN_CONNECTION_EVERY`] until the fake daemon has stopped, for at most
+    /// [`OWN_CONNECTION_WITHIN`].
     pub fn requests(self) -> TestResult<Vec<Request>> {
-        if !self.thread.is_finished() {
-            // The fake daemon may be past accepting already, and then nothing answers: no matter.
-            let _ = endpoint_name(&self.files).and_then(Stream::connect);
+        let until = Instant::now() + OWN_CONNECTION_WITHIN;
+        while !self.thread.is_finished() {
+            if Instant::now() >= until {
+                return Err("the fake daemon did not stop for the test's own connection".into());
+            }
+            // Once the fake daemon has stopped, there is nothing to connect to: no matter.
+            drop(endpoint_name(&self.files).and_then(Stream::connect));
+            thread::sleep(OWN_CONNECTION_EVERY);
         }
         Ok(self
             .thread
@@ -87,6 +99,13 @@ impl FakeDaemon {
             .map_err(|_| "the fake daemon panicked")??)
     }
 }
+
+/// How long the test's own connection to a fake daemon is repeated before the test fails: longer
+/// than a silent fake daemon waits to be released (30 s).
+const OWN_CONNECTION_WITHIN: Duration = Duration::from_secs(40);
+
+/// How often the test's own connection is made again while the fake daemon has not stopped.
+const OWN_CONNECTION_EVERY: Duration = Duration::from_millis(20);
 
 /// How long a fake daemon waits for its endpoint's name to be free.
 const ENDPOINT_FREED_WITHIN: Duration = Duration::from_secs(1);
