@@ -1,6 +1,7 @@
 //! Real command lines, typed by hand, against what [`whole_suite`] keeps of them and what
 //! [`narrow_command`] writes from that: each runner's whole and selecting forms, the launchers
-//! agents use, the lines that are uncertain, the folder a `cd` moves to, the quoting and the cap.
+//! agents use, the options repeated, the lines that are uncertain, the folder a `cd` moves to, the
+//! files a command runs, the quoting and the cap.
 //! Every expected value is written out from the rules in the module's documentation, never
 //! taken from a run of the code.
 
@@ -15,6 +16,13 @@ use crate::commands::Commands;
 
 /// Result type for these tests: any failure fails the test.
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+/// A narrow command line and the files it runs.
+type Written = (String, Vec<String>);
+
+/// A row of files asked for: the line, the folder it ran in, the files, the command and the files
+/// it runs.
+type CoverageRow<'a> = (&'a str, &'a str, &'a [&'a str], &'a str, &'a [&'a str]);
 
 /// The repository's top folder, as an agent on this platform names it. Nothing is read from it.
 #[cfg(windows)]
@@ -35,7 +43,8 @@ fn whole_in(line: &str, sub: &str) -> Option<SuiteRun> {
 }
 
 /// A run written as one line: the runner, then the variables and launcher words, then where it
-/// ran and the package and profile it names, each when it has one.
+/// ran, the package and profile it names, its options and its test binary's arguments, each when
+/// it has one.
 fn describe(run: &SuiteRun) -> String {
     let mut text = format!("{}:", run.runner);
     for word in run.env.iter().chain(&run.launcher) {
@@ -54,6 +63,12 @@ fn describe(run: &SuiteRun) -> String {
     if run.is_release {
         text.push_str(" [release]");
     }
+    if !run.options.is_empty() {
+        let _ = write!(text, " [options {}]", run.options.join(" "));
+    }
+    if !run.test_args.is_empty() {
+        let _ = write!(text, " [test args {}]", run.test_args.join(" "));
+    }
     text
 }
 
@@ -62,16 +77,33 @@ fn paths(files: &[&str]) -> Result<Vec<RepoPath>, cortex_core::PathError> {
     files.iter().map(|file| RepoPath::new(file)).collect()
 }
 
-/// What `narrow_command` writes for `files` after `line` was run in the folder `sub`.
+/// The command line `narrow_command` writes for `files` after `line` was run in the folder `sub`.
 fn narrowed(
     line: &str,
     sub: &str,
     files: &[&str],
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    Ok(narrowed_with_files(line, sub, files)?.map(|(line, _)| line))
+}
+
+/// The command line `narrow_command` writes for `files` after `line` was run in the folder `sub`,
+/// with the files it says the command runs.
+fn narrowed_with_files(
+    line: &str,
+    sub: &str,
+    files: &[&str],
+) -> Result<Option<Written>, Box<dyn std::error::Error>> {
     let Some(run) = whole_in(line, sub) else {
         return Err(format!("{line:?} was not a whole-suite run").into());
     };
-    Ok(narrow_command(&run, &paths(files)?))
+    Ok(narrow_command(&run, &paths(files)?).map(|command| {
+        let runs = command
+            .files
+            .iter()
+            .map(|file| file.as_str().to_owned())
+            .collect();
+        (command.line, runs)
+    }))
 }
 
 /// Whole-suite rows: a line and what it kept, as [`describe`] writes it, or nothing.
@@ -81,14 +113,24 @@ fn whole_suite_table() {
     let rows: &[(&str, Option<&str>)] = &[
         // pytest: whole forms, options that do not select.
         ("pytest", Some("pytest: pytest")),
-        ("pytest -q", Some("pytest: pytest")),
+        ("pytest -q", Some("pytest: pytest [options -q]")),
         (
             "pytest -x -v --tb=short --no-header --color=yes",
-            Some("pytest: pytest"),
+            Some("pytest: pytest [options -x -v --tb=short --no-header --color=yes]"),
         ),
-        ("pytest -n 4 -q", Some("pytest: pytest")),
-        ("pytest -p no:cacheprovider", Some("pytest: pytest")),
-        ("pytest --tb short -rA", Some("pytest: pytest")),
+        (
+            "pytest --import-mode=importlib -p no:randomly",
+            Some("pytest: pytest [options --import-mode=importlib -p no:randomly]"),
+        ),
+        ("pytest -n 4 -q", Some("pytest: pytest [options -n 4 -q]")),
+        (
+            "pytest -p no:cacheprovider",
+            Some("pytest: pytest [options -p no:cacheprovider]"),
+        ),
+        (
+            "pytest --tb short -rA",
+            Some("pytest: pytest [options --tb short -rA]"),
+        ),
         // pytest: forms that select, or that are not certain.
         ("pytest tests/test_ops.py", None),
         ("pytest tests/test_ops.py::test_add", None),
@@ -101,18 +143,40 @@ fn whole_suite_table() {
         ("pytest -m slow", None),
         ("pytest --lf", None),
         ("pytest --collect-only", None),
-        ("pytest --cov src", None),
+        // `--cov` takes the next word as its value, as pytest-cov's optional value does; coverage
+        // is not repeated.
+        ("pytest --cov src", Some("pytest: pytest")),
+        (
+            "pytest --cov=src --cov-fail-under=90 --junitxml=out.xml -q",
+            Some("pytest: pytest [options -q]"),
+        ),
+        // A flag pytest has that is not listed, or a short letter that is not, tells nothing:
+        // `--sw-skip` selects, `--fixtures` and `-h` run no test.
+        ("pytest --sw-skip", None),
+        ("pytest --fixtures", None),
+        ("pytest -h", None),
+        ("pytest --some-plugin-flag", None),
+        ("pytest --verbose=2", None),
         ("pytest $TESTS", None),
         // pytest: launchers.
-        ("python -m pytest -q", Some("pytest: python -m pytest")),
+        (
+            "python -m pytest -q",
+            Some("pytest: python -m pytest [options -q]"),
+        ),
         ("python3 -m pytest", Some("pytest: python3 -m pytest")),
-        ("uv run pytest -q", Some("pytest: uv run pytest")),
+        (
+            "uv run pytest -q",
+            Some("pytest: uv run pytest [options -q]"),
+        ),
         (
             "uv run python -m pytest",
             Some("pytest: uv run python -m pytest"),
         ),
         ("poetry run pytest", Some("pytest: poetry run pytest")),
-        (".venv/bin/pytest -q", Some("pytest: .venv/bin/pytest")),
+        (
+            ".venv/bin/pytest -q",
+            Some("pytest: .venv/bin/pytest [options -q]"),
+        ),
         ("uv run --with rich pytest", None),
         ("/usr/bin/pytest", None),
         ("timeout 60 pytest", None),
@@ -120,11 +184,20 @@ fn whole_suite_table() {
         // pytest: variables, pipes, folders, several commands.
         ("CI=1 pytest", Some("pytest: CI=1 pytest")),
         ("API_TOKEN=abc pytest", None),
-        ("pytest -q 2>&1 | tail -20", Some("pytest: pytest")),
+        (
+            "pytest -q 2>&1 | tail -20",
+            Some("pytest: pytest [options -q]"),
+        ),
         ("cat ids | pytest", None),
         ("(cd x && pytest)", None),
-        ("cd x && pytest -q", Some("pytest: pytest in x via x")),
-        ("ruff check . && pytest -q", Some("pytest: pytest")),
+        (
+            "cd x && pytest -q",
+            Some("pytest: pytest in x via x [options -q]"),
+        ),
+        (
+            "ruff check . && pytest -q",
+            Some("pytest: pytest [options -q]"),
+        ),
         ("pytest -q && pytest -x", None),
         ("pytest -q; pytest -x", None),
         ("pytest && jest", None),
@@ -132,20 +205,43 @@ fn whole_suite_table() {
         ("python -m unittest", Some("unittest: python -m unittest")),
         (
             "python -m unittest -v",
-            Some("unittest: python -m unittest"),
+            Some("unittest: python -m unittest [options -v]"),
         ),
         (
-            "python -m unittest discover -s tests",
-            Some("unittest: python -m unittest"),
+            "python -m unittest discover -v",
+            Some("unittest: python -m unittest [options -v]"),
         ),
+        (
+            "python -m unittest --durations 5",
+            Some("unittest: python -m unittest [options --durations 5]"),
+        ),
+        // Another start or top folder changes how modules import.
+        ("python -m unittest discover -s tests", None),
+        ("python -m unittest discover -t .", None),
         ("python -m unittest discover -s tests -p 'test_*.py'", None),
         ("python -m unittest tests.test_ops", None),
         ("python -m unittest -v -k add", None),
         // go.
         ("go test ./...", Some("go: go test")),
         ("go test", Some("go: go test")),
-        ("go test -race -count=1 ./...", Some("go: go test")),
-        ("go test -v -timeout 30s ./...", Some("go: go test")),
+        (
+            "go test -race -count=1 ./...",
+            Some("go: go test [options -race -count=1]"),
+        ),
+        (
+            "go test -v -timeout 30s ./...",
+            Some("go: go test [options -v -timeout 30s]"),
+        ),
+        (
+            "go test -tags integration ./...",
+            Some("go: go test [options -tags integration]"),
+        ),
+        (
+            "go test -race -coverprofile=c.out -coverpkg ./... -json ./...",
+            Some("go: go test [options -race]"),
+        ),
+        ("go test -c ./...", None),
+        ("go test -n ./...", None),
         ("go test ./pkg/a", None),
         ("go test ./cmd/...", None),
         ("go test -run TestA ./...", None),
@@ -155,13 +251,27 @@ fn whole_suite_table() {
         ("cargo test", Some("cargo: cargo test")),
         ("cargo t", Some("cargo: cargo t")),
         ("cargo test --workspace", Some("cargo: cargo test")),
-        ("cargo test --all -q", Some("cargo: cargo test")),
+        (
+            "cargo test --all -q",
+            Some("cargo: cargo test [options -q]"),
+        ),
+        (
+            "cargo test --locked -j 4",
+            Some("cargo: cargo test [options --locked -j 4]"),
+        ),
         (
             "cargo test -p cortex-learn",
             Some("cargo: cargo test [package cortex-learn]"),
         ),
         ("cargo test --release", Some("cargo: cargo test [release]")),
-        ("cargo test -- --nocapture", Some("cargo: cargo test")),
+        (
+            "cargo test -- --nocapture",
+            Some("cargo: cargo test [test args -- --nocapture]"),
+        ),
+        (
+            "cargo test -- --test-threads 1",
+            Some("cargo: cargo test [test args -- --test-threads 1]"),
+        ),
         ("cargo +nightly test", Some("cargo: cargo +nightly test")),
         ("cargo test parse", None),
         ("cargo test --lib", None),
@@ -173,16 +283,29 @@ fn whole_suite_table() {
         ("cargo build", None),
         // jest and vitest.
         ("npx jest", Some("jest: npx jest")),
-        ("npx jest --ci --coverage", Some("jest: npx jest")),
-        ("jest --maxWorkers=2", Some("jest: jest")),
+        (
+            "npx jest --ci --coverage",
+            Some("jest: npx jest [options --ci]"),
+        ),
+        (
+            "jest --maxWorkers=2",
+            Some("jest: jest [options --maxWorkers=2]"),
+        ),
         ("pnpm exec jest", Some("jest: pnpm exec jest")),
-        ("yarn jest --ci", Some("jest: yarn jest")),
-        ("npm exec -- jest --ci", Some("jest: npm exec -- jest")),
+        ("yarn jest --ci", Some("jest: yarn jest [options --ci]")),
+        (
+            "npm exec -- jest --ci",
+            Some("jest: npm exec -- jest [options --ci]"),
+        ),
         ("npx jest src/a.test.ts", None),
         ("npx jest -t add", None),
         ("npx vitest run", Some("vitest: npx vitest run")),
         ("npx vitest", Some("vitest: npx vitest run")),
         ("npx vitest run --coverage", Some("vitest: npx vitest run")),
+        (
+            "npx vitest run --reporter dot --silent",
+            Some("vitest: npx vitest run [options --silent]"),
+        ),
         ("npx vitest run src/a.test.ts", None),
         ("npx vitest related src/a.ts", None),
         ("npx vitest run -t add", None),
@@ -252,7 +375,17 @@ fn narrow_command_table() -> TestResult {
         (
             "python -m pytest -q",
             &[ops],
-            Some("python -m pytest tests/test_ops.py"),
+            Some("python -m pytest -q tests/test_ops.py"),
+        ),
+        (
+            "python -m pytest --import-mode=importlib -x",
+            &[ops],
+            Some("python -m pytest --import-mode=importlib -x tests/test_ops.py"),
+        ),
+        (
+            "pytest -W error::DeprecationWarning",
+            &[ops],
+            Some("pytest -W error::DeprecationWarning tests/test_ops.py"),
         ),
         (
             "uv run pytest",
@@ -271,11 +404,7 @@ fn narrow_command_table() -> TestResult {
             &["tests/test ops.py"],
             Some("pytest 'tests/test ops.py'"),
         ),
-        (
-            "pytest",
-            &["tests/it's.py"],
-            Some("pytest 'tests/it'\\''s.py'"),
-        ),
+        ("pytest", &["tests/it's.py"], None),
         ("pytest", &["-x.py"], None),
         ("pytest", &[], None),
         ("pytest", &[ops, ops], Some("pytest tests/test_ops.py")),
@@ -318,7 +447,25 @@ fn narrow_command_table() -> TestResult {
         (
             "go test -race ./...",
             &["pkg/a/a_test.go"],
-            Some("go test ./pkg/a"),
+            Some("go test -race ./pkg/a"),
+        ),
+        (
+            "go test -tags integration ./...",
+            &["pkg/a/a_test.go"],
+            Some("go test -tags integration ./pkg/a"),
+        ),
+        // Windows PowerShell splits an option at its first `.`: such a word is quoted.
+        (
+            "go test -timeout=1.5m ./...",
+            &["pkg/a/a_test.go"],
+            Some("go test '-timeout=1.5m' ./pkg/a"),
+        ),
+        // No quote is portable inside a quoted word: an option holding one gives no command.
+        ("pytest \"-W=error:it's\"", &[ops], None),
+        (
+            "python -m unittest -v",
+            &[ops],
+            Some("python -m unittest -v tests.test_ops"),
         ),
         (
             "cd svc && go test ./...",
@@ -374,13 +521,22 @@ fn narrow_command_table() -> TestResult {
             &["tests/a.rs"],
             Some("cargo +nightly test --test a"),
         ),
+        (
+            "cargo test --workspace --locked -- --test-threads=1",
+            &["tests/a.rs"],
+            Some("cargo test --locked --test a -- --test-threads=1"),
+        ),
         // jest and vitest.
         (
             "npx jest",
             &["src/a.test.ts", "src/b.test.ts"],
             Some("npx jest src/a.test.ts src/b.test.ts"),
         ),
-        ("jest --ci", &["src/a.test.ts"], Some("jest src/a.test.ts")),
+        (
+            "jest --ci",
+            &["src/a.test.ts"],
+            Some("jest --ci src/a.test.ts"),
+        ),
         (
             "pnpm exec jest",
             &["src/a.test.ts"],
@@ -444,18 +600,97 @@ fn narrow_command_has_nothing_for_an_unknown_runner() -> TestResult {
     Ok(())
 }
 
-/// Words are written as the shell passes them.
+/// Words are written as a POSIX shell and PowerShell both pass them, or not at all.
 #[test]
-fn quoting_writes_words_as_the_shell_passes_them() {
+fn quoting_writes_words_as_both_shells_pass_them() {
     let rows = [
-        ("tests/test_ops.py", "tests/test_ops.py"),
-        ("a b", "'a b'"),
-        ("", "''"),
-        ("a;b", "'a;b'"),
-        ("[id]", "'[id]'"),
-        ("it's", "'it'\\''s'"),
+        ("tests/test_ops.py", Some("tests/test_ops.py")),
+        ("./pkg/a", Some("./pkg/a")),
+        ("a b", Some("'a b'")),
+        ("", Some("''")),
+        ("a;b", Some("'a;b'")),
+        ("[id]", Some("'[id]'")),
+        ("--tb=short", Some("--tb=short")),
+        ("no:cacheprovider", Some("no:cacheprovider")),
+        ("a,b", Some("'a,b'")),
+        // An option holding a `.` is split there by Windows PowerShell unless quoted.
+        ("-coverpkg=./...", Some("'-coverpkg=./...'")),
+        ("--junitxml=out.xml", Some("'--junitxml=out.xml'")),
+        // No escape of a quote reads the same in both shells, nor does a control character.
+        ("it's", None),
+        ("a\tb", None),
     ];
     for (text, quoted) in rows {
-        assert_eq!(super::quote::word(text), quoted, "{text:?}");
+        assert_eq!(super::quote::word(text).as_deref(), quoted, "{text:?}");
     }
+}
+
+/// A command names only the files it runs: of the files asked for, those the runner cannot be told
+/// by (a README to pytest, a unit test inside `src` to cargo), those of another package or outside
+/// the folder the suite ran in are not among them, and two Go files of one package both are.
+#[test]
+fn narrow_command_says_which_files_it_runs() -> TestResult {
+    let rows: &[CoverageRow<'_>] = &[
+        (
+            "pytest",
+            "",
+            &["tests/test_a.py", "README.md", "tests/test_b.py"],
+            "pytest tests/test_a.py tests/test_b.py",
+            &["tests/test_a.py", "tests/test_b.py"],
+        ),
+        (
+            "cargo test",
+            "",
+            &["crates/x/src/a/tests.rs", "crates/x/tests/b.rs"],
+            "cargo test --manifest-path crates/x/Cargo.toml --test b",
+            &["crates/x/tests/b.rs"],
+        ),
+        (
+            "cargo test",
+            "",
+            &["crates/a/tests/x.rs", "tests/x.rs"],
+            "cargo test --manifest-path crates/a/Cargo.toml --test x",
+            &["crates/a/tests/x.rs"],
+        ),
+        (
+            "go test ./...",
+            "",
+            &["pkg/a/a_test.go", "pkg/a/b_test.go"],
+            "go test ./pkg/a",
+            &["pkg/a/a_test.go", "pkg/a/b_test.go"],
+        ),
+        (
+            "pytest",
+            "sub",
+            &["other/tests/test_a.py", "sub/tests/test_b.py"],
+            "pytest tests/test_b.py",
+            &["sub/tests/test_b.py"],
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (line, sub, files, command, runs) in rows {
+        let got = narrowed_with_files(line, sub, files)?;
+        let expected = Some((
+            (*command).to_owned(),
+            runs.iter().map(|run| (*run).to_owned()).collect(),
+        ));
+        if got != expected {
+            wrong.push(format!("{line:?} {files:?}: {got:?}, wanted {expected:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// A file dropped so that the command fits is not among the files it runs.
+#[test]
+fn a_file_dropped_to_fit_is_not_run() -> TestResult {
+    let name = |letter: &str| format!("tests/test_{}.py", letter.repeat(80));
+    let (a, b, c) = (name("a"), name("b"), name("c"));
+    let got = narrowed_with_files("pytest", "", &[&a, &b, &c])?;
+    assert_eq!(
+        got,
+        Some((format!("pytest {a} {b}"), vec![a.clone(), b.clone()]))
+    );
+    Ok(())
 }

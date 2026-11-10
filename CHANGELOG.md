@@ -94,8 +94,11 @@ All notable changes to this project are documented in this file. The format is b
 - `hints.narrow_tests = true`: after a run of a whole test suite (`pytest` with no path, `cargo
   test` with no filter, `go test ./...`, `npx jest`), the task is told once the test files of the
   files it edited, each file's own tests first, at most three, and the command that runs only them
-  as the suite was launched (`python -m pytest tests/test_ops.py`), within 80 tokens. Off by
-  default until measured.
+  as the suite was launched, its own options repeated (`python -m pytest -q tests/test_ops.py`)
+  except those that report on the run or check its coverage, within 80 tokens. The command stands beside the files it runs; a test file it cannot run (a unit
+  test inside a source file, another package's) is named after it. A run whose options change
+  where modules import from (unittest's `discover -s`) is told nothing. Off by default until
+  measured.
 - `hints.runtime_grounding = true` gives a failed check the repository lines its stack ran
   through, beside its output: when a test or build command the agent ran fails (Claude Code's
   failure hook, Codex's shell result with a non-zero exit), its output is read in memory by the

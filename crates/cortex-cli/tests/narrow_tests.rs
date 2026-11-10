@@ -2,7 +2,8 @@
 //! repository the captured payloads come from: once the task edited `calc/ops.py`, a run of the
 //! whole suite (`python -m pytest -q`) is told the file's own tests and the command that runs only
 //! them; a second whole-suite run in the task is told nothing; a run that names its tests is told
-//! nothing; and with `hints.narrow_tests` left at its default, nothing is said at all.
+//! nothing; a task held out from Cortex, or a repository in tiny mode, is told nothing; and with
+//! `hints.narrow_tests` left at its default, nothing is said at all.
 #![allow(
     clippy::indexing_slicing,
     reason = "the payloads edited here are JSON objects, where indexing a missing key adds it"
@@ -68,8 +69,8 @@ fn edited(repo: &Path, home: &Path, config: &str) -> TestResult<Daemon> {
 }
 
 /// With the hint on, the first whole-suite run after the edit is told the edited file's own tests
-/// and the command that runs only them, in the way the run was launched; a run naming its tests
-/// and a second whole-suite run are told nothing.
+/// and the command that runs only them, in the way the run was launched, its `-q` repeated; a run
+/// naming its tests and a second whole-suite run are told nothing.
 #[test]
 fn a_whole_suite_run_is_told_the_narrow_tests() -> TestResult {
     let (home, repo) = repository()?;
@@ -90,7 +91,7 @@ fn a_whole_suite_run_is_told_the_narrow_tests() -> TestResult {
         given(&suite_run(&repo, "python -m pytest -q")?, home)?.as_deref(),
         Some(
             "[cortex] Tests for the files changed in this task: tests/test_ops.py \
-             (`python -m pytest tests/test_ops.py`).\n"
+             (`python -m pytest -q tests/test_ops.py`).\n"
         )
     );
     assert_eq!(
@@ -107,6 +108,43 @@ fn the_narrow_tests_are_off_by_default() -> TestResult {
     let (home, repo) = repository()?;
     let home = home.path();
     let daemon = edited(&repo, home, "mode = \"medium\"\n[holdout]\nshare = 0\n")?;
+    assert_eq!(
+        given(&suite_run(&repo, "python -m pytest -q")?, home)?,
+        None
+    );
+    drop(daemon);
+    Ok(())
+}
+
+/// A task held out from Cortex is told nothing, whatever the setting: every task is held out when
+/// the share is one.
+#[test]
+fn a_held_out_task_is_told_nothing() -> TestResult {
+    let (home, repo) = repository()?;
+    let home = home.path();
+    let daemon = edited(
+        &repo,
+        home,
+        "mode = \"medium\"\n[holdout]\nshare = 1\n[hints]\nnarrow_tests = true\n",
+    )?;
+    assert_eq!(
+        given(&suite_run(&repo, "python -m pytest -q")?, home)?,
+        None
+    );
+    drop(daemon);
+    Ok(())
+}
+
+/// A repository in tiny mode is told nothing, as Cortex says nothing there.
+#[test]
+fn a_tiny_repository_is_told_nothing() -> TestResult {
+    let (home, repo) = repository()?;
+    let home = home.path();
+    let daemon = edited(
+        &repo,
+        home,
+        "mode = \"tiny\"\n[holdout]\nshare = 0\n[hints]\nnarrow_tests = true\n",
+    )?;
     assert_eq!(
         given(&suite_run(&repo, "python -m pytest -q")?, home)?,
         None

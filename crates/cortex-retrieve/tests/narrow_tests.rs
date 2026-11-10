@@ -1,13 +1,25 @@
 //! The narrow tests of a task and the hint a whole-suite run gets, from a store built here: the
 //! edited file's own tests first, then the test files tied to it, the strongest first, at most 3;
-//! and the hint within its cap, its command left out once a file is. Every expected value is
-//! typed out by hand from the files below.
+//! and the hint within its cap, its command left out once a file it runs is, and beside only the
+//! files it runs. Every expected value is typed out by hand from the files below.
 
 mod common;
 
 use common::{Def, Repo, TestResult, event, function, record, tool};
-use cortex_core::{EdgeType, FileFlags, HookKind, Identifier, SymbolKind, ToolKind};
+use cortex_core::{EdgeType, FileFlags, HookKind, Identifier, RepoPath, SymbolKind, ToolKind};
+use cortex_learn::NarrowCommand;
 use cortex_retrieve::{MAX_NARROW_HINT_TOKENS, NarrowTest, narrow_hint, narrow_tests};
+
+/// The narrow command `line`, which runs `files`.
+fn command(line: &str, files: &[&str]) -> TestResult<NarrowCommand> {
+    Ok(NarrowCommand {
+        line: line.to_owned(),
+        files: files
+            .iter()
+            .map(|file| RepoPath::new(file))
+            .collect::<Result<_, _>>()?,
+    })
+}
 
 /// A test function `name` on lines 1 and 2.
 fn test_def(name: &str) -> Def<'_> {
@@ -88,13 +100,17 @@ fn the_hint_keeps_within_its_cap() -> TestResult {
         .ok_or("node")?;
     let test = |path: &str| -> TestResult<NarrowTest> {
         Ok(NarrowTest {
-            path: cortex_core::RepoPath::new(path)?,
+            path: RepoPath::new(path)?,
             node,
         })
     };
     let two = [test("tests/test_ops.py")?, test("tests/test_main.py")?];
+    let both = command(
+        "pytest tests/test_ops.py tests/test_main.py",
+        &["tests/test_ops.py", "tests/test_main.py"],
+    )?;
     assert_eq!(
-        narrow_hint(&two, Some("pytest tests/test_ops.py tests/test_main.py"))
+        narrow_hint(&two, Some(&both))
             .map(|(text, _)| text)
             .as_deref(),
         Some(
@@ -117,13 +133,16 @@ fn the_hint_keeps_within_its_cap() -> TestResult {
         test(&long("test_b"))?,
         test(&long("test_c"))?,
     ];
-    let command = format!(
-        "pytest {} {} {}",
-        long("test_a"),
-        long("test_b"),
-        long("test_c")
-    );
-    let (hint, named) = narrow_hint(&three, Some(&command)).ok_or("no hint")?;
+    let all = command(
+        &format!(
+            "pytest {} {} {}",
+            long("test_a"),
+            long("test_b"),
+            long("test_c")
+        ),
+        &[&long("test_a"), &long("test_b"), &long("test_c")],
+    )?;
+    let (hint, named) = narrow_hint(&three, Some(&all)).ok_or("no hint")?;
     assert_eq!(named, 2);
     assert!(
         cortex_core::estimate_tokens(&hint) <= MAX_NARROW_HINT_TOKENS,
@@ -134,6 +153,55 @@ fn the_hint_keeps_within_its_cap() -> TestResult {
         hint.contains(&long("test_b")) && !hint.contains(&long("test_c")),
         "{hint}"
     );
-    assert_eq!(narrow_hint(&[], Some("pytest")), None);
+    assert_eq!(narrow_hint(&[], Some(&command("pytest", &[])?)), None);
+    Ok(())
+}
+
+/// A command stands beside the files it runs, and the named files it does not run follow it after
+/// `also`: of a unit test inside `src` and an integration test, cargo's command runs only the
+/// second. A command that runs a file the hint does not name is left out.
+#[test]
+fn the_command_stands_beside_only_the_files_it_runs() -> TestResult {
+    let mut repo = Repo::new()?;
+    let node = *repo
+        .file("crates/x/tests/b.rs", "x\n", &[], FileFlags::empty())?
+        .first()
+        .ok_or("node")?;
+    let test = |path: &str| -> TestResult<NarrowTest> {
+        Ok(NarrowTest {
+            path: RepoPath::new(path)?,
+            node,
+        })
+    };
+    let tests = [
+        test("crates/x/src/a/tests.rs")?,
+        test("crates/x/tests/b.rs")?,
+    ];
+    let cargo = command(
+        "cargo test --manifest-path crates/x/Cargo.toml --test b",
+        &["crates/x/tests/b.rs"],
+    )?;
+    assert_eq!(
+        narrow_hint(&tests, Some(&cargo)),
+        Some((
+            "[cortex] Tests for the files changed in this task: crates/x/tests/b.rs (`cargo test \
+             --manifest-path crates/x/Cargo.toml --test b`); also crates/x/src/a/tests.rs.\n"
+                .to_owned(),
+            2
+        ))
+    );
+    let wider = command(
+        "cargo test --manifest-path crates/x/Cargo.toml --test b --test c",
+        &["crates/x/tests/b.rs", "crates/x/tests/c.rs"],
+    )?;
+    assert_eq!(
+        narrow_hint(&tests, Some(&wider)),
+        Some((
+            "[cortex] Tests for the files changed in this task: crates/x/src/a/tests.rs, \
+             crates/x/tests/b.rs.\n"
+                .to_owned(),
+            2
+        ))
+    );
     Ok(())
 }

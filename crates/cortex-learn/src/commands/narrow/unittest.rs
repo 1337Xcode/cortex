@@ -1,8 +1,10 @@
 //! unittest: which arguments select tests, and how a narrow command names test modules. With no
 //! argument, or `discover`, it runs every test the discovery finds; a module, class or method
-//! name, `-k` or discovery's `-p` pattern selects.
+//! name, `-k` or discovery's `-p` pattern selects. Discovery's start and top folders (`-s`, `-t`)
+//! put another folder first on the import path, so a module named from the line's folder may not
+//! import as it did: they leave the run uncertain.
 
-use super::{SuiteRun, Whole};
+use super::{Narrowed, SuiteRun, Whole};
 
 /// The flags that only shape the run.
 const NON_SELECTING: &[&str] = &[
@@ -19,26 +21,33 @@ const NON_SELECTING: &[&str] = &[
     "--locals",
 ];
 
-/// The discovery flags that name where to look, with a value as the next word. A start folder
-/// is the suite's own, not a selection.
-const DISCOVERY_FLAGS: &[&str] = &["-s", "--start-directory", "-t", "--top-level-directory"];
+/// The flag that takes a value as the next word and selects nothing.
+const DURATIONS: &str = "--durations";
 
-/// Whether the arguments after `unittest` select nothing.
+/// Whether the arguments after `unittest` select nothing; then the flags among them are the run's
+/// options, `discover` left out, as the narrow command names modules instead.
 pub(super) fn whole(args: &[&str]) -> Option<Whole> {
+    let mut options: Vec<String> = Vec::new();
     let mut at = 0;
     let mut is_discovering = false;
     while let Some(&arg) = args.get(at) {
         at += 1;
         if arg == "discover" && !is_discovering {
             is_discovering = true;
-        } else if arg == "--durations" || (DISCOVERY_FLAGS.contains(&arg) && is_discovering) {
-            // Each takes a value, which selects nothing.
+        } else if arg == DURATIONS {
+            options.push(arg.to_owned());
+            options.push((*args.get(at)?).to_owned());
             at += 1;
-        } else if !NON_SELECTING.contains(&arg) {
+        } else if NON_SELECTING.contains(&arg) {
+            options.push(arg.to_owned());
+        } else {
             return None;
         }
     }
-    Some(Whole::default())
+    Some(Whole {
+        options,
+        ..Whole::default()
+    })
 }
 
 /// The dotted module name of the Python file `file`, when its folders and name are identifiers.
@@ -60,7 +69,12 @@ fn is_identifier(name: &str) -> bool {
 }
 
 /// The modules of the Python files among `files`, in order.
-pub(super) fn narrow(_run: &SuiteRun, files: &[&str]) -> Option<Vec<String>> {
-    let modules: Vec<String> = files.iter().filter_map(|file| module_of(file)).collect();
-    (!modules.is_empty()).then_some(modules)
+pub(super) fn narrow(_run: &SuiteRun, files: &[&str]) -> Option<Narrowed> {
+    let mut found = Narrowed::default();
+    for (place, file) in files.iter().enumerate() {
+        if let Some(module) = module_of(file) {
+            found.add(place, module);
+        }
+    }
+    found.found()
 }

@@ -11,10 +11,13 @@
 //!
 //! - pytest (9.0 usage and reference pages): a path, a node id (`::`), `-k`, `-m`, `--lf`,
 //!   `--sw`, `--deselect`, `--ignore`, `--pyargs`, `--collect-only` and `--doctest-modules` select.
-//!   `-q`, `-x`, `-v`, `--tb=short`, `--no-header`, `--color`, `-n N`, `-p plugin` and the other
-//!   flags of the value tables in `pytest` do not.
+//!   Only the flags listed in `pytest` keep a run whole (`-q`, `-x`, `-v`, `--tb=short`,
+//!   `--no-header`, `--color`, `-n N`, `-p plugin`, ...); any other flag or short letter makes it
+//!   uncertain.
 //! - unittest (Python 3 `unittest` page, from memory, not re-read): a module name, `-k` or
-//!   discovery's `-p` select; `discover`, `-s`, `-t` and the verbosity flags do not.
+//!   discovery's `-p` select; `discover` and the verbosity flags do not. Discovery's `-s` and `-t`
+//!   change the folder test modules are imported from, which a module name run from the line's
+//!   folder would not repeat, so they leave the run uncertain.
 //! - go (`go help test`, go 1.2x): a package other than `./...` and `-run`, `-skip`, `-bench`,
 //!   `-list`, `-fuzz` and `-args` select. `go test` with no package runs the folder's package,
 //!   which is taken as whole, as the folder's tests are what the agent asked for.
@@ -29,7 +32,17 @@
 //!   uncertain. A package script (`npm test`) has an unknown runner, so it tells nothing.
 //!
 //! The launcher stays as the agent wrote it: `python -m pytest`, `uv run pytest`, `npx jest`,
-//! `pnpm exec jest`. A line that sets a variable not in a short harmless list, wraps the runner
+//! `pnpm exec jest`, and so do the run's own options that select nothing (`-x`,
+//! `--import-mode=importlib`, `-tags integration`, `-- --test-threads=1`): they shape how the tests
+//! are built, imported or run, so the narrow command repeats them, and a narrow run is the whole
+//! run with fewer files. Left out of it are the options that name the whole of what ran
+//! (`./...`, `discover`, cargo's `--workspace`, `--all` and `--all-targets`) and those that report
+//! on the run or measure its coverage (`--junitxml`, `--cov-fail-under`, `-coverprofile`, jest's
+//! and vitest's `--coverage`): a narrow run's coverage falls short of a threshold the suite meets,
+//! and its report would replace the suite's. Each word is written so that a POSIX shell and
+//! PowerShell pass it alike; a word neither can (one holding a single quote) leaves no command.
+//!
+//! A line that sets a variable not in a short harmless list, wraps the runner
 //! in `env` or `timeout`, names it by an absolute path, or holds a word the shell expands, tells
 //! nothing, and neither does a line with a group, a pipe into the check, or several test checks.
 
@@ -76,6 +89,21 @@ pub struct SuiteRun {
     pub package: Option<String>,
     /// Whether a cargo run was built with `--release`.
     pub is_release: bool,
+    /// The run's own arguments that select nothing, as written, repeated before the files.
+    pub options: Vec<String>,
+    /// The arguments the run passed on to the test binary (cargo's, after `--`), repeated after
+    /// the files.
+    pub test_args: Vec<String>,
+}
+
+/// A command that runs only some test files, and which of the files asked for it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NarrowCommand {
+    /// The command line, at most [`MAX_NARROW_COMMAND_CHARS`] characters.
+    pub line: String,
+    /// The files it runs, in the order they were asked for: a file the runner cannot be told by,
+    /// outside the folder the suite ran in, or dropped to fit is not among them.
+    pub files: Vec<RepoPath>,
 }
 
 /// What a runner's arguments say of a run that selects nothing.
@@ -83,6 +111,10 @@ pub struct SuiteRun {
 pub(super) struct Whole {
     /// The words after the runner's own that the narrow command repeats (`test`, `run`).
     pub(super) tail: Vec<String>,
+    /// The arguments that select nothing, repeated before the files.
+    pub(super) options: Vec<String>,
+    /// The arguments for the test binary, repeated after the files.
+    pub(super) test_args: Vec<String>,
     /// The one package a cargo run named.
     pub(super) package: Option<String>,
     /// Whether the run was a release build.
@@ -98,8 +130,34 @@ struct Rule {
     programs: &'static [&'static str],
     /// Whether the arguments after the runner's word select nothing.
     whole: fn(&[&str]) -> Option<Whole>,
-    /// The arguments, after the launcher, that run only the files (relative to the run's folder).
-    narrow: fn(&SuiteRun, &[&str]) -> Option<Vec<String>>,
+    /// The arguments, after the launcher, that run only some of the files (relative to the run's
+    /// folder), and which.
+    narrow: fn(&SuiteRun, &[&str]) -> Option<Narrowed>,
+}
+
+/// The arguments that run some of the test files a runner was given, and which of them.
+#[derive(Debug, Default)]
+pub(super) struct Narrowed {
+    /// The arguments, after the launcher and the run's options.
+    pub(super) args: Vec<String>,
+    /// The places, among the files given, of those the arguments run.
+    pub(super) runs: Vec<usize>,
+}
+
+impl Narrowed {
+    /// Adds `arg`, which runs the file at `place`, unless the arguments hold it already (two files
+    /// of one Go package).
+    pub(super) fn add(&mut self, place: usize, arg: String) {
+        if !self.args.contains(&arg) {
+            self.args.push(arg);
+        }
+        self.runs.push(place);
+    }
+
+    /// These arguments, or `None` when they run no file.
+    pub(super) fn found(self) -> Option<Self> {
+        (!self.runs.is_empty()).then_some(self)
+    }
 }
 
 /// The runners a narrow command can be written for. A runner appears in one row only.
@@ -186,46 +244,59 @@ pub fn whole_suite(
         enter: place.enter,
         package: whole.package,
         is_release: whole.is_release,
+        options: whole.options,
+        test_args: whole.test_args,
     })
 }
 
 /// The command that runs only `test_files` (repository paths, a few of them) the way `run` ran the
-/// whole suite: the launcher, the files the runner can be told by, the folder entered first when
-/// the line entered one. Files that do not map to the runner's way of naming tests, or lie outside
-/// the folder the suite ran in, are left out; files are dropped from the end until the command is
-/// at most [`MAX_NARROW_COMMAND_CHARS`] characters. `None` when no file maps or even one does not fit.
+/// whole suite: the launcher, the run's options, the files the runner can be told by, the folder
+/// entered first when the line entered one; with the files it runs. Files that do not map to the
+/// runner's way of naming tests, or lie outside the folder the suite ran in, are left out; files
+/// are dropped from the end until the command is at most [`MAX_NARROW_COMMAND_CHARS`]
+/// characters. `None` when no file maps or even one does not fit.
 #[must_use]
-pub fn narrow_command(run: &SuiteRun, test_files: &[RepoPath]) -> Option<String> {
+pub fn narrow_command(run: &SuiteRun, test_files: &[RepoPath]) -> Option<NarrowCommand> {
     let rule = rule_of(run.runner)?;
-    let mut files: Vec<String> = Vec::new();
+    let mut files: Vec<(&RepoPath, String)> = Vec::new();
     for file in test_files {
         let Some(relative) = place::within(&run.dir, file).filter(|path| !path.starts_with('-'))
         else {
             continue;
         };
-        if !files.contains(&relative) {
-            files.push(relative);
+        if !files.iter().any(|(_, kept)| *kept == relative) {
+            files.push((file, relative));
         }
     }
     (1..=files.len()).rev().find_map(|count| {
-        let kept: Vec<&str> = files.iter().take(count).map(String::as_str).collect();
-        render(run, rule, &kept)
+        let kept: Vec<&str> = files
+            .iter()
+            .take(count)
+            .map(|(_, relative)| relative.as_str())
+            .collect();
+        let narrowed = (rule.narrow)(run, &kept)?;
+        let line = render(run, &narrowed.args)?;
+        let files = narrowed
+            .runs
+            .iter()
+            .filter_map(|place| files.get(*place))
+            .map(|(file, _)| (*file).clone())
+            .collect();
+        Some(NarrowCommand { line, files })
     })
 }
 
-/// The command line of `run` for `files`, when the runner maps some of them and it fits.
-fn render(run: &SuiteRun, rule: &Rule, files: &[&str]) -> Option<String> {
-    let args = (rule.narrow)(run, files)?;
-    if args.is_empty() {
-        return None;
-    }
+/// The command line of `run` with the narrow arguments `args`, when it fits.
+fn render(run: &SuiteRun, args: &[String]) -> Option<String> {
     let mut words: Vec<String> = Vec::new();
     if let Some(enter) = &run.enter {
-        words.extend(["cd".to_owned(), quote::word(enter), "&&".to_owned()]);
+        words.extend(["cd".to_owned(), quote::word(enter)?, "&&".to_owned()]);
     }
     words.extend(run.env.iter().cloned());
     words.extend(run.launcher.iter().cloned());
-    words.extend(args.iter().map(|arg| quote::word(arg)));
+    for arg in run.options.iter().chain(args).chain(&run.test_args) {
+        words.push(quote::word(arg)?);
+    }
     let line = words.join(" ");
     (line.chars().count() <= MAX_NARROW_COMMAND_CHARS).then_some(line)
 }

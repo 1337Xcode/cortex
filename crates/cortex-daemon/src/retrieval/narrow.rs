@@ -48,7 +48,7 @@ impl Service {
             let tests = narrow_tests(queries, task_id)?;
             let paths: Vec<_> = tests.iter().map(|test| test.path.clone()).collect();
             let command = narrow_command(&run, &paths);
-            let Some((text, named)) = narrow_hint(&tests, command.as_deref()) else {
+            let Some((text, named)) = narrow_hint(&tests, command.as_ref()) else {
                 return Ok(Answer::default());
             };
             if !narrowed.claim(task_id) {

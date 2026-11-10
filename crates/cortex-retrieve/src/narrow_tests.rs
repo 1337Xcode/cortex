@@ -7,10 +7,19 @@
 //! [cortex] Tests for the files changed in this task: tests/test_ops.py, tests/test_main.py
 //! (`pytest tests/test_ops.py tests/test_main.py`).
 //! ```
+//!
+//! The command stands beside the files it runs; a test file it cannot run (a unit test inside a
+//! source file, another package's) is named after it:
+//!
+//! ```text
+//! [cortex] Tests for the files changed in this task: crates/x/tests/b.rs (`cargo test
+//! --manifest-path crates/x/Cargo.toml --test b`); also crates/x/src/a/tests.rs.
+//! ```
 
 use std::fmt::Write as _;
 
 use cortex_core::{EventKind, RepoPath, Ulid, estimate_tokens, is_plain};
+use cortex_learn::NarrowCommand;
 use cortex_store::{NodeId, Queries, StoreError};
 
 use crate::warnings::is_own_test;
@@ -86,28 +95,21 @@ pub fn narrow_tests(queries: Queries<'_>, task: Ulid) -> Result<Vec<NarrowTest>,
     Ok(tests)
 }
 
-/// The hint naming `tests`, with `command`, the narrow command that runs them, when one can be
-/// written, and how many of `tests`, the first, it names: none when there are no tests, or the
-/// hint does not fit its cap even with one file.
+/// The hint naming `tests`, with `command`, the narrow command and the files it runs, when one can
+/// be written; and how many of `tests`, the first, it names. The command is shown only when every
+/// file it runs is named, right after those files; the named files it does not run follow it,
+/// after `also`, so that no file reads as run by a command that leaves it out. None when there
+/// are no tests, or the hint does not fit its cap even with one file.
 #[must_use]
-pub fn narrow_hint(tests: &[NarrowTest], command: Option<&str>) -> Option<(String, usize)> {
+pub fn narrow_hint(
+    tests: &[NarrowTest],
+    command: Option<&NarrowCommand>,
+) -> Option<(String, usize)> {
+    let command = command.filter(|command| is_plain(&command.line) && !command.line.contains('`'));
     let mut named = tests.len();
     while named > 0 {
-        let paths: Vec<&str> = tests
-            .iter()
-            .take(named)
-            .map(|test| test.path.as_str())
-            .collect();
-        let mut text = format!(
-            "[cortex] Tests for the files changed in this task: {}",
-            paths.join(", ")
-        );
-        match command.filter(|command| is_plain(command) && !command.contains('`')) {
-            Some(command) if named == tests.len() => {
-                let _ = writeln!(text, " (`{command}`).");
-            }
-            _ => text.push_str(".\n"),
-        }
+        let shown = tests.get(..named).unwrap_or_default();
+        let text = hint_text(shown, command);
         // INVARIANT: budgeted (fewer files are named until the hint fits its cap)
         if estimate_tokens(&text) <= MAX_NARROW_HINT_TOKENS {
             return Some((text, named));
@@ -115,6 +117,34 @@ pub fn narrow_hint(tests: &[NarrowTest], command: Option<&str>) -> Option<(Strin
         named -= 1;
     }
     None
+}
+
+/// The hint naming `shown`, with `command` beside the files it runs when it runs no other.
+fn hint_text(shown: &[NarrowTest], command: Option<&NarrowCommand>) -> String {
+    let is_named = |file: &RepoPath| shown.iter().any(|test| test.path == *file);
+    let command = command.filter(|command| command.files.iter().all(is_named));
+    let (run, rest): (Vec<&NarrowTest>, Vec<&NarrowTest>) = shown
+        .iter()
+        .partition(|test| command.is_some_and(|command| command.files.contains(&test.path)));
+    let list = |tests: &[&NarrowTest]| {
+        tests
+            .iter()
+            .map(|test| test.path.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut text = "[cortex] Tests for the files changed in this task: ".to_owned();
+    match command {
+        Some(command) if !run.is_empty() => {
+            let _ = write!(text, "{} (`{}`)", list(&run), command.line);
+            if !rest.is_empty() {
+                let _ = write!(text, "; also {}", list(&rest));
+            }
+        }
+        _ => text.push_str(&list(&rest)),
+    }
+    text.push_str(".\n");
+    text
 }
 
 /// Whether `path` names a test file by the names test runners look for: under a `tests` or `test`

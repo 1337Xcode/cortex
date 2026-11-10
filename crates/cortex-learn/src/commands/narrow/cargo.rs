@@ -8,9 +8,11 @@
 //! A test file maps to a command only when it is `<package folder>/tests/<name>.rs`, which is the
 //! integration test target `<name>`: unit tests live inside source files and cannot be named by
 //! file. A package other than the folder's own is reached with `--manifest-path`, or with `-p`
-//! when the whole run named a package.
+//! when the whole run named a package. The run's flags are repeated, except those that widen it to
+//! every package or target (`--workspace`, `--all`, `--all-targets`), and so are the test binary's
+//! arguments after `--`.
 
-use super::{SuiteRun, Whole};
+use super::{Narrowed, SuiteRun, Whole};
 
 /// The flags that leave the tests alone and have no value.
 const PLAIN_FLAGS: &[&str] = &[
@@ -45,6 +47,9 @@ const LIBTEST_PLAIN: &[&str] = &[
 /// The test binary's flag that sets the threads, `=` or the next word.
 const LIBTEST_THREADS: &str = "--test-threads";
 
+/// The flags that widen a run to every package or target, which a narrow command does not repeat.
+const WIDENING: &[&str] = &["--workspace", "--all", "--all-targets"];
+
 /// Whether the arguments after `cargo` are a test run that selects no tests.
 pub(super) fn whole(args: &[&str]) -> Option<Whole> {
     let toolchains = args.iter().take_while(|arg| arg.starts_with('+')).count();
@@ -58,7 +63,16 @@ pub(super) fn whole(args: &[&str]) -> Option<Whole> {
     while let Some(&arg) = flags.get(at) {
         at += 1;
         if arg == "--" {
-            return libtest_is_whole(flags.get(at..)?).then(|| tail_of(found, toolchain, command));
+            let test_args = flags.get(at..)?;
+            if !libtest_is_whole(test_args) {
+                return None;
+            }
+            found.test_args = ["--"]
+                .iter()
+                .chain(test_args)
+                .map(|arg| (*arg).to_owned())
+                .collect();
+            break;
         }
         match arg {
             "--release" | "-r" => found.is_release = true,
@@ -70,8 +84,15 @@ pub(super) fn whole(args: &[&str]) -> Option<Whole> {
             _ if arg.starts_with("--package=") => {
                 set_package(&mut found, arg.strip_prefix("--package=")?)?;
             }
-            _ if PLAIN_FLAGS.contains(&arg) || is_joined_value(arg) => {}
-            _ if VALUE_FLAGS.contains(&arg) => at += 1,
+            _ if WIDENING.contains(&arg) => {}
+            _ if PLAIN_FLAGS.contains(&arg) || is_joined_value(arg) => {
+                found.options.push(arg.to_owned());
+            }
+            _ if VALUE_FLAGS.contains(&arg) => {
+                found.options.push(arg.to_owned());
+                found.options.push((*flags.get(at)?).to_owned());
+                at += 1;
+            }
             _ => return None,
         }
     }
@@ -159,10 +180,14 @@ fn is_package(run: &SuiteRun, folder: &str, name: &str) -> bool {
 /// The arguments that run the integration tests among `files`: the package, then a `--test` for
 /// each file of the first package that maps. Files of other packages are left out, as one command
 /// names one package.
-pub(super) fn narrow(run: &SuiteRun, files: &[&str]) -> Option<Vec<String>> {
+pub(super) fn narrow(run: &SuiteRun, files: &[&str]) -> Option<Narrowed> {
     let mut package: Option<&str> = None;
     let mut names: Vec<&str> = Vec::new();
-    for (folder, name) in files.iter().filter_map(|file| test_target(file)) {
+    let mut runs: Vec<usize> = Vec::new();
+    for (place, file) in files.iter().enumerate() {
+        let Some((folder, name)) = test_target(file) else {
+            continue;
+        };
         let is_named = run
             .package
             .as_deref()
@@ -171,6 +196,7 @@ pub(super) fn narrow(run: &SuiteRun, files: &[&str]) -> Option<Vec<String>> {
             continue;
         }
         package = Some(folder);
+        runs.push(place);
         if !names.contains(&name) {
             names.push(name);
         }
@@ -188,5 +214,5 @@ pub(super) fn narrow(run: &SuiteRun, files: &[&str]) -> Option<Vec<String>> {
     for name in names {
         args.extend(["--test".to_owned(), name.to_owned()]);
     }
-    Some(args)
+    Some(Narrowed { args, runs })
 }
