@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use cortex_core::ipc::{FactLine, FactsAnswer, FactsAsk, RequestBody, ResponseBody};
-use cortex_core::{UserFolder, is_agent_shell};
+use cortex_core::{UserFolder, is_agent_shell, is_plain};
 
 use crate::{output, repository, upgrade};
 
@@ -139,6 +139,40 @@ fn line_of(fact: &FactLine) -> String {
         fact.status.name(),
         fact.kind.name(),
         fact.text,
-        fact.anchors.join(", ")
+        fact.anchors
+            .iter()
+            .map(|name| if is_plain(name) {
+                name.as_str()
+            } else {
+                "(a name holding characters a terminal would act on)"
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use cortex_core::{FactKind, FactStatus};
+
+    use super::*;
+
+    /// A name holding an escape character, which a terminal would act on, is printed as a
+    /// placeholder saying so; a plain name as it is.
+    #[test]
+    fn a_name_that_is_not_plain_is_listed_as_such() {
+        let fact = FactLine {
+            id: 4,
+            status: FactStatus::Active,
+            kind: FactKind::Convention,
+            text: "Money is kept in cents.".to_owned(),
+            anchors: vec!["src/money.py".to_owned(), "src/\u{1b}[2Jx.py".to_owned()],
+            uses: 0,
+        };
+        assert_eq!(
+            line_of(&fact),
+            "   4  active     convention  Money is kept in cents.  (at src/money.py, (a name \
+             holding characters a terminal would act on))"
+        );
+    }
 }
