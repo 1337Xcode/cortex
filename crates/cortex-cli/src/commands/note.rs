@@ -45,8 +45,8 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         .iter()
         .map(|anchor| anchor_of(&root, anchor))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    // INVARIANT: no rule an agent states is the user's (text in a repository can lead an agent to
-    // run this command)
+    // Text in a repository can lead an agent to run this command: what an agent notes is the
+    // agent's, never the user's.
     let is_agents = is_agent_shell(|name| std::env::var_os(name));
     let note = Note {
         text: args.text.clone(),

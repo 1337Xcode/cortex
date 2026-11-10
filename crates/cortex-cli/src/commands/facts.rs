@@ -63,7 +63,7 @@ enum Action {
 /// be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let is_word = !matches!(args.action, Action::List { .. });
-    // INVARIANT: no rule an agent states is the user's (an agent's shell gives no person's word)
+    // A word on a fact given from an agent's shell is not a person's: it is refused.
     if is_word && is_agent_shell(|name| std::env::var_os(name)) {
         bail!(
             "a person confirms, retires or corrects a fact, not a coding agent: run this in your \
