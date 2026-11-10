@@ -1,13 +1,16 @@
 //! A shaped agent's payloads turned into normalized events.
 //!
-//! Only paths, line ranges, sizes, exit codes and the prompt travel on: the prompt is cut so that
-//! any event fits a frame, a search pattern and a command are cut to 1,000 characters, and an
+//! Only paths, line ranges, sizes, exit codes, the prompt and the end of a failed shell command's
+//! output travel on: the prompt is cut so that any event fits a frame, the output to its last
+//! 64 KiB, a search pattern and a command are cut to 1,000 characters, and an
 //! optional value that breaks its rules (a model name over 256 bytes, say) is left out rather than
 //! losing the event. A field is carried only on the hooks it belongs to.
 
 use std::path::{Path, PathBuf};
 
-use cortex_core::{Agent, CompactTrigger, Event, HookKind, Identifier, StartSource};
+use cortex_core::{
+    Agent, CompactTrigger, Event, FailedOutput, HookKind, Identifier, StartSource, ToolKind,
+};
 
 use super::payload::Payload;
 use super::{Aim, Prompted, Tools};
@@ -44,11 +47,22 @@ pub(crate) fn event(
         .as_deref()
         .map(|name| tools.kind(name, &payload))
         .filter(|_| is_tool_event);
-    let tool_target = match tool.map(|tool| tools.aim(tool, entry.hook, &payload, &located)) {
+    let mut tool_target = match tool.map(|tool| tools.aim(tool, entry.hook, &payload, &located)) {
         Some(Aim::Outside) => return Ok(None),
         Some(Aim::Target(target)) => Some(target),
         Some(Aim::Nothing) | None => None,
     };
+    let tool_result = tool
+        .filter(|_| entry.hook == HookKind::PostTool)
+        .and_then(|tool| tools.result(tool, entry.event_name, &payload));
+    if let Some(target) = tool_target.as_mut()
+        && tool == Some(ToolKind::Shell)
+        && tool_result.is_some_and(|result| !result.is_success && !result.is_interrupted)
+    {
+        target.failed_output = tools
+            .failed_output(entry.event_name, &payload)
+            .and_then(|text| FailedOutput::tail_of(&text));
+    }
     Ok(Some(Event {
         event_id: stamp.event_id,
         ts_ms: stamp.ts_ms,
@@ -66,9 +80,7 @@ pub(crate) fn event(
             .and_then(StartSource::from_name),
         tool,
         tool_target,
-        tool_result: tool
-            .filter(|_| entry.hook == HookKind::PostTool)
-            .and_then(|tool| tools.result(tool, entry.event_name, &payload)),
+        tool_result,
         prompt_text: prompt
             .filter(|_| entry.hook == HookKind::Prompt)
             .map(cut_prompt),

@@ -17,9 +17,11 @@ mod disk;
 mod error;
 mod exploration;
 mod facts;
+mod failure_map;
 mod features;
 mod gate;
 mod graph;
+mod grounded_failure;
 mod hints;
 mod innermost;
 mod items;
@@ -51,6 +53,7 @@ pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
 pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
 pub use facts::{FactAt, ListedFile, MAX_ORDER_FACTS, OrderFact, order_facts};
+pub use failure_map::{FailureMap, MAX_FAILURE_MAP_TOKENS, MAX_MAPPED_FRAMES, failure_map};
 pub use features::{Found, GATED_FILES, MASSED_FILES, features_of};
 pub use gate::{
     AGREEING_KINDS, Confidence, LEXICAL_BAR, MAX_RAISED_CONFIDENCE, Rule,
@@ -58,6 +61,9 @@ pub use gate::{
     confidence_bar, decide,
 };
 pub use graph::{Graph, GraphError, LinkInput, NodeInput, Standing, Weighing};
+pub use grounded_failure::{
+    FailureQuery, GroundedFailure, GroundedFrame, MAX_GROUNDED_FRAMES, ground_failure,
+};
 pub use hints::{HINTED_ABOVE_LINES, HintQuery, MAX_HINT_TOKENS, MAX_HINTED_PARTS, read_hint};
 pub use items::{LOOKED_AT_PER_LISTED, Listed, Listing, listed};
 pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};

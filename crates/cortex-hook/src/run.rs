@@ -303,12 +303,21 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
             event,
             answer_by_ms,
         },
-        HookKind::PostTool if entry.gives_context => RequestBody::PostEdit {
-            event,
-            answer_by_ms,
-        },
+        HookKind::PostTool if entry.gives_context && !is_failed_without_output(&event) => {
+            RequestBody::PostEdit {
+                event,
+                answer_by_ms,
+            }
+        }
         _ => RequestBody::Event { event },
     }
+}
+
+/// Whether `event` is a tool's result that failed and carries no output of a failed command: the
+/// only text a failure gets is its map, which needs that output, so it asks for none and waits for
+/// nothing.
+fn is_failed_without_output(event: &Event) -> bool {
+    event.tool_result.is_some_and(|result| !result.is_success) && event.failed_output().is_none()
 }
 
 /// The text in the daemon's answer `body` to a request that asked for text or not, and the
@@ -513,11 +522,11 @@ mod tests {
         })
     }
 
-    /// After a successful tool Claude Code's `PostToolUse` asks for text, to be read by 1,485 ms
-    /// (485 ms after the event's 1,000): an edit's warnings and the notices waiting, and after a
-    /// read the notices waiting; `PostToolUseFailure`, whose output Claude Code does not show,
-    /// reports the event alone. Before a read, `PreToolUse` asks for its hint, and at a stop,
-    /// `Stop` for strict mode's reason.
+    /// After a tool Claude Code's `PostToolUse` asks for text, to be read by 1,485 ms (485 ms after
+    /// the event's 1,000): an edit's warnings and the notices waiting, and after a read the notices
+    /// waiting; `PostToolUseFailure` asks for its map only for a failed command that printed
+    /// something, and is otherwise the event alone. Before a read, `PreToolUse` asks for its hint,
+    /// and at a stop, `Stop` for strict mode's reason.
     #[test]
     fn a_tool_s_result_asks_for_its_text() -> Result<(), Box<dyn std::error::Error>> {
         use cortex_core::ToolKind;
@@ -536,11 +545,25 @@ mod tests {
                 }
             );
         }
-        let failed = tool_result(ToolKind::Edit, false)?;
+        for tool in [ToolKind::Edit, ToolKind::Shell] {
+            let failed = tool_result(tool, false)?;
+            assert_eq!(
+                request_of(entry("PostToolUseFailure")?, failed.clone()),
+                RequestBody::Event {
+                    event: Box::new(failed)
+                }
+            );
+        }
+        let mut printed = tool_result(ToolKind::Shell, false)?;
+        printed.tool_target = Some(cortex_core::ToolTarget {
+            failed_output: cortex_core::FailedOutput::tail_of("FAILED test_ops.py::test_a\n"),
+            ..cortex_core::ToolTarget::default()
+        });
         assert_eq!(
-            request_of(entry("PostToolUseFailure")?, failed.clone()),
-            RequestBody::Event {
-                event: Box::new(failed)
+            request_of(entry("PostToolUseFailure")?, printed.clone()),
+            RequestBody::PostEdit {
+                event: Box::new(printed),
+                answer_by_ms: Some(1_485),
             }
         );
         // Before a read, by 285 ms after the event's 1,000: its hint.

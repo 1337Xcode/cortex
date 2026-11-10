@@ -1,6 +1,8 @@
 //! What a Claude Code tool call aimed at and how it ended: the file or folder in the repository,
 //! the lines read or changed, the search pattern and the files it found, or the command, the exit
-//! code and the size of what it printed.
+//! code and the size of what it printed, and for a command that failed, what it printed.
+
+use std::borrow::Cow;
 
 use cortex_core::{
     HookKind, LineRange, MAX_COMMAND_CHARS, MAX_RANGES, RepoPath, ShellCommand, ToolKind,
@@ -31,6 +33,25 @@ impl Tools for ClaudeTools {
         payload: &Payload<'_>,
     ) -> Option<ToolResult> {
         Some(result(tool, event_name, payload))
+    }
+
+    fn failed_output<'p>(
+        &self,
+        event_name: &str,
+        payload: &'p Payload<'_>,
+    ) -> Option<Cow<'p, str>> {
+        if event_name != "PostToolUseFailure" {
+            return None;
+        }
+        let message = payload.error.as_ref()?.as_str()?;
+        // The message opens with the shell's `Exit code N` line, which is Claude Code's, not the
+        // command's.
+        let output = match message.split_once('\n') {
+            Some((first, rest)) if exit_code(first).is_some() => rest,
+            None if exit_code(message).is_some() => "",
+            _ => message,
+        };
+        Some(Cow::Borrowed(output))
     }
 }
 

@@ -4,7 +4,9 @@
 //! its `*** Update File:`, `*** Add File:`, `*** Delete File:` and `*** Move to:` headers name the
 //! files it changes, and its hunks carry no line numbers. A shell's exit code is not in the payload
 //! but at the end of the session's rollout file (see `rollout`); a patch's response opens with
-//! its own.
+//! its own. A shell that failed gives what it printed, its response.
+
+use std::borrow::Cow;
 
 use cortex_core::{
     HookKind, MAX_COMMAND_CHARS, MAX_EDITED_FILES, RepoPath, ShellCommand, ToolKind, ToolResult,
@@ -105,6 +107,14 @@ impl Tools for CodexTools {
             is_interrupted: false,
             output_bytes: None,
         })
+    }
+
+    fn failed_output<'p>(&self, _: &str, payload: &'p Payload<'_>) -> Option<Cow<'p, str>> {
+        // A shell's response is the output the model gets, as one JSON string.
+        let raw = payload.tool_response.as_ref()?.content?;
+        serde_json::from_str::<String>(raw.get())
+            .ok()
+            .map(Cow::Owned)
     }
 }
 

@@ -1,7 +1,8 @@
 //! The daemon's answers that are text: the work order a prompt gets, the primer a session's start
 //! gets, or the recap when its context was compacted, the warnings an edit gets, the hint a read
-//! gets, strict mode's reason at a stop, the coordination notices a prompt, an edit or a read gets
-//! ahead of the rest, and what the engine finds for a question asked of it directly.
+//! gets, strict mode's reason at a stop, the map a failed check gets beside its output, the
+//! coordination notices a prompt, an edit or a read gets ahead of the rest, and what the engine
+//! finds for a question asked of it directly.
 //! Each is worked out with a reader of the store and the graph as it stands, never waiting for the
 //! writer; what a prompt's retrieval gave or weighed, the primer or recap given and the warnings
 //! given are returned for the writer to record after the event they answer.
@@ -14,6 +15,7 @@
 
 mod claims;
 mod coordination;
+mod failure;
 mod handoff;
 mod hints;
 mod recap;
@@ -31,7 +33,7 @@ use cortex_core::{
     Ulid, WarningsConfig, is_held_out, task_id_of_prompt,
 };
 use cortex_index::Grammars;
-use cortex_learn::{model_in_use, raise_of, recent_precision};
+use cortex_learn::{Commands, model_in_use, raise_of, recent_precision};
 use cortex_retrieve::{Graph, Outcome, Request, Retrieval, Span, locate, primer, retrieve};
 use cortex_store::{
     HandoffId, InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError, TaskRow,
@@ -72,6 +74,8 @@ pub(crate) struct Service {
     edits: EditSettings,
     /// The `coordination.*` settings.
     coordination: CoordinationConfig,
+    /// What a failed check is read with.
+    failures: FailureSettings,
     /// Readers not in use.
     readers: Mutex<Vec<Reader>>,
 }
@@ -106,6 +110,15 @@ pub(crate) struct EditSettings {
     pub(crate) is_strict_mode: bool,
 }
 
+/// What a failed check is read with.
+#[derive(Debug, Clone)]
+pub(crate) struct FailureSettings {
+    /// The checks Cortex tells apart, to know which runner's output a failed command printed.
+    pub(crate) commands: Arc<Commands>,
+    /// `hints.runtime_grounding`: whether a failed check gets the map of the lines it ran through.
+    pub(crate) is_runtime_grounding: bool,
+}
+
 /// Where a service's settings come from.
 #[derive(Debug, Clone)]
 pub(crate) struct Settings {
@@ -125,6 +138,8 @@ pub(crate) struct Settings {
     pub(crate) edits: EditSettings,
     /// The `coordination.*` settings.
     pub(crate) coordination: CoordinationConfig,
+    /// What a failed check is read with.
+    pub(crate) failures: FailureSettings,
 }
 
 impl Service {
@@ -139,6 +154,7 @@ impl Service {
             holdout_share: settings.holdout_share,
             edits: settings.edits,
             coordination: settings.coordination,
+            failures: settings.failures,
             readers: Mutex::new(Vec::new()),
         }
     }

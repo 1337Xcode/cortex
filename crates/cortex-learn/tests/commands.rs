@@ -487,3 +487,37 @@ fn a_failing_line_is_the_failure_of_its_last_check_alone() -> TestResult {
     }
     Ok(())
 }
+
+/// Whatever its exit says, a line tells every check it ran, in its order and each once: the
+/// runners whose output it may print. Worked out by hand per line: `cd nowhere && cargo test` ran
+/// cargo's tests after the `cd`; `pytest -q 2>&1 | tail -20` ran pytest before `tail`; `cargo
+/// check && cargo test || cargo test` ran a type check and the tests (twice, told once); `! cargo test`
+/// and `cargo test &` ran them too; `git push` and `ls` are no checks.
+#[test]
+fn a_line_tells_every_check_it_ran() -> TestResult {
+    use CommandKind::{Test, TypeCheck};
+    let commands = Commands::new(&[])?;
+    let checks = |line: &str| {
+        commands
+            .tell(&ShellCommand::cut(line), Path::new(ROOT), &folder(""))
+            .checks
+    };
+    let cargo = |kind| Check {
+        runner: "cargo",
+        kind,
+    };
+    let pytest = Check {
+        runner: "pytest",
+        kind: Test,
+    };
+    assert_eq!(checks("cd nowhere && cargo test"), [cargo(Test)]);
+    assert_eq!(checks("pytest -q 2>&1 | tail -20"), [pytest]);
+    assert_eq!(
+        checks("cargo check && cargo test || cargo test"),
+        [cargo(TypeCheck), cargo(Test)]
+    );
+    assert_eq!(checks("! cargo test"), [cargo(Test)]);
+    assert_eq!(checks("cargo test &"), [cargo(Test)]);
+    assert_eq!(checks("git push && ls"), []);
+    Ok(())
+}

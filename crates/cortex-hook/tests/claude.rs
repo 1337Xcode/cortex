@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use cortex_core::ipc::{LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES, Request, RequestBody, encode};
 use cortex_core::{
-    Agent, CompactTrigger, Event, HookKind, LineRange, RepoPath, ShellCommand, StartSource,
-    ToolKind, ToolResult, ToolTarget,
+    Agent, CompactTrigger, Event, FailedOutput, HookKind, LineRange, MAX_FAILED_OUTPUT_BYTES,
+    RepoPath, ShellCommand, StartSource, ToolKind, ToolResult, ToolTarget,
 };
 use cortex_hook::{Located, NormalizeError, adapter};
 use proptest::prelude::*;
@@ -163,6 +163,20 @@ fn command(text: &str) -> Option<ToolTarget> {
     })
 }
 
+/// A shell command that failed, with what it printed: the fixture `name`'s message after its
+/// first line, `Exit code N`, which is Claude Code's own and not the command's.
+fn command_failed(text: &str, name: &str) -> TestResult<Option<ToolTarget>> {
+    let payload: serde_json::Value = serde_json::from_slice(&payload(name)?)?;
+    let message = payload["error"].as_str().ok_or("no message")?;
+    let (first, printed) = message.split_once('\n').ok_or("one line")?;
+    assert!(first.starts_with("Exit code "), "{first}");
+    Ok(Some(ToolTarget {
+        command: Some(ShellCommand::cut(text)),
+        failed_output: FailedOutput::tail_of(printed),
+        ..ToolTarget::default()
+    }))
+}
+
 /// A tool that succeeded, with the exit code and printed size reported.
 fn ok(exit_code: Option<i32>, output_bytes: Option<u64>) -> Option<ToolResult> {
     Some(ToolResult {
@@ -252,7 +266,10 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
                 S7,
                 (
                     ToolKind::Shell,
-                    command("python -m unittest tests.test_fail -q"),
+                    command_failed(
+                        "python -m unittest tests.test_fail -q",
+                        "post-tool-use-failure-bash-test.json",
+                    )?,
                     failed(Some(1), 537),
                 ),
             )?),
@@ -276,7 +293,10 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
                 S7,
                 (
                     ToolKind::Shell,
-                    command("python -m unittest tests.test_fail -q"),
+                    command_failed(
+                        "python -m unittest tests.test_fail -q",
+                        "post-tool-use-failure-powershell.json",
+                    )?,
                     failed(Some(1), 537),
                 ),
             )?),
@@ -1528,5 +1548,76 @@ fn grep_output_names_the_files_it_matched() -> TestResult {
         named.push("main.py".to_owned());
         assert_eq!(hits(named.into(), "".into())?, expected, "{outside}");
     }
+    Ok(())
+}
+
+/// A failed command's event carries what it printed, Claude Code's `Exit code N` line left out:
+/// the unittest run's output, from its first `=====` line to `FAILED (failures=1)`. A failure that
+/// printed nothing after the exit code carries none, nor does a command that succeeded. Output
+/// past 64 KiB keeps its end, from a line's start, and the event still fits a frame: 100,000 lines
+/// of one control character (six bytes in JSON) are cut to their last 64 KiB.
+#[test]
+fn a_failed_command_carries_what_it_printed() -> TestResult {
+    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
+    let output = |name: &str| -> TestResult<Option<String>> {
+        let payload = payload(name)?;
+        let event = claude
+            .normalize(&event_name(&payload)?, &payload, &locate, stamp())?
+            .ok_or("no event")?;
+        Ok(event
+            .tool_target
+            .and_then(|target| target.failed_output)
+            .map(String::from))
+    };
+    let printed = output("post-tool-use-failure-bash-test.json")?.ok_or("nothing printed")?;
+    assert!(printed.starts_with("====="), "{printed}");
+    assert!(printed.ends_with("FAILED (failures=1)"), "{printed}");
+    assert!(!printed.contains("Exit code"), "{printed}");
+    assert_eq!(output("post-tool-use-failure-bash.json")?, None);
+    assert_eq!(output("post-tool-use-bash.json")?, None);
+
+    let payload = serde_json::json!({
+        "session_id": "s".repeat(256),
+        "cwd": native(r"C:\repo"),
+        "hook_event_name": "PostToolUseFailure",
+        "tool_name": "Bash",
+        "tool_input": {"command": "pytest"},
+        "error": format!(
+            "Exit code 1\n{}FAILED tests/test_ops.py::test_divide",
+            "\u{1}\n".repeat(100_000)
+        ),
+    });
+    let event = claude
+        .normalize(
+            "PostToolUseFailure",
+            &serde_json::to_vec(&payload)?,
+            &locate,
+            stamp(),
+        )?
+        .ok_or("no event")?;
+    let kept = event
+        .tool_target
+        .as_ref()
+        .and_then(|target| target.failed_output.as_ref())
+        .ok_or("nothing kept")?;
+    assert!(
+        kept.as_str()
+            .ends_with("\u{1}\nFAILED tests/test_ops.py::test_divide")
+    );
+    // The cut moves to a line's start: whole lines of two bytes, then the last line's 37.
+    assert_eq!(kept.as_str().len() % 2, 1);
+    assert!(kept.as_str().len() > MAX_FAILED_OUTPUT_BYTES - 2);
+    assert!(kept.as_str().len() <= MAX_FAILED_OUTPUT_BYTES);
+    let frame = encode(&Request {
+        request_id: 1,
+        body: RequestBody::Event {
+            event: Box::new(event),
+        },
+    })?;
+    assert!(
+        frame.len() <= MAX_FRAME_BYTES + LENGTH_PREFIX_BYTES,
+        "{}",
+        frame.len()
+    );
     Ok(())
 }

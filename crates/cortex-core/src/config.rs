@@ -146,6 +146,10 @@ pub struct Config {
     /// `strict_mode`: when a task's agent stops while call sites of a signature it changed are still
     /// unchanged, ask it once to go on. Default `false`: Cortex never holds a stop.
     pub is_strict_mode: bool,
+    /// `hints.runtime_grounding`: beside a failed check's output, name the repository lines its
+    /// stack ran through when the output does not show them. Default `false` until its
+    /// evaluation shows it helps.
+    pub is_runtime_grounding: bool,
 }
 
 impl Default for Config {
@@ -173,6 +177,7 @@ impl Default for Config {
             warnings: WarningsConfig::default(),
             coordination: CoordinationConfig::default(),
             is_strict_mode: false,
+            is_runtime_grounding: false,
         }
     }
 }
@@ -361,6 +366,10 @@ impl Config {
             "strict_mode" => {
                 self.is_strict_mode = value.as_bool().ok_or_else(|| refuse("true or false"))?;
             }
+            "hints.runtime_grounding" => {
+                self.is_runtime_grounding =
+                    value.as_bool().ok_or_else(|| refuse("true or false"))?;
+            }
             "tests.extra_patterns" => {
                 self.test_extra_patterns = string_list(value)
                     .filter(|patterns| patterns.iter().all(|pattern| is_regex(pattern)))
@@ -499,6 +508,7 @@ mod tests {
                     max_tokens: 200,
                 },
                 is_strict_mode: false,
+                is_runtime_grounding: false,
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -510,7 +520,8 @@ mod tests {
     fn later_layers_override_earlier_ones() -> Result<(), ConfigError> {
         let user = layer(
             "user",
-            "mode = \"small\"\nstrict_mode = true\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n",
+            "mode = \"small\"\nstrict_mode = true\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n\
+             [hints]\nruntime_grounding = true\n",
         );
         let repository = layer(
             "repository",
@@ -589,6 +600,7 @@ mod tests {
                     max_tokens: 400,
                 },
                 is_strict_mode: true,
+                is_runtime_grounding: true,
             }
         );
         Ok(())
@@ -975,6 +987,11 @@ mod tests {
                 "a whole number above 0",
             ),
             ("strict_mode = \"yes\"", "strict_mode", "true or false"),
+            (
+                "hints.runtime_grounding = 1",
+                "hints.runtime_grounding",
+                "true or false",
+            ),
         ]);
     }
 

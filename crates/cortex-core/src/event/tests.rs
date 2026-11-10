@@ -15,7 +15,8 @@ const FULL_JSON: &str = concat!(
     r#""tool":"edit","tool_target":{"path":"calc/ops.py","ranges":[{"start_line":10,"#,
     r#""end_line":13}],"cut_after":2000,"pattern":"def divide","command":"pytest -q","#,
     r#""hits":["calc/ops.py","#,
-    r#""tests/test_ops.py"],"more_paths":["calc/__init__.py"]},"tool_result":{"#,
+    r#""tests/test_ops.py"],"more_paths":["calc/__init__.py"],"#,
+    r#""failed_output":"FAILED (failures=1)\n"},"tool_result":{"#,
     r#""exit_code":3,"is_success":false,"is_interrupted":false,"output_bytes":42},"#,
     r#""prompt_text":"fix divide","transcript_path":"/home/dev/t.jsonl","model":"sonnet","#,
     r#""subagent_type":"Explore","compact_trigger":"manual","end_reason":"other"}"#
@@ -46,6 +47,7 @@ fn full_event() -> Result<Event, Box<dyn std::error::Error>> {
                 RepoPath::new("tests/test_ops.py")?,
             ],
             more_paths: vec![RepoPath::new("calc/__init__.py")?],
+            failed_output: FailedOutput::tail_of("FAILED (failures=1)\n"),
         }),
         tool_result: Some(ToolResult {
             exit_code: Some(3),
@@ -135,18 +137,19 @@ fn commands_are_cut_by_characters() {
     assert_eq!(ShellCommand::cut("cargo test").as_str(), "cargo test");
 }
 
-/// Debug output, which may end up in a log, shows the lengths of the prompt, the search pattern
-/// and the command, never their text.
+/// Debug output, which may end up in a log, shows the lengths of the prompt, the search pattern,
+/// the command and a failed command's output, never their text.
 #[test]
 fn debug_output_withholds_prompts_patterns_and_commands() -> TestResult {
     let shown = format!("{:?}", full_event()?);
-    for text in ["fix divide", "def divide", "pytest -q"] {
+    for text in ["fix divide", "def divide", "pytest -q", "failures=1"] {
         assert!(!shown.contains(text), "{text} in {shown}");
     }
     for length in [
         "<10 characters withheld>",
         "<10 characters withheld>",
         "<9 characters withheld>",
+        "<20 bytes withheld>",
     ] {
         assert!(shown.contains(length), "{length} not in {shown}");
     }

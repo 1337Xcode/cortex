@@ -196,8 +196,14 @@ impl Inbox {
     /// whether it was taken: an event dropped to make room is taken (and counted), but none is
     /// once the inbox is closed, since the writer records what waits when it closes it and nothing
     /// that comes later. A stop asked for does not close it: the writer may still record events
-    /// before it next looks.
-    pub(crate) fn push_event(&self, event: Event) -> bool {
+    /// before it next looks. A failed command's output, which only an answer reads, is dropped from
+    /// the event first.
+    pub(crate) fn push_event(&self, mut event: Event) -> bool {
+        // INVARIANT: no-content-stored (the writer, which stores events, never gets a command's
+        // output; and a queue of events stays one of paths and counts)
+        if let Some(target) = event.tool_target.as_mut() {
+            target.failed_output = None;
+        }
         let mut state = self.lock();
         if state.is_closed {
             return false;
@@ -559,7 +565,6 @@ mod tests {
         ))
     }
 
-    /// The paths of `changed`, and whether it is a change to everything.
     /// Upkeep stops for a request that came after it began, a read's hint included, and for work
     /// waiting for the writer; not for the request it began after.
     #[test]
@@ -572,6 +577,7 @@ mod tests {
         assert!(!inbox.should_upkeep_stop(inbox.last_request()));
     }
 
+    /// The paths of `changed`, and whether it is a change to everything.
     fn summary(work: Work) -> Option<(bool, Vec<String>)> {
         let Work::Changed(changed) = work else {
             return None;
@@ -685,6 +691,36 @@ mod tests {
             Work::Events(events) => events.iter().map(|event| event.ts_ms).collect(),
             _ => Vec::new(),
         }
+    }
+
+    /// A failed command's event reaches the writer without its output, its command kept.
+    #[test]
+    fn the_writer_gets_no_command_s_output() -> Result<(), Box<dyn std::error::Error>> {
+        let inbox = Inbox::default();
+        let mut failed = event(HookKind::PostTool, Some(ToolKind::Shell), 1)?;
+        failed.tool_target = Some(cortex_core::ToolTarget {
+            command: Some(cortex_core::ShellCommand::cut("pytest")),
+            failed_output: cortex_core::FailedOutput::tail_of("FAILED test_ops.py::test_a\n"),
+            ..cortex_core::ToolTarget::default()
+        });
+        assert!(failed.failed_output().is_some());
+        inbox.push_event(failed);
+        let Work::Events(events) = inbox.wait(None) else {
+            return Err("no events".into());
+        };
+        let target = events
+            .first()
+            .and_then(|event| event.tool_target.as_ref())
+            .ok_or("no target")?;
+        assert_eq!(target.failed_output, None);
+        assert_eq!(
+            target
+                .command
+                .as_ref()
+                .map(cortex_core::ShellCommand::as_str),
+            Some("pytest")
+        );
+        Ok(())
     }
 
     /// Events come out oldest first, before any change waiting with them.

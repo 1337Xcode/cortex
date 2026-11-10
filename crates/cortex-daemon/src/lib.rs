@@ -75,7 +75,7 @@ use self::instance::Instance;
 use self::meter::Meter;
 use self::miner::Miner;
 use self::pending::Pending;
-use self::retrieval::{EditSettings, Service, Settings};
+use self::retrieval::{EditSettings, FailureSettings, Service, Settings};
 use self::server::Server;
 use self::signatures::Signatures;
 use self::worktree::Worktree;
@@ -282,6 +282,10 @@ fn index_and_serve(
             is_strict_mode: config.is_strict_mode,
         },
         coordination: config.coordination,
+        failures: FailureSettings {
+            commands: Arc::new(Commands::new(&config.test_extra_patterns)?),
+            is_runtime_grounding: config.is_runtime_grounding,
+        },
     })));
     // The graph is built once the first index is done, before which a retrieval would find
     // nothing; told to stop when dropped.

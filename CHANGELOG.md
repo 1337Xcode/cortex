@@ -74,6 +74,15 @@ All notable changes to this project are documented in this file. The format is b
   progress was doing: the files it edited, the files it was warned of and has not read or edited
   since, and the start of its prompt when `privacy.store_prompt_excerpt` kept it, within 500
   tokens, once for each compaction.
+- `hints.runtime_grounding = true` gives a failed check the repository lines its stack ran
+  through, beside its output: when a test or build command the agent ran fails (Claude Code's
+  failure hook, Codex's shell result with a non-zero exit), its output is read in memory by the
+  parser of its runner (pytest, unittest, cargo test and rustc, go test, jest and vitest, tsc,
+  Node stack traces, Maven and Gradle), each stack frame is mapped to a file the index holds as it
+  is on disk, and up to three of them, the innermost first, are named with their code line and
+  the definition holding it, within 120 tokens. Nothing is given when every code line is in the
+  output already and the task has read every file named, or when no frame is in the repository
+  (an import or environment error). The output is never stored. Off by default until measured.
 - `strict_mode = true` gives Claude Code a reason to go on when it stops while files calling a
   signature its task changed were not read or edited since the warning, once a task. Off by
   default, when a stop is given nothing. The hook and the daemon now speak protocol 5.1: a hook and

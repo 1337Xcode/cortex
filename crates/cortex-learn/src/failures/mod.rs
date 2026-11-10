@@ -33,10 +33,10 @@ mod tests_edge;
 #[cfg(test)]
 mod tests_formats;
 
-/// The most output read, in bytes. Summaries, failure lists and the last traceback are at the end
-/// of a run's output, so only the tail is read; 64 KiB holds about twice what Claude Code gives a
-/// hook of a command's output (30,000 characters) and bounds the work on output of any size.
-pub(crate) const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+/// The most output read, in bytes: as much as an event carries of a failed command's output.
+/// Summaries, failure lists and the last traceback are at the end of a run's output, so only the
+/// tail is read, and the bound holds the work on output of any size.
+pub(crate) const MAX_OUTPUT_BYTES: usize = cortex_core::MAX_FAILED_OUTPUT_BYTES;
 
 /// The most failed tests named. A failure map shows a handful; a run that breaks everything
 /// names the first twenty.

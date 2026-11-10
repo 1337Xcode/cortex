@@ -3,8 +3,10 @@
 //! An agent's adapter turns its hook payload into an [`Event`] once, at the edge; everything after
 //! (the daemon, the recorder) works on this type. It carries paths, line ranges, sizes and exit
 //! codes, never file contents or tool output. The prompt's text travels in it to the daemon's
-//! memory and is never stored as text unless the user asks for an excerpt.
+//! memory and is never stored as text unless the user asks for an excerpt; so does the end of a
+//! failed shell command's output, which is never stored.
 
+mod failed_output;
 mod kinds;
 
 use std::fmt;
@@ -12,6 +14,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub use self::failed_output::{FailedOutput, FailedOutputError, MAX_FAILED_OUTPUT_BYTES};
 pub use self::kinds::{Agent, CompactTrigger, HookKind, StartSource, ToolKind};
 use crate::{Identifier, RepoPath, Ulid};
 
@@ -115,6 +118,13 @@ impl Event {
         self.tool_target.as_ref()?.path.as_ref()
     }
 
+    /// What a shell command that failed printed, as far as the event carries it: the end of the
+    /// output of a failed shell command's result.
+    #[must_use]
+    pub fn failed_output(&self) -> Option<&FailedOutput> {
+        self.tool_target.as_ref()?.failed_output.as_ref()
+    }
+
     /// The file this event says a tool is about to read: the moment before a read runs, naming a
     /// file inside the repository.
     #[must_use]
@@ -176,6 +186,10 @@ pub struct ToolTarget {
     /// the order the edit names them: at most [`MAX_EDITED_FILES`] files with the first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub more_paths: Vec<RepoPath>,
+    /// For a shell command that failed, the end of what it printed, for the daemon to read what
+    /// failed. It travels to the daemon with the event and is never stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_output: Option<FailedOutput>,
 }
 
 impl ToolTarget {
@@ -387,6 +401,7 @@ impl fmt::Debug for ToolTarget {
             .field("command", &self.command)
             .field("hits", &self.hits)
             .field("more_paths", &self.more_paths)
+            .field("failed_output", &self.failed_output)
             .finish()
     }
 }

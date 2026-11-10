@@ -51,6 +51,17 @@ pub(crate) trait Tools: Sync {
     fn result(&self, tool: ToolKind, event_name: &str, payload: &Payload<'_>)
     -> Option<ToolResult>;
 
+    /// What a shell command that failed printed, as the agent gives it to the hook reporting
+    /// the failure at `event_name`: none for an agent that does not give it.
+    fn failed_output<'p>(
+        &self,
+        event_name: &str,
+        payload: &'p Payload<'_>,
+    ) -> Option<Cow<'p, str>> {
+        let _ = (event_name, payload);
+        None
+    }
+
     /// The payload as Claude Code's hook JSON names its fields: an agent that names some of them
     /// otherwise renames them here.
     fn renamed<'p>(&self, payload: &'p [u8]) -> Cow<'p, [u8]> {

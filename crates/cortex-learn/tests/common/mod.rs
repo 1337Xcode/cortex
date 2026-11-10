@@ -110,6 +110,7 @@ pub fn target(path: &str, ranges: &[(u32, u32)]) -> TestResult<ToolTarget> {
         command: None,
         hits: Vec::new(),
         more_paths: Vec::new(),
+        failed_output: None,
     })
 }
 

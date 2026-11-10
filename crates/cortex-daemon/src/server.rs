@@ -521,6 +521,9 @@ impl Server {
                         service.prompt(&event, (graph, uncommitted), &claims.handed)
                     }
                     Asked::Primer => service.primer(&event, graph, &claims.recapped),
+                    Asked::Warnings if event.failed_output().is_some() => {
+                        service.after_failure(&event)
+                    }
                     Asked::Warnings => service.post_edit(&event, (&signatures, &claims.told)),
                     Asked::ReadHint => service.read_hint(&event, &claims.read_next),
                     Asked::StopReason => service.stop_reason(&event, &claims.stopped),

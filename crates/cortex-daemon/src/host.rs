@@ -1255,6 +1255,7 @@ def g():
                 command: None,
                 hits: Vec::new(),
                 more_paths: Vec::new(),
+                failed_output: None,
             }),
             tool_result: Some(ToolResult {
                 exit_code: None,

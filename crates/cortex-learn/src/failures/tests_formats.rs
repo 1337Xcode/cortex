@@ -1,5 +1,6 @@
-//! The formats the review found uncovered or wrong, each on a small fixture of real output for
-//! the version named in its comment, with the findings counted by hand.
+//! Runner formats beyond the common case (older and newer versions, other build tools, colour),
+//! each on a small fixture of real output for the version named in its comment, with the
+//! findings counted by hand.
 
 use super::tests::{counts, counts_without_passed, frames, joined, kind, names, parsed};
 use super::*;

@@ -77,7 +77,7 @@ const HOOKS: &[HookEntry] = &[
         matcher: Some(TOOL_RESULTS),
         hook: HookKind::PostTool,
         hard_timeout: Duration::from_millis(500),
-        gives_context: false,
+        gives_context: true,
     },
     HookEntry {
         event_name: "PreCompact",
@@ -186,10 +186,10 @@ mod tests {
     use super::*;
 
     /// Cortex gives Claude Code text at a session's start, at a prompt, before a read (its hint),
-    /// after a tool succeeded (an edit's warnings) and at a stop (strict mode's reason), and at no
-    /// other hook: not after a tool failed.
+    /// after a tool succeeded (an edit's warnings), after a tool failed (a failed check's map)
+    /// and at a stop (strict mode's reason), and at no other hook.
     #[test]
-    fn a_session_start_a_prompt_a_read_a_tool_s_success_and_a_stop_give_context() {
+    fn a_session_start_a_prompt_a_read_a_tool_s_result_and_a_stop_give_context() {
         let giving: Vec<&str> = HOOKS
             .iter()
             .filter(|entry| entry.gives_context)
@@ -202,6 +202,7 @@ mod tests {
                 "UserPromptSubmit",
                 "PreToolUse",
                 "PostToolUse",
+                "PostToolUseFailure",
                 "Stop"
             ]
         );

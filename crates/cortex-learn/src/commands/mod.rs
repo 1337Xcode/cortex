@@ -13,6 +13,11 @@
 //! may have failed at the `cd`, `make || cargo test` exits otherwise only when the tests did),
 //! neither inverted nor in the background. A line the reader does not follow tells nothing.
 //!
+//! Apart from what its exit vouches for, a line also tells every check it ran, in its order, whatever
+//! its exit says of each: the runners whose output it may print, which a reader of that output
+//! needs (`cd x && pytest` and `pytest | tail` print pytest's output, though neither line's exit
+//! is pytest's alone).
+//!
 //! Nothing here keeps the command's text: the caller keeps what was told, never the line.
 
 mod argv;
@@ -91,6 +96,8 @@ pub struct Told {
     pub ran: Vec<Ran>,
     /// The check whose own exit status the line's is, when the line exits otherwise.
     pub failure: Option<Check>,
+    /// Every check the line ran, whatever its exit says of it, in the order of the line, each once.
+    pub checks: Vec<Check>,
 }
 
 /// The commands Cortex tells apart: the runners it knows and the user's patterns, compiled once.
@@ -258,8 +265,13 @@ impl Walk<'_> {
             Command::Simple(words) => {
                 if let Some(moved) = folder.after(words) {
                     *folder = moved;
-                } else if says.success || says.failure {
+                } else {
                     let ran = self.commands.ran(words, folder, self.root);
+                    if let Some(Ran::Check(check)) = &ran
+                        && !self.told.checks.contains(check)
+                    {
+                        self.told.checks.push(*check);
+                    }
                     if says.failure
                         && let Some(Ran::Check(check)) = &ran
                     {

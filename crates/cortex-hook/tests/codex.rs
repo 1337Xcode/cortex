@@ -592,6 +592,43 @@ fn a_command_s_result_is_read_from_its_rollout() -> TestResult {
     Ok(())
 }
 
+/// A shell command that failed, by its rollout's exit code, carries what it printed, its
+/// response: the failing unittest run, from its first `=====` line to `FAILED (failures=1)`. The
+/// same command when its rollout says it passed carries nothing, and nor does a failure that
+/// printed nothing.
+#[test]
+fn a_failed_command_carries_what_it_printed() -> TestResult {
+    let codex = adapter("codex").ok_or("no Codex adapter")?;
+    let folder = tempfile::tempdir()?;
+    let day = folder.path().join(".codex/sessions/2026/10/29");
+    std::fs::create_dir_all(&day)?;
+    let rollout = day.join(format!("rollout-2026-10-29T06-03-56-{S1}.jsonl"));
+    let output = |name: &str, code: i32| -> TestResult<Option<String>> {
+        let mut value: serde_json::Value = serde_json::from_slice(&payload(name)?)?;
+        let id = value["tool_use_id"].as_str().ok_or("no id")?.to_owned();
+        std::fs::write(&rollout, finished(&id, code) + "\n")?;
+        value["transcript_path"] = rollout.to_string_lossy().into_owned().into();
+        let event = codex
+            .normalize(
+                "PostToolUse",
+                &serde_json::to_vec(&value)?,
+                &locate,
+                stamp(),
+            )?
+            .ok_or("no event")?;
+        Ok(event
+            .tool_target
+            .and_then(|target| target.failed_output)
+            .map(String::from))
+    };
+    let printed = output("post-tool-use-bash-test-failing.json", 1)?.ok_or("nothing printed")?;
+    assert!(printed.starts_with("====="), "{printed}");
+    assert!(printed.ends_with("FAILED (failures=1)\r\n"), "{printed}");
+    assert_eq!(output("post-tool-use-bash-test-failing.json", 0)?, None);
+    assert_eq!(output("post-tool-use-bash-nonzero-exit.json", 3)?, None);
+    Ok(())
+}
+
 /// A patch's result is the exit code its response opens with: a patch that failed is no success;
 /// a response with no code, or no response, gives no result.
 #[test]
