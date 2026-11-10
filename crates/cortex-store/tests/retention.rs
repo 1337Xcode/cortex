@@ -1,7 +1,8 @@
-//! What upkeep stops keeping, deleted in bounded batches, worked out by hand: events past their
-//! retention, episodes past their cap (unknown outcomes first, then the oldest), positions that
+//! What upkeep stops keeping, deleted in bounded batches, worked out by hand: events and injections
+//! past their retention, episodes past their cap (unknown outcomes first, then the oldest), positions that
 //! can no longer hold, and facts retired long ago with their anchors and where they were given;
-//! and the write-ahead log's file, which upkeep paces itself by.
+//! the write-ahead log's file, which upkeep paces itself by; and upkeep's place, kept between
+//! daemons.
 
 mod common;
 
@@ -9,12 +10,12 @@ use std::time::{Duration, Instant};
 
 use common::{Scratch, TestResult, index};
 use cortex_core::{
-    Agent, EventKind, EventMeta, FactKind, FactSource, FactStatus, Identifier, PositionMode,
-    RepoPath, TaskOutcome, Ulid,
+    Agent, ContentHash, EventKind, EventMeta, FactKind, FactSource, FactStatus, HookKind,
+    Identifier, PositionMode, RepoPath, TaskOutcome, Ulid,
 };
 use cortex_store::{
-    EpisodeRecord, EventRecord, FactRecord, Pitfalls, PositionRecord, SessionRecord, TaskRecord,
-    WriteTx,
+    EpisodeRecord, EventRecord, FactRecord, InjectionRecord, MetaKey, Pitfalls, PositionRecord,
+    SessionRecord, TaskRecord, WriteTx,
 };
 
 /// Stores session `s1` and, for each of `outcomes`, a task started at 1,000 plus its position and
@@ -256,4 +257,59 @@ fn the_log_file_is_cut_back_once_the_log_is_copied() -> TestResult {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// Worked by hand. Injections of session `s1` at 1,000, 2,000 and 3,000, then at 4,000 and 3,500,
+/// recorded in that order. Before 2,500, two at a time: the first two go, then none. Before 3,750,
+/// two at a time: 3,000 alone goes (the next is 4,000, newer), and one at a time none: 3,500 waits
+/// behind 4,000, recorded before it. Before 5,000, both go. Upkeep's place, kept as `events`, reads
+/// back as `events`.
+#[test]
+fn old_injections_are_deleted_and_upkeep_s_place_is_kept() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let session = Identifier::new("s1")?;
+    transaction.record_session(&SessionRecord {
+        session_id: session.clone(),
+        agent: Agent::Claude,
+        agent_version: None,
+        model: None,
+        parent_session_id: None,
+        cwd: None,
+        transcript_path: None,
+        started_at_ms: 500,
+    })?;
+    let given = |at_ms| InjectionRecord {
+        task_id: None,
+        session_id: session.clone(),
+        hook: HookKind::SessionStart,
+        at_ms,
+        files: Vec::new(),
+        tokens: 10,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"a primer")),
+        features: None,
+    };
+    for at_ms in [1_000, 2_000, 3_000] {
+        transaction.record_injection(&given(at_ms))?;
+    }
+    assert_eq!(transaction.delete_injections_before(2_500, 2)?, 2);
+    assert_eq!(transaction.delete_injections_before(2_500, 2)?, 0);
+    for at_ms in [4_000, 3_500] {
+        transaction.record_injection(&given(at_ms))?;
+    }
+    assert_eq!(transaction.delete_injections_before(3_750, 2)?, 1);
+    assert_eq!(transaction.delete_injections_before(3_750, 1)?, 0);
+    assert_eq!(transaction.delete_injections_before(5_000, 2)?, 2);
+    assert_eq!(transaction.queries().injections_of_session(&session)?, []);
+    transaction.set_upkeep_step("events")?;
+    transaction.commit()?;
+    assert_eq!(
+        writer.queries().meta(MetaKey::UpkeepStep)?.as_deref(),
+        Some("events")
+    );
+    Ok(())
 }

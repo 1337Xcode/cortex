@@ -19,6 +19,8 @@ pub enum MetaKey {
     SelfCheck,
     /// The last time the confidence model was fitted, kept or not, as JSON.
     CalibrationAttempt,
+    /// The upkeep step to carry on from, by the name upkeep gives it.
+    UpkeepStep,
 }
 
 impl MetaKey {
@@ -33,6 +35,7 @@ impl MetaKey {
             Self::ScaleMode => "scale_mode",
             Self::SelfCheck => "self_check",
             Self::CalibrationAttempt => "calibration_attempt",
+            Self::UpkeepStep => "upkeep_step",
         }
     }
 }

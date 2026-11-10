@@ -296,6 +296,20 @@ impl WriteTx<'_> {
         })
     }
 
+    /// Keeps `step`, the name of the upkeep step to carry on from, for a daemon that starts later.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn set_upkeep_step(&mut self, step: &str) -> Result<(), StoreError> {
+        self.atomically(|connection| {
+            connection
+                .execute(schema::META_SET, (MetaKey::UpkeepStep.name(), step))
+                .map(drop)
+                .map_err(sqlite("writing upkeep's place"))
+        })
+    }
+
     /// Replaces the edges of `edge_type` that start at `src` with `edges`.
     ///
     /// # Errors
@@ -580,6 +594,20 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn delete_events_before(&mut self, before_ms: i64, limit: u64) -> Result<u64, StoreError> {
         self.atomically(|connection| retention::delete_events(connection, (before_ms, limit)))
+    }
+
+    /// Deletes those of the `limit` first injections recorded that are older than `before_ms`: how
+    /// many. An injection recorded after a later one keeps the older ones behind it.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn delete_injections_before(
+        &mut self,
+        before_ms: i64,
+        limit: u64,
+    ) -> Result<u64, StoreError> {
+        self.atomically(|connection| retention::delete_injections(connection, (before_ms, limit)))
     }
 
     /// Deletes at most `limit` episodes past the `keep` most worth keeping, those whose outcome is

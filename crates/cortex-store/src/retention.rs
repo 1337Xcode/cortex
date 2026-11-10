@@ -25,6 +25,24 @@ pub(crate) fn delete_events(
     )
 }
 
+/// Deletes those of the `limit` first injections recorded that are older than `before_ms`: how
+/// many.
+///
+/// # Errors
+///
+/// SQLite errors.
+pub(crate) fn delete_injections(
+    connection: &Connection,
+    (before_ms, limit): (i64, u64),
+) -> Result<u64, StoreError> {
+    run(
+        connection,
+        schema::INJECTIONS_DELETE_BEFORE,
+        (before_ms, as_sql(limit)),
+        "deleting old injections",
+    )
+}
+
 /// Deletes at most `limit` episodes past the `keep` most worth keeping: those whose outcome is
 /// unknown go first, then the oldest: how many.
 ///

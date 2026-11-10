@@ -774,6 +774,10 @@ pub(crate) const FREE_PAGES: &str = "PRAGMA freelist_count";
 /// after a later one keeps the older ones behind it until it is old enough itself.
 pub(crate) const EVENTS_DELETE_BEFORE: &str = "DELETE FROM events WHERE seq IN \
      (SELECT seq FROM events ORDER BY seq LIMIT ?2) AND ts < ?1";
+/// Deletes those of the ?2 first injections recorded, by number, that are older than ?1, as
+/// [`EVENTS_DELETE_BEFORE`] deletes events: reading no more than ?2 rows.
+pub(crate) const INJECTIONS_DELETE_BEFORE: &str = "DELETE FROM injections WHERE injection_id IN \
+     (SELECT injection_id FROM injections ORDER BY injection_id LIMIT ?2) AND ts < ?1";
 /// Deletes at most ?2 of the episodes past the ?1 most worth keeping: those of an unknown outcome
 /// first, then the oldest.
 pub(crate) const EPISODES_OVER_CAP: &str = "DELETE FROM episodes WHERE episode_id IN \
