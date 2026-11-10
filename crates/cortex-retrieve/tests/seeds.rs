@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use common::{Repo, TestResult, event, function, record, tool};
 use cortex_core::{EdgeType, FileFlags, HookKind, Identifier, InterestTier, ToolKind};
 use cortex_retrieve::{
-    GraphSettings, PromptTerms, SeedQuery, exploration, read_graph, seeds, shares, similar, summed,
+    FAILURE_AGREED_WEIGHT, FAILURE_ALONE_WEIGHT, GraphSettings, PromptTerms, SeedQuery,
+    exploration, read_graph, seeds, shares, similar, summed,
 };
 use cortex_store::NodeId;
 use proptest::prelude::*;
@@ -211,6 +212,7 @@ fn every_source_adds_to_one_vector() -> TestResult {
         terms: &terms,
         session: Some(&session),
         uncommitted: &[u],
+        failure: &[],
     };
     let found = seeds(reader.queries(), &graph, &query)?;
     let index = |node: NodeId| graph.index_of(node).ok_or("a node of the graph");
@@ -223,6 +225,60 @@ fn every_source_adds_to_one_vector() -> TestResult {
     assert!(near(found.vector.get(&u), 0.8 / 2.21));
     assert!(near(found.vector.get(&t), 0.36 / 2.21));
     assert!(near(found.vector.get(&h), 0.05 / 2.21));
+    Ok(())
+}
+
+/// The last failure seeds its frames by whether another source agrees, worked out by hand. The
+/// session edited lines 6 to 9 of `a.py`, `g`: 1.0 from the session. Of the failure's frames, `g`
+/// itself and `f` (another definition of `a.py`, the file the session's seed is in) are agreed,
+/// 1.0 each; `h` in `b.py`, which nothing else points at, stands alone, 0.4; `g` named again seeds
+/// once. So `g` weighs 1.0 + 1.0 = 2.0 in all, `f` 1.0 and `h` 0.4; no prompt word, work tree or
+/// earlier work adds anything.
+#[test]
+fn the_last_failure_seeds_by_agreement() -> TestResult {
+    let mut repo = Repo::new()?;
+    let text = "line\n".repeat(10);
+    let defs = [function("f", 1, 4), function("g", 6, 9)];
+    let a = repo.file("a.py", &text, &defs, FileFlags::empty())?;
+    let (f, g) = (a[1], a[2]);
+    let h = repo.file("b.py", &text, &[function("h", 1, 3)], FileFlags::empty())?[1];
+    record(
+        &mut repo,
+        &[
+            event("s1", 1_000, HookKind::SessionStart)?,
+            event("s1", 2_000, HookKind::Prompt)?,
+            tool(("s1", 2_100), ToolKind::Edit, ("a.py", &[(7, 8)]))?,
+        ],
+    )?;
+    let reader = repo.reader()?;
+    let graph = read_graph(reader.queries(), &GraphSettings::default())?;
+    let terms = PromptTerms::of("quokka wombat numbat");
+    let session = Identifier::new("s1")?;
+    let query = SeedQuery {
+        terms: &terms,
+        session: Some(&session),
+        uncommitted: &[],
+        failure: &[g, h, f, g],
+    };
+    let found = seeds(reader.queries(), &graph, &query)?;
+    let index = |node: NodeId| graph.index_of(node).ok_or("a node of the graph");
+    let (f, g, h) = (index(f)?, index(g)?, index(h)?);
+    assert_eq!(
+        found.failure.seeds,
+        BTreeMap::from([
+            (f, FAILURE_AGREED_WEIGHT),
+            (g, FAILURE_AGREED_WEIGHT),
+            (h, FAILURE_ALONE_WEIGHT)
+        ])
+    );
+    assert_eq!(found.failure.agreed, 2);
+    let whole = summed(&[&found.session.seeds, &found.failure.seeds]);
+    assert!(near(whole.get(&g), 2.0));
+    assert!(near(whole.get(&f), 1.0));
+    assert!(near(whole.get(&h), 0.4));
+    for node in [f, g, h] {
+        assert!(found.vector.contains_key(&node), "{node}");
+    }
     Ok(())
 }
 
@@ -245,6 +301,7 @@ fn nothing_found_is_no_vector() -> TestResult {
         terms: &terms,
         session: Some(&session),
         uncommitted: &[],
+        failure: &[],
     };
     let found = seeds(reader.queries(), &graph, &query)?;
     assert!(found.vector.is_empty());

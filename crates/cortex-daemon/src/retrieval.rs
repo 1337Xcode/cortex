@@ -41,6 +41,7 @@ use cortex_store::{
 
 pub(crate) use self::coordination::Coordination;
 use crate::claim::Claim;
+use crate::failed::Failed;
 use crate::given::{Given, text_record};
 use crate::once::ClaimedOnce;
 use crate::recapped::Recapped;
@@ -168,8 +169,11 @@ impl Service {
         &self,
         event: &Event,
         (graph, uncommitted): (Option<&Arc<Graph<NodeId>>>, &[NodeId]),
-        handed: &ClaimedOnce<HandoffId>,
+        (handed, failed): (&ClaimedOnce<HandoffId>, &Failed),
     ) -> Answer {
+        // Taken by any prompt of the session, one that asks for no code included: what came after
+        // the failure is no longer about it.
+        let failure = self.failure_seeds(event, failed);
         let Some((graph, prompt)) = graph.zip(event.prompt_for_work()) else {
             return Answer::default();
         };
@@ -184,6 +188,7 @@ impl Service {
                 prompt,
                 session: Some(&event.session_id),
                 uncommitted,
+                failure: &failure,
                 mode,
                 settings: &self.settings,
                 max_file_bytes: self.max_file_bytes,
@@ -320,6 +325,7 @@ impl Service {
                 prompt: question,
                 session: None,
                 uncommitted,
+                failure: &[],
                 mode,
                 settings: &self.settings,
                 max_file_bytes: self.max_file_bytes,

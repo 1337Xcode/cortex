@@ -22,6 +22,7 @@ mod asked;
 mod claim;
 mod claims;
 mod facts;
+mod failed;
 mod given;
 mod global_ignore;
 mod graph;

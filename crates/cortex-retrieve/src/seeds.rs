@@ -2,8 +2,9 @@
 //!
 //! The sources are the prompt's words ([`lexical`]), what the session has been doing
 //! ([`session`]), what the work tree is changing and has not committed ([`uncommitted`]), earlier
-//! work like the prompt's ([`similar`]), and, around what those found, code agents have not worked
-//! on yet ([`exploration`]). Each weighs the nodes it finds on its own
+//! work like the prompt's ([`similar`]), the code the session's last failed check ran through
+//! ([`failure_seeds`], weighed by whether the others agree), and, around what those found, code
+//! agents have not worked on yet ([`exploration`]). Each weighs the nodes it finds on its own
 //! scale. Per node the sources' weights add, and the whole is divided by its sum, so the vector
 //! sums to 1. Where no source finds anything there is no vector: activation never starts from
 //! nothing.
@@ -14,6 +15,7 @@ use cortex_core::Identifier;
 use cortex_store::{NodeId, Queries, StoreError};
 
 use crate::exploration::exploration;
+use crate::failure_seeds::{FailureMatch, failure_seeds};
 use crate::graph::Graph;
 use crate::lexical::{LexicalMatch, lexical};
 use crate::prompt::PromptTerms;
@@ -31,6 +33,9 @@ pub struct SeedQuery<'a> {
     pub session: Option<&'a Identifier>,
     /// The file nodes of the uncommitted diff, as the daemon last read them; empty when it has not.
     pub uncommitted: &'a [NodeId],
+    /// The nodes the session's last failed check ran through, as its failure map grounded them;
+    /// empty when there is none.
+    pub failure: &'a [NodeId],
 }
 
 /// What each source found, and the vector they make.
@@ -44,6 +49,8 @@ pub struct Seeds {
     pub uncommitted: UncommittedMatch,
     /// Earlier work like the prompt's.
     pub similar: SimilarMatch,
+    /// The code the session's last failed check ran through.
+    pub failure: FailureMatch,
     /// The dark neighbours of the strongest of the others.
     pub exploration: BTreeMap<u32, f64>,
     /// Every seed with its share of the whole, by node: the shares sum to 1, or there are none.
@@ -67,12 +74,14 @@ pub fn seeds(
     };
     let uncommitted = uncommitted(graph, query.uncommitted);
     let similar = similar(queries, graph, query.terms)?;
-    let found = summed(&[
+    let others = summed(&[
         &lexical.seeds,
         &session.seeds,
         &uncommitted.seeds,
         &similar.seeds,
     ]);
+    let failure = failure_seeds(graph, query.failure, &others);
+    let found = summed(&[&others, &failure.seeds]);
     let exploration = exploration(graph, &found);
     let vector = shares(&summed(&[&found, &exploration]));
     Ok(Seeds {
@@ -80,6 +89,7 @@ pub fn seeds(
         session,
         uncommitted,
         similar,
+        failure,
         exploration,
         vector,
     })

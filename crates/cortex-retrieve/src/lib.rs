@@ -18,6 +18,7 @@ mod error;
 mod exploration;
 mod facts;
 mod failure_map;
+mod failure_seeds;
 mod features;
 mod gate;
 mod graph;
@@ -54,6 +55,7 @@ pub use error::RetrieveError;
 pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
 pub use facts::{FactAt, ListedFile, MAX_ORDER_FACTS, OrderFact, order_facts};
 pub use failure_map::{FailureMap, MAX_FAILURE_MAP_TOKENS, MAX_MAPPED_FRAMES, failure_map};
+pub use failure_seeds::{FAILURE_AGREED_WEIGHT, FAILURE_ALONE_WEIGHT, FailureMatch, failure_seeds};
 pub use features::{Found, GATED_FILES, MASSED_FILES, features_of};
 pub use gate::{
     AGREEING_KINDS, Confidence, LEXICAL_BAR, MAX_RAISED_CONFIDENCE, Rule,

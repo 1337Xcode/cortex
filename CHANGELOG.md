@@ -82,7 +82,10 @@ All notable changes to this project are documented in this file. The format is b
   is on disk, and up to three of them, the innermost first, are named with their code line and
   the definition holding it, within 120 tokens. Nothing is given when every code line is in the
   output already and the task has read every file named, or when no frame is in the repository
-  (an import or environment error). The output is never stored. Off by default until measured.
+  (an import or environment error). The session's next prompt also seeds its retrieval from
+  those frames, as strongly as an edit where the prompt or the session points at them too, as a
+  read where nothing else does; a passing run of the same runner, or half an hour, drops them.
+  The output is never stored. Off by default until measured.
 - `strict_mode = true` gives Claude Code a reason to go on when it stops while files calling a
   signature its task changed were not read or edited since the warning, once a task. Off by
   default, when a stop is given nothing. The hook and the daemon now speak protocol 5.1: a hook and

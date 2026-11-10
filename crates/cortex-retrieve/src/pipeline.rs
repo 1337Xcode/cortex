@@ -44,6 +44,9 @@ pub struct Request<'a> {
     pub session: Option<&'a Identifier>,
     /// The file nodes of the uncommitted diff, as the daemon last read them; empty when it has not.
     pub uncommitted: &'a [NodeId],
+    /// The nodes the session's last failed check ran through, as its failure map grounded them;
+    /// empty when there is none.
+    pub failure: &'a [NodeId],
     /// The repository's mode.
     pub mode: ScaleMode,
     /// The `retrieval.*` settings.
@@ -326,6 +329,7 @@ fn reached(
             terms: &terms,
             session: request.session,
             uncommitted: request.uncommitted,
+            failure: request.failure,
         },
     )?;
     if seeds.vector.is_empty() {

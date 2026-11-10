@@ -2,7 +2,8 @@
 //! captured payloads come from: a unittest run whose traceback runs through `divide` and its test,
 //! in files the task has not read, is given those lines with their code as it is on disk,
 //! innermost first. With `hints.runtime_grounding` off, the same failure is given nothing; and a
-//! failure whose frames are all outside the repository is given nothing either.
+//! failure whose frames are all outside the repository is given nothing either. The prompt after
+//! the failure ranks the failing code higher than it would without it.
 #![allow(
     clippy::indexing_slicing,
     reason = "the payloads edited here are JSON objects, where indexing a missing key adds it"
@@ -16,7 +17,7 @@ use std::time::Duration;
 use common::calc::{S1, prompt, repository, tests_run};
 use common::hook_call::hook;
 use common::{Daemon, TestResult, graph_of, wait_for};
-use cortex_core::Identifier;
+use cortex_core::{HookKind, Identifier};
 use cortex_store::Reader;
 use serde_json::Value;
 
@@ -156,5 +157,67 @@ fn the_map_is_off_by_default() -> TestResult {
     let at = printed_root(&repo)?;
     assert_eq!(given(&failed_run(&repo, &at)?, home)?, None);
     drop(daemon);
+    Ok(())
+}
+
+/// The files the retrieval of the captured session's latest prompt ranked, best first, as the
+/// store recorded them, whether the gate gave them or not.
+fn ranked_by_latest_prompt(repo: &Path) -> TestResult<Vec<String>> {
+    let reader = Reader::open(&repo.join(".cortex"), 0)?;
+    let queries = reader.queries();
+    let latest = queries
+        .injections_of_session(&Identifier::new(S1)?)?
+        .into_iter()
+        .rev()
+        .find(|row| row.record.hook == HookKind::Prompt)
+        .ok_or("no prompt's retrieval recorded")?;
+    let mut files = Vec::new();
+    for file in &latest.record.files {
+        let (_, path) = queries.node_file(file.node)?.ok_or("a ranked file")?;
+        files.push(path.as_str().to_owned());
+    }
+    Ok(files)
+}
+
+/// The session's prompt after a failed run seeds from the frames the run went through: with the
+/// map on, `calc/ops.py`, where `divide` failed, ranks higher for "The tests fail. Fix it so they
+/// pass." than the same prompt ranks it with the map off, everything else alike.
+#[test]
+fn the_next_prompt_seeds_from_the_failure() -> TestResult {
+    let mut places = Vec::new();
+    for config in [
+        "mode = \"medium\"\n[holdout]\nshare = 0\n[hints]\nruntime_grounding = true\n",
+        "mode = \"medium\"\n[holdout]\nshare = 0\n",
+    ] {
+        let (home, repo) = repository()?;
+        let home = home.path();
+        let daemon = started(&repo, home, config)?;
+        let at = printed_root(&repo)?;
+        given(&failed_run(&repo, &at)?, home)?;
+        given(
+            &prompt(&repo, "The tests fail. Fix it so they pass.")?,
+            home,
+        )?;
+        let session = Identifier::new(S1)?;
+        wait_for(|| {
+            let reader = Reader::open(&repo.join(".cortex"), 0)?;
+            let prompts = reader
+                .queries()
+                .injections_of_session(&session)?
+                .into_iter()
+                .filter(|row| row.record.hook == HookKind::Prompt)
+                .count();
+            Ok(prompts == 2)
+        })?;
+        let ranked = ranked_by_latest_prompt(&repo)?;
+        let place = ranked
+            .iter()
+            .position(|path| path == "calc/ops.py")
+            .ok_or_else(|| format!("calc/ops.py not ranked: {ranked:?}"))?;
+        places.push(place);
+        drop(daemon);
+    }
+    let (on, off) = (places.first(), places.get(1));
+    assert!(on < off, "{places:?}");
     Ok(())
 }

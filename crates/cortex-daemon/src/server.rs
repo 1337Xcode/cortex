@@ -26,6 +26,7 @@ use tokio::sync::Semaphore;
 
 use crate::asked::{ASK_START_WITHIN, ASK_WRITE_WITHIN, Ask};
 use crate::claim::{Claim, Claims};
+use crate::failed::Failed;
 use crate::given::{Given, recorded};
 use crate::graph::Snapshot;
 use crate::host::now_ms;
@@ -62,6 +63,8 @@ pub(crate) struct Server {
     claims: Claims,
     /// What answers with text, once the first index is done.
     service: Arc<OnceLock<Service>>,
+    /// The latest failed check of each recent session, for its next prompt's seeds.
+    failed: Arc<Failed>,
     /// How long each hook's latest requests took to handle.
     latencies: Mutex<Latencies>,
     /// Probes, `cortex doctor`'s, answered since the daemon started.
@@ -205,6 +208,7 @@ impl Server {
             signatures,
             claims: Claims::default(),
             service,
+            failed: Arc::default(),
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
         }
@@ -514,17 +518,21 @@ impl Server {
         let agent = event.agent;
         let signatures = Arc::clone(&self.signatures);
         let claims = self.claims.clone();
+        let failed = Arc::clone(&self.failed);
         let mut answer = self
             .with_service(move |service, graph, uncommitted| {
                 let answer = match asked {
                     Asked::WorkOrder => {
-                        service.prompt(&event, (graph, uncommitted), &claims.handed)
+                        service.prompt(&event, (graph, uncommitted), (&claims.handed, &failed))
                     }
                     Asked::Primer => service.primer(&event, graph, &claims.recapped),
                     Asked::Warnings if event.failed_output().is_some() => {
-                        service.after_failure(&event)
+                        service.after_failure(&event, &failed)
                     }
-                    Asked::Warnings => service.post_edit(&event, (&signatures, &claims.told)),
+                    Asked::Warnings => {
+                        service.note_passed(&event, &failed);
+                        service.post_edit(&event, (&signatures, &claims.told))
+                    }
                     Asked::ReadHint => service.read_hint(&event, &claims.read_next),
                     Asked::StopReason => service.stop_reason(&event, &claims.stopped),
                 };
