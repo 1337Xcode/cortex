@@ -4,7 +4,8 @@
 //! `:`) is written bare, with `/` between folders, which every one of these shells runs as it is;
 //! any other path is quoted for the agent's shell, and is not written for a shell Cortex does not
 //! know, or for `cmd` when the path holds a character `cmd` reads between quotes, since a wrong
-//! quote would run something else.
+//! quote would run something else. PowerShell runs a quoted path only behind its call operator,
+//! `&`.
 
 /// The shell an agent hands a hook's command to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +14,8 @@ pub(crate) enum Shell {
     Posix,
     /// Windows' `cmd /c`.
     Cmd,
+    /// PowerShell, given the line as its command (`powershell -Command`).
+    Powershell,
     /// Not documented for this system.
     Unknown,
 }
@@ -47,7 +50,16 @@ fn written(program: &str, shell: Shell) -> Option<String> {
     match shell {
         Shell::Posix => Some(format!("'{}'", forward.replace('\'', r"'\''"))),
         Shell::Cmd if !program.chars().any(is_special_to_cmd) => Some(format!("\"{program}\"")),
-        Shell::Cmd | Shell::Unknown => None,
+        // Between single quotes PowerShell reads nothing but a quote, which is doubled; its
+        // typographic single quotes count as quotes too, and are not written.
+        Shell::Powershell
+            if !program
+                .chars()
+                .any(|char| ('\u{2018}'..='\u{201b}').contains(&char)) =>
+        {
+            Some(format!("& '{}'", program.replace('\'', "''")))
+        }
+        Shell::Cmd | Shell::Powershell | Shell::Unknown => None,
     }
 }
 
@@ -111,6 +123,36 @@ mod tests {
             Some(r#""C:\Users\Ann Lee\.cargo\bin\cortex.exe" hook --agent junie --event Stop"#)
         );
         assert_eq!(hook_command(windows, "qwen", "Stop", Shell::Unknown), None);
+    }
+
+    /// PowerShell gets a plain path bare, and any other behind its call operator in single quotes,
+    /// a quote doubled, `$`, `%` and parentheses kept as they are; a path holding a typographic
+    /// single quote, which PowerShell also reads as a quote, is not written.
+    #[test]
+    fn powershell_calls_a_quoted_path() {
+        assert_eq!(
+            hook_command(r"C:\tools\cortex.exe", "trae", "Stop", Shell::Powershell).as_deref(),
+            Some("C:/tools/cortex.exe hook --agent trae --event Stop")
+        );
+        assert_eq!(
+            hook_command(
+                r"C:\Users\Ann O'Neil\$x (1)%\cortex.exe",
+                "cursor",
+                "stop",
+                Shell::Powershell
+            )
+            .as_deref(),
+            Some(r"& 'C:\Users\Ann O''Neil\$x (1)%\cortex.exe' hook --agent cursor --event stop")
+        );
+        assert_eq!(
+            hook_command(
+                "C:\\Ann\u{2019}s\\cortex.exe",
+                "cursor",
+                "stop",
+                Shell::Powershell
+            ),
+            None
+        );
     }
 
     /// A Windows path that `cmd` would read differently between quotes is not written for it: a

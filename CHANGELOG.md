@@ -8,6 +8,26 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- `cortex init --agents` also writes Cortex's hooks for Cursor, GitHub Copilot, Antigravity,
+  Kiro, TRAE, Crush (in `crush.json`, the JSON form Crush still reads beside its newer `crushrc`)
+  and OpenHands, each in its own hooks file and shape as its documentation gives it, beside the
+  hooks the user already has there, keeping the keys the user added to Cortex's hooks, such as a
+  switch turning them off; OpenHands' events are spelled and placed as the user's own are.
+  Copilot's and Kiro's go in a file of Cortex's own in the repository, which `.gitignore` then
+  gets, or in the user's hooks folder with `--scope user`, and init refuses one scope while the
+  other holds Cortex's hooks, since the agent would run both. What the user must turn on
+  themselves (TRAE's hooks switch, Copilot's trust of the folder) is said and never written.
+  `cortex doctor` checks that every agent init set up for the repository, and uninstall has not
+  undone, still holds Cortex's hook for each of its events, and names the init that puts them
+  back, or the user's own switch when the user turned them off. `cortex uninstall` gives those
+  files back as they were, removes those init made, and removes exactly the folders init made for
+  them, once empty. These files are checked against hand-written ones; the agents themselves have
+  not run them yet.
+- `cortex` run with no arguments, its standard input not a terminal (as an agent runs a hook),
+  prints nothing and exits 0, so that an agent that imports Claude Code's settings and runs
+  Cortex's hook program without its arguments never reads a usage error as a refusal. A payload
+  given to Cortex's Claude Code hook that carries a field only Cursor, GitHub Copilot or TRAE
+  sends is passed over, so that no session is recorded twice.
 - Linked working trees (`git worktree add`): an agent working in one reaches the repository's
   daemon, store and what Cortex learned, never a second setup of its own; its work orders,
   warnings and hints show and check its own files' lines, its uncommitted changes are its own,

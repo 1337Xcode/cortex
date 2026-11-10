@@ -58,7 +58,7 @@ pub(super) fn planned(
         _ => {
             let home = std::env::home_dir().context("finding the home folder")?;
             let (folder, name) = split(hooks.user);
-            let folder = folder.map_or_else(|| home.clone(), |folder| home.join(folder));
+            let folder = folder.map_or_else(|| home.clone(), |folder| place::joined(&home, folder));
             (place::file_beside(&folder, name)?, Owner::User)
         }
     };
@@ -71,6 +71,9 @@ pub(super) fn planned(
         refuse_hidden_hooks(read_instead, setup)?;
     }
     let program = crate::program::this_program()?;
+    if let Some(project) = hooks.project {
+        refuse_both_scopes((root, project), owner, setup, &program)?;
+    }
     let after = settings::merged(before.as_deref(), &program, adapter.hooks(), &hooks.style)
         .with_context(|| {
             format!(
@@ -86,6 +89,47 @@ pub(super) fn planned(
         after,
         owner,
     }))
+}
+
+/// Refuses when the file of the other scope, `project` in the repository at `root` when `owner` is
+/// the user and the user's file otherwise, holds Cortex's hooks for `setup`'s agent, run by
+/// `program` or an older Cortex: the agent runs the hooks of both files, so each event would run
+/// Cortex twice. A file of the other scope that is not the JSON the agent reads runs nothing.
+///
+/// # Errors
+///
+/// No home folder, a file that cannot be read, or one holding Cortex's hooks.
+fn refuse_both_scopes(
+    (root, project): (&Path, &str),
+    owner: Owner,
+    setup: &Setup,
+    program: &str,
+) -> anyhow::Result<()> {
+    let Some(hooks) = &setup.hooks else {
+        return Ok(());
+    };
+    let (other, flag) = match owner {
+        Owner::User => (place::joined(root, project), ""),
+        Owner::Repository { .. } => {
+            let home = std::env::home_dir().context("finding the home folder")?;
+            (place::joined(&home, hooks.user), " --scope user")
+        }
+    };
+    let Some(text) = read_text_file(&other, MAX_SETTINGS_BYTES)? else {
+        return Ok(());
+    };
+    let holds = settings::cortex_commands(&text, program, &hooks.style)
+        .is_ok_and(|commands| !commands.is_empty());
+    if holds {
+        let title = setup.agent.title();
+        bail!(
+            "{} holds Cortex's {title} hooks already, and {title} runs the hooks of both files, \
+             so each event would run Cortex twice; take those out first (`cortex uninstall{flag}` \
+             undoes what init wrote there), or keep them and set {title} up in that scope",
+            other.display()
+        );
+    }
+    Ok(())
 }
 
 /// Refuses when `read_instead`, a file of the home folder that `setup`'s agent reads hooks from

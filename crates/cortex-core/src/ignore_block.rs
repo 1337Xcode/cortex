@@ -18,10 +18,12 @@ pub const IGNORE_LOCAL_SETTINGS: &str = ".claude/settings.local.json";
 
 /// The lines that leave out each agent's file of a repository's that init writes hooks to: the
 /// agent reads it and git does not share it, since a hook names this machine's program.
-pub const IGNORE_LOCAL_FILES: [&str; 3] = [
+pub const IGNORE_LOCAL_FILES: [&str; 5] = [
     IGNORE_LOCAL_SETTINGS,
     ".devin/config.local.json",
     ".augment/settings.local.json",
+    ".github/hooks/cortex.json",
+    ".kiro/hooks/cortex.json",
 ];
 
 /// `line` without its line ending, `\n` or `\r\n`.

@@ -4,7 +4,8 @@
 //! whatever the scope.
 
 use super::command::Shell;
-use super::settings::{Events, Handler, Style, TimeoutUnit};
+use super::handler::Keys;
+use super::settings::{Events, Handler, Layout, Spelling, Style, TimeoutUnit};
 use cortex_core::Agent;
 
 use super::{FoundBy, HooksFile, Setup};
@@ -18,7 +19,11 @@ const STYLE: Style = Style {
         Shell::Posix
     }),
     timeout: TimeoutUnit::Seconds,
-    events: Events::UnderHooks,
+    events: Events::Under("hooks"),
+    spelling: Spelling::AsAdapter,
+    layout: Layout::Grouped,
+    keys: Keys::CLAUDE,
+    version: None,
 };
 
 /// Junie: found by `~/.junie` or the `junie` program.

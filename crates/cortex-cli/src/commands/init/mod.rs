@@ -499,6 +499,16 @@ fn apply(root: &Root, changes: Vec<Change>) -> anyhow::Result<()> {
     for change in changes {
         let backup = match change.owner {
             Owner::Repository { folder } => {
+                let backup = made(&mut repository, || {
+                    let backups =
+                        place::own_folder(&place::own_folder(root, ".cortex")?, "backups")?;
+                    let backup =
+                        Backup::new(&backups, now_ms, root)?.with_users_copy(&user_backups()?);
+                    match linked {
+                        Some(linked) => backup.with_worktree(linked),
+                        None => Ok(backup),
+                    }
+                })?;
                 if let Some(folder) = folder {
                     // The folder goes in the working tree its file is in: an agent's hooks in the
                     // linked working tree init started in, Cortex's configuration in the
@@ -509,24 +519,19 @@ fn apply(root: &Root, changes: Vec<Change>) -> anyhow::Result<()> {
                     } else {
                         root
                     };
-                    place::own_folder(tree, folder)?;
-                }
-                made(&mut repository, || {
-                    let backups =
-                        place::own_folder(&place::own_folder(root, ".cortex")?, "backups")?;
-                    let backup =
-                        Backup::new(&backups, now_ms, root)?.with_users_copy(&user_backups()?);
-                    match linked {
-                        Some(linked) => backup.with_worktree(linked),
-                        None => Ok(backup),
+                    if change.kind != Kind::CortexConfig {
+                        recorded_missing(backup, &place::joined(tree, folder))?;
                     }
-                })?
+                    place::own_folders(tree, folder)?;
+                }
+                backup
             }
             Owner::User => {
                 // The user's backups are made first, so that `~/.cortex` is the user's alone
                 // before the user's configuration goes into it.
                 let backup = made(&mut user, || Backup::new(&user_backups()?, now_ms, root))?;
                 if let Some(parent) = change.file.parent() {
+                    recorded_missing(backup, parent)?;
                     fs::create_dir_all(parent)
                         .with_context(|| format!("creating {}", parent.display()))?;
                 }
@@ -545,6 +550,25 @@ fn apply(root: &Root, changes: Vec<Change>) -> anyhow::Result<()> {
             "backup and manifest in {}",
             backup.folder().display()
         ))?;
+    }
+    Ok(())
+}
+
+/// Records in `backup` each folder on the way to `folder`, `folder` included, that does not exist
+/// yet, the outermost first, before init makes them: uninstall removes exactly those again, once
+/// nothing is left in them, and never a folder that was there before.
+///
+/// # Errors
+///
+/// The manifest cannot be written.
+fn recorded_missing(backup: &mut Backup, folder: &Path) -> anyhow::Result<()> {
+    let mut missing: Vec<&Path> = folder
+        .ancestors()
+        .take_while(|folder| fs::symlink_metadata(folder).is_err())
+        .collect();
+    missing.reverse();
+    for folder in missing {
+        backup.made_folder(folder)?;
     }
     Ok(())
 }

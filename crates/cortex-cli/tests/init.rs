@@ -362,7 +362,8 @@ fn init_without_git_or_any_agent_says_so() -> TestResult {
             "note: git is not on the PATH; Cortex works here without git history",
             "note: no agent Cortex sets up was found on this machine, so no hooks are written; \
              once one is installed, run `cortex init` again, or name one with `--agents` (claude, \
-             codex, qwen, gemini, droid, devin, augment, junie)"
+             codex, qwen, gemini, droid, devin, augment, junie, cursor, copilot, antigravity, \
+             kiro, trae, crush, openhands)"
         ]
     );
     assert!(!repo.path().join(".claude").exists());
@@ -656,7 +657,11 @@ fn init_with_yes_takes_the_defaults() -> TestResult {
         .iter()
         .filter_map(|file| file.get("kind").and_then(Value::as_str))
         .collect();
-    assert_eq!(kinds, ["gitignore", "claude_settings", "cortex_config"]);
+    // The `.claude` folder init makes is recorded before the settings in it, for uninstall.
+    assert_eq!(
+        kinds,
+        ["gitignore", "folder", "claude_settings", "cortex_config"]
+    );
     Ok(())
 }
 

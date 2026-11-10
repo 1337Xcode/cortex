@@ -1,12 +1,13 @@
 //! Undoing what one run of `cortex init` did to one file. A file that holds what it held before the
 //! run has nothing to undo. A file that still holds what the run wrote gets back what it held
 //! before, from the run's backup copy once the copy is checked against the hash the manifest
-//! keeps, or is removed when the run made it, with the repository's `.claude` folder when that is
-//! left empty. A file changed since keeps the change: Cortex's hooks come out of Claude Code
-//! settings and the very lines the run added out of a `.gitignore`, while Cortex's own
-//! configuration stays as the user left it. Only plain files are read or written, never through
-//! a link, and a repository's file only while the folder it is in is still the repository's own.
-//! Every write is atomic and made only while the file still holds what was read.
+//! keeps, or is removed when the run made it; a folder the run made for an agent's hooks file, as
+//! its manifest records, is removed once nothing is left in it. A file changed
+//! since keeps the change: Cortex's hooks come out of an agent's settings and the very lines the
+//! run added out of a `.gitignore`, while Cortex's own configuration stays as the user left it.
+//! Only plain files are read or written, never through a link, and a repository's file only while
+//! the folder it is in is still the repository's own. Every write is atomic and made only while
+//! the file still holds what was read.
 
 use std::fs;
 use std::io;
@@ -34,6 +35,9 @@ pub(super) fn undo(run: &Run, change: &Changed, program: &str) -> anyhow::Result
     if let Some(bound) = bound {
         checked_inside(&path, bound)?;
     }
+    if let Kind::Folder = change.kind {
+        return removed_if_empty(&path);
+    }
     let Some(current) = read_plain(&path)? else {
         return Ok(None);
     };
@@ -46,7 +50,7 @@ pub(super) fn undo(run: &Run, change: &Changed, program: &str) -> anyhow::Result
         return Ok(None);
     }
     if hash == change.written_blake3 {
-        return restored((run, bound), change, &path, &current).map(Some);
+        return restored(run, change, &path, &current).map(Some);
     }
     taken_out(&change.kind, &path, &current, program)
 }
@@ -132,23 +136,14 @@ fn read_plain(path: &Path) -> anyhow::Result<Option<String>> {
 }
 
 /// Gives the file at `path`, which still holds `current`, what `change` wrote, back what it held
-/// before, or removes it when `run` made it, and says which; `bound` is the folder of the run's
-/// that `path` is in, whose `.claude` folder is removed when that leaves it empty.
+/// before, or removes it when `run` made it, and says which.
 ///
 /// # Errors
 ///
 /// As [`undo`].
-fn restored(
-    (run, bound): (&Run, Option<&Path>),
-    change: &Changed,
-    path: &Path,
-    current: &str,
-) -> anyhow::Result<String> {
+fn restored(run: &Run, change: &Changed, path: &Path, current: &str) -> anyhow::Result<String> {
     let Some(copy) = &change.backup else {
         remove_unchanged(path, current)?;
-        if let Some(bound) = bound {
-            remove_claude_left_empty(path, bound)?;
-        }
         return Ok(format!("removed {}, which init made", path.display()));
     };
     let before = copied(run, copy)?;
@@ -225,6 +220,8 @@ fn taken_out(
                 path.display()
             )));
         }
+        // A folder is undone before its contents are read.
+        Kind::Folder => return Ok(None),
     };
     let Some(without) = without else {
         return Ok(None);
@@ -253,16 +250,26 @@ fn remove_unchanged(path: &Path, before: &str) -> anyhow::Result<()> {
     fs::remove_file(path).with_context(|| format!("removing {}", path.display()))
 }
 
-/// Removes the `.claude` folder of the repository at `bound` when `path` was in it and nothing is
-/// left in it: init makes that folder for the settings it makes.
+/// Removes the folder at `path`, which the run made, when nothing is left in it, and says so; a
+/// folder that holds anything, is gone, or is now a link or no folder at all is left as it is.
 ///
 /// # Errors
 ///
 /// The folder cannot be read or removed.
-fn remove_claude_left_empty(path: &Path, bound: &Path) -> anyhow::Result<()> {
-    let folder = bound.join(".claude");
-    if path.parent() != Some(folder.as_path()) {
-        return Ok(());
+fn removed_if_empty(path: &Path) -> anyhow::Result<Option<String>> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("finding {}", path.display())),
+        Ok(metadata) if !metadata.is_dir() => return Ok(None),
+        Ok(_) => {}
     }
-    super::remove_if_empty(&folder)
+    let is_empty = fs::read_dir(path)
+        .with_context(|| format!("reading {}", path.display()))?
+        .next()
+        .is_none();
+    if !is_empty {
+        return Ok(None);
+    }
+    fs::remove_dir(path).with_context(|| format!("removing {}", path.display()))?;
+    Ok(Some(format!("removed {}, which init made", path.display())))
 }

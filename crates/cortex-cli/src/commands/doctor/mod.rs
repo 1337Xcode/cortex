@@ -1,14 +1,16 @@
 //! `cortex doctor`: whether Claude Code will run Cortex's hooks for this repository and the daemon
-//! will answer them, one check at a time, each failure with what to do about it, and what it
-//! cannot see.
+//! will answer them, and whether every other agent init set up for it still holds Cortex's hooks,
+//! one check at a time, each failure with what to do about it, and what it cannot see.
 //!
 //! The checks are a table, [`CHECKS`]: adding one means one function and one line. Each reads the
 //! settings files Claude Code reads that Cortex may read (the repository's local and shared
-//! settings, the user's, and the managed ones), asks the daemon, asks Claude Code its version, or
-//! runs this binary's hook on probes; none runs a command a settings file names, since a
-//! repository can name any program there.
+//! settings, the user's, and the managed ones), the hooks files init's manifests say it wrote for
+//! other agents, asks the daemon, asks Claude Code its version, or runs this binary's hook on
+//! probes; none runs a command a settings file names, since a repository can name any program
+//! there.
 
 mod agent;
+mod agents;
 mod daemon;
 mod hooks;
 mod latency;
@@ -65,6 +67,7 @@ const CHECKS: &[Check] = &[
     ("hooks", hooks::registered),
     ("silenced", hooks::silenced),
     ("binary", hooks::binary),
+    ("agents", agents::current),
     ("agent", agent::check),
     ("daemon", daemon::answers),
     ("latency", latency::probes),

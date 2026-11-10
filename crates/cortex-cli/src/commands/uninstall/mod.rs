@@ -13,7 +13,7 @@
 
 mod purge;
 mod restore;
-mod runs;
+pub(crate) mod runs;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,6 +26,7 @@ use cortex_daemon::is_running;
 use cortex_hook::{ClientError, stop_any};
 
 use super::init::Scope;
+use crate::backup::replace_unchanged;
 use crate::{output, repository, upgrade};
 
 /// How long uninstall gives the daemon to stop, from the first request: it drains its inbox and
@@ -119,9 +120,11 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
 }
 
 /// Undoes every change of `runs`, newest first and each run's last change first, `program` being
-/// this binary, recording in `report` what it did and what it could not do.
+/// this binary, recording in `report` what it did and what it could not do. A run whose every
+/// change is undone is marked so in its manifest, so that doctor no longer checks what it wrote.
 fn undo_all(runs: &[runs::Run], program: &str, report: &mut Report) {
     for run in runs {
+        let failed_before = report.failures.len();
         for change in run.manifest.files.iter().rev() {
             match restore::undo(run, change, program) {
                 Ok(Some(line)) => report.said.push(line),
@@ -129,7 +132,30 @@ fn undo_all(runs: &[runs::Run], program: &str, report: &mut Report) {
                 Err(error) => report.failures.push(format!("error: {error:#}")),
             }
         }
+        if report.failures.len() == failed_before
+            && !run.manifest.undone
+            && let Err(error) = marked_undone(run)
+        {
+            report.notes.push(format!(
+                "could not mark {} as undone, so doctor still checks what it wrote: {error:#}",
+                run.manifest_path.display()
+            ));
+        }
     }
+}
+
+/// Writes `run`'s manifest again, marked as undone, provided it still holds what was read.
+///
+/// # Errors
+///
+/// The manifest cannot be read, written, or changed since it was read.
+fn marked_undone(run: &runs::Run) -> anyhow::Result<()> {
+    let before = fs::read(&run.manifest_path)
+        .with_context(|| format!("reading {}", run.manifest_path.display()))?;
+    let mut manifest = run.manifest.clone();
+    manifest.undone = true;
+    let after = serde_json::to_vec_pretty(&manifest).context("writing the manifest")?;
+    replace_unchanged(&run.manifest_path, Some(&before), &after)
 }
 
 /// Purges what Cortex keeps of the repository at `root`, whose user folder is `user` and whose

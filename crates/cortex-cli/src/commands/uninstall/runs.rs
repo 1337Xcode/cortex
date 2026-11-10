@@ -1,8 +1,8 @@
-//! The runs of `cortex init` that uninstall undoes, newest first, read from the user's backup
-//! folder alone: for a repository, the user's copies of the manifests of the runs that changed its
-//! files, whose backup copies are in the repository's own `.cortex/backups/`; for the user, the
-//! manifests of the runs that changed the user's own files, beside their copies. A manifest inside
-//! a repository is never read: it may have come with the clone.
+//! The runs of `cortex init` that uninstall undoes and doctor checks, newest first, read from the
+//! user's backup folder alone: for a repository, the user's copies of the manifests of the runs
+//! that changed its files, whose backup copies are in the repository's own `.cortex/backups/`; for
+//! the user, the manifests of the runs that changed the user's own files, beside their copies. A
+//! manifest inside a repository is never read: it may have come with the clone.
 
 use std::fs;
 use std::io;
@@ -14,7 +14,7 @@ use cortex_core::{MAX_SETTINGS_BYTES, UserFolder, read_text_file};
 use crate::backup::{MANIFEST, Manifest, REPOSITORY_MANIFEST};
 
 /// One run of init: what it changed, and where its backup copies are.
-pub(super) struct Run {
+pub(crate) struct Run {
     /// When it ran, in UTC milliseconds, and its process id: its folder's name.
     started: (i64, u32),
     /// The file its manifest was read from.
@@ -26,7 +26,7 @@ pub(super) struct Run {
     /// wherever a link led init.
     pub(super) bounds: Vec<PathBuf>,
     /// What it changed.
-    pub(super) manifest: Manifest,
+    pub(crate) manifest: Manifest,
 }
 
 /// The runs that changed the files of the repository whose canonical root is `root`, newest first,
@@ -36,7 +36,7 @@ pub(super) struct Run {
 /// # Errors
 ///
 /// The backup folder or a manifest cannot be read.
-pub(super) fn of_repository(
+pub(crate) fn of_repository(
     user: &UserFolder,
     root: &Path,
     notes: &mut Vec<String>,
@@ -75,7 +75,7 @@ pub(super) fn of_repository(
 /// # Errors
 ///
 /// The backup folder or a manifest cannot be read.
-pub(super) fn of_user(user: &UserFolder, notes: &mut Vec<String>) -> anyhow::Result<Vec<Run>> {
+pub(crate) fn of_user(user: &UserFolder, notes: &mut Vec<String>) -> anyhow::Result<Vec<Run>> {
     let backups = user.path().join("backups");
     let mut runs = Vec::new();
     for (started, name) in run_folders(&backups)? {

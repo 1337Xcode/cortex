@@ -1,16 +1,25 @@
 //! What `cortex init` writes for each agent: the registry of agents, how each is found, and the
 //! files that set Cortex up in it. Adding an agent means one file here and one registry line.
 
+mod antigravity;
 mod augment;
 pub(crate) mod claude;
 mod codex;
 pub(crate) mod command;
+mod copilot;
+mod crush;
+mod cursor;
 mod devin;
 mod droid;
+mod entries;
 mod gemini;
+pub(crate) mod handler;
 mod junie;
+mod kiro;
+mod openhands;
 mod qwen;
 pub(crate) mod settings;
+mod trae;
 
 use std::path::Path;
 
@@ -71,6 +80,13 @@ pub(crate) const SETUPS: &[&Setup] = &[
     &devin::SETUP,
     &augment::SETUP,
     &junie::SETUP,
+    &cursor::SETUP,
+    &copilot::SETUP,
+    &antigravity::SETUP,
+    &kiro::SETUP,
+    &trae::SETUP,
+    &crush::SETUP,
+    &openhands::SETUP,
 ];
 
 /// The setup of the agent named `name` on the command line.
@@ -103,14 +119,23 @@ pub(crate) fn is_found(setup: &Setup, home: &Path, repository: &Path) -> bool {
 }
 
 /// Whether the folder `folder` of the home folder `home` holds an entry besides `written`, the
-/// home-relative file Cortex writes hooks to: an empty folder, or one holding only Cortex's own
-/// file, is no sign of the agent, since an earlier `cortex init --agents` makes it.
+/// home-relative file Cortex writes hooks to, and the folders on the way to it: an empty folder,
+/// or one holding only Cortex's own file, is no sign of the agent, since an earlier `cortex init
+/// --agents` makes it.
 fn holds_agents_own(home: &Path, folder: &str, written: Option<&str>) -> bool {
     let Ok(entries) = std::fs::read_dir(home.join(folder)) else {
         return false;
     };
     entries.flatten().any(|entry| {
         let path = format!("{folder}/{}", entry.file_name().to_string_lossy());
+        let is_on_the_way = written.is_some_and(|written| {
+            written
+                .strip_prefix(path.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        });
+        if is_on_the_way && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            return holds_agents_own(home, &path, written);
+        }
         Some(path.as_str()) != written
     })
 }
@@ -189,6 +214,135 @@ mod tests {
         assert!(!is_found(&unknown, home.path(), repository.path()));
         std::fs::write(folder.join("config.toml"), "")?;
         assert!(is_found(&unknown, home.path(), repository.path()));
+        Ok(())
+    }
+
+    /// An agent whose hooks file Cortex writes in a folder of the agent's folder is not found by
+    /// that file and the folder holding it, which init makes; anything else in either is a sign.
+    #[test]
+    fn an_agent_is_not_found_by_cortex_s_folder_of_hooks() -> std::io::Result<()> {
+        let home = tempfile::tempdir()?;
+        let repository = tempfile::tempdir()?;
+        let unknown = Setup {
+            agent: Agent::Other,
+            found_by: FoundBy {
+                folders: &[".none-agent"],
+                programs: &[],
+            },
+            hooks: Some(HooksFile {
+                project: None,
+                user: ".none-agent/hooks/cortex.json",
+                style: claude::STYLE,
+                read_instead: None,
+            }),
+            told: &[],
+        };
+        let hooks = home.path().join(".none-agent").join("hooks");
+        std::fs::create_dir_all(&hooks)?;
+        std::fs::write(hooks.join("cortex.json"), "{}")?;
+        assert!(!is_found(&unknown, home.path(), repository.path()));
+        std::fs::write(hooks.join("mine.json"), "{}")?;
+        assert!(is_found(&unknown, home.path(), repository.path()));
+        std::fs::remove_file(hooks.join("mine.json"))?;
+        std::fs::write(home.path().join(".none-agent").join("hooks.txt"), "")?;
+        assert!(is_found(&unknown, home.path(), repository.path()));
+        Ok(())
+    }
+
+    /// Every agent's hooks file, written fresh, holds one hook for each event of its adapter's
+    /// table and no other, with that event's matcher (on its group, on the handler, or on the named
+    /// hook), each running `hook --agent <agent> --event <event>`. The file is read here by its
+    /// documented shape, not by the code that writes it.
+    #[test]
+    fn every_agent_s_file_holds_its_adapter_s_events() -> anyhow::Result<()> {
+        use serde_json::Value;
+        let program = "/opt/cortex/bin/cortex";
+        for setup in SETUPS {
+            let name = setup.agent.name();
+            let Some(hooks) = &setup.hooks else {
+                continue;
+            };
+            let adapter = cortex_hook::adapter(name)
+                .ok_or(name)
+                .map_err(anyhow::Error::msg)?;
+            let written = settings::merged(None, program, adapter.hooks(), &hooks.style)?;
+            let written: Value = serde_json::from_str(&written)?;
+            // (event, matcher, command line) for each hook found in the file.
+            let mut found: Vec<(String, Option<String>, String)> = Vec::new();
+            let text = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_owned);
+            let events = match hooks.style.events {
+                settings::Events::Triggers => {
+                    for hook in written["hooks"].as_array().into_iter().flatten() {
+                        found.push((
+                            text(hook.get("trigger")).unwrap_or_default(),
+                            text(hook.get("matcher")),
+                            text(hook.pointer("/action/command")).unwrap_or_default(),
+                        ));
+                    }
+                    None
+                }
+                settings::Events::Under(key) => written.get(key).cloned(),
+                settings::Events::WholeFile | settings::Events::WholeFileOrHooks => {
+                    Some(written.clone())
+                }
+            };
+            let key = hooks.style.keys.command;
+            for (event, items) in events.iter().filter_map(Value::as_object).flatten() {
+                for item in items.as_array().into_iter().flatten() {
+                    let handlers: Vec<&Value> = match item.get("hooks").and_then(Value::as_array) {
+                        Some(handlers) => handlers.iter().collect(),
+                        None => vec![item],
+                    };
+                    for handler in handlers {
+                        let line = match &hooks.style.handler {
+                            settings::Handler::Arguments => format!(
+                                "{} {}",
+                                text(handler.get(key)).unwrap_or_default(),
+                                handler["args"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_str)
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            ),
+                            settings::Handler::CommandLine(_) => {
+                                text(handler.get(key)).unwrap_or_default()
+                            }
+                        };
+                        found.push((event.clone(), text(item.get("matcher")), line));
+                    }
+                }
+            }
+            let expected: Vec<(String, Option<String>, String)> = adapter
+                .hooks()
+                .iter()
+                .map(|entry| {
+                    (
+                        // A file spelled as the user's is spelled in snake case when fresh.
+                        match hooks.style.spelling {
+                            settings::Spelling::AsAdapter => entry.event_name.to_owned(),
+                            settings::Spelling::AsFile => entry
+                                .event_name
+                                .chars()
+                                .enumerate()
+                                .flat_map(|(at, char)| {
+                                    let underscore =
+                                        (at > 0 && char.is_ascii_uppercase()).then_some('_');
+                                    underscore.into_iter().chain([char.to_ascii_lowercase()])
+                                })
+                                .collect(),
+                        },
+                        entry.matcher.map(str::to_owned),
+                        format!("{program} hook --agent {name} --event {}", entry.event_name),
+                    )
+                })
+                .collect();
+            found.sort();
+            let mut expected = expected;
+            expected.sort();
+            assert_eq!(found, expected, "{name}");
+        }
         Ok(())
     }
 }

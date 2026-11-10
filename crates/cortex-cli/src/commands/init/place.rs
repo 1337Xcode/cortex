@@ -12,9 +12,10 @@ use anyhow::{Context as _, bail};
 use cortex_core::{canonical_root, create_private_folder};
 
 /// The file `name` in the repository whose canonical root is `root`, in its folder `folder` (such
-/// as `.claude`) or at the root itself, to be written there. Nothing is created: a folder that
-/// exists must be the repository's own, and the file, followed through a link, must stay inside
-/// the repository.
+/// as `.claude`, or `.github/hooks` with `/` between folders) or at the root itself, to be written
+/// there. Nothing is created: a folder that exists must be the repository's own, as must each
+/// folder on the way to it, and the file, followed through a link, must stay inside the
+/// repository.
 ///
 /// # Errors
 ///
@@ -23,14 +24,14 @@ use cortex_core::{canonical_root, create_private_folder};
 pub(super) fn file_in(root: &Path, folder: Option<&str>, name: &str) -> anyhow::Result<PathBuf> {
     let parent = match folder {
         None => root.to_path_buf(),
-        Some(folder) => match fs::symlink_metadata(root.join(folder)) {
-            Ok(_) => own_folder(root, folder)?,
+        Some(folder) => match fs::symlink_metadata(joined(root, folder)) {
+            Ok(_) => own_folders(root, folder)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(root.join(folder).join(name));
+                return Ok(joined(root, folder).join(name));
             }
             Err(error) => {
                 return Err(error)
-                    .with_context(|| format!("finding {}", root.join(folder).display()));
+                    .with_context(|| format!("finding {}", joined(root, folder).display()));
             }
         },
     };
@@ -43,6 +44,14 @@ pub(super) fn file_in(root: &Path, folder: Option<&str>, name: &str) -> anyhow::
         );
     }
     Ok(file)
+}
+
+/// The path `relative`, with `/` between its folders, inside `folder`, spelled with this system's
+/// separators.
+pub(super) fn joined(folder: &Path, relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .fold(folder.to_path_buf(), |path, name| path.join(name))
 }
 
 /// The file `name` at the root of the repository whose canonical root is `root`, which may not be a
@@ -88,6 +97,19 @@ pub(super) fn file_beside(folder: &Path, name: &str) -> anyhow::Result<PathBuf> 
     } else {
         Ok(folder.join(name))
     }
+}
+
+/// The folder `path` inside `parent`, with `/` between its folders, each made when missing and each
+/// a folder of its own in the one before it, as [`own_folder`] has it.
+///
+/// # Errors
+///
+/// As [`own_folder`], for any of the folders.
+pub(super) fn own_folders(parent: &Path, path: &str) -> anyhow::Result<PathBuf> {
+    path.split('/')
+        .try_fold(parent.to_path_buf(), |folder, name| {
+            own_folder(&folder, name)
+        })
 }
 
 /// The folder `name` inside `parent`, made when missing, which must be a folder of its own there:

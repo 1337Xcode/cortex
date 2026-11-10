@@ -3,7 +3,8 @@
 //! repository in `.augment/settings.local.json`, and for the user in `~/.augment/settings.json`.
 
 use super::command::Shell;
-use super::settings::{Events, Handler, Style, TimeoutUnit};
+use super::handler::Keys;
+use super::settings::{Events, Handler, Layout, Spelling, Style, TimeoutUnit};
 use cortex_core::Agent;
 
 use super::{FoundBy, HooksFile, Setup};
@@ -17,7 +18,11 @@ const STYLE: Style = Style {
         Shell::Posix
     }),
     timeout: TimeoutUnit::Milliseconds,
-    events: Events::UnderHooks,
+    events: Events::Under("hooks"),
+    spelling: Spelling::AsAdapter,
+    layout: Layout::Grouped,
+    keys: Keys::CLAUDE,
+    version: None,
 };
 
 /// Augment: found by `~/.augment` or the `auggie` program.

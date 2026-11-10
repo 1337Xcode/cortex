@@ -6,7 +6,8 @@
 //! alone; it does not make `hooks.json` over hooks kept there, since Droid would stop reading them.
 
 use super::command::Shell;
-use super::settings::{Events, Handler, Style, TimeoutUnit};
+use super::handler::Keys;
+use super::settings::{Events, Handler, Layout, Spelling, Style, TimeoutUnit};
 use cortex_core::Agent;
 
 use super::{FoundBy, HooksFile, Setup};
@@ -21,6 +22,10 @@ const STYLE: Style = Style {
     }),
     timeout: TimeoutUnit::Seconds,
     events: Events::WholeFile,
+    spelling: Spelling::AsAdapter,
+    layout: Layout::Grouped,
+    keys: Keys::CLAUDE,
+    version: None,
 };
 
 /// Droid: found by `~/.factory` or the `droid` program.

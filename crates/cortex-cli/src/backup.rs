@@ -58,7 +58,7 @@ struct Written {
 }
 
 /// What a backup folder's manifest says.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Manifest {
     /// The canonical root of the repository the run set up.
     pub(crate) repository: String,
@@ -66,12 +66,15 @@ pub(crate) struct Manifest {
     /// changed, when it started in one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) worktree: Option<String>,
-    /// Each file changed, in the order it was.
+    /// Each file changed, and each folder made, in the order it was.
     pub(crate) files: Vec<Changed>,
+    /// Whether `cortex uninstall` has undone every change of the run since.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) undone: bool,
 }
 
-/// One file a run changed.
-#[derive(Debug, Serialize, Deserialize)]
+/// One file a run changed, or one folder it made.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Changed {
     /// The file, as it was written: links followed.
     pub(crate) path: String,
@@ -85,7 +88,7 @@ pub(crate) struct Changed {
 }
 
 /// The copy of what a file held before a run changed it.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BackupCopy {
     /// Its name in the run's backup folder.
     pub(crate) name: String,
@@ -111,6 +114,9 @@ pub(crate) enum Kind {
     },
     /// Cortex's own configuration, which gets the answers to init's questions.
     CortexConfig,
+    /// A folder the run made for an agent's hooks file, which uninstall removes once it is empty;
+    /// recorded before it is made, with no copy and the hash of nothing.
+    Folder,
 }
 
 impl Backup {
@@ -138,6 +144,7 @@ impl Backup {
                 repository: repository.to_owned(),
                 worktree: None,
                 files: Vec::new(),
+                undone: false,
             },
         })
     }
@@ -207,6 +214,32 @@ impl Backup {
             return Err(self.forget_last(error));
         }
         if let Err(error) = replace_unchanged(path, before, contents) {
+            return Err(self.forget_last(error));
+        }
+        Ok(())
+    }
+
+    /// Records in the manifests that the run makes the folder `path`, before it is made, so that
+    /// uninstall removes it again once nothing is left in it.
+    ///
+    /// # Errors
+    ///
+    /// A path that is not UTF-8, or a backup folder or manifest that cannot be written: the
+    /// manifests are written again without the folder; failing that, the error says so.
+    pub(crate) fn made_folder(&mut self, path: &Path) -> anyhow::Result<()> {
+        let path_text = path
+            .to_str()
+            .with_context(|| format!("{} is not UTF-8 text", path.display()))?
+            .to_owned();
+        create_private_folder(&self.folder)
+            .with_context(|| format!("creating the backup folder {}", self.folder.display()))?;
+        self.manifest.files.push(Changed {
+            path: path_text,
+            kind: Kind::Folder,
+            backup: None,
+            written_blake3: ContentHash::of(b"").to_string(),
+        });
+        if let Err(error) = self.save() {
             return Err(self.forget_last(error));
         }
         Ok(())
