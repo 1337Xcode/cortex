@@ -3,7 +3,9 @@
 //! running on a medium repository (the index benchmark's 10,000 synthetic files, committed to git)
 //! once its graph is built, so that a session's start gets the primer and the prompt a work order,
 //! an edit that changes a function's signature its warnings, and a read of the file the session
-//! read whole already its hint, as checked before they are measured (every measured edit does the
+//! read whole already its hint, then, the store holding a strong way from that file to `main.py`,
+//! the line naming `main.py` as the file earlier tasks read next, once a task, as checked before
+//! they are measured (every measured edit does the
 //! same work; its warnings, told once a task, are new only the first time); a shell command's
 //! result, which asks only for the notices waiting, here none; the start after a
 //! compaction its recap, each start after a compaction of its own; a prompt of one word, which
@@ -31,13 +33,15 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use common::git::{commit, git};
-use common::{Daemon, TestResult, graph_of, isolate, payloads, stop_late_daemon, wait_for};
+use common::{
+    Daemon, StopsDaemon, TestResult, graph_of, isolate, payloads, stop_late_daemon, wait_for,
+};
 use cortex_core::ipc::{RequestBody, ResponseBody, Role};
 use cortex_core::{
     Agent, ContentHash, Event, HookKind, Identifier, RepoId, RepoPath, RunFiles, Ulid, UserFolder,
     canonical_root, create_private_folder, open_private_file,
 };
-use cortex_store::Reader;
+use cortex_store::{Reader, TransitionRow, Writer, WriterOptions};
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion, SamplingMode, criterion_group, criterion_main};
 
@@ -272,6 +276,65 @@ fn stored_hash(repo: &Path) -> TestResult<Option<ContentHash>> {
     Ok(row.and_then(|row| row.file.content_hash))
 }
 
+/// The way from the file the benchmark reads to the one tasks read next, its weight, how many
+/// tasks took it, and as of which task: strong enough to be named after the tasks the prompts
+/// measured before the reads open, about a hundred (50 x 0.995^n stays at least 2 while n is at
+/// most 642).
+const READ_NEXT: (&str, &str, f64, u32, u64) = ("calc/ops.py", "main.py", 50.0, 20, 0);
+
+/// A daemon started on the repository at `root`, `home` the user's home folder, once it has built
+/// its first graph.
+fn started(root: &Path, home: &Path) -> Daemon {
+    // A benchmark without its daemon has nothing to measure.
+    #[allow(clippy::expect_used)]
+    let daemon = Daemon::start(root, home).expect("starting the daemon");
+    #[allow(clippy::expect_used)]
+    let ready = daemon.first_line().expect("the daemon's ready line");
+    assert!(ready.starts_with("cortex: daemon ready"), "{ready}");
+    let deadline = Instant::now() + GRAPH_WITHIN;
+    loop {
+        #[allow(clippy::expect_used)]
+        let graph = graph_of(root, home).expect("the daemon's status");
+        if graph.is_some() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no graph within {GRAPH_WITHIN:?}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    daemon
+}
+
+/// Writes [`READ_NEXT`] into the store of the repository at `root`, whose daemon is stopped.
+fn add_read_next(root: &Path) -> TestResult {
+    let (from, to, weight, count, last_seq) = READ_NEXT;
+    let mut writer = Writer::open(&WriterOptions {
+        folder: &root.join(".cortex"),
+        repo_id: &RepoId::of(&canonical_root(root)?),
+        mmap_bytes: 0,
+        now_ms: 1,
+    })?;
+    let mut transaction = writer.transaction()?;
+    let node = |path: &str| -> TestResult<_> {
+        Ok(transaction
+            .queries()
+            .file_node_at(&RepoPath::new(path)?)?
+            .ok_or("an indexed file")?)
+    };
+    let (src, dst) = (node(from)?, node(to)?);
+    transaction.set_transitions(&[TransitionRow {
+        src,
+        dst,
+        weight,
+        count,
+        last_seq,
+    }])?;
+    transaction.commit()?;
+    Ok(())
+}
+
 /// A repository with a running daemon, and the user's home folder both use.
 struct Bench {
     /// The repository.
@@ -284,30 +347,22 @@ struct Bench {
 
 impl Bench {
     /// The medium repository, a home folder, and a daemon on them that has built its first
-    /// graph.
+    /// graph, its store holding [`READ_NEXT`]: written while a first daemon, which indexed the
+    /// repository, is stopped.
     fn start() -> Self {
         // A benchmark without its home folder or daemon has nothing to measure.
         #[allow(clippy::expect_used)]
         let home = tempfile::tempdir().expect("a home folder");
         let repo = medium_repository(home.path());
+        let indexed = started(repo.path(), home.path());
         #[allow(clippy::expect_used)]
-        let daemon = Daemon::start(repo.path(), home.path()).expect("starting the daemon");
+        StopsDaemon::of(repo.path(), home.path())
+            .stop()
+            .expect("stopping the first daemon");
+        drop(indexed);
         #[allow(clippy::expect_used)]
-        let ready = daemon.first_line().expect("the daemon's ready line");
-        assert!(ready.starts_with("cortex: daemon ready"), "{ready}");
-        let deadline = Instant::now() + GRAPH_WITHIN;
-        loop {
-            #[allow(clippy::expect_used)]
-            let graph = graph_of(repo.path(), home.path()).expect("the daemon's status");
-            if graph.is_some() {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "no graph within {GRAPH_WITHIN:?}"
-            );
-            std::thread::sleep(Duration::from_millis(200));
-        }
+        add_read_next(repo.path()).expect("the way read next");
+        let daemon = started(repo.path(), home.path());
         Self { repo, home, daemon }
     }
 
@@ -506,9 +561,18 @@ fn hooks(criterion: &mut Criterion) {
         &payload("post-tool-use-read.json", repo),
     );
     let read = payload("pre-tool-use-read.json", repo);
+    let told_next = std::cell::Cell::new(false);
     #[allow(clippy::expect_used)]
-    wait_for(|| Ok(printed(repo, home, "PreToolUse", &read).contains("You read lines 1-")))
-        .expect("the read told it was read already");
+    wait_for(|| {
+        let said = printed(repo, home, "PreToolUse", &read);
+        told_next.set(told_next.get() || said.contains("went on to read main.py"));
+        Ok(said.contains("You read lines 1-"))
+    })
+    .expect("the read told it was read already");
+    assert!(
+        told_next.get(),
+        "no read was told what earlier tasks read next"
+    );
     let mut group = criterion.benchmark_group("hooks");
     single_runs(&mut group);
     // Before the prompts measured below open tasks of their own: the task with the edit is open.

@@ -1,15 +1,21 @@
 //! The line a read gets naming the file earlier tasks read next: when an agent reads file A, and
 //! earlier tasks here that read A before changing anything went on to one file far more than to
 //! any other, that file is named, once a task. Silent unless the way is strong: its weight, as the
-//! tasks' outcomes added to it and faded since, is at least [`NEXT_FILE_MIN_WEIGHT`] and at least
-//! [`NEXT_FILE_MIN_SHARE`] of all the weight leaving A. The file named is one the index holds as it
-//! is on disk, the task has not read or changed it yet, and no earlier line of the task named it.
+//! tasks' outcomes added to it and faded since, is at least [`NEXT_FILE_MIN_WEIGHT`] and more than
+//! [`NEXT_FILE_MAJORITY`] of all the weight leaving A, so an even split names nothing. The file
+//! named is one the index holds as code (not generated, vendored, binary or named like a secret)
+//! and as it is on disk; the task has not read or changed it yet, and no earlier line that reached
+//! the task named it.
+//!
+//! The checks run cheapest first: the ways from A, two indexed lookups of the task's events and
+//! texts, the file's flags. What passes is a [`NextCandidate`], whose line the caller can weigh
+//! against its cap and claim before [`NextCandidate::checked`] reads and hashes the file, last.
 
 use std::path::Path;
 
-use cortex_core::{EventKind, ReasonKind, RepoPath, Ulid, is_plain};
+use cortex_core::{ContentHash, FileFlags, ReasonKind, RepoPath, Ulid, is_plain};
 use cortex_learn::decayed;
-use cortex_store::{NodeId, Queries, StoreError, TransitionRow};
+use cortex_store::{FileRow, NodeId, Queries, StoreError, TransitionRow};
 
 use crate::disk::CheckedFile;
 
@@ -17,18 +23,25 @@ use crate::disk::CheckedFile;
 /// work, or about seven nobody could vouch for, with little fading since.
 pub const NEXT_FILE_MIN_WEIGHT: f64 = 2.0;
 
-/// The least share of all the weight leaving a file that the way named must hold: tasks that went
-/// on to it at least as often as to every other file together.
-pub const NEXT_FILE_MIN_SHARE: f64 = 0.5;
+/// The share of all the weight leaving a file that the way named must hold more than: tasks went
+/// on to it more often than to every other file together.
+pub const NEXT_FILE_MAJORITY: f64 = 0.5;
 
 /// How many of a task's latest events are looked at for whether it read or changed the file.
 const EVENTS_LOOKED_AT: usize = 2_000;
 
+/// What a file is flagged as that keeps it from being named: no code an agent works on, or a file
+/// Cortex never opens.
+const NOT_NAMED: [FileFlags; 4] = [
+    FileFlags::GENERATED,
+    FileFlags::VENDORED,
+    FileFlags::BINARY,
+    FileFlags::SECRET_PATTERN,
+];
+
 /// What the line is worked out for.
 #[derive(Debug, Clone, Copy)]
 pub struct NextQuery<'a> {
-    /// The repository's root, where files are read from.
-    pub root: &'a Path,
     /// The file being read.
     pub path: &'a RepoPath,
     /// The task reading it.
@@ -37,11 +50,23 @@ pub struct NextQuery<'a> {
     pub seq: u64,
     /// `learning.link_decay`: what a way keeps of its weight per task.
     pub link_decay: f64,
-    /// `index.max_file_bytes`: the most bytes the file named may hold to be read.
-    pub max_file_bytes: u64,
 }
 
-/// The line, and the file it names.
+/// A line that passed every check but the file's own on disk: its file named, the line, and the
+/// file as the index holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NextCandidate {
+    /// The file named.
+    node: NodeId,
+    /// The line, ending in a line break.
+    line: String,
+    /// The file's path.
+    path: RepoPath,
+    /// The hash of the file as the index read it.
+    hash: ContentHash,
+}
+
+/// The line, its file checked on disk, and the file it names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NextFile {
     /// The file named.
@@ -50,9 +75,35 @@ pub struct NextFile {
     pub line: String,
 }
 
+impl NextCandidate {
+    /// The file the line names.
+    #[must_use]
+    pub fn node(&self) -> NodeId {
+        self.node
+    }
+
+    /// The line, ending in a line break, not to be given before [`NextCandidate::checked`].
+    #[must_use]
+    pub fn line(&self) -> &str {
+        &self.line
+    }
+
+    /// The line, once its file in the repository at `root` is on disk as the index read it and
+    /// holds at most `max_file_bytes`; none otherwise.
+    #[must_use]
+    pub fn checked(self, root: &Path, max_file_bytes: u64) -> Option<NextFile> {
+        // INVARIANT: true-at-render (the file named is there, as the index read it)
+        CheckedFile::read(root, &self.path, &self.hash, max_file_bytes).ok()?;
+        Some(NextFile {
+            node: self.node,
+            line: self.line,
+        })
+    }
+}
+
 /// The line the read `asked` describes gets, as the store `queries` reads holds what came before
-/// it; none when the way is not strong enough or the file it leads to cannot be named, as the
-/// module says.
+/// it, its file still to be checked on disk; none when the way is not strong enough or the file it
+/// leads to cannot be named, as the module says.
 ///
 /// # Errors
 ///
@@ -60,7 +111,10 @@ pub struct NextFile {
 pub fn next_file(
     queries: Queries<'_>,
     asked: &NextQuery<'_>,
-) -> Result<Option<NextFile>, StoreError> {
+) -> Result<Option<NextCandidate>, StoreError> {
+    if !is_plain(asked.path.as_str()) {
+        return Ok(None);
+    }
     let Some(from) = queries.file_node_at(asked.path)? else {
         return Ok(None);
     };
@@ -69,33 +123,36 @@ pub fn next_file(
         return Ok(None);
     };
     // INVARIANT: silent-when-unsure (a way too weak, or not plainly the main one, names nothing)
-    if weight < NEXT_FILE_MIN_WEIGHT || weight < NEXT_FILE_MIN_SHARE * total {
+    if weight < NEXT_FILE_MIN_WEIGHT || weight <= NEXT_FILE_MAJORITY * total {
+        return Ok(None);
+    }
+    if queries.has_named(asked.task, best.dst, ReasonKind::ReadNext)?
+        || queries.has_touched(asked.task, best.dst, EVENTS_LOOKED_AT)?
+    {
         return Ok(None);
     }
     let names = queries.anchor_names(&[best.dst])?;
     let Some(to) = names
         .get(&best.dst)
         .and_then(|name| RepoPath::new(name).ok())
+        .filter(|to| is_plain(to.as_str()))
     else {
         return Ok(None);
     };
-    if !is_plain(to.as_str()) || !is_plain(asked.path.as_str()) || !is_on_disk(queries, &to, asked)?
-    {
+    let Some(hash) = queries.file(&to)?.as_ref().and_then(nameable_hash) else {
         return Ok(None);
-    }
-    if is_touched(queries, asked.task, best.dst)? || is_named(queries, asked.task, best.dst)? {
-        return Ok(None);
-    }
-    let times: u32 = ways.iter().map(|way| way.count).sum();
+    };
     let line = format!(
-        "[cortex] After reading {}, earlier tasks here went on to {} ({} of {times} times).\n",
+        "[cortex] After reading {}, earlier tasks here went on to read {} ({} times).\n",
         asked.path.as_str(),
         to.as_str(),
         best.count
     );
-    Ok(Some(NextFile {
+    Ok(Some(NextCandidate {
         node: best.dst,
         line,
+        path: to,
+        hash,
     }))
 }
 
@@ -118,39 +175,12 @@ fn strongest<'a>(
         .map(|(way, weight)| (way, weight, total))
 }
 
-/// Whether the file at `path` is on disk as the index read it.
-fn is_on_disk(
-    queries: Queries<'_>,
-    path: &RepoPath,
-    asked: &NextQuery<'_>,
-) -> Result<bool, StoreError> {
-    let Some(row) = queries.file(path)? else {
-        return Ok(false);
-    };
-    let Some(hash) = row.file.content_hash else {
-        return Ok(false);
-    };
-    // INVARIANT: true-at-render (the file named is there, as the index read it)
-    Ok(CheckedFile::read(asked.root, path, &hash, asked.max_file_bytes).is_ok())
-}
-
-/// Whether `task` read or changed the file `node` already.
-fn is_touched(queries: Queries<'_>, task: Ulid, node: NodeId) -> Result<bool, StoreError> {
-    Ok(queries
-        .latest_events_of_task(task, EVENTS_LOOKED_AT)?
-        .iter()
-        .any(|row| {
-            row.record.node_id == Some(node)
-                && matches!(row.record.kind, EventKind::Read | EventKind::Edit)
-        }))
-}
-
-/// Whether an earlier line of `task` named the file `node`.
-fn is_named(queries: Queries<'_>, task: Ulid, node: NodeId) -> Result<bool, StoreError> {
-    Ok(queries.injections_of_task(task)?.iter().any(|row| {
-        row.record
-            .files
-            .iter()
-            .any(|file| file.node == node && file.reason == Some(ReasonKind::ReadNext))
-    }))
+/// The hash the index stored for `file`, when the file may be named: one flagged [`NOT_NAMED`] is
+/// never opened.
+fn nameable_hash(file: &FileRow) -> Option<ContentHash> {
+    let flags = file.file.flags;
+    if NOT_NAMED.iter().any(|flag| flags.contains(*flag)) {
+        return None;
+    }
+    file.file.content_hash
 }

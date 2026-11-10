@@ -522,7 +522,7 @@ impl Server {
                     }
                     Asked::Primer => service.primer(&event, graph, &claims.recapped),
                     Asked::Warnings => service.post_edit(&event, (&signatures, &claims.told)),
-                    Asked::ReadHint => service.read_hint(&event),
+                    Asked::ReadHint => service.read_hint(&event, &claims.read_next),
                     Asked::StopReason => service.stop_reason(&event, &claims.stopped),
                 };
                 // Notices go with every text but a stop's, which would hold the stop back. A

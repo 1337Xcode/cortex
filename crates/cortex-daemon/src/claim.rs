@@ -1,14 +1,15 @@
 //! What an answer claimed in the daemon's memory while it was worked out, so that one text is not
 //! given twice: the pairs a task was warned of, a compaction recapped, a task given strict mode's
 //! reason to go on, the coordination notices a session was given, a handoff given to a first
-//! prompt. An answer whose text never
-//! reaches its hook (worked out too late, written after the hook stopped reading, or not written at
-//! all) gives its claim back, so that a later edit, start or stop is told what this one was not.
+//! prompt, a file a task's read named as the one earlier tasks read next. An answer whose text
+//! never reaches its hook (worked out too late, written after the hook stopped reading, or not
+//! written at all) gives its claim back, so that a later edit, start, read or stop is told what
+//! this one was not.
 
 use std::sync::Arc;
 
 use cortex_core::{Identifier, NoticeSubject, Ulid};
-use cortex_store::{HandoffId, NoticeId};
+use cortex_store::{HandoffId, NodeId, NoticeId};
 
 use crate::noticed::Noticed;
 use crate::once::ClaimedOnce;
@@ -28,6 +29,8 @@ pub(crate) enum Claim {
     Noticed(Identifier, Vec<NoticeId>, Vec<NoticeSubject>),
     /// Handoff `.0`, given to a first prompt.
     Handed(HandoffId),
+    /// The file `.1`, named to task `.0` as the one earlier tasks read next.
+    ReadNext(Ulid, NodeId),
 }
 
 /// Where the daemon keeps what answers claimed.
@@ -43,17 +46,22 @@ pub(crate) struct Claims {
     pub(crate) noticed: Arc<Noticed>,
     /// The handoffs given to first prompts.
     pub(crate) handed: Arc<ClaimedOnce<HandoffId>>,
+    /// The files named to tasks as the ones earlier tasks read next, with their tasks: two reads
+    /// answered at once name each file once, before either's record is stored.
+    pub(crate) read_next: Arc<ClaimedOnce<(Ulid, NodeId)>>,
 }
 
 impl Claims {
     /// Gives `claim` back: its pairs untold, its compaction not recapped, its task not given its
-    /// reason, its notices waiting again and its lines untold, its handoff open to give again.
+    /// reason, its notices waiting again and its lines untold, its handoff open to give again, its
+    /// file open to name again.
     pub(crate) fn release(&self, claim: &Claim) {
         match claim {
             Claim::Warned(task_id, pairs) => self.told.forget(*task_id, pairs),
             Claim::Recapped(session, start) => self.recapped.release(session, *start),
             Claim::Stopped(task_id) => self.stopped.release(task_id),
             Claim::Handed(handoff) => self.handed.release(handoff),
+            Claim::ReadNext(task_id, node) => self.read_next.release(&(*task_id, *node)),
             Claim::Noticed(session, delivered, told) => {
                 self.noticed.release(session, (delivered, told));
             }
@@ -72,8 +80,8 @@ mod tests {
 
     /// Each claim given back can be made again: a pair told and released is told again, a
     /// compaction recapped and released is recapped again, a task stopped and released is given its
-    /// reason again, a handoff given and released is given again; a claim of another task, session
-    /// or start gives nothing back.
+    /// reason again, a handoff given and released is given again, a file named and released is
+    /// named again; a claim of another task, session, start or file gives nothing back.
     #[test]
     fn a_claim_given_back_can_be_made_again() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -140,6 +148,13 @@ mod tests {
         assert!(!claims.handed.claim(handoff));
         claims.release(&Claim::Handed(handoff));
         assert!(claims.handed.claim(handoff));
+
+        assert!(claims.read_next.claim((task, target)));
+        assert!(!claims.read_next.claim((task, target)));
+        claims.release(&Claim::ReadNext(task, source));
+        assert!(!claims.read_next.claim((task, target)));
+        claims.release(&Claim::ReadNext(task, target));
+        assert!(claims.read_next.claim((task, target)));
         Ok(())
     }
 }

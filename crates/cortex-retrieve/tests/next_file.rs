@@ -85,23 +85,23 @@ fn ways(repo: &mut Repo, src: NodeId, ways: &[(NodeId, f64, u32, u64)]) -> TestR
 fn asked(repo: &Repo, task: Ulid, seq: u64) -> TestResult<Option<NextFile>> {
     let reader = repo.reader()?;
     let path = RepoPath::new("src/a.py")?;
-    Ok(next_file(
+    let candidate = next_file(
         reader.queries(),
         &NextQuery {
-            root: repo.root.path(),
             path: &path,
             task,
             seq,
             link_decay: 0.995,
-            max_file_bytes: 1_048_576,
         },
-    )?)
+    )?;
+    Ok(candidate.and_then(|candidate| candidate.checked(repo.root.path(), 1_048_576)))
 }
 
 /// Case by case, each worked by hand, from `src/a.py` at task 3 unless said:
-/// - to b 2.5 (3 times) and c 0.5 (once), at 3: b holds 2.5 of 3.0, at least 2 and half, and is
-///   named, "3 of 4 times";
+/// - to b 2.5 (3 times) and c 0.5 (once), at 3: b holds 2.5 of 3.0, at least 2 and more than
+///   half, and is named, read there "3 times", the times that way was taken;
 /// - to b 1.9 alone: under 2, nothing;
+/// - to b 2.5 and c 2.5: b holds exactly half of 5.0, no more, nothing;
 /// - to b 2.5, c 2.4 and d 1.0: b is the most but holds 2.5 of 5.9, under half, nothing;
 /// - to b 2.5 kept at task 0, asked at task 100: 2.5 x 0.995^100, about 1.51, under 2, nothing;
 /// - to b 2.5 again: named; once the task has read `src/b.py`: nothing.
@@ -113,9 +113,11 @@ fn the_file_read_next_is_named_only_when_the_way_is_strong() -> TestResult {
     assert_eq!(named.node, b);
     assert_eq!(
         named.line,
-        "[cortex] After reading src/a.py, earlier tasks here went on to src/b.py (3 of 4 times).\n"
+        "[cortex] After reading src/a.py, earlier tasks here went on to read src/b.py (3 times).\n"
     );
     ways(&mut repo, a, &[(b, 1.9, 3, 3)])?;
+    assert_eq!(asked(&repo, task, 3)?, None);
+    ways(&mut repo, a, &[(b, 2.5, 3, 3), (c, 2.5, 3, 3)])?;
     assert_eq!(asked(&repo, task, 3)?, None);
     ways(
         &mut repo,
@@ -145,14 +147,14 @@ fn the_file_read_next_is_named_only_when_the_way_is_strong() -> TestResult {
 }
 
 /// A line of the task naming `src/b.py` already, and a `src/b.py` changed on disk since it was
-/// indexed, each leave the read with nothing, the way to b strong all the while.
+/// indexed, each leave the read with nothing, the way to b strong all the while; a line naming it
+/// that never reached the agent (its text not written in time) does not count.
 #[test]
 fn a_file_named_already_or_changed_on_disk_is_not_named() -> TestResult {
     let (mut repo, [a, b, _, _], task) = repository()?;
     ways(&mut repo, a, &[(b, 2.5, 3, 3)])?;
     assert!(asked(&repo, task, 3)?.is_some());
-    let mut transaction = repo.writer.transaction()?;
-    transaction.record_injection(&InjectionRecord {
+    let line = InjectionRecord {
         task_id: Some(task),
         session_id: Identifier::new("s1")?,
         hook: HookKind::PreTool,
@@ -170,7 +172,16 @@ fn a_file_named_already_or_changed_on_disk_is_not_named() -> TestResult {
         is_holdout: false,
         text_hash: Some(ContentHash::of(b"the line")),
         features: None,
+    };
+    let mut transaction = repo.writer.transaction()?;
+    transaction.record_injection(&InjectionRecord {
+        text_hash: None,
+        ..line.clone()
     })?;
+    transaction.commit()?;
+    assert!(asked(&repo, task, 3)?.is_some());
+    let mut transaction = repo.writer.transaction()?;
+    transaction.record_injection(&line)?;
     transaction.commit()?;
     assert_eq!(asked(&repo, task, 3)?, None);
 
@@ -180,6 +191,45 @@ fn a_file_named_already_or_changed_on_disk_is_not_named() -> TestResult {
         repo.root.path().join("src/b.py"),
         "def b():\n    return 2\n",
     )?;
+    assert_eq!(asked(&repo, task, 3)?, None);
+    Ok(())
+}
+
+/// A way as strong as the one to b, to a generated `src/gen.py` or a vendored `vendor/lib.py`,
+/// names nothing: neither is code an agent works on. Edited in the task, b is not named either.
+#[test]
+fn a_file_not_worked_on_or_changed_already_is_not_named() -> TestResult {
+    let (mut repo, [a, b, _, _], task) = repository()?;
+    for (path, flags) in [
+        ("src/gen.py", FileFlags::GENERATED),
+        ("vendor/lib.py", FileFlags::VENDORED),
+    ] {
+        let to = *repo
+            .file(
+                path,
+                "def f():\n    return 1\n",
+                &[function("f", 1, 2)],
+                flags,
+            )?
+            .first()
+            .ok_or("a file node")?;
+        ways(&mut repo, a, &[(to, 2.5, 3, 3)])?;
+        assert_eq!(asked(&repo, task, 3)?, None, "{path}");
+    }
+    ways(&mut repo, a, &[(b, 2.5, 3, 3)])?;
+    assert!(asked(&repo, task, 3)?.is_some());
+    let mut transaction = repo.writer.transaction()?;
+    transaction.append_event(&EventRecord {
+        task_id: Some(task),
+        session_id: Some(Identifier::new("s1")?),
+        ts_ms: 5,
+        kind: EventKind::Edit,
+        node_id: Some(b),
+        path: Some(RepoPath::new("src/b.py")?),
+        range: None,
+        meta: EventMeta::default(),
+    })?;
+    transaction.commit()?;
     assert_eq!(asked(&repo, task, 3)?, None);
     Ok(())
 }

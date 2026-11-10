@@ -61,7 +61,9 @@ pub use graph::{Graph, GraphError, LinkInput, NodeInput, Standing, Weighing};
 pub use hints::{HINTED_ABOVE_LINES, HintQuery, MAX_HINT_TOKENS, MAX_HINTED_PARTS, read_hint};
 pub use items::{LOOKED_AT_PER_LISTED, Listed, Listing, listed};
 pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};
-pub use next_file::{NEXT_FILE_MIN_SHARE, NEXT_FILE_MIN_WEIGHT, NextFile, NextQuery, next_file};
+pub use next_file::{
+    NEXT_FILE_MAJORITY, NEXT_FILE_MIN_WEIGHT, NextCandidate, NextFile, NextQuery, next_file,
+};
 pub use pipeline::{
     Location, Outcome, Request, Retrieval, SMALL_MODE_MAX_TOKENS, Silence, locate, retrieve,
 };
