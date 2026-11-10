@@ -400,6 +400,7 @@ dependencies = [
  "cortex-store",
  "criterion",
  "interprocess",
+ "rusqlite",
  "tempfile",
  "tokio",
  "tracing",

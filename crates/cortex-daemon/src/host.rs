@@ -93,6 +93,12 @@ impl<'a> Host<'a> {
             (&'a Inbox, &'a Snapshot, &'a Signatures),
         ),
     ) -> Self {
+        // Upkeep carries on where an earlier daemon left it; a store that cannot say where starts
+        // it at its first step, which redoes nothing a pass would not.
+        let upkeep = Upkeep::resumed(writer.queries()).unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "upkeep's place could not be read: it starts over");
+            Upkeep::default()
+        });
         Self {
             root,
             grammars,
@@ -105,7 +111,7 @@ impl<'a> Host<'a> {
             inbox,
             snapshot,
             signatures,
-            upkeep: Upkeep::default(),
+            upkeep,
             upkeep_clock: UpkeepClock::new(Instant::now()),
         }
     }
@@ -318,6 +324,7 @@ impl<'a> Host<'a> {
                     interest = swept.interest,
                     facts = swept.facts,
                     events = swept.events,
+                    injections = swept.injections,
                     episodes = swept.episodes,
                     positions = swept.positions,
                     pages = swept.pages,

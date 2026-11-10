@@ -4,9 +4,11 @@
 //! faded below 0.01 are removed, then the ways tasks read on from file to file that have, then
 //! interest that has; the facts are reviewed and those retired
 //! for 90 days deleted; the gate's confidence model is fitted when one is due (see
-//! [`cortex_learn::calibrate`]); events older than 90 days are deleted, episodes kept to 50,000 (unknown
-//! outcomes first) and positions that can no longer hold removed; last, the query planner's
-//! statistics are refreshed and up to [`VACUUM_PAGES`] free pages given back to the file system.
+//! [`cortex_learn::calibrate`]); events and injections older than 90 days are deleted, episodes
+//! kept to 50,000 (unknown outcomes first) and positions that can no longer hold removed; last, the
+//! query planner's statistics are refreshed and up to [`VACUUM_PAGES`] free pages given back to the
+//! file system. Each batch keeps, in the store, the step to carry on from, so that a daemon started
+//! later finds it; a step whose batch fails is left for the next pass and the steps after it run.
 //! Between batches a run stops when a hook event or a request waits, after
 //! [`UPKEEP_RUN_BUDGET`], or when the write-ahead log holds more than its limit; the next run
 //! carries on where it stopped, [`PACE_WAIT`] later after the last, by when the checkpointer has
@@ -18,7 +20,7 @@
 use std::time::{Duration, Instant};
 
 use cortex_learn::{Calibrated, calibrate, has_faded_out, review_facts};
-use cortex_store::{NodeId, StoreError, Writer};
+use cortex_store::{MetaKey, NodeId, Queries, StoreError, Writer};
 
 /// How long the repository must be quiet, no hook event recorded, before upkeep runs.
 pub(crate) const QUIET_BEFORE_UPKEEP: Duration = Duration::from_secs(10 * 60);
@@ -39,7 +41,7 @@ pub const PACE_WAIT: Duration = Duration::from_secs(2);
 /// behind it is recorded within milliseconds.
 const BATCH_ROWS: u64 = 500;
 
-/// How long events, and facts retired, are kept: 90 days, in milliseconds.
+/// How long events, injections and facts retired are kept: 90 days, in milliseconds.
 const KEPT_FOR_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
 
 /// The most episodes kept.
@@ -81,6 +83,8 @@ pub struct Swept {
     pub facts: u64,
     /// Events deleted.
     pub events: u64,
+    /// Injections deleted.
+    pub injections: u64,
     /// Episodes deleted.
     pub episodes: u64,
     /// Positions removed.
@@ -178,6 +182,8 @@ enum Step {
     Calibration,
     /// Old events.
     Events,
+    /// Old injections.
+    Injections,
     /// Episodes past the cap.
     Episodes,
     /// Positions that no longer hold.
@@ -199,24 +205,102 @@ pub struct Upkeep {
     has_paced: bool,
 }
 
+impl Step {
+    /// The first step of a pass.
+    const FIRST: Self = Self::Links(None);
+
+    /// The step's name, as the store keeps it: where in a step a run stopped is not kept, so a
+    /// daemon started later carries on from the step's start.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Links(_) => "links",
+            Self::Transitions(_) => "transitions",
+            Self::Interest(_) => "interest",
+            Self::Facts => "facts",
+            Self::Calibration => "calibration",
+            Self::Events => "events",
+            Self::Injections => "injections",
+            Self::Episodes => "episodes",
+            Self::Positions => "positions",
+            Self::Optimize => "optimize",
+            Self::Vacuum(_) => "vacuum",
+        }
+    }
+
+    /// The start of the step named `name`; none for a name this build does not give a step.
+    fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "links" => Self::Links(None),
+            "transitions" => Self::Transitions(None),
+            "interest" => Self::Interest(None),
+            "facts" => Self::Facts,
+            "calibration" => Self::Calibration,
+            "events" => Self::Events,
+            "injections" => Self::Injections,
+            "episodes" => Self::Episodes,
+            "positions" => Self::Positions,
+            "optimize" => Self::Optimize,
+            "vacuum" => Self::Vacuum(0),
+            _ => return None,
+        })
+    }
+
+    /// The start of the step after this one; none after the last.
+    fn following(self) -> Option<Self> {
+        Some(match self {
+            Self::Links(_) => Self::Transitions(None),
+            Self::Transitions(_) => Self::Interest(None),
+            Self::Interest(_) => Self::Facts,
+            Self::Facts => Self::Calibration,
+            Self::Calibration => Self::Events,
+            Self::Events => Self::Injections,
+            Self::Injections => Self::Episodes,
+            Self::Episodes => Self::Positions,
+            Self::Positions => Self::Optimize,
+            Self::Optimize => Self::Vacuum(0),
+            Self::Vacuum(_) => return None,
+        })
+    }
+}
+
 impl Default for Upkeep {
     /// Upkeep at its first job.
     fn default() -> Self {
         Self {
-            step: Step::Links(None),
+            step: Step::FIRST,
             has_paced: false,
         }
     }
 }
 
 impl Upkeep {
+    /// Upkeep where an earlier daemon left it, by the step `queries` reads kept: at that step's
+    /// start; at the first step when none is kept, or the name kept is one this build does not
+    /// give a step (another version's).
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn resumed(queries: Queries<'_>) -> Result<Self, StoreError> {
+        let kept = queries.meta(MetaKey::UpkeepStep)?;
+        Ok(Self {
+            step: kept
+                .as_deref()
+                .and_then(Step::from_name)
+                .unwrap_or(Step::FIRST),
+            has_paced: false,
+        })
+    }
+
     /// Runs upkeep at `now_ms` with `writer`, from where the last run stopped, until every job is
     /// done, `deadline` passes, `should_stop` says other work waits or the write-ahead log holds
     /// more than `settings` lets it: what it removed, and which of these ended it.
     ///
     /// # Errors
     ///
-    /// The store's errors; the batch that failed is rolled back and is the next run's first.
+    /// The store's errors; the batch that failed is rolled back, and the next run carries on from
+    /// the step after it, so that one step that keeps failing leaves the others to run: the failed
+    /// step is tried again on the next pass.
     pub fn run(
         &mut self,
         writer: &mut Writer,
@@ -235,20 +319,27 @@ impl Upkeep {
                 self.has_paced = true;
                 return Ok((swept, Ended::Paced));
             }
-            let next = self.batch(writer, (now_ms, settings), &mut swept)?;
+            let next = match self.batch(writer, (now_ms, settings), &mut swept) {
+                Ok(next) => next,
+                Err(error) => {
+                    self.step = self.step.following().unwrap_or(Step::FIRST);
+                    self.has_paced = false;
+                    return Err(error);
+                }
+            };
             self.has_paced = false;
             match next {
                 Some(next) => self.step = next,
                 None => {
-                    self.step = Step::Links(None);
+                    self.step = Step::FIRST;
                     return Ok((swept, Ended::Done));
                 }
             }
         }
     }
 
-    /// Runs the batch upkeep is at, adding what it removed to `swept`: the step after it, none
-    /// once the last job is done.
+    /// Runs the batch upkeep is at, adding what it removed to `swept`, and keeps in the store the
+    /// step to carry on from: the step after it, none once the last job is done.
     fn batch(
         &self,
         writer: &mut Writer,
@@ -271,8 +362,10 @@ impl Upkeep {
                     .collect();
                 swept.links += transaction.remove_coaccess_links(&faded)?;
                 match page.last() {
-                    Some(last) if is_full(page.len()) => Step::Links(Some((last.src, last.dst))),
-                    _ => Step::Transitions(None),
+                    Some(last) if is_full(page.len()) => {
+                        Some(Step::Links(Some((last.src, last.dst))))
+                    }
+                    _ => self.step.following(),
                 }
             }
             Step::Transitions(after) => {
@@ -288,9 +381,9 @@ impl Upkeep {
                 swept.transitions += transaction.remove_transitions(&faded)?;
                 match page.last() {
                     Some(last) if is_full(page.len()) => {
-                        Step::Transitions(Some((last.src, last.dst)))
+                        Some(Step::Transitions(Some((last.src, last.dst))))
                     }
-                    _ => Step::Interest(None),
+                    _ => self.step.following(),
                 }
             }
             Step::Interest(after) => {
@@ -305,8 +398,8 @@ impl Upkeep {
                     .collect();
                 swept.interest += transaction.remove_interest(&faded)?;
                 match page.last() {
-                    Some(last) if is_full(page.len()) => Step::Interest(Some(last.node)),
-                    _ => Step::Facts,
+                    Some(last) if is_full(page.len()) => Some(Step::Interest(Some(last.node))),
+                    _ => self.step.following(),
                 }
             }
             Step::Facts => {
@@ -315,9 +408,9 @@ impl Upkeep {
                     .delete_retired_facts_before(now_ms.saturating_sub(KEPT_FOR_MS), BATCH_ROWS)?;
                 swept.facts += deleted;
                 if deleted == BATCH_ROWS {
-                    Step::Facts
+                    Some(Step::Facts)
                 } else {
-                    Step::Calibration
+                    self.step.following()
                 }
             }
             Step::Calibration => {
@@ -332,49 +425,62 @@ impl Upkeep {
                     }
                     None => {}
                 }
-                Step::Events
+                self.step.following()
             }
+            // A batch looks at the oldest rows alone, so a row newer than the rest (a clock that
+            // went back) keeps a batch from filling: the step goes on while a batch deletes any.
             Step::Events => {
                 let deleted = transaction
                     .delete_events_before(now_ms.saturating_sub(KEPT_FOR_MS), BATCH_ROWS)?;
                 swept.events += deleted;
-                if deleted == BATCH_ROWS {
-                    Step::Events
+                if deleted > 0 {
+                    Some(Step::Events)
                 } else {
-                    Step::Episodes
+                    self.step.following()
+                }
+            }
+            Step::Injections => {
+                let deleted = transaction
+                    .delete_injections_before(now_ms.saturating_sub(KEPT_FOR_MS), BATCH_ROWS)?;
+                swept.injections += deleted;
+                if deleted > 0 {
+                    Some(Step::Injections)
+                } else {
+                    self.step.following()
                 }
             }
             Step::Episodes => {
                 let deleted = transaction.cap_episodes(MAX_EPISODES, BATCH_ROWS)?;
                 swept.episodes += deleted;
                 if deleted == BATCH_ROWS {
-                    Step::Episodes
+                    Some(Step::Episodes)
                 } else {
-                    Step::Positions
+                    self.step.following()
                 }
             }
             Step::Positions => {
                 swept.positions += transaction
                     .delete_positions_before(now_ms.saturating_sub(settings.longest_hold_ms))?;
-                Step::Optimize
+                self.step.following()
             }
             Step::Optimize => {
                 transaction.optimize()?;
-                Step::Vacuum(0)
+                self.step.following()
             }
             Step::Vacuum(given) => {
                 let freed = transaction.vacuum(VACUUM_BATCH_PAGES)?;
                 swept.pages += freed;
                 let given = given + freed;
                 if freed < u64::from(VACUUM_BATCH_PAGES) || given >= VACUUM_PAGES {
-                    transaction.commit()?;
-                    return Ok(None);
+                    None
+                } else {
+                    Some(Step::Vacuum(given))
                 }
-                Step::Vacuum(given)
             }
         };
+        transaction.set_upkeep_step(next.unwrap_or(Step::FIRST).name())?;
         transaction.commit()?;
-        Ok(Some(next))
+        Ok(next)
     }
 }
 
@@ -490,8 +596,9 @@ mod tests {
     }
 
     /// A run told other work waits after its first batch stops there, the link removed and the
-    /// rest left; the next run carries on from the second batch and finishes, removing the old
-    /// event, and a third run finds nothing left.
+    /// rest left, and the store keeps `transitions` as the step to carry on from, where upkeep
+    /// resumed from the store (a daemon started later) stands; the next run carries on from the
+    /// second batch and finishes, removing the old event, and a third run finds nothing left.
     #[test]
     fn a_run_stops_when_other_work_waits_and_the_next_carries_on() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -513,6 +620,12 @@ mod tests {
                 ..Swept::default()
             }
         );
+        assert_eq!(
+            writer.queries().meta(MetaKey::UpkeepStep)?.as_deref(),
+            Some("transitions")
+        );
+        let mut upkeep = Upkeep::resumed(writer.queries())?;
+        assert_eq!(upkeep.step, Step::Transitions(None));
         let (second, ended) = upkeep.run(&mut writer, now, (far, &|| false))?;
         assert_eq!(ended, Ended::Done);
         assert_eq!(
@@ -525,6 +638,66 @@ mod tests {
         let (third, ended) = upkeep.run(&mut writer, now, (far, &|| false))?;
         assert_eq!(ended, Ended::Done);
         assert_eq!(third, Swept::default());
+        Ok(())
+    }
+
+    /// A step that fails leaves the steps after it to run. The fitting's last attempt kept in the
+    /// store as `not json` makes the calibration step fail: the first run removes the link, then
+    /// stops with the error; the next run carries on from the events and removes the old one,
+    /// and finishes. The pass after that tries the fitting again (and fails again).
+    #[test]
+    fn a_step_that_fails_leaves_the_steps_after_it_to_run() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut writer = store(root.path())?;
+        rusqlite::Connection::open(root.path().join(".cortex").join("cortex.db"))?.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('calibration_attempt', 'not json')",
+            [],
+        )?;
+        let mut upkeep = Upkeep::default();
+        let far = Instant::now() + Duration::from_secs(60);
+        let now = (200 * DAY_MS, &SETTINGS);
+        assert!(upkeep.run(&mut writer, now, (far, &|| false)).is_err());
+        assert_eq!(upkeep.step, Step::Events);
+        let (swept, ended) = upkeep.run(&mut writer, now, (far, &|| false))?;
+        assert_eq!(ended, Ended::Done);
+        assert_eq!(
+            swept,
+            Swept {
+                events: 1,
+                ..Swept::default()
+            }
+        );
+        assert!(upkeep.run(&mut writer, now, (far, &|| false)).is_err());
+        Ok(())
+    }
+
+    /// Old events go batch after batch while a batch deletes any, even when a newer event sits
+    /// among the oldest. By hand: an event of day 300 recorded first, then 600 of day 100; at day
+    /// 200 the first batch, the oldest 500 recorded, deletes 499 (all but day 300's); the second,
+    /// the 101 left with it, deletes 101; the third deletes none and the step ends: 600 in all.
+    #[test]
+    fn old_events_go_while_a_batch_deletes_any() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut writer = writer(root.path())?;
+        let mut transaction = writer.transaction()?;
+        for day in std::iter::once(300).chain(std::iter::repeat_n(100, 600)) {
+            transaction.append_event(&EventRecord {
+                task_id: None,
+                session_id: None,
+                ts_ms: day * DAY_MS,
+                kind: EventKind::Read,
+                node_id: None,
+                path: None,
+                range: None,
+                meta: EventMeta::default(),
+            })?;
+        }
+        transaction.commit()?;
+        let far = Instant::now() + Duration::from_secs(60);
+        let (swept, ended) =
+            Upkeep::default().run(&mut writer, (200 * DAY_MS, &SETTINGS), (far, &|| false))?;
+        assert_eq!(ended, Ended::Done);
+        assert_eq!(swept.events, 600);
         Ok(())
     }
 
