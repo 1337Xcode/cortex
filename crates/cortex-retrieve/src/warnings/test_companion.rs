@@ -64,7 +64,7 @@ pub(super) fn warnings(facts: &EditFacts, task: &TaskSoFar, _: &WarningsConfig) 
 /// case aside. `tests/test_orders.py`, `orders_test.go`, `src/orders.test.ts`, `OrdersTest.java`
 /// and `tests/orders.rs` are the tests of `src/orders.py` (or `.go`, `.ts`, `.java`, `.rs`);
 /// `tests/test_orders_api.py` is not.
-fn is_own_test(test: &str, edited: &str) -> bool {
+pub(crate) fn is_own_test(test: &str, edited: &str) -> bool {
     let (Some(test), Some(edited)) = (base_name(test), base_name(edited)) else {
         return false;
     };

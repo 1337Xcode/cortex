@@ -8,12 +8,14 @@
 //! setting meant.
 
 mod coordination;
+mod hints;
 mod retrieval;
 mod warnings;
 
 use thiserror::Error;
 
 pub use self::coordination::CoordinationConfig;
+pub use self::hints::HintsConfig;
 pub use self::retrieval::{MAX_WORK_ORDER_TOKENS, RetrievalConfig, TypeWeights};
 pub use self::warnings::WarningsConfig;
 use crate::ScaleMode;
@@ -146,10 +148,8 @@ pub struct Config {
     /// `strict_mode`: when a task's agent stops while call sites of a signature it changed are still
     /// unchanged, ask it once to go on. Default `false`: Cortex never holds a stop.
     pub is_strict_mode: bool,
-    /// `hints.runtime_grounding`: beside a failed check's output, name the repository lines its
-    /// stack ran through when the output does not show them. Default `false` until its
-    /// evaluation shows it helps.
-    pub is_runtime_grounding: bool,
+    /// The `hints.*` keys: which texts about a check's run are on.
+    pub hints: HintsConfig,
 }
 
 impl Default for Config {
@@ -177,7 +177,7 @@ impl Default for Config {
             warnings: WarningsConfig::default(),
             coordination: CoordinationConfig::default(),
             is_strict_mode: false,
-            is_runtime_grounding: false,
+            hints: HintsConfig::default(),
         }
     }
 }
@@ -366,10 +366,7 @@ impl Config {
             "strict_mode" => {
                 self.is_strict_mode = value.as_bool().ok_or_else(|| refuse("true or false"))?;
             }
-            "hints.runtime_grounding" => {
-                self.is_runtime_grounding =
-                    value.as_bool().ok_or_else(|| refuse("true or false"))?;
-            }
+
             "tests.extra_patterns" => {
                 self.test_extra_patterns = string_list(value)
                     .filter(|patterns| patterns.iter().all(|pattern| is_regex(pattern)))
@@ -380,6 +377,7 @@ impl Config {
                 .apply(key, value)
                 .or_else(|| self.warnings.apply(key, value))
                 .or_else(|| self.coordination.apply(key, value))
+                .or_else(|| self.hints.apply(key, value))
             {
                 Some(set) => set.map_err(refuse)?,
                 None => return Ok(false),
@@ -508,7 +506,7 @@ mod tests {
                     max_tokens: 200,
                 },
                 is_strict_mode: false,
-                is_runtime_grounding: false,
+                hints: HintsConfig::default(),
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -521,7 +519,7 @@ mod tests {
         let user = layer(
             "user",
             "mode = \"small\"\nstrict_mode = true\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n\
-             [hints]\nruntime_grounding = true\n",
+             [hints]\nruntime_grounding = true\nnarrow_tests = true\n",
         );
         let repository = layer(
             "repository",
@@ -600,7 +598,10 @@ mod tests {
                     max_tokens: 400,
                 },
                 is_strict_mode: true,
-                is_runtime_grounding: true,
+                hints: HintsConfig {
+                    is_runtime_grounding: true,
+                    is_narrow_tests: true,
+                },
             }
         );
         Ok(())
@@ -990,6 +991,11 @@ mod tests {
             (
                 "hints.runtime_grounding = 1",
                 "hints.runtime_grounding",
+                "true or false",
+            ),
+            (
+                "hints.narrow_tests = \"yes\"",
+                "hints.narrow_tests",
                 "true or false",
             ),
         ]);

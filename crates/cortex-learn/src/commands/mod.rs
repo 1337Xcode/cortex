@@ -25,9 +25,11 @@
 mod argv;
 mod clean;
 mod folder;
+mod narrow;
 mod restore;
 mod runners;
 mod shell;
+mod target;
 
 use std::path::Path;
 
@@ -37,6 +39,7 @@ use thiserror::Error;
 
 pub use self::clean::{Cleaned, REDACTED, clean_command};
 use self::folder::Folder;
+pub use self::narrow::{MAX_NARROW_COMMAND_CHARS, SuiteRun, narrow_command, whole_suite};
 use self::shell::{AndOr, Command, Join, List, Pipeline, Word};
 
 /// The runner's name for a command one of the user's `tests.extra_patterns` names.

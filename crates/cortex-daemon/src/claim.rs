@@ -31,6 +31,8 @@ pub(crate) enum Claim {
     Handed(HandoffId),
     /// The file `.1`, named to task `.0` as the one earlier tasks read next.
     ReadNext(Ulid, NodeId),
+    /// Task `.0`, given the narrow tests of its edits after a whole-suite run.
+    Narrowed(Ulid),
 }
 
 /// Where the daemon keeps what answers claimed.
@@ -49,6 +51,8 @@ pub(crate) struct Claims {
     /// The files named to tasks as the ones earlier tasks read next, with their tasks: two reads
     /// answered at once name each file once, before either's record is stored.
     pub(crate) read_next: Arc<ClaimedOnce<(Ulid, NodeId)>>,
+    /// The tasks given the narrow tests of their edits.
+    pub(crate) narrowed: Arc<ClaimedOnce<Ulid>>,
 }
 
 impl Claims {
@@ -62,6 +66,7 @@ impl Claims {
             Claim::Stopped(task_id) => self.stopped.release(task_id),
             Claim::Handed(handoff) => self.handed.release(handoff),
             Claim::ReadNext(task_id, node) => self.read_next.release(&(*task_id, *node)),
+            Claim::Narrowed(task_id) => self.narrowed.release(task_id),
             Claim::Noticed(session, delivered, told) => {
                 self.noticed.release(session, (delivered, told));
             }

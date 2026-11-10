@@ -48,7 +48,8 @@ pub use calibration::{
     REFIT_AFTER_MS, Refusal, auc, calibrate, calibrated, model_in_use, model_inputs,
 };
 pub use commands::{
-    CONFIGURED, Check, Cleaned, Commands, PatternError, REDACTED, Ran, Restore, Told, clean_command,
+    CONFIGURED, Check, Cleaned, Commands, MAX_NARROW_COMMAND_CHARS, PatternError, REDACTED, Ran,
+    Restore, SuiteRun, Told, clean_command, narrow_command, whole_suite,
 };
 pub use decay::{FADED_OUT_BELOW, decayed, has_faded_out};
 pub use episode::episode_of;

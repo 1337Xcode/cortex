@@ -27,6 +27,7 @@ mod hints;
 mod innermost;
 mod items;
 mod lexical;
+mod narrow_tests;
 mod next_file;
 mod node_hash;
 mod open_warnings;
@@ -69,6 +70,9 @@ pub use grounded_failure::{
 pub use hints::{HINTED_ABOVE_LINES, HintQuery, MAX_HINT_TOKENS, MAX_HINTED_PARTS, read_hint};
 pub use items::{LOOKED_AT_PER_LISTED, Listed, Listing, listed};
 pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};
+pub use narrow_tests::{
+    MAX_NARROW_HINT_TOKENS, MAX_NARROW_TESTS, NarrowTest, narrow_hint, narrow_tests,
+};
 pub use next_file::{
     NEXT_FILE_MAJORITY, NEXT_FILE_MIN_WEIGHT, NextCandidate, NextFile, NextQuery, next_file,
 };

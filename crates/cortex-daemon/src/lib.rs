@@ -287,7 +287,8 @@ fn index_and_serve(
         coordination: config.coordination,
         failures: FailureSettings {
             commands: failure_commands,
-            is_runtime_grounding: config.is_runtime_grounding,
+            is_runtime_grounding: config.hints.is_runtime_grounding,
+            is_narrow_tests: config.hints.is_narrow_tests,
         },
     })));
     // The graph is built once the first index is done, before which a retrieval would find

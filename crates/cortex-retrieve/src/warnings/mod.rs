@@ -20,6 +20,7 @@ use cortex_store::{NodeId, WarningRecord};
 pub use call_site::MAX_LISTED_CALL_SITES;
 pub use facts::{EditQuery, MAX_CHECKED_CALLER_FILES, edit_facts, task_so_far};
 pub use test_companion::MAX_LISTED_TESTS;
+pub(crate) use test_companion::is_own_test;
 
 /// The most tokens the warnings of one edit take together, as estimated.
 pub const MAX_WARNING_TOKENS: usize = 250;

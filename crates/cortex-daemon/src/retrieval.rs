@@ -18,6 +18,7 @@ mod coordination;
 mod failure;
 mod handoff;
 mod hints;
+mod narrow;
 mod recap;
 mod stop;
 mod warnings;
@@ -95,6 +96,20 @@ pub(crate) struct Answer {
     pub(crate) coordination: Coordination,
 }
 
+impl Answer {
+    /// This answer followed by `then`'s: the texts one after the other (each ends its own lines),
+    /// what both record and claim, and this answer's coordination.
+    pub(crate) fn joined(mut self, then: Self) -> Self {
+        self.text = match (self.text, then.text) {
+            (Some(first), Some(second)) => Some(first + &second),
+            (first, second) => first.or(second),
+        };
+        self.given.extend(then.given);
+        self.claims.extend(then.claims);
+        self
+    }
+}
+
 /// What an edit's warnings are worked out with.
 #[derive(Debug, Clone)]
 pub(crate) struct EditSettings {
@@ -111,13 +126,16 @@ pub(crate) struct EditSettings {
     pub(crate) is_strict_mode: bool,
 }
 
-/// What a failed check is read with.
+/// What a check's run is read with.
 #[derive(Debug, Clone)]
 pub(crate) struct FailureSettings {
-    /// The checks Cortex tells apart, to know which runner's output a failed command printed.
+    /// The checks Cortex tells apart, to know which runner's output a failed command printed and
+    /// which line ran a whole suite.
     pub(crate) commands: Arc<Commands>,
     /// `hints.runtime_grounding`: whether a failed check gets the map of the lines it ran through.
     pub(crate) is_runtime_grounding: bool,
+    /// `hints.narrow_tests`: whether a whole-suite run gets the narrow tests of the task's edits.
+    pub(crate) is_narrow_tests: bool,
 }
 
 /// Where a service's settings come from.

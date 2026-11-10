@@ -30,7 +30,6 @@ mod names;
 mod prefixes;
 mod redact;
 mod render;
-mod target;
 mod test_path;
 #[cfg(test)]
 mod tests;
@@ -41,8 +40,8 @@ use std::path::Path;
 
 use cortex_core::ShellCommand;
 
-use self::target::Located;
 use super::shell::{self, Word};
+use super::target::{self, Located};
 use super::{CONFIGURED, Check, Commands, argv};
 
 /// What stands in a kept command for each secret a detector found.
