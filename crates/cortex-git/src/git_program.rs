@@ -4,40 +4,71 @@
 //! clone left out, and a bounded time and answer. The work tree's status is read the same way but
 //! with the user's own configuration, so that it lists what the user's own git lists.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 use cortex_core::{Captured, GIT, capture, find_program};
 
-/// How long git has to answer a question about HEAD, the configuration or a file in the git
-/// folder.
-const ASK_WITHIN: Duration = Duration::from_secs(10);
+use crate::history::has_repository;
 
-/// How long git has to list the history a window covers: 20,000 commits of a large repository
-/// take it tens of seconds.
-const LIST_WITHIN: Duration = Duration::from_secs(300);
+/// What one run of git may take: the time it has and the output read.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Bounds {
+    /// How long git has, from its start to its end.
+    pub(crate) within: Duration,
+    /// The most of its output read; more is cut and says so.
+    pub(crate) max_bytes: u64,
+}
 
-/// The most of a short answer read: an id, a path, a few settings.
-const MAX_ANSWER_BYTES: u64 = 64 * 1024;
+/// A short question to git about HEAD, the configuration or a file in the git folder: an id, a
+/// path, a few settings.
+const ANSWER: Bounds = Bounds {
+    within: Duration::from_secs(10),
+    max_bytes: 64 * 1024,
+};
 
-/// The most of a listing read; a listing cut short is not read at all.
-const MAX_LISTING_BYTES: u64 = 256 * 1024 * 1024;
+/// The listing of the history a window covers: 20,000 commits of a large repository take git tens
+/// of seconds; a listing cut short is not read at all.
+pub(crate) const LISTING: Bounds = Bounds {
+    within: Duration::from_secs(300),
+    max_bytes: 256 * 1024 * 1024,
+};
 
 /// The exit code of `git config --get` and `git rev-parse --verify --quiet` for a value or a
 /// revision that is not there.
 const ABSENT: i32 = 1;
 
 /// The file git reads as an empty configuration.
-const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+pub(crate) const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 /// The first git that can be told not to fetch what a partial clone left out, with
 /// `GIT_NO_LAZY_FETCH` or `--no-lazy-fetch`: 2.45, as its major and minor versions.
 const NO_LAZY_FETCH_SINCE: (u32, u32) = (2, 45);
 
 /// The keys of a repository's own configuration that decide how its work tree may be read: a
-/// filter's, and those that make it a partial clone.
-const OWN_CONFIG_KEYS: &str = r"^filter\.|^extensions\.partialclone$|^remote\..*\.promisor$";
+/// filter's, those that make it a partial clone, and the list of commits blame skips, which git
+/// opens when it starts, wherever the key points.
+const OWN_CONFIG_KEYS: &str =
+    r"^filter\.|^extensions\.partialclone$|^remote\..*\.promisor$|^blame\.ignorerevsfile$";
+
+/// The list of commits blame skips that a repository keeps in its top folder, which is the one
+/// list a blame may use.
+pub(crate) const IGNORE_REVS_FILE: &str = ".git-blame-ignore-revs";
+
+/// What a repository's own configuration says of `blame.ignoreRevsFile`, a file git opens before
+/// it blames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum IgnoreList {
+    /// The key is not set.
+    #[default]
+    Unset,
+    /// Every value of the key is [`IGNORE_REVS_FILE`].
+    Top,
+    /// A value names another file, which may be anywhere, a network share included.
+    Other,
+}
 
 /// What a repository's own configuration, with the files it includes, says that decides how
 /// Cortex may run git there.
@@ -49,6 +80,97 @@ pub(crate) struct OwnConfig {
     /// It is a partial clone: `extensions.partialClone` is set, or `promisor` is true on a
     /// remote, so git fetches from the remote what the clone left out unless told not to.
     pub(crate) is_partial: bool,
+    /// What it says of the list of commits blame skips.
+    pub(crate) ignore_list: IgnoreList,
+}
+
+/// Why a repository whose own configuration says it is as [`OwnConfig`] says may not be read with
+/// git.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Refusal {
+    /// The configuration names a filter, whose command git would run on a file it reads.
+    Filter,
+    /// The repository is a partial clone and this git cannot be told not to fetch what it left
+    /// out.
+    WouldFetch,
+}
+
+impl OwnConfig {
+    /// Why git may not read the repository, or `None` when it may; `can_refuse_fetching` answers
+    /// whether this git can be told not to fetch, and is asked only of a partial clone.
+    ///
+    /// # Errors
+    ///
+    /// `can_refuse_fetching` says it cannot tell.
+    pub(crate) fn refusal(
+        self,
+        can_refuse_fetching: impl FnOnce() -> Result<bool, String>,
+    ) -> Result<Option<Refusal>, String> {
+        if self.names_filter {
+            return Ok(Some(Refusal::Filter));
+        }
+        // INVARIANT: local-only. Git 2.45 and later read `GIT_NO_LAZY_FETCH`, which every git
+        // Cortex runs is given; an older git in a partial clone would fetch what a read needs.
+        if self.is_partial && !can_refuse_fetching()? {
+            return Ok(Some(Refusal::WouldFetch));
+        }
+        Ok(None)
+    }
+}
+
+/// Why a run of git gave no output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RunFailure {
+    /// Git did not end within the time given; it was stopped.
+    TimedOut,
+    /// Git could not be run, ended with a failure, or its output could not be read.
+    Failed(String),
+}
+
+impl fmt::Display for RunFailure {
+    /// The failure as a sentence.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TimedOut => formatter.write_str("git did not end in time"),
+            Self::Failed(message) => formatter.write_str(message),
+        }
+    }
+}
+
+/// Whose configuration git reads besides the repository's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Settings {
+    /// None: no system or global configuration, so that the answer does not depend on the
+    /// machine or the user.
+    Isolated,
+    /// The user's own and the system's, for an answer that should be the one the user's own git
+    /// gives.
+    User,
+}
+
+/// Why a repository cannot be opened for reading with git.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum OpenError {
+    /// The `PATH` names no `git` program outside the repository.
+    #[error("no git program is on the PATH")]
+    NoGit,
+    /// The folder holds no `.git`, so it is not a git repository's top.
+    #[error("no git repository is at the root")]
+    NoRepository,
+    /// The repository's own configuration names a filter, whose command git could run.
+    #[error("the repository's own git configuration names a filter")]
+    Refused,
+    /// The repository is a partial clone, and git, older than 2.45, cannot be told not to fetch
+    /// what the clone left out.
+    #[error("the repository is a partial clone, and git older than 2.45 could fetch in it")]
+    WouldFetch,
+    /// The repository's own configuration sets `blame.ignoreRevsFile` to a file other than the
+    /// top `.git-blame-ignore-revs`, which git would open wherever it is.
+    #[error("the repository's own git configuration names a blame ignore list outside its top")]
+    NamesIgnoreList,
+    /// Git did not answer the questions that decide whether it may be run.
+    #[error("asking git about the repository: {0}")]
+    Git(String),
 }
 
 /// The git program for one repository.
@@ -70,24 +192,37 @@ impl GitProgram {
         })
     }
 
+    /// The git for the repository at `root`, a repository's top in its canonical form, with what
+    /// its own configuration says, when git may be run there: the repository has no filter and,
+    /// being a partial clone, only a git that can be told not to fetch.
+    ///
+    /// # Errors
+    ///
+    /// No repository, no git, or one of the refusals, as [`OpenError`] says.
+    pub(crate) fn open(root: &Path) -> Result<(Self, OwnConfig), OpenError> {
+        if !has_repository(root) {
+            return Err(OpenError::NoRepository);
+        }
+        let git = Self::find(root).ok_or(OpenError::NoGit)?;
+        let own = git.own_config().map_err(OpenError::Git)?;
+        match own
+            .refusal(|| git.can_refuse_fetching())
+            .map_err(OpenError::Git)?
+        {
+            Some(Refusal::Filter) => Err(OpenError::Refused),
+            Some(Refusal::WouldFetch) => Err(OpenError::WouldFetch),
+            None => Ok((git, own)),
+        }
+    }
+
     /// The repository's top.
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 
-    /// Git with `options` before its command (such as `--no-lazy-fetch`), then `args`, as the
-    /// module says.
-    fn command(&self, options: &[&str], args: &[&str]) -> Command {
-        let mut command = self.as_user(options, args);
-        command
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", NULL_DEVICE);
-        command
-    }
-
-    /// Git as [`GitProgram::command`] runs it, but reading the user's own and the system's
-    /// configuration, for an answer that should be the one the user's own git gives.
-    fn as_user(&self, options: &[&str], args: &[&str]) -> Command {
+    /// Git with `options` before its command (such as `--no-lazy-fetch`), then `args`, reading the
+    /// configuration `settings` says.
+    fn command(&self, settings: Settings, options: &[&str], args: &[&str]) -> Command {
         let mut command = Command::new(&self.program);
         // The caller's `GIT_` variables could name another repository, object store, shallow
         // list, configuration or program; none of them applies to this one.
@@ -105,10 +240,37 @@ impl GitProgram {
             // this from version 2.45; a listing in a partial clone also gives `--no-lazy-fetch`,
             // which older git refuses.
             .env("GIT_NO_LAZY_FETCH", "1");
+        if settings == Settings::Isolated {
+            command
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", NULL_DEVICE);
+        }
         if let Some(parent) = self.root.parent() {
             command.env("GIT_CEILING_DIRECTORIES", parent);
         }
         command
+    }
+
+    /// What git printed for `args`, with `options` before its command, within `bounds`.
+    ///
+    /// # Errors
+    ///
+    /// Git does not start, or does not end in time.
+    fn run(
+        &self,
+        settings: Settings,
+        options: &[&str],
+        args: &[&str],
+        bounds: Bounds,
+    ) -> Result<Captured, RunFailure> {
+        let mut command = self.command(settings, options, args);
+        capture(&mut command, bounds.within, bounds.max_bytes).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::TimedOut {
+                RunFailure::TimedOut
+            } else {
+                RunFailure::Failed(format!("git did not answer ({error})"))
+            }
+        })
     }
 
     /// Git's short answer to `args` as text; `None` when git says the thing asked for is not
@@ -118,7 +280,9 @@ impl GitProgram {
     ///
     /// Git does not answer in time, fails, or answers more than a short answer or other than text.
     pub(crate) fn ask(&self, args: &[&str]) -> Result<Option<String>, String> {
-        let answer = run(&mut self.command(&[], args), ASK_WITHIN, MAX_ANSWER_BYTES)?;
+        let answer = self
+            .run(Settings::Isolated, &[], args, ANSWER)
+            .map_err(|failure| failure.to_string())?;
         if answer.status.code() == Some(ABSENT) && answer.stdout.is_empty() {
             return Ok(None);
         }
@@ -126,16 +290,16 @@ impl GitProgram {
             return Err(format!("git ended with {}", answer.status));
         }
         if answer.is_cut {
-            return Err(format!("git answered more than {MAX_ANSWER_BYTES} bytes"));
+            return Err(format!("git answered more than {} bytes", ANSWER.max_bytes));
         }
         String::from_utf8(answer.stdout)
             .map(Some)
             .map_err(|_| "git's answer is not UTF-8 text".to_owned())
     }
 
-    /// What the repository's own configuration, with the files it includes, says of filters and
-    /// of a partial clone, from one question to git, which reads no system or global
-    /// configuration for it.
+    /// What the repository's own configuration, with the files it includes, says of filters, of a
+    /// partial clone and of blame's list of commits to skip, from one question to git, which
+    /// reads no system or global configuration for it.
     ///
     /// # Errors
     ///
@@ -161,42 +325,25 @@ impl GitProgram {
         refuses_fetching(&self.ask(&["version"])?.unwrap_or_default())
     }
 
-    /// What git lists for `args`, with `options` before its command.
+    /// What git lists for `args`, with `options` before its command, within `bounds`; `None` when
+    /// it lists more than `bounds.max_bytes`.
     ///
     /// # Errors
     ///
-    /// Git does not end in time, fails, or lists more than [`MAX_LISTING_BYTES`].
-    pub(crate) fn list(&self, options: &[&str], args: &[&str]) -> Result<Vec<u8>, String> {
-        let listing = run(
-            &mut self.command(options, args),
-            LIST_WITHIN,
-            MAX_LISTING_BYTES,
-        )?;
-        if !listing.status.success() {
-            return Err(format!("git ended with {}", listing.status));
-        }
-        if listing.is_cut {
-            return Err(format!("git listed more than {MAX_LISTING_BYTES} bytes"));
-        }
-        Ok(listing.stdout)
-    }
-
-    /// What git lists for `args`, with `options` before its command, reading the user's own
-    /// configuration ([`GitProgram::as_user`]), in at most `within`; `None` when it lists more
-    /// than `max_bytes`.
-    ///
-    /// # Errors
-    ///
-    /// Git does not end in time, or fails.
-    pub(crate) fn list_as_user(
+    /// Git does not end in time ([`RunFailure::TimedOut`]) or fails.
+    pub(crate) fn list(
         &self,
+        settings: Settings,
         options: &[&str],
         args: &[&str],
-        (within, max_bytes): (Duration, u64),
-    ) -> Result<Option<Vec<u8>>, String> {
-        let listing = run(&mut self.as_user(options, args), within, max_bytes)?;
+        bounds: Bounds,
+    ) -> Result<Option<Vec<u8>>, RunFailure> {
+        let listing = self.run(settings, options, args, bounds)?;
         if !listing.status.success() {
-            return Err(format!("git ended with {}", listing.status));
+            return Err(RunFailure::Failed(format!(
+                "git ended with {}",
+                listing.status
+            )));
         }
         Ok((!listing.is_cut).then_some(listing.stdout))
     }
@@ -234,6 +381,15 @@ fn own_config_of(listing: &str) -> OwnConfig {
         if key.starts_with("filter.") {
             config.names_filter = true;
         }
+        if key == "blame.ignorerevsfile" {
+            let is_top = value == Some(IGNORE_REVS_FILE);
+            let is_only_top = is_top && config.ignore_list != IgnoreList::Other;
+            config.ignore_list = if is_only_top {
+                IgnoreList::Top
+            } else {
+                IgnoreList::Other
+            };
+        }
         let is_promisor = key.starts_with("remote.") && key.ends_with(".promisor");
         if key == "extensions.partialclone" || (is_promisor && is_true(value)) {
             config.is_partial = true;
@@ -255,11 +411,6 @@ fn is_true(value: Option<&str>) -> bool {
         "true" | "yes" | "on" => true,
         other => other.parse::<i64>() != Ok(0),
     }
-}
-
-/// What `command` printed, run for at most `within` and `max_bytes` of output; why not, as text.
-fn run(command: &mut Command, within: Duration, max_bytes: u64) -> Result<Captured, String> {
-    capture(command, within, max_bytes).map_err(|error| format!("git did not answer ({error})"))
 }
 
 #[cfg(test)]
@@ -328,5 +479,34 @@ mod tests {
             read("filter.x.process\nrun\0remote.p.promisor\nfalse\0remote.q.promisor\ntrue\0"),
             (true, true)
         );
+    }
+
+    /// The list of commits blame skips: unset says nothing; the top file alone is the top file,
+    /// whatever its key's case (git prints keys in lower case); any other value, a path outside the
+    /// repository or a share, makes it another one, wherever in the answer it comes.
+    #[test]
+    fn the_answer_says_which_ignore_list_the_configuration_names() {
+        let read = |listing: &str| own_config_of(listing).ignore_list;
+        assert_eq!(read(""), IgnoreList::Unset);
+        assert_eq!(
+            read("blame.ignorerevsfile\n.git-blame-ignore-revs\0"),
+            IgnoreList::Top
+        );
+        for other in [
+            "/etc/revs",
+            "//server/share/revs",
+            "missing",
+            "./.git-blame-ignore-revs",
+            "",
+        ] {
+            let listing = format!("blame.ignorerevsfile\n{other}\0");
+            assert_eq!(read(&listing), IgnoreList::Other, "{other:?}");
+        }
+        let top_then_other =
+            "blame.ignorerevsfile\n.git-blame-ignore-revs\0blame.ignorerevsfile\nx\0";
+        assert_eq!(read(top_then_other), IgnoreList::Other);
+        let other_then_top =
+            "blame.ignorerevsfile\nx\0blame.ignorerevsfile\n.git-blame-ignore-revs\0";
+        assert_eq!(read(other_then_top), IgnoreList::Other);
     }
 }

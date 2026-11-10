@@ -430,7 +430,9 @@ dependencies = [
  "cortex-core",
  "cortex-store",
  "gix",
+ "globset",
  "proptest",
+ "regex",
  "tempfile",
  "thiserror 2.0.21",
 ]

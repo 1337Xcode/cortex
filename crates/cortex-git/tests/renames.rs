@@ -6,7 +6,8 @@
 mod common;
 
 use common::{
-    Repo, TestResult, changed, commit, every_commit, git_version, lines, read_both, renamed,
+    Repo, TestResult, changed, commit, every_commit, git_version, lines, make_executable,
+    read_both, renamed,
 };
 use cortex_git::{CliHistory, GitError, GixHistory, HistorySource, Window};
 
@@ -354,18 +355,5 @@ fn a_path_that_is_not_utf8_is_left_out() -> TestResult {
     for (name, mined) in read_both(&repo.root(), &every_commit())? {
         assert_eq!(mined.commits, expected, "{name}");
     }
-    Ok(())
-}
-
-/// Makes the file at `path` executable by its owner, as git needs of a program it runs.
-fn make_executable(path: &std::path::Path) -> TestResult {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
-    }
-    // On Windows a file's name, not a permission, makes it a program; git's shell runs a script.
-    #[cfg(not(unix))]
-    let _ = path;
     Ok(())
 }

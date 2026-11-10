@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use cortex_core::{RepoPath, without_ignore_block};
 
-use crate::git_program::{GitProgram, OwnConfig};
+use crate::git_program::{Bounds, GitProgram, OwnConfig, Refusal, Settings};
 use crate::history::has_repository;
 
 /// How long git has to list the work tree's changes: a large work tree takes it a second or two.
@@ -149,15 +149,14 @@ fn may_look(
     own: OwnConfig,
     can_refuse_fetching: impl FnOnce() -> Result<bool, String>,
 ) -> Result<(), WorktreeError> {
-    if own.names_filter {
-        return Err(WorktreeError::Refused);
+    match own
+        .refusal(can_refuse_fetching)
+        .map_err(WorktreeError::Status)?
+    {
+        Some(Refusal::Filter) => Err(WorktreeError::Refused),
+        Some(Refusal::WouldFetch) => Err(WorktreeError::WouldFetch),
+        None => Ok(()),
     }
-    // INVARIANT: local-only. Git 2.45 and later read `GIT_NO_LAZY_FETCH`, which every git Cortex
-    // runs is given; an older git in a partial clone would fetch what a look needs.
-    if own.is_partial && !can_refuse_fetching().map_err(WorktreeError::Status)? {
-        return Err(WorktreeError::WouldFetch);
-    }
-    Ok(())
 }
 
 /// What git's status lists of the work tree, read within [`STATUS_WITHIN`] and `max_bytes`.
@@ -167,7 +166,8 @@ fn may_look(
 /// Git lists more than `max_bytes` ([`WorktreeError::TooMany`]), or does not list the changes.
 fn listed(git: &GitProgram, max_bytes: u64) -> Result<BTreeSet<RepoPath>, WorktreeError> {
     let listing = git
-        .list_as_user(
+        .list(
+            Settings::User,
             &["--no-optional-locks", "-c", "core.fsmonitor=false"],
             &[
                 "status",
@@ -181,9 +181,12 @@ fn listed(git: &GitProgram, max_bytes: u64) -> Result<BTreeSet<RepoPath>, Worktr
                 ".",
                 ":(exclude).cortex",
             ],
-            (STATUS_WITHIN, max_bytes),
+            Bounds {
+                within: STATUS_WITHIN,
+                max_bytes,
+            },
         )
-        .map_err(WorktreeError::Status)?
+        .map_err(|failure| WorktreeError::Status(failure.to_string()))?
         .ok_or(WorktreeError::TooMany)?;
     Ok(held_in_work_tree(&listing))
 }
@@ -245,6 +248,7 @@ mod tests {
         let own = |names_filter, is_partial| OwnConfig {
             names_filter,
             is_partial,
+            ..OwnConfig::default()
         };
         let never_asked = || -> Result<bool, String> { Err("asked".to_owned()) };
         assert!(matches!(

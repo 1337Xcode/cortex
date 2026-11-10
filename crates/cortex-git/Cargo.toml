@@ -11,7 +11,9 @@ publish.workspace = true
 [dependencies]
 cortex-core = { path = "../cortex-core" }
 cortex-store = { path = "../cortex-store" }
+globset.workspace = true
 gix.workspace = true
+regex.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

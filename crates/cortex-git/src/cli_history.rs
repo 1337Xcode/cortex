@@ -12,7 +12,7 @@ use std::path::Path;
 use cortex_core::canonical_root;
 
 use crate::git_log::{self, FORMAT};
-use crate::git_program::GitProgram;
+use crate::git_program::{GitProgram, LISTING, Settings};
 use crate::history::{
     GitError, HistorySource, Mined, MinedCommit, PathChange, Window, has_repository,
 };
@@ -146,7 +146,12 @@ impl CliHistory {
             from,
             "--",
         ];
-        self.git.list(options, &args).map_err(GitError::Walk)
+        self.git
+            .list(Settings::Isolated, options, &args, LISTING)
+            .map_err(|failure| GitError::Walk(failure.to_string()))?
+            .ok_or_else(|| {
+                GitError::Walk(format!("git listed more than {} bytes", LISTING.max_bytes))
+            })
     }
 }
 

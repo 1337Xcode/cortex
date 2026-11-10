@@ -176,6 +176,19 @@ pub fn git_in(folder: &Path, home: &Path, args: &[&str]) -> TestResult<String> {
     run_git(folder, home, args, None, None)
 }
 
+/// Makes the file at `path` executable by its owner, as git needs of a program it runs.
+pub fn make_executable(path: &Path) -> TestResult {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    // On Windows a file's name, not a permission, makes it a program; git's shell runs a script.
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
 /// The major and minor version of the git on the `PATH`, from `git version`.
 pub fn git_version() -> TestResult<(u32, u32)> {
     let output = Command::new("git").arg("version").output()?;
