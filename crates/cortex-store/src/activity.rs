@@ -394,6 +394,27 @@ impl Queries<'_> {
         self.event_rows(schema::LATEST_EVENTS_OF_TASK, (task_id.to_string(), limit))
     }
 
+    /// Whether one of task `task_id`'s latest `within` events read or edited the file whose node is
+    /// `node`, found by the index of the task's events without reading a row back.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn has_touched(
+        self,
+        task_id: Ulid,
+        node: NodeId,
+        within: usize,
+    ) -> Result<bool, StoreError> {
+        let within = i64::try_from(within).unwrap_or(i64::MAX);
+        self.connection()
+            .prepare_cached(schema::TASK_TOUCHED)
+            .and_then(|mut statement| {
+                statement.query_row((task_id.to_string(), node.get(), within), |row| row.get(0))
+            })
+            .map_err(sqlite("reading whether a task read a file"))
+    }
+
     /// The events the session reported, by time, then in the order they were stored.
     ///
     /// # Errors

@@ -214,6 +214,12 @@ pub(crate) const LATEST_EVENTS_OF_TASK: &str = "SELECT seq, task_id, session_id,
      node_id, path, range_start, range_end, meta FROM events WHERE task_id = ?1 \
      ORDER BY seq DESC LIMIT ?2";
 
+/// Whether one of task ?1's latest ?3 events read or edited the file whose node is ?2 (1) or not
+/// (0), found by the index of the task's events, newest first.
+pub(crate) const TASK_TOUCHED: &str = "SELECT EXISTS (SELECT 1 FROM (SELECT node_id, kind \
+     FROM events WHERE task_id = ?1 ORDER BY seq DESC LIMIT ?3) \
+     WHERE node_id = ?2 AND kind IN ('read', 'edit'))";
+
 /// The edits of the tasks of session ?1, its subagents' edits included, newest first by time and
 /// then by number, at most ?2 of them; the columns are those of [`EVENTS_OF_TASK`]. Only the edit
 /// rows of the session's tasks are read (the index of edits), and only those are sorted.
@@ -700,6 +706,14 @@ pub(crate) const INJECTION_USE: &str =
 pub(crate) const NEXT_FILE_USE: &str = "SELECT count(*), coalesce(sum(used_count > 0), 0) \
     FROM injections WHERE used_count IS NOT NULL AND label IS NULL AND rendered_hash IS NOT NULL \
     AND EXISTS (SELECT 1 FROM json_each(items) WHERE json_extract(value, '$.reason') = ?1)";
+
+/// Whether a text that reached task ?1's agent named the file whose node is ?2 for the reason ?3
+/// (1) or not (0), found by the index of the task's injections.
+pub(crate) const TASK_NAMED: &str = "SELECT EXISTS (SELECT 1 FROM injections, \
+    json_each(injections.items) AS item WHERE injections.task_id = ?1 \
+    AND injections.rendered_hash IS NOT NULL AND injections.gated_out = 0 \
+    AND injections.holdout = 0 AND json_extract(item.value, '$.node') = ?2 \
+    AND json_extract(item.value, '$.reason') = ?3)";
 
 /// Sets what the end of its task found of one injection: its used count and its label.
 pub(crate) const INJECTION_LABEL: &str =

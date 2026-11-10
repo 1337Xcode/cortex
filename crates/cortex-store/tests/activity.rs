@@ -5,7 +5,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use common::{Scratch, TestResult, name, path};
+use common::{Scratch, TestResult, index, name, path};
 use cortex_core::{
     Agent, ContentHash, EventKind, EventMeta, EventSource, LineRange, PromptExcerpt, SessionStatus,
     TaskOutcome, ToolKind, Ulid,
@@ -436,6 +436,66 @@ fn excerpts_and_watcher_events_read_back() -> TestResult {
         .collect();
     assert_eq!(stored, [watcher_edit]);
     assert_eq!(queries.events_after(1, 10)?, []);
+    Ok(())
+}
+
+/// A task touched a file when one of its own events read or edited it: task `first` read a.py,
+/// edited b.py and searched with c.py's node on its event; task `other` read c.py. So `first`
+/// touched a.py and b.py and not c.py (a search is no read, and the other task's read is not its
+/// own); `other` touched c.py alone. Looking at `first`'s latest event only (the search), it
+/// touched none; at its latest two (the edit and the search), b.py alone.
+#[test]
+fn a_task_touched_the_files_it_read_or_edited() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let first = task(b"first", "s1", 100)?;
+    let other = task(b"other", "s1", 200)?;
+    let nodes = committed(&mut writer, |transaction| {
+        let mut nodes = Vec::new();
+        for file in ["a.py", "b.py", "c.py"] {
+            nodes.push(
+                transaction
+                    .replace_file(&index(file, Vec::new(), Vec::new())?)?
+                    .file_node,
+            );
+        }
+        transaction.record_session(&session("s1", 50)?)?;
+        transaction.start_task(&first)?;
+        transaction.start_task(&other)?;
+        Ok(nodes)
+    })?;
+    let [a, b, c] = nodes[..] else {
+        return Err("three nodes".into());
+    };
+    let on = |task_id, kind, node| -> TestResult<EventRecord> {
+        Ok(EventRecord {
+            node_id: Some(node),
+            ..event(Some(task_id), 300, kind)?
+        })
+    };
+    let rows = [
+        on(first.task_id, EventKind::Read, a)?,
+        on(first.task_id, EventKind::Edit, b)?,
+        on(first.task_id, EventKind::Search, c)?,
+        on(other.task_id, EventKind::Read, c)?,
+    ];
+    committed(&mut writer, |transaction| {
+        for row in &rows {
+            transaction.append_event(row)?;
+        }
+        Ok(())
+    })?;
+    let queries = writer.queries();
+    let touched = |task_id, within| -> TestResult<Vec<bool>> {
+        [a, b, c]
+            .into_iter()
+            .map(|node| Ok(queries.has_touched(task_id, node, within)?))
+            .collect()
+    };
+    assert_eq!(touched(first.task_id, 10)?, [true, true, false]);
+    assert_eq!(touched(other.task_id, 10)?, [false, false, true]);
+    assert_eq!(touched(first.task_id, 1)?, [false, false, false]);
+    assert_eq!(touched(first.task_id, 2)?, [false, true, false]);
     Ok(())
 }
 

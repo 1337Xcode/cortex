@@ -532,6 +532,77 @@ fn a_session_s_work_orders_are_those_given() -> TestResult {
     Ok(())
 }
 
+/// A task was given a file for a reason when a text that reached its agent named the file for that
+/// reason. Task t: a.py named as read next, delivered; b.py named as read next by a text not
+/// written in time; c.py named as read next by a text the gate kept back, and named by a delivered
+/// work order. Task u: b.py named as read next, delivered. So t was given a.py as read next, not
+/// b.py nor c.py, and c.py as named; u was given b.py as read next and nothing else.
+#[test]
+fn a_task_was_given_what_reached_it() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let [a, b, c] = nodes(&mut writer, &["a.py", "b.py", "c.py"])?[..] else {
+        return Err("three nodes".into());
+    };
+    let session = Identifier::new("s1")?;
+    let (t, u) = (
+        Ulid::parse("01JC0000000000000000000000")?,
+        Ulid::parse("01JC0000000000000000000001")?,
+    );
+    session_with(&mut writer, &session, &[t, u])?;
+    let given = |task_id, node, reason| InjectionRecord {
+        task_id: Some(task_id),
+        session_id: session.clone(),
+        hook: HookKind::PreTool,
+        at_ms: 2_000,
+        files: vec![InjectedFile {
+            node,
+            spans: Vec::new(),
+            reason: Some(reason),
+            shown: Vec::new(),
+            content: None,
+        }],
+        tokens: 20,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"a line")),
+        features: None,
+    };
+    let rows = [
+        given(t, a, ReasonKind::ReadNext),
+        InjectionRecord {
+            text_hash: None,
+            ..given(t, b, ReasonKind::ReadNext)
+        },
+        InjectionRecord {
+            is_gated_out: true,
+            ..given(t, c, ReasonKind::ReadNext)
+        },
+        InjectionRecord {
+            hook: HookKind::Prompt,
+            ..given(t, c, ReasonKind::Named)
+        },
+        given(u, b, ReasonKind::ReadNext),
+    ];
+    let mut transaction = writer.transaction()?;
+    for row in &rows {
+        transaction.record_injection(row)?;
+    }
+    transaction.commit()?;
+    let queries = writer.queries();
+    let named = |task_id, reason| -> TestResult<Vec<bool>> {
+        [a, b, c]
+            .into_iter()
+            .map(|node| Ok(queries.has_named(task_id, node, reason)?))
+            .collect()
+    };
+    assert_eq!(named(t, ReasonKind::ReadNext)?, [true, false, false]);
+    assert_eq!(named(t, ReasonKind::Named)?, [false, false, true]);
+    assert_eq!(named(u, ReasonKind::ReadNext)?, [false, true, false]);
+    Ok(())
+}
+
 /// A file of an injection recorded before it kept the code it showed reads back with none shown.
 #[test]
 fn an_older_record_shows_nothing() -> TestResult {

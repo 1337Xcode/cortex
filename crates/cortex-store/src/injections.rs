@@ -194,6 +194,28 @@ impl Queries<'_> {
         ))
     }
 
+    /// Whether a text that reached task `task_id`'s agent named the file whose node is `node` for
+    /// the reason `reason`, found by the index of the task's injections.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn has_named(
+        self,
+        task_id: Ulid,
+        node: NodeId,
+        reason: ReasonKind,
+    ) -> Result<bool, StoreError> {
+        self.connection()
+            .prepare_cached(schema::TASK_NAMED)
+            .and_then(|mut statement| {
+                statement.query_row((task_id.to_string(), node.get(), reason.name()), |row| {
+                    row.get(0)
+                })
+            })
+            .map_err(sqlite("reading whether a task was given a file"))
+    }
+
     /// The injections of task `task_id`, in the order they were recorded.
     ///
     /// # Errors
