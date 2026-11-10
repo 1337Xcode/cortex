@@ -1,8 +1,8 @@
 //! A results folder: `runs.json`, each completed run's counts, written as each run ends;
 //! `summary.json` and `summary.txt`, what the runs add up to, written once all have. A summary can
 //! be rebuilt from the runs, so that a change to how runs add up reaches results already made
-//! without running their sessions again. A treated arm's folder also holds `comparison.json` and
-//! `comparison.txt` once it is compared with a held-out arm's.
+//! without running their sessions again. An arm's folder also holds `comparison.json` and
+//! `comparison.txt` once it is compared with another arm's.
 
 use std::path::Path;
 
@@ -92,7 +92,7 @@ pub(crate) fn write_comparison(treated: &Path, held_out: &Path) -> anyhow::Resul
     let off: Vec<TaskRun> = read_json(&held_out.join(RUNS_FILE))?;
     let groups = compare::compare(&on, &off);
     write_json(&treated.join(COMPARISON_FILE), &groups)?;
-    let text = compare::lines(&groups);
+    let text = compare::lines(&groups, compare::arm_names(&off));
     let path = treated.join(COMPARISON_TEXT_FILE);
     std::fs::write(&path, format!("{}\n", text.join("\n")))
         .with_context(|| format!("writing {}", path.display()))?;
@@ -149,6 +149,8 @@ mod tests {
             shown: None,
             warnings: None,
             config: Vec::new(),
+            facts: None,
+            notes: 0,
         }
     }
 

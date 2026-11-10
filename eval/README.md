@@ -10,7 +10,7 @@ the agent's version and model, and where its credentials came from.
 | Path | Holds |
 | --- | --- |
 | `testbeds.toml` | Each testbed: a git repository at a pinned commit |
-| `tasks/<id>.toml` | One task: its testbed, its kind, the prompts of its warm-up sessions, the prompt of its measured session, the success check, the files a correct solution touches, and the tools the agent may use |
+| `tasks/<id>.toml` | One task: its testbed, its kind, the prompts of its warm-up sessions, the prompt of its measured session, the success check, the files a correct solution touches, the tools the agent may use, and any project rules (`[[notes]]`: a rule's text, what it is about as `cortex note --at` takes it, and its kind) |
 | `checks/<id>.py` | Each task's success check, run from the repository's root after the sessions; exit code 0 is success |
 | `results/<date>-<commit>/` | An evaluation's `runs.json` (each run's counts), `summary.json` and `summary.txt`, named for the day it ran and the commit it measured |
 
@@ -25,7 +25,13 @@ cargo run -p cortex-eval -- check
 cargo run -p cortex-eval -- run --arm treated --cortex target/release/cortex \
   --base <a folder outside any repository> --out eval/results/<date>-<commit>
 cargo run -p cortex-eval -- report eval/results/<date>-<commit>
+cargo run -p cortex-eval -- compare <first arm's folder> <second arm's folder>
 ```
+
+`compare` pairs two arms' runs by task and writes, to the first arm's folder, each measure's mean
+in each arm and the mean per-task difference with its interval: a treated arm against a held-out
+one, or an arm that noted the tasks' project rules against one run with `--without-facts`, which
+leaves them out and changes nothing else.
 
 `report` rebuilds a results folder's `summary.json` and `summary.txt` from its `runs.json`, so a
 change to how runs add up reaches results already made without running their sessions again. It
@@ -34,7 +40,10 @@ refuses when that summary is missing.
 
 Each run clones its testbed at the pinned commit, or copies a folder holding it
 (`--from serena=<folder>`, leaving `.git/` and `.cortex/` behind), writes the arm's holdout share (0 for `treated`, 1 for `held-out`),
-runs `cortex init --yes`, and waits until the index and graph are ready. Each session is
+runs `cortex init --yes`, and waits until the index and graph are ready. Unless the arm runs with
+`--without-facts`, it then notes the task's project rules with `cortex note`, as a user would, so
+they are confirmed before the first session; the summary counts the rules noted and the runs that
+left them out. Each session is
 `claude -p` with the repository's own settings only (`--setting-sources project,local`), no MCP
 server but the repository's, edits accepted and the task's tools allowed, and `ANTHROPIC_API_KEY`
 left out of its environment so that Claude Code signs in with its own login. After each session

@@ -1,5 +1,5 @@
-//! One run of one task: a fresh copy of its testbed with Cortex installed for the arm, the agent's
-//! sessions in turn, the success check, what Cortex gave the measured session and what its end
+//! One run of one task: a fresh copy of its testbed with Cortex installed for the arm, the task's
+//! project rules noted unless the arm leaves them out, the agent's sessions in turn, the success check, what Cortex gave the measured session and what its end
 //! made of it, read from the copy's store, and whether every code line a session was shown was the
 //! line its file held when the session began.
 //!
@@ -56,6 +56,8 @@ pub(crate) struct Settings {
     /// Cortex configuration lines every run's copy gets besides the holdout share, each
     /// `key = value` with a dotted key, as TOML reads them.
     pub(crate) config: Vec<String>,
+    /// Whether each run notes its task's project rules before its first session.
+    pub(crate) facts: bool,
 }
 
 /// What Cortex gave the measured session, as its store holds it.
@@ -98,6 +100,14 @@ pub(crate) struct TaskRun {
     /// before the runner set any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) config: Vec<String>,
+    /// Whether the run's arm noted its task's project rules before the first session; none in
+    /// results from before an arm could leave them out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) facts: Option<bool>,
+    /// How many project rules the run noted before its first session; 0 in results from before
+    /// tasks had any.
+    #[serde(default)]
+    pub(crate) notes: u32,
 }
 
 /// Runs `task` in a copy of `testbed`, from `from` when given, as run number `run`.
@@ -117,6 +127,11 @@ pub(crate) fn run_task(
     std::fs::create_dir_all(&home).with_context(|| format!("making {}", home.display()))?;
     testbed.prepare(from, &repo)?;
     install((&repo, &home), &folder, settings)?;
+    let notes = if settings.facts {
+        note_rules(task, (&repo, &home), &folder, settings)?
+    } else {
+        0
+    };
     let mut sessions = Vec::new();
     let mut shown = Shown::default();
     let prompts = task.warmups.iter().chain(std::iter::once(&task.prompt));
@@ -148,6 +163,8 @@ pub(crate) fn run_task(
         shown: Some(shown),
         warnings: Some(warnings),
         config: settings.config.clone(),
+        facts: Some(settings.facts),
+        notes,
     })
 }
 
@@ -229,6 +246,29 @@ fn install((repo, home): (&Path, &Path), folder: &Path, settings: &Settings) -> 
         }
         std::thread::sleep(Duration::from_secs(2));
     }
+}
+
+/// Notes `task`'s project rules in `repo` with `cortex note`, logging each command in `folder`,
+/// and returns how many it noted.
+///
+/// # Errors
+///
+/// A rule `cortex note` refuses: a run without the rules its arm gives measures nothing.
+fn note_rules(
+    task: &Task,
+    (repo, home): (&Path, &Path),
+    folder: &Path,
+    settings: &Settings,
+) -> anyhow::Result<u32> {
+    for (at, note) in task.notes.iter().enumerate() {
+        let mut command = cortex(settings, repo, home);
+        command.args(note.args());
+        let log = folder.join(format!("note-{at}.log"));
+        if !run_logged(command, &log, COMMAND_WITHIN)?.success() {
+            bail!("cortex note failed:\n{}", tail_of(&log));
+        }
+    }
+    Ok(u32::try_from(task.notes.len()).unwrap_or(u32::MAX))
 }
 
 /// Runs one session of `prompt` in `repo`, its stream written to `stream`, and returns what it

@@ -65,6 +65,10 @@ pub(crate) struct Summary {
     pub(crate) warnings: Option<Warnings>,
     /// The share of the labelled warnings that were resolved, over the runs that recorded them.
     pub(crate) warning_precision: Option<Interval>,
+    /// The project rules the runs noted before their first sessions.
+    pub(crate) notes: u64,
+    /// The runs whose arm left their tasks' rules out.
+    pub(crate) without_facts: u64,
 }
 
 /// What the completed `runs` add up to, with the runs that could not complete, `incomplete`.
@@ -151,6 +155,8 @@ pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
             let warned = run.warnings.as_ref().map(all_kinds).unwrap_or_default();
             (warned.resolved, warned.labelled)
         })),
+        notes: count(&|run| u64::from(run.notes)),
+        without_facts: count(&|run| u64::from(run.facts == Some(false))),
     }
 }
 
@@ -241,6 +247,20 @@ pub(crate) fn lines(summary: &Summary) -> Vec<String> {
         warnings_line(summary, &share),
         format!("agents: {}", summary.agents.join("; ")),
     ]
+    .into_iter()
+    .chain(notes_line(summary))
+    .collect()
+}
+
+/// The line saying how many project rules the runs noted before their first sessions and how many
+/// runs left them out; none when no run did either.
+fn notes_line(summary: &Summary) -> Option<String> {
+    (summary.notes > 0 || summary.without_facts > 0).then(|| {
+        format!(
+            "project rules noted before the first sessions: {}; runs that left them out: {}",
+            summary.notes, summary.without_facts
+        )
+    })
 }
 
 /// The line saying what warnings the edits got and how precise they were, `share` writing the
@@ -325,6 +345,8 @@ mod tests {
             shown: None,
             warnings: None,
             config: Vec::new(),
+            facts: None,
+            notes: 0,
         }
     }
 
@@ -561,6 +583,34 @@ mod tests {
         assert!(
             lines(&summary)
                 .contains(&"cost of every session, as the agent reported it: $0.00".to_owned())
+        );
+    }
+
+    /// Runs that noted 3 rules and 2, and one whose arm left them out, add up to 5 rules noted and
+    /// 1 run without; runs from before tasks had rules give no such line.
+    #[test]
+    fn the_rules_noted_are_counted() {
+        let with = |facts, notes| TaskRun {
+            facts,
+            notes,
+            ..run(true, (100, 1, 1), Given::default())
+        };
+        let runs = [
+            with(Some(true), 3),
+            with(Some(true), 2),
+            with(Some(false), 0),
+        ];
+        let noted = summary(&runs, &[]);
+        assert_eq!((noted.notes, noted.without_facts), (5, 1));
+        assert_eq!(
+            lines(&noted).last().map(String::as_str),
+            Some("project rules noted before the first sessions: 5; runs that left them out: 1")
+        );
+        let older = summary(&[with(None, 0)], &[]);
+        assert!(
+            lines(&older)
+                .last()
+                .is_some_and(|line| line.starts_with("agents: "))
         );
     }
 }

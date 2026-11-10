@@ -56,12 +56,15 @@ enum Command {
         /// The results folder, holding `runs.json` and `summary.json`.
         folder: PathBuf,
     },
-    /// Compare a treated arm's runs with a held-out arm's, paired by task, and write the
-    /// comparison to the treated arm's folder.
+    /// Compare an arm's runs with another arm's, paired by task: a treated arm's with a held-out
+    /// arm's, or one noting the tasks' rules with one leaving them out; and write the comparison to
+    /// the first arm's folder.
     Compare {
-        /// The treated arm's results folder, holding `runs.json`.
+        /// The first arm's results folder, holding `runs.json`: the treated arm, or the one
+        /// noting the tasks' rules.
         treated: PathBuf,
-        /// The held-out arm's results folder, holding `runs.json`.
+        /// The second arm's results folder, holding `runs.json`: the held-out arm, or the one
+        /// leaving the rules out.
         held_out: PathBuf,
     },
 }
@@ -109,6 +112,9 @@ struct RunArgs {
     /// (`warnings.max_per_edit=0`); kept with each run's results.
     #[arg(long = "set", value_name = "KEY=VALUE")]
     set: Vec<String>,
+    /// Leave out the project rules the tasks carry: no run notes them before its first session.
+    #[arg(long)]
+    without_facts: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -235,6 +241,7 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
             Arm::HeldOut => 1.0,
         },
         config: config_lines(&args.set)?,
+        facts: !args.without_facts,
     };
     let ids: Vec<&str> = chosen.iter().map(|task| task.id.as_str()).collect();
     let taken = taken_folders(&args.base, &ids, args.runs);

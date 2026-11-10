@@ -1,5 +1,6 @@
-//! Two arms of one evaluation side by side: the same tasks run with Cortex giving work orders (the
-//! treated arm) and with Cortex holding every task out, paired by task. For each measure, the mean
+//! Two arms of one evaluation side by side, paired by task: the same tasks run with Cortex giving
+//! work orders (the treated arm) and with Cortex holding every task out, or with the tasks' project
+//! rules noted and without them. For each measure, the mean
 //! over tasks in each arm (a task's value is the mean of its runs) and the mean of the per-task
 //! differences, treated minus held out, with its 95% bootstrap interval over tasks. The same again
 //! for the tasks whose treated runs got a work order and for those whose did not, since the arms
@@ -141,8 +142,24 @@ fn group(name: &'static str, tasks: &[Paired<'_>]) -> Group {
     }
 }
 
-/// `groups` as lines of text: each group's name and size, then a line per measure.
-pub(crate) fn lines(groups: &[Group]) -> Vec<String> {
+/// The names the comparison gives its two arms, from the second arm's `runs`: "with facts" and
+/// "without facts" when Cortex treated every one of them and none noted its task's rules; else
+/// "with Cortex" and "held out".
+pub(crate) fn arm_names(second: &[TaskRun]) -> (&'static str, &'static str) {
+    let is_without_facts = !second.is_empty()
+        && second
+            .iter()
+            .all(|run| run.facts == Some(false) && run.holdout_share < 1.0);
+    if is_without_facts {
+        ("with facts", "without facts")
+    } else {
+        ("with Cortex", "held out")
+    }
+}
+
+/// `groups` as lines of text, the arms named `names`: each group's name and size, then a line per
+/// measure.
+pub(crate) fn lines(groups: &[Group], (first, second): (&str, &str)) -> Vec<String> {
     let mut lines = Vec::new();
     for group in groups {
         lines.push(format!("{}, paired tasks: {}", group.name, group.tasks));
@@ -150,7 +167,7 @@ pub(crate) fn lines(groups: &[Group]) -> Vec<String> {
             let decimals = compared.decimals;
             let difference = &compared.difference;
             lines.push(format!(
-                "  {}: {:.decimals$} with Cortex, {:.decimals$} held out; difference \
+                "  {}: {:.decimals$} {first}, {:.decimals$} {second}; difference \
                  {:+.decimals$} (95% interval {:+.decimals$} to {:+.decimals$}, resampling tasks)",
                 compared.measure,
                 compared.treated,
@@ -202,6 +219,8 @@ mod tests {
             shown: None,
             warnings: None,
             config: Vec::new(),
+            facts: None,
+            notes: 0,
         }
     }
 
@@ -260,7 +279,7 @@ mod tests {
     #[test]
     fn the_comparison_reads_as_lines() {
         let groups = compare(&[run("a", (100, 2), 1)], &[run("a", (160, 5), 0)]);
-        let lines = lines(&groups);
+        let lines = lines(&groups, ("with Cortex", "held out"));
         assert_eq!(lines[0], "every task, paired tasks: 1");
         assert_eq!(
             lines[1],
@@ -276,5 +295,33 @@ mod tests {
             lines.last().map(String::as_str),
             Some("tasks whose treated runs got none, paired tasks: 0")
         );
+    }
+
+    /// A second arm whose every run Cortex treated without noting its task's rules is the arm
+    /// without facts; one held out, one whose runs noted the rules or predate the choice, and none
+    /// at all are the held-out arm.
+    #[test]
+    fn the_arms_are_named_for_what_sets_them_apart() {
+        let with = |holdout_share, facts| TaskRun {
+            holdout_share,
+            facts,
+            ..run("a", (100, 2), 1)
+        };
+        assert_eq!(
+            arm_names(&[with(0.0, Some(false)), with(0.0, Some(false))]),
+            ("with facts", "without facts")
+        );
+        for second in [
+            vec![with(1.0, Some(false))],
+            vec![with(0.0, Some(false)), with(0.0, Some(true))],
+            vec![with(1.0, None)],
+            Vec::new(),
+        ] {
+            assert_eq!(
+                arm_names(&second),
+                ("with Cortex", "held out"),
+                "{second:?}"
+            );
+        }
     }
 }
