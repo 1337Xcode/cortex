@@ -1,0 +1,9 @@
+id = "concurrent-removal-flaky"
+testbed = "serena"
+kind = "check whether a failure repeats, then fix it"
+regression = "concurrent-removal-flaky.patch"
+warmups = []
+prompt = "`test_remove_project_preserves_concurrent_addition` in `test/serena/config/test_serena_config.py` failed on CI last night. It has two configuration instances change the project list at the same time, so it may depend on timing. Run it a few times with `uv run pytest test/serena/config/test_serena_config.py -k concurrent` and find out whether it fails every time here (the development environment is made with `uv sync --extra dev --python 3.13` when `.venv` is not there yet). If it does, find the cause in the library and fix it there, without changing the tests."
+check = ["python", "{checks}/concurrent-removal-flaky.py"]
+touches = ["src/serena/config/serena_config.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]

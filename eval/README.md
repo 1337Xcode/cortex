@@ -58,6 +58,13 @@ the runner waits until Cortex has ended its tasks and labelled what it gave; aft
 the check, reads the measured session's injections from the repository's store, and runs
 `cortex uninstall`.
 
+The serena tasks that have the agent run serena's tests name, in their prompts, how its environment
+is made in the copy: `uv sync --extra dev --python 3.13`. Left to choose, uv takes the newest Python
+it finds, and on 3.14 the pinned pyyaml has no wheel and fails to build. A machine running these
+tasks needs uv and a Python 3.13 it can find or fetch; their checks make the environment themselves
+when the session did not. Serena's whole suite starts real language servers and runs for longer
+than an agent's shell command may, so no task asks for it.
+
 Every command the runner waits for writes its output to a file in the run's folder (`init.log`,
 `session-<n>.jsonl`, `check.log` and the others), never to a pipe, and is stopped if it runs past
 its time. The logs stay with the run, and a file, unlike a pipe, does not depend on what the

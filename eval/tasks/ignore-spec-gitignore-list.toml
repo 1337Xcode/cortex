@@ -1,0 +1,9 @@
+id = "ignore-spec-gitignore-list"
+testbed = "serena"
+kind = "fix a failing test"
+regression = "ignore-spec-gitignore-list.patch"
+warmups = []
+prompt = "Since an earlier change, a project whose folder has a `.gitignore` can no longer tell which of its paths are ignored: `uv run pytest test/serena/test_project.py -k test_project_files` fails with `ValueError: The ignore spec could not be computed` (the development environment is made with `uv sync --extra dev --python 3.13` when `.venv` is not there yet). Run it, find the cause in the library and fix it there. Do not change the tests."
+check = ["python", "{checks}/ignore-spec-gitignore-list.py"]
+touches = ["src/serena/project.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]

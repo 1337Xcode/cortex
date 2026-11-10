@@ -1,0 +1,13 @@
+diff --git a/src/serena/util/file_system.py b/src/serena/util/file_system.py
+index f8894a5..eb3ddf1 100644
+--- a/src/serena/util/file_system.py
++++ b/src/serena/util/file_system.py
+@@ -443,7 +443,7 @@ class GitignoreParser:
+                         adjusted_pattern = f"{rel_dir_pattern}/{line}"
+                     else:
+                         # Add the directory prefix but also allow matching in subdirectories
+-                        adjusted_pattern = f"{rel_dir_pattern}/**/{line}"
++                        adjusted_pattern = f"{rel_dir_pattern}/*/{line}"
+             else:
+                 if is_anchored:
+                     # Anchored patterns in root should only match at root level

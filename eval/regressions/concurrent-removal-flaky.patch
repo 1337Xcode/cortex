@@ -1,0 +1,13 @@
+diff --git a/src/serena/config/serena_config.py b/src/serena/config/serena_config.py
+index 50f396e..4c29553 100644
+--- a/src/serena/config/serena_config.py
++++ b/src/serena/config/serena_config.py
+@@ -1328,7 +1328,7 @@ class SerenaConfig(SharedConfig, ModeSelectionDefinitionWithBaseModes):
+             persisted = SerenaConfig.from_config_file()
+             current_projects_by_path = {str(project.project_root): project for project in self.projects}
+             current_paths = set(current_projects_by_path)
+-            removed_paths = self._projects_at_load - current_paths
++            removed_paths = current_paths - self._projects_at_load
+             added_paths = current_paths - self._projects_at_load
+ 
+             combined_projects = []

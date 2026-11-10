@@ -1,0 +1,9 @@
+id = "gitignore-nested-star"
+testbed = "serena"
+kind = "fix a failing test"
+regression = "gitignore-nested-star.patch"
+warmups = []
+prompt = "Since an earlier change, a pattern in a subfolder's `.gitignore` no longer applies to the files directly in that subfolder: `foo.txt` in `foo/.gitignore` misses `foo/foo.txt`. `uv run pytest test/serena/util/test_file_system.py -k subdirectory` shows it (the development environment is made with `uv sync --extra dev --python 3.13` when `.venv` is not there yet). Find the cause in the library and fix it there, without changing the tests, then confirm that `uv run pytest test/serena/util/test_file_system.py test/serena/test_project.py` passes."
+check = ["python", "{checks}/gitignore-nested-star.py"]
+touches = ["src/serena/util/file_system.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]

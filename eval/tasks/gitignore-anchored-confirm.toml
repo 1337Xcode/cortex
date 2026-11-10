@@ -1,0 +1,8 @@
+id = "gitignore-anchored-confirm"
+testbed = "serena"
+kind = "confirm a reported behaviour"
+warmups = []
+prompt = "A user reports that serena hides too much: with the line `/build` in `src/.gitignore`, they say serena also treats `src/lib/build/` as ignored, while git ignores only `src/build/`. Find out whether serena really does that. Its gitignore handling is tested in `test/serena/util/test_file_system.py`; the development environment is made with `uv sync --extra dev --python 3.13` when `.venv` is not there yet, and tests run with `uv run pytest`. If serena already behaves like git here, leave every file as it is and tell me which test covers the case; if it does not, fix it in the library."
+check = ["python", "{checks}/gitignore-anchored-confirm.py"]
+touches = ["src/serena/util/file_system.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]

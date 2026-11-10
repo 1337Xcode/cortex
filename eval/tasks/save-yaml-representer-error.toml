@@ -1,0 +1,9 @@
+id = "save-yaml-representer-error"
+testbed = "serena"
+kind = "fix a failing test"
+regression = "save-yaml-representer-error.patch"
+warmups = []
+prompt = "Since an earlier change, saving Serena's global configuration fails with `ruamel.yaml.representer.RepresenterError: cannot represent an object`, so removing a project is no longer kept. `uv run pytest test/serena/config/test_serena_config.py -k test_remove_project_persists_across_reload` shows it (the development environment is made with `uv sync --extra dev --python 3.13` when `.venv` is not there yet). Run it, find the cause in the library and fix it there. Do not change the tests."
+check = ["python", "{checks}/save-yaml-representer-error.py"]
+touches = ["src/serena/util/yaml.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]

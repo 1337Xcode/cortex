@@ -1,0 +1,13 @@
+diff --git a/src/serena/project.py b/src/serena/project.py
+index a150887..44ede71 100644
+--- a/src/serena/project.py
++++ b/src/serena/project.py
+@@ -141,7 +141,7 @@ class Project(ToStringMixin):
+                     gitignore_parser = GitignoreParser(self.project_root, prune_spec=prune_spec)
+                     for spec in gitignore_parser.get_ignore_specs():
+                         log.debug(f"Adding {len(spec.patterns)} patterns from {spec.file_path} to the ignored paths.")
+-                        ignored_patterns.extend(spec.patterns)
++                        ignored_patterns.append(spec.patterns)
+                     # Explicit configuration has the final say, in its configured order: re-appending it after
+                     # the .gitignore patterns means neither a .gitignore negation can re-include a configured
+                     # exclusion nor a .gitignore rule can narrow a configured re-inclusion. This is what keeps

@@ -1,0 +1,13 @@
+diff --git a/src/serena/util/yaml.py b/src/serena/util/yaml.py
+index e42520c..101d33e 100644
+--- a/src/serena/util/yaml.py
++++ b/src/serena/util/yaml.py
+@@ -218,7 +218,7 @@ def normalise_yaml_comments(commented_map: CommentedMap, comment_normalisation:
+             raise ValueError(f"Unhandled comment normalisation: {comment_normalisation}")
+ 
+ 
+-def save_yaml(path: str, data: dict | CommentedMap, preserve_comments: bool = True) -> None:
++def save_yaml(path: str, data: dict | CommentedMap, preserve_comments: bool = False) -> None:
+     yaml = _create_yaml(preserve_comments)
+     target_dir = os.path.dirname(path)
+     os.makedirs(target_dir, exist_ok=True)
