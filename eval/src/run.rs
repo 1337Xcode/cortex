@@ -331,11 +331,12 @@ fn settle(repo: &Path, session: Option<&str>) -> anyhow::Result<()> {
     }
 }
 
-/// Whether a recorded text is a work order: the text a prompt was given, and the only kind a
-/// task's end labels. An edit's warnings, a read's hint, the recap and strict mode's reason are
-/// recorded too, and never labelled.
+/// Whether a recorded text is a work order: the text a prompt's retrieval gave, the one that keeps
+/// the gate's features, and the only kind a task's end labels. A prompt is given other texts too,
+/// a project rule or a handoff, recorded without features; and an edit's warnings, a read's hint,
+/// the recap and strict mode's reason are recorded at other hooks. None of those is labelled.
 fn is_work_order(record: &InjectionRecord) -> bool {
-    record.hook == HookKind::Prompt
+    record.hook == HookKind::Prompt && record.features.is_some()
 }
 
 /// Whether a session has settled: its tasks have `tasks_ended`, and each work order of `rows` that
@@ -577,6 +578,17 @@ warnings.max_per_edit = 0
         Ok(())
     }
 
+    /// The gate's features of a retrieval, any values.
+    const FEATURES: cortex_core::GateFeatures = cortex_core::GateFeatures {
+        top_lexical: 0.5,
+        top_mass: 0.5,
+        agreeing_kinds: 1,
+        supporting_kinds: 1,
+        similar_task: 0.0,
+        recent_precision: None,
+        is_continuing: false,
+    };
+
     /// A text of `hook` recorded for session `s`, delivered or kept back by the gate.
     fn text(hook: HookKind, is_delivered: bool) -> anyhow::Result<InjectionRecord> {
         Ok(InjectionRecord {
@@ -594,21 +606,30 @@ warnings.max_per_edit = 0
         })
     }
 
-    /// A session's warnings and read hints are never labelled, so they do not hold a session from
-    /// settling, nor count as work orders: with a work order delivered and labelled used, a
-    /// warning and a read hint delivered and unlabelled, and a work order the gate kept back, the
-    /// session settles once its tasks have ended, and one work order was delivered, labelled and
-    /// used. Until the work order is labelled, or while a task runs, it has not settled.
+    /// A session's warnings, read hints and a prompt's other texts (a project rule, a handoff) are
+    /// never labelled, so they do not hold a session from settling, nor count as work orders: with
+    /// a work order delivered and labelled used, a warning, a read hint and a rule's text at the
+    /// prompt delivered and unlabelled, and a work order the gate kept back, the session settles
+    /// once its tasks have ended, and one work order was delivered, labelled and used. Until the
+    /// work order is labelled, or while a task runs, it has not settled.
     #[test]
     fn only_work_orders_are_waited_for_and_counted() -> anyhow::Result<()> {
-        let order = text(HookKind::Prompt, true)?;
+        let order = InjectionRecord {
+            features: Some(FEATURES),
+            ..text(HookKind::Prompt, true)?
+        };
         let warning = text(HookKind::PostTool, true)?;
         let hint = text(HookKind::PreTool, true)?;
-        let kept = text(HookKind::Prompt, false)?;
-        let rows: [Labelled<'_>; 4] = [
+        let rule = text(HookKind::Prompt, true)?;
+        let kept = InjectionRecord {
+            features: Some(FEATURES),
+            ..text(HookKind::Prompt, false)?
+        };
+        let rows: [Labelled<'_>; 5] = [
             (&order, Some(true)),
             (&warning, None),
             (&hint, None),
+            (&rule, None),
             (&kept, None),
         ];
         assert!(is_settled(true, &rows));
