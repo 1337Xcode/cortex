@@ -549,3 +549,20 @@ fn candidates_leave_the_user_s_global_slots_free() -> TestResult {
     assert_eq!(status(&store, mine)?, (FactStatus::Active, 31));
     Ok(())
 }
+
+/// A fact names at most 16 files and symbols: noted on 17 files it is refused, naming 17; on 16 it
+/// is added.
+#[test]
+fn a_fact_about_more_than_16_places_is_refused() -> TestResult {
+    let mut store = Store::new()?;
+    let names: Vec<String> = (0..17).map(|at| format!("src/f{at:02}.py")).collect();
+    let files: Vec<(&str, &str)> = names.iter().map(|name| (name.as_str(), "x")).collect();
+    let nodes = store.index_text(&files)?;
+    let user = ("Each module has a test.", FactSource::User, None);
+    assert!(matches!(
+        say(&mut store, user, &nodes, 10),
+        Err(FactError::TooManyAnchors { count: 17 })
+    ));
+    added(say(&mut store, user, &nodes[..16], 11)?)?;
+    Ok(())
+}

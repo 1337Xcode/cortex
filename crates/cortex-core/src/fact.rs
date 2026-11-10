@@ -7,6 +7,10 @@ use crate::named::named_kind;
 /// The most characters a fact's text may hold: one short rule, never a passage of code.
 pub const MAX_FACT_CHARS: usize = 240;
 
+/// The most files and symbols one fact may be about: a rule about more than this is about a part of
+/// the code a person names better by a folder's files, or about the whole repository.
+pub const MAX_FACT_ANCHORS: usize = 16;
+
 named_kind! {
     /// What kind of rule a fact is.
     FactKind {

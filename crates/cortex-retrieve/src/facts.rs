@@ -23,6 +23,10 @@ use crate::disk::CheckedFile;
 /// Most project facts a work order carries.
 pub const MAX_ORDER_FACTS: usize = 5;
 
+/// The most of a fact's files and symbols a work order names: the rule's place, not a list that
+/// would crowd out the code it is given beside.
+const MAX_NAMED_ANCHORS: usize = 3;
+
 /// Most facts weighed for a work order: twice what it carries, so that a few withheld when it is
 /// written still leave it its five.
 const WEIGHED_FACTS: usize = 2 * MAX_ORDER_FACTS;
@@ -248,14 +252,44 @@ pub(crate) fn write_facts(text: &mut String, facts: &[OrderFact], kept: &[usize]
     }
 }
 
-/// `fact` as one line: its text and what it is about, `(anchored to path[:symbol], ...)`, the
-/// anchors in name order, each once.
+/// `fact` as one line: its text and what it is about, `(anchored to path[:symbol], ...)`, as
+/// [`anchored`] writes it.
 pub(crate) fn fact_line(fact: &OrderFact) -> String {
-    let names: BTreeSet<&str> = fact
-        .anchors
-        .iter()
-        .map(|anchor| anchor.name.as_str())
-        .collect();
-    let names: Vec<&str> = names.into_iter().collect();
-    format!("{} (anchored to {})", fact.text, names.join(", "))
+    anchored(
+        &fact.text,
+        fact.anchors.iter().map(|anchor| anchor.name.as_str()),
+    )
+}
+
+/// `text` and what it is about, `(anchored to name, ...)`: the `names` in order, each once, at
+/// most [`MAX_NAMED_ANCHORS`] of them and how many more.
+fn anchored<'a>(text: &str, names: impl Iterator<Item = &'a str>) -> String {
+    let names: BTreeSet<&str> = names.collect();
+    let shown: Vec<&str> = names.iter().copied().take(MAX_NAMED_ANCHORS).collect();
+    let more = match names.len().saturating_sub(MAX_NAMED_ANCHORS) {
+        0 => String::new(),
+        more => format!(" and {more} more"),
+    };
+    format!("{text} (anchored to {}{more})", shown.join(", "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fact's line names its anchors in name order, each once, at most three, then how many
+    /// more: about `c.py`, `a.py`, `b.py` and `a.py` again, the three; about five files, the
+    /// first three by name and "and 2 more".
+    #[test]
+    fn a_fact_s_line_names_three_anchors_and_how_many_more() {
+        let rule = "Use the shared client.";
+        assert_eq!(
+            anchored(rule, ["c.py", "a.py", "b.py", "a.py"].into_iter()),
+            "Use the shared client. (anchored to a.py, b.py, c.py)"
+        );
+        assert_eq!(
+            anchored(rule, ["e.py", "d.py", "c.py", "b.py", "a.py"].into_iter()),
+            "Use the shared client. (anchored to a.py, b.py, c.py and 2 more)"
+        );
+    }
 }

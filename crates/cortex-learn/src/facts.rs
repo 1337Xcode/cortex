@@ -18,7 +18,9 @@
 
 use std::collections::BTreeSet;
 
-use cortex_core::{FactKind, FactSource, FactStatus, RepoPath, Ulid, identifier_tokens, jaccard};
+use cortex_core::{
+    FactKind, FactSource, FactStatus, MAX_FACT_ANCHORS, RepoPath, Ulid, identifier_tokens, jaccard,
+};
 use cortex_store::{FactAnchor, FactId, FactRecord, FactRow, NodeId, Queries, StoreError, WriteTx};
 
 /// How alike two facts' words must be for one to be the other said again: 80% of the words they
@@ -83,6 +85,12 @@ pub enum FactError {
         /// The fact asked for.
         fact: FactId,
     },
+    /// A fact names more files and symbols than [`MAX_FACT_ANCHORS`].
+    #[error("a fact is about at most {MAX_FACT_ANCHORS} files and symbols; this one names {count}")]
+    TooManyAnchors {
+        /// How many it names.
+        count: usize,
+    },
     /// A fact about the whole repository names something else too: it is anchored to the root
     /// alone.
     #[error("a fact about the whole repository is anchored to it alone")]
@@ -122,6 +130,7 @@ pub struct Reviewed {
 /// # Errors
 ///
 /// [`FactError::Unanchorable`] for a node that cannot anchor a fact,
+/// [`FactError::TooManyAnchors`] for more nodes than [`MAX_FACT_ANCHORS`],
 /// [`FactError::GlobalWithOthers`] for the root named with anything else,
 /// [`FactError::TooManyGlobal`] for a new fact about the whole repository past
 /// [`MAX_GLOBAL_FACTS`], and the store's errors (among them text that is too long and no node).
@@ -131,6 +140,9 @@ pub fn assert_fact(
     now_ms: i64,
 ) -> Result<Asserted, FactError> {
     let nodes: BTreeSet<NodeId> = assertion.nodes.iter().copied().collect();
+    if nodes.len() > MAX_FACT_ANCHORS {
+        return Err(FactError::TooManyAnchors { count: nodes.len() });
+    }
     let listed: Vec<NodeId> = nodes.iter().copied().collect();
     let anchors = anchors_now(transaction.queries(), &listed)?;
     let root = transaction.queries().folder_node_at(&RepoPath::root())?;

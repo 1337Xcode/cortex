@@ -6,7 +6,7 @@
 //!
 //! The file is a teammate's, and what it says may end up in front of an agent once a person
 //! confirms it, so it is read strictly: a field Cortex does not know, another version, more than
-//! [`MAX_SHARED_FACTS`] facts or [`MAX_ANCHORS`] anchors to one, a text longer than a fact may be,
+//! [`MAX_SHARED_FACTS`] facts or [`MAX_FACT_ANCHORS`] anchors to one, a text longer than a fact may be,
 //! a text or an anchor holding a control or other invisible character, an anchor that is not a
 //! repository path, or a file over [`MAX_FACTS_FILE_BYTES`] refuses the whole file, and nothing of
 //! it is imported. It is read and written only as a file of its own in folders of the repository's
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
 use cortex_core::ipc::GONE_ANCHOR;
-use cortex_core::{FactKind, MAX_FACT_CHARS, RepoPath, is_plain, read_text_file};
+use cortex_core::{FactKind, MAX_FACT_ANCHORS, MAX_FACT_CHARS, RepoPath, is_plain, read_text_file};
 use serde::{Deserialize, Serialize};
 
 /// The folder in `.cortex` that a team commits.
@@ -38,9 +38,6 @@ pub(crate) const MAX_FACTS_FILE_BYTES: u64 = 1_048_576;
 /// The most facts the file may hold. A repository keeps at most ten facts about itself as a whole,
 /// and a team that writes down more than a thousand rules about files has other trouble.
 pub(crate) const MAX_SHARED_FACTS: usize = 1_000;
-
-/// The most anchors one fact may name.
-pub(crate) const MAX_ANCHORS: usize = 16;
 
 /// The most characters a symbol's name in an anchor may hold.
 const MAX_SYMBOL_CHARS: usize = 512;
@@ -163,7 +160,7 @@ pub(crate) fn is_own_file(path: &Path) -> anyhow::Result<bool> {
 }
 
 /// Whether `fact` is one a shared file may hold: words that fit and are plain, and between one and
-/// [`MAX_ANCHORS`] anchors, each a repository path or `.`, optionally followed by `:` and a plain
+/// [`MAX_FACT_ANCHORS`] anchors, each a repository path or `.`, optionally followed by `:` and a plain
 /// symbol name, all of it plain.
 ///
 /// # Errors
@@ -180,9 +177,9 @@ pub(crate) fn shareable(fact: &SharedFact) -> anyhow::Result<()> {
     if !is_plain(&fact.text) {
         bail!("its text holds a control character");
     }
-    if fact.at.is_empty() || fact.at.len() > MAX_ANCHORS {
+    if fact.at.is_empty() || fact.at.len() > MAX_FACT_ANCHORS {
         bail!(
-            "it names {} anchors; a fact names 1 to {MAX_ANCHORS}",
+            "it names {} anchors; a fact names 1 to {MAX_FACT_ANCHORS}",
             fact.at.len()
         );
     }
