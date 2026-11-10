@@ -1,0 +1,13 @@
+id = "heartbeat-timeout-setting"
+testbed = "serena"
+kind = "add a setting"
+warmups = ["Explain how the project server client in `src/serena/project_server.py` connects to the server and which timeouts it uses. Do not change any files."]
+prompt = "The project server client checks the server's heartbeat with a fixed timeout of 5 seconds. Make it configurable: add a setting `project_server_heartbeat_timeout` (seconds, default 5.0) to `SerenaConfig` and use it for the heartbeat request instead of the fixed value."
+check = ["python", "{checks}/heartbeat-timeout-setting.py"]
+touches = ["src/serena/config/serena_config.py", "src/serena/resources/serena_config.template.yml", "src/serena/project_server.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]
+
+[[notes]]
+text = "Every SerenaConfig setting is documented with its default in src/serena/resources/serena_config.template.yml; a new setting is added there too."
+at = ["src/serena/config/serena_config.py:SerenaConfig"]
+kind = "convention"

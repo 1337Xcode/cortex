@@ -1,0 +1,13 @@
+id = "health-check-url-changelog"
+testbed = "serena"
+kind = "fix a message"
+warmups = ["Explain how the project server client in `src/serena/project_server.py` checks that the server is running and what it raises when the check fails. Do not change any files."]
+prompt = "When the project server's health check fails with an error other than a refused connection, the `ConnectionError` the client raises does not say which server it checked. Include the server's URL in that message."
+check = ["python", "{checks}/health-check-url-changelog.py"]
+touches = ["src/serena/project_server.py", "CHANGELOG.md"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]
+
+[[notes]]
+text = "Every user-visible fix or feature gets a concise bullet in CHANGELOG.md under '# Unreleased (main)', in its topic group (General, JetBrains, Language Servers)."
+at = ["."]
+kind = "convention"

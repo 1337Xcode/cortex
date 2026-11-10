@@ -1,0 +1,13 @@
+id = "ls-shutdown-timeout-setting"
+testbed = "serena"
+kind = "add a setting"
+warmups = ["Explain what happens to the active project's language servers when the Serena agent shuts down, and which timeouts are used. Do not change any files."]
+prompt = "When the agent shuts down the active project, its language servers are stopped with a fixed timeout of 2 seconds. Make this a per-project setting: add `ls_shutdown_timeout` (seconds, default 2.0) to `ProjectConfig` and use the active project's value when the agent shuts the project down."
+check = ["python", "{checks}/ls-shutdown-timeout-setting.py"]
+touches = ["src/serena/config/serena_config.py", "src/serena/resources/project.template.yml", "src/serena/agent.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]
+
+[[notes]]
+text = "Every ProjectConfig setting is documented with its default in src/serena/resources/project.template.yml; a new project setting is added there too."
+at = ["src/serena/config/serena_config.py:ProjectConfig"]
+kind = "convention"
