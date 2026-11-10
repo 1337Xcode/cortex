@@ -5,7 +5,8 @@
 //! interest that has; the facts are reviewed and those retired
 //! for 90 days deleted; the gate's confidence model is fitted when one is due (see
 //! [`cortex_learn::calibrate`]); events and injections older than 90 days are deleted, episodes
-//! kept to 50,000 (unknown outcomes first) and positions that can no longer hold removed; last, the
+//! kept to 50,000 (unknown outcomes first), positions that can no longer hold removed and the
+//! failed checks handoffs keep cleared once a day old; last, the
 //! query planner's statistics are refreshed and up to [`VACUUM_PAGES`] free pages given back to the
 //! file system. Each batch keeps, in the store, the step to carry on from, so that a daemon started
 //! later finds it; a step whose batch fails is left for the next pass and the steps after it run.

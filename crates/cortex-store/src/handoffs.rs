@@ -45,8 +45,8 @@ pub enum HandoffEnd {
 }
 
 /// What a session whose task did not succeed leaves.
-// INVARIANT: no-content-stored (node ids, a runner's name, a check's kind and an exit code: no
-// prompt text, command line or output)
+// INVARIANT: no-content-stored (node ids, a runner's name, a check's kind, an exit code and its
+// failure's cleaned command and parsed counts: no prompt text, raw command line or output)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoffRecord {
     /// The session that left it.

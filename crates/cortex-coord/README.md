@@ -36,9 +36,9 @@ told. The daemon asks these rules and gives the text in each agent's own hooks.
 - `handoff_text`, `Handed`, `FailedCheck`, `MAX_HANDOFF_TOKENS`: what the session that picks up
   another's unfinished task is told: the agent and when it stopped, the files it edited and read
   (fewer named until the text fits 150 tokens), its last check when it failed, by its cleaned
-  command in backquotes when it was kept (a command holding a backquote is not quoted), else by
-  its runner and test file, with the counts the check's output printed when they were read
-  (`1 failed, 7 passed`), and its open warnings.
+  command in backquotes when it was kept (a command holding a backquote, or anything but plain
+  text, is left out), else by its runner and test file, with the counts the check's output
+  printed when they were read (`1 failed, 7 passed`), and its open warnings.
 
 ## Tests
 
