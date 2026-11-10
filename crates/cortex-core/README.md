@@ -21,7 +21,7 @@ modes and settings.
 
 | Item | What it is |
 | --- | --- |
-| `RepoPath` | A path relative to the repository root with `/` separators; `from_native` converts a platform path inside the root, including Windows verbatim (`\\?\`) spellings |
+| `RepoPath` | A path relative to the repository root with `/` separators; `from_native` converts a platform path inside the root, including Windows verbatim (`\\?\`) spellings; `from_native_in_any_case` also takes, on Windows only, a path whose root part is spelled in other letters' case or with the other separator, as command lines and tracebacks write it |
 | `canonical_root` | A folder in its canonical form: absolute, links and `..` resolved, names spelled as stored, no Windows verbatim prefix; every spelling of one folder gives one result |
 | `RepoId` | The 16-character id of a repository on this machine, from the BLAKE3 hash of its canonical root |
 | `ContentHash`, `ShortHash` | BLAKE3 hashes of 32 bytes (file contents) and 16 bytes (symbols, anchors); a content hash's first 16 bytes are the short hash of the same bytes (`short`); a short hash is written in stored facts as its 32 lower-case hexadecimal characters and read back from those alone (`from_hex`) |
