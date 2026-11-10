@@ -106,8 +106,7 @@ fn feed(child: &mut Child, input: &[u8]) -> io::Result<()> {
     };
     match stdin.write_all(input) {
         Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
-            drop(child.kill());
-            drop(child.wait());
+            stop(child);
             Err(error)
         }
         _ => Ok(()),
@@ -133,14 +132,59 @@ fn wait(child: &mut Child, deadline: Instant, timeout: Duration) -> io::Result<E
             return Ok(status);
         }
         if Instant::now() >= deadline {
-            // The program may exit between the check and the kill; either way it is not waited
-            // for again.
-            drop(child.kill());
-            drop(child.wait());
+            stop(child);
             return Err(timed_out("the program did not end", timeout));
         }
         std::thread::sleep(POLL_EVERY);
     }
+}
+
+/// Stops `child`, and on Windows the processes it started, and waits for it to be gone. The
+/// program may exit before it is stopped; either way it is not waited for again.
+fn stop(child: &mut Child) {
+    #[cfg(windows)]
+    kill_tree(child.id());
+    drop(child.kill());
+    drop(child.wait());
+}
+
+/// How long `taskkill` has to stop a program's tree.
+#[cfg(windows)]
+const TASKKILL_WITHIN: Duration = Duration::from_secs(5);
+
+/// Stops the process `pid` and every process it started, which `Child::kill` does not: the `git`
+/// on a Windows `PATH` is often a wrapper that starts the real `git.exe` and leaves it running
+/// when the wrapper is killed. `taskkill` follows the tree by parent, so it must run while the
+/// parent is still alive. It is the system's own, found by the system folder and not by the
+/// `PATH`, and the way to do this without a Job object, which needs unsafe code (the workspace
+/// forbids it) or a crate the workspace does not hold. Its failure is not reported: the caller
+/// kills the process next and reports the timeout.
+#[cfg(windows)]
+fn kill_tree(pid: u32) {
+    let Some(root) = std::env::var_os("SystemRoot") else {
+        return;
+    };
+    let program = std::path::Path::new(&root)
+        .join("System32")
+        .join("taskkill.exe");
+    let mut command = Command::new(program);
+    command
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let Ok(mut killer) = command.spawn() else {
+        return;
+    };
+    let deadline = Instant::now() + TASKKILL_WITHIN;
+    while Instant::now() < deadline {
+        if matches!(killer.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        std::thread::sleep(POLL_EVERY);
+    }
+    drop(killer.kill());
+    drop(killer.wait());
 }
 
 /// A `TimedOut` error: `what` within `timeout`.
@@ -240,6 +284,37 @@ mod tests {
         assert!(status.success());
         assert!(took < Duration::from_secs(10), "{took:?}");
         Ok(())
+    }
+
+    /// The processes a timed-out program started are stopped with it. `cmd` starts `ping`, which
+    /// holds the file its output goes to for 8 s; once the timeout has stopped the tree the file
+    /// can be deleted, which Windows does not allow while any process holds it open.
+    #[cfg(windows)]
+    #[test]
+    fn a_timeout_stops_the_programs_it_started_too() -> io::Result<()> {
+        use std::os::windows::process::CommandExt as _;
+
+        let folder = tempfile::tempdir()?;
+        let held = folder.path().join("held.txt");
+        let mut command = Command::new("cmd");
+        command
+            .arg("/C")
+            .raw_arg(format!("ping -n 8 127.0.0.1 > \"{}\"", held.display()));
+        let captured = capture(&mut command, Duration::from_millis(1_500), 16);
+        assert_eq!(
+            captured.err().map(|error| error.kind()),
+            Some(io::ErrorKind::TimedOut)
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut last = Ok(());
+        while Instant::now() < deadline {
+            last = std::fs::remove_file(&held);
+            if last.is_ok() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        last
     }
 
     /// A program that ends while a process it started keeps its stdout open is not waited for past
