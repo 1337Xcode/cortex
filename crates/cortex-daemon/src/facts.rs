@@ -219,7 +219,7 @@ mod tests {
     use cortex_store::{FileIndex, FileRecord, SessionRecord, TaskRecord, Writer};
 
     use super::*;
-    use crate::asked::{Ask, AskJob};
+    use crate::asked::{Ask, AskJob, AtWork};
     use crate::test_store::{TestResult, writer};
 
     /// Stores `src/money.py`, read, holding "cents", and session `s1` with its open task, made at 1;
@@ -265,9 +265,11 @@ mod tests {
         Ok(task)
     }
 
-    /// An agent's note is a candidate, asserted in the open task of the session at work, `s1`;
-    /// with no session at work, in no task. A user's note is active, in no task, whoever is at work.
-    /// An import's is a candidate, in no task, whoever is at work, and its source stays an import.
+    /// An agent's note is a candidate, asserted in the open task of the session at work, `s1`, when
+    /// it is the only one at work; with no session at work, or with `s1` the latest of two, in no
+    /// task: the note cannot be told to be `s1`'s. A user's note is active, in no task, whoever is at
+    /// work. An import's is a candidate, in no task, whoever is at work, and its source stays an
+    /// import.
     #[test]
     fn an_agent_s_note_is_a_candidate_in_the_task_at_work() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -282,28 +284,34 @@ mod tests {
                 at: vec!["src/money.py".to_owned()],
             })
         };
+        let alone = AtWork {
+            latest: Some(at_work.clone()),
+            sole: Some(at_work.clone()),
+        };
+        let of_two = AtWork {
+            latest: Some(at_work),
+            sole: None,
+        };
         let cases = [
+            (note("Money is kept in cents.", FactSource::Agent), &alone),
             (
-                note("Money is kept in cents.", FactSource::Agent),
-                Some(&at_work),
+                note("Money never floats.", FactSource::Agent),
+                &AtWork::default(),
             ),
-            (note("Money never floats.", FactSource::Agent), None),
-            (note("Money is exact.", FactSource::User), Some(&at_work)),
-            (
-                note("Money is never rounded.", FactSource::Import),
-                Some(&at_work),
-            ),
+            (note("Money is exact.", FactSource::User), &alone),
+            (note("Money is never rounded.", FactSource::Import), &alone),
+            (note("Money has two decimals.", FactSource::Agent), &of_two),
         ];
-        for (request, session) in cases {
+        for (request, at_work) in cases {
             let (job, answer) = AskJob::new(request);
             let timing = Timing::of(&CoordinationConfig::default());
-            job.carry_out(&mut writer, (5, session, &timing))?;
+            job.carry_out(&mut writer, (5, at_work, &timing))?;
             assert!(matches!(
                 answer.try_recv()?,
                 Ok(ResponseBody::Facts(FactsAnswer::Noted { .. }))
             ));
         }
-        let facts: Vec<(String, FactStatus, Option<Ulid>)> = [1, 2, 3, 4]
+        let facts: Vec<(String, FactStatus, Option<Ulid>)> = [1, 2, 3, 4, 5]
             .into_iter()
             .map(|number| {
                 let id = writer.queries().fact_id(number)?.ok_or("a fact")?;
@@ -327,6 +335,11 @@ mod tests {
                 ("Money is exact.".to_owned(), FactStatus::Active, None),
                 (
                     "Money is never rounded.".to_owned(),
+                    FactStatus::Candidate,
+                    None
+                ),
+                (
+                    "Money has two decimals.".to_owned(),
                     FactStatus::Candidate,
                     None
                 ),

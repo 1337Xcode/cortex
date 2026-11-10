@@ -408,6 +408,14 @@ impl Recorder {
         self.activity.at_work(at_ms, (within_ms, 0))
     }
 
+    /// The session at work at `at_ms` as [`Recorder::session_at_work`] finds it, when no other
+    /// session had an event in the `within_ms` before it: what a request that names no session can
+    /// be told apart by.
+    #[must_use]
+    pub fn sole_session_at_work(&self, at_ms: i64, within_ms: i64) -> Option<Identifier> {
+        self.activity.sole_at_work(at_ms, (within_ms, 0))
+    }
+
     /// Ends, as left, each task not ended whose session has shown no sign of work since
     /// `quiet_since_ms`, as of its last sign, and returns what each did, to learn from. An agent
     /// killed, crashed or interrupted with no stop and no session end leaves its task open; only

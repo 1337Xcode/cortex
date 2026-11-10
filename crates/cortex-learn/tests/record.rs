@@ -842,3 +842,29 @@ fn the_session_at_work_is_the_one_seen_last() -> TestResult {
     assert_eq!(at_work(&recorder, 25, 100).as_deref(), Some("s1"));
     Ok(())
 }
+
+/// The sole session at work is the session at work when no other had an event in the window.
+/// `s1` prompts at 10 and `s2` at 20. At 25, within 10: `s2` alone (`s1`'s event is 15 before). At
+/// 25, within 100: both were at work, so none. At 15, within 10: `s1` alone. With `s2` ended at
+/// 22, at 25 within 100: `s1` alone. At 200, within 10: none at work, none.
+#[test]
+fn the_sole_session_at_work_is_one_no_other_shares_the_window_with() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
+    store.record(
+        &mut recorder,
+        &[prompt("s1", 10, "fix add")?, prompt("s2", 20, "fix mul")?],
+    )?;
+    let sole = |recorder: &Recorder, at_ms, within_ms| {
+        recorder
+            .sole_session_at_work(at_ms, within_ms)
+            .map(|session| session.as_str().to_owned())
+    };
+    assert_eq!(sole(&recorder, 25, 10).as_deref(), Some("s2"));
+    assert_eq!(sole(&recorder, 25, 100), None);
+    assert_eq!(sole(&recorder, 15, 10).as_deref(), Some("s1"));
+    store.record(&mut recorder, &[end("s2", 22, "other")?])?;
+    assert_eq!(sole(&recorder, 25, 100).as_deref(), Some("s1"));
+    assert_eq!(sole(&recorder, 200, 10), None);
+    Ok(())
+}

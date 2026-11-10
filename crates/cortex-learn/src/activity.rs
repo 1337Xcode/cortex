@@ -119,23 +119,36 @@ impl Activity {
     /// Of the sessions not ended before `at_ms`, the one with the latest event from `before_ms`
     /// before it to `after_ms` after it; of two as late, the one whose id sorts first. `None` when
     /// none was at work then.
-    pub(crate) fn at_work(
-        &self,
-        at_ms: i64,
-        (before_ms, after_ms): (i64, i64),
-    ) -> Option<Identifier> {
-        let seen_ms = at_ms;
-        let around = seen_ms.saturating_sub(before_ms)..=seen_ms.saturating_add(after_ms);
-        self.sessions
-            .iter()
-            .filter(|(_, session)| session.ended_ms.is_none_or(|ended| ended >= seen_ms))
-            .filter_map(|(session_id, session)| {
-                let latest = session.times.range(around.clone()).next_back()?;
-                Some((session_id, *latest))
-            })
+    pub(crate) fn at_work(&self, at_ms: i64, window: (i64, i64)) -> Option<Identifier> {
+        self.working(at_ms, window)
             .max_by(|(one, one_ms), (other, other_ms)| {
                 one_ms.cmp(other_ms).then_with(|| other.cmp(one))
             })
             .map(|(session_id, _)| session_id.clone())
+    }
+
+    /// The session at work at `at_ms` as [`Activity::at_work`] finds it, when it is the only
+    /// session with an event in the window; `None` when none or several were at work then.
+    pub(crate) fn sole_at_work(&self, at_ms: i64, window: (i64, i64)) -> Option<Identifier> {
+        let mut working = self.working(at_ms, window);
+        let (session_id, _) = working.next()?;
+        working.next().is_none().then(|| session_id.clone())
+    }
+
+    /// The sessions not ended before `at_ms` with an event from `before_ms` before it to
+    /// `after_ms` after it, each with its latest such event.
+    fn working(
+        &self,
+        at_ms: i64,
+        (before_ms, after_ms): (i64, i64),
+    ) -> impl Iterator<Item = (&Identifier, i64)> {
+        let around = at_ms.saturating_sub(before_ms)..=at_ms.saturating_add(after_ms);
+        self.sessions
+            .iter()
+            .filter(move |(_, session)| session.ended_ms.is_none_or(|ended| ended >= at_ms))
+            .filter_map(move |(session_id, session)| {
+                let latest = session.times.range(around.clone()).next_back()?;
+                Some((session_id, *latest))
+            })
     }
 }

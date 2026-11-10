@@ -27,6 +27,18 @@ pub(crate) const ASK_WRITE_WITHIN: Duration = Duration::from_secs(5);
 /// agent's turn spends between two tool calls.
 pub(crate) const AT_WORK_WITHIN_MS: i64 = 5 * 60 * 1_000;
 
+/// The sessions at work when a request is carried out, a request naming none: the one with the
+/// latest event, which holds a claim; and that one again only when no other session was at work,
+/// the one whose open task an agent's note is taken to be (of two at work, a note names neither,
+/// and is filed in no task).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct AtWork {
+    /// The session with the latest event.
+    pub(crate) latest: Option<Identifier>,
+    /// The only session at work, when there is one.
+    pub(crate) sole: Option<Identifier>,
+}
+
 /// A request for the writer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Ask {
@@ -85,8 +97,8 @@ impl AskJob {
     /// only once that transaction is committed. A refusal rolls the transaction back and is the
     /// answer; a job that waited too long is dropped unanswered and nothing is written.
     ///
-    /// `at_work` is the session at work, whose open task an agent's note is taken to be, and which
-    /// holds a claim; positions hold as `timing` says.
+    /// `at_work` holds the sessions at work: the latest holds a claim, and an agent's note is taken
+    /// to be in the open task of the only one; positions hold as `timing` says.
     ///
     /// # Errors
     ///
@@ -94,7 +106,7 @@ impl AskJob {
     pub(crate) fn carry_out(
         self,
         writer: &mut Writer,
-        (now_ms, at_work, timing): (i64, Option<&Identifier>, &Timing),
+        (now_ms, at_work, timing): (i64, &AtWork, &Timing),
     ) -> Result<(), StoreError> {
         if Instant::now() > self.start_by {
             return Ok(());
@@ -124,19 +136,25 @@ impl AskJob {
     }
 }
 
-/// Answers `request` at `now_ms` in `transaction`, an agent's note in the open task of `at_work`,
-/// a claim held by it, positions holding as `timing` says.
+/// Answers `request` at `now_ms` in `transaction`, an agent's note in the open task of the only
+/// session at work, a claim held by the latest, positions holding as `timing` says.
 fn answer(
     transaction: &mut WriteTx<'_>,
     request: &Ask,
-    (now_ms, at_work, timing): (i64, Option<&Identifier>, &Timing),
+    (now_ms, at_work, timing): (i64, &AtWork, &Timing),
 ) -> Result<ResponseBody, Refused> {
     Ok(match request {
-        Ask::Note(note) => ResponseBody::Facts(facts::noted(transaction, note, (now_ms, at_work))?),
+        Ask::Note(note) => ResponseBody::Facts(facts::noted(
+            transaction,
+            note,
+            (now_ms, at_work.sole.as_ref()),
+        )?),
         Ask::Facts(ask) => ResponseBody::Facts(facts::answer_ask(transaction, ask, now_ms)?),
-        Ask::Claim(at) => {
-            ResponseBody::Claims(claims::claimed(transaction, at, (now_ms, at_work, timing))?)
-        }
+        Ask::Claim(at) => ResponseBody::Claims(claims::claimed(
+            transaction,
+            at,
+            (now_ms, at_work.latest.as_ref(), timing),
+        )?),
         Ask::Release(at) => {
             ResponseBody::Claims(claims::released(transaction, at, (now_ms, timing))?)
         }
@@ -170,19 +188,19 @@ mod tests {
             .checked_sub(Duration::from_millis(1))
             .ok_or("no earlier instant")?;
         let timing = Timing::of(&CoordinationConfig::default());
-        late.carry_out(&mut writer, (5, None, &timing))?;
+        late.carry_out(&mut writer, (5, &AtWork::default(), &timing))?;
         assert!(matches!(
             answer.try_recv(),
             Err(mpsc::TryRecvError::Disconnected)
         ));
         let (unread, answer) = AskJob::new(note);
-        unread.carry_out(&mut writer, (6, None, &timing))?;
+        unread.carry_out(&mut writer, (6, &AtWork::default(), &timing))?;
         assert_eq!(
             answer.try_recv()?,
             Err("src/money.py cannot anchor a fact: Cortex does not read it".to_owned())
         );
         let (in_time, answer) = AskJob::new(Ask::Facts(FactsAsk::List { all: true }));
-        in_time.carry_out(&mut writer, (7, None, &timing))?;
+        in_time.carry_out(&mut writer, (7, &AtWork::default(), &timing))?;
         assert_eq!(
             answer.try_recv()?,
             Ok(ResponseBody::Facts(FactsAnswer::Listed {
