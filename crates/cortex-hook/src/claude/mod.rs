@@ -1,11 +1,17 @@
 //! The Claude Code adapter: the hooks Cortex registers with Claude Code, its payloads turned into
 //! normalized events, and the text Cortex gives it written as its hook JSON, or before a compaction
-//! as plain text, which Claude Code takes as instructions for the compaction's summary.
+//! as plain text, which Claude Code takes as instructions for the compaction's summary. Agents that
+//! import Claude Code's settings (Cursor, GitHub Copilot, TRAE) may run Cortex's Claude Code hooks
+//! beside their own; a payload carrying a field only another agent sends is that agent's, whose own
+//! hooks record it, and makes no event here, so that no session is handled twice.
 
 mod tool;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
+
+use serde::de::IgnoredAny;
 
 use cortex_core::{Agent, Event, HookKind, holds_reminder_tag};
 
@@ -38,6 +44,21 @@ const MAX_CONTEXT_CHARS: usize = 10_000;
 /// The hard timeout of the events whose budget names none: a margin over their 60 ms budget, and
 /// below the one second Claude Code's timeout setting rounds up to.
 const OTHER_HARD_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// Fields another agent's hook payload carries and Claude Code's never does: none of the 124
+/// captured payloads of Claude Code 2.1.312, 2.1.316 and 2.1.318 has one at its top. Cursor's
+/// common fields (`conversation_id`, `generation_id`, `cursor_version`, `workspace_roots`), TRAE's
+/// (`workspace_roots`, `llm_tool_name`, `loop_count`), and GitHub Copilot's `timestamp`, which its
+/// payloads in Claude Code's field names carry; each is in the agents' documented fixtures.
+const OTHER_AGENTS_FIELDS: [&str; 7] = [
+    "conversation_id",
+    "generation_id",
+    "cursor_version",
+    "workspace_roots",
+    "llm_tool_name",
+    "loop_count",
+    "timestamp",
+];
 
 /// Claude Code.
 #[derive(Debug, Clone, Copy)]
@@ -152,6 +173,11 @@ impl Adapter for Claude {
         let Some(entry) = HOOKS.iter().find(|entry| entry.event_name == event_name) else {
             return Ok(None);
         };
+        if is_other_agents(payload) {
+            // INVARIANT: silent-when-unsure. Another agent ran Claude Code's hook: nothing is
+            // recorded or given for a payload that is not Claude Code's.
+            return Ok(None);
+        }
         normalize::event((Agent::Claude, &ClaudeTools, entry), payload, locate, stamp)
     }
 
@@ -193,6 +219,20 @@ impl Adapter for Claude {
         }
         Some(output::with_message(entry.event_name, text, message))
     }
+}
+
+/// Whether `payload`, a JSON object, carries at its top one of [`OTHER_AGENTS_FIELDS`]; a payload
+/// that is no JSON object is left for the normalizing to refuse.
+#[allow(
+    clippy::zero_sized_map_values,
+    reason = "only the keys are read; the values are passed over unparsed"
+)]
+fn is_other_agents(payload: &[u8]) -> bool {
+    serde_json::from_slice::<BTreeMap<String, IgnoredAny>>(payload).is_ok_and(|fields| {
+        OTHER_AGENTS_FIELDS
+            .iter()
+            .any(|field| fields.contains_key(*field))
+    })
 }
 
 /// `text` as a `PreCompact` hook prints it: plain, since Claude Code takes a `PreCompact` hook's

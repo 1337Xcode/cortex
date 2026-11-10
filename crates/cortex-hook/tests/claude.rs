@@ -1627,3 +1627,58 @@ fn a_failed_command_carries_what_it_printed() -> TestResult {
     );
     Ok(())
 }
+
+/// The payloads of the agents that import Claude Code's settings and so may run Cortex's Claude
+/// Code hooks beside their own (Cursor, GitHub Copilot, TRAE, from their documented fixtures) make
+/// no Claude Code event, each given as the Claude Code event it stands for. A Claude Code payload
+/// with any one of those agents' fields added makes none either; as captured, it makes its event.
+#[test]
+fn another_agent_s_payload_makes_no_claude_code_event() -> TestResult {
+    let claude = adapter("claude").ok_or("no Claude Code adapter")?;
+    let claude_event = |name: &str| match name {
+        "sessionStart" => "SessionStart".to_owned(),
+        "beforeSubmitPrompt" => "UserPromptSubmit".to_owned(),
+        "postToolUse" => "PostToolUse".to_owned(),
+        "postToolUseFailure" => "PostToolUseFailure".to_owned(),
+        "stop" => "Stop".to_owned(),
+        other => other.to_owned(),
+    };
+    for agent in ["cursor", "copilot", "trae"] {
+        let folder = common::fixture::fixtures_of(agent, "docs-2026-11-06");
+        for name in fixture_names(&folder)? {
+            let payload = read_fixture(agent, "docs-2026-11-06", &name)?;
+            let event = claude_event(&event_name(&payload)?);
+            let made = claude.normalize(&event, &payload, &locate, stamp())?;
+            assert!(made.is_none(), "{agent} {name}");
+        }
+    }
+    for field in [
+        "conversation_id",
+        "generation_id",
+        "cursor_version",
+        "workspace_roots",
+        "llm_tool_name",
+        "loop_count",
+        "timestamp",
+    ] {
+        let made = normalized(
+            "session-start-startup.json",
+            "SessionStart",
+            &locate,
+            |value| {
+                value[field] = serde_json::json!("2026-11-06T10:00:00.000Z");
+            },
+        )?;
+        assert!(made.is_none(), "{field}");
+    }
+    assert!(
+        normalized(
+            "session-start-startup.json",
+            "SessionStart",
+            &locate,
+            |_| {}
+        )?
+        .is_some()
+    );
+    Ok(())
+}

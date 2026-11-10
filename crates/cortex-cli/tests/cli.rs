@@ -78,3 +78,25 @@ fn help_names_the_binary_cortex() -> TestResult<()> {
     );
     Ok(())
 }
+
+/// Run with no arguments as an agent runs a hook, its standard input a pipe holding a payload,
+/// `cortex` prints nothing and exits 0: an agent that runs Claude Code's exec-form hook without
+/// its argument list must not read a usage error (exit 2) as a refusal.
+#[test]
+fn no_arguments_on_a_pipe_is_a_silent_success() -> TestResult<()> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(br#"{"hook_event_name": "PreToolUse", "tool_name": "Shell"}"#)?;
+    }
+    let output = child.wait_with_output()?;
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8(output.stdout)?, "");
+    assert_eq!(String::from_utf8(output.stderr)?, "");
+    Ok(())
+}
