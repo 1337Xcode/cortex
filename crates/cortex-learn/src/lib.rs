@@ -25,6 +25,7 @@ mod decay;
 mod episode;
 mod fact_word;
 mod facts;
+mod failures;
 mod given;
 mod handoff;
 mod interest;
@@ -53,6 +54,9 @@ pub use fact_word::{confirm_fact, edit_fact, retire_fact};
 pub use facts::{
     Asserted, Assertion, FactError, MAX_GLOBAL_FACTS, MERGES_AT, Reviewed,
     SUSPECT_RETIRES_AFTER_MS, assert_fact, review_facts,
+};
+pub use failures::{
+    Counts, Failures, Frame, MAX_FAILED_TESTS, MAX_FRAMES, MAX_NAME_CHARS, parse_failures,
 };
 pub use interest::{EarnedInterest, add_interest, interest_of, tier_now};
 pub use labels::{LABELLED_FILES, count_next_file_use, label_injections};
