@@ -4,22 +4,31 @@
 //! rest of an answer. Positions come from the store, as the writer kept them; how files are linked
 //! from the store's edges; the rules and the words from `cortex-coord`. A session working in
 //! another working tree or on another branch than the one told is named with its place. Nothing
-//! here writes: what to queue, tell and mark delivered goes to the writer with the answer.
+//! here writes: what to queue, tell and mark delivered goes to the writer with the answer. While
+//! `coordination.contracts` is on, a notice of a changed signature that the held file calls keeps
+//! its contract in memory, and is given in its words when the files still bear it out.
+
+mod contract;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
-use cortex_coord::{EditAt, Link, Notice, Party, Position, Thresholds, Timing, concerned};
+use cortex_coord::{EditAt, Holding, Link, Notice, Party, Position, Thresholds, Timing, concerned};
 use cortex_core::{
     Agent, CoordinationConfig, EdgeType, Event, Identifier, NoticeSubject, RepoPath,
     estimate_tokens,
 };
 use cortex_store::{Coupling, NodeId, NoticeRecord, PositionRow, Queries, SeenSession};
 
+use self::contract::{Queued, contract_of, rendered};
 use super::{Answer, Service, task_of_answer};
 use crate::claim::Claim;
+use crate::contracts::Contract;
 use crate::given::{Given, Notices, text_record};
 use crate::noticed::{Giving, Noticed};
 use crate::place::Place;
+
+pub(crate) use self::contract::Signed;
 
 /// What an edit's coordination found, before it is given.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -56,6 +65,8 @@ struct Found {
     lines: Vec<Line>,
     /// The notices.
     queued: Vec<NoticeRecord>,
+    /// The contracts of the notices that have one.
+    contracts: Vec<Contract>,
 }
 
 impl Around {
@@ -103,7 +114,8 @@ impl Around {
     }
 
     /// Adds to `found` what `event`'s edit of `path` concerns, `names` being the definitions whose
-    /// signature it changed there, by the rules `thresholds` and `timing`.
+    /// signature it changed there and `signed` those with their signatures, by the rules
+    /// `thresholds` and `timing`. The edit was made in the working tree at `root`.
     ///
     /// # Errors
     ///
@@ -111,8 +123,8 @@ impl Around {
     fn edit_of(
         &self,
         queries: Queries<'_>,
-        (event, path, names): (&Event, &RepoPath, &[&str]),
-        (thresholds, timing): (&Thresholds, &Timing),
+        (event, path, names, signed): (&Event, &RepoPath, &[&str], &[Signed]),
+        (thresholds, timing, root): (&Thresholds, &Timing, &Path),
         found: &mut Found,
     ) -> Result<(), cortex_store::StoreError> {
         let Some(edited) = queries.file_node_at(path)? else {
@@ -137,7 +149,7 @@ impl Around {
             else {
                 continue;
             };
-            let Some((_, held_path)) = queries.node_file(concern.held)? else {
+            let Some((held_file, held_path)) = queries.node_file(concern.held)? else {
                 continue;
             };
             let (their_place, my_place) = self.places_said(&concern.session);
@@ -159,6 +171,23 @@ impl Around {
             if let Some(notice) =
                 cortex_coord::to_holder(&concern, editor, held_path.as_str(), names)
             {
+                let queued = Queued {
+                    key: (concern.session.clone(), notice.subject.clone(), event.ts_ms),
+                    holding: Holding {
+                        mode: concern.mode,
+                        is_urgent: concern.is_urgent,
+                    },
+                    editor: &editor_name,
+                    edited: (root, path),
+                    held: (held_file, &held_path),
+                };
+                // A contract that cannot be worked out leaves its notice naming the definitions.
+                match contract_of(queries, queued, signed) {
+                    Ok(contract) => found.contracts.extend(contract),
+                    Err(error) => {
+                        tracing::warn!(error = %format!("{error:#}"), "a notice's contract failed");
+                    }
+                }
                 found.queued.push(NoticeRecord {
                     to_session: concern.session.clone(),
                     about: notice.subject,
@@ -209,7 +238,9 @@ impl Service {
     /// sessions holding that file or one linked to it strongly enough, outside the editing
     /// session's own family (its parent and its subagents); the line the editing session could be
     /// told of each, and the notice for each. `changed` names the definitions whose signature the
-    /// edit of [`Event::edited_file`] changed, which the notices name.
+    /// edit of [`Event::edited_file`] changed, which the notices name, and `signed` gives those
+    /// with their signatures, which a notice to a session whose file calls them keeps as its
+    /// contract.
     ///
     /// # Errors
     ///
@@ -218,7 +249,7 @@ impl Service {
         &self,
         queries: Queries<'_>,
         event: &Event,
-        changed: &[String],
+        (changed, signed): (&[String], &[Signed]),
     ) -> Result<Coordination, cortex_store::StoreError> {
         let Some(target) = &event.tool_target else {
             return Ok(Coordination::default());
@@ -231,17 +262,20 @@ impl Service {
         let changed: Vec<&str> = changed.iter().map(String::as_str).collect();
         let mut found = Found::default();
         for path in target.paths() {
-            let names: &[&str] = if event.edited_file() == Some(path) {
-                &changed
+            let (names, signed): (&[&str], &[Signed]) = if event.edited_file() == Some(path) {
+                (&changed, signed)
             } else {
-                &[]
+                (&[], &[])
             };
             around.edit_of(
                 queries,
-                (event, path, names),
-                (&thresholds, &timing),
+                (event, path, names, signed),
+                (&thresholds, &timing, self.root_for(event)),
                 &mut found,
             )?;
+        }
+        for contract in std::mem::take(&mut found.contracts) {
+            self.contracts.keep(contract);
         }
         Ok(found.into_coordination())
     }
@@ -268,6 +302,13 @@ impl Service {
                 return Ok(None);
             }
             let waiting = queries.notices_waiting(&event.session_id, since_ms)?;
+            let given = noticed.given_to(&event.session_id);
+            let waiting = rendered(
+                queries,
+                (&event.session_id, self.root_for(event)),
+                (waiting, &given),
+                self.rendering(),
+            );
             let sent: Vec<NoticeSubject> = queries
                 .notices_since(&event.session_id, since_ms)?
                 .into_iter()

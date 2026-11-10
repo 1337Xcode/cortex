@@ -121,6 +121,9 @@ pub enum GitError {
     /// Walking the history failed.
     #[error("walking the history: {0}")]
     Walk(String),
+    /// A file as HEAD's commit holds it could not be read.
+    #[error("reading a committed file: {0}")]
+    Committed(String),
     /// A commit's changes could not be read.
     #[error("reading the changes of commit {commit}: {message}")]
     Changes {

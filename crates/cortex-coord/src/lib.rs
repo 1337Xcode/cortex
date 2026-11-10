@@ -5,11 +5,15 @@
 //! they are tested on hand-built values; the daemon uses the store's.
 
 mod concern;
+mod contract;
 mod handoff;
 mod notice;
 mod position;
+mod signature;
 
 pub use concern::{Concern, EditAt, Link, Thresholds, Via, concerned};
+pub use contract::{Called, Holding, contract_to_holder};
 pub use handoff::{FailedCheck, Handed, MAX_HANDOFF_TOKENS, ago, handoff_text};
 pub use notice::{Notice, Party, to_editor, to_holder};
 pub use position::{Position, PositionMode, Timing, is_live};
+pub use signature::{MAX_SIGNATURE_CHARS, Signature};

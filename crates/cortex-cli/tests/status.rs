@@ -64,6 +64,7 @@ fn index(root: &Path, writer: &mut Writer) -> TestResult {
         mode: ModeSetting::Auto,
         pause: None,
         on_changed: None,
+        on_parsed: None,
     };
     index_repository(root, &Arc::new(Grammars::load()?), writer, &options)?;
     Ok(())

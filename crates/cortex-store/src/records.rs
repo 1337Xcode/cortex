@@ -118,6 +118,9 @@ pub struct SymbolChange {
     pub name: Identifier,
     /// What happened to it.
     pub kind: ChangeKind,
+    /// The hash of its declaration header as it was stored before, for a symbol that was
+    /// stored; none for a new one.
+    pub sig_hash_before: Option<ShortHash>,
 }
 
 /// What happened to a symbol.

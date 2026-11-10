@@ -11,6 +11,31 @@ use common::{
 };
 use cortex_git::{CliHistory, GitError, GixHistory, Mined, Window};
 
+/// A file is read as HEAD's commit holds it, whatever the work tree holds now: a file in a
+/// folder by its path with `/`; none for a path the commit does not hold, a folder, a file
+/// larger than asked for, or a repository with no commit yet.
+#[test]
+fn a_committed_file_is_read_as_head_holds_it() -> TestResult {
+    let repo = Repo::new()?;
+    let path = |text: &str| cortex_core::RepoPath::new(text);
+    assert_eq!(
+        GixHistory::open(&repo.root())?.committed(&path("a.txt")?, 100)?,
+        None
+    );
+    repo.write("src/a.txt", "one\n")?;
+    repo.commit(1)?;
+    repo.write("src/a.txt", "two\n")?;
+    let history = GixHistory::open(&repo.root())?;
+    let committed = |text: &str, max_bytes| -> TestResult<Option<Vec<u8>>> {
+        Ok(history.committed(&path(text)?, max_bytes)?)
+    };
+    assert_eq!(committed("src/a.txt", 4)?, Some(b"one\n".to_vec()));
+    assert_eq!(committed("src/a.txt", 3)?, None);
+    assert_eq!(committed("src", 100)?, None);
+    assert_eq!(committed("src/b.txt", 100)?, None);
+    Ok(())
+}
+
 /// Commits are read newest first, each against its parent, the first against nothing so that
 /// every file it holds counts. A file in a folder is named by its whole path with `/`, and a
 /// deletion by the path the file had.

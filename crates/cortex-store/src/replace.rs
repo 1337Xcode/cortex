@@ -89,6 +89,7 @@ fn write_symbols(
             index: position,
             position: parent,
         })?;
+        let sig_hash_before = earlier.as_ref().map(|old| old.sig_hash);
         let (id, change) = match earlier {
             Some(old) => {
                 update_symbol(connection, old.id, parent, symbol)?;
@@ -104,6 +105,7 @@ fn write_symbols(
                 symbol: id,
                 name: symbol.name.clone(),
                 kind,
+                sig_hash_before,
             });
         }
         let node = upsert_node(connection, NodeKind::Symbol, id.get(), path)?;
@@ -277,6 +279,7 @@ fn remove_symbol(connection: &Connection, old: StoredSymbol) -> Result<SymbolCha
         symbol: old.id,
         name: old.name,
         kind: ChangeKind::Removed,
+        sig_hash_before: Some(old.sig_hash),
     })
 }
 

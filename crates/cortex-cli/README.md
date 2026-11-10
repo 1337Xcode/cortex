@@ -86,8 +86,8 @@ sets overrides it:
 | Profile | What it sets |
 | --- | --- |
 | `standard` (the default) | Nothing: every key keeps its documented default |
-| `lean` | `hints.runtime_grounding`, `hints.narrow_tests`, `hints.redundant_commands` and `compaction.keep_list` to `false`, leaving work orders and warnings. Each is off by default now, so `lean` gives what `standard` gives until one of those defaults turns on |
-| `everything` | The same four keys to `true` |
+| `lean` | `hints.runtime_grounding`, `hints.narrow_tests`, `hints.redundant_commands`, `compaction.keep_list` and `coordination.contracts` to `false`, leaving work orders and warnings. Each is off by default now, so `lean` gives what `standard` gives until one of those defaults turns on |
+| `everything` | The same five keys to `true` |
 
 No profile changes `strict_mode` or `privacy.store_prompt_excerpt`: holding an agent's stop and
 keeping prompt text are the user's own choices.

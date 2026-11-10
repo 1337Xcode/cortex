@@ -41,7 +41,7 @@ use crate::bindings::Bindings;
 use crate::discover::{
     self, DiscoverError, DiscoverOptions, DiscoveredFile, Discovery, Problem, ProblemKind, discover,
 };
-use crate::extract::{ExtractError, Extractor, LeftOut};
+use crate::extract::{ExtractError, Extraction, Extractor, LeftOut};
 use crate::file_edges;
 use crate::file_imports::{self, FileImports};
 use crate::folders;
@@ -86,6 +86,19 @@ impl fmt::Debug for OnChanged<'_> {
     }
 }
 
+/// A callback an index calls with each file it read and parsed: its path, what it defines and
+/// uses, and its bytes, which are not kept. It runs on the thread that parsed the file, before
+/// the file is written, and never calls the index back.
+#[derive(Clone, Copy)]
+pub struct OnParsed<'a>(pub &'a (dyn Fn(&RepoPath, &Extraction, &[u8]) + Sync));
+
+impl fmt::Debug for OnParsed<'_> {
+    /// A callback has nothing to show.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("OnParsed")
+    }
+}
+
 /// What [`index_repository`] needs besides the root, the grammars and the writer.
 #[derive(Debug, Clone, Copy)]
 pub struct IndexOptions<'a> {
@@ -105,6 +118,8 @@ pub struct IndexOptions<'a> {
     /// What the caller does with the definitions each stretch of writes changed, before the
     /// stretch is committed, if anything.
     pub on_changed: Option<OnChanged<'a>>,
+    /// What the caller does with each file read and parsed, if anything.
+    pub on_parsed: Option<OnParsed<'a>>,
 }
 
 /// A file an index found edited: new, gone, or with other contents than stored.
@@ -269,6 +284,8 @@ pub(crate) struct Context<'a> {
     /// stored but a later time is written whole, not only touched, since that time puts it out of
     /// the index's word, as a full index decides.
     pub(crate) scip_written_ns: Option<i64>,
+    /// What the caller does with each file read and parsed, if anything.
+    pub(crate) on_parsed: Option<OnParsed<'a>>,
 }
 
 /// Indexes the repository at `root` into `writer`'s store: walks it, removes the stored files the
@@ -335,6 +352,7 @@ pub fn index_repository(
         threads: options.threads,
         now_ms: options.now_ms,
         scip_written_ns: scip::written_ns(root),
+        on_parsed: options.on_parsed,
     };
     let candidates = candidates_of(&discovery.files, &known, is_inventory);
     let mut report = IndexReport::starting(
@@ -1044,6 +1062,9 @@ fn prepare(
         };
     match extractor.extract(&record.path, language, &source) {
         Ok(extraction) => {
+            if let Some(OnParsed(on_parsed)) = context.on_parsed {
+                on_parsed(&record.path, &extraction, &source);
+            }
             record.flags = record.flags.with(FileFlags::PARSED);
             let (counts, targets) = file_imports::resolve_imports(
                 context.project,
@@ -1428,6 +1449,7 @@ mod tests {
             threads: NonZeroUsize::MIN,
             now_ms: 9,
             scip_written_ns: None,
+            on_parsed: None,
         };
         let batch = names
             .into_iter()

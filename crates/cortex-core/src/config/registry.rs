@@ -150,6 +150,7 @@ mod tests {
         coordination.cochange_min_confidence = 0.0\n\
         coordination.max_notices = 0\n\
         coordination.max_tokens = 400\n\
+        coordination.contracts = true\n\
         hints.runtime_grounding = true\n\
         hints.narrow_tests = true\n\
         hints.redundant_commands = true\n\
@@ -209,6 +210,7 @@ mod tests {
                 cochange_min_confidence: 0.0,
                 max_notices: 0,
                 max_tokens: 400,
+                is_contracts: true,
             },
             is_strict_mode: true,
             hints: HintsConfig {

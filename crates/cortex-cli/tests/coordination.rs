@@ -5,8 +5,10 @@
 //! definition changed, in which file, and how its own file depends on it. Each is told once; a
 //! third session holding an unrelated file is told nothing, and nothing is told of it. When both
 //! agents edit the same file, each is told to act first. When a session stops before finishing
-//! its task, the next session's first prompt that asks to go on is told what it left. Neither
-//! agent messages the other and no tool call is held: each hook only adds context.
+//! its task, the next session's first prompt that asks to go on is told what it left. With
+//! `coordination.contracts` on, Claude Code is told how `add`'s signature changed and the line of
+//! `main.py` that calls it, also from a daemon that started again on a committed repository it had
+//! indexed. Neither agent messages the other and no tool call is held: each hook only adds context.
 #![allow(
     clippy::indexing_slicing,
     reason = "the payloads edited here are JSON objects, where indexing a missing key adds it"
@@ -18,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use common::calc::{MAIN, OPS, OPS_FIXED, S1, captured, prompt, read_of_tests, repository};
+use common::git::commit;
 use common::hook_call::hook;
 use common::payloads;
 use common::{Daemon, TestResult, graph_of, wait_for};
@@ -157,12 +160,32 @@ fn noticed(root: &Path, session: &str) -> TestResult<Vec<String>> {
 /// Starts the daemon on the captured repository, pinned to medium mode with `share` of tasks held
 /// out, once its graph is built.
 fn started(share: u8) -> TestResult<(tempfile::TempDir, PathBuf, Daemon)> {
+    started_with(&format!("[holdout]\nshare = {share}\n"), false)
+}
+
+/// Starts the daemon on the captured repository, pinned to medium mode with the settings
+/// `config` adds, once its graph is built. When `is_restarted`, the repository is committed with
+/// git first, and the daemon that indexed it is stopped and another started on its store, which
+/// finds every file as stored and reads none again.
+fn started_with(
+    config: &str,
+    is_restarted: bool,
+) -> TestResult<(tempfile::TempDir, PathBuf, Daemon)> {
     let (home, repo) = repository()?;
     std::fs::create_dir_all(repo.join(".cortex"))?;
     std::fs::write(
         repo.join(".cortex/config.toml"),
-        format!("mode = \"medium\"\n[holdout]\nshare = {share}\n"),
+        format!("mode = \"medium\"\n{config}"),
     )?;
+    if is_restarted {
+        common::git::git(&repo, home.path(), &["init", "-q"])?;
+        commit(&repo, home.path(), "first", &["calc", "tests", "main.py"])?;
+        let first = Daemon::start(&repo, home.path())?;
+        let line = first.first_line()?;
+        assert!(line.starts_with("cortex: daemon ready"), "{line}");
+        wait_for(|| Ok(graph_of(&repo, home.path())?.is_some()))?;
+        drop(first);
+    }
     let daemon = Daemon::start(&repo, home.path())?;
     let line = daemon.first_line()?;
     assert!(line.starts_with("cortex: daemon ready"), "{line}");
@@ -267,6 +290,96 @@ fn two_agents_are_each_told_once_of_the_other() -> TestResult {
              code (0.80); you are editing calc/ops.py."
         ]
     );
+    Ok(())
+}
+
+/// What Claude Code is told of Codex's change to `add`, with `coordination.contracts` on: the
+/// signature before, as the index read `calc/ops.py`, after, as Codex left it on disk, and the
+/// line of `main.py` that calls it.
+const TOLD_CONTRACT: &str = "[cortex] Coordination: Codex changed add in calc/ops.py from \
+                             `(a, b)` to `(a, b, c=0)`. You read main.py, which calls it at line 3.";
+
+/// Claude Code reads `main.py`, then Codex changes `add`'s parameters in `calc/ops.py`, with
+/// `coordination.contracts` set to `is_on` and no task held out, the daemon started again on a
+/// committed repository when `is_restarted`: what Claude Code's next hook gives, and what the
+/// store keeps of the notice, once given.
+fn told_of_a_changed_add(
+    is_on: bool,
+    is_restarted: bool,
+) -> TestResult<(Option<String>, Vec<String>)> {
+    let config = format!("[holdout]\nshare = 0\n[coordination]\ncontracts = {is_on}\n");
+    let (home, repo, _daemon) = started_with(&config, is_restarted)?;
+    let home = home.path();
+    given(
+        "claude",
+        &prompt_in(&repo, S1, "Print the total in main.py.")?,
+        home,
+    )?;
+    let reads_main = read_of(&repo, "post-tool-use-read.json", S1, ("main.py", MAIN))?;
+    assert_eq!(given("claude", &reads_main, home)?, None);
+    wait_for(|| read(&repo, |queries| Ok(queries.positions_since(0)?.len() == 1)))?;
+    let mut asked = codex(&repo, "user-prompt-submit.json")?;
+    asked["prompt"] = Value::from("Let add take a third number.");
+    given("codex", &asked, home)?;
+    let codex_session = Identifier::new(CODEX_SESSION)?;
+    wait_for(|| {
+        read(&repo, |queries| {
+            Ok(queries.open_task(&codex_session)?.is_some())
+        })
+    })?;
+    let told_codex = "[cortex] Coordination: Claude Code has read main.py, linked by code (0.80) \
+                      to calc/ops.py.\n";
+    assert_eq!(
+        given("codex", &codex_changes_add(&repo, OPS)?, home)?,
+        Some(format!("{told_codex}{ADD_WARNINGS}"))
+    );
+    // The store keeps the notice in the words that name the definition alone: a signature is
+    // code, which it never keeps.
+    wait_for(|| Ok(!waiting(&repo, S1)?.is_empty()))?;
+    assert_eq!(waiting(&repo, S1)?, [TOLD_CLAUDE]);
+    let next = read_of(
+        &repo,
+        "pre-tool-use-read.json",
+        S1,
+        ("tests/test_ops.py", ""),
+    )?;
+    let told = given("claude", &next, home)?;
+    assert_eq!(given("claude", &next, home)?, None);
+    // What was told is what the files hold: `add`'s header before and after, and the call.
+    let ops = std::fs::read_to_string(repo.join("calc/ops.py"))?;
+    assert!(OPS.contains("def add(a, b):") && ops.contains("def add(a, b, c=0):"));
+    let main = std::fs::read_to_string(repo.join("main.py"))?;
+    assert_eq!(main.lines().nth(2), Some("print(add(1, 2))"));
+    wait_for(|| Ok(waiting(&repo, S1)?.is_empty()))?;
+    Ok((told, noticed(&repo, S1)?))
+}
+
+/// With `coordination.contracts` on, Claude Code is told how Codex changed `add` and where
+/// `main.py` calls it, once; the store keeps the notice naming `add` alone.
+#[test]
+fn a_changed_signature_is_told_with_its_contract() -> TestResult {
+    let (told, kept) = told_of_a_changed_add(true, false)?;
+    assert_eq!(told, Some(format!("{TOLD_CONTRACT}\n")));
+    assert_eq!(kept, [TOLD_CLAUDE]);
+    Ok(())
+}
+
+/// A daemon that started again on a committed repository it had indexed reads no file again: the
+/// first change of `add` is still told with its signature before, read from HEAD's commit.
+#[test]
+fn after_a_restart_a_changed_signature_is_told_with_its_contract() -> TestResult {
+    let (told, kept) = told_of_a_changed_add(true, true)?;
+    assert_eq!(told, Some(format!("{TOLD_CONTRACT}\n")));
+    assert_eq!(kept, [TOLD_CLAUDE]);
+    Ok(())
+}
+
+/// With `coordination.contracts` off, Claude Code is told which definition changed, by name.
+#[test]
+fn without_contracts_a_changed_signature_is_named_alone() -> TestResult {
+    let (told, kept) = told_of_a_changed_add(false, false)?;
+    assert_eq!(told, Some(format!("{TOLD_CLAUDE}\n")));
+    assert_eq!(kept, [TOLD_CLAUDE]);
     Ok(())
 }
 

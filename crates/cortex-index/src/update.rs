@@ -101,6 +101,7 @@ pub fn index_paths(
         threads: options.threads,
         now_ms: options.now_ms,
         scip_written_ns: scip::written_ns(root),
+        on_parsed: options.on_parsed,
     };
     let mut report = IndexReport::starting(
         0,

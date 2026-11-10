@@ -10,6 +10,7 @@
 //! definition inside it, whose qualified names would contain it.
 
 use std::cmp::Reverse;
+use std::ops::Range;
 
 use cortex_core::{Identifier, SymbolKind};
 use cortex_store::SymbolRecord;
@@ -44,6 +45,8 @@ struct Recorder<'a> {
     is_test_file: bool,
     /// The records made so far.
     records: Vec<SymbolRecord>,
+    /// Where each record's declaration header is in the file, in the order of the records.
+    headers: Vec<Range<usize>>,
 }
 
 /// The innermost of `symbols`, records as [`build_symbols`] makes them, whose lines hold `line`
@@ -64,13 +67,14 @@ pub(crate) fn innermost_at(symbols: &[SymbolRecord], line: u32) -> Option<usize>
 }
 
 /// The definitions among `tags` as records, in the order of their starts, each after the record
-/// of the definition it sits in.
+/// of the definition it sits in, and where each one's declaration header is in `source`, the
+/// bytes its signature hash covers, in the same order.
 pub(crate) fn build_symbols(
     tags: &[Tag<'_>],
     source: &[u8],
     spec: &TagsSpec,
     is_test_file: bool,
-) -> Vec<SymbolRecord> {
+) -> (Vec<SymbolRecord>, Vec<Range<usize>>) {
     let mut definitions: Vec<(Span, &Tag<'_>)> = tags
         .iter()
         .filter(|tag| tag.role.is_definition())
@@ -84,6 +88,7 @@ pub(crate) fn build_symbols(
         spec,
         is_test_file,
         records: Vec::new(),
+        headers: Vec::new(),
     };
     // The spans of the definitions around the current one, innermost last, each with the
     // position of its record, or `None` when it was left out.
@@ -102,7 +107,7 @@ pub(crate) fn build_symbols(
         };
         around.push((span, position));
     }
-    recorder.records
+    (recorder.records, recorder.headers)
 }
 
 impl Recorder<'_> {
@@ -135,6 +140,7 @@ impl Recorder<'_> {
             body_hash: collapsed_hash(self.source.get(span.start..span.end)?),
         };
         self.records.push(record);
+        self.headers.push(span.start..header_end);
         Some(self.records.len() - 1)
     }
 
@@ -264,6 +270,7 @@ mod tests {
     fn symbols_found(spec: &'static TagsSpec, source: &str) -> Result<Found, Box<dyn Error>> {
         with_tags(spec, source, |tags| {
             build_symbols(tags, source.as_bytes(), spec, false)
+                .0
                 .into_iter()
                 .map(|symbol| {
                     let qual_name = symbol.qual_name.as_str().to_owned();
@@ -351,6 +358,7 @@ mod tests {
         let ends = |source: &str| {
             with_tags(&MODULE, source, |tags| {
                 build_symbols(tags, source.as_bytes(), &MODULE, false)
+                    .0
                     .into_iter()
                     .map(|symbol| (symbol.end_byte, symbol.start_line, symbol.end_line))
                     .collect::<Vec<_>>()
@@ -366,7 +374,7 @@ mod tests {
 
     /// A body the pattern captures ends the header where no body path leads to one: the
     /// signature hash covers `def f(x):` alone, while without the capture it covers the whole
-    /// function, as the body hash always does.
+    /// function, as the body hash always does. The header's place is the text the hash covers.
     #[test]
     fn captured_bodies_end_headers() -> Result<(), Box<dyn Error>> {
         static BODIES: TagsSpec = python_spec(
@@ -381,6 +389,7 @@ mod tests {
         let hashes = |spec: &'static TagsSpec| {
             with_tags(spec, source, |tags| {
                 build_symbols(tags, source.as_bytes(), spec, false)
+                    .0
                     .into_iter()
                     .map(|symbol| (symbol.sig_hash, symbol.body_hash))
                     .collect::<Vec<_>>()
@@ -389,6 +398,18 @@ mod tests {
         let whole = collapsed_hash(b"def f(x):\n    return x");
         assert_eq!(hashes(&BODIES)?, [(collapsed_hash(b"def f(x):"), whole)]);
         assert_eq!(hashes(&NO_BODIES)?, [(whole, whole)]);
+        let headers = |spec: &'static TagsSpec| {
+            with_tags(spec, source, |tags| {
+                build_symbols(tags, source.as_bytes(), spec, false)
+                    .1
+                    .into_iter()
+                    .map(|header| (header.start, header.end))
+                    .collect::<Vec<_>>()
+            })
+        };
+        // `def f(x):` is the first 9 bytes; the function ends after `return x`, at byte 22.
+        assert_eq!(headers(&BODIES)?, [(0, 9)]);
+        assert_eq!(headers(&NO_BODIES)?, [(0, 22)]);
         Ok(())
     }
 }

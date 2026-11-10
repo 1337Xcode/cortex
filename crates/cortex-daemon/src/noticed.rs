@@ -103,6 +103,16 @@ impl Noticed {
         giving
     }
 
+    /// The waiting notices `session` was given that the store may not know of yet.
+    pub(crate) fn given_to(&self, session: &Identifier) -> Vec<NoticeId> {
+        let sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
+        sessions
+            .iter()
+            .find(|(kept, _)| kept == session)
+            .map(|(_, given)| given.delivered.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
     /// Forgets that `session` was given `delivered` and told lines about `told`: they never reached
     /// its agent, so the notices wait again and the lines can be told again.
     pub(crate) fn release(

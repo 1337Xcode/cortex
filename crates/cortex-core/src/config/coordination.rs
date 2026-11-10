@@ -1,6 +1,8 @@
 //! The coordination settings: how long each kind of position a session takes holds, how recent an
 //! event keeps a session live, how strongly two files must be linked for an edit of one to concern
-//! a session holding the other, and how much coordination text one answer gives.
+//! a session holding the other, how much coordination text one answer gives, and whether a
+//! notice of a changed signature says what it changed from and to and where the held file calls
+//! it.
 //!
 //! Each key is read and checked here, as the rest of the configuration reads its own; a value the
 //! rules cannot use is refused.
@@ -88,6 +90,11 @@ pub struct CoordinationConfig {
     pub max_notices: u32,
     /// `coordination.max_tokens`, from 1 to [`MAX_TOKENS_LIMIT`]. Default [`DEFAULT_MAX_TOKENS`].
     pub max_tokens: u32,
+    /// `coordination.contracts`: a notice that another session changed the signature of a
+    /// definition the held file calls says the signature before and after and the lines that
+    /// call it, instead of the definition's name alone. Default `false`, until an evaluation
+    /// with two agents shows its effect.
+    pub is_contracts: bool,
 }
 
 impl Default for CoordinationConfig {
@@ -105,6 +112,7 @@ impl Default for CoordinationConfig {
             cochange_min_confidence: DEFAULT_COCHANGE_MIN_CONFIDENCE,
             max_notices: DEFAULT_MAX_NOTICES,
             max_tokens: DEFAULT_MAX_TOKENS,
+            is_contracts: false,
         }
     }
 }
@@ -215,6 +223,16 @@ pub(super) const KEYS: &[ConfigKey] = &[
             Ok(())
         },
         |config| config.coordination.max_tokens.into(),
+    ),
+    ConfigKey::new(
+        "coordination.contracts",
+        "Tell a session holding a file that calls a definition another session changed the \
+         signature before and after and the calling lines.",
+        |config, value| {
+            config.coordination.is_contracts = value.as_bool().ok_or("true or false")?;
+            Ok(())
+        },
+        |config| toml::Value::Boolean(config.coordination.is_contracts),
     ),
 ];
 

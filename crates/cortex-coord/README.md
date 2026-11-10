@@ -16,6 +16,13 @@ told. The daemon asks these rules and gives the text in each agent's own hooks.
   next hook that carries text, with the definitions whose signature the edit changed. A notice
   names agents, files, definitions and links, never lines; one whose path is not plain text is not
   given.
+- **Contracts.** A notice to a session whose file calls definitions whose signature the edit
+  changed can say each signature before and after and the lines that call it, at most three
+  definitions and three lines each, the rest counted. A signature is the header after the
+  definition's name, whitespace collapsed, at most 120 characters (a longer one is cut after a
+  parameter with ` ...`), never holding a backquote, a control or hidden character or a
+  reminder tag, and it is shown as code, in backquotes. The caller gives only signatures and
+  lines it checked against the files on disk.
 
 ## What it must never do
 
@@ -31,6 +38,11 @@ told. The daemon asks these rules and gives the text in each agent's own hooks.
   positions, each session's last event and the edited node's links.
 - `to_editor`, `to_holder`, `Notice`: what each side is told, with its subject, so that one
   happening told from either side, or in other words, is told to a session once.
+- `Signature`, `MAX_SIGNATURE_CHARS`: a definition's signature as a notice may say it, read from
+  its declaration header, or none.
+- `contract_to_holder`, `Called`, `Holding`: the notice a session holding a file is told when
+  another changed the signatures of definitions the file calls, with both signatures and the
+  calling lines.
 - `ago`: how long ago something happened, in whole minutes or hours, as text an agent reads says
   it.
 - `handoff_text`, `Handed`, `FailedCheck`, `MAX_HANDOFF_TOKENS`: what the session that picks up

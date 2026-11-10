@@ -2,6 +2,7 @@
 //! names it uses and the modules it imports, all within a time limit. A file that runs out of time
 //! is reported as such and read no further; it never holds up the files after it.
 
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,6 +24,9 @@ use crate::tags::{Tag, read_tags};
 pub struct Extraction {
     /// Its definitions, in the order of their starts, each after the one it sits in.
     pub symbols: Vec<SymbolRecord>,
+    /// Where each definition's declaration header is in the file, by byte, in the order of
+    /// `symbols`: the bytes its signature hash covers. Kept only while the file is read.
+    pub headers: Vec<Range<usize>>,
     /// The names it uses, in the order they appear, each name an import takes among them as a
     /// reference of kind `import`.
     pub refs: Vec<RefRecord>,
@@ -33,6 +37,16 @@ pub struct Extraction {
     pub imports: Vec<Import>,
     /// What its queries found that was left out.
     pub left_out: LeftOut,
+}
+
+impl Extraction {
+    /// The declaration header of the definition at `position` in `symbols`, as it is in `source`,
+    /// the bytes this was read from: the text its signature hash covers. None past the last
+    /// definition, or for bytes other than those read.
+    #[must_use]
+    pub fn header<'s>(&self, position: usize, source: &'s [u8]) -> Option<&'s [u8]> {
+        source.get(self.headers.get(position)?.clone())
+    }
 }
 
 /// How many of the names a file's queries found were left out: because a syntax error touches
@@ -140,7 +154,7 @@ impl Extractor {
             .count();
         let references = read.tags.len() - definitions + imported.names.len();
         let tags = with_imported_names(read.tags, imported.names);
-        let symbols = build_symbols(
+        let (symbols, headers) = build_symbols(
             &tags,
             source,
             grammar.spec,
@@ -159,6 +173,7 @@ impl Extractor {
         };
         Ok(Extraction {
             symbols,
+            headers,
             refs,
             qualifiers,
             imports,

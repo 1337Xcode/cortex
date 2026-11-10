@@ -48,6 +48,7 @@ fn parse(root: &Path, paths: &[RepoPath]) -> TestResult<IndexReport> {
         mode: HUGE,
         pause: None,
         on_changed: None,
+        on_parsed: None,
     };
     Ok(index_paths(
         root,

@@ -487,6 +487,7 @@ mod tests {
                     cochange_min_confidence: 0.5,
                     max_notices: 3,
                     max_tokens: 200,
+                    is_contracts: false,
                 },
                 is_strict_mode: false,
                 hints: HintsConfig::default(),
@@ -524,7 +525,7 @@ mod tests {
              claim_minutes = 1440\nlive_minutes = 4\nsame_file_minutes = 6\n\
              handoff_idle_minutes = 45\n\
              structural_min_weight = 0.9\ncochange_min_confidence = 0\nmax_notices = 0\n\
-             max_tokens = 400\n",
+             max_tokens = 400\ncontracts = true\n",
         );
         let loaded = load(&[user, repository])?;
         assert_eq!(
@@ -581,6 +582,7 @@ mod tests {
                     cochange_min_confidence: 0.0,
                     max_notices: 0,
                     max_tokens: 400,
+                    is_contracts: true,
                 },
                 is_strict_mode: true,
                 hints: HintsConfig {
@@ -1000,7 +1002,7 @@ mod tests {
 
     /// The coordination keys refuse what the rules cannot use: a hold of no minutes or of more
     /// than a day, a link weight outside 0 to 1, more notices than fit an answer, a token cap of 0
-    /// or past a third of the work order's hard cap.
+    /// or past a third of the work order's hard cap, a switch that is not true or false.
     #[test]
     fn bad_coordination_values_are_refused() {
         let minutes = "a whole number of minutes from 1 to 1440";
@@ -1044,6 +1046,11 @@ mod tests {
                 "coordination.max_tokens = 401",
                 "coordination.max_tokens",
                 "a whole number from 1 to 400",
+            ),
+            (
+                "coordination.contracts = 1",
+                "coordination.contracts",
+                "true or false",
             ),
         ]);
     }

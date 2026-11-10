@@ -21,11 +21,13 @@
 mod asked;
 mod claim;
 mod claims;
+mod contracts;
 mod facts;
 mod failed;
 mod given;
 mod global_ignore;
 mod graph;
+mod headers;
 mod host;
 mod inbox;
 mod instance;

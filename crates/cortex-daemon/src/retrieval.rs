@@ -21,6 +21,7 @@ mod handoff;
 mod hints;
 mod keep;
 mod narrow;
+mod on_disk;
 mod recap;
 mod redundant;
 mod stop;
@@ -45,6 +46,7 @@ use cortex_store::{
 
 pub(crate) use self::coordination::Coordination;
 use crate::claim::Claim;
+use crate::contracts::Contracts;
 use crate::failed::Failed;
 use crate::given::{Given, text_record};
 use crate::once::ClaimedOnce;
@@ -83,6 +85,9 @@ pub(crate) struct Service {
     failures: FailureSettings,
     /// `compaction.keep_list`: whether a compaction's summary is given the open task's keep-list.
     is_keep_list: bool,
+    /// The contracts of the coordination notices queued lately, for their notices to be given
+    /// in their words.
+    contracts: Contracts,
     /// Readers not in use.
     readers: Mutex<Vec<Reader>>,
 }
@@ -185,6 +190,7 @@ impl Service {
             coordination: settings.coordination,
             failures: settings.failures,
             is_keep_list: settings.is_keep_list,
+            contracts: Contracts::default(),
             readers: Mutex::new(Vec::new()),
         }
     }

@@ -76,15 +76,16 @@ fn each_value_shows_the_file_it_came_from() -> TestResult {
         "hints.runtime_grounding = true (profile)",
         "hints.redundant_commands = true (profile)",
         "compaction.keep_list = true (profile)",
+        "coordination.contracts = true (profile)",
         "retrieval.max_code_spans = 2 (default)",
         "mode = \"auto\" (default)",
         "holdout.share = 0.1 (default)",
     ] {
         assert!(lines.contains(&expected), "{expected}\n{}", printed.stdout);
     }
-    // 18 keys of the main settings, 11 retrieval, 5 warning, 11 coordination, 3 hint and 1
+    // 18 keys of the main settings, 11 retrieval, 5 warning, 12 coordination, 3 hint and 1
     // compaction key, and the profile.
-    assert_eq!(lines.len(), 50, "{}", printed.stdout);
+    assert_eq!(lines.len(), 51, "{}", printed.stdout);
     let mut sorted = lines.clone();
     sorted.sort_unstable();
     assert_eq!(lines, sorted);
@@ -328,6 +329,7 @@ fn features_are_listed_and_switched() -> TestResult {
         "narrow_tests: off (state experimental, key hints.narrow_tests)",
         "redundant_commands: off (state experimental, key hints.redundant_commands)",
         "keep_list: off (state experimental, key compaction.keep_list)",
+        "contracts: off (state experimental, key coordination.contracts)",
     ] {
         assert!(lines.contains(&expected), "{expected}\n{}", printed.stdout);
     }
@@ -335,7 +337,7 @@ fn features_are_listed_and_switched() -> TestResult {
         .iter()
         .filter(|line| **line == "  effect here: not measured here yet")
         .count();
-    assert_eq!(unmeasured, 6);
+    assert_eq!(unmeasured, 7);
     let printed = cortex(home.path(), &repo, &["features", "on", "narrow_tests"])?;
     assert!(printed.is_success, "{}", printed.stderr);
     assert_eq!(
@@ -371,7 +373,7 @@ fn features_are_listed_and_switched() -> TestResult {
     assert!(
         printed.stderr.contains(
             "unknown feature `teleport`; the features are work_orders, warnings, \
-             runtime_grounding, narrow_tests, redundant_commands, keep_list"
+             runtime_grounding, narrow_tests, redundant_commands, keep_list, contracts"
         ),
         "{}",
         printed.stderr

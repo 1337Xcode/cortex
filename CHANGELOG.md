@@ -128,6 +128,19 @@ All notable changes to this project are documented in this file. The format is b
   line and the folder, never stored. Claude Code's `PreToolUse` hook now also runs before `Bash`
   and `PowerShell` calls, so every shell command starts the hook; Codex's already ran before every
   shell command, and Codex gets the note too. Off by default until measured.
+- `coordination.contracts = true`: when another session changes the signature of a definition
+  that a file a session holds calls, that session's notice says what the signature was and is,
+  and the lines of its file that call it (``[cortex] Coordination: Codex changed add in
+  calc/ops.py from `(a, b)` to `(a, b, c=0)`. You read main.py, which calls it at line 3.``), at
+  most three definitions and three lines each, the rest counted. The signature before is the
+  header the index read before the change, as its stored hash vouches, taken from the
+  daemon's memory of what it parsed or else from the file as HEAD's commit holds it; the
+  signature after and the calling lines are checked against the files on disk when the notice
+  is given, one notice a hook. A notice the files no longer bear out, over the token cap, or
+  whose signatures cannot be said (one over 120 characters is cut after a parameter; one
+  holding a backquote or a control character is not said) names the definition alone, as it
+  does with the key off. Signatures are kept in the daemon's memory only, and the store keeps
+  the notice naming the definition alone. Off by default until measured.
 - The file watcher reports a notice that file events were lost (a rescan) as a change to
   everything, as it does an error, rather than dropping it; and it no longer reports a folder
   that is still there whose times or attributes changed (Windows reports one when an entry in it

@@ -120,7 +120,7 @@ fn signatures_of(plain: &[&str]) -> Option<String> {
 }
 
 /// What opens a notice: a coordination note, marked when two sessions edit one file at once.
-fn prefix(is_urgent: bool) -> &'static str {
+pub(crate) fn prefix(is_urgent: bool) -> &'static str {
     if is_urgent {
         "[cortex] Coordination, act first: "
     } else {

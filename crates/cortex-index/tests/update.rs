@@ -276,6 +276,7 @@ fn options() -> IndexOptions<'static> {
         mode: ModeSetting::Auto,
         pause: None,
         on_changed: None,
+        on_parsed: None,
     }
 }
 
@@ -750,6 +751,7 @@ fn an_index_tells_the_definitions_it_changed() -> TestResult {
         |changes: &[cortex_store::SymbolChange]| told.borrow_mut().extend_from_slice(changes);
     let telling = IndexOptions {
         on_changed: Some(cortex_index::OnChanged(&keep)),
+        on_parsed: None,
         ..options()
     };
     let report = index_paths(

@@ -40,6 +40,7 @@ fn options() -> IndexOptions<'static> {
         mode: ModeSetting::Auto,
         pause: None,
         on_changed: None,
+        on_parsed: None,
     }
 }
 

@@ -599,6 +599,7 @@ mod tests {
     ) -> Extraction {
         Extraction {
             symbols,
+            headers: Vec::new(),
             qualifiers: vec![Qualifier::None; refs.len()],
             refs,
             imports,

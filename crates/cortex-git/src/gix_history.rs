@@ -6,7 +6,7 @@
 use std::error::Error;
 use std::path::Path;
 
-use cortex_core::canonical_root;
+use cortex_core::{RepoPath, canonical_root};
 use gix::diff::blob::Platform as ComparisonCache;
 use gix::object::tree::diff::{Action, Change};
 
@@ -62,6 +62,47 @@ impl GixHistory {
         }
         let is_partial = is_partial_clone(&repo);
         Ok(Self { repo, is_partial })
+    }
+
+    /// The bytes the file at `path` holds in the commit HEAD points to, when it is a regular file
+    /// of at most `max_bytes`; none when HEAD has no commit, the commit holds no such file, or it
+    /// is larger, a link or a submodule. Only git's object store is read, never the work tree.
+    ///
+    /// # Errors
+    ///
+    /// HEAD, its tree or the file's object cannot be read.
+    pub fn committed(&self, path: &RepoPath, max_bytes: u64) -> Result<Option<Vec<u8>>, GitError> {
+        let failed = |error: &(dyn Error + 'static)| GitError::Committed(message(error));
+        let Some(head) = self.head_id()? else {
+            return Ok(None);
+        };
+        let tree = self
+            .repo
+            .find_commit(head)
+            .map_err(|error| failed(&error))?
+            .tree()
+            .map_err(|error| failed(&error))?;
+        let Some(entry) = tree
+            .lookup_entry_by_path(path.as_str())
+            .map_err(|error| failed(&error))?
+        else {
+            return Ok(None);
+        };
+        if !entry.mode().is_blob() {
+            return Ok(None);
+        }
+        let id = entry.object_id();
+        // The size is read from the object's header, so that a large file is never inflated.
+        let size = self
+            .repo
+            .find_header(id)
+            .map_err(|error| failed(&error))?
+            .size();
+        if size > max_bytes {
+            return Ok(None);
+        }
+        let mut blob = self.repo.find_blob(id).map_err(|error| failed(&error))?;
+        Ok(Some(blob.take_data()))
     }
 
     /// The commit HEAD points to, peeled through tags; `None` while HEAD's branch has no commit.

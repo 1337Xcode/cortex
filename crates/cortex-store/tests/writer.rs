@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use common::{Scratch, TestResult, index, name, path, reference, symbol};
 use cortex_core::{
-    EdgeType, FileFlags, Language, RefKind, RepoId, Resolution, ScaleMode, SymbolKind,
+    EdgeType, FileFlags, Language, RefKind, RepoId, Resolution, ScaleMode, ShortHash, SymbolKind,
 };
 use cortex_store::{
     ChangeKind, EdgeRecord, EdgeRow, FileIndex, IndexCounts, MetaKey, PassedOn, RefName, Resolved,
@@ -253,21 +253,25 @@ fn rewriting_a_file_keeps_matching_symbols() -> TestResult {
                 symbol: first.symbols[1],
                 name: name("parse")?,
                 kind: ChangeKind::Body,
+                sig_hash_before: Some(ShortHash::of(b"parse")),
             },
             SymbolChange {
                 symbol: first.symbols[2],
                 name: name("helper")?,
                 kind: ChangeKind::Signature,
+                sig_hash_before: Some(ShortHash::of(b"helper")),
             },
             SymbolChange {
                 symbol: second.symbols[3],
                 name: name("extra")?,
                 kind: ChangeKind::Added,
+                sig_hash_before: None,
             },
             SymbolChange {
                 symbol: first.symbols[3],
                 name: name("gone")?,
                 kind: ChangeKind::Removed,
+                sig_hash_before: Some(ShortHash::of(b"gone")),
             },
         ]
     );
@@ -657,6 +661,7 @@ fn removing_a_file_deletes_everything_about_it() -> TestResult {
             symbol: target.symbols[0],
             name: name("helper")?,
             kind: ChangeKind::Removed,
+            sig_hash_before: Some(ShortHash::of(b"s")),
         }]
     );
     assert_eq!(transaction.remove_file(&path("src/a.py")?)?, None);

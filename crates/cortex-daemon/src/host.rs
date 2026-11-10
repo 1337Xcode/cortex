@@ -20,8 +20,8 @@ use cortex_core::ipc::UpkeepReport;
 use cortex_core::{Config, Event, HookKind, RepoPath, unix_millis};
 use cortex_git::mine;
 use cortex_index::{
-    Crawl, DiscoverOptions, Grammars, IndexOptions, IndexReport, OnChanged, index_paths,
-    index_repository,
+    Crawl, DiscoverOptions, Extraction, Grammars, IndexOptions, IndexReport, OnChanged, OnParsed,
+    index_paths, index_repository,
 };
 use cortex_learn::{Recorder, TaskState, review_facts};
 use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, SymbolChange, WriteTx, Writer};
@@ -433,7 +433,9 @@ impl<'a> Host<'a> {
     /// pause takes nothing from a row the index wrote as what its file held before. However it
     /// went, the graph is rebuilt from what it wrote. Each stretch of its writes leaves the
     /// signature changes it found with the signatures kept for an edit's warnings before it is
-    /// committed, so that warnings that find a file's new rows know what changed in it.
+    /// committed, so that warnings that find a file's new rows know what changed in it. While
+    /// `coordination.contracts` is on, each file it parses leaves its definitions' signatures
+    /// there too, for a notice to say what a changed one was before.
     fn indexing<E>(
         &mut self,
         threads: NonZeroUsize,
@@ -451,14 +453,23 @@ impl<'a> Host<'a> {
             let changed = changes
                 .iter()
                 .filter(|change| change.kind == ChangeKind::Signature)
-                .map(|change| change.symbol);
+                .filter_map(|change| Some((change.symbol, change.sig_hash_before?)));
             signatures.note(changed, now_ms());
         };
+        let read = |_: &RepoPath, extraction: &Extraction, source: &[u8]| {
+            signatures.headers.note(extraction, source);
+        };
+        let on_parsed = self
+            .config
+            .coordination
+            .is_contracts
+            .then_some(OnParsed(&read));
         self.recorder.index_started(options.now_ms);
         let indexed = self.with_pause(|writer, pause| {
             let options = IndexOptions {
                 pause: Some(pause),
                 on_changed: Some(OnChanged(&keep)),
+                on_parsed,
                 ..options
             };
             index(root, &grammars, writer, &options)
@@ -551,6 +562,7 @@ impl<'a> Host<'a> {
             mode: self.config.mode,
             pause: None,
             on_changed: None,
+            on_parsed: None,
         }
     }
 }

@@ -111,6 +111,16 @@ pub const FEATURES: &[Feature] = &[
         measure: "files read again after a compaction per task, with it on against off",
         reaches: |config| config.compaction.is_keep_list && !is_tiny(config),
     },
+    Feature {
+        name: "contracts",
+        description: "When another session changes the signature of a definition a held file \
+                      calls, say the signature before and after and the calling lines.",
+        state: FeatureState::Experimental,
+        key: Some("coordination.contracts"),
+        measure: "calls broken by another session's change per two-agent task, with it on \
+                  against off",
+        reaches: |config| config.coordination.is_contracts,
+    },
 ];
 
 /// The feature named `name`.
@@ -182,9 +192,13 @@ mod tests {
                 is_redundant_commands: true,
             },
             compaction: crate::CompactionConfig { is_keep_list: true },
+            coordination: crate::CoordinationConfig {
+                is_contracts: true,
+                ..crate::CoordinationConfig::default()
+            },
             ..Config::default()
         };
-        assert_eq!(on_with(&everything).len(), 6);
+        assert_eq!(on_with(&everything).len(), 7);
         let no_warnings = Config {
             warnings: crate::WarningsConfig {
                 max_per_edit: 0,
@@ -193,17 +207,18 @@ mod tests {
             ..everything.clone()
         };
         assert!(!on_with(&no_warnings).contains(&"warnings"));
-        assert_eq!(on_with(&no_warnings).len(), 5);
+        assert_eq!(on_with(&no_warnings).len(), 6);
         let tiny = Config {
             mode: ModeSetting::Pinned(ScaleMode::Tiny),
             ..everything.clone()
         };
-        assert_eq!(on_with(&tiny), ["warnings"]);
+        // Coordination notices go with any text, whatever the mode.
+        assert_eq!(on_with(&tiny), ["warnings", "contracts"]);
         let small = Config {
             mode: ModeSetting::Pinned(ScaleMode::Small),
             ..everything.clone()
         };
-        assert_eq!(on_with(&small).len(), 6);
+        assert_eq!(on_with(&small).len(), 7);
         let all_held_out = Config {
             holdout_share: 1.0,
             ..everything.clone()
@@ -213,7 +228,7 @@ mod tests {
             holdout_share: 0.99,
             ..everything
         };
-        assert_eq!(on_with(&most_held_out).len(), 6);
+        assert_eq!(on_with(&most_held_out).len(), 7);
     }
 
     /// The features, by name, in order; names are unique and found by name.
@@ -228,7 +243,8 @@ mod tests {
                 "runtime_grounding",
                 "narrow_tests",
                 "redundant_commands",
-                "keep_list"
+                "keep_list",
+                "contracts"
             ]
         );
         for name in names {
