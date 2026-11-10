@@ -179,6 +179,7 @@ impl Tools for ToolTable {
             is_success,
             is_interrupted: false,
             output_bytes: None,
+            counts: None,
         })
     }
 

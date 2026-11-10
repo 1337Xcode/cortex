@@ -24,6 +24,7 @@ fn shell(session: &str, ts_ms: i64, line: &str, exit_code: i32) -> TestResult<Ev
         is_success: exit_code == 0,
         is_interrupted: false,
         output_bytes: Some(20),
+        counts: None,
     });
     Ok(Event {
         cwd: root.clone(),
@@ -118,6 +119,7 @@ fn a_record_says_what_one_task_did() -> TestResult {
         is_success: false,
         is_interrupted: true,
         output_bytes: None,
+        counts: None,
     });
     let state = asked_task(
         (&mut store, &mut recorder),

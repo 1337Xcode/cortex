@@ -101,6 +101,7 @@ fn ended(is_success: bool) -> Option<ToolResult> {
         is_success,
         is_interrupted: false,
         output_bytes: None,
+        counts: None,
     })
 }
 
@@ -370,6 +371,7 @@ fn openhands() -> TestResult<Vec<(&'static str, Option<Event>)>> {
                         is_success: false,
                         is_interrupted: false,
                         output_bytes: None,
+                        counts: None,
                     }),
                 ),
             )),

@@ -199,6 +199,8 @@ fn index_and_serve(
     inbox.keep_positions_by(Timing::of(&config.coordination));
     // The configuration refuses a pattern that does not compile, so this fails only as it would.
     let commands = Commands::new(&config.test_extra_patterns)?;
+    let failure_commands = Arc::new(Commands::new(&config.test_extra_patterns)?);
+    inbox.read_failures_with(Arc::clone(&failure_commands));
     let folder = root.join(".cortex");
     // INVARIANT: single-writer (the store's writer is opened here only, and its lock refuses a
     // second one)
@@ -284,7 +286,7 @@ fn index_and_serve(
         },
         coordination: config.coordination,
         failures: FailureSettings {
-            commands: Arc::new(Commands::new(&config.test_extra_patterns)?),
+            commands: failure_commands,
             is_runtime_grounding: config.is_runtime_grounding,
         },
     })));

@@ -57,6 +57,7 @@ fn call(
             is_success,
             is_interrupted: false,
             output_bytes: None,
+            counts: None,
         }),
         prompt_text: None,
         transcript_path: None,

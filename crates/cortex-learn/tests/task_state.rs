@@ -85,6 +85,7 @@ fn exited(code: i32) -> Option<ToolResult> {
         is_success: code == 0,
         is_interrupted: false,
         output_bytes: Some(10),
+        counts: None,
     })
 }
 
@@ -205,18 +206,21 @@ fn a_task_s_state_holds_what_it_did_in_order() -> TestResult {
                 }),
                 exit_code: Some(0),
                 restores: Vec::new(),
+                counts: None,
             },
             Step::Run {
                 at_ms: 1_500,
                 check: None,
                 exit_code: Some(0),
                 restores: vec![Restore::Paths(vec![RepoPath::new("calc/ops.py")?])],
+                counts: None,
             },
             Step::Run {
                 at_ms: 1_550,
                 check: None,
                 exit_code: Some(1),
                 restores: Vec::new(),
+                counts: None,
             },
             Step::Read {
                 at_ms: 1_600,
@@ -290,6 +294,7 @@ fn a_task_open_across_a_restart_is_rebuilt_from_its_rows() -> TestResult {
                     check: None,
                     exit_code: Some(0),
                     restores: Vec::new(),
+                    counts: None,
                 },
                 Step::Edit {
                     at_ms: 1_400,

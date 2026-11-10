@@ -10,6 +10,6 @@ mod notice;
 mod position;
 
 pub use concern::{Concern, EditAt, Link, Thresholds, Via, concerned};
-pub use handoff::{Handed, MAX_HANDOFF_TOKENS, ago, handoff_text};
+pub use handoff::{FailedCheck, Handed, MAX_HANDOFF_TOKENS, ago, handoff_text};
 pub use notice::{Notice, Party, to_editor, to_holder};
 pub use position::{Position, PositionMode, Timing, is_live};

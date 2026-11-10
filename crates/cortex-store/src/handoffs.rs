@@ -5,7 +5,7 @@
 //! most one open handoff, its latest; one is closed by the session it is given to, or by a later
 //! success in the session that left it.
 
-use cortex_core::{CommandKind, Identifier, Ulid};
+use cortex_core::{CheckCounts, CommandKind, Identifier, Ulid};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +23,8 @@ pub struct LastFailure {
     pub kind: CommandKind,
     /// Its exit code.
     pub exit_code: i32,
+    /// The counts its output printed, when they were read.
+    pub counts: Option<CheckCounts>,
 }
 
 /// How the task a handoff was left by ended.
@@ -95,6 +97,9 @@ struct Failure {
     kind: String,
     /// The exit code.
     exit_code: i32,
+    /// The counts its output printed; none in a row written before they were kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    counts: Option<CheckCounts>,
 }
 
 /// Leaves `record` as its session's open handoff, in place of any it left before.
@@ -119,6 +124,7 @@ pub(crate) fn leave(
                 runner: failure.runner.as_str().to_owned(),
                 kind: failure.kind.name().to_owned(),
                 exit_code: failure.exit_code,
+                counts: failure.counts,
             })
         })
         .transpose()
@@ -236,6 +242,7 @@ fn row_of(
                 runner,
                 kind,
                 exit_code: failure.exit_code,
+                counts: failure.counts,
             })
         })
         .transpose()?;

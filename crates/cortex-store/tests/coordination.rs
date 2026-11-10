@@ -7,8 +7,8 @@ mod common;
 
 use common::{Scratch, TestResult, index, symbol};
 use cortex_core::{
-    Agent, CommandKind, EdgeType, EventKind, EventMeta, Identifier, NoticeSubject, PositionMode,
-    SessionStatus, SymbolKind, TaskOutcome, Ulid,
+    Agent, CheckCounts, CommandKind, EdgeType, EventKind, EventMeta, Identifier, NoticeSubject,
+    PositionMode, SessionStatus, SymbolKind, TaskOutcome, Ulid,
 };
 use cortex_store::{
     Coupling, EdgeRecord, EventRecord, HandoffEnd, HandoffRecord, LastFailure, NodeId,
@@ -512,6 +512,12 @@ fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
                 runner: Identifier::new("pytest")?,
                 kind: CommandKind::Test,
                 exit_code: 1,
+                counts: Some(CheckCounts {
+                    failed: 1,
+                    passed: Some(7),
+                    errors: 0,
+                    skipped: 2,
+                }),
             }),
             created_at_ms: at_ms,
         })

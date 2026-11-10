@@ -95,15 +95,17 @@ fn files_of(state: &TaskState) -> (Vec<NodeId>, Vec<NodeId>) {
     (edited, read)
 }
 
-/// The last check command `state` ran, when it failed: its runner, kind and exit code. None when
-/// the last check passed, ran in the background, or there was none.
+/// The last check command `state` ran, when it failed: its runner, kind and exit code, and the
+/// counts its output printed when the daemon read them. None when the last check passed, ran in
+/// the background, or there was none.
 fn last_failure(state: &TaskState) -> Option<LastFailure> {
-    let (check, exit_code) = state.steps().iter().rev().find_map(|step| match step {
+    let (check, exit_code, counts) = state.steps().iter().rev().find_map(|step| match step {
         Step::Run {
             check: Some(check),
             exit_code,
+            counts,
             ..
-        } => Some((check, *exit_code)),
+        } => Some((check, *exit_code, *counts)),
         _ => None,
     })?;
     let exit_code = exit_code.filter(|code| *code != 0)?;
@@ -111,5 +113,6 @@ fn last_failure(state: &TaskState) -> Option<LastFailure> {
         runner: check.runner.clone(),
         kind: check.kind,
         exit_code,
+        counts,
     })
 }

@@ -17,7 +17,7 @@ use super::collect::{
 };
 use super::locate::split_location;
 use super::node_stack;
-use super::{Counts, Failures};
+use super::{CheckCounts, Failures};
 
 /// What a run of lines has told so far.
 #[derive(Default)]
@@ -35,9 +35,9 @@ struct Scan<'a> {
     /// The file of the latest `FAIL file` line.
     current_suite: Option<&'a str>,
     /// The counts of the `Tests` line.
-    counts: Option<Counts>,
+    counts: Option<CheckCounts>,
     /// The counts of the `Test Suites` or `Test Files` line.
-    suite_counts: Option<Counts>,
+    suite_counts: Option<CheckCounts>,
     /// Whether a failure's header has been seen, from which error lines name the error.
     in_failure: bool,
 }
@@ -152,14 +152,14 @@ fn import_failure_name(rest: &str) -> Option<&str> {
 
 /// The counts of a summary line that starts with one of `prefixes`, its parts written `N word`
 /// and separated by commas or bars; `None` when no part names a count.
-fn read_counts(line: &str, prefixes: &[&str]) -> Option<Counts> {
+fn read_counts(line: &str, prefixes: &[&str]) -> Option<CheckCounts> {
     let body = prefixes
         .iter()
         .find_map(|prefix| line.strip_prefix(*prefix))?;
     // Both tools print only the counts that are not zero, so a missing `passed` is 0.
-    let mut counts = Counts {
+    let mut counts = CheckCounts {
         passed: Some(0),
-        ..Counts::default()
+        ..CheckCounts::default()
     };
     let mut found = false;
     for part in body.split([',', '|']) {

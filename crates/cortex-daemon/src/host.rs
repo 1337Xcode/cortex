@@ -1262,6 +1262,7 @@ def g():
                 is_success: true,
                 is_interrupted: false,
                 output_bytes: None,
+                counts: None,
             }),
             prompt_text: None,
             ..event(HookKind::PostTool, ts_ms, b"edit")?

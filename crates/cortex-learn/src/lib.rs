@@ -56,7 +56,8 @@ pub use facts::{
     SUSPECT_RETIRES_AFTER_MS, assert_fact, review_facts,
 };
 pub use failures::{
-    Counts, Failures, Frame, MAX_FAILED_TESTS, MAX_FRAMES, MAX_NAME_CHARS, parse_failures,
+    Failures, Frame, LineFailure, MAX_FAILED_TESTS, MAX_FRAMES, MAX_NAME_CHARS, parse_failures,
+    read_line_failure,
 };
 pub use interest::{EarnedInterest, add_interest, interest_of, tier_now};
 pub use labels::{LABELLED_FILES, count_next_file_use, label_injections};

@@ -520,10 +520,11 @@ fn open_handoffs(root: &Path) -> TestResult<usize> {
     read(root, |queries| Ok(queries.open_handoffs_since(0)?.len()))
 }
 
-/// Claude Code reads the tests, edits `calc/ops.py`, and its turn stops on a usage limit before it
-/// finishes. A session that was already at work asks to continue and is told nothing. Codex's
-/// first prompt asks the same and is told, once, what was left: the agent, when, the file edited
-/// and the file read (no check ran, no warning was open). Codex's next prompt is told nothing, and
+/// Claude Code reads the tests, runs a test that fails, edits `calc/ops.py`, and its turn stops on
+/// a usage limit before it finishes. A session that was already at work asks to continue and is
+/// told nothing. Codex's first prompt asks the same and is told, once, what was left: the agent,
+/// when, the file edited, the file read, and the failed run with the counts its output printed
+/// (unittest ran 1 test, `FAILED (failures=1)`: 1 failed; no warning was open). Codex's next prompt is told nothing, and
 /// neither is a later session asking the same, the handoff having been taken.
 #[test]
 fn a_task_left_unfinished_is_handed_to_the_next_session() -> TestResult {
@@ -540,6 +541,9 @@ fn a_task_left_unfinished_is_handed_to_the_next_session() -> TestResult {
         home,
     )?;
     given("claude", &read_of_tests(&repo)?, home)?;
+    let mut failed_run = captured("post-tool-use-failure-bash-test.json", &repo)?;
+    failed_run["session_id"] = Value::from(S1);
+    given("claude", &failed_run, home)?;
     std::fs::write(repo.join("calc/ops.py"), OPS_FIXED)?;
     given("claude", &captured("post-tool-use-edit.json", &repo)?, home)?;
     let mut stopped: Value = serde_json::from_slice(&payloads::payload_of(
@@ -570,7 +574,8 @@ fn a_task_left_unfinished_is_handed_to_the_next_session() -> TestResult {
         given("codex", &asked, home)?,
         Some(
             "[cortex] Handoff: a Claude Code session stopped less than a minute ago before \
-             finishing its task. It edited calc/ops.py. It had read tests/test_ops.py.\n"
+             finishing its task. It edited calc/ops.py. It had read tests/test_ops.py. Its last \
+             test run (unittest) failed with exit code 1: 1 failed.\n"
                 .to_owned()
         )
     );

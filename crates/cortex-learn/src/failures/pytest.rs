@@ -12,7 +12,7 @@ use super::collect::{Collector, TraceOrder, apply_count, count_part, exception_n
 use super::locate::{Located, locate_prefix};
 use super::paths::has_extension;
 use super::python_traceback;
-use super::{Counts, Failures};
+use super::{CheckCounts, Failures};
 
 /// Reads pytest's output.
 pub(super) fn parse(output: &str) -> Option<Failures> {
@@ -41,15 +41,15 @@ fn is_section_header(line: &str) -> bool {
 /// The counts of a summary line, `=== 1 failed, 7 passed in 0.12s ===` or, with `-q`, the same
 /// without the rule. The part after `in` must start with the time, so prose is not taken for one.
 /// pytest prints only the counts that are not zero, so a missing `passed` is 0.
-fn summary_counts(line: &str) -> Option<Counts> {
+fn summary_counts(line: &str) -> Option<CheckCounts> {
     let body = line.trim().trim_matches('=').trim();
     let (head, time) = body.split_once(" in ")?;
     if !time.trim_start().starts_with(|c: char| c.is_ascii_digit()) {
         return None;
     }
-    let mut counts = Counts {
+    let mut counts = CheckCounts {
         passed: Some(0),
-        ..Counts::default()
+        ..CheckCounts::default()
     };
     let mut found = false;
     for part in head.split(',') {

@@ -7,7 +7,7 @@
 //! of all of them are added up. Each error is one failure with one frame, its primary location.
 
 use super::collect::{Collector, leading_number};
-use super::{Counts, Failures};
+use super::{CheckCounts, Failures};
 
 /// Reads rustc's diagnostics out of the output of a build.
 pub(super) fn parse(output: &str) -> Option<Failures> {
@@ -33,9 +33,9 @@ pub(super) fn parse(output: &str) -> Option<Failures> {
         }
     }
     if let Some(errors) = error_total {
-        collector.add_counts(Counts {
+        collector.add_counts(CheckCounts {
             errors,
-            ..Counts::default()
+            ..CheckCounts::default()
         });
     }
     collector.finish()

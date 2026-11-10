@@ -7,14 +7,15 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
 use cortex_coord::Timing;
 use cortex_core::ipc::{GitReport, RecentError, ResponseBody, UpkeepReport};
-use cortex_core::{CoordinationConfig, Event, HookKind, RepoPath, ToolKind};
+use cortex_core::{CheckCounts, CoordinationConfig, Event, HookKind, RepoPath, ToolKind};
 use cortex_git::mine::Mining;
 use cortex_index::Change;
+use cortex_learn::{Commands, read_line_failure};
 use cortex_store::CheckpointFailures;
 
 use crate::asked::{Ask, AskJob};
@@ -54,6 +55,8 @@ pub(crate) struct Inbox {
     /// How long each kind of position holds, from the configuration: of a session's two positions
     /// on one file, the writer keeps the one that holds longer.
     position_timing: OnceLock<Timing>,
+    /// The checks Cortex tells apart, from the configuration, to read a failed check's counts.
+    commands: OnceLock<Arc<Commands>>,
 }
 
 /// What waits in the inbox.
@@ -183,6 +186,22 @@ impl Inbox {
         self.position_timing.get_or_init(|| timing);
     }
 
+    /// Reads a failed check's output with `commands`, the checks the configuration tells apart,
+    /// for the counts the writer keeps: set before the writer opens. A second call changes nothing;
+    /// an inbox never set reads no counts.
+    pub(crate) fn read_failures_with(&self, commands: Arc<Commands>) {
+        self.commands.get_or_init(|| commands);
+    }
+
+    /// The counts `output`, what `event`'s failed shell line printed, says: none when the inbox
+    /// reads no failures, or no parser of the line's checks finds a failure in it.
+    fn counts_of(&self, event: &Event, output: &str) -> Option<CheckCounts> {
+        let commands = self.commands.get()?;
+        let command = event.tool_target.as_ref()?.command.as_ref()?;
+        let read = read_line_failure(commands, command, (&event.repo_root, &event.cwd), output)?;
+        read.failures.counts
+    }
+
     /// How long each kind of position holds: as set from the configuration, which the daemon
     /// does before its writer opens; the documented defaults for an inbox never set, as a test's.
     pub(crate) fn position_timing(&self) -> Timing {
@@ -200,9 +219,17 @@ impl Inbox {
     /// the event first.
     pub(crate) fn push_event(&self, mut event: Event) -> bool {
         // INVARIANT: no-content-stored (the writer, which stores events, never gets a command's
-        // output; and a queue of events stays one of paths and counts)
-        if let Some(target) = event.tool_target.as_mut() {
-            target.failed_output = None;
+        // output, only the counts read from it; and a queue of events stays one of paths and
+        // counts)
+        if let Some(output) = event
+            .tool_target
+            .as_mut()
+            .and_then(|target| target.failed_output.take())
+        {
+            let counts = self.counts_of(&event, output.as_str());
+            if let Some(result) = event.tool_result.as_mut() {
+                result.counts = counts;
+            }
         }
         let mut state = self.lock();
         if state.is_closed {
@@ -693,15 +720,26 @@ mod tests {
         }
     }
 
-    /// A failed command's event reaches the writer without its output, its command kept.
+    /// A failed command's event reaches the writer without its output, its command kept and the
+    /// counts its output printed read: pytest's `1 failed, 2 passed`.
     #[test]
     fn the_writer_gets_no_command_s_output() -> Result<(), Box<dyn std::error::Error>> {
         let inbox = Inbox::default();
+        inbox.read_failures_with(Arc::new(Commands::new(&[])?));
         let mut failed = event(HookKind::PostTool, Some(ToolKind::Shell), 1)?;
         failed.tool_target = Some(cortex_core::ToolTarget {
             command: Some(cortex_core::ShellCommand::cut("pytest")),
-            failed_output: cortex_core::FailedOutput::tail_of("FAILED test_ops.py::test_a\n"),
+            failed_output: cortex_core::FailedOutput::tail_of(
+                "FAILED test_ops.py::test_a - AssertionError\n1 failed, 2 passed in 0.01s\n",
+            ),
             ..cortex_core::ToolTarget::default()
+        });
+        failed.tool_result = Some(cortex_core::ToolResult {
+            exit_code: Some(1),
+            is_success: false,
+            is_interrupted: false,
+            output_bytes: Some(70),
+            counts: None,
         });
         assert!(failed.failed_output().is_some());
         inbox.push_event(failed);
@@ -719,6 +757,19 @@ mod tests {
                 .as_ref()
                 .map(cortex_core::ShellCommand::as_str),
             Some("pytest")
+        );
+        let counts = events
+            .first()
+            .and_then(|event| event.tool_result)
+            .and_then(|result| result.counts);
+        assert_eq!(
+            counts,
+            Some(CheckCounts {
+                failed: 1,
+                passed: Some(2),
+                errors: 0,
+                skipped: 0,
+            })
         );
         Ok(())
     }

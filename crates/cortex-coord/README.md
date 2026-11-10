@@ -33,6 +33,10 @@ told. The daemon asks these rules and gives the text in each agent's own hooks.
   happening told from either side, or in other words, is told to a session once.
 - `ago`: how long ago something happened, in whole minutes or hours, as text an agent reads says
   it.
+- `handoff_text`, `Handed`, `FailedCheck`, `MAX_HANDOFF_TOKENS`: what the session that picks up
+  another's unfinished task is told: the agent and when it stopped, the files it edited and read
+  (fewer named until the text fits 150 tokens), its last check when it failed, with the counts the
+  check's output printed when they were read (`1 failed, 7 passed`), and its open warnings.
 
 ## Tests
 

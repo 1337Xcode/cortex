@@ -13,7 +13,7 @@
 
 use super::collect::{Collector, TraceOrder, number_before};
 use super::locate::split_location;
-use super::{Counts, Failures};
+use super::{CheckCounts, Failures};
 
 /// How many lines after an unfinished `panicked at '` are searched for the location that ends the
 /// message. A message longer than this is not a one-line assertion's; the panic then has no frame.
@@ -91,8 +91,8 @@ impl Scan {
 
 /// The counts of a `test result: FAILED. 3 passed; 1 failed; 0 ignored; ...` line, after the
 /// colon. A count the line lacks is absent: `passed` stays `None`.
-fn result_counts(summary: &str) -> Counts {
-    Counts {
+fn result_counts(summary: &str) -> CheckCounts {
+    CheckCounts {
         failed: number_before(summary, "failed").unwrap_or(0),
         passed: number_before(summary, "passed"),
         errors: 0,

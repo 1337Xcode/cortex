@@ -74,6 +74,11 @@ All notable changes to this project are documented in this file. The format is b
   progress was doing: the files it edited, the files it was warned of and has not read or edited
   since, and the start of its prompt when `privacy.store_prompt_excerpt` kept it, within 500
   tokens, once for each compaction.
+- When a session stops before finishing its task (cut off, or answered with no check that
+  passed), the next session's first prompt is told once what was left: the agent and when, the
+  files it edited and read, its last check when it failed, with the counts the check's output
+  printed (`1 failed, 7 passed`, read in memory; the output is never stored), and how many
+  warnings about its edits were still open.
 - `hints.runtime_grounding = true` gives a failed check the repository lines its stack ran
   through, beside its output: when a test or build command the agent ran fails (Claude Code's
   failure hook, Codex's shell result with a non-zero exit), its output is read in memory by the

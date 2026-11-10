@@ -30,13 +30,13 @@ pub(super) fn frames(list: &[(&str, u32)]) -> Vec<Frame> {
         .collect()
 }
 
-/// Counts in the order failed, passed, errors, skipped, with the passing count printed.
+/// The counts in the order failed, passed, errors, skipped, with the passing count printed.
 #[allow(
     clippy::unnecessary_wraps,
     reason = "compared with the optional counts a parser returns"
 )]
-pub(super) fn counts(failed: u32, passed: u32, errors: u32, skipped: u32) -> Option<Counts> {
-    Some(Counts {
+pub(super) fn counts(failed: u32, passed: u32, errors: u32, skipped: u32) -> Option<CheckCounts> {
+    Some(CheckCounts {
         failed,
         passed: Some(passed),
         errors,
@@ -44,13 +44,13 @@ pub(super) fn counts(failed: u32, passed: u32, errors: u32, skipped: u32) -> Opt
     })
 }
 
-/// Counts in the order failed, errors, skipped, for a runner that printed no passing count.
+/// The counts in the order failed, errors, skipped, for a runner that printed no passing count.
 #[allow(
     clippy::unnecessary_wraps,
     reason = "compared with the optional counts a parser returns"
 )]
-pub(super) fn counts_without_passed(failed: u32, errors: u32, skipped: u32) -> Option<Counts> {
-    Some(Counts {
+pub(super) fn counts_without_passed(failed: u32, errors: u32, skipped: u32) -> Option<CheckCounts> {
+    Some(CheckCounts {
         failed,
         passed: None,
         errors,

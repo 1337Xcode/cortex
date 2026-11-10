@@ -5,7 +5,7 @@
 
 use super::locate::split_location;
 use super::paths::is_kept_path;
-use super::{Counts, Failures, Frame, MAX_FAILED_TESTS, MAX_FRAMES, MAX_NAME_CHARS};
+use super::{CheckCounts, Failures, Frame, MAX_FAILED_TESTS, MAX_FRAMES, MAX_NAME_CHARS};
 
 /// The order in which a runner prints one failure's frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +34,7 @@ struct Trace {
 #[derive(Default)]
 pub(super) struct Collector {
     /// The counts so far, added over every summary line given.
-    counts: Option<Counts>,
+    counts: Option<CheckCounts>,
     /// The failed tests' names.
     failed_tests: Vec<String>,
     /// The frames, each failure's innermost first.
@@ -48,8 +48,8 @@ pub(super) struct Collector {
 impl Collector {
     /// Adds `more` to the counts, as a run of several test binaries prints one summary each. A
     /// passing count is there once any of the summaries has one.
-    pub(super) fn add_counts(&mut self, more: Counts) {
-        let total = self.counts.get_or_insert_with(Counts::default);
+    pub(super) fn add_counts(&mut self, more: CheckCounts) {
+        let total = self.counts.get_or_insert_with(CheckCounts::default);
         total.failed = total.failed.saturating_add(more.failed);
         total.passed = match (total.passed, more.passed) {
             (None, None) => None,
@@ -223,7 +223,7 @@ pub(super) fn count_part(part: &str) -> Option<(u32, &str)> {
 
 /// Sets the field of `counts` that `word` names (`failed`, `passed`, `skipped`, `error`,
 /// `errors`) to `number`, and says whether it named one.
-pub(super) fn apply_count(counts: &mut Counts, number: u32, word: &str) -> bool {
+pub(super) fn apply_count(counts: &mut CheckCounts, number: u32, word: &str) -> bool {
     match word {
         "failed" => counts.failed = number,
         "passed" => counts.passed = Some(number),

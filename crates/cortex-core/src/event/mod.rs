@@ -6,6 +6,7 @@
 //! memory and is never stored as text unless the user asks for an excerpt; so does the end of a
 //! failed shell command's output, which is never stored.
 
+mod check_counts;
 mod failed_output;
 mod kinds;
 
@@ -14,6 +15,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub use self::check_counts::CheckCounts;
 pub use self::failed_output::{FailedOutput, FailedOutputError, MAX_FAILED_OUTPUT_BYTES};
 pub use self::kinds::{Agent, CompactTrigger, HookKind, StartSource, ToolKind};
 use crate::{Identifier, RepoPath, Ulid};
@@ -213,6 +215,10 @@ pub struct ToolResult {
     /// The size of what the tool printed, in bytes, when the agent reports it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_bytes: Option<u64>,
+    /// For a check that failed, the counts its output printed, as the daemon read them from the
+    /// output before the event went to its writer; never what the output said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<CheckCounts>,
 }
 
 /// Lines `start_line` to `end_line` of a file, both included, counted from 1.

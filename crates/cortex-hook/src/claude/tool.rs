@@ -236,6 +236,7 @@ fn result(tool: ToolKind, event_name: &str, payload: &Payload<'_>) -> ToolResult
             is_success: false,
             is_interrupted: payload.is_interrupt.unwrap_or(false),
             output_bytes: message.map(|message| u64::try_from(message.len()).unwrap_or(u64::MAX)),
+            counts: None,
         };
     }
     let response = payload.tool_response.as_ref();
@@ -255,6 +256,7 @@ fn result(tool: ToolKind, event_name: &str, payload: &Payload<'_>) -> ToolResult
         is_success: true,
         is_interrupted,
         output_bytes: response.and_then(printed),
+        counts: None,
     }
 }
 

@@ -19,7 +19,7 @@
 use super::collect::{Collector, TraceOrder};
 use super::locate::{locate_prefix, split_location};
 use super::paths::has_extension;
-use super::{Counts, Failures};
+use super::{CheckCounts, Failures};
 
 /// The marks of a trace line's program counter, ` +0x1d`, which follow the location.
 const OFFSET_MARK: &str = " +0x";
@@ -28,7 +28,7 @@ const OFFSET_MARK: &str = " +0x";
 #[derive(Default)]
 struct Scan {
     /// The failed, errors and skipped counted; `passed` is kept apart, in the field below.
-    counts: Counts,
+    counts: CheckCounts,
     /// The passing top-level tests counted.
     passed: u32,
     /// Whether a `=== RUN` or a `--- PASS` or `--- SKIP` line was seen, which `-v` prints.
@@ -44,11 +44,11 @@ pub(super) fn parse(output: &str) -> Option<Failures> {
     for line in output.lines().map(str::trim_end) {
         scan.read_line(&mut collector, line);
     }
-    let counts = Counts {
+    let counts = CheckCounts {
         passed: scan.has_progress.then_some(scan.passed),
         ..scan.counts
     };
-    if counts != Counts::default() {
+    if counts != CheckCounts::default() {
         collector.add_counts(counts);
     }
     collector.finish()

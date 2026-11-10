@@ -18,7 +18,7 @@ use super::collect::{
 use super::locate::{locate_prefix, split_location};
 use super::node_stack::strip_file_scheme;
 use super::paths::has_extension;
-use super::{Counts, Failures};
+use super::{CheckCounts, Failures};
 
 /// Folders, as paths, of the frames that are the platform's or the test tools', not the project's.
 const FRAMEWORK_PREFIXES: &[&str] = &[
@@ -40,7 +40,7 @@ const FRAMEWORK_PREFIXES: &[&str] = &[
 #[derive(Default)]
 struct Totals {
     /// The test totals, from the last totals line.
-    tests: Option<Counts>,
+    tests: Option<CheckCounts>,
     /// The compiler's count of errors, from its `2 errors` line.
     build_errors: u32,
     /// The compiler errors printed one by one, which count when there is no `2 errors` line
@@ -64,9 +64,9 @@ pub(super) fn parse(output: &str) -> Option<Failures> {
         totals.printed_errors
     };
     if errors > 0 {
-        collector.add_counts(Counts {
+        collector.add_counts(CheckCounts {
             errors,
-            ..Counts::default()
+            ..CheckCounts::default()
         });
     }
     collector.finish()
@@ -107,7 +107,7 @@ fn read_line(collector: &mut Collector, totals: &mut Totals, body: &str) {
 
 /// The counts of surefire's totals line. The per-class lines, which end with ` - in Class` or
 /// ` -- in Class` or carry `<<<`, are not the totals.
-fn maven_totals(text: &str) -> Option<Counts> {
+fn maven_totals(text: &str) -> Option<CheckCounts> {
     let has_class = [" - in ", " -- in ", "<<<"]
         .iter()
         .any(|mark| text.contains(mark));
@@ -122,7 +122,7 @@ fn maven_totals(text: &str) -> Option<Counts> {
 }
 
 /// The counts of Gradle's `8 tests completed, 1 failed, 2 skipped` line.
-fn gradle_totals(text: &str) -> Option<Counts> {
+fn gradle_totals(text: &str) -> Option<CheckCounts> {
     let (run, rest) = take_digits(text)?;
     if !rest.trim_start().starts_with("test") || !rest.contains("completed") {
         return None;
@@ -133,9 +133,9 @@ fn gradle_totals(text: &str) -> Option<Counts> {
 }
 
 /// The counts of a run of `run` tests: those that did not fail, err or skip passed.
-fn counts_from_run(run: u32, failed: u32, errors: u32, skipped: u32) -> Counts {
+fn counts_from_run(run: u32, failed: u32, errors: u32, skipped: u32) -> CheckCounts {
     let not_passed = failed.saturating_add(errors).saturating_add(skipped);
-    Counts {
+    CheckCounts {
         failed,
         passed: Some(run.saturating_sub(not_passed)),
         errors,

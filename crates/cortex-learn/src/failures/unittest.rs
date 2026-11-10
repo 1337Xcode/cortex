@@ -10,7 +10,7 @@
 
 use super::collect::{Collector, leading_number};
 use super::python_traceback;
-use super::{Counts, Failures};
+use super::{CheckCounts, Failures};
 
 /// What the closing `FAILED (...)` line said, by key.
 #[derive(Default)]
@@ -75,14 +75,14 @@ fn read_outcome(rest: &str) -> Outcome {
 
 /// The counts of a run of `ran` tests, when the `Ran` line was there: those that did not fail,
 /// err, skip or succeed unexpectedly passed, expected failures among them.
-fn counts_of(outcome: &Outcome, ran: Option<u32>) -> Counts {
+fn counts_of(outcome: &Outcome, ran: Option<u32>) -> CheckCounts {
     let failed = outcome
         .failures
         .saturating_add(outcome.unexpected_successes);
     let not_passed = failed
         .saturating_add(outcome.errors)
         .saturating_add(outcome.skipped);
-    Counts {
+    CheckCounts {
         failed,
         passed: ran.map(|ran| ran.saturating_sub(not_passed)),
         errors: outcome.errors,

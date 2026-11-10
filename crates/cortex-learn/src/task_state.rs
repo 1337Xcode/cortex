@@ -15,7 +15,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cortex_core::{CommandKind, EventKind, FileContent, Identifier, LineRange, RepoPath, Ulid};
+use cortex_core::{
+    CheckCounts, CommandKind, EventKind, FileContent, Identifier, LineRange, RepoPath, Ulid,
+};
 use cortex_store::{EventRecord, NodeId, Queries, StoreError};
 
 use crate::commands::Restore;
@@ -104,6 +106,9 @@ pub enum Step {
         /// The git restores it ran, when it exited 0, as seen while the daemon ran; none in a
         /// state rebuilt from rows.
         restores: Vec<Restore>,
+        /// The counts its output printed, when it failed a check and the daemon read them while it
+        /// ran; none in a state rebuilt from rows.
+        counts: Option<CheckCounts>,
     },
 }
 
@@ -125,6 +130,8 @@ pub(crate) struct Unkept {
     pub(crate) hits: Vec<RepoPath>,
     /// The git restores a shell line ran.
     pub(crate) restores: Vec<Restore>,
+    /// The counts a failed check's output printed.
+    pub(crate) counts: Option<CheckCounts>,
     /// What an edited file held before the edit, when known.
     pub(crate) before: Option<FileContent>,
 }
@@ -222,7 +229,7 @@ impl TaskState {
             return;
         }
         self.rows += 1;
-        let Some(mut step) = step_of(row, unkept.hits, unkept.restores) else {
+        let Some(mut step) = step_of(row, unkept.hits, unkept.restores, unkept.counts) else {
             return;
         };
         match &mut step {
@@ -392,7 +399,12 @@ fn keep_within(hits: &mut Vec<FileNode>, held_bytes: usize) -> usize {
 
 /// The step `row` records, with what was seen of its event that the row does not keep: none for a
 /// row of another kind, and for a read, edit or search that failed.
-fn step_of(row: &EventRecord, hits: Vec<RepoPath>, restores: Vec<Restore>) -> Option<Step> {
+fn step_of(
+    row: &EventRecord,
+    hits: Vec<RepoPath>,
+    restores: Vec<Restore>,
+    counts: Option<CheckCounts>,
+) -> Option<Step> {
     let at_ms = row.ts_ms;
     let has_failed = row.meta.is_success == Some(false);
     let file = || {
@@ -434,6 +446,7 @@ fn step_of(row: &EventRecord, hits: Vec<RepoPath>, restores: Vec<Restore>) -> Op
             } else {
                 Vec::new()
             },
+            counts,
         },
         _ => return None,
     })

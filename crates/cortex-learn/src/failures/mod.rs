@@ -11,12 +11,16 @@
 //! `bun test` has not been read yet, so its output is not parsed (a `bun run` of another tool
 //! prints that tool's own format, but the runner name cannot tell the two apart).
 
+pub use cortex_core::CheckCounts;
+pub use line::{LineFailure, read_line_failure};
+
 mod cargo_test;
 mod clean;
 mod collect;
 mod go_test;
 mod jest;
 mod jvm;
+mod line;
 mod locate;
 mod node_stack;
 mod paths;
@@ -50,25 +54,6 @@ pub const MAX_FRAMES: usize = 20;
 /// arguments in the name; two hundred characters keep it recognizable without keeping a payload.
 pub const MAX_NAME_CHARS: usize = 200;
 
-/// The counts a runner printed.
-///
-/// `failed`, `errors` and `skipped` are 0 when the runner printed none of them. `passed` is
-/// `None` when the runner printed no passing count and none can be worked out from what it
-/// printed: `go test` without `-v` prints only its failures, and a compiler runs no tests. It is
-/// `Some(0)` when the runner prints every count it has (pytest, cargo, jest, `JUnit`) and none
-/// passed.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Counts {
-    /// Tests that failed.
-    pub failed: u32,
-    /// Tests that passed, when the output says.
-    pub passed: Option<u32>,
-    /// Tests or builds that ended in an error rather than a failed assertion.
-    pub errors: u32,
-    /// Tests skipped or ignored.
-    pub skipped: u32,
-}
-
 /// One stack frame: a file as the output printed it and a line in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
@@ -82,7 +67,7 @@ pub struct Frame {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Failures {
     /// The counts the runner printed, when it printed any.
-    pub counts: Option<Counts>,
+    pub counts: Option<CheckCounts>,
     /// The names of the failed tests, in output order, each once, at most [`MAX_FAILED_TESTS`].
     pub failed_tests: Vec<String>,
     /// Each failure's frames innermost first, failures in output order, each frame once, at most

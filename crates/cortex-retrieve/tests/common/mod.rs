@@ -370,6 +370,7 @@ pub fn tool(
             is_success: true,
             is_interrupted: false,
             output_bytes: None,
+            counts: None,
         }),
         ..event(session, ts_ms, HookKind::PostTool)?
     })
@@ -383,6 +384,7 @@ pub fn failed(event: Event) -> Event {
             is_success: false,
             is_interrupted: false,
             output_bytes: None,
+            counts: None,
         }),
         ..event
     }

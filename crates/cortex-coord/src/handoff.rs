@@ -1,11 +1,12 @@
 //! The text a handoff gives the session that picks up another session's unfinished task: which
 //! agent stopped and how long ago, the files it edited and read, whether its last check failed
-//! and how, and how many warnings about its edits were still open. It names files, a runner and
-//! an exit code, never lines, code or a command, so it stays true until it is given. A repository
+//! and how, and how many warnings about its edits were still open. It names files, a runner, an
+//! exit code and the counts the check's output printed, never lines, code or output, so it stays
+//! true until it is given. A repository
 //! is untrusted, so a path that is not plain text is left out, and a text with no file left gives
 //! nothing.
 
-use cortex_core::{estimate_tokens, is_plain};
+use cortex_core::{CheckCounts, estimate_tokens, is_plain};
 
 /// The most tokens a handoff's text may take.
 pub const MAX_HANDOFF_TOKENS: usize = 150;
@@ -33,11 +34,23 @@ pub struct Handed<'h> {
     pub edited: &'h [&'h str],
     /// The files it read and did not edit.
     pub read: &'h [&'h str],
-    /// Its last check, when it failed: the runner, what it checks (`test`, `build`, `type_check`,
-    /// `lint`) and the exit code.
-    pub failure: Option<(&'h str, &'h str, i32)>,
+    /// Its last check, when it failed.
+    pub failure: Option<FailedCheck<'h>>,
     /// How many warnings about its edits were still open.
     pub open_warnings: usize,
+}
+
+/// A check that failed, as a handoff names it.
+#[derive(Debug, Clone, Copy)]
+pub struct FailedCheck<'h> {
+    /// The runner, by the name Cortex gives it (`pytest`, `cargo`).
+    pub runner: &'h str,
+    /// What it checks: `test`, `build`, `type_check` or `lint`.
+    pub kind: &'h str,
+    /// Its exit code.
+    pub exit_code: i32,
+    /// The counts its output printed, when they were read.
+    pub counts: Option<CheckCounts>,
 }
 
 /// The handoff's text, within [`MAX_HANDOFF_TOKENS`]: fewer files named until it fits. None when
@@ -105,11 +118,17 @@ fn text_of(
         };
         text.push_str(&format!(" {had} {}.", listed(read, reads_named)));
     }
-    if let Some((runner, kind, exit_code)) = handed.failure {
+    if let Some(failed) = handed.failure {
         text.push_str(&format!(
-            " Its last {} ({runner}) failed with exit code {exit_code}.",
-            check_name(kind)
+            " Its last {} ({}) failed with exit code {}",
+            check_name(failed.kind),
+            failed.runner,
+            failed.exit_code
         ));
+        match failed.counts {
+            Some(counts) => text.push_str(&format!(": {counts}.")),
+            None => text.push('.'),
+        }
     }
     // Warnings are about edits: with no edited file named, there is nothing they are about.
     match handed.open_warnings {
@@ -177,7 +196,12 @@ mod tests {
             is_cut_off: true,
             edited: &["calc/ops.py", "main.py"],
             read: &["tests/test_ops.py"],
-            failure: Some(("pytest", "test", 1)),
+            failure: Some(FailedCheck {
+                runner: "pytest",
+                kind: "test",
+                exit_code: 1,
+                counts: None,
+            }),
             open_warnings: 2,
         };
         assert_eq!(
@@ -187,6 +211,30 @@ mod tests {
                  its task. It edited calc/ops.py and main.py. It had read tests/test_ops.py. Its \
                  last test run (pytest) failed with exit code 1. 2 warnings about its edits were \
                  still open."
+            )
+        );
+        // With the counts its output printed: 1 failed and 7 passed.
+        let counted = Handed {
+            failure: Some(FailedCheck {
+                counts: Some(CheckCounts {
+                    failed: 1,
+                    passed: Some(7),
+                    errors: 0,
+                    skipped: 0,
+                }),
+                runner: "pytest",
+                kind: "test",
+                exit_code: 1,
+            }),
+            ..handed
+        };
+        assert_eq!(
+            handoff_text(&counted).as_deref(),
+            Some(
+                "[cortex] Handoff: a Claude Code session stopped 4 minutes ago before finishing \
+                 its task. It edited calc/ops.py and main.py. It had read tests/test_ops.py. Its \
+                 last test run (pytest) failed with exit code 1: 1 failed, 7 passed. 2 warnings \
+                 about its edits were still open."
             )
         );
     }
@@ -270,7 +318,17 @@ mod tests {
             is_cut_off: true,
             edited: &paths,
             read: &paths,
-            failure: Some(("cargo", "build", 101)),
+            failure: Some(FailedCheck {
+                runner: "cargo",
+                kind: "build",
+                exit_code: 101,
+                counts: Some(CheckCounts {
+                    failed: 0,
+                    passed: None,
+                    errors: 12,
+                    skipped: 0,
+                }),
+            }),
             open_warnings: 3,
         };
         let text = handoff_text(&handed).unwrap_or_default();

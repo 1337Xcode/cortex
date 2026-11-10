@@ -9,7 +9,7 @@
 //! handoff is claimed when it is given, so two first prompts answered at once do not both get it;
 //! the claim is given back if its text never reaches the agent.
 
-use cortex_coord::{Handed, handoff_text};
+use cortex_coord::{FailedCheck, Handed, handoff_text};
 use cortex_core::{Event, Identifier, RepoPath, SessionStatus, Ulid};
 use cortex_store::{HandoffEnd, HandoffId, HandoffRow, NodeId, Queries, SeenSession, StoreError};
 
@@ -131,12 +131,11 @@ fn text_of(
     let (edited, read) = (paths(&row.record.edited)?, paths(&row.record.read)?);
     let edited: Vec<&str> = edited.iter().map(RepoPath::as_str).collect();
     let read: Vec<&str> = read.iter().map(RepoPath::as_str).collect();
-    let failure = row.record.last_failure.as_ref().map(|failure| {
-        (
-            failure.runner.as_str(),
-            failure.kind.name(),
-            failure.exit_code,
-        )
+    let failure = row.record.last_failure.as_ref().map(|failure| FailedCheck {
+        runner: failure.runner.as_str(),
+        kind: failure.kind.name(),
+        exit_code: failure.exit_code,
+        counts: failure.counts,
     });
     Ok(handoff_text(&Handed {
         agent,

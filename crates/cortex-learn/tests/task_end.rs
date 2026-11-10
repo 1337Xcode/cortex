@@ -672,6 +672,7 @@ fn a_task_that_did_not_succeed_leaves_a_handoff() -> TestResult {
             runner: Identifier::new("cargo")?,
             kind: CommandKind::Test,
             exit_code: 1,
+            counts: None,
         }),
         created_at_ms: 1_500,
     };

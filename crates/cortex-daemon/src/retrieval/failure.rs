@@ -9,7 +9,7 @@
 //! it named, as for any text given.
 
 use cortex_core::{Event, FailedOutput, ScaleMode, ShellCommand};
-use cortex_learn::{Failures, Ran, parse_failures};
+use cortex_learn::{Failures, Ran, read_line_failure};
 use cortex_retrieve::{FailureQuery, GroundedFailure, failure_map, ground_failure};
 use cortex_store::{InjectedFile, InjectionRecord, NodeId};
 
@@ -133,21 +133,16 @@ impl Service {
         }
         let target = event.tool_target.as_ref()?;
         let (command, output) = target.command.as_ref().zip(target.failed_output.as_ref())?;
-        let told = self.failures.commands.tell(command, &self.root, &event.cwd);
-        let checks: Vec<_> = told.failure.iter().chain(&told.checks).collect();
-        let failures = checks
-            .iter()
-            .find_map(|check| parse_failures(check.runner, output.as_str()))?;
-        let mut runners: Vec<&'static str> = Vec::new();
-        for check in checks {
-            if !runners.contains(&check.runner) {
-                runners.push(check.runner);
-            }
-        }
+        let read = read_line_failure(
+            &self.failures.commands,
+            command,
+            (&self.root, &event.cwd),
+            output.as_str(),
+        )?;
         Some(ReadFailure {
-            failures,
+            failures: read.failures,
             output,
-            runners,
+            runners: read.runners,
         })
     }
 }

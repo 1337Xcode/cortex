@@ -7,7 +7,7 @@
 
 use super::collect::{Collector, leading_number};
 use super::locate::split_location;
-use super::{Counts, Failures};
+use super::{CheckCounts, Failures};
 
 /// The text that opens a diagnostic's code.
 const ERROR_MARK: &str = "error ";
@@ -39,9 +39,9 @@ pub(super) fn parse(output: &str) -> Option<Failures> {
         }
     }
     let errors = found_total.unwrap_or(diagnostics);
-    collector.add_counts(Counts {
+    collector.add_counts(CheckCounts {
         errors,
-        ..Counts::default()
+        ..CheckCounts::default()
     });
     collector.finish()
 }

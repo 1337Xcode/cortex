@@ -146,6 +146,7 @@ fn patched() -> Option<ToolResult> {
         is_success: true,
         is_interrupted: false,
         output_bytes: None,
+        counts: None,
     })
 }
 
@@ -573,6 +574,7 @@ fn a_command_s_result_is_read_from_its_rollout() -> TestResult {
             is_success: code == 0,
             is_interrupted: false,
             output_bytes: None,
+            counts: None,
         })
     };
     assert_eq!(
@@ -655,6 +657,7 @@ fn a_patch_s_result_is_its_exit_code() -> TestResult {
             is_success: false,
             is_interrupted: false,
             output_bytes: None,
+            counts: None,
         })
     );
     assert_eq!(result("Success.".into())?, None);

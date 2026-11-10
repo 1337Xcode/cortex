@@ -64,9 +64,9 @@ pub use config::{
 pub use coordination::PositionMode;
 pub use estimate::estimate_tokens;
 pub use event::{
-    Agent, CompactTrigger, Event, FailedOutput, FailedOutputError, HookKind, LineRange,
-    LineRangeError, MAX_COMMAND_CHARS, MAX_EDITED_FILES, MAX_FAILED_OUTPUT_BYTES, MAX_HITS,
-    MAX_HITS_BYTES, MAX_RANGES, MIN_WORK_PROMPT_CHARS, ShellCommand, ShellCommandError,
+    Agent, CheckCounts, CompactTrigger, Event, FailedOutput, FailedOutputError, HookKind,
+    LineRange, LineRangeError, MAX_COMMAND_CHARS, MAX_EDITED_FILES, MAX_FAILED_OUTPUT_BYTES,
+    MAX_HITS, MAX_HITS_BYTES, MAX_RANGES, MIN_WORK_PROMPT_CHARS, ShellCommand, ShellCommandError,
     StartSource, ToolKind, ToolResult, ToolTarget,
 };
 pub use fact::{FactKind, FactSource, FactStatus, MAX_FACT_ANCHORS, MAX_FACT_CHARS};

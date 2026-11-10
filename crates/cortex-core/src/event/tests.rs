@@ -54,6 +54,7 @@ fn full_event() -> Result<Event, Box<dyn std::error::Error>> {
             is_success: false,
             is_interrupted: false,
             output_bytes: Some(42),
+            counts: None,
         }),
         prompt_text: Some("fix divide".to_owned()),
         transcript_path: Some(PathBuf::from("/home/dev/t.jsonl")),
@@ -189,6 +190,7 @@ fn only_a_successful_edit_names_its_file() -> TestResult {
                 is_success: true,
                 is_interrupted: false,
                 output_bytes: None,
+                counts: None,
             })
         }),
         ..event

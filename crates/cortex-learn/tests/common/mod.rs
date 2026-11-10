@@ -121,6 +121,7 @@ pub fn succeeded(exit_code: Option<i32>, output_bytes: Option<u64>) -> Option<To
         is_success: true,
         is_interrupted: false,
         output_bytes,
+        counts: None,
     })
 }
 
@@ -132,6 +133,7 @@ pub fn failed() -> Option<ToolResult> {
         is_success: false,
         is_interrupted: false,
         output_bytes: None,
+        counts: None,
     })
 }
 
@@ -149,6 +151,7 @@ pub fn shell(session: &str, ts_ms: i64, line: &str, exit_code: Option<i32>) -> T
         is_success: exit_code == Some(0),
         is_interrupted: exit_code.is_none(),
         output_bytes: Some(20),
+        counts: None,
     });
     Ok(Event {
         cwd: root.clone(),

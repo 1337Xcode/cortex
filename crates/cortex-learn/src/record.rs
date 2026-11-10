@@ -217,6 +217,7 @@ impl Recorder {
         let mut unkept = Unkept {
             hits: target.map(|target| target.hits.clone()).unwrap_or_default(),
             restores: restores_of(told.ran),
+            counts: event.tool_result.and_then(|result| result.counts),
             before: match &path {
                 Some(path) => self.before_of(transaction, (event, kind), path)?,
                 None => None,
