@@ -137,6 +137,16 @@ impl Event {
         self.tool_target.as_ref()?.path.as_ref()
     }
 
+    /// The shell command this event says is about to run: the moment before a shell tool runs,
+    /// naming its command.
+    #[must_use]
+    pub fn command_to_run(&self) -> Option<&ShellCommand> {
+        if self.hook != HookKind::PreTool || self.tool != Some(ToolKind::Shell) {
+            return None;
+        }
+        self.tool_target.as_ref()?.command.as_ref()
+    }
+
     /// The prompt this event submits when it may ask for code: none for an event that is no
     /// prompt, a slash command (a first word of `/` and a name, such as `/review`; a path such as
     /// `/usr/lib/x.py` is no command), a shell escape (`!` first), or a prompt of fewer than

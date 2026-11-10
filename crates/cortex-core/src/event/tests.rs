@@ -297,6 +297,37 @@ fn only_the_moment_before_a_read_names_its_file() -> TestResult {
     Ok(())
 }
 
+/// Only the moment before a shell tool runs names the command about to run: not its result, not a
+/// read, and not a shell call that carries no command.
+#[test]
+fn only_the_moment_before_a_shell_names_its_command() -> TestResult {
+    let before = Event {
+        hook: HookKind::PreTool,
+        tool: Some(ToolKind::Shell),
+        ..full_event()?
+    };
+    assert_eq!(
+        before.command_to_run().map(ShellCommand::as_str),
+        Some("pytest -q")
+    );
+    let after = Event {
+        hook: HookKind::PostTool,
+        ..before.clone()
+    };
+    assert_eq!(after.command_to_run(), None);
+    let read = Event {
+        tool: Some(ToolKind::Read),
+        ..before.clone()
+    };
+    assert_eq!(read.command_to_run(), None);
+    let without = Event {
+        tool_target: Some(ToolTarget::default()),
+        ..before
+    };
+    assert_eq!(without.command_to_run(), None);
+    Ok(())
+}
+
 /// The names people write, typed from each agent's own documentation: Claude Code, Codex, Gemini
 /// CLI, Qwen Code; every agent has one, and no two share one.
 #[test]

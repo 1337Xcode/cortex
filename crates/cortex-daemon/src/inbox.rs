@@ -88,6 +88,11 @@ struct State {
     /// How many of those the writer has indexed: the ones it had taken before it last came back
     /// for work.
     changes_indexed: u64,
+    /// How many edits hooks reported since the daemon started, failed ones included, and shell
+    /// commands that may have written a file: changes the daemon hears of before the watcher
+    /// reports them, or that the watcher, which reports a path once it has been quiet a moment,
+    /// has not reported yet.
+    edits_in: u64,
     /// A mining waiting to be written: one at most, since the miner waits for the write.
     mining: Option<MiningJob>,
     /// Requests waiting for the writer, oldest first, at most [`MAX_ASKS_WAITING`].
@@ -202,6 +207,33 @@ impl Inbox {
         read.failures.counts
     }
 
+    /// Whether `event` is a tool's result that may have changed the repository's files: an edit's,
+    /// failed or not, or a shell command's unless its line ran only checks, `cd` and programs
+    /// known to write nothing (`Told::may_write`). A shell line the inbox cannot read, as when it
+    /// reads no commands or the event names none, may have.
+    fn may_have_changed_files(&self, event: &Event) -> bool {
+        if event.hook != HookKind::PostTool {
+            return false;
+        }
+        match event.tool {
+            Some(tool) if tool.is_edit() => true,
+            Some(ToolKind::Shell) => {
+                let command = event
+                    .tool_target
+                    .as_ref()
+                    .and_then(|target| target.command.as_ref());
+                command
+                    .zip(self.commands.get())
+                    .is_none_or(|(command, commands)| {
+                        commands
+                            .tell(command, &event.repo_root, &event.cwd)
+                            .may_write
+                    })
+            }
+            _ => false,
+        }
+    }
+
     /// How long each kind of position holds: as set from the configuration, which the daemon
     /// does before its writer opens; the documented defaults for an inbox never set, as a test's.
     pub(crate) fn position_timing(&self) -> Timing {
@@ -231,7 +263,12 @@ impl Inbox {
                 result.counts = counts;
             }
         }
+        let is_change = self.may_have_changed_files(&event);
         let mut state = self.lock();
+        // Counted before anything can turn the event away: the file changed all the same.
+        if is_change {
+            state.edits_in = state.edits_in.saturating_add(1);
+        }
         if state.is_closed {
             return false;
         }
@@ -442,6 +479,14 @@ impl Inbox {
     /// How many changes the watcher put in since the daemon started.
     pub(crate) fn changes_in(&self) -> u64 {
         self.lock().changes_in
+    }
+
+    /// How many changes to the repository's files the daemon has heard of since it started: the
+    /// watcher's and the edits hooks reported. None once the watcher stopped, when a change could
+    /// go unheard.
+    pub(crate) fn source_changes(&self) -> Option<u64> {
+        let state = self.lock();
+        (!state.is_watcher_gone).then(|| state.changes_in.saturating_add(state.edits_in))
     }
 
     /// Whether the writer has indexed the first `count` changes the watcher put in: it took them,
@@ -710,6 +755,62 @@ mod tests {
             end_reason: None,
             is_probe: false,
         })
+    }
+
+    /// The source changes heard of count each change the watcher put in, each edit a hook
+    /// reported (a failed one and one the closed inbox turns away included) and each shell line
+    /// that may have written a file (`sed -i`, a redirection to a file, one that names no command),
+    /// and nothing else: a check, a line of programs that only read, a read, an edit before it
+    /// runs. Once the watcher stops, the count is unknown.
+    #[test]
+    fn the_source_changes_heard_of_are_counted() -> Result<(), Box<dyn std::error::Error>> {
+        let inbox = Inbox::default();
+        inbox.read_failures_with(Arc::new(Commands::new(&[])?));
+        assert_eq!(inbox.source_changes(), Some(0));
+        inbox.push_change(paths(&["a.py"])?, 1);
+        inbox.push_change(Change::Everything, 2);
+        assert_eq!(inbox.source_changes(), Some(2));
+        inbox.push_event(event(HookKind::PostTool, Some(ToolKind::Edit), 3)?);
+        let failed_patch = Event {
+            tool_result: Some(cortex_core::ToolResult {
+                exit_code: None,
+                is_success: false,
+                is_interrupted: false,
+                output_bytes: None,
+                counts: None,
+            }),
+            ..event(HookKind::PostTool, Some(ToolKind::ApplyPatch), 4)?
+        };
+        inbox.push_event(failed_patch);
+        assert_eq!(inbox.source_changes(), Some(4));
+        let shell = |line: &str, ts_ms| -> Result<Event, Box<dyn std::error::Error>> {
+            Ok(Event {
+                tool_target: Some(cortex_core::ToolTarget {
+                    command: Some(cortex_core::ShellCommand::cut(line)),
+                    ..cortex_core::ToolTarget::default()
+                }),
+                ..event(HookKind::PostTool, Some(ToolKind::Shell), ts_ms)?
+            })
+        };
+        inbox.push_event(shell("python -m pytest -q 2>&1 | tail -20", 5)?);
+        inbox.push_event(shell("git status && cat calc/ops.py", 6)?);
+        inbox.push_event(event(HookKind::PostTool, Some(ToolKind::Read), 7)?);
+        inbox.push_event(event(HookKind::PreTool, Some(ToolKind::Write), 8)?);
+        inbox.push_event(Event {
+            hook: HookKind::PreTool,
+            ..shell("sed -i s/a/b/ calc/ops.py", 9)?
+        });
+        assert_eq!(inbox.source_changes(), Some(4));
+        inbox.push_event(shell("sed -i s/a/b/ calc/ops.py", 10)?);
+        inbox.push_event(shell("pytest -q > out.txt", 11)?);
+        inbox.push_event(event(HookKind::PostTool, Some(ToolKind::Shell), 12)?);
+        assert_eq!(inbox.source_changes(), Some(7));
+        inbox.close();
+        assert!(!inbox.push_event(event(HookKind::PostTool, Some(ToolKind::Write), 13)?));
+        assert_eq!(inbox.source_changes(), Some(8));
+        inbox.watcher_stopped();
+        assert_eq!(inbox.source_changes(), None);
+        Ok(())
     }
 
     /// The times of the events a wait drains.

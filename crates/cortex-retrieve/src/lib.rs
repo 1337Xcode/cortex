@@ -39,6 +39,7 @@ mod push;
 mod read;
 mod reasons;
 mod recap;
+mod redundant;
 mod render;
 mod score;
 mod seeds;
@@ -88,6 +89,10 @@ pub use push::{Activation, L1_TOLERANCE, MAX_PUSHES, Network, SPREAD_THRESHOLD, 
 pub use read::{GraphSettings, read_graph};
 pub use reasons::{ItemEvidence, MAX_REASON_CHARS, Reason, reason_of};
 pub use recap::{MAX_RECAP_TOKENS, recap};
+pub use redundant::{
+    EarlierRun, MAX_NAMED_FAILING, MAX_REDUNDANT_NOTE_TOKENS, MAX_SHOWN_COMMAND_CHARS,
+    redundant_note,
+};
 pub use render::{
     Basis, Item, ItemSpan, Limits, MAX_WORK_ORDER_CHARS, Rendered, WorkOrder, render,
 };

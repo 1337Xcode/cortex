@@ -1,10 +1,10 @@
 //! What an answer claimed in the daemon's memory while it was worked out, so that one text is not
 //! given twice: the pairs a task was warned of, a compaction recapped, a task given strict mode's
 //! reason to go on, the coordination notices a session was given, a handoff given to a first
-//! prompt, a file a task's read named as the one earlier tasks read next. An answer whose text
-//! never reaches its hook (worked out too late, written after the hook stopped reading, or not
-//! written at all) gives its claim back, so that a later edit, start, read or stop is told what
-//! this one was not.
+//! prompt, a file a task's read named as the one earlier tasks read next, a note about a check run
+//! again. An answer whose text never reaches its hook (worked out too late, written after the hook
+//! stopped reading, or not written at all) gives its claim back, so that a later edit, start, read
+//! or stop is told what this one was not.
 
 use std::sync::Arc;
 
@@ -33,6 +33,8 @@ pub(crate) enum Claim {
     ReadNext(Ulid, NodeId),
     /// Task `.0`, given the narrow tests of its edits after a whole-suite run.
     Narrowed(Ulid),
+    /// Task `.0`, given its note `.1` (counted from 0) about a check run again.
+    Repeated(Ulid, u8),
 }
 
 /// Where the daemon keeps what answers claimed.
@@ -53,6 +55,9 @@ pub(crate) struct Claims {
     pub(crate) read_next: Arc<ClaimedOnce<(Ulid, NodeId)>>,
     /// The tasks given the narrow tests of their edits.
     pub(crate) narrowed: Arc<ClaimedOnce<Ulid>>,
+    /// The notes each task was given about a check run again, by their count from 0: two answers
+    /// worked out at once take one each.
+    pub(crate) repeated: Arc<ClaimedOnce<(Ulid, u8)>>,
 }
 
 impl Claims {
@@ -67,6 +72,7 @@ impl Claims {
             Claim::Handed(handoff) => self.handed.release(handoff),
             Claim::ReadNext(task_id, node) => self.read_next.release(&(*task_id, *node)),
             Claim::Narrowed(task_id) => self.narrowed.release(task_id),
+            Claim::Repeated(task_id, slot) => self.repeated.release(&(*task_id, *slot)),
             Claim::Noticed(session, delivered, told) => {
                 self.noticed.release(session, (delivered, told));
             }
@@ -86,7 +92,8 @@ mod tests {
     /// Each claim given back can be made again: a pair told and released is told again, a
     /// compaction recapped and released is recapped again, a task stopped and released is given its
     /// reason again, a handoff given and released is given again, a file named and released is
-    /// named again; a claim of another task, session, start or file gives nothing back.
+    /// named again, a task's note about a check run again released is given again; a claim of
+    /// another task, session, start, file or note gives nothing back.
     #[test]
     fn a_claim_given_back_can_be_made_again() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -160,6 +167,13 @@ mod tests {
         assert!(!claims.read_next.claim((task, target)));
         claims.release(&Claim::ReadNext(task, target));
         assert!(claims.read_next.claim((task, target)));
+
+        assert!(claims.repeated.claim((task, 0)));
+        assert!(!claims.repeated.claim((task, 0)));
+        claims.release(&Claim::Repeated(task, 1));
+        assert!(!claims.repeated.claim((task, 0)));
+        claims.release(&Claim::Repeated(task, 0));
+        assert!(claims.repeated.claim((task, 0)));
         Ok(())
     }
 }

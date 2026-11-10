@@ -526,7 +526,8 @@ mod tests {
         let user = layer(
             "user",
             "mode = \"small\"\nstrict_mode = true\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n\
-             [hints]\nruntime_grounding = true\nnarrow_tests = true\n[compaction]\nkeep_list = true\n",
+             [hints]\nruntime_grounding = true\nnarrow_tests = true\nredundant_commands = true\n\
+             [compaction]\nkeep_list = true\n",
         );
         let repository = layer(
             "repository",
@@ -608,6 +609,7 @@ mod tests {
                 hints: HintsConfig {
                     is_runtime_grounding: true,
                     is_narrow_tests: true,
+                    is_redundant_commands: true,
                 },
                 compaction: CompactionConfig { is_keep_list: true },
             }
@@ -1004,6 +1006,11 @@ mod tests {
             (
                 "hints.narrow_tests = \"yes\"",
                 "hints.narrow_tests",
+                "true or false",
+            ),
+            (
+                "hints.redundant_commands = 0",
+                "hints.redundant_commands",
                 "true or false",
             ),
             (

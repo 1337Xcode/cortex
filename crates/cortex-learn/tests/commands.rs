@@ -521,3 +521,57 @@ fn a_line_tells_every_check_it_ran() -> TestResult {
     assert_eq!(checks("git push && ls"), []);
     Ok(())
 }
+
+/// A line may have written a file unless every command it ran is a check, a `cd` or a program
+/// known to write nothing, with no output redirected to a file and no command substitution; a
+/// line the reader does not follow may have too. Each line's answer is read off it by hand.
+#[test]
+fn a_line_tells_whether_it_may_have_written() -> TestResult {
+    let commands = Commands::new(&[])?;
+    let may_write = |line: &str| {
+        commands
+            .tell(&ShellCommand::cut(line), Path::new(ROOT), &folder(""))
+            .may_write
+    };
+    for reading in [
+        "pytest -q",
+        "cd sub && python -m pytest -q 2>&1 | tail -20",
+        "cargo test >/dev/null 2>&1",
+        "ls calc && cat calc/ops.py | head -5",
+        "git status && git diff --stat && git log -1 && git show HEAD",
+        "find . -name '*.py'",
+        "rg -n divide calc",
+        "grep -rn divide . | wc -l",
+        "echo done; pwd",
+        "",
+    ] {
+        assert!(!may_write(reading), "{reading}");
+    }
+    for writing in [
+        "sed -i s/a/b/ calc/ops.py",
+        "sed -i s/a/b/ calc/ops.py && pytest -q",
+        "echo x > notes.txt",
+        "cat a.py >> b.py",
+        "pytest -q > out.txt",
+        "cargo test &> log.txt",
+        "pytest 2>err.txt",
+        "cat <>a.py",
+        "ls >& listing.txt",
+        "find . -name '*.pyc' -delete",
+        "find . -exec rm {} +",
+        "rg --pre=./decode.sh x",
+        "git checkout -- calc/ops.py",
+        "git checkout -- calc/ops.py && pytest -q",
+        "git diff --output=patch.txt",
+        "git -C sub status",
+        "pytest $(git diff --name-only)",
+        "ls `pwd`",
+        "python script.py",
+        "touch a.py",
+        "npx prettier --write .",
+        "if true; then ls; fi",
+    ] {
+        assert!(may_write(writing), "{writing}");
+    }
+    Ok(())
+}

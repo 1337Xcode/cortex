@@ -272,9 +272,10 @@ fn probed(answer: Result<Answer, ClientError>, asks_for_text: bool) -> Result<()
 
 /// The request the hook makes of the daemon with `event` at the hook `entry`: the text Cortex
 /// gives the agent there, where it gives some (the primer at a session's start, the work order at
-/// a prompt, the warnings after an edit, the hint before a read, strict mode's reason at a stop,
-/// the keep-list before a compaction, and at a prompt or after any tool the coordination notices
-/// waiting), saying when the hook stops reading the answer; the event alone otherwise.
+/// a prompt, the warnings after an edit, the hint before a read or a shell command, strict mode's
+/// reason at a stop, the keep-list before a compaction, and at a prompt or after any tool the
+/// coordination notices waiting), saying when the hook stops reading the answer; the event alone
+/// otherwise.
 fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
     // The event's time is the clock at the hook's start, from which its deadline counts.
     let wait = entry.hard_timeout.saturating_sub(EXIT_MARGIN);
@@ -293,7 +294,7 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
             event,
             answer_by_ms,
         },
-        HookKind::PreTool if entry.gives_context && event.file_to_read().is_some() => {
+        HookKind::PreTool if entry.gives_context && is_hinted_before(&event) => {
             RequestBody::ReadHint {
                 event,
                 answer_by_ms,
@@ -315,6 +316,12 @@ fn request_of(entry: &HookEntry, event: Event) -> RequestBody {
         }
         _ => RequestBody::Event { event },
     }
+}
+
+/// Whether `event`, the moment before a tool runs, is one the daemon may give a hint: a read of a
+/// file in the repository, or a shell command.
+fn is_hinted_before(event: &Event) -> bool {
+    event.file_to_read().is_some() || event.command_to_run().is_some()
 }
 
 /// Whether `event` is a tool's result that failed and carries no output of a failed command: the
@@ -628,6 +635,51 @@ mod tests {
                 event: Box::new(compaction)
             }
         );
+        Ok(())
+    }
+
+    /// Before a shell command Claude Code's `PreToolUse` asks, by 1,285 ms (285 ms after the
+    /// event's 1,000), for what the same command gave when it ran earlier; a shell call that names
+    /// no command, and a search, send the event alone.
+    #[test]
+    fn a_shell_command_asks_for_its_note_before_it_runs() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use cortex_core::ToolKind;
+        let (_, entry) = hook_of(&args(&["--agent", "claude", "--event", "PreToolUse"]))
+            .map_err(|failure| failure.to_string())?;
+        let shell = Event {
+            hook: HookKind::PreTool,
+            tool_target: Some(cortex_core::ToolTarget {
+                command: Some(cortex_core::ShellCommand::cut("pytest -q")),
+                ..cortex_core::ToolTarget::default()
+            }),
+            tool_result: None,
+            ..tool_result(ToolKind::Shell, true)?
+        };
+        assert_eq!(
+            request_of(entry, shell.clone()),
+            RequestBody::ReadHint {
+                event: Box::new(shell.clone()),
+                answer_by_ms: Some(1_285),
+            }
+        );
+        for unhinted in [
+            Event {
+                tool_target: Some(cortex_core::ToolTarget::default()),
+                ..shell.clone()
+            },
+            Event {
+                tool: Some(ToolKind::Grep),
+                ..shell
+            },
+        ] {
+            assert_eq!(
+                request_of(entry, unhinted.clone()),
+                RequestBody::Event {
+                    event: Box::new(unhinted)
+                }
+            );
+        }
         Ok(())
     }
 

@@ -67,10 +67,12 @@ pub enum RequestBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answer_by_ms: Option<i64>,
     },
-    /// Answer the moment before a read with the hint the read gets, if any, recording nothing
-    /// (protocol 4.0 added it).
+    /// Answer the moment before a tool runs with the hint it gets, if any, recording nothing: a
+    /// read's hint before a read, and before a shell command what the same command gave when it ran
+    /// earlier in the session (protocol 4.0 added it, for reads; the name stays, as it is the
+    /// message's tag on the wire).
     ReadHint {
-        /// The read's event: the moment before a tool reads a file.
+        /// The tool's event: the moment before a tool reads a file or runs a shell command.
         event: Box<Event>,
         /// When the hook stops reading the answer, in UTC milliseconds by the wall clock, as for
         /// `Retrieve`: a hint that cannot reach the hook by then is not sent. None from a client

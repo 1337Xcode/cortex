@@ -106,6 +106,25 @@ All notable changes to this project are documented in this file. The format is b
   test inside a source file, another package's) is named after it. A run whose options change
   where modules import from (unittest's `discover -s`) is told nothing. Off by default until
   measured.
+- `hints.redundant_commands = true`: just before a test or build command runs, when the same
+  command line ran in the same working folder earlier in the session and no source change was
+  heard of from the moment that run started (no edit a hook reported, no shell command that may
+  have written a file, and no change the file watcher saw to the repository files it watches;
+  files the watcher leaves out, such as those `.gitignore` names, are not seen), the agent is told
+  what that run gave: its exit code, and the failing tests its output named, at most three and
+  then how many more (``[cortex] `pytest tests/test_ops.py` ran earlier in this session with no
+  source change since: exit 1, failing: test_divide_by_zero.``). A shell command counts as a
+  possible change unless every program it runs is a check or one known to write nothing (`ls`,
+  `cat`, `grep`, `git status` and a few more) with no output redirected to a file. The command
+  still runs. At most two notes a task, within 60 tokens; nothing in a tiny repository, outside a
+  task or for a held-out task. The results are kept in the daemon's memory only, by a hash of the
+  line and the folder, never stored. Claude Code's `PreToolUse` hook now also runs before `Bash`
+  and `PowerShell` calls, so every shell command starts the hook; Codex's already ran before every
+  shell command, and Codex gets the note too. Off by default until measured.
+- The file watcher reports a notice that file events were lost (a rescan) as a change to
+  everything, as it does an error, rather than dropping it; and it no longer reports a folder
+  that is still there whose times or attributes changed (Windows reports one when an entry in it
+  was touched), since its entries' own events say what changed in it.
 - `hints.runtime_grounding = true` gives a failed check the repository lines its stack ran
   through, beside its output: when a test or build command the agent ran fails (Claude Code's
   failure hook, Codex's shell result with a non-zero exit), its output is read in memory by the

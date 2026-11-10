@@ -104,22 +104,23 @@ fn logged(log: &Path) -> TestResult<String> {
     }
 }
 
-/// The captured payload each hook Cortex registers with Claude Code is sent: a session's start, a
-/// prompt, the moment before a read, an edit's result, a failed command's, a compaction's start,
-/// a subagent's start and end, the stop, a turn ended on an API error and the session's end.
-fn fixture_of(event: &str) -> Option<&'static str> {
+/// The captured payloads each hook Cortex registers with Claude Code is sent: a session's start, a
+/// prompt, the moment before a read and before a shell command, an edit's result, a failed
+/// command's, a compaction's start, a subagent's start and end, the stop, a turn ended on an API
+/// error and the session's end.
+fn fixtures_of(event: &str) -> Option<&'static [&'static str]> {
     Some(match event {
-        "SessionStart" => "session-start-startup.json",
-        "UserPromptSubmit" => "user-prompt-submit.json",
-        "PreToolUse" => "pre-tool-use-read.json",
-        "PostToolUse" => "post-tool-use-edit.json",
-        "PostToolUseFailure" => "post-tool-use-failure-bash.json",
-        "PreCompact" => "pre-compact-manual.json",
-        "SubagentStart" => "subagent-start.json",
-        "SubagentStop" => "subagent-stop.json",
-        "Stop" => "stop.json",
-        "SessionEnd" => "session-end.json",
-        "StopFailure" => "stop-failure-model-not-found.json",
+        "SessionStart" => &["session-start-startup.json"],
+        "UserPromptSubmit" => &["user-prompt-submit.json"],
+        "PreToolUse" => &["pre-tool-use-read.json", "pre-tool-use-bash.json"],
+        "PostToolUse" => &["post-tool-use-edit.json"],
+        "PostToolUseFailure" => &["post-tool-use-failure-bash.json"],
+        "PreCompact" => &["pre-compact-manual.json"],
+        "SubagentStart" => &["subagent-start.json"],
+        "SubagentStop" => &["subagent-stop.json"],
+        "Stop" => &["stop.json"],
+        "SessionEnd" => &["session-end.json"],
+        "StopFailure" => &["stop-failure-model-not-found.json"],
         _ => return None,
     })
 }
@@ -143,7 +144,7 @@ fn warm_up() -> TestResult {
     Ok(())
 }
 
-/// Every hook Cortex registers with Claude Code, its captured payload sent from a repository whose
+/// Every hook Cortex registers with Claude Code, each captured payload sent from a repository whose
 /// daemon is down and cannot come up (the test holds the repository, as a daemon still starting
 /// does), tries the daemon, starts one and returns: exit code 0, nothing printed, nothing logged
 /// (a hook held past its hard timeout would log that it ran out of time), and a start marked. The
@@ -161,9 +162,12 @@ fn every_hook_is_silent_with_the_daemon_down() -> TestResult {
         .ok_or("no adapter for Claude Code")?
         .hooks();
     let log = UserFolder::in_home(home).logs_folder().join("hook.log");
-    for entry in hooks {
+    let calls = hooks.iter().flat_map(|entry| {
+        let fixtures = fixtures_of(entry.event_name).unwrap_or_default();
+        fixtures.iter().map(move |fixture| (entry, *fixture))
+    });
+    for (entry, fixture) in calls {
         let event = entry.event_name;
-        let fixture = fixture_of(event).ok_or(event)?;
         let payload = payloads::payload(NEWEST, fixture, &repo)?;
         for call in 1..=3 {
             if let Err(error) = std::fs::remove_file(scene.files.start_path())
@@ -185,6 +189,11 @@ fn every_hook_is_silent_with_the_daemon_down() -> TestResult {
         }
     }
     assert_eq!(hooks.len(), 11);
+    assert!(
+        hooks
+            .iter()
+            .all(|entry| fixtures_of(entry.event_name).is_some())
+    );
     drop(held);
     Ok(())
 }

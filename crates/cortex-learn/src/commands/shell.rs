@@ -1,9 +1,10 @@
 //! A shell command line read as the POSIX shell reads it, as far as telling which commands it runs
 //! needs: words with their quotes removed, the operators that join commands (`&&`, `||`, `|`, `;`,
 //! `&` and line breaks), `!`, and groups in parentheses or braces. Redirections are dropped with
-//! their targets, comments and here-documents skipped. A line it cannot read for sure (a compound
-//! command such as `if` or `for`, a function definition, an unclosed quote or group) is refused,
-//! never guessed at.
+//! their targets, comments and here-documents skipped; whether one of them writes a file, or a
+//! command substitution runs a command no word shows, is kept for the line ([`read_line`]). A line
+//! it cannot read for sure (a compound command such as `if` or `for`, a function definition, an
+//! unclosed quote or group) is refused, never guessed at.
 
 /// A word as the shell passes it to a command, its quotes and escapes removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +83,27 @@ pub(super) struct Unreadable;
 ///
 /// The line holds what the reader does not follow, or is not a well-formed list.
 pub(super) fn read(line: &str) -> Result<List, Unreadable> {
-    let tokens = Lexer::new(line).tokens()?;
+    read_line(line).map(|read| read.list)
+}
+
+/// A line read: its commands, and whether it may write a file beyond what its commands show.
+#[derive(Debug)]
+pub(super) struct ReadLine {
+    /// The commands.
+    pub(super) list: List,
+    /// Whether a redirection writes to a file (any output to a target other than `/dev/null` or
+    /// another descriptor, and `<>`), or a command substitution (`$(...)`, a backquote) runs a
+    /// command that is not one of the line's words.
+    pub(super) may_write: bool,
+}
+
+/// Reads `line` as a list of commands, with whether it may write a file beyond its commands.
+///
+/// # Errors
+///
+/// The line holds what the reader does not follow, or is not a well-formed list.
+pub(super) fn read_line(line: &str) -> Result<ReadLine, Unreadable> {
+    let (tokens, may_write) = Lexer::new(line).tokens()?;
     let mut parser = Parser {
         tokens,
         at: 0,
@@ -90,7 +111,7 @@ pub(super) fn read(line: &str) -> Result<List, Unreadable> {
     };
     let list = parser.list(Close::End)?;
     if parser.at == parser.tokens.len() {
-        Ok(list)
+        Ok(ReadLine { list, may_write })
     } else {
         Err(Unreadable)
     }
@@ -135,6 +156,8 @@ struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
     /// Here-documents begun on this line, by their delimiters, to skip at the next line break.
     here_documents: Vec<String>,
+    /// Whether a redirection read so far writes a file, or a command substitution runs a command.
+    may_write: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -143,11 +166,12 @@ impl<'a> Lexer<'a> {
         Self {
             chars: line.chars().peekable(),
             here_documents: Vec::new(),
+            may_write: false,
         }
     }
 
-    /// Every token of the line.
-    fn tokens(mut self) -> Result<Vec<Token>, Unreadable> {
+    /// Every token of the line, and whether the line may write a file beyond its commands.
+    fn tokens(mut self) -> Result<(Vec<Token>, bool), Unreadable> {
         let mut tokens = Vec::new();
         while let Some(&next) = self.chars.peek() {
             match next {
@@ -171,7 +195,7 @@ impl<'a> Lexer<'a> {
                 _ => self.word(&mut tokens)?,
             }
         }
-        Ok(tokens)
+        Ok((tokens, self.may_write))
     }
 
     /// Reads an operator or a redirection starting at `&`, `|`, `(`, `)`, `<` or `>`.
@@ -190,7 +214,8 @@ impl<'a> Lexer<'a> {
                 if self.chars.peek() == Some(&'>') {
                     self.chars.next();
                 }
-                self.redirection_target()?;
+                let target = self.target_word()?;
+                self.note_output(&target);
             }
             ('&', _) => tokens.push(Token::Ampersand),
             ('|', Some('|')) => {
@@ -209,7 +234,8 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// Skips a redirection whose first character, `<` or `>`, was read, with its target.
+    /// Skips a redirection whose first character, `<` or `>`, was read, with its target, noting
+    /// whether it writes a file.
     fn redirection(&mut self, first: char) -> Result<(), Unreadable> {
         if first == '<' && self.chars.peek() == Some(&'<') {
             self.chars.next();
@@ -224,10 +250,29 @@ impl<'a> Lexer<'a> {
                 }
                 _ => return self.here_document(),
             }
-        } else if matches!(self.chars.peek(), Some('>' | '&' | '|')) {
-            self.chars.next();
+            return self.redirection_target();
         }
-        self.redirection_target()
+        let second = if matches!(self.chars.peek(), Some('>' | '&' | '|')) {
+            self.chars.next()
+        } else {
+            None
+        };
+        let target = self.target_word()?;
+        match (first, second) {
+            // Input, or input taken from another descriptor.
+            ('<', None | Some('&')) => {}
+            // `>&2` and `>&-` duplicate or close a descriptor; `>& file` writes both outputs.
+            ('>', Some('&')) if is_descriptor(&target) => {}
+            _ => self.note_output(&target),
+        }
+        Ok(())
+    }
+
+    /// Notes an output to `target`, which writes a file unless it is `/dev/null`.
+    fn note_output(&mut self, target: &Word) {
+        if target.literal() != Some("/dev/null") {
+            self.may_write = true;
+        }
     }
 
     /// Reads a here-document's delimiter, to skip its lines at the next line break.
@@ -380,12 +425,16 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Reads what follows a `$`: a name, `{...}`, `(...)` or `((...))`, kept as written.
+    /// Reads what follows a `$`: a name, `{...}`, `(...)` or `((...))`, kept as written. A
+    /// command substitution may write: what it runs is no word of the line.
     fn expansion(&mut self, word: &mut Word) -> Result<(), Unreadable> {
         word.text.push('$');
         match self.chars.peek() {
             Some('{') => self.balanced(word, '{', '}'),
-            Some('(') => self.balanced(word, '(', ')'),
+            Some('(') => {
+                self.may_write = true;
+                self.balanced(word, '(', ')')
+            }
             Some('\'') => {
                 // `$'...'`: quoted text with escapes, kept as written.
                 self.chars.next();
@@ -437,8 +486,9 @@ impl<'a> Lexer<'a> {
         Err(Unreadable)
     }
 
-    /// Reads up to the closing backquote, kept as written.
+    /// Reads up to the closing backquote, kept as written. The command it runs may write.
     fn backquoted(&mut self, word: &mut Word) -> Result<(), Unreadable> {
+        self.may_write = true;
         word.text.push('`');
         while let Some(c) = self.chars.next() {
             word.text.push(c);
@@ -454,6 +504,14 @@ impl<'a> Lexer<'a> {
         }
         Err(Unreadable)
     }
+}
+
+/// Whether a redirection's `target` after `>&` or `<&` names a descriptor (digits) or closes one
+/// (`-`), rather than a file.
+fn is_descriptor(target: &Word) -> bool {
+    target
+        .literal()
+        .is_some_and(|text| text == "-" || text.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 /// What ends a list being read.

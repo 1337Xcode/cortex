@@ -16,7 +16,9 @@
 //! Apart from what its exit vouches for, a line also tells every check it ran, in its order, whatever
 //! its exit says of each: the runners whose output it may print, which a reader of that output
 //! needs (`cd x && pytest` and `pytest | tail` print pytest's output, though neither line's exit
-//! is pytest's alone).
+//! is pytest's alone). It also tells whether it may have written a file: unless every command it
+//! ran is a check, a `cd` or a program known to write nothing (`read_only`), with no redirection
+//! to a file and no command substitution, it may have; so may a line the reader does not follow.
 //!
 //! Nothing here keeps the command's text: the caller keeps what was told, never the line, but for
 //! the cleaned form of a failed check's command a handoff keeps ([`clean_command`]): the runner's
@@ -26,6 +28,7 @@ mod argv;
 mod clean;
 mod folder;
 mod narrow;
+mod read_only;
 mod restore;
 mod runners;
 mod shell;
@@ -107,6 +110,10 @@ pub struct Told {
     pub failure: Option<Check>,
     /// Every check the line ran, whatever its exit says of it, in the order of the line, each once.
     pub checks: Vec<Check>,
+    /// Whether the line may have written a file: it ran a command other than a check, a `cd` or a
+    /// program known to write nothing, redirected an output to a file, ran a command
+    /// substitution, or could not be read.
+    pub may_write: bool,
 }
 
 /// The commands Cortex tells apart: the runners it knows and the user's patterns, compiled once.
@@ -150,19 +157,25 @@ impl Commands {
     /// an exit of 0 vouches for, and the check an exit otherwise is the failure of.
     #[must_use]
     pub fn tell(&self, command: &ShellCommand, root: &Path, cwd: &Path) -> Told {
-        let Ok(list) = shell::read(command.as_str()) else {
-            return Told::default();
+        let Ok(read) = shell::read_line(command.as_str()) else {
+            return Told {
+                may_write: true,
+                ..Told::default()
+            };
         };
         let mut walk = Walk {
             commands: self,
             root,
-            told: Told::default(),
+            told: Told {
+                may_write: read.may_write,
+                ..Told::default()
+            },
         };
         let says = Says {
             success: true,
             failure: true,
         };
-        walk.list(&list, &mut Folder::new(cwd), says);
+        walk.list(&read.list, &mut Folder::new(cwd), says);
         walk.told
     }
 
@@ -276,6 +289,11 @@ impl Walk<'_> {
                     *folder = moved;
                 } else {
                     let ran = self.commands.ran(words, folder, self.root);
+                    let is_reading = argv::invocation(words)
+                        .is_some_and(|invocation| read_only::is_read_only(&invocation));
+                    if !is_reading && !matches!(ran, Some(Ran::Check(_))) {
+                        self.told.may_write = true;
+                    }
                     if let Some(Ran::Check(check)) = &ran
                         && !self.told.checks.contains(check)
                     {

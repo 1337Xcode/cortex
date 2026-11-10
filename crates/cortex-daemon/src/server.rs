@@ -33,6 +33,7 @@ use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
 use crate::retrieval::Service;
+use crate::runs::Runs;
 use crate::signatures::Signatures;
 use crate::troubles::Taken;
 use crate::worktree::Worktree;
@@ -65,6 +66,8 @@ pub(crate) struct Server {
     service: Arc<OnceLock<Service>>,
     /// The latest failed check of each recent session, for its next prompt's seeds.
     failed: Arc<Failed>,
+    /// The checks each recent session ran and what each gave, for the note a check run again gets.
+    runs: Arc<Runs>,
     /// How long each hook's latest requests took to handle.
     latencies: Mutex<Latencies>,
     /// Probes, `cortex doctor`'s, answered since the daemon started.
@@ -99,8 +102,9 @@ enum Asked {
     Primer,
     /// The warnings an edit gets.
     Warnings,
-    /// The hint a read gets, before it runs.
-    ReadHint,
+    /// The hint a tool gets before it runs: a read's hint, or a shell command's note when the
+    /// same check ran earlier with no source change since.
+    BeforeTool,
     /// The reason strict mode gives a stop to go on.
     StopReason,
     /// The keep-list a compaction's summary is given, before it runs.
@@ -211,6 +215,7 @@ impl Server {
             claims: Claims::default(),
             service,
             failed: Arc::default(),
+            runs: Arc::default(),
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
         }
@@ -374,7 +379,7 @@ impl Server {
                 answer_by_ms,
             } => {
                 reads_until_ms = answer_by_ms;
-                let asked = (Asked::ReadHint, answer_by_ms);
+                let asked = (Asked::BeforeTool, answer_by_ms);
                 let answered = self.answer_with_text(*event, asked).await;
                 (given, undo) = (answered.given, answered.undo);
                 (answered.body, answered.hook)
@@ -420,6 +425,10 @@ impl Server {
                     self.probes_answered.fetch_add(1, atomic::Ordering::Relaxed);
                     true
                 } else {
+                    // A result sent without asking for text, as a failed shell that printed
+                    // nothing is, is not read for the note a check run again gets: the line's
+                    // earlier run no longer says what it gives.
+                    self.runs.forget_result_of(&event);
                     hook == HookKind::PreTool || self.record_event(*event)
                 };
                 // A daemon that is stopping records nothing more, and says so rather than take an
@@ -500,7 +509,7 @@ impl Server {
             Asked::WorkOrder => HookKind::Prompt,
             Asked::Primer => HookKind::SessionStart,
             Asked::Warnings => HookKind::PostTool,
-            Asked::ReadHint => HookKind::PreTool,
+            Asked::BeforeTool => HookKind::PreTool,
             Asked::StopReason => HookKind::Stop,
             Asked::KeepList => HookKind::Compact,
         };
@@ -526,7 +535,9 @@ impl Server {
         let agent = event.agent;
         let signatures = Arc::clone(&self.signatures);
         let claims = self.claims.clone();
-        let failed = Arc::clone(&self.failed);
+        let (failed, runs) = (Arc::clone(&self.failed), Arc::clone(&self.runs));
+        // Read once the event is handed to the writer: an edit's own result counts as a change.
+        let changes = self.inbox.source_changes();
         let mut answer = self
             .with_service(move |service, graph, uncommitted| {
                 let answer = match asked {
@@ -534,24 +545,35 @@ impl Server {
                         service.prompt(&event, (graph, uncommitted), (&claims.handed, &failed))
                     }
                     Asked::Primer => service.primer(&event, graph, &claims.recapped),
-                    Asked::Warnings if event.failed_output().is_some() => service
-                        .after_failure(&event, &failed)
-                        .joined(service.after_suite(&event, &claims.narrowed)),
+                    Asked::Warnings if event.failed_output().is_some() => {
+                        service.note_run(&event, changes, &runs);
+                        service
+                            .after_failure(&event, &failed)
+                            .joined(service.after_suite(&event, &claims.narrowed))
+                    }
                     Asked::Warnings => {
+                        service.note_run(&event, changes, &runs);
                         service.note_passed(&event, &failed);
                         service
                             .post_edit(&event, (&signatures, &claims.told))
                             .joined(service.after_suite(&event, &claims.narrowed))
                     }
-                    Asked::ReadHint => service.read_hint(&event, &claims.read_next),
+                    Asked::BeforeTool if event.file_to_read().is_none() => {
+                        service.redundant_command_note(&event, changes, (&runs, &claims.repeated))
+                    }
+                    Asked::BeforeTool => service.read_hint(&event, &claims.read_next),
                     Asked::StopReason => service.stop_reason(&event, &claims.stopped),
                     Asked::KeepList => service.keep_list(&event),
                 };
-                // Notices go with every text but a stop's, which would hold the stop back, and a
-                // compaction's, which goes to its summary and not to the agent. A probe's session
-                // is no agent's: it is given no notice and leaves none.
-                let has_notices =
-                    !matches!(asked, Asked::StopReason | Asked::KeepList) && !is_probe;
+                // Notices go with every text but a stop's, which would hold the stop back, a
+                // compaction's, which goes to its summary and not to the agent, and the moment
+                // before a shell command, which they reach once it ran. A probe's session is no
+                // agent's: it is given no notice and leaves none.
+                let is_before_shell =
+                    matches!(asked, Asked::BeforeTool) && event.file_to_read().is_none();
+                let has_notices = !matches!(asked, Asked::StopReason | Asked::KeepList)
+                    && !is_before_shell
+                    && !is_probe;
                 if has_notices {
                     service.with_notices(&event, answer, &claims.noticed)
                 } else {

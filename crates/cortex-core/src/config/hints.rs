@@ -13,6 +13,10 @@ pub struct HintsConfig {
     /// `hints.narrow_tests`: after a whole test-suite run, name the test files of what the task
     /// edited and the command that runs only them, once a task. Default `false`.
     pub is_narrow_tests: bool,
+    /// `hints.redundant_commands`: before a check runs, say what the same command line in the same
+    /// working folder gave when it ran earlier in the session with no source change since, at most
+    /// twice a task. Default `false`.
+    pub is_redundant_commands: bool,
 }
 
 impl HintsConfig {
@@ -28,6 +32,7 @@ impl HintsConfig {
         Some(match key {
             "hints.runtime_grounding" => switch().map(|is_on| self.is_runtime_grounding = is_on),
             "hints.narrow_tests" => switch().map(|is_on| self.is_narrow_tests = is_on),
+            "hints.redundant_commands" => switch().map(|is_on| self.is_redundant_commands = is_on),
             _ => return None,
         })
     }

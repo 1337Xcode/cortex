@@ -695,7 +695,7 @@ fn the_hooks_are_the_ones_cortex_registers() -> TestResult {
         [
             ("SessionStart", None, 1_500),
             ("UserPromptSubmit", None, 1_000),
-            ("PreToolUse", Some("Read"), 300),
+            ("PreToolUse", Some("Read|Bash|PowerShell"), 300),
             ("PostToolUse", results, 500),
             ("PostToolUseFailure", results, 500),
             ("PreCompact", None, 300),

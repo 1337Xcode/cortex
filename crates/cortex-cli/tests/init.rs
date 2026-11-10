@@ -61,10 +61,10 @@ fn cortex_hook(group: &Value) -> Option<(String, Vec<String>, u64, Option<String
 /// of the ten events Cortex registers, after the user's, the user's key first and their event
 /// where it was; the others follow in the adapter's order. Each runs this binary with `hook
 /// --agent claude --event <event>`, with the event's timeout in seconds (2 for SessionStart,
-/// 1 for the rest) and its matcher (`Read` before a tool runs, the recorded tools after it). The
-/// file as it was is in the backup folder, and the manifest names the repository and the file, its
-/// kind, its copy with the copy's hash, and the hash of what was written. The user's backup folder
-/// holds the same manifest, byte for byte, in a run folder of the same name.
+/// 1 for the rest) and its matcher (reads and shells before a tool runs, the recorded tools after
+/// it). The file as it was is in the backup folder, and the manifest names the repository and the
+/// file, its kind, its copy with the copy's hash, and the hash of what was written. The user's
+/// backup folder holds the same manifest, byte for byte, in a run folder of the same name.
 #[test]
 fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
     let repo = tempfile::tempdir()?;
@@ -113,7 +113,7 @@ fn init_merges_the_hooks_and_keeps_a_backup() -> TestResult {
         let expected_timeout = if event == "SessionStart" { 2 } else { 1 };
         assert_eq!(timeout_s, expected_timeout, "{event}");
         let expected_matcher = match event {
-            "PreToolUse" => Some("Read"),
+            "PreToolUse" => Some("Read|Bash|PowerShell"),
             "PostToolUse" | "PostToolUseFailure" => Some(tools),
             _ => None,
         };

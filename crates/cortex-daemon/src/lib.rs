@@ -43,6 +43,7 @@ mod positions;
 mod recapped;
 mod recent_errors;
 mod retrieval;
+mod runs;
 mod server;
 pub mod settings;
 mod signatures;
@@ -289,6 +290,7 @@ fn index_and_serve(
             commands: failure_commands,
             is_runtime_grounding: config.hints.is_runtime_grounding,
             is_narrow_tests: config.hints.is_narrow_tests,
+            is_redundant_commands: config.hints.is_redundant_commands,
         },
         is_keep_list: config.compaction.is_keep_list,
     })));

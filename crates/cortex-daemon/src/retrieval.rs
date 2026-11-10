@@ -1,8 +1,9 @@
 //! The daemon's answers that are text: the work order a prompt gets, the primer a session's start
 //! gets, or the recap when its context was compacted, the warnings an edit gets, the hint a read
-//! gets, strict mode's reason at a stop, the keep-list a compaction's summary gets before it runs,
-//! the map a failed check gets beside its output, the coordination notices a prompt, an edit or a
-//! read gets ahead of the rest, and what the engine finds for a question asked of it directly.
+//! gets, the note a check about to run again gets, strict mode's reason at a stop, the keep-list a
+//! compaction's summary gets before it runs, the map a failed check gets beside its output, the
+//! coordination notices a prompt, an edit or a read gets ahead of the rest, and what the engine
+//! finds for a question asked of it directly.
 //! Each is worked out with a reader of the store and the graph as it stands, never waiting for the
 //! writer; what a prompt's retrieval gave or weighed, the primer or recap given and the warnings
 //! given are returned for the writer to record after the event they answer.
@@ -21,6 +22,7 @@ mod hints;
 mod keep;
 mod narrow;
 mod recap;
+mod redundant;
 mod stop;
 mod warnings;
 mod why;
@@ -139,6 +141,9 @@ pub(crate) struct FailureSettings {
     pub(crate) is_runtime_grounding: bool,
     /// `hints.narrow_tests`: whether a whole-suite run gets the narrow tests of the task's edits.
     pub(crate) is_narrow_tests: bool,
+    /// `hints.redundant_commands`: whether a check about to run again with no source change since
+    /// its earlier run in the session is told what that run gave.
+    pub(crate) is_redundant_commands: bool,
 }
 
 /// Where a service's settings come from.

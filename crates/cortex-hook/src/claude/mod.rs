@@ -17,6 +17,10 @@ use tool::ClaudeTools;
 /// without spawning a hook.
 const TOOL_RESULTS: &str = "Read|Grep|Glob|Edit|Write|MultiEdit|Bash|PowerShell";
 
+/// The tools Cortex hears of before they run: a read, for its hint, and a shell command, for what
+/// the same command gave when it ran earlier in the session. Every shell command starts the hook.
+const BEFORE_TOOLS: &str = "Read|Bash|PowerShell";
+
 /// The versions of Claude Code Cortex knows: the oldest is 2.1.295, the first to read `onFailure`,
 /// which Cortex's hooks set so that a hook that fails never holds up the agent; the newest tested
 /// is 2.1.318, whose payloads the fixtures hold beside those of 2.1.312 and 2.1.316.
@@ -62,7 +66,7 @@ const HOOKS: &[HookEntry] = &[
     },
     HookEntry {
         event_name: "PreToolUse",
-        matcher: Some("Read"),
+        matcher: Some(BEFORE_TOOLS),
         hook: HookKind::PreTool,
         hard_timeout: Duration::from_millis(300),
         gives_context: true,
@@ -206,10 +210,10 @@ fn compaction_output(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Cortex gives Claude Code text at a session's start, at a prompt, before a read (its hint),
-    /// after a tool succeeded (an edit's warnings), after a tool failed (a failed check's map),
-    /// before a compaction (its keep-list) and at a stop (strict mode's reason), and at no other
-    /// hook.
+    /// Cortex gives Claude Code text at a session's start, at a prompt, before a read (its hint) or
+    /// a shell command (what the same command gave earlier), after a tool succeeded (an edit's
+    /// warnings), after a tool failed (a failed check's map), before a compaction (its keep-list)
+    /// and at a stop (strict mode's reason), and at no other hook.
     #[test]
     fn a_session_start_a_prompt_a_read_a_tool_s_result_a_compaction_and_a_stop_give_context() {
         let giving: Vec<&str> = HOOKS
