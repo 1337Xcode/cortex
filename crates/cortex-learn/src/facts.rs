@@ -1,10 +1,16 @@
 //! The life of a fact. A fact asserted on the same anchors as a current one, in words alike enough,
 //! is that fact said again, not a new one: a candidate turns active when the user says it, or an
 //! agent says it in a second task; a suspect one turns active again when the user or an agent says
-//! it against the code as it is now, its anchors stamped with today's hashes. Otherwise the fact is
-//! added, active when the user wrote it and a candidate when an agent or an import did. A fact about
-//! the whole repository is anchored to its root alone, and the repository holds at most
-//! [`MAX_GLOBAL_FACTS`] of them that are not retired.
+//! it against the code as it is now, its anchors stamped with today's hashes. For an agent or an
+//! import, words alike are not enough when one text holds a word the other lacks that turns a rule
+//! into another (a negation, a number): that is a different rule. The user's own words are the
+//! rule: said in other words than a fact alike holds, negated or renumbered included, they correct
+//! it (a new fact supersedes it, kept as history). Otherwise the fact
+//! is added, active when the user wrote it and a candidate when an agent or an import did. An
+//! agent's or an import's assertion of a fact retired here is that fact, left retired: only the user
+//! brings a retired rule back. A fact about the whole repository is anchored to its root alone, and
+//! the repository holds at most [`MAX_GLOBAL_FACTS`] of them (the user's count only those that are
+//! not candidates, so agents' and imports' candidates never crowd the user out).
 //!
 //! [`review_facts`] keeps statuses true to the code: a candidate or active fact with an anchor whose
 //! code changed, or is gone, turns suspect; a fact suspect for 14 days retires. The user's own word
@@ -22,8 +28,15 @@ pub const MERGES_AT: f64 = 0.8;
 
 /// Most facts about the whole repository it holds that are not retired: a few rules every task
 /// should know, which every session's start carries. A new one past this is refused until one is
-/// retired.
+/// retired; a new one of the user's counts only the facts that are not candidates.
 pub const MAX_GLOBAL_FACTS: usize = 10;
+
+/// Words that turn a rule into another when one of two texts holds them and the other does not:
+/// negations (`don't` and `can't` leave a `t` of their own) and words that make an exception. A
+/// word holding a digit (a number, a version) does the same.
+const MEANING_WORDS: [&str; 11] = [
+    "not", "no", "never", "none", "nor", "neither", "cannot", "without", "avoid", "except", "t",
+];
 
 /// How long a fact stays suspect before it retires on its own: 14 days, in milliseconds. Long
 /// enough for the user to look at what changed and confirm the rule or retire it.
@@ -125,28 +138,42 @@ pub fn assert_fact(
     if is_global && nodes.len() > 1 {
         return Err(FactError::GlobalWithOthers);
     }
-    let current = said_before(transaction.queries(), assertion.text, &nodes, false)?;
-    if current.is_none() && assertion.source == FactSource::Import {
-        let retired = said_before(transaction.queries(), assertion.text, &nodes, true)?;
+    let is_users = assertion.source == FactSource::User;
+    let current = said_before(
+        transaction.queries(),
+        assertion.text,
+        &nodes,
+        (false, !is_users),
+    )?;
+    if current.is_none() && !is_users {
+        let retired = said_before(transaction.queries(), assertion.text, &nodes, (true, true))?;
         if let Some(retired) = retired.filter(|row| row.record.status == FactStatus::Retired) {
             return Ok(Asserted::Merged(retired.id));
         }
     }
+    let new_fact = FactRecord {
+        text: assertion.text.to_owned(),
+        kind: assertion.kind,
+        source: assertion.source,
+        status: assertion.source.first_status(),
+        created_at_ms: now_ms,
+        task: assertion.task,
+        anchors,
+    };
     let Some(said) = current else {
-        if is_global && global_facts(transaction.queries(), &listed)? >= MAX_GLOBAL_FACTS {
+        if is_global && global_facts(transaction.queries(), &listed, !is_users)? >= MAX_GLOBAL_FACTS
+        {
             return Err(FactError::TooManyGlobal);
         }
-        let id = transaction.add_fact(&FactRecord {
-            text: assertion.text.to_owned(),
-            kind: assertion.kind,
-            source: assertion.source,
-            status: assertion.source.first_status(),
-            created_at_ms: now_ms,
-            task: assertion.task,
-            anchors,
-        })?;
-        return Ok(Asserted::Added(id));
+        return Ok(Asserted::Added(transaction.add_fact(&new_fact)?));
     };
+    // The user's own words are the rule: said in other words, they correct the fact.
+    if is_users && words_of(&said.record.text) != words_of(assertion.text) {
+        let id = transaction.add_fact(&new_fact)?;
+        transaction.supersede_fact(said.id, id)?;
+        return Ok(Asserted::Added(id));
+    }
+    let anchors = new_fact.anchors;
     if !confirms(&said, assertion) {
         if let Some(task) = assertion.task {
             transaction.note_fact_task(said.id, task)?;
@@ -181,13 +208,13 @@ pub fn review_facts(transaction: &mut WriteTx<'_>, now_ms: i64) -> Result<Review
 }
 
 /// The current fact, retired too when `has_retired`, anchored to exactly `nodes`, whose words are
-/// at least [`MERGES_AT`] alike to `text`'s: the most alike, the oldest of equals; none when no fact
-/// is.
+/// at least [`MERGES_AT`] alike to `text`'s, and, when `is_strict`, differ from them in no word that
+/// changes a rule's meaning: the most alike, the oldest of equals; none when no fact is.
 fn said_before(
     queries: Queries<'_>,
     text: &str,
     nodes: &BTreeSet<NodeId>,
-    has_retired: bool,
+    (has_retired, is_strict): (bool, bool),
 ) -> Result<Option<FactRow>, StoreError> {
     let words = words_of(text);
     let listed: Vec<NodeId> = nodes.iter().copied().collect();
@@ -205,8 +232,12 @@ fn said_before(
         if (row.record.status == FactStatus::Retired && !has_retired) || anchored != *nodes {
             continue;
         }
-        let likeness = jaccard(&words, &words_of(&row.record.text));
-        if likeness >= MERGES_AT && best.as_ref().is_none_or(|(top, _)| likeness > *top) {
+        let said = words_of(&row.record.text);
+        let likeness = jaccard(&words, &said);
+        if likeness >= MERGES_AT
+            && !(is_strict && changes_meaning(&words, &said))
+            && best.as_ref().is_none_or(|(top, _)| likeness > *top)
+        {
             best = Some((likeness, row));
         }
     }
@@ -246,18 +277,35 @@ fn confirms_candidate(said: &FactRow, assertion: &Assertion<'_>) -> bool {
     }
 }
 
-/// How many current facts not retired are anchored to `root`, the repository's root node alone.
-fn global_facts(queries: Queries<'_>, root: &[NodeId]) -> Result<usize, StoreError> {
+/// How many current facts not retired, and not candidates unless `counts_candidates`, are
+/// anchored to `root`, the repository's root node alone.
+fn global_facts(
+    queries: Queries<'_>,
+    root: &[NodeId],
+    counts_candidates: bool,
+) -> Result<usize, StoreError> {
     let mut count = 0;
     for id in queries.facts_anchored_to(root)? {
-        if queries
+        let counts = queries
             .fact(id)?
-            .is_some_and(|row| row.record.status != FactStatus::Retired)
-        {
+            .is_some_and(|row| match row.record.status {
+                FactStatus::Retired => false,
+                FactStatus::Candidate => counts_candidates,
+                FactStatus::Active | FactStatus::Suspect => true,
+            });
+        if counts {
             count += 1;
         }
     }
     Ok(count)
+}
+
+/// Whether one of `one` and `other` holds a word the other lacks that turns a rule into another:
+/// one of [`MEANING_WORDS`], or a word holding a digit.
+fn changes_meaning(one: &BTreeSet<String>, other: &BTreeSet<String>) -> bool {
+    one.symmetric_difference(other).any(|word| {
+        MEANING_WORDS.contains(&word.as_str()) || word.chars().any(|c| c.is_ascii_digit())
+    })
 }
 
 /// The anchors on `nodes`, each once in node order, with the hashes they hold now.

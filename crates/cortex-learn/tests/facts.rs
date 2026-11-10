@@ -134,8 +134,9 @@ fn an_import_waits_for_the_user_and_the_user_confirms_at_once() -> TestResult {
     Ok(())
 }
 
-/// A fact retired here and imported again stays retired: the import is that fact, merged. Said
-/// again by the user, the same words make a new fact, as any rule said after its retirement does.
+/// A fact retired here and imported again stays retired: the import is that fact, merged; so is an
+/// agent saying it in task 1 and in task 2, which would confirm a candidate. Said again by the user,
+/// the same words make a new fact, as any rule said after its retirement does.
 #[test]
 fn an_import_of_a_fact_retired_here_leaves_it_retired() -> TestResult {
     let mut store = Store::new()?;
@@ -150,10 +151,16 @@ fn an_import_of_a_fact_retired_here_leaves_it_retired() -> TestResult {
     let mut transaction = store.writer.transaction()?;
     transaction.set_fact_status(fact, FactStatus::Retired, 20)?;
     transaction.commit()?;
-    assert_eq!(
-        say(&mut store, (rule, FactSource::Import, None), &nodes, 30)?,
-        Asserted::Merged(fact)
-    );
+    for (source, task, at_ms) in [
+        (FactSource::Import, None, 30),
+        (FactSource::Agent, Some(1), 31),
+        (FactSource::Agent, Some(2), 32),
+    ] {
+        assert_eq!(
+            say(&mut store, (rule, source, task), &nodes, at_ms)?,
+            Asserted::Merged(fact)
+        );
+    }
     assert_eq!(status(&store, fact)?, (FactStatus::Retired, 20));
     let again = say(&mut store, (rule, FactSource::User, None), &nodes, 40)?;
     assert!(
@@ -163,8 +170,8 @@ fn an_import_of_a_fact_retired_here_leaves_it_retired() -> TestResult {
     Ok(())
 }
 
-/// The user's facts on `tax.py`. "Tax rounds half up" (a). "Tax rounds half up always": 4 words
-/// shared of 5 held, 0.8 exactly: a said again. "Tax rounds half": 3 of 4 with a, 0.75: a new fact
+/// The user's facts on `tax.py`. "Tax rounds half up" (a). An agent's "Tax rounds half up always"
+/// in task 1: 4 words shared of 5 held, 0.8 exactly: a said again. "Tax rounds half": 3 of 4 with a, 0.75: a new fact
 /// (b). "Tax rounds half up" on `tax.py` and `money.py`: other anchors, a new fact (c), and the
 /// same said on the two files listed the other way round is c again. With a retired, "Tax rounds
 /// half up" is a new fact (d): b holds 3 of its 4 words.
@@ -175,7 +182,12 @@ fn facts_on_other_anchors_or_in_other_words_stay_apart() -> TestResult {
     let (tax, money) = (nodes[0], nodes[1]);
     let user = |text| (text, FactSource::User, None);
     let first = added(say(&mut store, user("Tax rounds half up"), &[tax], 1)?)?;
-    let alike = say(&mut store, user("Tax rounds half up always"), &[tax], 2)?;
+    let alike = say(
+        &mut store,
+        ("Tax rounds half up always", FactSource::Agent, Some(1)),
+        &[tax],
+        2,
+    )?;
     assert_eq!(alike, Asserted::Merged(first));
     added(say(&mut store, user("Tax rounds half"), &[tax], 3)?)?;
     let both = added(say(
@@ -446,4 +458,94 @@ fn word<T>(
     let done = change(&mut transaction)?;
     transaction.commit()?;
     Ok(done)
+}
+
+/// The text and the fact correcting fact `id`, if any.
+fn text_of(store: &Store, id: FactId) -> TestResult<(String, Option<FactId>)> {
+    let row = store.writer.queries().fact(id)?.ok_or("no such fact")?;
+    Ok((row.record.text, row.superseded_by))
+}
+
+/// A note that negates or renumbers a rule. Worked by hand on `writer.py` and `client.py`:
+/// - An agent's "Always call flush before close in the writer module" in task 1 (a). Another
+///   agent's "Never call flush before close in the writer module" in task 2: 8 words shared of 10
+///   held, 0.8, but "always" against "never": another rule (b), and a stays a candidate (said in a
+///   second task, it would have turned active).
+/// - An agent's "Always retry a request after a timeout in the client" in task 3 (c). The user's
+///   "Never retry ...": 8 of 10, 0.8; the user's words correct c: a new active fact (u) supersedes
+///   it.
+/// - The user's "The client gives up on a request after 30 seconds of silence" (r1); then "... after
+///   60 seconds of silence": 11 of 13, 0.85; the user's words correct r1 (r2 supersedes it). An
+///   agent's "... after 90 seconds of silence" in task 4: 11 of 13 with r2, but 90 against 60:
+///   another rule, a candidate (s), and r2 stays as the user said it.
+#[test]
+fn a_note_that_negates_or_renumbers_a_rule_is_another_rule_or_corrects_it() -> TestResult {
+    let mut store = Store::new()?;
+    let nodes = store.index_text(&[("src/writer.py", "flush"), ("src/client.py", "retry")])?;
+    let (writer, client) = (&nodes[..1], &nodes[1..]);
+    let agent = |text, task| (text, FactSource::Agent, Some(task));
+    let user = |text| (text, FactSource::User, None);
+    let always = "Always call flush before close in the writer module";
+    let never = "Never call flush before close in the writer module";
+    let a = added(say(&mut store, agent(always, 1), writer, 10)?)?;
+    let b = added(say(&mut store, agent(never, 2), writer, 20)?)?;
+    assert_ne!(a, b);
+    assert_eq!(status(&store, a)?, (FactStatus::Candidate, 10));
+    assert_eq!(status(&store, b)?, (FactStatus::Candidate, 20));
+
+    let retry = "Always retry a request after a timeout in the client";
+    let no_retry = "Never retry a request after a timeout in the client";
+    let c = added(say(&mut store, agent(retry, 3), client, 30)?)?;
+    let u = added(say(&mut store, user(no_retry), client, 40)?)?;
+    assert_eq!(text_of(&store, c)?, (retry.to_owned(), Some(u)));
+    assert_eq!(text_of(&store, u)?, (no_retry.to_owned(), None));
+    assert_eq!(status(&store, u)?, (FactStatus::Active, 40));
+
+    let thirty = "The client gives up on a request after 30 seconds of silence";
+    let sixty = "The client gives up on a request after 60 seconds of silence";
+    let ninety = "The client gives up on a request after 90 seconds of silence";
+    let r1 = added(say(&mut store, user(thirty), client, 50)?)?;
+    let r2 = added(say(&mut store, user(sixty), client, 60)?)?;
+    assert_eq!(text_of(&store, r1)?, (thirty.to_owned(), Some(r2)));
+    assert_eq!(status(&store, r2)?, (FactStatus::Active, 60));
+    let s = added(say(&mut store, agent(ninety, 4), client, 70)?)?;
+    assert_eq!(status(&store, s)?, (FactStatus::Candidate, 70));
+    assert_eq!(text_of(&store, r2)?, (sixty.to_owned(), None));
+    Ok(())
+}
+
+/// Candidates leave the user's slots for rules about the whole repository free. Agents note ten
+/// such rules in task 1: candidates, each added; an eleventh of an agent's is refused (ten not
+/// retired). The user's own rule is added: no fact that is not a candidate holds a slot yet.
+#[test]
+fn candidates_leave_the_user_s_global_slots_free() -> TestResult {
+    let mut store = Store::new()?;
+    store.index_text(&[("src/money.py", "cents")])?;
+    let root = store.folder_node("")?;
+    for at in 0..10 {
+        let rule = format!("Every module {at} has tests.");
+        added(say(
+            &mut store,
+            (rule.as_str(), FactSource::Agent, Some(1)),
+            &[root],
+            10 + at,
+        )?)?;
+    }
+    assert!(matches!(
+        say(
+            &mut store,
+            ("Errors carry the operation.", FactSource::Agent, Some(1)),
+            &[root],
+            30
+        ),
+        Err(FactError::TooManyGlobal)
+    ));
+    let mine = added(say(
+        &mut store,
+        ("Logs never hold code.", FactSource::User, None),
+        &[root],
+        31,
+    )?)?;
+    assert_eq!(status(&store, mine)?, (FactStatus::Active, 31));
+    Ok(())
 }
