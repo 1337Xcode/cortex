@@ -162,6 +162,20 @@ All notable changes to this project are documented in this file. The format is b
   orders as before, and now an edit's warnings, a read's hint, the recap after a compaction and
   strict mode's reason. A held-out task is given none of them, so the comparison between held-out
   tasks and the rest holds out everything Cortex would say to a task.
+- `cortex config` prints every configuration key with its value in effect and where it came
+  from (`default`, `profile`, `user`, `repository`), as text or with `--json`. `cortex config
+  set <key> <value> [--user]` writes one key into the repository's `.cortex/config.toml` or the
+  user's `~/.cortex/config.toml`: an unknown key is refused naming the nearest known one, a
+  value is checked as loading checks it, only the key's own line changes (comments and every
+  other line kept), and what the file held before Cortex first changed it is kept as
+  `config.toml.cortex-backup`. `cortex init` adds its holdout answer through the same
+  editor, so an answer now goes under a `[holdout]` table the file already has.
+- The `profile` key chooses the feature switches' defaults: `standard` (the defaults), `lean`
+  (every hint and the keep-list off) or `everything` (each on); any key a file sets overrides
+  it.
+- `cortex features` lists what Cortex gives agents, whether the settings let each reach a
+  task, its key and the comparison that decides it, with no effect shown until one is measured;
+  `cortex features on|off <name>` sets its key.
 - `cargo xtask verify` runs formatting, the crate dependency-direction rules, the shared lint
   settings in every crate, the invariant tags, clippy, the tests and the dependency licence and
   advisory checks; `--full` also runs the benchmarks against their budgets.

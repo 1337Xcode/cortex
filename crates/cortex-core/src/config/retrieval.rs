@@ -5,6 +5,8 @@
 //! outside what retrieval can use is refused, so a work order's caps can never be configured past
 //! the hard caps that keep it under every agent's limit.
 
+use super::{ConfigKey, FACTOR, SHARE, count, factor, share};
+
 /// The default for `retrieval.max_tokens`: the most estimated tokens a work order holds.
 pub const DEFAULT_MAX_TOKENS: u32 = 900;
 
@@ -121,61 +123,112 @@ impl Default for RetrievalConfig {
     }
 }
 
-impl RetrievalConfig {
-    /// Sets the retrieval key `key` (written with dots, `retrieval.` included) to `value`:
-    /// `Some(Ok(()))` when set, `Some(Err(expected))` with what the key accepts when the value is
-    /// unusable, `None` when the key is not a retrieval key Cortex reads.
-    pub(super) fn apply(
-        &mut self,
-        key: &str,
-        value: &toml::Value,
-    ) -> Option<Result<(), &'static str>> {
-        let bounded = |low: u32, high: u32, expected: &'static str| {
-            super::whole_number(value)
-                .and_then(|number| u32::try_from(number).ok())
-                .filter(|number| (low..=high).contains(number))
-                .ok_or(expected)
-        };
-        let weight = || super::share(value).ok_or("a number from 0 to 1");
-        let set = match key {
-            "retrieval.max_tokens" => {
-                bounded(1, MAX_WORK_ORDER_TOKENS, "a whole number from 1 to 1200")
-                    .map(|tokens| self.max_tokens = tokens)
-            }
-            "retrieval.max_files" => bounded(1, MAX_FILES_LIMIT, "a whole number from 1 to 20")
-                .map(|files| self.max_files = files),
-            "retrieval.max_code_spans" => {
-                bounded(0, MAX_CODE_SPANS_LIMIT, "a whole number from 0 to 5")
-                    .map(|spans| self.max_code_spans = spans)
-            }
-            "retrieval.span_max_lines" => {
-                bounded(1, SPAN_MAX_LINES_LIMIT, "a whole number from 1 to 200")
-                    .map(|lines| self.span_max_lines = lines)
-            }
-            "retrieval.teleport" => super::factor(value)
-                .ok_or("a number above 0 and at most 1")
-                .map(|teleport| self.teleport = teleport),
-            "retrieval.min_confidence" => super::share(value)
+/// The retrieval keys, each read and checked here.
+pub(super) const KEYS: &[ConfigKey] = &[
+    ConfigKey::new(
+        "retrieval.max_tokens",
+        "The most estimated tokens a work order holds.",
+        |config, value| {
+            config.retrieval.max_tokens =
+                count(value, 1, MAX_WORK_ORDER_TOKENS).ok_or("a whole number from 1 to 1200")?;
+            Ok(())
+        },
+        |config| config.retrieval.max_tokens.into(),
+    ),
+    ConfigKey::new(
+        "retrieval.max_files",
+        "How many files a work order lists.",
+        |config, value| {
+            config.retrieval.max_files =
+                count(value, 1, MAX_FILES_LIMIT).ok_or("a whole number from 1 to 20")?;
+            Ok(())
+        },
+        |config| config.retrieval.max_files.into(),
+    ),
+    ConfigKey::new(
+        "retrieval.max_code_spans",
+        "How many spans a work order shows as code; the rest are listed by path and lines.",
+        |config, value| {
+            config.retrieval.max_code_spans =
+                count(value, 0, MAX_CODE_SPANS_LIMIT).ok_or("a whole number from 0 to 5")?;
+            Ok(())
+        },
+        |config| config.retrieval.max_code_spans.into(),
+    ),
+    ConfigKey::new(
+        "retrieval.span_max_lines",
+        "The most lines one span of a work order covers.",
+        |config, value| {
+            config.retrieval.span_max_lines =
+                count(value, 1, SPAN_MAX_LINES_LIMIT).ok_or("a whole number from 1 to 200")?;
+            Ok(())
+        },
+        |config| config.retrieval.span_max_lines.into(),
+    ),
+    ConfigKey::new(
+        "retrieval.teleport",
+        "The probability that spreading activation returns to its seeds at each step.",
+        |config, value| {
+            config.retrieval.teleport = factor(value).ok_or(FACTOR)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.retrieval.teleport),
+    ),
+    ConfigKey::new(
+        "retrieval.min_confidence",
+        "The chance a kept confidence model must give a work order before it is handed over.",
+        |config, value| {
+            config.retrieval.min_confidence = share(value)
                 .filter(|least| *least >= MIN_CONFIDENCE_FLOOR)
-                .ok_or("a number from 0.5 to 1")
-                .map(|least| self.min_confidence = least),
-            "retrieval.type_weights.structural" => {
-                weight().map(|weight| self.type_weights.structural = weight)
-            }
-            "retrieval.type_weights.cochange" => {
-                weight().map(|weight| self.type_weights.cochange = weight)
-            }
-            "retrieval.type_weights.coaccess" => {
-                weight().map(|weight| self.type_weights.coaccess = weight)
-            }
-            "retrieval.type_weights.about" => {
-                weight().map(|weight| self.type_weights.about = weight)
-            }
-            "retrieval.type_weights.containment" => {
-                weight().map(|weight| self.type_weights.containment = weight)
-            }
-            _ => return None,
-        };
-        Some(set)
-    }
-}
+                .ok_or("a number from 0.5 to 1")?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.retrieval.min_confidence),
+    ),
+    ConfigKey::new(
+        "retrieval.type_weights.structural",
+        "How much imports, calls, references and tests count while activation spreads.",
+        |config, value| {
+            config.retrieval.type_weights.structural = share(value).ok_or(SHARE)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.retrieval.type_weights.structural),
+    ),
+    ConfigKey::new(
+        "retrieval.type_weights.cochange",
+        "How much files git shows changing together count while activation spreads.",
+        |config, value| {
+            config.retrieval.type_weights.cochange = share(value).ok_or(SHARE)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.retrieval.type_weights.cochange),
+    ),
+    ConfigKey::new(
+        "retrieval.type_weights.coaccess",
+        "How much code agents used together in work that held up counts while activation spreads.",
+        |config, value| {
+            config.retrieval.type_weights.coaccess = share(value).ok_or(SHARE)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.retrieval.type_weights.coaccess),
+    ),
+    ConfigKey::new(
+        "retrieval.type_weights.about",
+        "How much a project fact's link to the code it is about counts while activation spreads.",
+        |config, value| {
+            config.retrieval.type_weights.about = share(value).ok_or(SHARE)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.retrieval.type_weights.about),
+    ),
+    ConfigKey::new(
+        "retrieval.type_weights.containment",
+        "How much a folder's link to its files, and a file's to its symbols, counts while \
+         activation spreads.",
+        |config, value| {
+            config.retrieval.type_weights.containment = share(value).ok_or(SHARE)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.retrieval.type_weights.containment),
+    ),
+];

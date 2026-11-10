@@ -36,6 +36,7 @@ the files that change together. `cortex daemon` runs it.
 | `Upkeep`, `UpkeepSettings`, `Swept`, `Ended`, `LOG_LIMIT_BYTES`, `PACE_WAIT` | Upkeep's runner as the daemon runs it on its writer, public so that its benchmark runs the same code: a run from where the last stopped, until every job is done, its deadline passes, other work waits or the write-ahead log holds more than its limit, with what it removed and why it ended; after a run that paced, the daemon runs it again `PACE_WAIT` later |
 | `is_running` | Whether a daemon holds a repository: its lock on `~/.cortex/run/<id>.lock` is taken (tested by taking it for a moment when free) |
 | `settings::load` | The configuration in effect for a repository: the user's `~/.cortex/config.toml`, then the repository's `.cortex/config.toml`, each refused over 1 MiB |
+| `settings::read_files`, `settings::load_files`, `settings::Place` | The configuration files that exist for a repository, read, each with its place (`user` or `repository`) and path, and the settings they give, a setting's source naming its file |
 
 ## Tests
 

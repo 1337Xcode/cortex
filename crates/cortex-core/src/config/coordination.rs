@@ -5,6 +5,8 @@
 //! Each key is read and checked here, as the rest of the configuration reads its own; a value the
 //! rules cannot use is refused.
 
+use super::{ConfigKey, SHARE, count, share};
+
 /// The default for `coordination.read_minutes`: how long a read holds.
 pub const DEFAULT_READ_MINUTES: u32 = 10;
 
@@ -107,51 +109,116 @@ impl Default for CoordinationConfig {
     }
 }
 
-impl CoordinationConfig {
-    /// Sets the coordination key `key` (written with dots, `coordination.` included) to `value`:
-    /// `Some(Ok(()))` when set, `Some(Err(expected))` with what the key accepts when the value is
-    /// unusable, `None` when the key is not a coordination key Cortex reads.
-    pub(super) fn apply(
-        &mut self,
-        key: &str,
-        value: &toml::Value,
-    ) -> Option<Result<(), &'static str>> {
-        let count = |low: u32, high: u32, expected: &'static str| {
-            super::whole_number(value)
-                .and_then(|number| u32::try_from(number).ok())
-                .filter(|number| (low..=high).contains(number))
-                .ok_or(expected)
-        };
-        let minutes = || count(1, MAX_MINUTES, "a whole number of minutes from 1 to 1440");
-        let share = || super::share(value).ok_or("a number from 0 to 1");
-        let set = match key {
-            "coordination.read_minutes" => minutes().map(|held| self.read_minutes = held),
-            "coordination.edit_minutes" => minutes().map(|held| self.edit_minutes = held),
-            "coordination.edit_after_task_minutes" => {
-                minutes().map(|held| self.edit_after_task_minutes = held)
-            }
-            "coordination.claim_minutes" => minutes().map(|held| self.claim_minutes = held),
-            "coordination.live_minutes" => minutes().map(|live| self.live_minutes = live),
-            "coordination.same_file_minutes" => {
-                minutes().map(|close| self.same_file_minutes = close)
-            }
-            "coordination.handoff_idle_minutes" => {
-                minutes().map(|quiet| self.handoff_idle_minutes = quiet)
-            }
-            "coordination.structural_min_weight" => {
-                share().map(|least| self.structural_min_weight = least)
-            }
-            "coordination.cochange_min_confidence" => {
-                share().map(|least| self.cochange_min_confidence = least)
-            }
-            "coordination.max_notices" => {
-                count(0, MAX_NOTICES_LIMIT, "a whole number from 0 to 10")
-                    .map(|most| self.max_notices = most)
-            }
-            "coordination.max_tokens" => count(1, MAX_TOKENS_LIMIT, "a whole number from 1 to 400")
-                .map(|most| self.max_tokens = most),
-            _ => return None,
-        };
-        Some(set)
-    }
+/// The coordination keys, each read and checked here.
+pub(super) const KEYS: &[ConfigKey] = &[
+    ConfigKey::new(
+        "coordination.read_minutes",
+        "How long a session's read of a file holds, in minutes.",
+        |config, value| {
+            config.coordination.read_minutes = minutes(value)?;
+            Ok(())
+        },
+        |config| config.coordination.read_minutes.into(),
+    ),
+    ConfigKey::new(
+        "coordination.edit_minutes",
+        "How long a session's edit of a file holds after its last edit, in minutes.",
+        |config, value| {
+            config.coordination.edit_minutes = minutes(value)?;
+            Ok(())
+        },
+        |config| config.coordination.edit_minutes.into(),
+    ),
+    ConfigKey::new(
+        "coordination.edit_after_task_minutes",
+        "How long an edit holds after the task that made it ended, in minutes.",
+        |config, value| {
+            config.coordination.edit_after_task_minutes = minutes(value)?;
+            Ok(())
+        },
+        |config| config.coordination.edit_after_task_minutes.into(),
+    ),
+    ConfigKey::new(
+        "coordination.claim_minutes",
+        "How long a claim on files holds, in minutes.",
+        |config, value| {
+            config.coordination.claim_minutes = minutes(value)?;
+            Ok(())
+        },
+        |config| config.coordination.claim_minutes.into(),
+    ),
+    ConfigKey::new(
+        "coordination.live_minutes",
+        "How recent a session's last event must be for it to be live, in minutes.",
+        |config, value| {
+            config.coordination.live_minutes = minutes(value)?;
+            Ok(())
+        },
+        |config| config.coordination.live_minutes.into(),
+    ),
+    ConfigKey::new(
+        "coordination.same_file_minutes",
+        "How close two sessions' edits of one file must be for both to be told, in \
+         minutes.",
+        |config, value| {
+            config.coordination.same_file_minutes = minutes(value)?;
+            Ok(())
+        },
+        |config| config.coordination.same_file_minutes.into(),
+    ),
+    ConfigKey::new(
+        "coordination.handoff_idle_minutes",
+        "How long a session that never ended must be quiet before its handoff is \
+         given, in minutes.",
+        |config, value| {
+            config.coordination.handoff_idle_minutes = minutes(value)?;
+            Ok(())
+        },
+        |config| config.coordination.handoff_idle_minutes.into(),
+    ),
+    ConfigKey::new(
+        "coordination.structural_min_weight",
+        "The least confidence of a code link between two files for an edit of one to concern a \
+         session holding the other.",
+        |config, value| {
+            config.coordination.structural_min_weight = share(value).ok_or(SHARE)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.coordination.structural_min_weight),
+    ),
+    ConfigKey::new(
+        "coordination.cochange_min_confidence",
+        "The least share of an edited file's commits that also changed a file another session \
+         holds.",
+        |config, value| {
+            config.coordination.cochange_min_confidence = share(value).ok_or(SHARE)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.coordination.cochange_min_confidence),
+    ),
+    ConfigKey::new(
+        "coordination.max_notices",
+        "The most coordination lines one answer gives; 0 gives none.",
+        |config, value| {
+            config.coordination.max_notices =
+                count(value, 0, MAX_NOTICES_LIMIT).ok_or("a whole number from 0 to 10")?;
+            Ok(())
+        },
+        |config| config.coordination.max_notices.into(),
+    ),
+    ConfigKey::new(
+        "coordination.max_tokens",
+        "The most tokens of coordination text one answer gives.",
+        |config, value| {
+            config.coordination.max_tokens =
+                count(value, 1, MAX_TOKENS_LIMIT).ok_or("a whole number from 1 to 400")?;
+            Ok(())
+        },
+        |config| config.coordination.max_tokens.into(),
+    ),
+];
+
+/// The value as a hold in minutes, from 1 to [`MAX_MINUTES`].
+fn minutes(value: &toml::Value) -> Result<u32, &'static str> {
+    count(value, 1, MAX_MINUTES).ok_or("a whole number of minutes from 1 to 1440")
 }

@@ -6,19 +6,40 @@
 //! know produces a warning and is otherwise ignored. A known key with a value of the wrong type or
 //! out of range is an error that names the file and the key: Cortex never guesses what a broken
 //! setting meant.
+//!
+//! Every key is one entry of the registry ([`config_keys`]), which reads it and shows it; loading
+//! a file looks each key up there. The `profile` key alone stands outside it. A registry entry
+//! reads a value into a field of [`Config`] and shows that field; the profile is no setting
+//! `Config` holds but the choice of the defaults every other key starts from, read before them
+//! and over every layer. A field for it would hold a value the keys after it may contradict, and
+//! entries over a wider type would make every other entry reach through it. So four places name it
+//! instead: [`load`] reads it first, [`LoadedConfig::settings`] lists it, and [`with_setting`]
+//! checks it and offers it as the nearest key.
 
 mod compaction;
 mod coordination;
+mod edit;
+mod effective;
 mod hints;
+mod main_keys;
+mod profile;
+mod registry;
 mod retrieval;
+mod set;
 mod warnings;
+
+use std::collections::BTreeMap;
 
 use thiserror::Error;
 
 pub use self::compaction::CompactionConfig;
 pub use self::coordination::CoordinationConfig;
+pub use self::effective::{Setting, SettingSource};
 pub use self::hints::HintsConfig;
+pub use self::profile::{PROFILE_KEY, Profile};
+pub use self::registry::{ConfigKey, config_key, config_keys};
 pub use self::retrieval::{MAX_WORK_ORDER_TOKENS, RetrievalConfig, TypeWeights};
+pub use self::set::{SetError, setting_value, with_setting};
 pub use self::warnings::WarningsConfig;
 use crate::ScaleMode;
 
@@ -77,6 +98,18 @@ pub const DEFAULT_GIT_MAX_FILES_PER_COMMIT: u64 = 30;
 /// The default for `git.half_life_commits`: a commit this many commits older than the newest
 /// counts half as much toward co-change.
 pub const DEFAULT_GIT_HALF_LIFE_COMMITS: u64 = 500;
+
+/// What a key taking a whole number above 0 accepts, in its refusal.
+const ABOVE_ZERO: &str = "a whole number above 0";
+
+/// What a key taking true or false accepts, in its refusal.
+const SWITCH: &str = "true or false";
+
+/// What a key taking a share accepts, in its refusal.
+const SHARE: &str = "a number from 0 to 1";
+
+/// What a key taking a factor accepts, in its refusal.
+const FACTOR: &str = "a number above 0 and at most 1";
 
 /// The scale mode setting: chosen from the repository's size, or pinned by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,6 +236,11 @@ pub struct LoadedConfig {
     pub config: Config,
     /// One line per unknown key, naming the file and the key.
     pub warnings: Vec<String>,
+    /// The profile whose defaults the keys started from.
+    pub profile: Profile,
+    /// For each key a layer sets, the profile's included, the position in the layers given to
+    /// [`load`] of the last one that sets it.
+    pub set_by: BTreeMap<&'static str, usize>,
 }
 
 /// Why a configuration file cannot be used.
@@ -229,25 +267,57 @@ pub enum ConfigError {
 }
 
 /// The settings that result from `layers`, applied in order so that each overrides the ones
-/// before it: pass the user's file first and the repository's last.
+/// before it: pass the user's file first and the repository's last. The last `profile` any layer
+/// sets is applied first, so that every other key a layer sets overrides it.
 ///
 /// # Errors
 ///
 /// A file that is not valid TOML, or a known key with an unusable value.
 pub fn load(layers: &[ConfigLayer<'_>]) -> Result<LoadedConfig, ConfigError> {
-    let mut config = Config::default();
-    let mut warnings = Vec::new();
-    for layer in layers {
-        let table = parsed(layer)?;
-        let mut entries = Vec::new();
-        flatten("", &table, &mut entries);
-        for (key, value) in entries {
-            if !config.apply(&key, value, layer.origin)? {
-                warnings.push(format!("{}: unknown key `{key}` is ignored", layer.origin));
-            }
+    let tables = layers.iter().map(parsed).collect::<Result<Vec<_>, _>>()?;
+    let mut set_by = BTreeMap::new();
+    let mut profile = Profile::default();
+    for (position, (layer, table)) in layers.iter().zip(&tables).enumerate() {
+        if let Some(value) = table.get(PROFILE_KEY) {
+            profile = Profile::read(value)
+                .map_err(|expected| refusal(layer.origin, PROFILE_KEY, expected))?;
+            set_by.insert(PROFILE_KEY, position);
         }
     }
-    Ok(LoadedConfig { config, warnings })
+    let mut config = profile.defaults()?;
+    let mut warnings = Vec::new();
+    for (position, (layer, table)) in layers.iter().zip(&tables).enumerate() {
+        let mut entries = Vec::new();
+        flatten("", table, &mut entries);
+        for (key, value) in entries {
+            if key == PROFILE_KEY {
+                continue;
+            }
+            let Some(entry) = config_key(&key) else {
+                warnings.push(format!("{}: unknown key `{key}` is ignored", layer.origin));
+                continue;
+            };
+            entry
+                .read(&mut config, value)
+                .map_err(|expected| refusal(layer.origin, &key, expected))?;
+            set_by.insert(entry.name, position);
+        }
+    }
+    Ok(LoadedConfig {
+        config,
+        warnings,
+        profile,
+        set_by,
+    })
+}
+
+/// The error for the value of `key` in the file `origin`, which must be `expected`.
+fn refusal(origin: &str, key: &str, expected: &'static str) -> ConfigError {
+    ConfigError::Value {
+        origin: origin.to_owned(),
+        key: key.to_owned(),
+        expected,
+    }
 }
 
 /// The keys the configuration file `layer` sets, known or not, written with dots, in the order of
@@ -293,106 +363,6 @@ fn flatten<'a>(prefix: &str, table: &'a toml::Table, out: &mut Vec<(String, &'a 
     }
 }
 
-impl Config {
-    /// Sets the key to the value; `Ok(false)` when the key is not one Cortex reads.
-    fn apply(&mut self, key: &str, value: &toml::Value, origin: &str) -> Result<bool, ConfigError> {
-        let refuse = |expected: &'static str| ConfigError::Value {
-            origin: origin.to_owned(),
-            key: key.to_owned(),
-            expected,
-        };
-        match key {
-            "mode" => {
-                self.mode = value
-                    .as_str()
-                    .and_then(mode_setting)
-                    .ok_or_else(|| refuse("one of auto, tiny, small, medium, huge"))?;
-            }
-            "index.max_file_bytes" => {
-                self.max_file_bytes =
-                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
-            }
-            "index.extra_ignores" => {
-                self.extra_ignores =
-                    string_list(value).ok_or_else(|| refuse("a list of strings"))?;
-            }
-            "index.parse_timeout_ms" => {
-                self.parse_timeout_ms =
-                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
-            }
-            "daemon.idle_shutdown_minutes" => {
-                self.idle_shutdown_minutes =
-                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
-            }
-            "store.mmap_bytes" => {
-                self.mmap_bytes = whole_number(value)
-                    .filter(|bytes| *bytes <= MAX_MMAP_BYTES)
-                    .ok_or_else(|| refuse("a whole number from 0 to 2147418112"))?;
-            }
-            "index.crawl_files_per_second" => {
-                self.crawl_files_per_second =
-                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
-            }
-            "privacy.store_prompt_excerpt" => {
-                self.store_prompt_excerpt =
-                    value.as_bool().ok_or_else(|| refuse("true or false"))?;
-            }
-            "holdout.share" => {
-                self.holdout_share = share(value).ok_or_else(|| refuse("a number from 0 to 1"))?;
-            }
-            "learning.eta" => {
-                self.learning_eta =
-                    factor(value).ok_or_else(|| refuse("a number above 0 and at most 1"))?;
-            }
-            "learning.link_decay" => {
-                self.link_decay =
-                    factor(value).ok_or_else(|| refuse("a number above 0 and at most 1"))?;
-            }
-            "learning.interest_decay" => {
-                self.interest_decay =
-                    factor(value).ok_or_else(|| refuse("a number above 0 and at most 1"))?;
-            }
-            "git.max_commits" => {
-                self.git_max_commits =
-                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
-            }
-            "git.max_age_days" => {
-                self.git_max_age_days =
-                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
-            }
-            "git.max_files_per_commit" => {
-                self.git_max_files_per_commit =
-                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
-            }
-            "git.half_life_commits" => {
-                self.git_half_life_commits =
-                    positive_integer(value).ok_or_else(|| refuse("a whole number above 0"))?;
-            }
-            "strict_mode" => {
-                self.is_strict_mode = value.as_bool().ok_or_else(|| refuse("true or false"))?;
-            }
-
-            "tests.extra_patterns" => {
-                self.test_extra_patterns = string_list(value)
-                    .filter(|patterns| patterns.iter().all(|pattern| is_regex(pattern)))
-                    .ok_or_else(|| refuse("a list of regular expressions"))?;
-            }
-            _ => match self
-                .retrieval
-                .apply(key, value)
-                .or_else(|| self.warnings.apply(key, value))
-                .or_else(|| self.coordination.apply(key, value))
-                .or_else(|| self.hints.apply(key, value))
-                .or_else(|| self.compaction.apply(key, value))
-            {
-                Some(set) => set.map_err(refuse)?,
-                None => return Ok(false),
-            },
-        }
-        Ok(true)
-    }
-}
-
 /// The mode setting a configured word names.
 fn mode_setting(word: &str) -> Option<ModeSetting> {
     if word == "auto" {
@@ -412,6 +382,13 @@ fn whole_number(value: &toml::Value) -> Option<u64> {
     value
         .as_integer()
         .and_then(|number| u64::try_from(number).ok())
+}
+
+/// The value as a whole number from `low` to `high`.
+fn count(value: &toml::Value, low: u32, high: u32) -> Option<u32> {
+    whole_number(value)
+        .and_then(|number| u32::try_from(number).ok())
+        .filter(|number| (low..=high).contains(number))
 }
 
 /// The value as a share from 0 to 1, written as a number with or without a fraction.

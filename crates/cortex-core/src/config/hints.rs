@@ -4,6 +4,8 @@
 //! Each key is read and checked here, as the rest of the configuration reads its own; a value the
 //! rules cannot use is refused.
 
+use super::{ConfigKey, SWITCH};
+
 /// The settings of the hints about a check's run.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HintsConfig {
@@ -19,21 +21,34 @@ pub struct HintsConfig {
     pub is_redundant_commands: bool,
 }
 
-impl HintsConfig {
-    /// Sets the hint key `key` (written with dots, `hints.` included) to `value`: `Some(Ok(()))`
-    /// when set, `Some(Err(expected))` with what the key accepts when the value is unusable,
-    /// `None` when the key is not a hint key Cortex reads.
-    pub(super) fn apply(
-        &mut self,
-        key: &str,
-        value: &toml::Value,
-    ) -> Option<Result<(), &'static str>> {
-        let switch = || value.as_bool().ok_or("true or false");
-        Some(match key {
-            "hints.runtime_grounding" => switch().map(|is_on| self.is_runtime_grounding = is_on),
-            "hints.narrow_tests" => switch().map(|is_on| self.is_narrow_tests = is_on),
-            "hints.redundant_commands" => switch().map(|is_on| self.is_redundant_commands = is_on),
-            _ => return None,
-        })
-    }
-}
+/// The hint keys, each read and checked here.
+pub(super) const KEYS: &[ConfigKey] = &[
+    ConfigKey::new(
+        "hints.runtime_grounding",
+        "Beside a failed check's output, name the repository lines its stack ran through.",
+        |config, value| {
+            config.hints.is_runtime_grounding = value.as_bool().ok_or(SWITCH)?;
+            Ok(())
+        },
+        |config| toml::Value::Boolean(config.hints.is_runtime_grounding),
+    ),
+    ConfigKey::new(
+        "hints.narrow_tests",
+        "After a whole test-suite run, name the tests of what the task edited and the command \
+         that runs only them.",
+        |config, value| {
+            config.hints.is_narrow_tests = value.as_bool().ok_or(SWITCH)?;
+            Ok(())
+        },
+        |config| toml::Value::Boolean(config.hints.is_narrow_tests),
+    ),
+    ConfigKey::new(
+        "hints.redundant_commands",
+        "Before a check runs again with no source change since, say what its last run gave.",
+        |config, value| {
+            config.hints.is_redundant_commands = value.as_bool().ok_or(SWITCH)?;
+            Ok(())
+        },
+        |config| toml::Value::Boolean(config.hints.is_redundant_commands),
+    ),
+];

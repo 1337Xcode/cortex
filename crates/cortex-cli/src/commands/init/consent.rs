@@ -10,7 +10,9 @@
 use std::io::{BufRead, Read as _};
 
 use anyhow::{Context as _, bail};
-use cortex_core::{ConfigLayer, DEFAULT_HOLDOUT_SHARE, config_keys_set, load_config};
+use cortex_core::{
+    ConfigLayer, DEFAULT_HOLDOUT_SHARE, config_keys_set, load_config, setting_value, with_setting,
+};
 
 use crate::output;
 
@@ -39,6 +41,9 @@ const ATTEMPTS: usize = 3;
 
 /// The most of one answer read: a word.
 const MAX_ANSWER_BYTES: u64 = 1_024;
+
+/// The comment above an answer init writes into a configuration file.
+const ANSWER_NOTE: &str = "The answer to a question `cortex init` asked; change it here.";
 
 /// The key that keeps the holdout answer.
 const HOLDOUT_KEY: &str = "holdout.share";
@@ -180,12 +185,11 @@ fn parsed(line: &str, default: bool) -> Option<bool> {
     }
 }
 
-/// The repository's configuration `file` with the holdout answer added at its end, unless it was
-/// kept.
+/// The repository's configuration `file` with the holdout answer added, unless it was kept.
 ///
 /// # Errors
 ///
-/// The configuration with the answer added does not load (see [`appended`]).
+/// The answer cannot be added (see [`answered`]).
 pub(super) fn repository_config(
     file: ConfigFile<'_>,
     kept: Kept,
@@ -199,46 +203,29 @@ pub(super) fn repository_config(
     } else {
         0.0
     };
-    appended(file, HOLDOUT_KEY, &format!("[holdout]\nshare = {share}")).map(Some)
+    answered(file, HOLDOUT_KEY, &share.to_string()).map(Some)
 }
 
-/// The text of `file` (empty when there is none) with the lines of `table`, which sets `key`,
-/// added at its end after a comment, in the file's own line ending.
+/// The text of `file` (empty when there is none) with `key` set to the value `value` writes, by
+/// the configuration's own editor: under the file's table for it, else in a new table at its end,
+/// after a comment saying init wrote it, in the file's own line ending, every other line kept.
 ///
 /// # Errors
 ///
-/// The result does not load, as when the file has a table of the same name without the key:
-/// Cortex does not rewrite a table the user wrote, and says to set the key by hand.
-fn appended(file: ConfigFile<'_>, key: &str, table: &str) -> anyhow::Result<String> {
-    let before = file.text.unwrap_or_default();
-    let ending = if before.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
-    let mut text = before.to_owned();
-    if !text.is_empty() {
-        if !text.ends_with('\n') {
-            text.push_str(ending);
-        }
-        text.push_str(ending);
-    }
-    let comment = "# The answer to a question `cortex init` asked; change it here.";
-    for line in std::iter::once(comment).chain(table.lines()) {
-        text.push_str(line);
-        text.push_str(ending);
-    }
-    load_config(&[ConfigLayer {
+/// The editor cannot place the key without changing anything else the file says, as when the
+/// file sets its table inline: Cortex does not rewrite what the user wrote, and says to set the
+/// key by hand.
+fn answered(file: ConfigFile<'_>, key: &str, value: &str) -> anyhow::Result<String> {
+    let layer = ConfigLayer {
         origin: file.origin,
-        text: &text,
-    }])
-    .with_context(|| {
+        text: file.text.unwrap_or_default(),
+    };
+    with_setting(&layer, key, &setting_value(value), Some(ANSWER_NOTE)).with_context(|| {
         format!(
             "adding an answer to {}: set `{key}` there by hand",
             file.origin
         )
-    })?;
-    Ok(text)
+    })
 }
 
 #[cfg(test)]
@@ -364,8 +351,9 @@ mod tests {
     }
 
     /// An answer not kept goes at the end of its file under its table, after the user's text, in
-    /// the file's own line ending; a kept one is not written again; a file with its own `[holdout]`
-    /// table refuses, naming the key to set by hand.
+    /// the file's own line ending, or under the file's own `[holdout]` table; a kept one is not
+    /// written again; a file setting its `holdout` table inline refuses, naming the key to set by
+    /// hand.
     #[test]
     fn answers_are_added_at_the_end() -> anyhow::Result<()> {
         let answers = Answers {
@@ -407,7 +395,18 @@ mod tests {
             text: Some("[holdout]\n"),
             ..NO_FILE
         };
-        let refused = repository_config(own_table, NONE_KEPT, answers);
+        assert_eq!(
+            repository_config(own_table, NONE_KEPT, answers)?.as_deref(),
+            Some(
+                "[holdout]\n# The answer to a question `cortex init` asked; change it here.\n\
+                 share = 0.1\n"
+            )
+        );
+        let inline_table = ConfigFile {
+            text: Some("holdout = { other = 1 }\n"),
+            ..NO_FILE
+        };
+        let refused = repository_config(inline_table, NONE_KEPT, answers);
         assert!(
             refused.as_ref().is_err_and(|error| error.to_string()
                 == "adding an answer to f: set `holdout.share` there by hand"),

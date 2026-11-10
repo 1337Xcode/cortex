@@ -4,6 +4,8 @@
 //! Each key is read and checked here, as the rest of the configuration reads its own; a value the
 //! rules cannot use is refused.
 
+use super::{ABOVE_ZERO, ConfigKey, SHARE, count, share};
+
 /// The default for `warnings.max_per_edit`: the most warnings one edit brings, strongest first.
 pub const DEFAULT_MAX_PER_EDIT: u32 = 3;
 
@@ -60,41 +62,60 @@ impl Default for WarningsConfig {
     }
 }
 
-impl WarningsConfig {
-    /// Sets the warning key `key` (written with dots, `warnings.` included) to `value`:
-    /// `Some(Ok(()))` when set, `Some(Err(expected))` with what the key accepts when the value is
-    /// unusable, `None` when the key is not a warning key Cortex reads.
-    pub(super) fn apply(
-        &mut self,
-        key: &str,
-        value: &toml::Value,
-    ) -> Option<Result<(), &'static str>> {
-        let count = |low: u32, high: u32, expected: &'static str| {
-            super::whole_number(value)
-                .and_then(|number| u32::try_from(number).ok())
-                .filter(|number| (low..=high).contains(number))
-                .ok_or(expected)
-        };
-        let set = match key {
-            "warnings.max_per_edit" => count(0, MAX_PER_EDIT_LIMIT, "a whole number from 0 to 10")
-                .map(|most| self.max_per_edit = most),
-            "warnings.cochange_min_confidence" => super::share(value)
-                .ok_or("a number from 0 to 1")
-                .map(|confidence| self.cochange_min_confidence = confidence),
-            "warnings.cochange_min_count" => count(1, u32::MAX, "a whole number above 0")
-                .map(|fewest| self.cochange_min_count = fewest),
-            "warnings.cochange_min_link_weight" => match value {
+/// The warning keys, each read and checked here.
+pub(super) const KEYS: &[ConfigKey] = &[
+    ConfigKey::new(
+        "warnings.max_per_edit",
+        "The most warnings one edit brings, strongest first; 0 gives none.",
+        |config, value| {
+            config.warnings.max_per_edit =
+                count(value, 0, MAX_PER_EDIT_LIMIT).ok_or("a whole number from 0 to 10")?;
+            Ok(())
+        },
+        |config| config.warnings.max_per_edit.into(),
+    ),
+    ConfigKey::new(
+        "warnings.cochange_min_confidence",
+        "The share of an edited file's commits that must also have changed a partner worth a \
+         warning.",
+        |config, value| {
+            config.warnings.cochange_min_confidence = share(value).ok_or(SHARE)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.warnings.cochange_min_confidence),
+    ),
+    ConfigKey::new(
+        "warnings.cochange_min_count",
+        "How many commits must have changed both files for a partner to be worth a warning.",
+        |config, value| {
+            config.warnings.cochange_min_count = count(value, 1, u32::MAX).ok_or(ABOVE_ZERO)?;
+            Ok(())
+        },
+        |config| config.warnings.cochange_min_count.into(),
+    ),
+    ConfigKey::new(
+        "warnings.cochange_min_link_weight",
+        "The least faded weight of a link of agents' past work worth a warning.",
+        |config, value| {
+            config.warnings.cochange_min_link_weight = match value {
                 toml::Value::Float(number) => Some(*number),
                 toml::Value::Integer(number) => i32::try_from(*number).ok().map(f64::from),
                 _ => None,
             }
             .filter(|weight| weight.is_finite() && *weight >= 0.0)
-            .ok_or("a number of 0 or more")
-            .map(|least| self.cochange_min_link_weight = least),
-            "warnings.cochange_min_link_tasks" => count(1, u32::MAX, "a whole number above 0")
-                .map(|fewest| self.cochange_min_link_tasks = fewest),
-            _ => return None,
-        };
-        Some(set)
-    }
-}
+            .ok_or("a number of 0 or more")?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.warnings.cochange_min_link_weight),
+    ),
+    ConfigKey::new(
+        "warnings.cochange_min_link_tasks",
+        "The fewest tasks that must have drawn a link of agents' past work worth a warning.",
+        |config, value| {
+            config.warnings.cochange_min_link_tasks =
+                count(value, 1, u32::MAX).ok_or(ABOVE_ZERO)?;
+            Ok(())
+        },
+        |config| config.warnings.cochange_min_link_tasks.into(),
+    ),
+];

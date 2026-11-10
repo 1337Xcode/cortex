@@ -4,6 +4,8 @@
 //! Each key is read and checked here, as the rest of the configuration reads its own; a value the
 //! rules cannot use is refused.
 
+use super::{ConfigKey, SWITCH};
+
 /// The settings of what a compaction is given.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CompactionConfig {
@@ -14,21 +16,14 @@ pub struct CompactionConfig {
     pub is_keep_list: bool,
 }
 
-impl CompactionConfig {
-    /// Sets the compaction key `key` (written with dots, `compaction.` included) to `value`:
-    /// `Some(Ok(()))` when set, `Some(Err(expected))` with what the key accepts when the value is
-    /// unusable, `None` when the key is not a compaction key Cortex reads.
-    pub(super) fn apply(
-        &mut self,
-        key: &str,
-        value: &toml::Value,
-    ) -> Option<Result<(), &'static str>> {
-        Some(match key {
-            "compaction.keep_list" => value
-                .as_bool()
-                .ok_or("true or false")
-                .map(|is_on| self.is_keep_list = is_on),
-            _ => return None,
-        })
-    }
-}
+/// The compaction keys, each read and checked here.
+pub(super) const KEYS: &[ConfigKey] = &[ConfigKey::new(
+    "compaction.keep_list",
+    "Before Claude Code compacts a session's context, give its summary the open task's working \
+     set to keep.",
+    |config, value| {
+        config.compaction.is_keep_list = value.as_bool().ok_or(SWITCH)?;
+        Ok(())
+    },
+    |config| toml::Value::Boolean(config.compaction.is_keep_list),
+)];

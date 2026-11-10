@@ -4,11 +4,13 @@
 //! repository root with `/` separators, hashes are BLAKE3 at the sizes storage uses, a
 //! [`Language`] has one stable name, an [`Identifier`] is the only text besides paths that the
 //! index stores, each record kind such as [`SymbolKind`] has a fixed stored name or number, and
-//! [`Config`] holds every setting with its default, [`identifier_tokens`] splits names and paths
-//! into the words a search matches, and [`estimate_tokens`] sizes the text Cortex injects. Its
-//! only I/O is what every process needs alike: canonicalizing a repository's folder, reading where
-//! git keeps a working tree's repository, creating folders and files only their user can read, reading a small text file whole, and finding and
-//! running another program, bounded in time and output.
+//! [`Config`] holds every setting with its default, each key read and shown through one registry
+//! entry ([`config_keys`]), [`FEATURES`] lists what Cortex gives agents and the key that switches
+//! each, [`identifier_tokens`] splits names and paths into the words a search matches, and
+//! [`estimate_tokens`] sizes the text Cortex injects. Its only I/O is what every process needs
+//! alike: canonicalizing a repository's folder, reading where git keeps a working tree's
+//! repository, creating folders and files only their user can read, reading a small text file
+//! whole, and finding and running another program, bounded in time and output.
 
 #![warn(clippy::pedantic)]
 
@@ -20,6 +22,7 @@ mod coordination;
 mod estimate;
 mod event;
 mod fact;
+mod feature;
 mod file_content;
 mod git_layout;
 mod hash;
@@ -57,11 +60,12 @@ pub use activity::{
 pub use agent_shell::{AGENT_SHELL_MARKERS, is_agent_shell};
 pub use child::{Captured, capture, time_fed};
 pub use config::{
-    CompactionConfig, Config, ConfigError, ConfigLayer, CoordinationConfig, DEFAULT_HOLDOUT_SHARE,
-    DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES, DEFAULT_MMAP_BYTES,
-    DEFAULT_PARSE_TIMEOUT_MS, HintsConfig, LoadedConfig, MAX_MMAP_BYTES, MAX_WORK_ORDER_TOKENS,
-    ModeSetting, RetrievalConfig, TypeWeights, WarningsConfig, keys_set as config_keys_set,
-    load as load_config,
+    CompactionConfig, Config, ConfigError, ConfigKey, ConfigLayer, CoordinationConfig,
+    DEFAULT_HOLDOUT_SHARE, DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES,
+    DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, HintsConfig, LoadedConfig, MAX_MMAP_BYTES,
+    MAX_WORK_ORDER_TOKENS, ModeSetting, PROFILE_KEY, Profile, RetrievalConfig, SetError, Setting,
+    SettingSource, TypeWeights, WarningsConfig, config_key, config_keys,
+    keys_set as config_keys_set, load as load_config, setting_value, with_setting,
 };
 pub use coordination::{PositionMode, WorkingTree};
 pub use estimate::estimate_tokens;
@@ -72,6 +76,7 @@ pub use event::{
     StartSource, ToolKind, ToolResult, ToolTarget,
 };
 pub use fact::{FactKind, FactSource, FactStatus, MAX_FACT_ANCHORS, MAX_FACT_CHARS};
+pub use feature::{FEATURES, Feature, FeatureState, feature};
 pub use file_content::FileContent;
 pub use git_layout::{GitLayout, MAX_GIT_FILE_BYTES, git_layout};
 pub use hash::{ContentHash, ShortHash};

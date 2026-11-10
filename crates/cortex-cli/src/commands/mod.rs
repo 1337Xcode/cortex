@@ -4,11 +4,13 @@
 //! [`run`]. Removing a command means deleting all three.
 
 mod claims;
+mod config;
 mod consolidate;
 mod daemon;
 mod doctor;
 mod export;
 mod facts;
+mod features;
 mod import;
 mod init;
 mod mcp;
@@ -60,6 +62,10 @@ pub(crate) enum Command {
     Export(export::Args),
     /// Take a team's shared project rules from .cortex/shared/, each to confirm before it is used.
     Import(import::Args),
+    /// List every setting with its value and where it came from, or set one.
+    Config(config::Args),
+    /// List what Cortex gives agents and whether each is on, or switch one on or off.
+    Features(features::Args),
 }
 
 /// Runs one parsed command to completion.
@@ -85,5 +91,7 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Consolidate(args) => consolidate::run(&args),
         Command::Export(args) => export::run(&args),
         Command::Import(args) => import::run(&args),
+        Command::Config(args) => config::run(&args),
+        Command::Features(args) => features::run(&args),
     }
 }
