@@ -34,9 +34,7 @@ use crate::meter::Transcript;
 use crate::pending::Pending;
 use crate::positions;
 use crate::signatures::Signatures;
-use crate::upkeep::{
-    Ended, LOG_LIMIT_BYTES, UPKEEP_RUN_BUDGET, Upkeep, UpkeepClock, UpkeepSettings,
-};
+use crate::upkeep::{Ended, LOG_LIMIT_BYTES, Upkeep, UpkeepClock, UpkeepSettings};
 
 /// How often the crawler takes a batch of `index.crawl_files_per_second` files.
 const CRAWL_PERIOD: Duration = Duration::from_secs(1);
@@ -309,8 +307,9 @@ impl<'a> Host<'a> {
             log_limit_bytes: LOG_LIMIT_BYTES,
         };
         let inbox = self.inbox;
-        let should_stop = || inbox.has_work_waiting();
-        let deadline = Instant::now() + UPKEEP_RUN_BUDGET;
+        let asked_before = inbox.last_request();
+        let should_stop = || inbox.should_upkeep_stop(asked_before);
+        let deadline = self.upkeep_clock.run_deadline(Instant::now());
         let ran = self.upkeep.run(
             &mut self.writer,
             (now_ms(), &settings),

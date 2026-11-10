@@ -120,6 +120,9 @@ pub(crate) struct UpkeepClock {
     is_asked: bool,
     /// Not before then: the last run paced.
     paced_until: Option<Instant>,
+    /// When the run under way began, through the pieces a pace or other work cut it into; none
+    /// between runs.
+    run_since: Option<Instant>,
 }
 
 impl UpkeepClock {
@@ -130,7 +133,14 @@ impl UpkeepClock {
             has_run: false,
             is_asked: false,
             paced_until: None,
+            run_since: None,
         }
+    }
+
+    /// When the run under way, or the one starting at `now`, must stop: [`UPKEEP_RUN_BUDGET`] after
+    /// it began, however many pieces it runs in.
+    pub(crate) fn run_deadline(&mut self, now: Instant) -> Instant {
+        *self.run_since.get_or_insert(now) + UPKEEP_RUN_BUDGET
     }
 
     /// Notes hook events recorded at `now`, among them a session's end when `has_session_end`.
@@ -163,6 +173,7 @@ impl UpkeepClock {
         if matches!(ended, Ended::Done | Ended::OutOfTime) {
             self.has_run = true;
             self.is_asked = false;
+            self.run_since = None;
         }
     }
 }
@@ -734,6 +745,26 @@ mod tests {
             clock.due_at(minutes(30)),
             Some(minutes(30) + Duration::from_secs(2))
         );
+    }
+
+    /// One run keeps one budget through its pieces. Worked by hand: a run starting at 40 minutes
+    /// must stop by 42; paced at 41 and carried on at 41 and 2 s, then yielded and carried on at
+    /// 41 and a half, it must still stop by 42. Out of time at 42, the next run, at 50, must stop
+    /// by 52; done at 51, the next, at 60, by 62.
+    #[test]
+    fn a_run_keeps_one_budget_through_its_pieces() {
+        let start = Instant::now();
+        let at = |seconds: u64| start + Duration::from_secs(seconds);
+        let mut clock = UpkeepClock::new(start);
+        assert_eq!(clock.run_deadline(at(40 * 60)), at(42 * 60));
+        clock.ran(Ended::Paced, at(41 * 60));
+        assert_eq!(clock.run_deadline(at(41 * 60 + 2)), at(42 * 60));
+        clock.ran(Ended::Yielded, at(41 * 60 + 20));
+        assert_eq!(clock.run_deadline(at(41 * 60 + 30)), at(42 * 60));
+        clock.ran(Ended::OutOfTime, at(42 * 60));
+        assert_eq!(clock.run_deadline(at(50 * 60)), at(52 * 60));
+        clock.ran(Ended::Done, at(51 * 60));
+        assert_eq!(clock.run_deadline(at(60 * 60)), at(62 * 60));
     }
 
     /// 250 labelled injections of prompts, each used exactly when its top lexical score, (37 n mod

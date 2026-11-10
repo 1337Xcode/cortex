@@ -361,6 +361,13 @@ impl Inbox {
         self.lock().last_upkeep
     }
 
+    /// Whether upkeep, which began when the latest request was `asked_before`, should stop for
+    /// other work: work waits for the writer, or a request arrived since, a read's hint among them,
+    /// which a reader answers beside the writer and upkeep should not slow.
+    pub(crate) fn should_upkeep_stop(&self, asked_before: Option<Instant>) -> bool {
+        self.has_work_waiting() || self.last_request() != asked_before
+    }
+
     /// Whether work the writer should do before upkeep waits: hook events to record, what was
     /// given to record, a request asked of it, or a stop.
     pub(crate) fn has_work_waiting(&self) -> bool {
@@ -553,6 +560,18 @@ mod tests {
     }
 
     /// The paths of `changed`, and whether it is a change to everything.
+    /// Upkeep stops for a request that came after it began, a read's hint included, and for work
+    /// waiting for the writer; not for the request it began after.
+    #[test]
+    fn upkeep_stops_for_a_request_that_came_after_it_began() {
+        let inbox = Inbox::default();
+        let asked_before = inbox.last_request();
+        assert!(!inbox.should_upkeep_stop(asked_before));
+        inbox.note_request();
+        assert!(inbox.should_upkeep_stop(asked_before));
+        assert!(!inbox.should_upkeep_stop(inbox.last_request()));
+    }
+
     fn summary(work: Work) -> Option<(bool, Vec<String>)> {
         let Work::Changed(changed) = work else {
             return None;
