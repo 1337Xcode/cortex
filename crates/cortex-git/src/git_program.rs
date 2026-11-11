@@ -53,6 +53,12 @@ const NO_LAZY_FETCH_SINCE: (u32, u32) = (2, 45);
 const OWN_CONFIG_KEYS: &str =
     r"^filter\.|^extensions\.partialclone$|^remote\..*\.promisor$|^blame\.ignorerevsfile$";
 
+/// The keys of a repository's own configuration that make git read another file: `include.path`
+/// and `includeIf.<condition>.path`, as git prints a key (section and variable in lower case).
+/// Whatever they name, which may be anywhere, a network share included, can hold a filter, a
+/// text conversion, a difference or monitor command, or a path that opens a connection.
+const INCLUDE_KEYS: &str = r"^include\.path$|^includeif\..*\.path$";
+
 /// The list of commits blame skips that a repository keeps in its top folder, which is the one
 /// list a blame may use.
 pub(crate) const IGNORE_REVS_FILE: &str = ".git-blame-ignore-revs";
@@ -70,8 +76,7 @@ pub(crate) enum IgnoreList {
     Other,
 }
 
-/// What a repository's own configuration, with the files it includes, says that decides how
-/// Cortex may run git there.
+/// What a repository's own configuration says that decides how Cortex may run git there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct OwnConfig {
     /// It names a filter (any `filter.<driver>.<key>`), whose command git runs on a file the
@@ -118,6 +123,20 @@ impl OwnConfig {
     }
 }
 
+/// Why git cannot be started for a repository before anything is run in it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum Start {
+    /// The `PATH` names no `git` program outside the repository.
+    #[error("git is not on the PATH")]
+    NoGit,
+    /// The repository's own configuration includes another file, which git would read.
+    #[error("the repository's own git configuration includes another file")]
+    Includes,
+    /// Git did not answer whether the configuration includes a file.
+    #[error("asking git about the repository: {0}")]
+    Failed(String),
+}
+
 /// Why a run of git gave no output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RunFailure {
@@ -160,6 +179,10 @@ pub enum OpenError {
     /// The repository's own configuration names a filter, whose command git could run.
     #[error("the repository's own git configuration names a filter")]
     Refused,
+    /// The repository's own configuration includes another file, which git would read wherever
+    /// it is.
+    #[error("the repository's own git configuration includes another file")]
+    Includes,
     /// The repository is a partial clone, and git, older than 2.45, cannot be told not to fetch
     /// what the clone left out.
     #[error("the repository is a partial clone, and git older than 2.45 could fetch in it")]
@@ -181,15 +204,45 @@ pub(crate) struct GitProgram {
     root: PathBuf,
 }
 
+impl From<Start> for OpenError {
+    /// The refusal or failure of starting git as the error of opening a repository.
+    fn from(start: Start) -> Self {
+        match start {
+            Start::NoGit => Self::NoGit,
+            Start::Includes => Self::Includes,
+            Start::Failed(message) => Self::Git(message),
+        }
+    }
+}
+
 impl GitProgram {
     /// The git the `PATH` names outside `root`, a repository's top in its canonical form; `None`
-    /// when there is none.
-    pub(crate) fn find(root: &Path) -> Option<Self> {
+    /// when there is none. Nothing is run: only [`GitProgram::start`] makes it safe to.
+    fn find(root: &Path) -> Option<Self> {
         let program = find_program(GIT, root)?;
         Some(Self {
             program,
             root: root.to_path_buf(),
         })
+    }
+
+    /// The git for the repository whose top is `root`, in its canonical form, once its own
+    /// configuration is known to include no file: the first question asked of git there, before
+    /// any other run, since git reads what an include names whenever it reads the configuration.
+    ///
+    /// # Errors
+    ///
+    /// No git ([`Start::NoGit`]), a configuration that includes a file ([`Start::Includes`]), or
+    /// git does not answer.
+    pub(crate) fn start(root: &Path) -> Result<Self, Start> {
+        let git = Self::find(root).ok_or(Start::NoGit)?;
+        // INVARIANT: local-only. An include path can be a network share, which Windows opens
+        // when git reads the file, so no run reads the configuration before this one says it
+        // names none.
+        if git.names_includes().map_err(Start::Failed)? {
+            return Err(Start::Includes);
+        }
+        Ok(git)
     }
 
     /// The git for the repository at `root`, a repository's top in its canonical form, with what
@@ -203,7 +256,7 @@ impl GitProgram {
         if !has_repository(root) {
             return Err(OpenError::NoRepository);
         }
-        let git = Self::find(root).ok_or(OpenError::NoGit)?;
+        let git = Self::start(root)?;
         let own = git.own_config().map_err(OpenError::Git)?;
         match own
             .refusal(|| git.can_refuse_fetching())
@@ -297,9 +350,21 @@ impl GitProgram {
             .map_err(|_| "git's answer is not UTF-8 text".to_owned())
     }
 
-    /// What the repository's own configuration, with the files it includes, says of filters, of a
-    /// partial clone and of blame's list of commits to skip, from one question to git, which
-    /// reads no system or global configuration for it.
+    /// Whether the repository's own configuration (its file, and the work tree's own where git
+    /// reads one) holds an `include.path` or `includeIf.<condition>.path`, from one question to
+    /// git, which follows no include and reads no system or global configuration for it.
+    ///
+    /// # Errors
+    ///
+    /// Git does not answer, or answers more than a short answer or other than text.
+    fn names_includes(&self) -> Result<bool, String> {
+        let answer = self.ask(&["config", "--no-includes", "--get-regexp", INCLUDE_KEYS])?;
+        Ok(answer.is_some())
+    }
+
+    /// What the repository's own configuration says of filters, of a partial clone and of
+    /// blame's list of commits to skip, from one question to git, which reads no system or global
+    /// configuration for it. It follows no include, as [`GitProgram::start`] found none.
     ///
     /// # Errors
     ///
@@ -307,7 +372,7 @@ impl GitProgram {
     pub(crate) fn own_config(&self) -> Result<OwnConfig, String> {
         let answer = self.ask(&[
             "config",
-            "--includes",
+            "--no-includes",
             "--null",
             "--get-regexp",
             OWN_CONFIG_KEYS,

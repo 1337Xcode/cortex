@@ -235,6 +235,7 @@ fn kept_of(
         Err(WorktreeError::NoGit) => unknown(WorktreeState::NoGit),
         Err(WorktreeError::NoRepository) => unknown(WorktreeState::NoRepository),
         Err(WorktreeError::Refused) => unknown(WorktreeState::Refused),
+        Err(WorktreeError::Includes) => unknown(WorktreeState::Includes),
         Err(WorktreeError::WouldFetch) => unknown(WorktreeState::WouldFetch),
         Err(WorktreeError::TooMany) => unknown(WorktreeState::TooMany),
         Err(error @ WorktreeError::Status(_)) => Err(error.to_string()),
@@ -344,6 +345,7 @@ mod tests {
             (WorktreeError::NoGit, WorktreeState::NoGit),
             (WorktreeError::NoRepository, WorktreeState::NoRepository),
             (WorktreeError::Refused, WorktreeState::Refused),
+            (WorktreeError::Includes, WorktreeState::Includes),
             (WorktreeError::WouldFetch, WorktreeState::WouldFetch),
             (WorktreeError::TooMany, WorktreeState::TooMany),
         ];

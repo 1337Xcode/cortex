@@ -90,34 +90,38 @@ const MARKING: &str = "touch filtered; cat";
 /// A repository whose own configuration names a filter, which `.gitattributes` gives every file, is
 /// not looked at, wherever the configuration names it: in the repository's own file, in a file it
 /// includes, in one it includes while a branch is checked out, and in the work tree's own file.
-/// The changed file keeps its size and has a time unlike the index's, so git reads it, through the
+/// The two that are included are refused as includes, whatever the file holds. The changed file keeps its size and has a time unlike the index's, so git reads it, through the
 /// filter, to tell whether it changed: git's own status runs the filter's command, which leaves
 /// its mark, and Cortex's look, refused before git runs, leaves none.
 #[test]
 fn a_filter_the_repository_names_is_never_run() -> TestResult {
     let included = format!("[filter \"marking\"]\n\tclean = {MARKING}\n");
-    let cases: [(&str, &[&[&str]]); 4] = [
+    let cases: [(&str, bool, &[&[&str]]); 4] = [
         (
             "its own file",
+            false,
             &[&["config", "filter.marking.clean", MARKING]],
         ),
         (
             "an included file",
+            true,
             &[&["config", "include.path", "extra.cfg"]],
         ),
         (
             "a file included on its branch",
+            true,
             &[&["config", "includeIf.onbranch:main.path", "extra.cfg"]],
         ),
         (
             "the work tree's own file",
+            false,
             &[
                 &["config", "extensions.worktreeConfig", "true"],
                 &["config", "--worktree", "filter.marking.clean", MARKING],
             ],
         ),
     ];
-    for (place, setup) in cases {
+    for (place, is_included, setup) in cases {
         let repo = Repo::new()?;
         repo.write("a.txt", "a\n")?;
         repo.commit(1)?;
@@ -131,7 +135,11 @@ fn a_filter_the_repository_names_is_never_run() -> TestResult {
         let mark = repo.root().join("filtered");
         let looked = uncommitted_files(&repo.root());
         assert!(!mark.exists(), "{place}");
-        assert!(matches!(looked, Err(WorktreeError::Refused)), "{place}");
+        if is_included {
+            assert!(matches!(looked, Err(WorktreeError::Includes)), "{place}");
+        } else {
+            assert!(matches!(looked, Err(WorktreeError::Refused)), "{place}");
+        }
         repo.git(&["status", "--porcelain"])?;
         assert!(mark.exists(), "git's own status runs the filter in {place}");
     }

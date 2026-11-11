@@ -308,3 +308,13 @@ All notable changes to this project are documented in this file. The format is b
   the index writes references and edges in transactions cut every quarter second rather than every
   4,096 rows, reads the whole repository's names in steps, and walks the repository on a thread of
   its own while it records the events waiting.
+
+### Security
+
+- Cortex no longer runs git in a repository whose own configuration includes another file
+  (`include.path`, `includeIf`). Git reads what such a key names wherever it points, a network
+  share included, and an included file can name a filter, a text conversion, a difference or
+  monitor command, or a path that opens a connection. Before any other run the repository is
+  asked, with includes off, whether it holds such a key, and if it does the work tree is not
+  looked at, nothing is blamed or shown, and the history is not read with the git program;
+  `cortex status` says the work tree is not read because the configuration includes another file.

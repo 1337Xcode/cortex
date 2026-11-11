@@ -12,7 +12,7 @@ use std::path::Path;
 use cortex_core::canonical_root;
 
 use crate::git_log::{self, FORMAT};
-use crate::git_program::{GitProgram, LISTING, Settings};
+use crate::git_program::{GitProgram, LISTING, Settings, Start};
 use crate::history::{
     GitError, HistorySource, Mined, MinedCommit, PathChange, Window, has_repository,
 };
@@ -34,14 +34,15 @@ impl CliHistory {
     /// # Errors
     ///
     /// [`GitError::NoRepository`] when `root` has no `.git`; [`GitError::Open`] when git is not on
-    /// the `PATH`, does not answer, or names another folder as the work tree's top.
+    /// the `PATH`, does not answer, names another folder as the work tree's top, or the
+    /// repository's own configuration includes a file, which git would read wherever it is.
     pub fn open(root: &Path) -> Result<Self, GitError> {
         if !has_repository(root) {
             return Err(GitError::NoRepository(root.to_path_buf()));
         }
         let root = canonical_root(root).map_err(|error| GitError::Open(error.to_string()))?;
-        let git = GitProgram::find(&root)
-            .ok_or_else(|| GitError::Open("git is not on the PATH".to_owned()))?;
+        let git =
+            GitProgram::start(&root).map_err(|start: Start| GitError::Open(start.to_string()))?;
         let top = git
             .ask(&["rev-parse", "--show-toplevel"])
             .map_err(GitError::Open)?

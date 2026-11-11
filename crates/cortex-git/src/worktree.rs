@@ -6,7 +6,9 @@
 //! A look runs no command the repository names and fetches nothing. Git passes a file through its
 //! filter when it has to read the file to tell whether it changed, and the repository's own
 //! configuration may name the filter's command; a repository's folder is content Cortex does not
-//! trust, so one whose own configuration names a filter is not looked at. A filter the user's own
+//! trust, so one whose own configuration names a filter is not looked at. Nor is one whose own
+//! configuration includes another file (`include.path`, `includeIf`), which git would read
+//! wherever it is, a network share included, before any look could tell what it names. A filter the user's own
 //! configuration names, one the user installed, runs as it does for the user's own git. In a
 //! partial clone git would fetch from the remote the configuration names what the clone left out
 //! and a look needs; it is told not to, which git older than 2.45 cannot be, so with such a git a
@@ -24,7 +26,7 @@ use std::time::Duration;
 
 use cortex_core::{RepoPath, without_ignore_block};
 
-use crate::git_program::{Bounds, GitProgram, OwnConfig, Refusal, Settings};
+use crate::git_program::{Bounds, GitProgram, OwnConfig, Refusal, Settings, Start};
 use crate::history::has_repository;
 
 /// How long git has to list the work tree's changes: a large work tree takes it a second or two.
@@ -53,6 +55,10 @@ pub enum WorktreeError {
     /// The repository's own configuration names a filter, whose command a look would run.
     #[error("the repository's own git configuration names a filter, which a look would run")]
     Refused,
+    /// The repository's own configuration includes another file, which git would read wherever
+    /// it is.
+    #[error("the repository's own git configuration includes another file")]
+    Includes,
     /// The repository is a partial clone, and git, older than 2.45, cannot be told not to fetch
     /// what the clone left out.
     #[error("the repository is a partial clone, and git older than 2.45 could fetch in it")]
@@ -71,14 +77,18 @@ pub enum WorktreeError {
 ///
 /// # Errors
 ///
-/// No repository at `root`, no git program, a filter named in the repository's own configuration,
-/// a partial clone with a git that would fetch in it, a mass change, or git does not list the
+/// No repository at `root`, no git program, a filter named or a file included in the repository's
+/// own configuration, a partial clone with a git that would fetch in it, a mass change, or git does not list the
 /// changes, as [`WorktreeError`] says.
 pub fn uncommitted_files(root: &Path) -> Result<BTreeSet<RepoPath>, WorktreeError> {
     if !has_repository(root) {
         return Err(WorktreeError::NoRepository);
     }
-    let git = GitProgram::find(root).ok_or(WorktreeError::NoGit)?;
+    let git = GitProgram::start(root).map_err(|start| match start {
+        Start::NoGit => WorktreeError::NoGit,
+        Start::Includes => WorktreeError::Includes,
+        Start::Failed(message) => WorktreeError::Status(message),
+    })?;
     let own = git.own_config().map_err(WorktreeError::Status)?;
     may_look(own, || git.can_refuse_fetching())?;
     Ok(without_own_ignores(&git, listed(&git, MAX_STATUS_BYTES)?))
@@ -286,7 +296,7 @@ mod tests {
         for name in ["a.txt", "b.txt", "c.txt"] {
             std::fs::write(root.join(name), "x\n")?;
         }
-        let git = GitProgram::find(root).ok_or("a git program")?;
+        let git = GitProgram::start(root)?;
         assert!(matches!(listed(&git, 26), Err(WorktreeError::TooMany)));
         let names: Vec<String> = listed(&git, 27)?
             .into_iter()

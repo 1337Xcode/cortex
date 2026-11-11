@@ -245,6 +245,9 @@ fn worktree_said(report: &WorktreeReport) -> String {
             "not read, as the repository's own git configuration names a filter a look would run"
                 .to_owned()
         }
+        WorktreeState::Includes => {
+            "not read, as the repository's own git configuration includes another file".to_owned()
+        }
         WorktreeState::WouldFetch => "not read; update git to 2.45 or later".to_owned(),
         WorktreeState::TooMany => {
             let many = match report.listed_files {
@@ -1046,6 +1049,10 @@ mod tests {
                 WorktreeState::Refused,
                 "work tree: not read, as the repository's own git configuration names a filter a \
                  look would run",
+            ),
+            (
+                WorktreeState::Includes,
+                "work tree: not read, as the repository's own git configuration includes another file",
             ),
             (
                 WorktreeState::WouldFetch,

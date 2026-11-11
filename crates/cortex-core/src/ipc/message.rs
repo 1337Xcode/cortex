@@ -415,6 +415,9 @@ named_kind! {
         /// The repository's own git configuration names a filter, whose command a look would run,
         /// so the work tree is not looked at.
         Refused => "refused",
+        /// The repository's own git configuration includes another file, which git would read
+        /// wherever it is, so the work tree is not looked at.
+        Includes => "includes",
         /// The repository is a partial clone and git is older than 2.45, which cannot be told not
         /// to fetch what the clone left out, so the work tree is not looked at.
         WouldFetch => "would_fetch",
