@@ -110,7 +110,7 @@ pub use private::{
 pub use program::{GIT, find_program};
 pub use reminder_tag::{REMINDER_TAGS, holds_reminder_tag};
 pub use repo_id::RepoId;
-pub use root::canonical_root;
+pub use root::{canonical_root, is_never_a_root};
 pub use scale_mode::ScaleMode;
 pub use set_up::{forget_set_up, is_set_up_here, record_set_up};
 pub use task::{is_held_out, task_id_of_prompt};

@@ -335,8 +335,8 @@ fn init_never_sets_up_a_home_folder_repository() -> TestResult {
     assert_eq!(
         refused.stderr.trim_end(),
         format!(
-            "cortex: error: Cortex never sets up the home folder or a folder holding it ({}); run \
-             `cortex init` in a repository",
+            "cortex: error: Cortex never sets up the home folder, a folder holding it, or a file \
+             system's root ({}); run `cortex init` in a repository",
             canonical_root(home.path())?.display()
         )
     );

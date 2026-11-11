@@ -11,7 +11,7 @@ use std::io;
 use std::path::Path;
 
 use anyhow::{Context as _, bail};
-use cortex_core::{RepoId, UserFolder, canonical_root};
+use cortex_core::{RepoId, UserFolder, canonical_root, is_never_a_root};
 
 use super::remove_if_empty;
 use super::runs::Run;
@@ -24,8 +24,9 @@ const SHARED: &str = "shared";
 ///
 /// # Errors
 ///
-/// `root` is the home folder or holds it, or that cannot be found; `.cortex` is a link or not a
-/// folder; or a file or folder cannot be read or deleted.
+/// `root` is the home folder, a folder holding it, or a file system's root, or the home folder
+/// cannot be found; `.cortex` is a link or not a folder; or a file or folder cannot be read or
+/// deleted.
 pub(super) fn purged(
     root: &Path,
     user: &UserFolder,
@@ -56,8 +57,8 @@ pub(super) fn purged(
     Ok(())
 }
 
-/// Refuses `root` when it is the home folder of the user folder `user`, or a folder holding it:
-/// the home folder's `.cortex` is the user's own, for every repository.
+/// Refuses `root` when it is the home folder of the user folder `user`, a folder holding it, or a
+/// file system's root: the home folder's `.cortex` is the user's own, for every repository.
 ///
 /// # Errors
 ///
@@ -69,10 +70,10 @@ fn refuse_home(root: &Path, user: &UserFolder) -> anyhow::Result<()> {
         .with_context(|| format!("{} is in no folder", user.path().display()))?;
     let home = canonical_root(home)
         .with_context(|| format!("finding the home folder {}", home.display()))?;
-    if home.starts_with(root) {
+    if is_never_a_root(root, &home) {
         bail!(
-            "{} is the home folder or holds it, whose `.cortex` is the user's own, for every \
-             repository; purge never deletes it",
+            "{} is the home folder, a folder holding it, or a file system's root, which is never \
+             a repository's; purge never deletes its `.cortex`",
             root.display()
         );
     }

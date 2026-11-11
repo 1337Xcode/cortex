@@ -13,7 +13,7 @@ cortex-core = { path = "../cortex-core" }
 rmcp.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["client"] }

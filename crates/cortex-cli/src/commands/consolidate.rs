@@ -30,7 +30,7 @@ pub(crate) struct Args {
 /// A root that is not a folder, no home folder, a daemon that cannot be started or does not
 /// answer, or stdout that cannot be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let root = repository::root(args.root.as_deref())?;
+    let (root, _) = repository::root_and_worktree(args.root.as_deref())?;
     let user = UserFolder::of_current_user().context("finding the home folder")?;
     let asked = upgrade::ask_started(
         &root,

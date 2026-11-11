@@ -39,7 +39,7 @@ pub(crate) struct Args {
 /// A root that is not a folder, no shared facts file, one that is refused, a daemon that cannot be
 /// started or does not answer, or stdout that cannot be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
-    let root = repository::root(args.root.as_deref())?;
+    let (root, _) = repository::root_and_worktree(args.root.as_deref())?;
     let Some((path, text)) = read_shared_facts(&root)? else {
         bail!(
             "no shared facts at {}; a teammate's `cortex export` writes them",

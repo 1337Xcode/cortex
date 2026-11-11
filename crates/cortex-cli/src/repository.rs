@@ -1,31 +1,54 @@
 //! Which repository a command works on: the folder `--root` names; else the repository the current
 //! folder is in, the nearest folder at or above it that holds `.cortex`, below the home folder, set
 //! up here or a fresh clone holding only a team's shared folder, or a linked working tree's main
-//! working tree that holds one; else the current folder, which Cortex has not set up yet.
+//! working tree that holds one; else the current folder, which Cortex has not set up yet. A command
+//! that asks the repository's daemon, starting it when none runs, never takes the home folder, a
+//! folder holding it, or a file system's root (see [`root_and_worktree`]), whose daemon would
+//! refuse to start; one that only reads or writes files does. `cortex mcp` serves only a repository
+//! set up here (see [`served`]).
+
+mod served;
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use cortex_core::{canonical_root, working_tree_top};
+use cortex_core::{canonical_root, is_never_a_root, working_tree_top};
+
+pub(crate) use self::served::served;
 
 /// The repository root `given` names, or the one the current folder is in, in its canonical form,
-/// so that every spelling of one folder names one repository.
+/// so that every spelling of one folder names one repository: for a command that reads or writes
+/// files and asks no daemon.
 ///
 /// # Errors
 ///
 /// The current folder cannot be read, or the root is missing, unreachable or not a folder.
 pub(crate) fn root(given: Option<&Path>) -> anyhow::Result<PathBuf> {
-    Ok(root_and_worktree(given)?.0)
+    Ok(found(given)?.0)
 }
 
 /// The repository root, as [`root`] finds it, and the top of the working tree the paths a person
 /// types are read from, canonical: the linked working tree the current folder is in, when it is in
-/// one, and the root otherwise.
+/// one, and the root otherwise; for a command that asks the repository's daemon, which refuses a
+/// root that is the home folder, a folder holding it, or a file system's root.
 ///
 /// # Errors
 ///
-/// The current folder cannot be read, or the root is missing, unreachable or not a folder.
+/// The current folder cannot be read, the root is missing, unreachable or not a folder, or it is
+/// one the daemon refuses.
 pub(crate) fn root_and_worktree(given: Option<&Path>) -> anyhow::Result<(PathBuf, PathBuf)> {
+    let (root, worktree) = found(given)?;
+    refuse_never_a_root(&root)?;
+    Ok((root, worktree))
+}
+
+/// The repository root and the working tree's top, as [`root_and_worktree`] finds them, whatever
+/// folder they are.
+///
+/// # Errors
+///
+/// As [`root`].
+fn found(given: Option<&Path>) -> anyhow::Result<(PathBuf, PathBuf)> {
     let alone = |folder: &Path| canonical(folder).map(|root| (root.clone(), root));
     if let Some(given) = given {
         return alone(given);
@@ -35,6 +58,26 @@ pub(crate) fn root_and_worktree(given: Option<&Path>) -> anyhow::Result<(PathBuf
         Some(located) => Ok((located.repository_root().to_path_buf(), located.root)),
         None => alone(&current),
     }
+}
+
+/// Refuses `root`, canonical, when it is the user's home folder, a folder holding it, or a file
+/// system's root, which Cortex never serves as a repository.
+///
+/// # Errors
+///
+/// The root is one of those, or the home folder cannot be found.
+pub(crate) fn refuse_never_a_root(root: &Path) -> anyhow::Result<()> {
+    let home = std::env::home_dir().context("finding the home folder")?;
+    let home = canonical(&home)?;
+    if is_never_a_root(root, &home) {
+        bail!(
+            "{} is the home folder, a folder holding it, or a file system's root, which Cortex \
+             never serves as a repository: run the command in a repository, or name one with \
+             --root",
+            root.display()
+        );
+    }
+    Ok(())
 }
 
 /// The repository `cortex off` and `cortex on` work on: the folder `--root` names; else the
@@ -67,13 +110,7 @@ pub(crate) fn switched_root(given: Option<&Path>) -> anyhow::Result<PathBuf> {
             }
         }
     };
-    if home.starts_with(&root) {
-        bail!(
-            "{} is the home folder or holds it, whose .cortex is your own: name a repository with \
-             --root",
-            root.display()
-        );
-    }
+    refuse_never_a_root(&root)?;
     Ok(root)
 }
 

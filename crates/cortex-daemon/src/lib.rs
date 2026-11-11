@@ -49,6 +49,7 @@ mod place;
 mod positions;
 mod recapped;
 mod recent_errors;
+mod refused_root;
 mod retrieval;
 mod runs;
 mod server;
@@ -63,6 +64,7 @@ mod welcome;
 mod worktree;
 
 pub use instance::is_running;
+pub use refused_root::RefusedRoot;
 pub use upkeep::{Ended, LOG_LIMIT_BYTES, PACE_WAIT, Swept, Upkeep, UpkeepSettings};
 
 use std::path::{Path, PathBuf};
@@ -106,16 +108,18 @@ const STOP_GRACE: Duration = Duration::from_secs(1);
 ///
 /// # Errors
 ///
-/// A root that is not a folder, no home folder, another daemon serving the repository, an
-/// endpoint that cannot be bound, an
-/// unusable configuration, a store that cannot be opened, a watcher that cannot start or stops, a
-/// failed index, and a line `note` could not write.
+/// A root that is not a folder, no home folder, a root that is the home folder, holds it or is a
+/// file system's root ([`RefusedRoot`]), another daemon serving the repository, an endpoint that
+/// cannot be bound, an unusable configuration, a store that cannot be opened, a watcher that cannot
+/// start or stops, a failed index, and a line `note` could not write.
 pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> anyhow::Result<()> {
     // The repository is named by its canonical root, however the caller spelled it, so that the
     // daemon's lock and endpoint are the ones hooks and commands look for.
     let root =
         &canonical_root(root).with_context(|| format!("finding the folder {}", root.display()))?;
     let home = std::env::home_dir().context("finding the user's home folder")?;
+    let canonical_home = canonical_root(&home).unwrap_or_else(|_| home.clone());
+    refused_root::refuse(root, &canonical_home)?;
     let user = UserFolder::in_home(&home);
     let repo_id = RepoId::of(root);
     let _instance = Instance::acquire(&user, &repo_id)?;

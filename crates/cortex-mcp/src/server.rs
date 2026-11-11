@@ -2,17 +2,23 @@
 //! the daemon, and the session over stdio. A call the server cannot answer is a tool error the agent reads, never a
 //! crash: the session goes on.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use cortex_core::ipc::{FactsAnswer, Note, NoteOutcome, RequestBody, ResponseBody};
 use cortex_core::{FactKind, FactSource};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
-use rmcp::{ErrorData, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
+use rmcp::service::{NotificationContext, RequestContext};
+use rmcp::{
+    ErrorData, Peer, RoleServer, ServerHandler, ServiceExt, schemars, tool, tool_handler,
+    tool_router,
+};
 use serde::Deserialize;
 
 use crate::McpError;
 use crate::cap::capped;
+use crate::roots::Roots;
 
 /// How many files `cortex_where` names when the call does not say, as `cortex where` does.
 const DEFAULT_LIMIT: u8 = 3;
@@ -28,12 +34,14 @@ const NOTHING_FOUND: &str = "Nothing found: no file the engine can show for this
 /// runs, and waits for its answer.
 pub trait Daemon: Send + Sync + 'static {
     /// The daemon's answer to `body`, or a sentence for the agent saying why there is none (no
-    /// repository here, no daemon could be started, it did not answer in time).
+    /// repository set up here, no daemon could be started, it did not answer in time). `roots`
+    /// are the local folders the client names as its roots, in its order; none when it names
+    /// none.
     ///
     /// # Errors
     ///
     /// Why the daemon gave no answer.
-    fn ask(&self, body: RequestBody) -> Result<ResponseBody, String>;
+    fn ask(&self, body: RequestBody, roots: &[PathBuf]) -> Result<ResponseBody, String>;
 }
 
 /// The input of `cortex_where`.
@@ -69,6 +77,8 @@ pub struct NoteInput {
 pub struct Server {
     /// The daemon every call is forwarded to.
     daemon: Arc<dyn Daemon>,
+    /// The client's roots, as the session knows them.
+    roots: Arc<Roots>,
 }
 
 #[tool_router]
@@ -76,7 +86,24 @@ impl Server {
     /// A server forwarding every call to `daemon`.
     #[must_use]
     pub fn new(daemon: Arc<dyn Daemon>) -> Self {
-        Self { daemon }
+        Self {
+            daemon,
+            roots: Arc::default(),
+        }
+    }
+
+    /// The daemon's answer to `body`, given the roots the client behind `peer` names, asked off
+    /// the session's thread, since the daemon is asked over a blocking connection.
+    async fn asked(
+        &self,
+        peer: &Peer<RoleServer>,
+        body: RequestBody,
+    ) -> Result<ResponseBody, String> {
+        let roots = self.roots.of(peer).await;
+        let daemon = Arc::clone(&self.daemon);
+        tokio::task::spawn_blocking(move || daemon.ask(body, &roots))
+            .await
+            .unwrap_or_else(|_| Err("the call to the daemon stopped".to_owned()))
     }
 
     /// `cortex_where`: the code the engine finds for a question, as `cortex where` prints it,
@@ -88,6 +115,7 @@ impl Server {
     async fn find_where(
         &self,
         Parameters(input): Parameters<WhereInput>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         // Input the model can correct is a tool error it reads, not a protocol error.
         let limit = match input.limit.map(u8::try_from) {
@@ -98,25 +126,21 @@ impl Server {
         if input.query.trim().is_empty() {
             return Ok(failed("the query is empty: ask in a sentence"));
         }
-        let daemon = Arc::clone(&self.daemon);
         let body = RequestBody::Where {
             query: input.query,
             limit,
             worktree_root: None,
         };
-        // The daemon is asked over a blocking connection, off the session's thread.
-        let asked = tokio::task::spawn_blocking(move || daemon.ask(body)).await;
-        let text = match asked {
-            Ok(Ok(ResponseBody::Reply {
+        let text = match self.asked(&context.peer, body).await {
+            Ok(ResponseBody::Reply {
                 text: Some(text), ..
-            })) => capped(&text),
-            Ok(Ok(ResponseBody::Reply { text: None, .. })) => NOTHING_FOUND.to_owned(),
-            Ok(Ok(ResponseBody::Error { message })) => {
+            }) => capped(&text),
+            Ok(ResponseBody::Reply { text: None, .. }) => NOTHING_FOUND.to_owned(),
+            Ok(ResponseBody::Error { message }) => {
                 return Ok(failed(&format!("the daemon could not answer: {message}")));
             }
-            Ok(Ok(_)) => return Ok(failed("the daemon gave an answer of another kind")),
-            Ok(Err(why)) => return Ok(failed(&why)),
-            Err(_) => return Ok(failed("the call to the daemon stopped")),
+            Ok(_) => return Ok(failed("the daemon gave an answer of another kind")),
+            Err(why) => return Ok(failed(&why)),
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
     }
@@ -129,26 +153,24 @@ impl Server {
     async fn explain_why(
         &self,
         Parameters(input): Parameters<WhyInput>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         if input.target.trim().is_empty() {
             return Ok(failed(
                 "name a file, `path:line`, `path:symbol` or a symbol's name",
             ));
         }
-        let daemon = Arc::clone(&self.daemon);
         let body = RequestBody::Why {
             target: input.target,
             worktree_root: None,
         };
-        let asked = tokio::task::spawn_blocking(move || daemon.ask(body)).await;
-        let text = match asked {
-            Ok(Ok(ResponseBody::Reply {
+        let text = match self.asked(&context.peer, body).await {
+            Ok(ResponseBody::Reply {
                 text: Some(text), ..
-            })) => capped(&text),
-            Ok(Ok(ResponseBody::Error { message })) => return Ok(failed(&message)),
-            Ok(Ok(_)) => return Ok(failed("the daemon gave an answer of another kind")),
-            Ok(Err(why)) => return Ok(failed(&why)),
-            Err(_) => return Ok(failed("the call to the daemon stopped")),
+            }) => capped(&text),
+            Ok(ResponseBody::Error { message }) => return Ok(failed(&message)),
+            Ok(_) => return Ok(failed("the daemon gave an answer of another kind")),
+            Err(why) => return Ok(failed(&why)),
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
     }
@@ -162,6 +184,7 @@ impl Server {
     async fn note(
         &self,
         Parameters(input): Parameters<NoteInput>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let kind = match input.kind.as_deref() {
             None => FactKind::Convention,
@@ -182,16 +205,14 @@ impl Server {
                 "name what the rule is about: a file, `path:symbol`, or `.` for the repository",
             ));
         }
-        let daemon = Arc::clone(&self.daemon);
         let body = RequestBody::Note(Note {
             text: input.text,
             kind,
             source: FactSource::Agent,
             at: input.anchors,
         });
-        let asked = tokio::task::spawn_blocking(move || daemon.ask(body)).await;
-        let text = match asked {
-            Ok(Ok(ResponseBody::Facts(FactsAnswer::Noted { id, outcome }))) => match outcome {
+        let text = match self.asked(&context.peer, body).await {
+            Ok(ResponseBody::Facts(FactsAnswer::Noted { id, outcome })) => match outcome {
                 NoteOutcome::Added => format!(
                     "Noted as fact {id}, a candidate: given to agents once the user confirms it \
                      or it is noted again in another task."
@@ -201,12 +222,11 @@ impl Server {
                     format!("Fact {id} says this already, and is now active.")
                 }
             },
-            Ok(Ok(ResponseBody::Error { message })) => {
+            Ok(ResponseBody::Error { message }) => {
                 return Ok(failed(&format!("the rule was not noted: {message}")));
             }
-            Ok(Ok(_)) => return Ok(failed("the daemon gave an answer of another kind")),
-            Ok(Err(why)) => return Ok(failed(&why)),
-            Err(_) => return Ok(failed("the call to the daemon stopped")),
+            Ok(_) => return Ok(failed("the daemon gave an answer of another kind")),
+            Err(why) => return Ok(failed(&why)),
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(capped(
             &text,
@@ -216,6 +236,11 @@ impl Server {
 
 #[tool_handler]
 impl ServerHandler for Server {
+    /// The client's roots changed: they are asked again at the next call.
+    async fn on_roots_list_changed(&self, _: NotificationContext<RoleServer>) {
+        self.roots.changed();
+    }
+
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("cortex", env!("CARGO_PKG_VERSION")))

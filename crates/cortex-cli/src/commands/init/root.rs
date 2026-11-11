@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
-use cortex_core::{canonical_root, git_layout};
+use cortex_core::{canonical_root, git_layout, is_never_a_root};
 
 use super::git;
 
@@ -108,16 +108,17 @@ fn main_tree_of(top: &Path) -> Option<PathBuf> {
         .main_root
 }
 
-/// `root`, unless its folder is the home folder `home` or holds it.
+/// `root`, unless its folder is the home folder `home`, a folder holding it, or a file system's
+/// root.
 ///
 /// # Errors
 ///
-/// The folder is the home folder or holds it.
+/// The folder is one of those.
 fn checked(root: Root, home: &Path) -> anyhow::Result<Root> {
-    if home.starts_with(&root.folder) {
+    if is_never_a_root(&root.folder, home) {
         bail!(
-            "Cortex never sets up the home folder or a folder holding it ({}); run `cortex init` \
-             in a repository",
+            "Cortex never sets up the home folder, a folder holding it, or a file system's root \
+             ({}); run `cortex init` in a repository",
             root.folder.display()
         );
     }

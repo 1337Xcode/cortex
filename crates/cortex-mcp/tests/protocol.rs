@@ -1,9 +1,13 @@
 //! The server spoken to by an MCP client over an in-memory pipe, its daemon a fake that records
 //! each request and answers as told: the tools and their schemas, the answer as the daemon wrote
 //! it, the inputs refused, and each way the daemon can fail turned into a tool error the agent
-//! reads.
+//! reads. A client that names roots has them given to the daemon with each call, asked once a
+//! session and again after it says they changed; one that never answers is waited for once.
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use cortex_core::ipc::{FactsAnswer, Note, NoteOutcome, RequestBody, ResponseBody};
 use cortex_core::{FactKind, FactSource};
@@ -15,20 +19,88 @@ use serde_json::{Value, json};
 /// What a test's result is.
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-/// A daemon that answers every request with one answer and keeps the requests it was sent.
+/// A daemon that answers every request with one answer and keeps the requests it was sent, and
+/// the roots given with each.
 struct Fake {
     /// The answer, or why there is none.
     answer: Result<ResponseBody, String>,
     /// Every request, in order.
     asked: Mutex<Vec<RequestBody>>,
+    /// The roots given with each request, in order.
+    roots: Mutex<Vec<Vec<PathBuf>>>,
+}
+
+impl Fake {
+    /// A fake answering `answer`, asked nothing yet.
+    fn answering(answer: Result<ResponseBody, String>) -> Self {
+        Self {
+            answer,
+            asked: Mutex::new(Vec::new()),
+            roots: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 impl Daemon for Fake {
-    fn ask(&self, body: RequestBody) -> Result<ResponseBody, String> {
+    fn ask(&self, body: RequestBody, roots: &[PathBuf]) -> Result<ResponseBody, String> {
         if let Ok(mut asked) = self.asked.lock() {
             asked.push(body);
         }
+        if let Ok(mut given) = self.roots.lock() {
+            given.push(roots.to_vec());
+        }
         self.answer.clone()
+    }
+}
+
+/// A client that offers roots, names these when it answers, and counts the times it was asked.
+struct WithRoots {
+    /// The roots' URIs.
+    uris: Vec<&'static str>,
+    /// Whether it never answers.
+    is_silent: bool,
+    /// How many times it was asked.
+    asked: Arc<AtomicUsize>,
+}
+
+impl WithRoots {
+    /// A client naming `uris`, or never answering when `is_silent`.
+    fn new(uris: Vec<&'static str>, is_silent: bool) -> Self {
+        Self {
+            uris,
+            is_silent,
+            asked: Arc::default(),
+        }
+    }
+}
+
+#[expect(deprecated, reason = "roots are what this test is about")]
+impl rmcp::ClientHandler for WithRoots {
+    fn get_info(&self) -> rmcp::model::ClientInfo {
+        rmcp::model::ClientInfo::new(
+            rmcp::model::ClientCapabilities::builder()
+                .enable_roots()
+                .enable_roots_list_changed()
+                .build(),
+            rmcp::model::Implementation::new("test", "0"),
+        )
+        .with_protocol_version(rmcp::model::ProtocolVersion::V_2025_06_18)
+    }
+
+    async fn list_roots(
+        &self,
+        _: rmcp::service::RequestContext<rmcp::RoleClient>,
+    ) -> Result<rmcp::model::ListRootsResult, rmcp::ErrorData> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        if self.is_silent {
+            std::future::pending::<()>().await;
+        }
+        Ok(rmcp::model::ListRootsResult::new(
+            self.uris
+                .iter()
+                .map(|uri| rmcp::model::Root::new(*uri))
+                .collect(),
+        ))
     }
 }
 
@@ -49,10 +121,7 @@ async fn session_of(
     answer: Result<ResponseBody, String>,
     calls: Vec<Value>,
 ) -> TestResult<(Vec<Value>, Vec<RequestBody>)> {
-    let fake = Arc::new(Fake {
-        answer,
-        asked: Mutex::new(Vec::new()),
-    });
+    let fake = Arc::new(Fake::answering(answer));
     let (server_side, client_side) = tokio::io::duplex(64 * 1024);
     let server = Server::new(fake.clone()).serve(server_side);
     let client = ().serve(client_side);
@@ -95,10 +164,7 @@ fn schema_of_tool(tools: &[rmcp::model::Tool], name: &str) -> TestResult<Value> 
 /// target.
 #[tokio::test]
 async fn the_tools_are_cortex_note_where_and_why() -> TestResult {
-    let fake = Arc::new(Fake {
-        answer: Err("unused".to_owned()),
-        asked: Mutex::new(Vec::new()),
-    });
+    let fake = Arc::new(Fake::answering(Err("unused".to_owned())));
     let (server_side, client_side) = tokio::io::duplex(64 * 1024);
     let (server, client) =
         tokio::join!(Server::new(fake).serve(server_side), ().serve(client_side));
@@ -379,5 +445,106 @@ async fn a_why_is_answered_as_the_daemon_wrote_it() -> TestResult {
             true
         )]
     );
+    Ok(())
+}
+
+/// How long a call may take in these tests: a client that never names its roots delays one call
+/// by the server's 2 s at most.
+const CALL_WITHIN: Duration = Duration::from_secs(30);
+
+/// The roots each call gave the daemon, in a session of `calls` `cortex_where` calls made by
+/// `client`, each within [`CALL_WITHIN`]; after the first, the client says its roots changed when
+/// `is_changed`.
+async fn roots_given(
+    client: impl rmcp::ClientHandler,
+    calls: usize,
+    is_changed: bool,
+) -> TestResult<Vec<Vec<PathBuf>>> {
+    let fake = Arc::new(Fake::answering(Ok(ResponseBody::Reply {
+        text: Some("found".to_owned()),
+        to_user: None,
+    })));
+    let (server_side, client_side) = tokio::io::duplex(64 * 1024);
+    let server = Server::new(fake.clone()).serve(server_side);
+    let client = client.serve(client_side);
+    let (server, client) = tokio::join!(server, client);
+    let (server, client) = (server?, client?);
+    for call in 0..calls {
+        if call == 1 && is_changed {
+            client.notify_roots_list_changed().await?;
+        }
+        let Value::Object(arguments) = json!({"query": "where are orders summed"}) else {
+            return Err("arguments are no object".into());
+        };
+        let params = CallToolRequestParams::new("cortex_where").with_arguments(arguments);
+        tokio::time::timeout(CALL_WITHIN, client.call_tool(params)).await??;
+    }
+    client.cancel().await?;
+    server.cancel().await?;
+    let given = fake.roots.lock().map_err(|_| "poisoned")?.clone();
+    Ok(given)
+}
+
+/// This system's two roots typed by hand, as URIs and as the folders they name.
+fn two_roots() -> (&'static str, &'static str, Vec<PathBuf>) {
+    if cfg!(windows) {
+        (
+            "file:///C:/work/one",
+            "file:///D:/two%20words",
+            vec![PathBuf::from("C:/work/one"), PathBuf::from("D:/two words")],
+        )
+    } else {
+        (
+            "file:///work/one",
+            "file:///srv/two%20words",
+            vec![PathBuf::from("/work/one"), PathBuf::from("/srv/two words")],
+        )
+    }
+}
+
+/// A client that names roots has its local folders given to the daemon with each call, in its
+/// order, a root that is no local folder left out, asked once for two calls; a client that offers
+/// no roots gives none.
+#[tokio::test]
+async fn the_client_s_roots_are_given_with_each_call() -> TestResult {
+    let (first, second, expected) = two_roots();
+    let client = WithRoots::new(vec![first, "https://example.test/three", second], false);
+    let asked = Arc::clone(&client.asked);
+    assert_eq!(
+        roots_given(client, 2, false).await?,
+        vec![expected.clone(), expected]
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        roots_given((), 1, false).await?,
+        vec![Vec::<PathBuf>::new()]
+    );
+    Ok(())
+}
+
+/// Once the client says its roots changed, they are asked again at a later call.
+#[tokio::test]
+async fn changed_roots_are_asked_again() -> TestResult {
+    let (first, second, _) = two_roots();
+    let client = WithRoots::new(vec![first, second], false);
+    let asked = Arc::clone(&client.asked);
+    // The notice and the next call may reach the server in either order: a few calls give it time.
+    roots_given(client, 4, true).await?;
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+/// A client that offers roots and never names them: each call still answers, with no roots, and
+/// the client is asked once in the session.
+#[tokio::test]
+async fn a_client_that_never_names_its_roots_is_asked_once() -> TestResult {
+    let (first, _, _) = two_roots();
+    let client = WithRoots::new(vec![first], true);
+    let asked = Arc::clone(&client.asked);
+    assert_eq!(
+        roots_given(client, 3, false).await?,
+        vec![Vec::<PathBuf>::new(); 3]
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
     Ok(())
 }

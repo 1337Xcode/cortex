@@ -79,7 +79,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
             text: text.clone(),
         },
     };
-    let root = repository::root(args.root.as_deref())?;
+    let (root, _) = repository::root_and_worktree(args.root.as_deref())?;
     let answer = match answer_of(&root, &RequestBody::Facts(ask))? {
         ResponseBody::Facts(answer) => answer,
         other => bail!("the daemon answered with {other:?}"),

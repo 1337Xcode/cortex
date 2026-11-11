@@ -9,6 +9,8 @@ last changed the lines it may show. `cortex daemon` runs it.
 
 - Let anything but its writer write the store, or run twice for one repository: the run folder's
   lock refuses a second daemon, and the store's writer lock refuses a second writer.
+- Serve the user's home folder, a folder holding it, or a file system's root as a repository:
+  `run` refuses such a root (`RefusedRoot`) before it records or holds anything.
 - Use the network. It asks git for the user's global gitignore with `git config` alone, which reads
   configuration files and nothing else, and reads the history in-process with `gix`, or with the
   `git` program told never to fetch what a partial clone left out.

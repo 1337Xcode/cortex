@@ -562,8 +562,8 @@ fn purge_never_deletes_the_home_folder_s_cortex() -> TestResult {
         assert!(!undone.is_success, "{}", undone.stdout);
         assert!(
             undone.stderr.contains(&format!(
-                "{} is the home folder or holds it, whose `.cortex` is the user's own, for every \
-                 repository; purge never deletes it",
+                "{} is the home folder, a folder holding it, or a file system's root, which is \
+                 never a repository's; purge never deletes its `.cortex`",
                 canonical_root(root)?.display()
             )),
             "{}",

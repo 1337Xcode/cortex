@@ -3,10 +3,12 @@
 //! reasons and confidence, as `cortex where` prints it; `cortex_why`, why a file or a symbol is
 //! where it is, as `cortex why` prints it; and `cortex_note`, a project rule the agent found, kept
 //! as a candidate fact. Every call is answered by the repository's daemon through [`Daemon`],
-//! which the binary implements; this crate knows the protocol, the tools and their limits, not how
-//! the daemon is found or started.
+//! which the binary implements, given the folders the client names as its roots, asked once a
+//! session and again when the client says they changed; this crate knows the protocol, the tools
+//! and their limits, not how the daemon is found or started.
 
 mod cap;
+mod roots;
 mod server;
 
 pub use server::{Daemon, Server, serve};

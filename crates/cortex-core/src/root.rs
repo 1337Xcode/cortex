@@ -3,7 +3,8 @@
 //! A repository is known by its root folder: the root's hash names its daemon's socket and is
 //! stored with its index. A folder has many spellings (a relative path, `..` segments, a link to
 //! it, another letter case on a file system that ignores case), so everything that names a
-//! repository by its root first passes the root through [`canonical_root`].
+//! repository by its root first passes the root through [`canonical_root`]. Some folders are never
+//! a repository's root ([`is_never_a_root`]).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -30,10 +31,57 @@ pub fn canonical_root(folder: &Path) -> io::Result<PathBuf> {
     Ok(without_verbatim_prefix(&canonical))
 }
 
+/// Whether `folder`, canonical, can never be a repository's root for the user whose canonical home
+/// folder is `home`: it is the home folder, whose `.cortex` is the user's own, a folder holding
+/// it, or a file system's root (a folder with no parent: `/`, `C:\`, a network share's root),
+/// below which everything would be indexed. Every command that serves, sets up or deletes a
+/// repository refuses such a folder.
+///
+/// ```
+/// use std::path::Path;
+/// use cortex_core::is_never_a_root;
+/// let home = Path::new("/home/ann");
+/// assert!(is_never_a_root(Path::new("/home/ann"), home));
+/// assert!(is_never_a_root(Path::new("/home"), home));
+/// assert!(is_never_a_root(Path::new("/"), home));
+/// assert!(!is_never_a_root(Path::new("/home/ann/repo"), home));
+/// assert!(!is_never_a_root(Path::new("/srv/repo"), home));
+/// ```
+#[must_use]
+pub fn is_never_a_root(folder: &Path, home: &Path) -> bool {
+    home.starts_with(folder) || folder.parent().is_none()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::RepoId;
+
+    /// This system's own file system root, the temporary folder's outermost folder, is never a
+    /// root, nor is the home folder or what holds it; a folder inside the home folder or beside
+    /// it, its name starting the same, can be.
+    #[test]
+    fn the_home_folder_what_holds_it_and_a_file_system_root_are_never_roots() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let home = canonical_root(scratch.path())?.join("users").join("ann");
+        let file_system_root = home.ancestors().last().ok_or("no outermost folder")?;
+        assert!(
+            file_system_root.parent().is_none(),
+            "{}",
+            file_system_root.display()
+        );
+        assert!(is_never_a_root(
+            file_system_root,
+            Path::new("/elsewhere/home")
+        ));
+        for folder in home.ancestors() {
+            assert!(is_never_a_root(folder, &home), "{}", folder.display());
+        }
+        assert!(!is_never_a_root(&home.join("repo"), &home));
+        let beside = home.with_file_name("anna");
+        assert!(!is_never_a_root(&beside, &home));
+        Ok(())
+    }
 
     /// Result type for these tests: any failure fails the test.
     type TestResult = Result<(), Box<dyn std::error::Error>>;

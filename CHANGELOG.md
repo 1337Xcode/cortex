@@ -294,6 +294,16 @@ All notable changes to this project are documented in this file. The format is b
 - Cortex is licensed under the Apache License, Version 2.0, alone (see `LICENSE` and `NOTICE`).
   Commits before this change were offered under the MIT license or Apache-2.0, at the user's
   option, and stay available under those terms.
+- `cortex mcp` serves only a repository set up on this machine and not turned off: the one
+  `--root` names, which before was served whether it was set up or not, else that of the first
+  folder the MCP client names as its roots that is in one (asked once a session), else that of the
+  current folder. Anywhere else, as when an editor starts it from the home folder, each tool call
+  is a tool error the agent passes on, saying Cortex is not set up there, is turned off there, or
+  never serves that folder, and no daemon starts. The home folder, a folder holding it and a file
+  system's root are never a repository: the daemon refuses such a root, and so do `cortex where`,
+  `why`, `note`, `claims`, `consolidate`, `facts` and `import` at once, where they waited before
+  for a daemon to start; `cortex init` and `cortex uninstall --purge` now refuse a file system's
+  root too.
 
 ### Fixed
 
