@@ -1,9 +1,10 @@
 //! What `cortex init` writes for each agent: the registry of agents, how each is found, and the
 //! files that set Cortex up in it: hooks merged into a settings file, files of Cortex's own (a
-//! plugin, hook scripts), Cortex's MCP server merged into JSON settings, and the lines the user
-//! adds to a file Cortex does not write. Adding an agent means one file here and one registry
-//! line.
+//! plugin, hook scripts, a rules file), Cortex's MCP server merged into JSON settings, and what
+//! the user adds to a file Cortex does not write. Adding an agent means one file here and one
+//! registry line.
 
+mod aider;
 mod amp;
 mod antigravity;
 mod augment;
@@ -11,6 +12,7 @@ pub(crate) mod claude;
 mod cline;
 mod codex;
 pub(crate) mod command;
+mod continue_;
 mod copilot;
 mod crush;
 mod cursor;
@@ -30,17 +32,22 @@ mod opencode;
 mod openhands;
 pub(crate) mod own;
 mod qwen;
+mod roo;
+pub(crate) mod rules;
 pub(crate) mod settings;
 mod trae;
 pub(crate) mod user_path;
+mod warp;
+mod windsurf;
 mod yaml;
+mod zed;
 
 use std::path::Path;
 
 use cortex_core::{Agent, find_program};
 
 use self::mcp::McpFile;
-use self::own::OwnFiles;
+use self::own::{OwnFiles, OwnKind, UsersFolder};
 use self::settings::Style;
 
 /// One agent `cortex init` sets up.
@@ -131,6 +138,12 @@ pub(crate) const SETUPS: &[&Setup] = &[
     &cline::SETUP,
     &hermes::SETUP,
     &goose::SETUP,
+    &zed::SETUP,
+    &continue_::SETUP,
+    &warp::SETUP,
+    &windsurf::SETUP,
+    &roo::SETUP,
+    &aider::SETUP,
 ];
 
 /// The setup of the agent named `name` on the command line.
@@ -172,7 +185,7 @@ pub(crate) fn users_files(setup: &Setup) -> Vec<String> {
         .map(|hooks| hooks.user.to_owned())
         .collect();
     if let Some(own) = &setup.own
-        && let Some(folder) = own.user
+        && let Some(folder) = own.user.path()
     {
         // The files' names do not depend on the program they run.
         let names = (own.files)("cortex").unwrap_or_default();
@@ -180,9 +193,56 @@ pub(crate) fn users_files(setup: &Setup) -> Vec<String> {
         files.extend(names.iter().map(|file| format!("{folder}/{}", file.name)));
     }
     if let Some(mcp) = &setup.mcp {
-        files.extend(mcp.user.iter().map(|file| file.in_home()));
+        files.extend(mcp.files().iter().map(|file| file.in_home()));
     }
     files
+}
+
+/// What the user is to do for `setup`'s agent, this binary being `program`, that Cortex never does
+/// and doctor cannot check, each as init says it: the rules to add where Cortex writes none for the
+/// user, when `is_for_user`; the MCP entry to add by hand; and the agent's own steps.
+pub(crate) fn steps(setup: &Setup, program: &str, is_for_user: bool) -> Vec<String> {
+    let mut steps = Vec::new();
+    if is_for_user && let Some(UsersFolder::Told(told)) = setup.own.as_ref().map(|own| own.user) {
+        steps.push(told.to_owned());
+    }
+    steps.extend(
+        setup
+            .mcp
+            .as_ref()
+            .and_then(|file| mcp::by_hand_step(file, program)),
+    );
+    steps.extend(setup.told.iter().map(|step| (*step).to_owned()));
+    steps
+}
+
+/// Whether Cortex writes anything for `setup`'s agent at the user's scope: hooks, a file of its own
+/// in the user's folder, or its MCP server in the user's settings.
+pub(crate) fn writes_for_user(setup: &Setup) -> bool {
+    setup.hooks.is_some()
+        || setup
+            .own
+            .as_ref()
+            .is_some_and(|own| matches!(own.user, UsersFolder::At(_)))
+        || setup
+            .mcp
+            .as_ref()
+            .is_some_and(|file| !file.files().is_empty())
+}
+
+/// Each rules file of Cortex's own init may write in a repository for an agent of the registry,
+/// relative to the repository's root with `/` between folders: git is told to leave each out
+/// through the exclude file.
+pub(crate) fn rules_files() -> Vec<String> {
+    let mut paths = Vec::new();
+    for own in SETUPS.iter().filter_map(|setup| setup.own.as_ref()) {
+        if let (OwnKind::Rules, Some(project)) = (own.kind, own.project) {
+            // A rules file's name does not depend on the program.
+            let names = (own.files)("cortex").unwrap_or_default();
+            paths.extend(names.iter().map(|file| format!("{project}/{}", file.name)));
+        }
+    }
+    paths
 }
 
 /// Whether the folder `folder` of the home folder `home` holds an entry besides `written`, the
@@ -221,8 +281,9 @@ fn program_names(program: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Every agent is named once; every agent Cortex writes anything for has an adapter of the same
-    /// name, which `cortex hook --agent` takes, and every hooks file's style names that agent.
+    /// Every agent is named once; every agent Cortex writes hooks, a plugin or hook scripts for
+    /// has an adapter of the same name, which `cortex hook --agent` takes, and every hooks file's
+    /// style names that agent. An agent Cortex reaches through MCP alone needs none.
     #[test]
     fn every_setup_is_its_adapter_s() {
         let mut names: Vec<&str> = SETUPS.iter().map(|setup| setup.agent.name()).collect();
@@ -231,8 +292,15 @@ mod tests {
         assert_eq!(names.len(), SETUPS.len());
         for setup in SETUPS {
             let name = setup.agent.name();
-            let writes = setup.hooks.is_some() || setup.own.is_some() || setup.mcp.is_some();
-            assert!(!writes || cortex_hook::adapter(name).is_some(), "{name}");
+            let runs_cortex = setup.hooks.is_some()
+                || setup
+                    .own
+                    .as_ref()
+                    .is_some_and(|own| own.kind != OwnKind::Rules);
+            assert!(
+                !runs_cortex || cortex_hook::adapter(name).is_some(),
+                "{name}"
+            );
             if let Some(hooks) = &setup.hooks {
                 assert_eq!(hooks.style.agent, name);
             }
@@ -241,9 +309,20 @@ mod tests {
 
     /// Every agent's file of the repository's that init writes hooks to, and every file of
     /// Cortex's own it writes in a repository's folder, is one git is told to leave out, since it
-    /// names this machine's program.
+    /// names this machine's program or tells an agent to call a tool only this machine gives it:
+    /// a rules file through the exclude file git never commits, every other file as Cortex's
+    /// folder is.
     #[test]
     fn every_local_file_is_left_out_of_git() -> anyhow::Result<()> {
+        let rules = rules_files();
+        assert_eq!(
+            rules,
+            [
+                ".continue/rules/cortex.md",
+                ".windsurf/rules/cortex.md",
+                ".roo/rules/cortex.md"
+            ]
+        );
         for setup in SETUPS {
             if let Some(project) = setup.hooks.as_ref().and_then(|hooks| hooks.project) {
                 assert!(
@@ -256,10 +335,16 @@ mod tests {
             {
                 for file in (own.files)("/opt/cortex")? {
                     let path = format!("{folder}/{}", file.name);
-                    assert!(
+                    let lists = (
                         cortex_core::IGNORE_LOCAL_FILES.contains(&path.as_str()),
-                        "{path}"
+                        rules.contains(&path),
                     );
+                    let expected = if own.kind == OwnKind::Rules {
+                        (false, true)
+                    } else {
+                        (true, false)
+                    };
+                    assert_eq!(lists, expected, "{path}");
                 }
             }
         }

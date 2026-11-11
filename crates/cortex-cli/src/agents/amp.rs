@@ -9,8 +9,8 @@
 
 use cortex_core::Agent;
 
-use super::mcp::{McpFile, Shape};
-use super::own::{OwnFile, OwnFiles, plugin};
+use super::mcp::{McpFile, McpPlace, Shape};
+use super::own::{OwnFile, OwnFiles, OwnKind, UsersFolder, plugin};
 use super::user_path::UserPath;
 use super::{FoundBy, Setup};
 
@@ -33,17 +33,18 @@ pub(crate) const SETUP: Setup = Setup {
     hooks: None,
     own: Some(OwnFiles {
         project: Some(".amp/plugins"),
-        user: Some(UserPath::config("amp/plugins")),
+        user: UsersFolder::At(UserPath::config("amp/plugins")),
         loads_both: false,
-        what: "plugin",
+        kind: OwnKind::Plugin,
+        hides: &[],
         files,
         after_removal: None,
     }),
     mcp: Some(McpFile {
-        user: &[
+        place: McpPlace::Files(&[
             UserPath::config("amp/settings.json"),
             UserPath::config("amp/settings.jsonc"),
-        ],
+        ]),
         servers: &["amp.mcpServers"],
         shape: Shape::CommandArgs,
         off: None,

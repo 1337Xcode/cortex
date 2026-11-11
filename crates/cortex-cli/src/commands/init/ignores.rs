@@ -2,7 +2,9 @@
 //! gets when git does not leave it out yet (in a linked working tree, the exclude file git names
 //! for it, since its `.gitignore` belongs to its branch): `.cortex/` (or, when the team shares
 //! facts, all of `.cortex/` but `.cortex/shared/`, which is committed), and an agent's local file
-//! of the repository's (Claude Code's `.claude/settings.local.json`) when init makes that file. Git
+//! of the repository's (Claude Code's `.claude/settings.local.json`) when init makes that file. A
+//! rules file of Cortex's in an agent's rules folder, which a team often commits, is left out
+//! through the exclude file git names for the working tree alone, never through `.gitignore`. Git
 //! says what it ignores (`git check-ignore`), whichever file makes it; lines are only ever added,
 //! at the end, after a comment naming Cortex, by which `cortex uninstall` finds them again.
 
@@ -14,6 +16,7 @@ use cortex_core::{
 };
 
 use super::git;
+use crate::agents;
 
 /// A file in Cortex's folder, which need not exist: git ignores it when it ignores the folder.
 const CORTEX_PROBE: &str = ".cortex/probe";
@@ -30,6 +33,8 @@ pub(super) struct Ignored {
     pub(super) is_shared: bool,
     /// The agents' local files of the repository's (`IGNORE_LOCAL_FILES`) it ignores.
     pub(super) local_files: Vec<&'static str>,
+    /// The rules files of Cortex's own it ignores (see [`agents::rules_files`]).
+    pub(super) rules_files: Vec<String>,
 }
 
 impl Ignored {
@@ -47,8 +52,10 @@ impl Ignored {
 ///
 /// Git did not run, or ended with an error.
 pub(super) fn read(root: &Path, bound: &Path) -> anyhow::Result<Ignored> {
+    let rules_files = agents::rules_files();
     let mut args = vec!["check-ignore", "--no-index", CORTEX_PROBE, SHARED_PROBE];
     args.extend(IGNORE_LOCAL_FILES);
+    args.extend(rules_files.iter().map(String::as_str));
     let captured = git::run(&args, root, bound).map_err(anyhow::Error::msg)?;
     // check-ignore ends with 0 when it ignores any of the paths, 1 when it ignores none, and more
     // on an error.
@@ -65,6 +72,10 @@ pub(super) fn read(root: &Path, bound: &Path) -> anyhow::Result<Ignored> {
         is_cortex: is_listed(CORTEX_PROBE),
         is_shared: is_listed(SHARED_PROBE),
         local_files: IGNORE_LOCAL_FILES
+            .into_iter()
+            .filter(|file| is_listed(file))
+            .collect(),
+        rules_files: rules_files
             .into_iter()
             .filter(|file| is_listed(file))
             .collect(),
@@ -119,6 +130,15 @@ pub(super) fn needed(
             .filter(|file| !ignored.local_files.contains(file)),
     );
     lines
+}
+
+/// The lines the exclude file needs for the rules files init makes (`made`) that git does not
+/// ignore already (`ignored`).
+pub(super) fn excluded<'m>(ignored: &Ignored, made: &[&'m str]) -> Vec<&'m str> {
+    made.iter()
+        .copied()
+        .filter(|file| !ignored.rules_files.iter().any(|ignored| ignored == file))
+        .collect()
 }
 
 /// The `.gitignore` that held `before` (or none) with `lines` added at its end, after a comment
@@ -189,6 +209,7 @@ mod tests {
             } else {
                 Vec::new()
             },
+            rules_files: Vec::new(),
         }
     }
 
@@ -224,6 +245,16 @@ mod tests {
         assert_eq!(all.sharing(), Some(false));
         assert_eq!(ignored(true, false, false).sharing(), Some(true));
         assert_eq!(none.sharing(), None);
+    }
+
+    /// A rules file init makes gets its exclude line unless git ignores it already.
+    #[test]
+    fn a_rules_file_git_ignores_gets_no_exclude_line() {
+        let made = [".continue/rules/cortex.md", ".roo/rules/cortex.md"];
+        let mut ignored = ignored(true, true, false);
+        assert_eq!(excluded(&ignored, &made), made);
+        ignored.rules_files = vec![".roo/rules/cortex.md".to_owned()];
+        assert_eq!(excluded(&ignored, &made), [".continue/rules/cortex.md"]);
     }
 
     /// Lines go at the end after a comment, on a line of their own even when the file did not end

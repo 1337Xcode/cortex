@@ -34,6 +34,17 @@ impl What {
     }
 }
 
+/// How git is told to leave out a file of the repository's that init makes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum LeftOut {
+    /// By this line of the block init adds to the `.gitignore` (or to the exclude file, where
+    /// init adds its block there).
+    Gitignore(&'static str),
+    /// By this line of the exclude file git never commits, whatever the `.gitignore`: a rules
+    /// file, in a folder a team often commits.
+    Exclude(String),
+}
+
 /// A file init writes for an agent, what it holds, and what it holds once written.
 #[derive(Debug)]
 pub(super) struct AgentFile {
@@ -51,8 +62,8 @@ pub(super) struct AgentFile {
     pub(super) kind: Kind,
     /// What it holds of Cortex's.
     pub(super) what: What,
-    /// The line that has git leave the file out, for a file of the repository's.
-    pub(super) ignore_line: Option<&'static str>,
+    /// How git is told to leave the file out, for a file of the repository's.
+    pub(super) left_out: Option<LeftOut>,
     /// Whether the agent runs the file as a program.
     pub(super) is_executable: bool,
 }
@@ -63,11 +74,11 @@ impl AgentFile {
         self.before.as_deref() == Some(self.after.as_str())
     }
 
-    /// The repository's file init makes, which git should then leave out; none when the file is
-    /// there already or is the user's.
-    pub(super) fn made_in_repository(&self) -> Option<&'static str> {
+    /// How git is told to leave out the repository's file init makes; none when the file is there
+    /// already or is the user's.
+    pub(super) fn made_in_repository(&self) -> Option<&LeftOut> {
         let is_made = self.before.is_none() && matches!(self.owner, Owner::Repository { .. });
-        self.ignore_line.filter(|_| is_made)
+        self.left_out.as_ref().filter(|_| is_made)
     }
 
     /// What init says when the file holds what it would write already.
@@ -139,8 +150,9 @@ pub(super) fn planned(
         return Ok(plan);
     }
     let program = crate::program::this_program()?;
-    plan.files
-        .extend(own::planned(scope, root, setup, &program)?);
+    let (files, told) = own::planned(scope, root, setup, &program)?;
+    plan.files.extend(files);
+    plan.told.extend(told.map(str::to_owned));
     match mcp::planned(setup, &program)? {
         Some(mcp::Planned::File(file)) => plan.files.push(*file),
         Some(mcp::Planned::Told(told)) => plan.told.push(told),

@@ -286,8 +286,8 @@ fn the_daemon_refuses_each_excluded_folder_itself() -> TestResult {
     Ok(())
 }
 
-/// A set-up that fails once writing began (here the folder git keeps its exclude file in is
-/// gone) gives back what it wrote: no `.cortex`, no backup, nothing in the user's backups; it is
+/// A set-up that fails once writing began (here a file stands where git keeps its exclude file's
+/// folder, which init would otherwise make) gives back what it wrote: no `.cortex`, no backup, nothing in the user's backups; it is
 /// logged and not remembered, and no daemon runs. A configuration that cannot be read, and git
 /// missing from the PATH, fail too, logged and not remembered; once the configuration is fixed, the
 /// next hook sets the folder up.
@@ -303,9 +303,10 @@ fn a_failed_set_up_leaves_the_folder_as_it_was() -> TestResult {
     let _daemon = StopsDaemon::of(&repo, home);
     let info = repo.join(".git").join("info");
     std::fs::remove_dir_all(&info)?;
+    std::fs::write(&info, "not a folder\n")?;
     machine.adopt_setting_nothing_up(&repo)?;
     assert!(!repo.join(".cortex").exists());
-    assert!(!info.exists());
+    assert_eq!(std::fs::read_to_string(&info)?, "not a folder\n");
     assert_eq!(names_in(&user.path().join("backups"))?, backups_before);
     assert!(!machine.refusal(&repo)?.exists());
     let log = std::fs::read_to_string(machine.failures_log())?;
@@ -314,6 +315,7 @@ fn a_failed_set_up_leaves_the_folder_as_it_was() -> TestResult {
         "{log}"
     );
     assert!(!is_running(&user, &RepoId::of(&repo))?);
+    std::fs::remove_file(&info)?;
     std::fs::create_dir_all(&info)?;
 
     let root = repo.to_string_lossy().into_owned();

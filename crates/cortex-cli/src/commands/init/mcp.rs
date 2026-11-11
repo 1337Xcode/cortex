@@ -3,7 +3,8 @@
 //! run a server only once the user approves it, and the entry names this machine's program. A file
 //! Cortex cannot rewrite without losing something of the user's (comments, or a server of the
 //! same name) is left as it is, and init says what to add instead, under another name when the
-//! name is taken: the agent is set up all the same.
+//! name is taken: the agent is set up all the same. So it does for an agent whose file of the
+//! user's Cortex cannot find (Roo Code's), saying where the agent lets the user add it.
 
 use anyhow::Context as _;
 use cortex_core::{MAX_SETTINGS_BYTES, read_text_file};
@@ -11,7 +12,9 @@ use cortex_core::{MAX_SETTINGS_BYTES, read_text_file};
 use super::agent_file::{AgentFile, What};
 use super::{Owner, place};
 use crate::agents::Setup;
-use crate::agents::mcp::{NAME, OTHER_NAME, entry, is_name_taken, merged, servers_path};
+use crate::agents::mcp::{
+    NAME, OTHER_NAME, by_hand_step, entry, is_name_taken, merged, servers_path,
+};
 use crate::backup::Kind;
 
 /// What init does with an agent's MCP settings.
@@ -35,8 +38,11 @@ pub(super) fn planned(setup: &'static Setup, program: &str) -> anyhow::Result<Op
     let Some(mcp) = &setup.mcp else {
         return Ok(None);
     };
-    let mut paths = Vec::with_capacity(mcp.user.len());
-    for user in mcp.user {
+    if let Some(step) = by_hand_step(mcp, program) {
+        return Ok(Some(Planned::Told(step)));
+    }
+    let mut paths = Vec::with_capacity(mcp.files().len());
+    for user in mcp.files() {
         paths.push(user.resolved()?);
     }
     let path = paths
@@ -62,7 +68,7 @@ pub(super) fn planned(setup: &'static Setup, program: &str) -> anyhow::Result<Op
                 agent: setup.agent.name().to_owned(),
             },
             what: What::Mcp,
-            ignore_line: None,
+            left_out: None,
             is_executable: false,
         })))),
         Err(error) => {

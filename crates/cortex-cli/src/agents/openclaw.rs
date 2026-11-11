@@ -11,8 +11,8 @@
 
 use cortex_core::Agent;
 
-use super::mcp::{McpFile, Shape};
-use super::own::{OwnFile, OwnFiles, plugin};
+use super::mcp::{McpFile, McpPlace, Shape};
+use super::own::{OwnFile, OwnFiles, OwnKind, UsersFolder, plugin};
 use super::user_path::UserPath;
 use super::{FoundBy, Setup};
 
@@ -54,9 +54,10 @@ pub(crate) const SETUP: Setup = Setup {
     } else {
         Some(OwnFiles {
             project: None,
-            user: Some(UserPath::home(".openclaw/extensions")),
+            user: UsersFolder::At(UserPath::home(".openclaw/extensions")),
             loads_both: false,
-            what: "plugin",
+            kind: OwnKind::Plugin,
+            hides: &[],
             files,
             after_removal: Some(
                 "if you added `plugins.entries.cortex` to ~/.openclaw/openclaw.json, as init said, \
@@ -68,7 +69,7 @@ pub(crate) const SETUP: Setup = Setup {
         None
     } else {
         Some(McpFile {
-            user: &[UserPath::home(".openclaw/openclaw.json")],
+            place: McpPlace::Files(&[UserPath::home(".openclaw/openclaw.json")]),
             servers: &["mcp", "servers"],
             shape: Shape::CommandArgs,
             off: Some(("enabled", false)),

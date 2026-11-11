@@ -12,7 +12,9 @@
 //!
 //! An agent Cortex writes nothing for, whose lines init only says (see
 //! [`crate::agents::ToldLines`]), is checked by those lines in its file, when the file holds any
-//! of them or the agent is found on this machine.
+//! of them or the agent is found on this machine. One Cortex writes nothing for at the user's
+//! scope (Aider, Roo Code) has the steps init says said as the user's, once it is found and no run
+//! wrote anything for it here.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -62,23 +64,73 @@ pub(super) fn current(context: &Context) -> Vec<Finding> {
         })
         .collect();
     let mut steps_said = BTreeSet::new();
-    for (agent, written, _) in &written {
-        let setup = agents::setup(agent).filter(|_| *written != Written::Hooks);
+    for (agent, written_here, _) in &written {
+        let setup = agents::setup(agent).filter(|_| *written_here != Written::Hooks);
         if let Some(setup) = setup.filter(|_| steps_said.insert(agent)) {
-            findings.extend(setup.told.iter().map(|step| {
-                Finding::Pass(format!(
-                    "{}: yours to do, which doctor cannot check: {step}",
-                    setup.agent.title()
-                ))
-            }));
+            // No rules file written here: the rules are the user's to add, as at the user's scope.
+            let has_file = written
+                .iter()
+                .any(|(other, kind, _)| other == agent && *kind == Written::File);
+            findings.extend(
+                agents::steps(setup, &context.program, !has_file)
+                    .iter()
+                    .map(|step| {
+                        Finding::Pass(format!(
+                            "{}: yours to do, which doctor cannot check: {}",
+                            setup.agent.title(),
+                            step_said(setup, step)
+                        ))
+                    }),
+            );
         }
     }
-    findings.extend(
-        agents::SETUPS
-            .iter()
-            .filter_map(|setup| told(context, setup)),
-    );
+    let set_up: BTreeSet<&str> = written.iter().map(|(agent, ..)| agent.as_str()).collect();
+    for setup in agents::SETUPS {
+        match told(context, setup) {
+            Some(finding) => findings.push(finding),
+            None if !set_up.contains(setup.agent.name()) => {
+                findings.extend(told_only(context, setup));
+            }
+            None => {}
+        }
+    }
     findings
+}
+
+/// The step `step` init says for `setup`'s agent, on one line: a step that goes on with the lines
+/// to add is said up to them, with the command that prints them.
+fn step_said(setup: &Setup, step: &str) -> String {
+    match step.split_once('\n') {
+        Some((first, _)) => format!(
+            "{first} `cortex init --agents {}` prints them",
+            setup.agent.name()
+        ),
+        None => step.to_owned(),
+    }
+}
+
+/// What doctor says of `setup`'s agent, for which no run wrote anything here, when Cortex writes
+/// nothing for it at the user's scope and has no file of its to look in: each step init says, as
+/// the user's, once the agent is found on this machine; nothing otherwise.
+fn told_only(context: &Context, setup: &Setup) -> Vec<Finding> {
+    let home = std::env::home_dir();
+    let is_found = || {
+        home.as_deref()
+            .is_some_and(|home| agents::is_found(setup, home, &context.root))
+    };
+    if setup.told_lines.is_some() || agents::writes_for_user(setup) || !is_found() {
+        return Vec::new();
+    }
+    agents::steps(setup, &context.program, true)
+        .iter()
+        .map(|step| {
+            Finding::Pass(format!(
+                "{}: found; yours to do, which doctor cannot check: {}",
+                setup.agent.title(),
+                step_said(setup, step)
+            ))
+        })
+        .collect()
 }
 
 /// The agents (but Claude Code), what was written for each, and the files the runs of init that
@@ -194,7 +246,7 @@ fn checked_file(context: &Context, setup: &Setup, path: &Path) -> Option<Finding
             return Some(Finding::Fail {
                 what: format!(
                     "{title}: this build cannot write its {}: {error:#}",
-                    own.what
+                    own.kind.word()
                 ),
                 fix,
             });
@@ -208,7 +260,7 @@ fn checked_file(context: &Context, setup: &Setup, path: &Path) -> Option<Finding
     if let Some(finding) = moved_away(context, setup, folder, path) {
         return Some(finding);
     }
-    let text = match read_for(setup, path, own.what, &fix) {
+    let text = match read_for(setup, path, own.kind.word(), &fix) {
         Ok(text) => text,
         Err(finding) => return Some(finding),
     };
@@ -225,7 +277,7 @@ fn checked_file(context: &Context, setup: &Setup, path: &Path) -> Option<Finding
             what: format!(
                 "{title}: {shown} is not the {} this build writes: it changed, or it runs another \
                  binary",
-                own.what
+                own.kind.word()
             ),
             fix: if own::is_cortex_s(&text, file, signs) {
                 fix
@@ -238,7 +290,7 @@ fn checked_file(context: &Context, setup: &Setup, path: &Path) -> Option<Finding
         return Some(Finding::Fail {
             what: format!(
                 "{title}: Cortex's {} {shown} is turned off there (not executable)",
-                own.what
+                own.kind.word()
             ),
             fix: format!(
                 "turn it on in {title} (or make it executable) for {title} to run it; init leaves \
@@ -248,7 +300,7 @@ fn checked_file(context: &Context, setup: &Setup, path: &Path) -> Option<Finding
     }
     Some(Finding::Pass(format!(
         "{title}: Cortex's {} is current in {shown}",
-        own.what
+        own.kind.word()
     )))
 }
 
@@ -257,7 +309,7 @@ fn checked_file(context: &Context, setup: &Setup, path: &Path) -> Option<Finding
 /// or `XDG_CONFIG_HOME` changed); none for a folder of the repository's, or the one it reads.
 fn moved_away(context: &Context, setup: &Setup, folder: &Path, path: &Path) -> Option<Finding> {
     let own = setup.own.as_ref()?;
-    let user = own.user?;
+    let user = own.user.path()?;
     if own.project.is_some() && path.starts_with(&context.root) {
         return None;
     }
@@ -269,7 +321,7 @@ fn moved_away(context: &Context, setup: &Setup, folder: &Path, path: &Path) -> O
             what: format!(
                 "{title}: {} is not where {title} reads the user's {}s now, {}",
                 path.display(),
-                own.what,
+                own.kind.word(),
                 reads.display()
             ),
             fix,
@@ -277,7 +329,7 @@ fn moved_away(context: &Context, setup: &Setup, folder: &Path, path: &Path) -> O
         Err(error) => Some(Finding::Fail {
             what: format!(
                 "{title}: the folder {title} reads the user's {}s from cannot be found: {error:#}",
-                own.what
+                own.kind.word()
             ),
             fix: format!("set {title} up with `--scope project` in a repository instead"),
         }),
@@ -314,7 +366,7 @@ fn checked_mcp(context: &Context, setup: &Setup, path: &Path) -> Option<Finding>
     // Init writes the user's MCP settings whatever the scope.
     let fix = init_command(context, setup, None);
     let reads: Vec<std::path::PathBuf> = file
-        .user
+        .files()
         .iter()
         .filter_map(|user| user.resolved().ok())
         .collect();

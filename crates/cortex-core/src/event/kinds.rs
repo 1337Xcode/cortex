@@ -4,7 +4,9 @@
 use crate::named::named_kind;
 
 named_kind! {
-    /// The agent that sent an event.
+    /// An agent Cortex knows: one whose hooks send events, or one Cortex reaches through its MCP
+    /// server or only tells the user about (Zed, Continue, Warp, Windsurf, Roo Code, Aider, goose),
+    /// which sends none.
     Agent {
         /// Claude Code.
         Claude => "claude",
@@ -50,6 +52,18 @@ named_kind! {
         OpenClaw => "openclaw",
         /// The goose agent, from the Agentic AI Foundation.
         Goose => "goose",
+        /// Zed's agent panel.
+        Zed => "zed",
+        /// Continue: its editor extensions and its `cn` command-line agent.
+        Continue => "continue",
+        /// Warp's agent.
+        Warp => "warp",
+        /// Windsurf's Cascade agent.
+        Windsurf => "windsurf",
+        /// Roo Code's Visual Studio Code extension.
+        Roo => "roo",
+        /// Aider.
+        Aider => "aider",
         /// Any other agent.
         Other => "other",
     }
@@ -83,6 +97,12 @@ impl Agent {
             Self::Amp => "Amp",
             Self::OpenClaw => "OpenClaw",
             Self::Goose => "goose",
+            Self::Zed => "Zed",
+            Self::Continue => "Continue",
+            Self::Warp => "Warp",
+            Self::Windsurf => "Windsurf",
+            Self::Roo => "Roo Code",
+            Self::Aider => "Aider",
             Self::Other => "Another agent",
         }
     }

@@ -85,7 +85,7 @@ fn written_notes(user: &UserFolder, program: &str) -> Vec<String> {
                 let Some(setup) = agents::setup(agent).filter(|_| path.is_file()) else {
                     continue;
                 };
-                let what = setup.own.as_ref().map_or("files", |own| own.what);
+                let what = setup.own.as_ref().map_or("files", |own| own.kind.word());
                 (setup, what, path.parent().unwrap_or(path))
             }
             Kind::AgentMcp { agent } => {

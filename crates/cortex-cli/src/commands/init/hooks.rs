@@ -9,7 +9,7 @@ use std::path::Path;
 use anyhow::{Context as _, bail};
 use cortex_core::{MAX_SETTINGS_BYTES, read_text_file};
 
-use super::agent_file::{AgentFile, What};
+use super::agent_file::{AgentFile, LeftOut, What};
 use super::{Owner, Scope, place};
 use crate::agents::{Setup, settings};
 use crate::backup::Kind;
@@ -75,9 +75,10 @@ pub(super) fn planned(
             agent: agent.to_owned(),
         },
     };
-    let ignore_line = hooks
+    let left_out = hooks
         .project
-        .filter(|_| matches!(owner, Owner::Repository { .. }));
+        .filter(|_| matches!(owner, Owner::Repository { .. }))
+        .map(LeftOut::Gitignore);
     Ok(Some(AgentFile {
         setup,
         file,
@@ -86,7 +87,7 @@ pub(super) fn planned(
         owner,
         kind,
         what: What::Hooks,
-        ignore_line,
+        left_out,
         is_executable: false,
     }))
 }

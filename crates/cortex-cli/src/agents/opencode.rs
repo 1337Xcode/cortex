@@ -9,8 +9,8 @@
 
 use cortex_core::Agent;
 
-use super::mcp::{McpFile, Shape};
-use super::own::{OwnFile, OwnFiles, plugin};
+use super::mcp::{McpFile, McpPlace, Shape};
+use super::own::{OwnFile, OwnFiles, OwnKind, UsersFolder, plugin};
 use super::user_path::UserPath;
 use super::{FoundBy, Setup};
 
@@ -33,17 +33,18 @@ pub(crate) const SETUP: Setup = Setup {
     hooks: None,
     own: Some(OwnFiles {
         project: Some(".opencode/plugins"),
-        user: Some(UserPath::config("opencode/plugins")),
+        user: UsersFolder::At(UserPath::config("opencode/plugins")),
         loads_both: true,
-        what: "plugin",
+        kind: OwnKind::Plugin,
+        hides: &[],
         files,
         after_removal: None,
     }),
     mcp: Some(McpFile {
-        user: &[
+        place: McpPlace::Files(&[
             UserPath::config("opencode/opencode.json"),
             UserPath::config("opencode/opencode.jsonc"),
-        ],
+        ]),
         servers: &["mcp"],
         shape: Shape::LocalList,
         off: Some(("enabled", false)),

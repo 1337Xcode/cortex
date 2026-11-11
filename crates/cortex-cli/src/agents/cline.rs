@@ -14,8 +14,8 @@ use anyhow::Context as _;
 use cortex_core::Agent;
 
 use super::command::{Shell, hook_command};
-use super::mcp::{McpFile, Shape};
-use super::own::{OwnFile, OwnFiles};
+use super::mcp::{McpFile, McpPlace, Shape};
+use super::own::{OwnFile, OwnFiles, OwnKind, UsersFolder};
 use super::user_path::UserPath;
 use super::{FoundBy, Setup};
 
@@ -80,16 +80,17 @@ pub(crate) const SETUP: Setup = Setup {
     hooks: None,
     own: Some(OwnFiles {
         project: Some(".clinerules/hooks"),
-        user: Some(UserPath::documents("Cline/Hooks")),
+        user: UsersFolder::At(UserPath::documents("Cline/Hooks")),
         loads_both: true,
-        what: "hook",
+        kind: OwnKind::Hook,
+        hides: &[],
         files,
         after_removal: None,
     }),
     mcp: Some(McpFile {
-        user: &[UserPath::home(
+        place: McpPlace::Files(&[UserPath::home(
             ".cline/data/settings/cline_mcp_settings.json",
-        )],
+        )]),
         servers: &["mcpServers"],
         shape: Shape::CommandArgs,
         off: Some(("disabled", true)),

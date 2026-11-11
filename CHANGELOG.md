@@ -87,6 +87,25 @@ All notable changes to this project are documented in this file. The format is b
   or script the user edited, and, from settings changed since, takes out Cortex's MCP server
   alone. These files are checked against fixtures and hand-written ones; the agents themselves
   have not run them yet.
+- `cortex init --agents` also sets up the agents Cortex reaches through its MCP server alone:
+  Zed, Continue, Warp, Windsurf's Cascade and Roo Code. Cortex's MCP server goes into the user's
+  settings beside the user's own servers (Zed's `settings.json`, a `cortex.json` of its own in
+  Continue's `~/.continue/mcpServers/`, Warp's `~/.warp/.mcp.json`, the `mcp_config.json` of the
+  Devin configuration folder that Windsurf's Cascade reads); for Roo Code, whose settings file is
+  not documented, and for settings holding comments, as Zed's often do, init prints the entry to
+  add. A rules file of Cortex's own, `cortex.md`, tells the model to call `cortex_where` first
+  when a task needs code it has not read: in a repository's `.continue/rules/`,
+  `.windsurf/rules/` or `.roo/rules/`, left out of git through the exclude file git never
+  commits, not `.gitignore`, or in `~/.continue/rules/` at the user's scope. A rules file of the
+  user's at that path is never written over, and init makes no first file in `.roo/rules/` while
+  a `.roorules` or `.clinerules` there would be hidden by it. Init never writes a file the user
+  owns or other agents read, such as `AGENTS.md`, `.rules` or Windsurf's global rules: for Zed,
+  Warp, and Windsurf and Roo Code at the user's scope, it prints the lines to add. For Aider,
+  which has neither hooks nor MCP, it writes nothing and prints lines for the user's conventions
+  file telling the model to suggest `cortex where`; `cortex doctor` says the steps are the user's
+  once Aider is found. Doctor checks the MCP entries and rules files init wrote, and uninstall
+  gives every file back byte for byte, the exclude file included. These files are checked against
+  hand-written ones; the agents themselves have not run them yet.
 - `cortex` run with no arguments, its standard input not a terminal (as an agent runs a hook),
   prints nothing and exits 0, so that an agent that imports Claude Code's settings and runs
   Cortex's hook program without its arguments never reads a usage error as a refusal. A payload

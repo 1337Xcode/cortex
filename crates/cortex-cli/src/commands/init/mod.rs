@@ -4,11 +4,12 @@
 //! questions once (see [`consent`]), registers Cortex's hooks with each agent (see [`hooks`]): for
 //! Claude Code in the repository's `.claude/settings.local.json` (`--scope project`, the default, a
 //! file Claude Code does not commit) or in the user's `~/.claude/settings.json` (`--scope user`),
-//! writes the files of Cortex's own an agent loads (a plugin, hook scripts; see [`own`]) and
-//! Cortex's MCP server into an agent's JSON settings (see [`mcp`]), says what the user is to do
-//! themselves (see [`agent_file`]), keeps the answers, and has git leave out what Cortex writes
-//! (see [`ignores`]). Whatever the
-//! scope, and with no agent found, the repository is set up.
+//! writes the files of Cortex's own an agent loads (a plugin, hook scripts, a rules file; see
+//! [`own`]) and Cortex's MCP server into an agent's JSON settings (see [`mcp`]), says what the user
+//! is to do themselves (see [`agent_file`]), keeps the answers, and has git leave out what Cortex
+//! writes (see [`ignores`]): a rules file through the exclude file git never commits, the rest
+//! through the `.gitignore`. Whatever the scope, and with no agent found, the repository is set
+//! up.
 //!
 //! Every file init may change is found, read and checked before anything is asked, and nothing is
 //! written until every question is answered. Then the `.gitignore` is written first, so that a run
@@ -57,7 +58,7 @@ use crate::commands::doctor::{Finding, checked, claude_code_version};
 use crate::output;
 
 pub(crate) use self::adopt::{Adopted, adopt};
-use self::agent_file::AgentFile;
+use self::agent_file::{AgentFile, LeftOut};
 use self::consent::{Answers, ConfigFile, Kept};
 pub(crate) use self::global::switch_off;
 use self::ignores::Ignored;
@@ -176,6 +177,9 @@ struct Files {
     repository_config: Found,
     /// In a git repository, what git ignores and the `.gitignore` lines are added to.
     ignores: Option<(Ignored, Found)>,
+    /// The exclude file the lines for Cortex's rules files go to, when init makes one and the
+    /// exclude file is not the file `ignores` adds to already.
+    exclude: Option<Found>,
     /// The files written for the agents.
     settings: Vec<AgentFile>,
     /// The agents set up: what init writes for each planned; in order.
@@ -220,10 +224,24 @@ impl Files {
             not_set_up,
             told,
         } = planned_hooks(scope, Some(root.worktree()), setups, are_named)?;
+        let makes_rules = settings.iter().any(|file| {
+            file.made_in_repository()
+                .is_some_and(|left_out| matches!(left_out, LeftOut::Exclude(_)))
+        });
+        let exclude = match &ignores {
+            Some((_, gitignore)) if makes_rules => {
+                let file = exclude_file(root)?;
+                (file != gitignore.file)
+                    .then(|| Found::read(file))
+                    .transpose()?
+            }
+            _ => None,
+        };
         Ok(Self {
             users_config: Found::read_only(user.config_path())?,
             repository_config: Found::read(repository_config)?,
             ignores,
+            exclude,
             settings,
             set_up,
             not_set_up,
@@ -257,12 +275,25 @@ impl Files {
     fn changes(self, kept: Kept, answers: Answers) -> anyhow::Result<Vec<Change>> {
         let mut changes = Vec::new();
         if let Some((ignored, gitignore)) = self.ignores {
-            let made: Vec<&'static str> = self
+            let mut local = Vec::new();
+            let mut rules = Vec::new();
+            for left_out in self
                 .settings
                 .iter()
                 .filter_map(AgentFile::made_in_repository)
-                .collect();
-            let lines = ignores::needed(&ignored, answers.sharing, &made);
+            {
+                match left_out {
+                    LeftOut::Gitignore(line) => local.push(*line),
+                    LeftOut::Exclude(line) => rules.push(line.as_str()),
+                }
+            }
+            let mut lines: Vec<&str> = ignores::needed(&ignored, answers.sharing, &local);
+            let excluded = ignores::excluded(&ignored, &rules);
+            match self.exclude {
+                Some(exclude) => changes.extend(ignore_change(exclude, &excluded)),
+                // The file the `.gitignore` lines go to is the exclude file itself.
+                None => lines.extend(excluded),
+            }
             changes.extend(ignore_change(gitignore, &lines));
         }
         changes.extend(settings_changes(self.settings)?);
@@ -550,19 +581,27 @@ fn check_claude_code(folder: &Path, versions: Versions) -> anyhow::Result<()> {
 fn ignore_file(root: &Root) -> anyhow::Result<PathBuf> {
     match (&root.linked, root.is_adopted) {
         (None, false) => place::unlinked_file_in(&root.folder, ".gitignore"),
-        (linked, _) => {
-            let top = linked.as_deref().unwrap_or(&root.folder);
-            let file = ignores::exclude_file(top, &root.git_bound)?;
-            let (folder, name) = file
-                .parent()
-                .zip(file.file_name().and_then(|name| name.to_str()))
-                .with_context(|| format!("{} names no file", file.display()))?;
-            place::unlinked_file_in(folder, name)
-        }
+        _ => exclude_file(root),
     }
 }
 
-/// The change that adds `lines` to the `.gitignore` `found`, or none when there are none to add.
+/// The exclude file git names for the working tree of `root` init started in, which git reads and
+/// never commits.
+///
+/// # Errors
+///
+/// Git cannot name the file, or it is a link.
+fn exclude_file(root: &Root) -> anyhow::Result<PathBuf> {
+    let file = ignores::exclude_file(root.worktree(), &root.git_bound)?;
+    let (folder, name) = file
+        .parent()
+        .zip(file.file_name().and_then(|name| name.to_str()))
+        .with_context(|| format!("{} names no file", file.display()))?;
+    place::unlinked_file_in(folder, name)
+}
+
+/// The change that adds `lines` to `found`, a `.gitignore` or the exclude file, or none when there
+/// are none to add.
 fn ignore_change(found: Found, lines: &[&str]) -> Option<Change> {
     if lines.is_empty() {
         return None;
@@ -630,6 +669,12 @@ fn apply((root, linked): (&Path, Option<&Path>), changes: Vec<Change>) -> anyhow
                         recorded_missing(backup, &place::joined(tree, folder))?;
                     }
                     place::own_folders(tree, folder)?;
+                } else if let Some(parent) = change.file.parent() {
+                    // The exclude file's folder, `.git/info`, which a repository made from an
+                    // empty template lacks; uninstall removes it again once empty.
+                    recorded_missing(backup, parent)?;
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("creating {}", parent.display()))?;
                 }
                 backup
             }

@@ -20,12 +20,11 @@ pub(crate) const NAME: &str = "cortex";
 /// has [`NAME`].
 pub(crate) const OTHER_NAME: &str = "cortex-index";
 
-/// The settings file an agent reads its MCP servers from, and how it holds them.
+/// Where an agent reads its MCP servers from, and how its settings hold them.
 #[derive(Debug)]
 pub(crate) struct McpFile {
-    /// The user's files the agent reads: the first that exists is edited, and the first is made
-    /// when none does.
-    pub(crate) user: &'static [UserPath],
+    /// Where Cortex's entry goes.
+    pub(crate) place: McpPlace,
     /// The keys, from the file's top, of the object holding the servers.
     pub(crate) servers: &'static [&'static str],
     /// How an entry runs its server.
@@ -33,6 +32,40 @@ pub(crate) struct McpFile {
     /// The key and value with which the user turns an entry off (`"enabled": false`), if the
     /// agent documents one.
     pub(crate) off: Option<(&'static str, bool)>,
+}
+
+/// Where Cortex's MCP entry goes for an agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum McpPlace {
+    /// Into the user's files the agent reads: the first that exists is edited, and the first is
+    /// made when none does.
+    Files(&'static [UserPath]),
+    /// Nowhere Cortex writes, since the agent's documentation gives no file Cortex can find: the
+    /// user adds it in the place this says, which init says with the entry.
+    ByHand(&'static str),
+}
+
+impl McpFile {
+    /// The user's files Cortex writes the entry to; none when the user adds it by hand.
+    pub(crate) fn files(&self) -> &'static [UserPath] {
+        match self.place {
+            McpPlace::Files(files) => files,
+            McpPlace::ByHand(_) => &[],
+        }
+    }
+}
+
+/// What the user is to do to add Cortex's entry, running `program`, by hand, for an agent whose
+/// file Cortex cannot find; none for an agent whose file Cortex writes.
+pub(crate) fn by_hand_step(file: &McpFile, program: &str) -> Option<String> {
+    let McpPlace::ByHand(place) = file.place else {
+        return None;
+    };
+    Some(format!(
+        "add Cortex's MCP server yourself, under `{}` in {place}: \"{NAME}\": {}",
+        servers_path(file),
+        entry(program, file.shape)
+    ))
 }
 
 /// How an agent's MCP entry runs a local server.
@@ -238,7 +271,7 @@ mod tests {
 
     /// OpenCode's shape: servers under `mcp`.
     const OPENCODE: McpFile = McpFile {
-        user: &[UserPath::config("opencode/opencode.json")],
+        place: McpPlace::Files(&[UserPath::config("opencode/opencode.json")]),
         servers: &["mcp"],
         shape: Shape::LocalList,
         off: Some(("enabled", false)),
@@ -246,7 +279,7 @@ mod tests {
 
     /// OpenClaw's shape: servers two keys down, `mcp.servers`.
     const NESTED: McpFile = McpFile {
-        user: &[UserPath::home(".openclaw/openclaw.json")],
+        place: McpPlace::Files(&[UserPath::home(".openclaw/openclaw.json")]),
         servers: &["mcp", "servers"],
         shape: Shape::CommandArgs,
         off: None,

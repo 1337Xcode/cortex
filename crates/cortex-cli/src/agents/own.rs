@@ -1,7 +1,8 @@
 //! Files of Cortex's own that init writes whole into an agent's folder: the plugin Cortex
-//! generates for an agent whose hooks are code (OpenCode, Kilo Code, Amp, OpenClaw), or a hook
-//! script per event for an agent that runs one file per event (Cline). Such a file is never merged
-//! into a file of the user's. A file already at its path is Cortex's when it is what this build
+//! generates for an agent whose hooks are code (OpenCode, Kilo Code, Amp, OpenClaw), a hook script
+//! per event for an agent that runs one file per event (Cline), or a rules file for an agent that
+//! reads every file of a rules folder (see [`super::rules`]). Such a file is never merged into a
+//! file of the user's. A file already at its path is Cortex's when it is what this build
 //! writes, when one of its first lines says it was written by `cortex init` ([`MARKER`], which
 //! every script Cortex generates carries), when a run of init recorded writing exactly it there,
 //! or when it is in a folder of Cortex's own (OpenClaw's `cortex/`) whose script carries the
@@ -29,17 +30,65 @@ pub(crate) struct OwnFiles {
     /// agent reads no such folder of a repository's, or one that is not the repository's own: the
     /// user's folder is written then, whatever the scope.
     pub(crate) project: Option<&'static str>,
-    /// The user's folder; none when the agent documents none on this system.
-    pub(crate) user: Option<UserPath>,
+    /// The user's folder, or what init says instead at the user's scope when Cortex writes none
+    /// there.
+    pub(crate) user: UsersFolder,
     /// Whether the agent loads the files of both folders, so that Cortex's in both would run each
     /// event twice: init then refuses one folder while the other holds Cortex's files.
     pub(crate) loads_both: bool,
-    /// What the agent calls the files, said by init and doctor: `plugin`, `hook`.
-    pub(crate) what: &'static str,
+    /// What the files are.
+    pub(crate) kind: OwnKind,
+    /// Files of the repository's, relative to its root, that the agent reads only while the
+    /// repository's folder holds no file: init makes no first file there while one of them
+    /// exists, since that would hide it from the agent.
+    pub(crate) hides: &'static [&'static str],
     /// The files, for this program.
     pub(crate) files: fn(&str) -> anyhow::Result<Vec<OwnFile>>,
     /// What uninstall says once it took the files out, if anything is left for the user to undo.
     pub(crate) after_removal: Option<&'static str>,
+}
+
+/// What files of Cortex's own an agent reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnKind {
+    /// A plugin the agent loads, which runs Cortex's hooks.
+    Plugin,
+    /// A hook script the agent runs at one event.
+    Hook,
+    /// A rules file telling the model to call Cortex's MCP tool: it runs nothing, and git is told
+    /// to leave it out of a repository through the exclude file alone.
+    Rules,
+}
+
+impl OwnKind {
+    /// What the agent calls such a file, said by init and doctor.
+    pub(crate) fn word(self) -> &'static str {
+        match self {
+            Self::Plugin => "plugin",
+            Self::Hook => "hook",
+            Self::Rules => "rules file",
+        }
+    }
+}
+
+/// Where an agent reads the user's files of Cortex's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UsersFolder {
+    /// In this folder.
+    At(UserPath),
+    /// Nowhere Cortex writes: at the user's scope init writes none of the files, and says this
+    /// instead.
+    Told(&'static str),
+}
+
+impl UsersFolder {
+    /// The folder, when Cortex writes one.
+    pub(crate) fn path(self) -> Option<UserPath> {
+        match self {
+            Self::At(path) => Some(path),
+            Self::Told(_) => None,
+        }
+    }
 }
 
 /// One file of Cortex's own.
