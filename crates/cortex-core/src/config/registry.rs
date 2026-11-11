@@ -25,6 +25,8 @@ pub struct ConfigKey {
     read: Read,
     /// Shows the value in effect.
     show: Show,
+    /// Whether only the user's own file may set the key.
+    is_user_only: bool,
 }
 
 impl ConfigKey {
@@ -40,7 +42,29 @@ impl ConfigKey {
             description,
             read,
             show,
+            is_user_only: false,
         }
+    }
+
+    /// A key only the user's own file may set: a repository's file can come with a clone or an
+    /// archive, so a setting that must be the user's own decision is never read from it.
+    pub(super) const fn user_only(
+        name: &'static str,
+        description: &'static str,
+        read: Read,
+        show: Show,
+    ) -> Self {
+        Self {
+            is_user_only: true,
+            ..Self::new(name, description, read, show)
+        }
+    }
+
+    /// Whether only the user's own file may set the key; a repository's file that sets it is
+    /// ignored, and `cortex config set` writes it only with `--user`.
+    #[must_use]
+    pub fn is_user_only(&self) -> bool {
+        self.is_user_only
     }
 
     /// Sets the key in `config` to `value`.
@@ -99,8 +123,8 @@ mod tests {
 
     use super::*;
     use crate::config::{
-        ConfigError, ConfigLayer, CoordinationConfig, ModeSetting, RetrievalConfig, TypeWeights,
-        WarningsConfig, load,
+        ConfigError, ConfigLayer, CoordinationConfig, LayerKind, ModeSetting, RetrievalConfig,
+        TypeWeights, WarningsConfig, load,
     };
     use crate::{AdoptConfig, CompactionConfig, HintsConfig, ScaleMode};
 
@@ -243,6 +267,7 @@ mod tests {
             .collect();
         assert_eq!(lines, unique);
         let loaded = load(&[ConfigLayer {
+            kind: LayerKind::User,
             origin: "f",
             text: EVERY_KEY,
         }])?;
@@ -281,6 +306,17 @@ mod tests {
             assert_eq!(key.show(&config), shown, "{}", key.name);
             assert!(!key.description.is_empty(), "{}", key.name);
         }
+    }
+
+    /// The keys only the user's own file may set are the one that keeps prompt text and the one
+    /// that names the folders the user wants left alone, and no other.
+    #[test]
+    fn only_two_keys_are_user_only() {
+        let user_only: Vec<&str> = config_keys()
+            .filter(|key| key.is_user_only())
+            .map(|key| key.name)
+            .collect();
+        assert_eq!(user_only, ["privacy.store_prompt_excerpt", "adopt.exclude"]);
     }
 
     /// An unusable value leaves the settings as they were and says what the key accepts.

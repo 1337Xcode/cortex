@@ -4,7 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use cortex_core::{
-    ConfigLayer, LoadedConfig, MAX_SETTINGS_BYTES, UserFolder, load_config, read_text_file,
+    ConfigLayer, LayerKind, LoadedConfig, MAX_SETTINGS_BYTES, UserFolder, load_config,
+    read_text_file,
 };
 
 /// Which of the two configuration files a file is.
@@ -23,6 +24,15 @@ impl Place {
         match self {
             Self::User => "user",
             Self::Repository => "repository",
+        }
+    }
+
+    /// Whose file a configuration layer read from this place is.
+    #[must_use]
+    pub fn kind(self) -> LayerKind {
+        match self {
+            Self::User => LayerKind::User,
+            Self::Repository => LayerKind::Repository,
         }
     }
 
@@ -81,6 +91,7 @@ pub fn load_files(files: &[ConfigFile]) -> anyhow::Result<LoadedConfig> {
         .iter()
         .zip(&origins)
         .map(|(file, origin)| ConfigLayer {
+            kind: file.place.kind(),
             origin,
             text: &file.text,
         })
@@ -96,4 +107,42 @@ pub fn load_files(files: &[ConfigFile]) -> anyhow::Result<LoadedConfig> {
 /// unusable value.
 pub fn load(root: &Path) -> anyhow::Result<LoadedConfig> {
     load_files(&read_files(root)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A configuration file of `place` holding `text`.
+    fn file(place: Place, text: &str) -> ConfigFile {
+        ConfigFile {
+            place,
+            path: PathBuf::from(place.name()),
+            text: text.to_owned(),
+        }
+    }
+
+    /// A repository's file that turns on `privacy.store_prompt_excerpt` leaves prompt excerpts off
+    /// and is warned of by its path; the user's file turns them on, even under a repository file
+    /// that says otherwise.
+    #[test]
+    fn only_the_users_file_turns_prompt_excerpts_on() -> anyhow::Result<()> {
+        let on = "privacy.store_prompt_excerpt = true\n";
+        let from_repository = load_files(&[file(Place::Repository, on)])?;
+        assert!(!from_repository.config.store_prompt_excerpt);
+        assert_eq!(
+            from_repository.warnings,
+            [
+                "repository: `privacy.store_prompt_excerpt` is read only from the user's file; this \
+              value is ignored"
+            ]
+        );
+        let from_user = load_files(&[
+            file(Place::User, on),
+            file(Place::Repository, "privacy.store_prompt_excerpt = false\n"),
+        ])?;
+        assert!(from_user.config.store_prompt_excerpt);
+        assert_eq!(from_user.warnings.len(), 1);
+        Ok(())
+    }
 }

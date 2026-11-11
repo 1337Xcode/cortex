@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 
 use super::set::SetError;
-use super::{ConfigLayer, flatten, parsed};
+use super::{ConfigLayer, flatten, parsed, parsed_text};
 
 /// The table a line belongs to while the text is read from the top.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,7 +108,7 @@ fn entries(table: &toml::Table) -> BTreeMap<String, toml::Value> {
 
 /// Whether `text` is TOML holding exactly the values `expected`.
 fn says(text: &str, origin: &str, expected: &BTreeMap<String, toml::Value>) -> bool {
-    parsed(&ConfigLayer { origin, text }).is_ok_and(|table| entries(&table) == *expected)
+    parsed_text(origin, text).is_ok_and(|table| entries(&table) == *expected)
 }
 
 /// The positions of the lines that set `key`.
@@ -307,6 +307,16 @@ fn joined(prefix: &str, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::LayerKind;
+
+    /// A user's file named `f` holding `text`.
+    fn file_of(text: &str) -> ConfigLayer<'_> {
+        ConfigLayer {
+            kind: LayerKind::User,
+            origin: "f",
+            text,
+        }
+    }
 
     /// `text` with `key` set to the TOML value `value`, written as a file named `f`.
     fn set(text: &str, key: &'static str, value: &str) -> Result<String, SetError> {
@@ -314,7 +324,7 @@ mod tests {
             origin: "test".to_owned(),
             key,
         })?;
-        placed(&ConfigLayer { origin: "f", text }, key, &value, None)
+        placed(&file_of(text), key, &value, None)
     }
 
     /// A note goes as a comment above the line a change adds, or above the new table holding it,
@@ -322,7 +332,7 @@ mod tests {
     #[test]
     fn a_note_goes_above_an_added_line() -> Result<(), SetError> {
         let noted = |text: &str, key: &'static str, value: f64| {
-            let file = ConfigLayer { origin: "f", text };
+            let file = file_of(text);
             placed(
                 &file,
                 key,

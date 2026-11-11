@@ -569,6 +569,7 @@ warnings.max_per_edit = 0
 "
         );
         let loaded = cortex_core::load_config(&[cortex_core::ConfigLayer {
+            kind: cortex_core::LayerKind::Repository,
             origin: "config.toml",
             text: &text,
         }])?;

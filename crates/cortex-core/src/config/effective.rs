@@ -59,7 +59,7 @@ impl LoadedConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ConfigError, ConfigLayer, load};
+    use crate::config::{ConfigError, ConfigLayer, LayerKind, load};
 
     /// The setting of `key` among `settings`.
     fn setting<'a>(settings: &'a [Setting], key: &str) -> Option<&'a Setting> {
@@ -71,10 +71,12 @@ mod tests {
     #[test]
     fn each_setting_names_its_source() -> Result<(), ConfigError> {
         let user = ConfigLayer {
+            kind: LayerKind::User,
             origin: "user",
             text: "profile = \"everything\"\nretrieval.max_files = 7\nholdout.share = 0\n",
         };
         let repository = ConfigLayer {
+            kind: LayerKind::Repository,
             origin: "repository",
             text: "[retrieval]\nmax_files = 9\n[hints]\nnarrow_tests = false\n",
         };

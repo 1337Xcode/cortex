@@ -12,7 +12,8 @@ use std::io::{BufRead, Read as _};
 
 use anyhow::{Context as _, bail};
 use cortex_core::{
-    ConfigLayer, DEFAULT_HOLDOUT_SHARE, config_keys_set, load_config, setting_value, with_setting,
+    ConfigLayer, DEFAULT_HOLDOUT_SHARE, LayerKind, config_keys_set, load_config, setting_value,
+    with_setting,
 };
 
 use crate::output;
@@ -70,6 +71,8 @@ pub(super) struct Kept {
 /// A configuration file as init read it.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ConfigFile<'a> {
+    /// Whose file it is.
+    pub(super) kind: LayerKind,
     /// Its text, or `None` when there is none.
     pub(super) text: Option<&'a str>,
     /// Its path, for messages.
@@ -80,6 +83,7 @@ impl ConfigFile<'_> {
     /// The file as a configuration layer, when it exists.
     fn layer(&self) -> Option<ConfigLayer<'_>> {
         self.text.map(|text| ConfigLayer {
+            kind: self.kind,
             origin: self.origin,
             text,
         })
@@ -219,6 +223,7 @@ pub(super) fn with_answers(
 /// key by hand.
 fn answered(file: ConfigFile<'_>, key: &str, value: &str) -> anyhow::Result<String> {
     let layer = ConfigLayer {
+        kind: file.kind,
         origin: file.origin,
         text: file.text.unwrap_or_default(),
     };
@@ -244,6 +249,7 @@ mod tests {
 
     /// No file.
     const NO_FILE: ConfigFile<'static> = ConfigFile {
+        kind: LayerKind::Repository,
         text: None,
         origin: "f",
     };
@@ -321,6 +327,7 @@ mod tests {
     #[test]
     fn answers_are_kept_where_they_may_be() -> anyhow::Result<()> {
         let users = ConfigFile {
+            kind: LayerKind::User,
             text: Some("[holdout]\nshare = 0\n"),
             origin: "user",
         };
@@ -332,6 +339,7 @@ mod tests {
             }
         );
         let repository = ConfigFile {
+            kind: LayerKind::Repository,
             text: Some("holdout.share = 0.1\n"),
             origin: "repo",
         };

@@ -41,7 +41,7 @@ use std::time::SystemTime;
 
 use anyhow::{Context as _, bail};
 use cortex_core::{
-    MAX_SETTINGS_BYTES, UserFolder, create_private_folder, read_text_file, unix_millis,
+    LayerKind, MAX_SETTINGS_BYTES, UserFolder, create_private_folder, read_text_file, unix_millis,
 };
 use cortex_hook::Versions;
 
@@ -136,9 +136,10 @@ impl Found {
         })
     }
 
-    /// The file as a configuration.
-    fn config(&self) -> ConfigFile<'_> {
+    /// The file as a configuration, `kind` being whose it is.
+    fn config(&self, kind: LayerKind) -> ConfigFile<'_> {
         ConfigFile {
+            kind,
             text: self.text.as_deref(),
             origin: &self.origin,
         }
@@ -228,8 +229,8 @@ impl Files {
             .as_ref()
             .map_or(Some(false), |(ignored, _)| ignored.sharing());
         consent::kept(
-            self.users_config.config(),
-            self.repository_config.config(),
+            self.users_config.config(LayerKind::User),
+            self.repository_config.config(LayerKind::Repository),
             sharing,
         )
     }
@@ -252,7 +253,11 @@ impl Files {
             changes.extend(ignore_change(gitignore, &lines));
         }
         changes.extend(settings_changes(self.settings)?);
-        let repository = consent::with_answers(self.repository_config.config(), kept, answers)?;
+        let repository = consent::with_answers(
+            self.repository_config.config(LayerKind::Repository),
+            kept,
+            answers,
+        )?;
         if let Some(after) = repository {
             let owner = Owner::Repository {
                 folder: Some(".cortex"),

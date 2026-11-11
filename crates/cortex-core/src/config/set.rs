@@ -5,7 +5,10 @@
 use thiserror::Error;
 
 use super::edit::placed;
-use super::{Config, ConfigError, ConfigLayer, PROFILE_KEY, Profile, config_key, config_keys};
+use super::{
+    Config, ConfigError, ConfigKey, ConfigLayer, LayerKind, PROFILE_KEY, Profile, config_key,
+    config_keys,
+};
 
 /// Why a key cannot be set in a file.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -25,6 +28,12 @@ pub enum SetError {
         key: &'static str,
         /// What the key accepts.
         expected: &'static str,
+    },
+    /// The key is read only from the user's own file, and the file is a repository's.
+    #[error("`{key}` is read only from the user's own file; set it with --user")]
+    UserOnly {
+        /// The key.
+        key: &'static str,
     },
     /// The file is not valid TOML.
     #[error(transparent)]
@@ -58,8 +67,9 @@ pub fn setting_value(text: &str) -> toml::Value {
 /// # Errors
 ///
 /// A key Cortex does not read (naming the nearest one), a value the key does not accept (in the
-/// words loading refuses it with), a file that is not TOML, or a file the value cannot be written
-/// into without changing anything else it says.
+/// words loading refuses it with), a key only the user's own file may set in a repository's file,
+/// a file that is not TOML, or a file the value cannot be written into without changing anything
+/// else it says.
 pub fn with_setting(
     file: &ConfigLayer<'_>,
     key: &str,
@@ -67,6 +77,9 @@ pub fn with_setting(
     note: Option<&str>,
 ) -> Result<String, SetError> {
     let name = checked(key, value)?;
+    if file.kind == LayerKind::Repository && config_key(name).is_some_and(ConfigKey::is_user_only) {
+        return Err(SetError::UserOnly { key: name });
+    }
     placed(file, name, value, note)
 }
 
@@ -136,7 +149,11 @@ mod tests {
 
     /// A file named `f` holding `text`.
     fn file(text: &str) -> ConfigLayer<'_> {
-        ConfigLayer { origin: "f", text }
+        ConfigLayer {
+            kind: LayerKind::User,
+            origin: "f",
+            text,
+        }
     }
 
     /// Edit distances counted by hand: one substitution, one insertion, one deletion, a whole word.
@@ -188,6 +205,35 @@ mod tests {
         assert_eq!(
             refused("hints.narrow_tests", "yes"),
             Err("`hints.narrow_tests` must be true or false".to_owned())
+        );
+    }
+
+    /// A key only the user's file may set is refused in a repository's file, with the flag that
+    /// writes the user's, and written in the user's; other keys are written in either.
+    #[test]
+    fn a_user_only_key_is_written_only_in_the_users_file() {
+        let repository = ConfigLayer {
+            kind: LayerKind::Repository,
+            origin: "r",
+            text: "",
+        };
+        let value = toml::Value::Boolean(true);
+        assert_eq!(
+            with_setting(&repository, "privacy.store_prompt_excerpt", &value, None)
+                .map_err(|error| error.to_string()),
+            Err(
+                "`privacy.store_prompt_excerpt` is read only from the user's own file; set it \
+                 with --user"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            with_setting(&file(""), "privacy.store_prompt_excerpt", &value, None),
+            Ok("[privacy]\nstore_prompt_excerpt = true\n".to_owned())
+        );
+        assert_eq!(
+            with_setting(&repository, "hints.narrow_tests", &value, None),
+            Ok("[hints]\nnarrow_tests = true\n".to_owned())
         );
     }
 

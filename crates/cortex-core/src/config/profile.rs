@@ -105,12 +105,16 @@ impl Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ConfigLayer, load};
+    use crate::config::{ConfigLayer, LayerKind, load};
     use crate::{CompactionConfig, HintsConfig};
 
     /// Loads one file holding `text`.
     fn loaded(text: &str) -> Result<crate::LoadedConfig, ConfigError> {
-        load(&[ConfigLayer { origin: "f", text }])
+        load(&[ConfigLayer {
+            kind: LayerKind::User,
+            origin: "f",
+            text,
+        }])
     }
 
     /// Each profile sets exactly the keys its documentation names, to the value it names.
@@ -170,14 +174,17 @@ mod tests {
     #[test]
     fn keys_override_the_profile() -> Result<(), ConfigError> {
         let user = ConfigLayer {
+            kind: LayerKind::User,
             origin: "user",
             text: "hints.narrow_tests = false\nprofile = \"lean\"\n",
         };
         let repository = ConfigLayer {
+            kind: LayerKind::Repository,
             origin: "repository",
             text: "[compaction]\nkeep_list = false\n\n[hints]\nprofile = 1\n\n[x]\n",
         };
         let top = ConfigLayer {
+            kind: LayerKind::Repository,
             origin: "top",
             text: "profile = \"everything\"\n",
         };

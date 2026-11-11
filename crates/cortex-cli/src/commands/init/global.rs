@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use std::io::{self, IsTerminal as _};
 
 use anyhow::{Context as _, bail};
-use cortex_core::{UserFolder, canonical_root, create_private_folder};
+use cortex_core::{LayerKind, UserFolder, canonical_root, create_private_folder};
 
 use super::consent::{self, ConfigFile};
 use super::{
@@ -72,16 +72,18 @@ pub(super) fn run(is_yes: bool, names: &[String]) -> anyhow::Result<()> {
     }
     let users_config = Found::read(user.config_path())?;
     let none = ConfigFile {
+        kind: LayerKind::Repository,
         text: None,
         origin: "",
     };
     // Sharing is not asked: a team decides it for one repository, by `cortex init` there.
-    let kept = consent::kept(users_config.config(), none, Some(false))?;
+    let kept = consent::kept(users_config.config(LayerKind::User), none, Some(false))?;
     let stdin = io::stdin();
     let mut terminal = stdin.is_terminal().then(|| stdin.lock());
     let answers = consent::answers(kept, is_yes, terminal.as_mut())?;
     let mut changes = settings_changes(planned.settings)?;
-    if let Some(after) = consent::with_answers(users_config.config(), kept, answers)? {
+    if let Some(after) = consent::with_answers(users_config.config(LayerKind::User), kept, answers)?
+    {
         changes.push(users_config.changed(after, Owner::User, "answer kept in"));
     }
     apply((&home, None), changes)?;

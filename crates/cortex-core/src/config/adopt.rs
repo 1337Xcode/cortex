@@ -75,10 +75,10 @@ fn compiled(pattern: &str, home: Option<&str>) -> Option<Glob> {
 }
 
 /// The adoption keys, each read and checked here.
-pub(super) const KEYS: &[ConfigKey] = &[ConfigKey::new(
+pub(super) const KEYS: &[ConfigKey] = &[ConfigKey::user_only(
     "adopt.exclude",
     "Glob patterns of folders Cortex never sets up on its own, ~ standing for the home folder; a \
-     match also leaves out every folder below it.",
+     match also leaves out every folder below it. Read only from the user's own file.",
     |config, value| {
         let patterns = string_list(value).ok_or(GLOBS)?;
         if !patterns

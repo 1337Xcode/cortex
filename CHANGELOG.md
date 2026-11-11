@@ -238,6 +238,13 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
+- `privacy.store_prompt_excerpt` and `adopt.exclude` are read only from the user's own
+  `~/.cortex/config.toml`. A repository can carry a `.cortex/config.toml` in its commits, and a
+  clone or an archive could have turned on keeping the first 200 characters of each prompt
+  without the user choosing it. A repository's file that sets either key is now ignored for it,
+  `cortex config` and `cortex status` print a warning naming the file and the key, and `cortex
+  config set` refuses these keys without `--user`. `cortex config` shows such a key's value as
+  coming from the user's file or the default, never from the repository.
 - A file the prompt names, by its path or by a rare name defined in it, now leads the work order
   with its code, and the folders of a path the prompt names are no longer search words: a prompt
   naming `src/app/helpers.py` no longer ranks every file under `src/app` above the one it names.

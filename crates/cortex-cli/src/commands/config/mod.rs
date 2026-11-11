@@ -2,7 +2,9 @@
 //! (`default`, `profile`, `user` for `~/.cortex/config.toml`, `repository` for the repository's
 //! `.cortex/config.toml`), in the order of the keys' names, as text or as JSON; and `cortex config
 //! set <key> <value>`, which writes one key into the repository's file, or the user's with
-//! `--user`. The configuration's own registry reads and shows each key, and checks what is set.
+//! `--user`. The configuration's own registry reads and shows each key, and checks what is set; a
+//! key only the user's file may set is shown from that file or the default, and `set` writes it
+//! only with `--user`.
 //! A switch (`adopt.enabled`) is no line of a file but a file's presence in the user's folder: it
 //! is shown as `user` when on and `default` when off, and set by writing or removing that file,
 //! whichever file `--user` names.

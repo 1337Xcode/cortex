@@ -85,9 +85,10 @@ pub(super) const KEYS: &[ConfigKey] = &[
         },
         |config| integer(config.mmap_bytes),
     ),
-    ConfigKey::new(
+    ConfigKey::user_only(
         "privacy.store_prompt_excerpt",
-        "Keep the first 200 characters of each prompt with its task, not only its hash.",
+        "Keep the first 200 characters of each prompt with its task, not only its hash. Read only \
+         from the user's own file.",
         |config, value| {
             config.store_prompt_excerpt = value.as_bool().ok_or(SWITCH)?;
             Ok(())

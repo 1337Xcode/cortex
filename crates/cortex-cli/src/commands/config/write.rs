@@ -48,6 +48,7 @@ pub(crate) fn set(root: &Path, place: Place, key: &str, value_text: &str) -> any
     let before = read_text_file(&path, MAX_SETTINGS_BYTES)?;
     let origin = path.display().to_string();
     let file = ConfigLayer {
+        kind: place.kind(),
         origin: &origin,
         text: before.as_deref().unwrap_or_default(),
     };

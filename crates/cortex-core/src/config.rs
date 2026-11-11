@@ -227,9 +227,21 @@ impl Default for Config {
     }
 }
 
+/// Whose file a configuration layer is: a repository can carry its own `.cortex/config.toml` in
+/// its commits, so a key that must be the user's own decision is read from the user's file alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerKind {
+    /// The user's own file, `~/.cortex/config.toml`.
+    User,
+    /// A repository's file, `.cortex/config.toml`.
+    Repository,
+}
+
 /// One configuration file's text and a name for it in messages, such as its path.
 #[derive(Debug, Clone, Copy)]
 pub struct ConfigLayer<'a> {
+    /// Whose file it is.
+    pub kind: LayerKind,
     /// Where the text came from, shown in warnings and errors.
     pub origin: &'a str,
     /// The file's TOML text.
@@ -241,7 +253,8 @@ pub struct ConfigLayer<'a> {
 pub struct LoadedConfig {
     /// The settings in effect.
     pub config: Config,
-    /// One line per unknown key, naming the file and the key.
+    /// One line per key that was ignored, naming the file and the key: an unknown key, or a key
+    /// only the user's file may set that a repository's file sets.
     pub warnings: Vec<String>,
     /// The profile whose defaults the keys started from.
     pub profile: Profile,
@@ -275,7 +288,9 @@ pub enum ConfigError {
 
 /// The settings that result from `layers`, applied in order so that each overrides the ones
 /// before it: pass the user's file first and the repository's last. The last `profile` any layer
-/// sets is applied first, so that every other key a layer sets overrides it.
+/// sets is applied first, so that every other key a layer sets overrides it. A key only the user's
+/// file may set (see [`ConfigKey::is_user_only`]) is skipped, with a warning, in a repository's
+/// layer.
 ///
 /// # Errors
 ///
@@ -304,6 +319,15 @@ pub fn load(layers: &[ConfigLayer<'_>]) -> Result<LoadedConfig, ConfigError> {
                 warnings.push(format!("{}: unknown key `{key}` is ignored", layer.origin));
                 continue;
             };
+            // INVARIANT: no-content-stored (a repository's file must not turn on keeping prompt
+            // text, which is the user's own decision)
+            if entry.is_user_only() && layer.kind == LayerKind::Repository {
+                warnings.push(format!(
+                    "{}: `{key}` is read only from the user's file; this value is ignored",
+                    layer.origin
+                ));
+                continue;
+            }
             entry
                 .read(&mut config, value)
                 .map_err(|expected| refusal(layer.origin, &key, expected))?;
@@ -346,11 +370,18 @@ pub fn keys_set(layer: &ConfigLayer<'_>) -> Result<Vec<String>, ConfigError> {
 ///
 /// The file is not valid TOML.
 fn parsed(layer: &ConfigLayer<'_>) -> Result<toml::Table, ConfigError> {
-    layer
-        .text
-        .parse()
+    parsed_text(layer.origin, layer.text)
+}
+
+/// The TOML table `text` holds, a file named `origin` in messages.
+///
+/// # Errors
+///
+/// The text is not valid TOML.
+fn parsed_text(origin: &str, text: &str) -> Result<toml::Table, ConfigError> {
+    text.parse()
         .map_err(|error: toml::de::Error| ConfigError::Syntax {
-            origin: layer.origin.to_owned(),
+            origin: origin.to_owned(),
             message: error.message().to_owned(),
         })
 }
@@ -431,9 +462,22 @@ fn string_list(value: &toml::Value) -> Option<Vec<String>> {
 mod tests {
     use super::*;
 
-    /// A layer named `origin` holding `text`.
+    /// A user's layer named `origin` holding `text`.
     fn layer<'a>(origin: &'a str, text: &'a str) -> ConfigLayer<'a> {
-        ConfigLayer { origin, text }
+        ConfigLayer {
+            kind: LayerKind::User,
+            origin,
+            text,
+        }
+    }
+
+    /// A repository's layer named `origin` holding `text`.
+    fn repository_layer<'a>(origin: &'a str, text: &'a str) -> ConfigLayer<'a> {
+        ConfigLayer {
+            kind: LayerKind::Repository,
+            origin,
+            text,
+        }
     }
 
     /// With no files, every setting has its documented default.
@@ -513,13 +557,13 @@ mod tests {
             "user",
             "mode = \"small\"\nstrict_mode = true\n[index]\nmax_file_bytes = 2000\nextra_ignores = [\"*.log\"]\n\
              [hints]\nruntime_grounding = true\nnarrow_tests = true\nredundant_commands = true\n\
-             [compaction]\nkeep_list = true\n",
+             [compaction]\nkeep_list = true\n[privacy]\nstore_prompt_excerpt = true\n",
         );
-        let repository = layer(
+        let repository = repository_layer(
             "repository",
             "[index]\nmax_file_bytes = 5000\nparse_timeout_ms = 250\ncrawl_files_per_second = 7\n\
              [daemon]\nidle_shutdown_minutes = 5\n[store]\nmmap_bytes = 0\n\
-             [privacy]\nstore_prompt_excerpt = true\n[holdout]\nshare = 0.25\n\
+             [holdout]\nshare = 0.25\n\
              [learning]\neta = 0.2\nlink_decay = 1\ninterest_decay = 0.5\n\
              [git]\nmax_commits = 100\nmax_age_days = 7\nmax_files_per_commit = 5\n\
              half_life_commits = 50\n[tests]\nextra_patterns = [\"^just test\", \"tox( |$)\"]\n\
@@ -601,6 +645,59 @@ mod tests {
                 compaction: CompactionConfig { is_keep_list: true },
                 adopt: AdoptConfig::default(),
             }
+        );
+        Ok(())
+    }
+
+    /// A key only the user's file may set is applied from the user's file. A repository's file
+    /// setting it is skipped, whatever it holds: the settings stay as they were, the key's source is
+    /// still the user's file or none, and one line names the file and the key.
+    #[test]
+    fn a_repository_cannot_set_a_user_only_key() -> Result<(), ConfigError> {
+        let user_text =
+            "privacy.store_prompt_excerpt = true\nadopt.exclude = [\"~/Downloads/**\"]\n";
+        let from_user = load(&[layer("user", user_text)])?;
+        assert!(from_user.config.store_prompt_excerpt);
+        assert_eq!(from_user.config.adopt.exclude, ["~/Downloads/**"]);
+        assert_eq!(
+            from_user.set_by.get("privacy.store_prompt_excerpt"),
+            Some(&0)
+        );
+        assert_eq!(from_user.set_by.get("adopt.exclude"), Some(&0));
+        assert_eq!(from_user.warnings, Vec::<String>::new());
+
+        // The second value is no glob: a skipped value is not even checked.
+        let repository_text =
+            "[privacy]\nstore_prompt_excerpt = true\n[adopt]\nexclude = [\"a[\"]\n";
+        let alone = load(&[repository_layer("repo", repository_text)])?;
+        assert_eq!(alone.config, Config::default());
+        assert!(alone.set_by.is_empty());
+        assert_eq!(
+            alone.warnings,
+            [
+                "repo: `adopt.exclude` is read only from the user's file; this value is ignored",
+                "repo: `privacy.store_prompt_excerpt` is read only from the user's file; this \
+                 value is ignored",
+            ]
+        );
+
+        let both = load(&[
+            layer("user", "privacy.store_prompt_excerpt = false\n"),
+            repository_layer(
+                "repo",
+                "privacy.store_prompt_excerpt = true\nmode = \"small\"\n",
+            ),
+        ])?;
+        assert!(!both.config.store_prompt_excerpt);
+        assert_eq!(both.config.mode, ModeSetting::Pinned(ScaleMode::Small));
+        assert_eq!(both.set_by.get("privacy.store_prompt_excerpt"), Some(&0));
+        assert_eq!(both.set_by.get("mode"), Some(&1));
+        assert_eq!(
+            both.warnings,
+            [
+                "repo: `privacy.store_prompt_excerpt` is read only from the user's file; this value \
+              is ignored"
+            ]
         );
         Ok(())
     }

@@ -312,6 +312,75 @@ fn what_the_configuration_refuses_is_not_written() -> TestResult {
     Ok(())
 }
 
+/// A key only the user's own file may set is refused by `config set` for the repository's file,
+/// naming `--user`, and written with it. A repository's file that sets it by hand is warned of, and
+/// `config` shows the user's file as its source, or the default: never the repository's.
+#[test]
+fn a_user_only_key_is_set_with_user_and_never_from_the_repository() -> TestResult {
+    let (home, repo, user_file, repository_file) = setup()?;
+    let first = "mode = \"auto\"\n";
+    std::fs::write(&repository_file, first)?;
+    let printed = cortex(
+        home.path(),
+        &repo,
+        &["config", "set", "privacy.store_prompt_excerpt", "true"],
+    )?;
+    assert!(!printed.is_success, "{}", printed.stdout);
+    assert!(
+        printed.stderr.contains(
+            "`privacy.store_prompt_excerpt` is read only from the user's own file; set it with \
+             --user"
+        ),
+        "{}",
+        printed.stderr
+    );
+    assert_eq!(std::fs::read_to_string(&repository_file)?, first);
+    assert!(!user_file.exists());
+    let line = |printed: &Printed, key: &str| {
+        printed
+            .stdout
+            .lines()
+            .find(|line| line.starts_with(&format!("{key} = ")))
+            .map(str::to_owned)
+    };
+    let excerpt = "privacy.store_prompt_excerpt";
+    std::fs::write(&repository_file, "[privacy]\nstore_prompt_excerpt = true\n")?;
+    let shown = cortex(home.path(), &repo, &["config"])?;
+    assert!(shown.is_success, "{}", shown.stderr);
+    assert_eq!(
+        line(&shown, excerpt).as_deref(),
+        Some("privacy.store_prompt_excerpt = false (default)")
+    );
+    assert_eq!(
+        shown.stderr,
+        format!(
+            "cortex: warning: {}: `privacy.store_prompt_excerpt` is read only from the user's \
+             file; this value is ignored\n",
+            repository_file.display()
+        )
+    );
+    let printed = cortex(
+        home.path(),
+        &repo,
+        &["config", "set", excerpt, "true", "--user"],
+    )?;
+    assert!(printed.is_success, "{}", printed.stderr);
+    assert_eq!(
+        std::fs::read_to_string(&user_file)?,
+        "[privacy]\nstore_prompt_excerpt = true\n"
+    );
+    std::fs::write(
+        &repository_file,
+        "[privacy]\nstore_prompt_excerpt = false\n",
+    )?;
+    let shown = cortex(home.path(), &repo, &["config"])?;
+    assert_eq!(
+        line(&shown, excerpt).as_deref(),
+        Some("privacy.store_prompt_excerpt = true (user)")
+    );
+    Ok(())
+}
+
 /// `cortex features` lists every feature with whether the settings let it reach a task and no
 /// measured effect; `features on` and `off` write its key to the repository's file, and a feature
 /// with no key, or an unknown one, is refused. A feature with no key is off when the settings keep
