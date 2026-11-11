@@ -30,14 +30,13 @@ mod porcelain;
 use std::path::Path;
 use std::time::Duration;
 
-use cortex_core::RepoPath;
+use cortex_core::{RepoPath, is_object_id};
 
 pub use porcelain::{Blame, BlameRun, BlamedCommit, Previous, parse_porcelain};
 
 use crate::git_program::{
     Bounds, GitProgram, IGNORE_REVS_FILE, IgnoreList, NULL_DEVICE, OpenError, RunFailure, Settings,
 };
-use crate::object_id::is_object_id;
 
 /// The earliest date, in seconds since the Unix epoch (1973-03-03), that git reads as a time: git
 /// takes a smaller number in a date for a day or a year, and a date of 0 for now, so a date limit

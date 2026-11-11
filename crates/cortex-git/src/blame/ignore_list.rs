@@ -4,8 +4,9 @@
 use std::io::Read as _;
 use std::path::Path;
 
+use cortex_core::is_object_id;
+
 use crate::git_program::IGNORE_REVS_FILE;
-use crate::object_id::is_object_id;
 
 /// The most of the list read, 1 MiB, about 25,000 ids; a longer file is not used.
 const MAX_LIST_BYTES: u64 = 1024 * 1024;
@@ -35,11 +36,12 @@ pub(super) fn is_usable(root: &Path) -> bool {
 
 /// Whether every line of `text` is blank, a comment (from a `#` to the line's end, which may
 /// follow an id) or a full object id. Git refuses a list with a line that is anything else, an
-/// abbreviated id included, and then fails every blame that reads it.
+/// abbreviated id included, and then fails every blame that reads it. Git takes an id in either
+/// case here, so a list written by hand in upper case is used too.
 fn is_list_of_full_ids(text: &str) -> bool {
     text.lines().all(|line| {
         let id = line.split('#').next().unwrap_or_default().trim_end();
-        id.is_empty() || is_object_id(id)
+        id.is_empty() || is_object_id(&id.to_ascii_lowercase())
     })
 }
 
@@ -50,7 +52,8 @@ mod tests {
     /// A full id, 40 hexadecimal digits.
     const ID: &str = "0123456789abcdef0123456789abcdef01234567";
 
-    /// Lines git reads (full ids, blank lines, comments, a comment after an id, carriage returns)
+    /// Lines git reads (full ids in either case, blank lines, comments, a comment after an id,
+    /// carriage returns)
     /// and lines it refuses (an abbreviated id, an id with text after it, a word, an id with white
     /// space before it, an id that is too long).
     #[test]
@@ -60,6 +63,7 @@ mod tests {
             format!("{ID}\n"),
             format!("# a bot\n\n{ID}   # the bump\n{ID}\r\n"),
             "   \n#\n".to_owned(),
+            "0123456789ABCDEF0123456789ABCDEF01234567\n".to_owned(),
         ];
         for text in good {
             assert!(is_list_of_full_ids(&text), "{text:?}");

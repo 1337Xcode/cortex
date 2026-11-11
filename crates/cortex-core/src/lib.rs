@@ -38,6 +38,7 @@ mod language;
 mod log_rotation;
 mod named;
 mod notice_subject;
+mod object_id;
 mod one_line;
 mod path;
 mod plain;
@@ -99,6 +100,7 @@ pub use kinds::{EdgeType, FileFlags, InterestTier, NodeKind, RefKind, Resolution
 pub use language::{Language, Tier};
 pub use log_rotation::rotate_log;
 pub use notice_subject::NoticeSubject;
+pub use object_id::is_object_id;
 pub use one_line::{is_hidden, one_line};
 pub use path::{PathError, RepoPath};
 pub use plain::{is_plain, is_taken_out};

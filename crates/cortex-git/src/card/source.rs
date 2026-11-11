@@ -7,9 +7,10 @@
 use std::path::Path;
 use std::time::Duration;
 
+use cortex_core::is_object_id;
+
 use super::SHOW_FORMAT;
 use crate::git_program::{Bounds, GitProgram, OpenError, RunFailure, Settings};
-use crate::object_id::is_object_id;
 
 /// What reading a commit's record may take: a commit's message is a few lines; one of 256 KiB is
 /// not a message to show, and is refused rather than cut.

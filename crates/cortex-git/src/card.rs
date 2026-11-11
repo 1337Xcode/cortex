@@ -16,9 +16,8 @@ mod trivial;
 
 pub use source::{CommitError, CommitReader};
 
+use cortex_core::is_object_id;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
-
-use crate::object_id::is_object_id;
 
 /// The `git show` format that [`read_card`] reads: the commit id, its parents on one line, the
 /// committer time in seconds (the time `git log --since` and blame's date limit cut on), the

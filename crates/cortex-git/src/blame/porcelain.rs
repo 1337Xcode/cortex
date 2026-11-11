@@ -9,8 +9,9 @@
 
 use std::collections::BTreeMap;
 
+use cortex_core::is_object_id;
+
 use super::BlameError;
-use crate::object_id::is_object_id;
 
 /// The id of the commit before the one a line was last changed in, and the path the file had
 /// there: where `git blame` would look next to see what the line was before.

@@ -20,7 +20,6 @@ mod git_program;
 mod gix_history;
 mod history;
 pub mod mine;
-mod object_id;
 mod renames;
 pub mod worktree;
 
