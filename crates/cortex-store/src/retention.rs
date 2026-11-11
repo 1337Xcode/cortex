@@ -116,7 +116,8 @@ pub(crate) fn delete_retired_facts(
     )
 }
 
-/// Deletes at most `limit` blames made for a file content that no indexed file has now: how many.
+/// Deletes at most `limit` blames whose file the index does not hold with the content they were
+/// made from: how many.
 ///
 /// # Errors
 ///

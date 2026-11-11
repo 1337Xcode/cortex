@@ -1,13 +1,14 @@
 //! The blame of a line range of a file, kept so that the same span is not blamed again: which
-//! commit last changed each run of lines, for the file as it stood when its content hashed to a
-//! given value. A change to the file changes its hash, so a stored blame can only be read back for
-//! the content it was made from.
+//! commit last changed each run of lines, for the file at a path as it stood when its content
+//! hashed to a given value. A change to the file changes its hash, so a stored blame can only be
+//! read back for the content it was made from; two files of the same content are blamed apart,
+//! since different commits can have written them.
 //!
 //! One row holds a whole blame, its runs as JSON, because a blame is read and replaced as one: a
 //! lookup is one read of the rows whose range overlaps the one asked for, and the caller combines
 //! them. Only line numbers and commit ids are kept, never a line's text or a person's name.
 
-use cortex_core::{ContentHash, is_object_id};
+use cortex_core::{ContentHash, RepoPath, is_object_id};
 use rusqlite::Connection;
 
 use crate::error::{StoreError, sqlite};
@@ -29,10 +30,12 @@ pub struct BlameRunRecord {
     pub oid: String,
 }
 
-/// The blame of lines `first_line` to `last_line` of the file whose content hashed to
+/// The blame of lines `first_line` to `last_line` of the file at `path` whose content hashed to
 /// `file_hash`, and when it was computed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlameRecord {
+    /// The file's path.
+    pub path: RepoPath,
     /// The hash of the file's content the blame was made for.
     pub file_hash: ContentHash,
     /// The first line blamed, counted from 1.
@@ -46,16 +49,16 @@ pub struct BlameRecord {
 }
 
 impl Queries<'_> {
-    /// The stored blames of the file whose content hashed to `file_hash` whose range of lines
-    /// overlaps `first_line` to `last_line` (the edges count), by first line and then last. A
-    /// range may be covered by several blames, or only in part; the caller combines them.
+    /// The stored blames of the file at `path` whose content hashed to `file_hash` whose range of
+    /// lines overlaps `first_line` to `last_line` (the edges count), by first line and then last.
+    /// A range may be covered by several blames, or only in part; the caller combines them.
     ///
     /// # Errors
     ///
     /// SQLite errors and stored runs that cannot be read back.
     pub fn cached_blames(
         self,
-        file_hash: &ContentHash,
+        (path, file_hash): (&RepoPath, &ContentHash),
         first_line: u32,
         last_line: u32,
     ) -> Result<Vec<BlameRecord>, StoreError> {
@@ -65,7 +68,12 @@ impl Queries<'_> {
             .and_then(|mut statement| {
                 statement
                     .query_map(
-                        (file_hash.as_bytes().as_slice(), first_line, last_line),
+                        (
+                            path.as_str(),
+                            file_hash.as_bytes().as_slice(),
+                            first_line,
+                            last_line,
+                        ),
                         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                     )?
                     .collect()
@@ -74,6 +82,7 @@ impl Queries<'_> {
         rows.into_iter()
             .map(|(first, last, runs, computed_at_ms)| {
                 Ok(BlameRecord {
+                    path: path.clone(),
                     file_hash: *file_hash,
                     first_line: values::number(first, "blame_cache.first_line", first)?,
                     last_line: values::number(last, "blame_cache.last_line", first)?,
@@ -117,6 +126,7 @@ pub(crate) fn put(connection: &Connection, record: &BlameRecord) -> Result<(), S
         .prepare_cached(schema::BLAME_PUT)
         .and_then(|mut statement| {
             statement.execute((
+                record.path.as_str(),
                 record.file_hash.as_bytes().as_slice(),
                 record.first_line,
                 record.last_line,

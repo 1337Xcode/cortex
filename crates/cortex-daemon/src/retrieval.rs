@@ -39,7 +39,7 @@ use cortex_core::{
 };
 use cortex_index::Grammars;
 use cortex_learn::{Commands, model_in_use, raise_of, recent_precision};
-use cortex_retrieve::{Graph, Outcome, Request, Retrieval, Span, locate, primer, retrieve};
+use cortex_retrieve::{Graph, Outcome, Request, Retrieval, Span, WhyAsk, locate, primer, retrieve};
 use cortex_store::{
     HandoffId, InjectedFile, InjectionRecord, MetaKey, NodeId, Queries, Reader, StoreError, TaskRow,
 };
@@ -49,6 +49,7 @@ use crate::claim::Claim;
 use crate::contracts::Contracts;
 use crate::failed::Failed;
 use crate::given::{Given, text_record};
+use crate::history::Jobs;
 use crate::once::ClaimedOnce;
 use crate::recapped::Recapped;
 
@@ -85,6 +86,9 @@ pub(crate) struct Service {
     failures: FailureSettings,
     /// `compaction.keep_list`: whether a compaction's summary is given the open task's keep-list.
     is_keep_list: bool,
+    /// What a work order's why-lines are read with; none while `history.why` is off or the history
+    /// worker does not run.
+    why_lines: Option<WhyLinesSettings>,
     /// The contracts of the coordination notices queued lately, for their notices to be given
     /// in their words.
     contracts: Contracts,
@@ -174,6 +178,19 @@ pub(crate) struct Settings {
     pub(crate) failures: FailureSettings,
     /// `compaction.keep_list`: whether a compaction's summary is given the open task's keep-list.
     pub(crate) is_keep_list: bool,
+    /// What a work order's why-lines are read with; none while they are off.
+    pub(crate) why_lines: Option<WhyLinesSettings>,
+}
+
+/// What a work order's why-lines are read with: the running history worker, and the caps.
+#[derive(Debug, Clone)]
+pub(crate) struct WhyLinesSettings {
+    /// The history worker's texts, and where blames are asked for.
+    pub(crate) jobs: Arc<Jobs>,
+    /// `history.max_reasons`.
+    pub(crate) max_reasons: u32,
+    /// `history.max_tokens`.
+    pub(crate) max_tokens: u32,
 }
 
 impl Service {
@@ -190,6 +207,7 @@ impl Service {
             coordination: settings.coordination,
             failures: settings.failures,
             is_keep_list: settings.is_keep_list,
+            why_lines: settings.why_lines,
             contracts: Contracts::default(),
             readers: Mutex::new(Vec::new()),
         }
@@ -232,6 +250,11 @@ impl Service {
                 model: in_use.model(),
                 deadline: Some(Instant::now() + SPREAD_FOR),
                 root: self.root_for(event),
+                why_lines: self.why_lines.as_ref().map(|why| WhyAsk {
+                    history: &*why.jobs,
+                    max_reasons: why.max_reasons,
+                    max_tokens: why.max_tokens,
+                }),
             };
             let retrieval = retrieve(queries, graph, &request)?;
             let injection = retrieval.features.map(|features| InjectionRecord {
@@ -380,6 +403,7 @@ impl Service {
                 deadline: Some(Instant::now() + SPREAD_FOR),
                 // INVARIANT: true-at-render. The lines shown are the asker's working tree's.
                 root: worktree.unwrap_or(&self.root),
+                why_lines: None,
             };
             let location = locate(queries, graph, &request, limit)?;
             Ok(location.rendered.map(|rendered| rendered.text))

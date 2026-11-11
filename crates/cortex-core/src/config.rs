@@ -22,6 +22,7 @@ mod coordination;
 mod edit;
 mod effective;
 mod hints;
+mod history;
 mod main_keys;
 mod profile;
 mod registry;
@@ -39,6 +40,7 @@ pub use self::compaction::CompactionConfig;
 pub use self::coordination::CoordinationConfig;
 pub use self::effective::{Setting, SettingSource};
 pub use self::hints::HintsConfig;
+pub use self::history::HistoryConfig;
 pub use self::profile::{PROFILE_KEY, Profile};
 pub use self::registry::{ConfigKey, config_key, config_keys};
 pub use self::retrieval::{MAX_WORK_ORDER_TOKENS, RetrievalConfig, TypeWeights};
@@ -193,6 +195,8 @@ pub struct Config {
     pub compaction: CompactionConfig,
     /// The `adopt.*` keys: which folders Cortex sets up on its own.
     pub adopt: AdoptConfig,
+    /// The `history.*` keys: what git history adds to the code shown and to the search.
+    pub history: HistoryConfig,
 }
 
 impl Default for Config {
@@ -223,6 +227,7 @@ impl Default for Config {
             hints: HintsConfig::default(),
             compaction: CompactionConfig::default(),
             adopt: AdoptConfig::default(),
+            history: HistoryConfig::default(),
         }
     }
 }
@@ -544,6 +549,14 @@ mod tests {
                 hints: HintsConfig::default(),
                 compaction: CompactionConfig::default(),
                 adopt: AdoptConfig::default(),
+                history: HistoryConfig {
+                    is_why: false,
+                    is_seeds: false,
+                    blame_timeout_ms: 2000,
+                    max_reasons: 2,
+                    max_tokens: 120,
+                    bot_patterns: Vec::new(),
+                },
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -644,6 +657,7 @@ mod tests {
                 },
                 compaction: CompactionConfig { is_keep_list: true },
                 adopt: AdoptConfig::default(),
+                history: HistoryConfig::default(),
             }
         );
         Ok(())

@@ -70,11 +70,11 @@ pub use child::{Captured, capture, time_fed};
 pub use config::{
     AdoptConfig, CompactionConfig, Config, ConfigError, ConfigKey, ConfigLayer, CoordinationConfig,
     DEFAULT_HOLDOUT_SHARE, DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES,
-    DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, HintsConfig, LayerKind, LoadedConfig,
-    MAX_MMAP_BYTES, MAX_WORK_ORDER_TOKENS, ModeSetting, PROFILE_KEY, Profile, RetrievalConfig,
-    SWITCH_KEYS, SetError, Setting, SettingSource, SwitchKey, TypeWeights, WarningsConfig,
-    config_key, config_keys, keys_set as config_keys_set, load as load_config, setting_value,
-    switch_key, with_setting,
+    DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, HintsConfig, HistoryConfig, LayerKind,
+    LoadedConfig, MAX_MMAP_BYTES, MAX_WORK_ORDER_TOKENS, ModeSetting, PROFILE_KEY, Profile,
+    RetrievalConfig, SWITCH_KEYS, SetError, Setting, SettingSource, SwitchKey, TypeWeights,
+    WarningsConfig, config_key, config_keys, keys_set as config_keys_set, load as load_config,
+    setting_value, switch_key, with_setting,
 };
 pub use coordination::{PositionMode, WorkingTree};
 pub use estimate::estimate_tokens;

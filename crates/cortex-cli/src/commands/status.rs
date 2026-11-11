@@ -12,8 +12,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
 use cortex_core::ipc::{
-    GitReport, GitState, GraphReport, HookLatency, LinkedWorktreeReport, RecentError, RequestBody,
-    ResponseBody, StatusReport, UpkeepReport, WorktreeReport, WorktreeState,
+    GitReport, GitState, GraphReport, HistoryReport, HookLatency, LinkedWorktreeReport,
+    RecentError, RequestBody, ResponseBody, StatusReport, UpkeepReport, WorktreeReport,
+    WorktreeState,
 };
 use cortex_core::{Config, FileFlags, ModeSetting, ScaleMode, UserFolder, unix_millis};
 use cortex_daemon::settings;
@@ -136,8 +137,9 @@ fn daemon_lines(root: &Path) -> Vec<String> {
     lines
 }
 
-/// What a running daemon reported, as lines: itself, its queue, its miner, each hook's handling
-/// time, and its latest errors, each with how long before `now_ms` it last happened.
+/// What a running daemon reported, as lines: itself, its queue, its miner, its history worker
+/// when it runs, each hook's handling time, and its latest errors, each with how long before
+/// `now_ms` it last happened.
 fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
     let mut lines = vec![
         format!(
@@ -152,6 +154,7 @@ fn report_lines(report: &StatusReport, now_ms: i64) -> Vec<String> {
         worktree_line(report.worktree.as_ref()),
         upkeep_line(report.upkeep.as_ref(), now_ms),
     ];
+    lines.extend(report.history.as_ref().map(history_line));
     lines.extend(report.linked_worktrees.iter().map(linked_line));
     if report.latencies.is_empty() {
         lines.push("daemon latency: no hook request handled yet".to_owned());
@@ -297,6 +300,27 @@ fn upkeep_line(report: Option<&UpkeepReport>, now_ms: i64) -> String {
         "upkeep: last ran {} ago, {removed}; {finished}",
         ago(report.at_ms, now_ms)
     )
+}
+
+/// What the daemon's history worker holds, as a line: the cards and blames the store keeps, the
+/// jobs waiting, the blames that failed when any did, and why git is refused when it is.
+fn history_line(report: &HistoryReport) -> String {
+    let mut line = format!(
+        "history: {}, {}, {}",
+        counted(report.cards, ("commit carded", "commits carded")),
+        counted(report.cached_blames, ("blame kept", "blames kept")),
+        counted(report.jobs_waiting, ("job waiting", "jobs waiting")),
+    );
+    if report.failed_blames > 0 {
+        line.push_str(&format!(
+            ", {}",
+            counted(report.failed_blames, ("blame failed", "blames failed"))
+        ));
+    }
+    if let Some(why) = &report.refused {
+        line.push_str(&format!("; git is not run for history: {why}"));
+    }
+    line
 }
 
 /// What the daemon's co-change miner is doing, as a line, or that the daemon did not say.
@@ -738,7 +762,47 @@ mod tests {
             worktree: None,
             linked_worktrees: Vec::new(),
             upkeep: None,
+            history: None,
         }
+    }
+
+    /// The history worker's line names what the store keeps and what waits, then the failures
+    /// and the refusal only when there are any; a daemon with history off has no such line.
+    #[test]
+    fn the_history_worker_reads_as_one_line() {
+        let mut history = HistoryReport {
+            cards: 12,
+            cached_blames: 1,
+            jobs_waiting: 0,
+            failed_blames: 0,
+            refused: None,
+        };
+        assert_eq!(
+            history_line(&history),
+            "history: 12 commits carded, 1 blame kept, 0 jobs waiting"
+        );
+        history.failed_blames = 2;
+        history.refused = Some("the repository's own git configuration names a filter".to_owned());
+        assert_eq!(
+            history_line(&history),
+            "history: 12 commits carded, 1 blame kept, 0 jobs waiting, 2 blames failed; git is \
+             not run for history: the repository's own git configuration names a filter"
+        );
+        let with_history = StatusReport {
+            history: Some(history),
+            ..report()
+        };
+        let lines = report_lines(&with_history, 0);
+        assert!(
+            lines
+                .get(6)
+                .is_some_and(|line| line.starts_with("history: "))
+        );
+        assert!(
+            !report_lines(&report(), 0)
+                .iter()
+                .any(|line| line.starts_with("history"))
+        );
     }
 
     /// A daemon that handled no hook and met no error says so, its miner still waiting for the

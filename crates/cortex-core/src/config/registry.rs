@@ -5,7 +5,9 @@
 //! holds them; [`SECTIONS`] lists the tables. Adding a key is one entry in its section's table and
 //! the field it sets; no other code matches on a key's name to read or show it.
 
-use super::{Config, adopt, compaction, coordination, hints, main_keys, retrieval, warnings};
+use super::{
+    Config, adopt, compaction, coordination, hints, history, main_keys, retrieval, warnings,
+};
 
 /// How an entry reads a file's value into the settings: `Err` holds what the key accepts, in the
 /// words its refusal uses.
@@ -85,7 +87,7 @@ impl ConfigKey {
 }
 
 /// Every section's table of keys.
-const SECTIONS: [&[ConfigKey]; 7] = [
+const SECTIONS: [&[ConfigKey]; 8] = [
     main_keys::KEYS,
     retrieval::KEYS,
     warnings::KEYS,
@@ -93,6 +95,7 @@ const SECTIONS: [&[ConfigKey]; 7] = [
     hints::KEYS,
     compaction::KEYS,
     adopt::KEYS,
+    history::KEYS,
 ];
 
 /// Every key Cortex reads but `profile`, section by section.
@@ -126,7 +129,7 @@ mod tests {
         ConfigError, ConfigLayer, CoordinationConfig, LayerKind, ModeSetting, RetrievalConfig,
         TypeWeights, WarningsConfig, load,
     };
-    use crate::{AdoptConfig, CompactionConfig, HintsConfig, ScaleMode};
+    use crate::{AdoptConfig, CompactionConfig, HintsConfig, HistoryConfig, ScaleMode};
 
     /// Every key Cortex reads set to a value other than its default, one line each, with the
     /// settings that result written out by hand below.
@@ -180,7 +183,13 @@ mod tests {
         hints.narrow_tests = true\n\
         hints.redundant_commands = true\n\
         compaction.keep_list = true\n\
-        adopt.exclude = [\"~/Downloads/**\"]\n";
+        adopt.exclude = [\"~/Downloads/**\"]\n\
+        history.why = true\n\
+        history.seeds = true\n\
+        history.blame_timeout_ms = 100\n\
+        history.max_reasons = 5\n\
+        history.max_tokens = 400\n\
+        history.bot_patterns = [\"*[bot]\"]\n";
 
     /// The settings [`EVERY_KEY`] gives, every field away from its default.
     fn every_key_set() -> Config {
@@ -247,6 +256,14 @@ mod tests {
             compaction: CompactionConfig { is_keep_list: true },
             adopt: AdoptConfig {
                 exclude: vec!["~/Downloads/**".to_owned()],
+            },
+            history: HistoryConfig {
+                is_why: true,
+                is_seeds: true,
+                blame_timeout_ms: 100,
+                max_reasons: 5,
+                max_tokens: 400,
+                bot_patterns: vec!["*[bot]".to_owned()],
             },
         }
     }

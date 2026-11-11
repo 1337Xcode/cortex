@@ -295,6 +295,7 @@ fn indexing() -> StatusReport {
         worktree: None,
         linked_worktrees: Vec::new(),
         upkeep: None,
+        history: None,
     }
 }
 

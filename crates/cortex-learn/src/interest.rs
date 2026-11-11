@@ -58,7 +58,7 @@ const FOLDER_SHARE: f64 = 0.25;
 const INTERESTING_ABOVE: f64 = 0.2;
 
 /// The score a file must reach to be a landmark, however few files reach it.
-const LANDMARK_FROM: f64 = 3.0;
+pub const LANDMARK_FROM: f64 = 3.0;
 
 /// The fewest files the landmarks may take, so that a small repository has landmarks at all.
 const LANDMARKS_MIN: usize = 5;

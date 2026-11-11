@@ -12,18 +12,26 @@ use cortex_core::is_object_id;
 use super::SHOW_FORMAT;
 use crate::git_program::{Bounds, GitProgram, OpenError, RunFailure, Settings};
 
+/// How long reading a commit's record may take: a few lines from git's object store.
+pub const RECORD_WITHIN: Duration = Duration::from_secs(10);
+
+/// How long the white-space check of one commit may take. It runs only for a commit that changed
+/// at most `git.max_files_per_commit` files (30 by default); on Cortex's own history, 379 such
+/// commits took at most 41 ms each (measured 2026-11-11), so 10 s leaves large files and a slow
+/// disk two hundred times that.
+pub const COSMETIC_WITHIN: Duration = Duration::from_secs(10);
+
 /// What reading a commit's record may take: a commit's message is a few lines; one of 256 KiB is
 /// not a message to show, and is refused rather than cut.
 const RECORD: Bounds = Bounds {
-    within: Duration::from_secs(10),
+    within: RECORD_WITHIN,
     max_bytes: 256 * 1024,
 };
 
 /// What the whitespace check may take. Its answer is only whether git printed anything, so the
-/// output is cut at 64 KiB, which is already an answer; a large commit takes git some time to
-/// compare without whitespace.
+/// output is cut at 64 KiB, which is already an answer.
 const COSMETIC: Bounds = Bounds {
-    within: Duration::from_secs(30),
+    within: COSMETIC_WITHIN,
     max_bytes: 64 * 1024,
 };
 

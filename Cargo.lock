@@ -542,6 +542,7 @@ dependencies = [
  "cortex-core",
  "cortex-index",
  "cortex-learn",
+ "cortex-meter",
  "cortex-store",
  "criterion",
  "petgraph",

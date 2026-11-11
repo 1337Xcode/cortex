@@ -52,6 +52,7 @@ mod two_stage;
 mod uncommitted;
 mod warnings;
 mod why;
+mod why_lines;
 mod working_set;
 
 pub use disk::{CheckedFile, Unchecked};
@@ -94,7 +95,7 @@ pub use redundant::{
     redundant_note,
 };
 pub use render::{
-    Basis, Item, ItemSpan, Limits, MAX_WORK_ORDER_CHARS, Rendered, WorkOrder, render,
+    Basis, Item, ItemSpan, Limits, MAX_WORK_ORDER_CHARS, Rendered, WorkOrder, render, render_with,
 };
 pub use score::{
     INTERESTING_PRIOR, LANDMARK_PRIOR, ScoredFile, named_first, scored_files, with_symbols,
@@ -114,5 +115,9 @@ pub use warnings::{
 };
 pub use why::{
     MAX_LINKS_PER_KIND, MAX_WHY_SESSIONS, MAX_WHY_TOKENS, MAX_WHY_WARNINGS, Why, WhyAt, why,
+};
+pub use why_lines::{
+    BlamedSpan, CommitText, MAX_REASON_TOKENS, MAX_TEXT_ASKS, ReasonCommit, WhyAsk, WhyHistory,
+    WhyLines,
 };
 pub use working_set::{MAX_RECAPPED_FILES, MAX_RECAPPED_WARNINGS};

@@ -305,6 +305,28 @@ pub struct StatusReport {
     /// upkeep.
     #[serde(default)]
     pub upkeep: Option<UpkeepReport>,
+    /// What the history worker holds and waits on; none while `history.why` and `history.seeds`
+    /// are both off, or from a daemon that does not say (protocol 11.2 added it).
+    #[serde(default)]
+    pub history: Option<HistoryReport>,
+}
+
+/// What a daemon's history worker holds, which reads who last changed the lines Cortex may show
+/// and what those commits were, for its status.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct HistoryReport {
+    /// The commits the store keeps a card of.
+    pub cards: u64,
+    /// The blames of line ranges the store keeps.
+    pub cached_blames: u64,
+    /// The jobs waiting for the worker.
+    pub jobs_waiting: u64,
+    /// The blames that failed since the daemon started (git did not end in time, say); each is
+    /// not tried again until the daemon starts again.
+    pub failed_blames: u64,
+    /// Why git is not run in the repository for history, when it is not: its own configuration
+    /// names a program git would run, say. Kept for the daemon's life.
+    pub refused: Option<String>,
 }
 
 /// What a run of upkeep removed, and whether it finished.

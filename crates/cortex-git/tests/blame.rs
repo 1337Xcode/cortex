@@ -111,7 +111,8 @@ fn open(repo: &Repo) -> TestResult<Blamer> {
     Ok(Blamer::open(&repo.root())?)
 }
 
-/// A request for lines `first..=last` of `path` at `at`, with no date limit and 10 seconds.
+/// A request for lines `first..=last` of `path` at `at`, with no date limit, no commit ignored
+/// and 10 seconds.
 fn ask<'a>(path: &'a RepoPath, first: u32, last: u32, at: &'a str) -> BlameRequest<'a> {
     BlameRequest {
         path,
@@ -120,6 +121,7 @@ fn ask<'a>(path: &'a RepoPath, first: u32, last: u32, at: &'a str) -> BlameReque
         at,
         since_s: None,
         timeout_ms: 10_000,
+        ignore_revs: &[],
     }
 }
 
@@ -511,8 +513,8 @@ fn a_partial_clone_is_blamed_without_fetching() -> TestResult {
 }
 
 /// A request that cannot be a blame is refused before git runs: line 0, a span that ends before
-/// it starts, one of 501 lines, a revision name where an object id is needed, a date before git
-/// reads dates as times, and the repository's root for a file. The span of 500 lines is allowed.
+/// it starts, one of 501 lines, a revision name where an object id is needed (to blame at or to
+/// ignore), a date before git reads dates as times, and the repository's root for a file. The span of 500 lines is allowed.
 /// The earliest date that is a time is the one git reads as one: 100,000,000.
 #[test]
 fn a_request_that_is_not_a_blame_is_refused() -> TestResult {
@@ -521,6 +523,7 @@ fn a_request_that_is_not_a_blame_is_refused() -> TestResult {
     let path = RepoPath::new("deps.txt")?;
     let root = RepoPath::root();
     let at = commits.first.as_str();
+    let short = [at[..10].to_owned()];
     let cases = [
         ("line 0", ask(&path, 0, 1, at)),
         ("backwards", ask(&path, 3, 2, at)),
@@ -549,6 +552,13 @@ fn a_request_that_is_not_a_blame_is_refused() -> TestResult {
             },
         ),
         ("the root", ask(&root, 1, 1, at)),
+        (
+            "a short id to ignore",
+            BlameRequest {
+                ignore_revs: &short,
+                ..ask(&path, 1, 1, at)
+            },
+        ),
     ];
     for (name, request) in cases {
         let result = blamer.blame(&request);
@@ -566,6 +576,28 @@ fn a_request_that_is_not_a_blame_is_refused() -> TestResult {
     // lines asked for.
     let long = blamer.blame(&ask(&path, 1, 500, at));
     assert!(matches!(long, Err(BlameError::Malformed(_))), "{long:?}");
+    Ok(())
+}
+
+/// A commit ignored is looked through: the bot's bump changed the first line of `deps.txt`, and
+/// blamed with the bump ignored the line is the first commit's, which wrote it before, so both
+/// lines are one run of the first commit's. Without the ignore list the bump owns line 1.
+#[test]
+fn a_commit_ignored_gives_its_lines_to_the_commit_before() -> TestResult {
+    let (repo, commits) = history()?;
+    let blamer = open(&repo)?;
+    let path = RepoPath::new("deps.txt")?;
+    let plain = blamer.blame(&ask(&path, 1, 2, &commits.rename))?;
+    assert_eq!(
+        plain.runs,
+        [run(1, 1, 1, &commits.bump), run(2, 2, 2, &commits.first)]
+    );
+    let ignored = [commits.bump.clone()];
+    let request = BlameRequest {
+        ignore_revs: &ignored,
+        ..ask(&path, 1, 2, &commits.rename)
+    };
+    assert_eq!(blamer.blame(&request)?.runs, [run(1, 2, 1, &commits.first)]);
     Ok(())
 }
 

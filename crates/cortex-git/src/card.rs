@@ -14,7 +14,7 @@ mod source;
 mod tests;
 mod trivial;
 
-pub use source::{CommitError, CommitReader};
+pub use source::{COSMETIC_WITHIN, CommitError, CommitReader, RECORD_WITHIN};
 
 use cortex_core::is_object_id;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};

@@ -107,10 +107,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 23,
         sql: include_str!("../migrations/0023_history.sql"),
     },
+    Migration {
+        version: 24,
+        sql: include_str!("../migrations/0024_blame_path.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 23;
+pub(crate) const SCHEMA_VERSION: u32 = 24;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -687,33 +691,36 @@ macro_rules! card_columns {
     };
 }
 
-/// Stores the blame (?4, its runs as JSON) of lines ?2 to ?3 of the file hashed ?1, computed at ?5,
-/// replacing the blame of the same range.
+/// Stores the blame (?5, its runs as JSON) of lines ?3 to ?4 of the file at ?1 hashed ?2, computed
+/// at ?6, replacing the blame of the same file, content and range.
 pub(crate) const BLAME_PUT: &str = "INSERT INTO blame_cache \
-    (file_hash, first_line, last_line, runs, computed_at) VALUES (?1, ?2, ?3, ?4, ?5) \
-    ON CONFLICT (file_hash, first_line, last_line) DO UPDATE SET \
+    (path, file_hash, first_line, last_line, runs, computed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+    ON CONFLICT (path, file_hash, first_line, last_line) DO UPDATE SET \
     runs = excluded.runs, computed_at = excluded.computed_at";
 
-/// The blames of the file hashed ?1 whose lines overlap ?2 to ?3, by first line and then last.
+/// The blames of the file at ?1 hashed ?2 whose lines overlap ?3 to ?4, by first line and then
+/// last.
 pub(crate) const BLAME_OVERLAPPING: &str = "SELECT first_line, last_line, runs, computed_at \
-    FROM blame_cache WHERE file_hash = ?1 AND first_line <= ?3 AND last_line >= ?2 \
+    FROM blame_cache WHERE path = ?1 AND file_hash = ?2 AND first_line <= ?4 AND last_line >= ?3 \
     ORDER BY first_line, last_line";
 
 /// How many blames are kept.
 pub(crate) const BLAME_ROWS: &str = "SELECT count(*) FROM blame_cache";
 
-/// Deletes at most ?1 of the blames of a hash that no indexed file has now.
+/// Deletes at most ?1 of the blames whose file the index does not hold with the content they were
+/// made from: the file at their path is gone, or its content now hashes otherwise.
 pub(crate) const BLAME_DELETE_MISSING: &str = "DELETE FROM blame_cache \
-    WHERE (file_hash, first_line, last_line) IN \
-    (SELECT file_hash, first_line, last_line FROM blame_cache \
-     WHERE file_hash NOT IN (SELECT content_hash FROM files WHERE content_hash IS NOT NULL) \
+    WHERE (path, file_hash, first_line, last_line) IN \
+    (SELECT b.path, b.file_hash, b.first_line, b.last_line FROM blame_cache AS b \
+     WHERE NOT EXISTS (SELECT 1 FROM files AS f \
+     WHERE f.path = b.path AND f.content_hash = b.file_hash) \
      LIMIT ?1)";
 
 /// Deletes at most ?2 of the blames past the ?1 newest, the oldest computed first.
 pub(crate) const BLAME_OVER_CAP: &str = "DELETE FROM blame_cache \
-    WHERE (file_hash, first_line, last_line) IN \
-    (SELECT file_hash, first_line, last_line FROM blame_cache \
-     ORDER BY computed_at, file_hash, first_line, last_line \
+    WHERE (path, file_hash, first_line, last_line) IN \
+    (SELECT path, file_hash, first_line, last_line FROM blame_cache \
+     ORDER BY computed_at, path, file_hash, first_line, last_line \
      LIMIT min(?2, max(0, (SELECT count(*) FROM blame_cache) - ?1)))";
 
 /// Whether a card of the commit ?1 is kept.
@@ -1672,7 +1679,7 @@ mod tests {
     }
 
     /// The blames of a file's content that overlap a range are found from the start of the table's
-    /// key, the file's hash, and never by reading every blame, as the query plan shows.
+    /// key, the file's path and hash, and never by reading every blame, as the query plan shows.
     #[test]
     fn cached_blames_are_found_by_their_key() -> Result<(), Box<dyn std::error::Error>> {
         let connection = Connection::open_in_memory()?;
@@ -1682,12 +1689,12 @@ mod tests {
         let mut statement =
             connection.prepare(&["EXPLAIN QUERY PLAN ", BLAME_OVERLAPPING].concat())?;
         let steps: Vec<String> = statement
-            .query_map((&[0_u8; 32][..], 1, 2), |row| row.get(3))?
+            .query_map(("a.py", &[0_u8; 32][..], 1, 2), |row| row.get(3))?
             .collect::<rusqlite::Result<_>>()?;
         assert!(
             steps
                 .first()
-                .is_some_and(|step| step.contains("USING PRIMARY KEY (file_hash=?")),
+                .is_some_and(|step| step.contains("USING PRIMARY KEY (path=? AND file_hash=?")),
             "{steps:?}"
         );
         Ok(())
@@ -1699,9 +1706,10 @@ mod tests {
             (
                 "blame_cache",
                 column_list(&[
-                    ("file_hash", "BLOB", 1),
-                    ("first_line", "INTEGER", 2),
-                    ("last_line", "INTEGER", 3),
+                    ("path", "TEXT", 1),
+                    ("file_hash", "BLOB", 2),
+                    ("first_line", "INTEGER", 3),
+                    ("last_line", "INTEGER", 4),
                     ("runs", "TEXT", 0),
                     ("computed_at", "INTEGER", 0),
                 ]),
@@ -1758,7 +1766,7 @@ mod tests {
             .collect();
         assert_eq!(added, ["blame_cache", "change_cards", "commit_terms"]);
         let allowed: [(&str, &[&str]); 3] = [
-            ("blame_cache", &["runs"]),
+            ("blame_cache", &["path", "runs"]),
             (
                 "change_cards",
                 &[

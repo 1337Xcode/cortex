@@ -1,5 +1,5 @@
-//! What waits for the writer: hook events, the watcher's changes, a mining of the history, word
-//! that the watcher stopped, and a request to stop, with the counts, the miner's state and the
+//! What waits for the writer: hook events, the watcher's changes, a mining of the history, what
+//! the history worker found, word that the watcher stopped, and a request to stop, with the counts, the miner's state and the
 //! latest errors the daemon's status reports, and how many of the watcher's changes the writer has
 //! indexed, which the miner waits on. One lock and one condition variable, so the writer sleeps
 //! until something arrives or a deadline passes. It also holds the rules the writer keeps each
@@ -20,6 +20,7 @@ use cortex_store::CheckpointFailures;
 
 use crate::asked::{Ask, AskJob};
 use crate::given::Given;
+use crate::history::{HistoryWrite, HistoryWriteJob};
 
 use crate::recent_errors::RecentErrors;
 use crate::troubles::{Step, Taken, Troubles};
@@ -95,6 +96,9 @@ struct State {
     edits_in: u64,
     /// A mining waiting to be written: one at most, since the miner waits for the write.
     mining: Option<MiningJob>,
+    /// What the history worker found, waiting to be written: one at most, since the worker waits
+    /// for the write.
+    history: Option<HistoryWriteJob>,
     /// Requests waiting for the writer, oldest first, at most [`MAX_ASKS_WAITING`].
     asked: VecDeque<AskJob>,
     /// Whether a person asked for upkeep and the writer has not been told yet.
@@ -113,6 +117,8 @@ struct State {
     last_request: Option<Instant>,
     /// Whether the daemon's first index is done.
     is_indexed: bool,
+    /// Whether huge mode's crawl has files waiting to be parsed.
+    is_crawling: bool,
 }
 
 /// What the writer is to do next.
@@ -128,6 +134,8 @@ pub(crate) enum Work {
     Changed(Changed),
     /// Write what the miner found, and tell it how that went.
     Mining(Box<MiningJob>),
+    /// Write what the history worker found, and tell it how that went.
+    History(Box<HistoryWriteJob>),
     /// Answer a request of a person or an agent.
     Ask(Box<AskJob>),
     /// Run upkeep: a person asked for it.
@@ -467,6 +475,20 @@ impl Inbox {
         Some(answer)
     }
 
+    /// Puts in what the history worker found for the writer, and returns where the writer will
+    /// say whether it stored it; `None` once the inbox is closed, when nothing would store it.
+    pub(crate) fn push_history(&self, write: HistoryWrite) -> Option<Receiver<Result<(), String>>> {
+        let mut state = self.lock();
+        if state.is_closed {
+            return None;
+        }
+        let (job, answer) = HistoryWriteJob::new(write);
+        state.history = Some(job);
+        drop(state);
+        self.arrived.notify_one();
+        Some(answer)
+    }
+
     /// Puts in a request for the writer, and returns where the writer will answer it; none when
     /// the inbox is closed or [`MAX_ASKS_WAITING`] requests wait already.
     pub(crate) fn push_ask(&self, request: Ask) -> Option<Receiver<Result<ResponseBody, String>>> {
@@ -494,6 +516,23 @@ impl Inbox {
         (!state.is_watcher_gone).then(|| state.changes_in.saturating_add(state.edits_in))
     }
 
+    /// Whether an index is under way or due: changes wait for the writer, it took some and has
+    /// not come back for more work since, which it does once they are indexed, or huge mode's
+    /// crawl has files waiting to be parsed.
+    pub(crate) fn is_indexing(&self) -> bool {
+        let state = self.lock();
+        !state.changes.is_empty()
+            || state.is_overflowed
+            || state.changes_taken > state.changes_indexed
+            || state.is_crawling
+    }
+
+    /// Notes whether huge mode's crawl has files waiting to be parsed: the writer says so as it
+    /// goes.
+    pub(crate) fn set_crawling(&self, is_crawling: bool) {
+        self.lock().is_crawling = is_crawling;
+    }
+
     /// Whether the writer has indexed the first `count` changes the watcher put in: it took them,
     /// then came back for more work.
     pub(crate) fn has_indexed(&self, count: u64) -> bool {
@@ -517,12 +556,14 @@ impl Inbox {
     }
 
     /// Closes the inbox to events and minings: what the writer does once it has stopped working,
-    /// whatever stopped it, before it records the last events waiting. A mining still waiting is
-    /// dropped unwritten, which ends the miner's wait for it; the next daemon mines again.
+    /// whatever stopped it, before it records the last events waiting. A mining or the history
+    /// worker's findings still waiting are dropped unwritten, which ends the miner's and the
+    /// worker's wait for them; the next daemon reads them again.
     pub(crate) fn close(&self) {
         let mut state = self.lock();
         state.is_closed = true;
         state.mining = None;
+        state.history = None;
         state.asked.clear();
     }
 
@@ -532,10 +573,11 @@ impl Inbox {
         self.arrived.notify_one();
     }
 
-    /// Waits until an event, a change, a mining, a stop or word of the watcher arrives, or `until`
-    /// passes (never, when `None`), and says what to do: a stop first, then every event waiting,
-    /// then every change waiting, drained into one, then the oldest request asked, so that a note
-    /// finds the files changed before it indexed, then the mining, then that the watcher stopped.
+    /// Waits until an event, a change, a mining, the history worker's findings, a stop or word of
+    /// the watcher arrives, or `until` passes (never, when `None`), and says what to do: a stop
+    /// first, then every event waiting, then every change waiting, drained into one, then the
+    /// oldest request asked, so that a note finds the files changed before it indexed, then the
+    /// mining, then the history worker's findings, then that the watcher stopped.
     /// Only the writer waits, so the changes it took before are indexed by now.
     pub(crate) fn wait(&self, until: Option<Instant>) -> Work {
         let mut state = self.lock();
@@ -562,6 +604,9 @@ impl Inbox {
             }
             if let Some(job) = state.mining.take() {
                 return Work::Mining(Box::new(job));
+            }
+            if let Some(job) = state.history.take() {
+                return Work::History(Box::new(job));
             }
             if state.is_watcher_gone {
                 return Work::WatcherStopped;

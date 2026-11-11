@@ -10,7 +10,8 @@
 //! after `daemon.idle_shutdown_minutes` without a request or a file change, once nothing waits to
 //! be parsed. It says when the first index is done and the watcher runs. As tasks end it learns
 //! from them, and at each stop it reads the transcript the stop names for the tokens each response
-//! took.
+//! took. With `history.why` or `history.seeds` on, a worker of its own reads who last changed the
+//! lines it may show, and what those commits were, in the background.
 //!
 //! Once it holds the repository it keeps a log, `~/.cortex/logs/daemon-<id>.log`: when it started
 //! and stopped and why, the first index, each hook request it handled, and every error it met from
@@ -29,6 +30,7 @@ mod given;
 mod global_ignore;
 mod graph;
 mod headers;
+mod history;
 mod host;
 mod inbox;
 mod instance;
@@ -77,6 +79,7 @@ use cortex_retrieve::GraphSettings;
 use cortex_store::{Writer, WriterOptions};
 
 use self::graph::{Snapshot, rebuild, store_reads};
+use self::history::{History, Jobs};
 use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
@@ -84,7 +87,7 @@ use self::linked::Linked;
 use self::meter::Meter;
 use self::miner::Miner;
 use self::pending::Pending;
-use self::retrieval::{EditSettings, FailureSettings, Service, Settings};
+use self::retrieval::{EditSettings, FailureSettings, Service, Settings, WhyLinesSettings};
 use self::server::Server;
 use self::signatures::Signatures;
 use self::welcome::WelcomeLine;
@@ -175,6 +178,7 @@ fn listen_and_serve(
         (
             Arc::clone(&shared.service),
             WelcomeLine::of(&root.join(".cortex")),
+            Arc::clone(&shared.history),
         ),
     );
     runtime.spawn(Arc::new(server).serve(listener));
@@ -188,7 +192,8 @@ fn listen_and_serve(
 
 /// What the server and the writer share: the writer's inbox, the graph, the work tree's
 /// uncommitted diff and those of the linked working trees agents work in, the signature changes the
-/// writer's indexes found lately, and what answers with text once the first index is done.
+/// writer's indexes found lately, the history worker's jobs, and what answers with text once the
+/// first index is done.
 #[derive(Debug, Default)]
 struct Shared {
     /// The writer's inbox.
@@ -201,6 +206,9 @@ struct Shared {
     linked: Arc<Linked>,
     /// The signature changes the writer's indexes found lately, for an edit's warnings.
     signatures: Arc<Signatures>,
+    /// The history worker's jobs, its text cache and what its status says; nothing is taken while
+    /// the worker does not run.
+    history: Arc<Jobs>,
     /// What answers with text.
     service: Arc<OnceLock<Service>>,
 }
@@ -292,6 +300,17 @@ fn index_and_serve(
         files_waiting = host.waiting(),
         "first index done"
     );
+    // The history worker starts once the files are stored, and only when one of its switches is
+    // on; before the service, which reads what it holds; told to stop when dropped.
+    let history = History::start(root, &config, inbox, &shared.history);
+    if history.is_some() {
+        host.warm_history_with(Arc::clone(&shared.history));
+    }
+    let why_lines = (history.is_some() && config.history.is_why).then(|| WhyLinesSettings {
+        jobs: Arc::clone(&shared.history),
+        max_reasons: config.history.max_reasons,
+        max_tokens: config.history.max_tokens,
+    });
     // Installed once: the daemon serves one repository with one configuration. Installed before
     // the graph's first build, so that a daemon whose status shows a graph answers with text.
     drop(service.set(Service::new(Settings {
@@ -316,6 +335,7 @@ fn index_and_serve(
             is_redundant_commands: config.hints.is_redundant_commands,
         },
         is_keep_list: config.compaction.is_keep_list,
+        why_lines,
     })));
     // The graph is built once the first index is done, before which a retrieval would find
     // nothing; told to stop when dropped.
@@ -334,6 +354,7 @@ fn index_and_serve(
     // miner that cannot start leaves the daemon without co-change, as its status says.
     let miner = Miner::start(root, &config, inbox, &shared.worktree);
     host.serve()?;
+    drop(history);
     drop(miner);
     shared.linked.stop();
     drop(looker);

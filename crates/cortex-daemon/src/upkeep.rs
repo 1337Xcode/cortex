@@ -6,7 +6,9 @@
 //! for 90 days deleted; the gate's confidence model is fitted when one is due (see
 //! [`cortex_learn::calibrate`]); events and injections older than 90 days are deleted, episodes
 //! kept to 50,000 (unknown outcomes first), positions that can no longer hold removed and the
-//! failed checks handoffs keep cleared once a day old; last, the
+//! failed checks handoffs keep cleared once a day old; the blames kept for file contents no
+//! indexed file has are deleted and the rest kept to [`MAX_BLAMES`], and, while the history worker
+//! runs, the files worth warming are asked of it (see [`crate::history::warm`]); last, the
 //! query planner's statistics are refreshed and up to [`VACUUM_PAGES`] free pages given back to the
 //! file system. Each batch keeps, in the store, the step to carry on from, so that a daemon started
 //! later finds it; a step whose batch fails is left for the next pass and the steps after it run.
@@ -18,10 +20,13 @@
 //! coming, can keep it from starting afresh; each run after a pace then writes one batch and
 //! waits again.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cortex_learn::{Calibrated, calibrate, has_faded_out, review_facts};
 use cortex_store::{MetaKey, NodeId, Queries, StoreError, Writer};
+
+use crate::history::{Jobs, warm};
 
 /// How long the repository must be quiet, no hook event recorded, before upkeep runs.
 pub(crate) const QUIET_BEFORE_UPKEEP: Duration = Duration::from_secs(10 * 60);
@@ -51,6 +56,10 @@ const HANDOFF_FAILURE_KEPT_MS: i64 = 24 * 60 * 60 * 1_000;
 
 /// The most episodes kept.
 const MAX_EPISODES: u64 = 50_000;
+
+/// The most blames of line ranges kept, the oldest computed dropped first: by estimate a few
+/// hundred bytes each, some 10 MiB in all, while 50,000 spans cover those shown in many tasks.
+pub(crate) const MAX_BLAMES: u64 = 50_000;
 
 /// The most free pages of the database upkeep gives back each time through its jobs: 2,000
 /// pages, 8 MiB at SQLite's usual page size, however much was deleted; the rest goes next time.
@@ -96,6 +105,10 @@ pub struct Swept {
     pub positions: u64,
     /// Handoffs whose failed check, with its command, was forgotten a day on.
     pub handoff_failures: u64,
+    /// Blames of line ranges deleted: of file contents no indexed file has, or past the cap.
+    pub blames: u64,
+    /// Files the history worker was asked to blame ahead of a prompt.
+    pub warmed: u64,
     /// Free pages given back to the file system.
     pub pages: u64,
 }
@@ -208,6 +221,8 @@ enum Step {
     Positions,
     /// Handoffs' failed checks a day old.
     Handoffs,
+    /// The blames kept, pruned and capped, then the files worth warming asked for.
+    History,
     /// The planner's statistics.
     Optimize,
     /// The free pages, this many given back so far.
@@ -223,6 +238,9 @@ pub struct Upkeep {
     /// it looks at the log, since SQLite cuts the log's file back only on a commit after the log
     /// starts afresh, and a run that looked first would pace again without writing.
     has_paced: bool,
+    /// The history worker's jobs, which the history step asks for the files worth warming; none
+    /// while the worker does not run.
+    warm: Option<Arc<Jobs>>,
 }
 
 impl Step {
@@ -243,6 +261,7 @@ impl Step {
             Self::Episodes => "episodes",
             Self::Positions => "positions",
             Self::Handoffs => "handoffs",
+            Self::History => "history",
             Self::Optimize => "optimize",
             Self::Vacuum(_) => "vacuum",
         }
@@ -261,6 +280,7 @@ impl Step {
             "episodes" => Self::Episodes,
             "positions" => Self::Positions,
             "handoffs" => Self::Handoffs,
+            "history" => Self::History,
             "optimize" => Self::Optimize,
             "vacuum" => Self::Vacuum(0),
             _ => return None,
@@ -279,7 +299,8 @@ impl Step {
             Self::Injections => Self::Episodes,
             Self::Episodes => Self::Positions,
             Self::Positions => Self::Handoffs,
-            Self::Handoffs => Self::Optimize,
+            Self::Handoffs => Self::History,
+            Self::History => Self::Optimize,
             Self::Optimize => Self::Vacuum(0),
             Self::Vacuum(_) => return None,
         })
@@ -292,6 +313,7 @@ impl Default for Upkeep {
         Self {
             step: Step::FIRST,
             has_paced: false,
+            warm: None,
         }
     }
 }
@@ -312,7 +334,14 @@ impl Upkeep {
                 .and_then(Step::from_name)
                 .unwrap_or(Step::FIRST),
             has_paced: false,
+            warm: None,
         })
+    }
+
+    /// Has the history step ask `jobs`, the running history worker's, for the files worth
+    /// warming.
+    pub(crate) fn warm_with(&mut self, jobs: Arc<Jobs>) {
+        self.warm = Some(jobs);
     }
 
     /// Runs upkeep at `now_ms` with `writer`, from where the last run stopped, until every job is
@@ -492,6 +521,19 @@ impl Upkeep {
                 )?;
                 self.step.following()
             }
+            Step::History => {
+                let missing = transaction.delete_blames_of_missing_files(BATCH_ROWS)?;
+                let capped = transaction.cap_blames(MAX_BLAMES, BATCH_ROWS)?;
+                swept.blames += missing + capped;
+                if missing == BATCH_ROWS || capped == BATCH_ROWS {
+                    Some(Step::History)
+                } else {
+                    if let Some(jobs) = &self.warm {
+                        swept.warmed += warm(transaction.queries(), jobs, now_ms)?;
+                    }
+                    self.step.following()
+                }
+            }
             Step::Optimize => {
                 transaction.optimize()?;
                 self.step.following()
@@ -523,10 +565,13 @@ mod tests {
     use std::cell::Cell;
 
     use cortex_core::{
-        Agent, ContentHash, EdgeType, EventKind, EventMeta, GateFeatures, HookKind, Identifier,
-        RepoPath,
+        Agent, ContentHash, EdgeType, EventKind, EventMeta, FileFlags, GateFeatures, HookKind,
+        Identifier, RepoPath,
     };
-    use cortex_store::{EdgeRecord, EventRecord, InjectionRecord, SessionRecord, TransitionRow};
+    use cortex_store::{
+        EdgeRecord, EventRecord, FileIndex, FileRecord, InjectionRecord, SessionRecord,
+        TransitionRow,
+    };
 
     use super::*;
     use crate::test_store::{TestResult, add_file, writer};
@@ -535,7 +580,8 @@ mod tests {
     const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
 
     /// Every step, walked from the first, is kept under a name that reads back as the step's
-    /// start, each name once, the handoffs' step between the positions and the planner's.
+    /// start, each name once, the handoffs' step between the positions and the history, and the
+    /// history's before the planner's.
     #[test]
     fn every_step_reads_back_by_its_name() {
         let mut names = Vec::new();
@@ -558,6 +604,7 @@ mod tests {
                 "episodes",
                 "positions",
                 "handoffs",
+                "history",
                 "optimize",
                 "vacuum"
             ]
@@ -957,6 +1004,7 @@ mod tests {
         let mut upkeep = Upkeep {
             step: Step::Vacuum(0),
             has_paced: false,
+            warm: None,
         };
         let far = Instant::now() + Duration::from_secs(60);
         let now = (DAY_MS, &SETTINGS);
@@ -971,6 +1019,65 @@ mod tests {
         let (swept, ended) = upkeep.run(&mut writer, now, (far, &|| false))?;
         assert_eq!((swept.pages, ended), (1_500, Ended::Done));
         assert!(writer.queries().free_pages()? > 0);
+        Ok(())
+    }
+
+    /// The history step deletes the blames kept of a file as a content it no longer has, then
+    /// keeps the 50,000 newest of the rest. By hand: `a.py` holds the content hashed `kept`; three
+    /// blames of `a.py` as another content go, and of 50,002 blames of `kept`, computed at 1 to 50,002, the
+    /// two oldest go: five in all, 50,000 left, the oldest computed at 3.
+    #[test]
+    fn the_history_step_prunes_and_caps_the_blames_kept() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut writer = writer(root.path())?;
+        let kept = ContentHash::of(b"a");
+        let mut transaction = writer.transaction()?;
+        transaction.replace_file(&FileIndex {
+            file: FileRecord {
+                path: RepoPath::new("a.py")?,
+                language: None,
+                size_bytes: 1,
+                line_count: Some(1),
+                content_hash: Some(kept),
+                mtime_ns: 1,
+                flags: FileFlags::empty(),
+                indexed_at_ms: 1,
+            },
+            symbols: Vec::new(),
+            refs: Vec::new(),
+            passes_on: Vec::new(),
+        })?;
+        transaction.commit()?;
+        let mut database =
+            rusqlite::Connection::open(root.path().join(".cortex").join("cortex.db"))?;
+        let rows = database.transaction()?;
+        {
+            let mut insert = rows.prepare(
+                "INSERT INTO blame_cache (path, file_hash, first_line, last_line, runs, \
+                 computed_at) VALUES ('a.py', ?1, ?2, ?2, '[]', ?2)",
+            )?;
+            let gone = ContentHash::of(b"gone");
+            for line in 1..=3_i64 {
+                insert.execute((gone.as_bytes().as_slice(), line))?;
+            }
+            for line in 1..=50_002_i64 {
+                insert.execute((kept.as_bytes().as_slice(), line))?;
+            }
+        }
+        rows.commit()?;
+        drop(database);
+
+        let mut upkeep = Upkeep::default();
+        let far = Instant::now() + Duration::from_secs(60);
+        let (swept, ended) = upkeep.run(&mut writer, (DAY_MS, &SETTINGS), (far, &|| false))?;
+        assert_eq!((swept.blames, ended), (5, Ended::Done));
+        assert_eq!(writer.queries().cached_blame_count()?, MAX_BLAMES);
+        let oldest = writer
+            .queries()
+            .cached_blames((&RepoPath::new("a.py")?, &kept), 1, 3)?;
+        let firsts: Vec<u32> = oldest.iter().map(|blame| blame.first_line).collect();
+        assert_eq!(firsts, [3]);
+        assert_eq!(MAX_BLAMES, 50_000);
         Ok(())
     }
 }

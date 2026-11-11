@@ -13,6 +13,7 @@ cortex-coord = { path = "../cortex-coord" }
 cortex-core = { path = "../cortex-core" }
 cortex-index = { path = "../cortex-index" }
 cortex-learn = { path = "../cortex-learn" }
+cortex-meter = { path = "../cortex-meter" }
 cortex-store = { path = "../cortex-store" }
 thiserror.workspace = true
 

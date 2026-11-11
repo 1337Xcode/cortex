@@ -65,13 +65,14 @@ pub use discover::{
 };
 pub use extract::{ExtractError, Extraction, Extractor, LeftOut};
 pub use grammar::{GrammarError, Grammars};
+pub use path_rules::{is_secret, is_test_path};
 pub use pipeline::{
     EditedFile, FileProblem, IndexError, IndexOptions, IndexReport, OnChanged, OnParsed,
     count_lines, index_repository, waits_to_be_parsed,
 };
 pub use references::Qualifier;
 pub use rules::MAX_REPORTED_LINES;
-pub use safe_read::{ReadError, open_regular};
+pub use safe_read::{ReadError, open_regular, read_whole};
 pub use scale::{RepoSize, mode_for};
 pub use scip::{ScipOutcome, ScipProblem};
 pub use specifiers::{Import, Imported};

@@ -25,12 +25,13 @@ use crate::graph::Graph;
 use crate::items::{Listed, Listing, listed};
 use crate::prompt::PromptTerms;
 use crate::push::{Activation, spread};
-use crate::render::{Basis, Item, Limits, Rendered, WorkOrder, render};
+use crate::render::{Basis, Item, Limits, Rendered, WorkOrder, render, render_with};
 use crate::score::{ScoredFile, named_first, scored_files};
 use crate::seeds::{SeedQuery, Seeds, seeds};
 use crate::spans::Span;
 use crate::support::{Evidence, Support};
 use crate::two_stage::{Staged, two_stage};
+use crate::why_lines::{WhyAsk, WhyLines, ask_missing, look_up};
 
 /// The most tokens a work order holds in small mode, whatever the setting.
 pub const SMALL_MODE_MAX_TOKENS: u32 = 400;
@@ -64,6 +65,9 @@ pub struct Request<'a> {
     pub deadline: Option<Instant>,
     /// The repository's root, where files are read from.
     pub root: &'a Path,
+    /// What a work order's why-lines are read with, when `history.why` is on and the daemon reads
+    /// history; none gives no why-line.
+    pub why_lines: Option<WhyAsk<'a>>,
 }
 
 /// Why a retrieval gives nothing.
@@ -173,9 +177,16 @@ pub fn retrieve(
         items: listed.iter().map(|entry| entry.item.clone()).collect(),
         facts: facts_about(queries, graph, &listed)?,
     };
-    let Some(rendered) = render(&order, request.root, &limits_of(request)) else {
+    let why = match &request.why_lines {
+        Some(ask) => look_up(queries, &order.items, ask)?,
+        None => WhyLines::default(),
+    };
+    let Some(rendered) = render_with(&order, request.root, &limits_of(request), &why) else {
         return Ok(silent(Silence::NothingToShow, Some(judged), &weighed));
     };
+    if let Some(ask) = &request.why_lines {
+        ask_missing(ask, &order.items, &rendered.shown, &why);
+    }
     let listed = written_of(&listed, &rendered);
     // INVARIANT: silent-when-unsure (the gate weighed the three best files: a work order showing
     // none of them shows what the gate never weighed)

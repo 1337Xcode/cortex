@@ -3,8 +3,10 @@
 //!
 //! The header says what agreed. "Start here" lists the items whose code is shown, each with its
 //! lines, the symbol they are for and why it is listed; "Also likely" the rest, by path and lines;
-//! "Current code" holds the shown spans' lines, numbered; "Project facts" the facts about the
-//! listed files that are true now (`crate::facts`). A part with nothing in it is left out.
+//! "Current code" holds the shown spans' lines, numbered, each span followed by its why-lines,
+//! the reasons git history gives for those lines (`crate::why_lines`), when any were looked up;
+//! "Project facts" the facts about the listed files that are true now (`crate::facts`). A part
+//! with nothing in it is left out.
 //! Before an item's lines are written its file is read and hashed: a file that is not the one the
 //! index read lends no lines, and its item is listed by path alone; an item whose file is gone
 //! (deleted, no longer a regular file, unreadable) is not listed. Control characters (but tabs)
@@ -17,14 +19,16 @@
 //!
 //! The text is held to its caps where it is built: at most the files, spans a file and lines a span
 //! the caller gives, the token cap the caller gives, never above the hard cap of 1,200 tokens,
-//! and 8,000 characters. Past a cap, code is shed first, the last body shown first: it is cut to
-//! its first half, again and again down to [`MIN_SHOWN_LINES`], with a line saying which lines are
-//! not shown, and only then taken out; then the facts from the last; then the items from the last.
+//! and 8,000 characters. Past a cap, why-lines are shed first, one at a time, the last of the
+//! last span shown first; then code, the last body shown first: it is cut to its first half, again and again down
+//! to [`MIN_SHOWN_LINES`], with a line saying which lines are not shown, and only then taken out;
+//! then the facts from the last; then the items from the last.
 //! A work order that cannot fit with one item is not rendered at all.
 //!
 //! A span that starts inside a definition, a method in its class, is shown under that definition's
 //! first line, so the agent sees where the code lives without reading the file for it.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -38,6 +42,7 @@ use crate::facts::{OrderFact, true_now, write_facts};
 use crate::gate::{Rule, Shut, Verdict};
 use crate::reasons::Reason;
 use crate::spans::MAX_SPANS_PER_FILE;
+use crate::why_lines::{WhyLines, choose};
 use cortex_core::{is_plain, is_taken_out};
 
 /// Most characters a work order may hold, whatever its token cap.
@@ -135,11 +140,23 @@ pub struct Rendered {
     pub facts: Vec<cortex_store::FactId>,
 }
 
-/// `order` written for the repository at `root`, held to `limits`; `None` when it has no item that
-/// can be shown as it is, or not even its first fits. The engine's answer to a question whose
-/// spreading ran out of time is its header alone, whatever its items.
+/// `order` written for the repository at `root`, held to `limits`, with no why-line; `None` when
+/// it has no item that can be shown as it is, or not even its first fits. The engine's answer to a
+/// question whose spreading ran out of time is its header alone, whatever its items.
 #[must_use]
 pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendered> {
+    render_with(order, root, limits, &WhyLines::default())
+}
+
+/// `order` written as [`render`] writes it, each span shown followed by the why-lines `why` gives
+/// it.
+#[must_use]
+pub fn render_with(
+    order: &WorkOrder,
+    root: &Path,
+    limits: &Limits,
+    why: &WhyLines,
+) -> Option<Rendered> {
     // INVARIANT: deterministic (which files a spreading the clock cut short had reached is the
     // clock's doing: an answer out of time names no file, and says only that)
     if let Basis::Located {
@@ -170,9 +187,10 @@ pub fn render(order: &WorkOrder, root: &Path, limits: &Limits) -> Option<Rendere
         return None;
     }
     plan.facts = true_now(&order.facts, root, limits.max_file_bytes);
+    let reasons = plan.reasons(order, why);
     let max_tokens = limits.max_tokens.min(MAX_WORK_ORDER_TOKENS);
     loop {
-        let text = plan.write(order, &files);
+        let text = plan.write(order, &files, &reasons);
         let tokens = u32::try_from(estimate_tokens(&text)).unwrap_or(u32::MAX);
         // INVARIANT: budgeted (the work order is held to its token cap and the hard caps where it
         // is written, shedding code, then items, until it fits). Within 1,200 tokens it holds at
@@ -210,7 +228,13 @@ struct Plan {
     shown: Vec<Shown>,
     /// The facts written, by position, in the order written.
     facts: Vec<usize>,
+    /// The spans shown whose why-lines are written, as their item's position and their own, with
+    /// how many of their lines are written (their first ones), in the order shown.
+    why: Vec<((usize, usize), usize)>,
 }
+
+/// The why-lines of each span shown that has any, by its item's position and its own.
+type Reasons = BTreeMap<(usize, usize), Vec<String>>;
 
 /// One span whose code is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +307,9 @@ impl Plan {
                 is_shown_as_it_is(item) && !files.get(*at).is_some_and(OnDisk::is_gone)
             })
             .map(|(at, item)| {
+                // INVARIANT: true-at-render (a span, its code and its why-lines, comes only from a
+                // file whose bytes are the ones the index read: the lines blamed are the lines
+                // shown)
                 let spans = match files.get(at).and_then(OnDisk::checked) {
                     Some(file) => (0..item.spans.len())
                         .filter(|span| {
@@ -329,13 +356,42 @@ impl Plan {
             kept,
             shown,
             facts: Vec::new(),
+            why: Vec::new(),
         }
     }
 
-    /// Takes one thing out to make the text shorter: half of the last code shown, while it is more
-    /// than [`MIN_SHOWN_LINES`] lines, else that code, else the last fact, else the last item not
-    /// shown, else the last item after the first; `false` when there is nothing left to take.
+    /// The why-lines of each span this plan shows, as `why` gives them; the spans that get any are
+    /// noted as written. A span is shown only from a file whose bytes are the ones the index read
+    /// ([`Plan::of`]), which is the content `why`'s blames were looked up by.
+    fn reasons(&mut self, order: &WorkOrder, why: &WhyLines) -> Reasons {
+        let mut reasons = Reasons::new();
+        for shown in &self.shown {
+            let key = (shown.item, shown.span);
+            let Some(item) = order.items.get(shown.item) else {
+                continue;
+            };
+            let lines = choose(why, key, item);
+            if !lines.is_empty() {
+                self.why.push((key, lines.len()));
+                reasons.insert(key, lines);
+            }
+        }
+        reasons
+    }
+
+    /// Takes one thing out to make the text shorter: the last why-line of the last span that has
+    /// any written, else half of the last code shown, while it is more than [`MIN_SHOWN_LINES`] lines,
+    /// else that code, else the last fact, else the last item not shown, else the last item after
+    /// the first; `false` when there is nothing left to take.
     fn shed(&mut self) -> bool {
+        // Why-lines go first: they explain code, and are worth nothing without it.
+        if let Some((_, written)) = self.why.last_mut() {
+            *written -= 1;
+            if *written == 0 {
+                self.why.pop();
+            }
+            return true;
+        }
         if let Some(last) = self.shown.last_mut() {
             let (start, count) = (
                 last.lines.start_line(),
@@ -366,8 +422,9 @@ impl Plan {
         self.kept.clone()
     }
 
-    /// The text this plan writes of `order`, its code from `files`.
-    fn write(&self, order: &WorkOrder, files: &[OnDisk]) -> String {
+    /// The text this plan writes of `order`, its code from `files`, each span's why-lines from
+    /// `reasons` while they are written.
+    fn write(&self, order: &WorkOrder, files: &[OnDisk], reasons: &Reasons) -> String {
         let mut text = String::new();
         let _ = writeln!(text, "{}", heading(&order.basis));
         let is_shown = |at: usize| self.shown.iter().any(|shown| shown.item == at);
@@ -404,6 +461,15 @@ impl Plan {
                     continue;
                 };
                 write_code(&mut text, (item, span, shown.lines), file);
+                let key = (shown.item, shown.span);
+                let written = self
+                    .why
+                    .iter()
+                    .find(|(span, _)| *span == key)
+                    .map_or(0, |(_, written)| *written);
+                for line in reasons.get(&key).into_iter().flatten().take(written) {
+                    let _ = writeln!(text, "{line}");
+                }
             }
         }
         write_facts(&mut text, &order.facts, &self.facts);

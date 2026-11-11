@@ -62,7 +62,7 @@ pub use failures::{
     Failures, Frame, LineFailure, MAX_FAILED_TESTS, MAX_FRAMES, MAX_NAME_CHARS, parse_failures,
     read_line_failure,
 };
-pub use interest::{EarnedInterest, add_interest, interest_of, tier_now};
+pub use interest::{EarnedInterest, LANDMARK_FROM, add_interest, interest_of, tier_now};
 pub use labels::{LABELLED_FILES, count_next_file_use, label_injections};
 pub use links::{EarnedLinks, Linking, MAX_LINK_WEIGHT, add_links, links_of};
 pub use outcome::{FileNow, Judgement, judge, reverted_after};

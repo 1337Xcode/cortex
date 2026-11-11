@@ -1,7 +1,7 @@
 //! `cortex daemon` on temporary repositories, with an empty home folder so that no user
 //! configuration applies: it indexes and says so, indexes a file again after it changes, refuses a
-//! second daemon on the same repository, in huge mode parses what it took inventory of, and mines
-//! the history of a git repository.
+//! second daemon on the same repository, in huge mode parses what it took inventory of, mines the
+//! history of a git repository, and runs its history worker only when it is turned on.
 
 mod common;
 
@@ -394,6 +394,32 @@ fn the_daemon_mines_the_history_and_the_commits_head_gains() -> TestResult {
         )),
         "{status}"
     );
+    Ok(())
+}
+
+/// The history worker runs only when one of its switches is on. With both off, the daemon's status
+/// has no history line once the miner is ready, which it is after the worker would have started;
+/// with `history.why` on in the repository's configuration, a daemon started again says what the
+/// worker holds: nothing yet, since nothing asked for a blame and upkeep has not run.
+#[test]
+fn the_history_worker_runs_only_when_turned_on() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, home.path(), &["init", "-q"])?;
+    commit(root, home.path(), "one", &["a.py"])?;
+    let off = Daemon::start(root, home.path())?;
+    off.first_line()?;
+    wait_for(|| Ok(status_of(root, home.path())?.contains("\ngit: ready\n")))?;
+    let status = status_of(root, home.path())?;
+    assert!(!status.contains("\nhistory: "), "{status}");
+    drop(off);
+
+    std::fs::write(root.join(".cortex/config.toml"), "history.why = true\n")?;
+    let on = Daemon::start(root, home.path())?;
+    on.first_line()?;
+    let expected = "\nhistory: 0 commits carded, 0 blames kept, 0 jobs waiting\n";
+    wait_for(|| Ok(status_of(root, home.path())?.contains(expected)))?;
     Ok(())
 }
 

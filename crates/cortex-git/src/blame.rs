@@ -41,11 +41,11 @@ use crate::git_program::{
 /// The earliest date, in seconds since the Unix epoch (1973-03-03), that git reads as a time: git
 /// takes a smaller number in a date for a day or a year, and a date of 0 for now, so a date limit
 /// below this would cut the blame at the newest commit instead.
-const MIN_SINCE_S: i64 = 100_000_000;
+pub const MIN_SINCE_S: i64 = 100_000_000;
 
 /// The most lines one blame covers. A longer span is refused, so that the answer stays inside
 /// [`MAX_BLAME_BYTES`].
-const MAX_BLAME_LINES: u32 = 500;
+pub const MAX_BLAME_LINES: u32 = 500;
 
 /// The most of git's output read, 1 MiB. A line costs its header (about 50 bytes), its text and,
 /// the first time a commit appears, its details (about 450 bytes with a long summary). Five
@@ -96,6 +96,10 @@ pub struct BlameRequest<'a> {
     pub since_s: Option<i64>,
     /// How long git has, in milliseconds (`history.blame_timeout_ms`, default 2,000).
     pub timeout_ms: u64,
+    /// Commits whose changes the blame looks through, as full hexadecimal ids (`--ignore-rev`):
+    /// a line one of them changed is blamed on the commit that changed it before, git mapping the
+    /// line through the ignored change.
+    pub ignore_revs: &'a [String],
 }
 
 impl BlameRequest<'_> {
@@ -104,8 +108,8 @@ impl BlameRequest<'_> {
     /// # Errors
     ///
     /// [`BlameError::BadRequest`]: no file, lines that are not a span of 1 to
-    /// [`MAX_BLAME_LINES`] lines counted from 1, a commit that is not a full object id, or a
-    /// date git would not read as a time.
+    /// [`MAX_BLAME_LINES`] lines counted from 1, a commit, or a commit to ignore, that is not a
+    /// full object id, or a date git would not read as a time.
     fn check(&self) -> Result<(), BlameError> {
         if self.path.as_str().is_empty() {
             return Err(BlameError::BadRequest("the path is the repository's root"));
@@ -118,6 +122,11 @@ impl BlameRequest<'_> {
         }
         if !is_object_id(self.at) {
             return Err(BlameError::BadRequest("the commit is not an object id"));
+        }
+        if !self.ignore_revs.iter().all(|oid| is_object_id(oid)) {
+            return Err(BlameError::BadRequest(
+                "a commit to ignore is not an object id",
+            ));
         }
         if self.since_s.is_some_and(|since_s| since_s < MIN_SINCE_S) {
             return Err(BlameError::BadRequest("the date is too early to be a time"));
@@ -193,6 +202,9 @@ impl Blamer {
         ];
         if has_ignore_list {
             args.extend(["--ignore-revs-file", IGNORE_REVS_FILE]);
+        }
+        for oid in request.ignore_revs {
+            args.extend(["--ignore-rev", oid.as_str()]);
         }
         // Git's own date format, a time in seconds and a zone.
         let since = request

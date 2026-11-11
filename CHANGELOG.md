@@ -8,6 +8,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Why-lines, an experimental feature that is off by default (`history.why`, the `why_lines`
+  feature): under the code a work order shows, at most `history.max_reasons` lines (2) of
+  `history.max_tokens` tokens (120) saying why those lines look as they do, from the commits
+  that last changed them: the commit's subject and reason line, each quoted as the commit's, the
+  pull request, the issues fixed, a test file touched and the day. Only a normal change that gives
+  a reason line, a number or a test is a reason; a formatting, bot or mass change is looked
+  through to the commit before it. The daemon blames the lines in the background and holds the
+  commits' subjects and reason lines in memory only, so a span gets its reason from the next
+  prompt on. A reason is given only for code shown as the file holds it, a file whose content git
+  blamed: its line numbers are those of the code shown, and the reason is the commit that last
+  changed those lines in that content.
+  `cortex status` says what the history worker holds while it runs. Tested on scripted
+  repositories, through the real binary included; not run with a live agent yet, and its effect
+  on a task is not measured.
 - `cortex init --global` sets Cortex up once for the user: every agent found gets Cortex's
   hooks in its user settings, beside the user's own, the holdout question is kept in
   `~/.cortex/config.toml`, and adoption is turned on (`adopt.enabled`, which `cortex config`

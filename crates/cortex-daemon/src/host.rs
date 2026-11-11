@@ -29,6 +29,7 @@ use cortex_store::{ChangeKind, PAUSE_EVERY, Pause, StoreError, SymbolChange, Wri
 use crate::asked::{AT_WORK_WITHIN_MS, AskJob, AtWork};
 use crate::given::{Given, Notices};
 use crate::graph::Snapshot;
+use crate::history::{self, HistoryWriteJob, Jobs};
 use crate::inbox::{Changed, Inbox, MiningJob, Work};
 use crate::meter::Transcript;
 use crate::pending::Pending;
@@ -199,6 +200,7 @@ impl<'a> Host<'a> {
                 self.end_quiet_tasks();
             }
             self.settle();
+            inbox.set_crawling(self.waiting() > 0);
             let is_free = self.pending.is_idle() && self.waiting() == 0;
             if is_free
                 && self
@@ -237,6 +239,8 @@ impl<'a> Host<'a> {
                 }
                 // Mining is the daemon's own work, not a user's: it does not put off the idle stop.
                 Work::Mining(job) => self.store_mining(*job),
+                // So is what the history worker found.
+                Work::History(job) => store_history(&mut self.writer, inbox, *job),
                 Work::Ask(job) => {
                     self.carry_out_ask(*job);
                     last_activity = Instant::now();
@@ -327,6 +331,8 @@ impl<'a> Host<'a> {
                     episodes = swept.episodes,
                     positions = swept.positions,
                     handoff_failures = swept.handoff_failures,
+                    blames = swept.blames,
+                    warmed = swept.warmed,
                     pages = swept.pages,
                     ended = ?ended,
                     "upkeep ran"
@@ -512,6 +518,12 @@ impl<'a> Host<'a> {
             tracing::warn!(error = %error, "a mining could not be stored");
         }
         job.answer(stored.map_err(|error| error.to_string()));
+    }
+
+    /// Has upkeep's history step ask `jobs`, the running history worker's, for the files worth
+    /// warming.
+    pub(crate) fn warm_history_with(&mut self, jobs: Arc<Jobs>) {
+        self.upkeep.warm_with(jobs);
     }
 
     /// Carries out a request of a person or an agent in a transaction of its own, answered once
@@ -732,6 +744,16 @@ fn record_due_edits(
         count_failed(inbox, "the edits the watcher saw", &error);
     }
     recorded
+}
+
+/// Stores what the history worker found, `job`, with `writer`, and tells the worker how that
+/// went; a write the store refuses is counted in `inbox`, with its error.
+fn store_history(writer: &mut Writer, inbox: &Inbox, job: HistoryWriteJob) {
+    let stored = history::store(writer, &job.write);
+    if let Err(error) = &stored {
+        count_failed(inbox, "what the history worker found", error);
+    }
+    job.answer(stored.map_err(|error| error.to_string()));
 }
 
 /// Counts in `inbox` a batch of `what` the writer could not record, the store's `error` kept as

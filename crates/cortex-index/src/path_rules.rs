@@ -3,7 +3,9 @@
 //!
 //! Each rule is one line in a table below. Adding a rule means adding a line.
 
-use cortex_core::{FileFlags, RepoPath};
+use cortex_core::{FileFlags, Language, RepoPath};
+
+use crate::languages::ALL;
 
 /// A test on a file or folder name.
 #[derive(Debug, Clone, Copy)]
@@ -117,6 +119,16 @@ pub fn flags_for(path: &RepoPath) -> FileFlags {
         flags = flags.with(FileFlags::GENERATED);
     }
     flags
+}
+
+/// Whether the index takes the file at `path`, of `language` when it has one, for a test file: a
+/// folder above it is a test folder, or its name is one of its language's names for test files.
+#[must_use]
+pub fn is_test_path(path: &RepoPath, language: Option<Language>) -> bool {
+    let names = language
+        .and_then(|language| ALL.iter().find(|spec| spec.language == language))
+        .map_or(&[][..], |spec| spec.tags.test_files);
+    is_test_file(path, names)
 }
 
 /// Whether the file at `path` holds tests: a folder above it is a test folder, or its name
@@ -268,6 +280,23 @@ mod tests {
             assert!(!is_test_file(&RepoPath::new(name)?, &names), "{name}");
         }
         assert!(!is_test_file(&RepoPath::new("test_orders.py")?, &[]));
+        Ok(())
+    }
+
+    /// A path is a test by its language's names, or by a test folder whatever its language: a
+    /// Python file named like a pytest file is one, the same name in Go is not, and a helper in a
+    /// test folder is one with no language.
+    #[test]
+    fn test_paths_follow_their_language() -> Result<(), PathError> {
+        let python = Some(Language::Python);
+        assert!(is_test_path(&RepoPath::new("shop/test_orders.py")?, python));
+        assert!(!is_test_path(&RepoPath::new("shop/orders.py")?, python));
+        assert!(!is_test_path(
+            &RepoPath::new("shop/test_orders.go")?,
+            Some(Language::Go)
+        ));
+        assert!(is_test_path(&RepoPath::new("tests/conftest.py")?, None));
+        assert!(!is_test_path(&RepoPath::new("conftest.py")?, None));
         Ok(())
     }
 }

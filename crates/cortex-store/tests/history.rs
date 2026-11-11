@@ -5,7 +5,7 @@
 mod common;
 
 use common::{Scratch, TestResult, index};
-use cortex_core::ContentHash;
+use cortex_core::{ContentHash, RepoPath};
 use cortex_store::{
     BlameRecord, BlameRunRecord, CardKind, ChangeCardRecord, MAX_CARD_NODES, StoreError, Writer,
 };
@@ -20,14 +20,15 @@ fn hash(text: &str) -> ContentHash {
     ContentHash::of(text.as_bytes())
 }
 
-/// A blame of lines `first` to `last` of the content hashed `file_hash`, computed at
-/// `computed_at_ms`, with one run over all of them from the commit `digit`.
+/// A blame of lines `first` to `last` of the file at `path` whose content hashed `file_hash`,
+/// computed at `computed_at_ms`, with one run over all of them from the commit `digit`.
 fn blame(
-    file_hash: ContentHash,
+    (path, file_hash): (&RepoPath, ContentHash),
     (first, last): (u32, u32),
     (digit, computed_at_ms): (char, i64),
 ) -> BlameRecord {
     BlameRecord {
+        path: path.clone(),
         file_hash,
         first_line: first,
         last_line: last,
@@ -94,16 +95,17 @@ fn store_blames(writer: &mut Writer, blames: &[BlameRecord]) -> TestResult {
 /// content, which no range of the first reaches.
 #[test]
 fn cached_blames_come_back_where_their_lines_overlap() -> TestResult {
+    let a = RepoPath::new("a.py")?;
     let scratch = Scratch::new()?;
     let mut writer = scratch.writer(1)?;
     let (one, two) = (hash("one"), hash("two"));
     store_blames(
         &mut writer,
         &[
-            blame(one, (1, 10), ('a', 100)),
-            blame(one, (5, 20), ('b', 200)),
-            blame(one, (30, 40), ('c', 300)),
-            blame(two, (1, 100), ('d', 400)),
+            blame((&a, one), (1, 10), ('a', 100)),
+            blame((&a, one), (5, 20), ('b', 200)),
+            blame((&a, one), (30, 40), ('c', 300)),
+            blame((&a, two), (1, 100), ('d', 400)),
         ],
     )?;
     let queries = writer.queries();
@@ -117,15 +119,18 @@ fn cached_blames_come_back_where_their_lines_overlap() -> TestResult {
         (8, 32, &[1, 5, 30]),
     ];
     for (first, last, expected) in cases {
-        let found = queries.cached_blames(&one, first, last)?;
+        let found = queries.cached_blames((&a, &one), first, last)?;
         assert_eq!(first_lines(&found), expected, "{first} to {last}");
     }
-    assert_eq!(first_lines(&queries.cached_blames(&two, 50, 60)?), [1]);
-    assert_eq!(queries.cached_blames(&hash("three"), 1, 100)?, []);
+    assert_eq!(
+        first_lines(&queries.cached_blames((&a, &two), 50, 60)?),
+        [1]
+    );
+    assert_eq!(queries.cached_blames((&a, &hash("three")), 1, 100)?, []);
     // What was written is what comes back: the runs, the range, the time and the content.
     assert_eq!(
-        queries.cached_blames(&one, 30, 30)?,
-        [blame(one, (30, 40), ('c', 300))]
+        queries.cached_blames((&a, &one), 30, 30)?,
+        [blame((&a, one), (30, 40), ('c', 300))]
     );
     assert_eq!(queries.cached_blame_count()?, 4);
     Ok(())
@@ -135,10 +140,11 @@ fn cached_blames_come_back_where_their_lines_overlap() -> TestResult {
 /// the runs and the time are the new ones, with two runs read back in the order they were given.
 #[test]
 fn a_blame_of_the_same_range_is_replaced() -> TestResult {
+    let a = RepoPath::new("a.py")?;
     let scratch = Scratch::new()?;
     let mut writer = scratch.writer(1)?;
     let file_hash = hash("one");
-    let mut newer = blame(file_hash, (1, 10), ('b', 500));
+    let mut newer = blame((&a, file_hash), (1, 10), ('b', 500));
     newer.runs = vec![
         BlameRunRecord {
             start: 1,
@@ -155,10 +161,13 @@ fn a_blame_of_the_same_range_is_replaced() -> TestResult {
     ];
     store_blames(
         &mut writer,
-        &[blame(file_hash, (1, 10), ('a', 100)), newer.clone()],
+        &[blame((&a, file_hash), (1, 10), ('a', 100)), newer.clone()],
     )?;
     assert_eq!(writer.queries().cached_blame_count()?, 1);
-    assert_eq!(writer.queries().cached_blames(&file_hash, 1, 10)?, [newer]);
+    assert_eq!(
+        writer.queries().cached_blames((&a, &file_hash), 1, 10)?,
+        [newer]
+    );
     Ok(())
 }
 
@@ -166,15 +175,16 @@ fn a_blame_of_the_same_range_is_replaced() -> TestResult {
 /// write leaves nothing behind.
 #[test]
 fn a_blame_that_is_not_lines_and_commit_ids_is_refused() -> TestResult {
+    let a = RepoPath::new("a.py")?;
     let scratch = Scratch::new()?;
     let mut writer = scratch.writer(1)?;
     let file_hash = hash("one");
-    let mut not_an_id = blame(file_hash, (1, 10), ('a', 1));
+    let mut not_an_id = blame((&a, file_hash), (1, 10), ('a', 1));
     not_an_id.runs[0].oid = "fix the parser, it dropped tokens".to_owned();
     let refused = [
         not_an_id,
-        blame(file_hash, (0, 10), ('a', 1)),
-        blame(file_hash, (11, 10), ('a', 1)),
+        blame((&a, file_hash), (0, 10), ('a', 1)),
+        blame((&a, file_hash), (11, 10), ('a', 1)),
     ];
     for record in &refused {
         let mut transaction = writer.transaction()?;
@@ -408,11 +418,13 @@ fn store_file(writer: &mut Writer, path: &str, file_hash: ContentHash) -> TestRe
     Ok(())
 }
 
-/// Blames of the content `one`, which a file has, and of `two` and `three`, which no file has, are
-/// stored. A pass of limit 1 drops one of the two and leaves the kept one; a pass of limit 10 drops
-/// the other; the kept blame stays until its file is read again with other content, and then goes.
+/// Blames of `a.py` as the content `one`, which it has, and as `two` and `three`, which it has
+/// not, are stored. A pass of limit 1 drops one of the two and leaves the kept one; a pass of limit
+/// 10 drops the other; the kept blame stays until its file is read again with other content, and
+/// then goes.
 #[test]
 fn blames_of_content_no_file_has_are_dropped() -> TestResult {
+    let a = RepoPath::new("a.py")?;
     let scratch = Scratch::new()?;
     let mut writer = scratch.writer(1)?;
     let (one, two, three) = (hash("one"), hash("two"), hash("three"));
@@ -420,16 +432,16 @@ fn blames_of_content_no_file_has_are_dropped() -> TestResult {
     store_blames(
         &mut writer,
         &[
-            blame(one, (1, 10), ('a', 1)),
-            blame(two, (1, 10), ('b', 2)),
-            blame(three, (1, 10), ('c', 3)),
+            blame((&a, one), (1, 10), ('a', 1)),
+            blame((&a, two), (1, 10), ('b', 2)),
+            blame((&a, three), (1, 10), ('c', 3)),
         ],
     )?;
     let mut transaction = writer.transaction()?;
     assert_eq!(transaction.delete_blames_of_missing_files(1)?, 1);
     transaction.commit()?;
     assert_eq!(writer.queries().cached_blame_count()?, 2);
-    assert_eq!(writer.queries().cached_blames(&one, 1, 10)?.len(), 1);
+    assert_eq!(writer.queries().cached_blames((&a, &one), 1, 10)?.len(), 1);
     let mut transaction = writer.transaction()?;
     assert_eq!(transaction.delete_blames_of_missing_files(10)?, 1);
     assert_eq!(transaction.delete_blames_of_missing_files(10)?, 0);
@@ -448,12 +460,13 @@ fn blames_of_content_no_file_has_are_dropped() -> TestResult {
 /// more, and a cap of 5 on the two left drops none.
 #[test]
 fn the_cache_is_capped_by_dropping_the_oldest_computed() -> TestResult {
+    let a = RepoPath::new("a.py")?;
     let scratch = Scratch::new()?;
     let mut writer = scratch.writer(1)?;
     let file_hash = hash("one");
     let blames: Vec<BlameRecord> = (1..=5_u32)
         .zip(['a', 'b', 'c', 'd', 'e'])
-        .map(|(line, digit)| blame(file_hash, (line, line), (digit, i64::from(line) * 10)))
+        .map(|(line, digit)| blame((&a, file_hash), (line, line), (digit, i64::from(line) * 10)))
         .collect();
     // Written newest first, so that the order they were written in is not the order dropped.
     let reversed: Vec<BlameRecord> = blames.iter().rev().cloned().collect();
@@ -461,7 +474,7 @@ fn the_cache_is_capped_by_dropping_the_oldest_computed() -> TestResult {
     let computed = |writer: &Writer| -> TestResult<Vec<i64>> {
         Ok(writer
             .queries()
-            .cached_blames(&file_hash, 1, 5)?
+            .cached_blames((&a, &file_hash), 1, 5)?
             .iter()
             .map(|row| row.computed_at_ms)
             .collect())
@@ -526,5 +539,34 @@ fn a_card_with_too_many_nodes_in_a_list_is_refused() -> TestResult {
     transaction.put_change_card(&full, &[])?;
     transaction.commit()?;
     assert_eq!(writer.queries().change_cards(&[oid('a')])?, [full]);
+    Ok(())
+}
+
+/// Two files of the same content are blamed apart: `a.py` and `b.py` both hash to `one`, and the
+/// blame of each comes back for its own path only, with its own commit. When `b.py` changes,
+/// upkeep drops its blame and keeps `a.py`'s, whose file still has the content; a file with the
+/// content at another path keeps no blame alive.
+#[test]
+fn files_of_the_same_content_are_blamed_apart() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let (a, b) = (RepoPath::new("a.py")?, RepoPath::new("b.py")?);
+    let one = hash("one");
+    store_file(&mut writer, "a.py", one)?;
+    store_file(&mut writer, "b.py", one)?;
+    let of_a = blame((&a, one), (1, 10), ('a', 1));
+    let of_b = blame((&b, one), (1, 10), ('b', 2));
+    store_blames(&mut writer, &[of_a.clone(), of_b.clone()])?;
+    assert_eq!(
+        writer.queries().cached_blames((&a, &one), 1, 10)?,
+        std::slice::from_ref(&of_a)
+    );
+    assert_eq!(writer.queries().cached_blames((&b, &one), 1, 10)?, [of_b]);
+    store_file(&mut writer, "b.py", hash("two"))?;
+    let mut transaction = writer.transaction()?;
+    assert_eq!(transaction.delete_blames_of_missing_files(10)?, 1);
+    transaction.commit()?;
+    assert_eq!(writer.queries().cached_blames((&a, &one), 1, 10)?, [of_a]);
+    assert_eq!(writer.queries().cached_blame_count()?, 1);
     Ok(())
 }

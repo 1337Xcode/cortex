@@ -72,11 +72,12 @@ const SETTLE: Duration = Duration::from_secs(5);
 /// than 90 days before day 100 (500); the events of the first 10 days, one every 8.64 s (100,000);
 /// no injection (the store holds none);
 /// the episodes past 50,000 of the 60,000, all of unknown outcome (10,000); the positions of
-/// day 1, every even one of each session's 100 (5,000); and 2,000 free pages, the most upkeep
+/// day 1, every even one of each session's 100 (5,000); no handoff's failure; no blame (the store
+/// holds none) and no file warmed (no history worker runs); and 2,000 free pages, the most upkeep
 /// gives back each time through its jobs, of the more than 2,400 the events alone leave (100,000
 /// rows of over 100 bytes each, in 4 KiB pages).
-const SWEPT: [u64; 10] = [
-    100_000, 40_000, 10_000, 500, 100_000, 0, 10_000, 5_000, 0, 2_000,
+const SWEPT: [u64; 12] = [
+    100_000, 40_000, 10_000, 500, 100_000, 0, 10_000, 5_000, 0, 0, 0, 2_000,
 ];
 
 /// How many ways each file has to the files tasks read after it.
@@ -325,7 +326,7 @@ fn copy_store(from: &Path, to: &Path) -> BenchResult {
 }
 
 /// What `swept` removed, in the order of [`SWEPT`].
-fn counts(swept: Swept) -> [u64; 10] {
+fn counts(swept: Swept) -> [u64; 12] {
     let Swept {
         links,
         transitions,
@@ -336,6 +337,8 @@ fn counts(swept: Swept) -> [u64; 10] {
         episodes,
         positions,
         handoff_failures,
+        blames,
+        warmed,
         pages,
     } = swept;
     [
@@ -348,6 +351,8 @@ fn counts(swept: Swept) -> [u64; 10] {
         episodes,
         positions,
         handoff_failures,
+        blames,
+        warmed,
         pages,
     ]
 }
@@ -398,7 +403,7 @@ fn run_once(template: &Path, copy: &Path, repo: &RepoId) -> BenchResult<Run> {
         log_limit_bytes: LOG_LIMIT_BYTES,
     };
     let mut upkeep = Upkeep::default();
-    let mut removed = [0; 10];
+    let mut removed = [0; 12];
     let mut runs = Run {
         took: Duration::ZERO,
         longest_batch: Duration::ZERO,

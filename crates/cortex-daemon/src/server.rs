@@ -30,6 +30,7 @@ use crate::claim::{Claim, Claims};
 use crate::failed::Failed;
 use crate::given::{Given, recorded};
 use crate::graph::Snapshot;
+use crate::history::Jobs;
 use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
@@ -64,6 +65,8 @@ pub(crate) struct Server {
     linked: Arc<Linked>,
     /// The signature changes the writer's indexes found lately, for an edit's warnings.
     signatures: Arc<Signatures>,
+    /// The history worker's jobs, whose state the status reports.
+    history: Arc<Jobs>,
     /// What answers claimed: the pairs each task was warned of, the compactions recapped, the
     /// tasks given strict mode's reason.
     claims: Claims,
@@ -214,7 +217,7 @@ impl Server {
     /// A server for a daemon started now, whose writer reads `inbox`, answering from the graph of
     /// `snapshot`, the uncommitted diff of `worktree` or of the event's working tree among
     /// `linked`, and the signature changes `signatures` holds, with `service`, telling the user
-    /// once what `welcome` holds.
+    /// once what `welcome` holds, and reporting the history worker's `history` in the status.
     pub(crate) fn new(
         inbox: Arc<Inbox>,
         (snapshot, worktree, linked, signatures): (
@@ -223,7 +226,7 @@ impl Server {
             Arc<Linked>,
             Arc<Signatures>,
         ),
-        (service, welcome): (Arc<OnceLock<Service>>, WelcomeLine),
+        (service, welcome, history): (Arc<OnceLock<Service>>, WelcomeLine, Arc<Jobs>),
     ) -> Self {
         Self {
             started: Instant::now(),
@@ -232,6 +235,7 @@ impl Server {
             worktree,
             linked,
             signatures,
+            history,
             claims: Claims::default(),
             service,
             failed: Arc::default(),
@@ -913,6 +917,7 @@ impl Server {
             worktree: self.worktree.report(),
             linked_worktrees: self.linked.reports(),
             upkeep: self.inbox.upkeep(),
+            history: self.history.report(),
         }
     }
 

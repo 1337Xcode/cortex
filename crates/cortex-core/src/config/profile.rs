@@ -3,10 +3,11 @@
 //!
 //! - `standard` (the default) sets nothing: every key keeps its documented default.
 //! - `lean` sets every feature switch off: `hints.runtime_grounding`, `hints.narrow_tests`,
-//!   `hints.redundant_commands`, `compaction.keep_list` and `coordination.contracts` are `false`,
-//!   leaving work orders and warnings, which no key switches. Each of those switches is off by
-//!   default today, so `lean` differs from `standard` only once one of their defaults turns on.
-//! - `everything` sets the same five switches on.
+//!   `hints.redundant_commands`, `compaction.keep_list`, `coordination.contracts` and
+//!   `history.why` are `false`, leaving work orders and warnings, which no key switches. Each of
+//!   those switches is off by default today, so `lean` differs from `standard` only once one of
+//!   their defaults turns on.
+//! - `everything` sets the same six switches on.
 //!
 //! The switches are the keys of the features registry ([`crate::FEATURES`]). No profile changes
 //! `strict_mode`, which holds an agent's stop, or `privacy.store_prompt_excerpt`, which keeps prompt
@@ -126,6 +127,7 @@ mod tests {
             "hints.redundant_commands",
             "compaction.keep_list",
             "coordination.contracts",
+            "history.why",
         ];
         assert_eq!(Profile::Standard.keys(), Vec::new());
         assert_eq!(
@@ -156,6 +158,10 @@ mod tests {
                 coordination: crate::CoordinationConfig {
                     is_contracts: true,
                     ..crate::CoordinationConfig::default()
+                },
+                history: crate::HistoryConfig {
+                    is_why: true,
+                    ..crate::HistoryConfig::default()
                 },
                 ..Config::default()
             }

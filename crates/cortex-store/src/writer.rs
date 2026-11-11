@@ -490,7 +490,7 @@ impl WriteTx<'_> {
         self.atomically(|connection| transitions::remove(connection, pairs))
     }
 
-    /// Stores a blame, replacing the one of the same file content and lines.
+    /// Stores a blame, replacing the one of the same file, content and lines.
     ///
     /// # Errors
     ///
@@ -525,8 +525,8 @@ impl WriteTx<'_> {
         self.atomically(|connection| change_cards::remove(connection, oids))
     }
 
-    /// Deletes at most `limit` blames made for a file content that no indexed file has now: how
-    /// many.
+    /// Deletes at most `limit` blames whose file the index does not hold with the content they were
+    /// made from (gone, or changed since): how many.
     ///
     /// # Errors
     ///

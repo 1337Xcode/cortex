@@ -788,9 +788,12 @@ mod tests {
     #[test]
     fn the_twenty_third_schema_adds_history() -> Result<(), Box<dyn std::error::Error>> {
         let history = ["blame_cache", "change_cards", "commit_terms"].map(str::to_owned);
+        let twenty_third = MIGRATIONS
+            .get(..23)
+            .ok_or("fewer than twenty-three migrations")?;
         let (folder, mut connection) = database()?;
         let backups = folder.path().join("backups");
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        migrate(&mut connection, twenty_third, &backups)?;
         assert_eq!(schema_version(&connection)?, 23);
         let found = objects(&connection)?;
         assert!(history.iter().all(|name| found.contains(name)), "{found:?}");
@@ -807,7 +810,7 @@ mod tests {
             [],
         )?;
         assert!(!objects(&connection)?.contains(&history[0]));
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        migrate(&mut connection, twenty_third, &backups)?;
         assert_eq!(schema_version(&connection)?, 23);
         let found = objects(&connection)?;
         assert!(history.iter().all(|name| found.contains(name)), "{found:?}");
@@ -817,6 +820,45 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(kept, 1);
+        Ok(())
+    }
+
+    /// The twenty-fourth schema keys the blame cache by path too: a twenty-third-schema store's
+    /// blame is dropped, as a cache may be, the table gains its path, and the change card it holds
+    /// is kept.
+    #[test]
+    fn the_twenty_fourth_schema_keys_blames_by_path() -> Result<(), Box<dyn std::error::Error>> {
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let twenty_third = MIGRATIONS
+            .get(..23)
+            .ok_or("fewer than twenty-three migrations")?;
+        migrate(&mut connection, twenty_third, &backups)?;
+        connection.execute(
+            "INSERT INTO blame_cache (file_hash, first_line, last_line, runs, computed_at) \
+             VALUES (x'00', 1, 2, '[]', 3)",
+            [],
+        )?;
+        connection.execute(
+            "INSERT INTO change_cards (oid, first_parent, committed_at, kind, pr, issues, \
+             has_reason, file_nodes, symbol_nodes, test_nodes, carded_at) \
+             VALUES ('a', NULL, 1, 'normal', NULL, '[]', 0, '[]', '[]', '[]', 2)",
+            [],
+        )?;
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 24);
+        let blames: i64 =
+            connection.query_row("SELECT count(*) FROM blame_cache", [], |row| row.get(0))?;
+        assert_eq!(blames, 0);
+        let has_path: i64 = connection.query_row(
+            "SELECT count(*) FROM pragma_table_info('blame_cache') WHERE name = 'path'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(has_path, 1);
+        let cards: i64 =
+            connection.query_row("SELECT count(*) FROM change_cards", [], |row| row.get(0))?;
+        assert_eq!(cards, 1);
         Ok(())
     }
 

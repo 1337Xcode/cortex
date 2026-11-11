@@ -121,6 +121,15 @@ pub const FEATURES: &[Feature] = &[
                   against off",
         reaches: |config| config.coordination.is_contracts,
     },
+    Feature {
+        name: "why_lines",
+        description: "When Cortex shows code, add the reason it looks that way, from the git \
+                      history of those lines.",
+        state: FeatureState::Experimental,
+        key: Some("history.why"),
+        measure: "turns, tokens and edits redone per task, with it on against off",
+        reaches: |config| config.history.is_why && !is_tiny(config),
+    },
 ];
 
 /// The feature named `name`.
@@ -196,9 +205,13 @@ mod tests {
                 is_contracts: true,
                 ..crate::CoordinationConfig::default()
             },
+            history: crate::HistoryConfig {
+                is_why: true,
+                ..crate::HistoryConfig::default()
+            },
             ..Config::default()
         };
-        assert_eq!(on_with(&everything).len(), 7);
+        assert_eq!(on_with(&everything).len(), 8);
         let no_warnings = Config {
             warnings: crate::WarningsConfig {
                 max_per_edit: 0,
@@ -207,18 +220,19 @@ mod tests {
             ..everything.clone()
         };
         assert!(!on_with(&no_warnings).contains(&"warnings"));
-        assert_eq!(on_with(&no_warnings).len(), 6);
+        assert_eq!(on_with(&no_warnings).len(), 7);
         let tiny = Config {
             mode: ModeSetting::Pinned(ScaleMode::Tiny),
             ..everything.clone()
         };
-        // Coordination notices go with any text, whatever the mode.
+        // Coordination notices go with any text, whatever the mode; why-lines go with the code a
+        // work order shows, which tiny mode gives none of.
         assert_eq!(on_with(&tiny), ["warnings", "contracts"]);
         let small = Config {
             mode: ModeSetting::Pinned(ScaleMode::Small),
             ..everything.clone()
         };
-        assert_eq!(on_with(&small).len(), 7);
+        assert_eq!(on_with(&small).len(), 8);
         let all_held_out = Config {
             holdout_share: 1.0,
             ..everything.clone()
@@ -228,7 +242,7 @@ mod tests {
             holdout_share: 0.99,
             ..everything
         };
-        assert_eq!(on_with(&most_held_out).len(), 7);
+        assert_eq!(on_with(&most_held_out).len(), 8);
     }
 
     /// The features, by name, in order; names are unique and found by name.
@@ -244,7 +258,8 @@ mod tests {
                 "narrow_tests",
                 "redundant_commands",
                 "keep_list",
-                "contracts"
+                "contracts",
+                "why_lines"
             ]
         );
         for name in names {
