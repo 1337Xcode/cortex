@@ -46,6 +46,33 @@ All notable changes to this project are documented in this file. The format is b
   files back as they were, removes those init made, and removes exactly the folders init made for
   them, once empty. These files are checked against hand-written ones; the agents themselves have
   not run them yet.
+- `cortex init --agents` also writes Cortex's plugin for OpenCode (its 1.x plugin API, which
+  init says OpenCode 2 does not run), Kilo Code, Amp and OpenClaw, in the folder each loads
+  plugins from: the repository's or, with `--scope user`, the user's, in the configuration folder
+  `XDG_CONFIG_HOME` names when it is set to an absolute folder, else `~/.config`; OpenClaw's always
+  the user's `~/.openclaw/extensions/cortex/`, and on Windows, where its Gateway runs in WSL,
+  nothing, with a line saying to set it up there. Cline gets a hook script per event in
+  `.clinerules/hooks/` or in `Cline/Hooks/` of the documents folder the system names (on Windows
+  as PowerShell gives it, so a folder moved to OneDrive counts; on Linux from `user-dirs.dirs`):
+  `<Event>.ps1` with a UTF-8 byte order mark on Windows, a shell script with the executable bit
+  elsewhere. A file of the user's with the same name is never written over; one an older build
+  wrote is replaced. For OpenCode, Kilo Code and Cline, which load both folders, init refuses one
+  while the other holds Cortex's files; Amp loads one plugin of a name, so both are written. Each
+  of these agents also gets Cortex's MCP server in the user's JSON settings, beside the user's own
+  servers and keys; a settings file holding comments, or a server named `cortex` that runs another
+  program, is left as it is and init prints the entry to add instead (as `cortex-index` when the
+  name is taken). Enabling OpenClaw's plugin and letting it see the conversation, and keeping
+  Cline's Hooks setting on, are said and never done. For Hermes Agent and goose, whose
+  configuration is YAML, init writes nothing and prints the lines to add: Hermes' hooks, which
+  Hermes asks the user to approve, and MCP server, and goose's MCP extension (goose gets no hooks:
+  Cortex has no adapter for its hook payloads yet). `cortex doctor` checks each plugin, hook script
+  and MCP entry init wrote, in the folder the agent reads now, and says when the user turned one
+  off (a hook script no longer executable, `"enabled": false` or `"disabled": true` on Cortex's
+  MCP server), and looks for the printed lines in Hermes' and goose's configuration; `cortex
+  uninstall` removes the files init made, gives settings files back byte for byte, keeps a plugin
+  or script the user edited, and, from settings changed since, takes out Cortex's MCP server
+  alone. These files are checked against fixtures and hand-written ones; the agents themselves
+  have not run them yet.
 - `cortex` run with no arguments, its standard input not a terminal (as an agent runs a hook),
   prints nothing and exits 0, so that an agent that imports Claude Code's settings and runs
   Cortex's hook program without its arguments never reads a usage error as a refusal. A payload

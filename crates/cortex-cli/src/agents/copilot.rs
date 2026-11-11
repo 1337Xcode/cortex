@@ -45,6 +45,9 @@ pub(crate) const SETUP: Setup = Setup {
         style: STYLE,
         read_instead: None,
     }),
+    own: None,
+    mcp: None,
+    told_lines: None,
     told: &[
         "trust the repository's folder when Copilot asks (or start it with `--trust-folder`): \
          Copilot runs a repository's hooks only in a folder it trusts",

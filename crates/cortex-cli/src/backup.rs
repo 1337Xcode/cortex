@@ -112,6 +112,17 @@ pub(crate) enum Kind {
         /// The agent's name on Cortex's command line.
         agent: String,
     },
+    /// A file of Cortex's own in an agent's folder, written whole for `agent`: a plugin, or a hook
+    /// script.
+    AgentFile {
+        /// The agent's name on Cortex's command line.
+        agent: String,
+    },
+    /// An agent's JSON settings, which get Cortex's MCP server for `agent`.
+    AgentMcp {
+        /// The agent's name on Cortex's command line.
+        agent: String,
+    },
     /// Cortex's own configuration, which gets the answers to init's questions.
     CortexConfig,
     /// A folder the run made for an agent's hooks file, which uninstall removes once it is empty;

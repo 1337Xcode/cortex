@@ -41,6 +41,9 @@ pub(crate) const SETUP: Setup = Setup {
         style: STYLE,
         read_instead: None,
     }),
+    own: None,
+    mcp: None,
+    told_lines: None,
     told: &[
         "turn hooks on in TRAE's Settings > Hooks, confirming its security warning: TRAE runs no \
          hook until then",

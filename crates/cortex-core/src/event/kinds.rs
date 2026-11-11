@@ -48,6 +48,8 @@ named_kind! {
         Amp => "amp",
         /// OpenClaw's Gateway and its agents.
         OpenClaw => "openclaw",
+        /// The goose agent, from the Agentic AI Foundation.
+        Goose => "goose",
         /// Any other agent.
         Other => "other",
     }
@@ -80,6 +82,7 @@ impl Agent {
             Self::Kilo => "Kilo Code",
             Self::Amp => "Amp",
             Self::OpenClaw => "OpenClaw",
+            Self::Goose => "goose",
             Self::Other => "Another agent",
         }
     }

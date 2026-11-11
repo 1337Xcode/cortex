@@ -4,7 +4,10 @@
 //! questions once (see [`consent`]), registers Cortex's hooks with each agent (see [`hooks`]): for
 //! Claude Code in the repository's `.claude/settings.local.json` (`--scope project`, the default, a
 //! file Claude Code does not commit) or in the user's `~/.claude/settings.json` (`--scope user`),
-//! keeps the answers, and has git leave out what Cortex writes (see [`ignores`]). Whatever the
+//! writes the files of Cortex's own an agent loads (a plugin, hook scripts; see [`own`]) and
+//! Cortex's MCP server into an agent's JSON settings (see [`mcp`]), says what the user is to do
+//! themselves (see [`agent_file`]), keeps the answers, and has git leave out what Cortex writes
+//! (see [`ignores`]). Whatever the
 //! scope, and with no agent found, the repository is set up.
 //!
 //! Every file init may change is found, read and checked before anything is asked, and nothing is
@@ -25,12 +28,15 @@
 //! on its own each repository an agent works in (see [`global`] and [`adopt`]).
 
 mod adopt;
+mod agent_file;
 mod consent;
 mod daemon;
 mod git;
 mod global;
 mod hooks;
 mod ignores;
+mod mcp;
+mod own;
 mod place;
 mod root;
 
@@ -51,6 +57,7 @@ use crate::commands::doctor::{Finding, checked, claude_code_version};
 use crate::output;
 
 pub(crate) use self::adopt::{Adopted, adopt};
+use self::agent_file::AgentFile;
 use self::consent::{Answers, ConfigFile, Kept};
 pub(crate) use self::global::switch_off;
 use self::ignores::Ignored;
@@ -155,6 +162,7 @@ impl Found {
             before: self.text,
             after,
             owner,
+            is_executable: false,
         }
     }
 }
@@ -168,13 +176,16 @@ struct Files {
     repository_config: Found,
     /// In a git repository, what git ignores and the `.gitignore` lines are added to.
     ignores: Option<(Ignored, Found)>,
-    /// The settings each agent's hooks go to.
-    settings: Vec<hooks::Settings>,
-    /// The agents set up: their hooks planned, or with no hooks file Cortex writes; in order.
+    /// The files written for the agents.
+    settings: Vec<AgentFile>,
+    /// The agents set up: what init writes for each planned; in order.
     set_up: Vec<&'static Setup>,
     /// What init says of each agent it found on this machine whose hooks cannot be planned: it
     /// is left out, and the others are set up all the same.
     not_set_up: Vec<String>,
+    /// What the user is to do for each agent set up, each said with the agent's name once
+    /// everything is written.
+    told: Vec<String>,
 }
 
 impl Files {
@@ -207,6 +218,7 @@ impl Files {
             settings,
             set_up,
             not_set_up,
+            told,
         } = planned_hooks(scope, Some(root.worktree()), setups, are_named)?;
         Ok(Self {
             users_config: Found::read_only(user.config_path())?,
@@ -215,6 +227,7 @@ impl Files {
             settings,
             set_up,
             not_set_up,
+            told,
         })
     }
 
@@ -247,7 +260,7 @@ impl Files {
             let made: Vec<&'static str> = self
                 .settings
                 .iter()
-                .filter_map(hooks::Settings::made_in_repository)
+                .filter_map(AgentFile::made_in_repository)
                 .collect();
             let lines = ignores::needed(&ignored, answers.sharing, &made);
             changes.extend(ignore_change(gitignore, &lines));
@@ -285,6 +298,9 @@ struct Change {
     owner: Owner,
     /// What init says once it is written.
     said: String,
+    /// Whether the agent runs it as a program, so that it is made executable where files carry
+    /// that bit.
+    is_executable: bool,
 }
 
 /// Sets Cortex up in the repository `args` start from, as the module says, and says what it did.
@@ -320,6 +336,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         output::line(line)?;
     }
     let set_up = files.set_up.clone();
+    let told = files.told.clone();
     let kept = files.kept()?;
     let stdin = io::stdin();
     let mut terminal = stdin.is_terminal().then(|| stdin.lock());
@@ -327,11 +344,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let changes = files.changes(kept, answers)?;
     apply((&root.folder, root.linked.as_deref()), changes)?;
     daemon::started_and_indexed(&root.folder)?;
-    for setup in &set_up {
-        for step in setup.told {
-            output::line(&format!("{}: to do yourself: {step}", setup.agent.title()))?;
-        }
-    }
+    say_told(&told)?;
     let is_claude_set_up = set_up.iter().any(|setup| setup.agent.name() == "claude");
     let failed = if is_claude_set_up {
         checked(root.folder)?
@@ -420,25 +433,40 @@ fn found_root(args: &Args) -> anyhow::Result<Root> {
     Ok(root)
 }
 
-/// What [`planned_hooks`] found: the settings each agent's hooks go to, the agents set up, and
-/// what init says of each found agent left out.
+/// What [`planned_hooks`] found: the files written for the agents, the agents set up, what init
+/// says of each found agent left out, and what the user is to do.
 struct Planned {
-    /// The settings each agent's hooks go to.
-    settings: Vec<hooks::Settings>,
-    /// The agents set up: their hooks planned, or with no hooks file Cortex writes; in order.
+    /// The files written for the agents.
+    settings: Vec<AgentFile>,
+    /// The agents set up: what init writes for each planned; in order.
     set_up: Vec<&'static Setup>,
     /// What init says of each agent found on this machine whose hooks cannot be planned.
     not_set_up: Vec<String>,
+    /// What the user is to do for each agent set up, each with its name.
+    told: Vec<String>,
 }
 
-/// The hooks of each of `setups` planned at `scope` for the working tree `worktree` (none for the
-/// user's own settings alone, as `--global` writes), which the command line named when
-/// `are_named`. A found agent whose hooks cannot be planned is left out and said; a named one
-/// stops init.
+/// Says `told`, what the user is to do, once everything is written, each of several lines (the
+/// lines to add to a file) a line at a time.
 ///
 /// # Errors
 ///
-/// A named agent's hooks cannot be planned.
+/// Stdout cannot be written.
+fn say_told(told: &[String]) -> anyhow::Result<()> {
+    for text in told {
+        output::lines(text)?;
+    }
+    Ok(())
+}
+
+/// What init writes for each of `setups` planned at `scope` for the working tree `worktree` (none
+/// for the user's own files alone, as `--global` writes), which the command line named when
+/// `are_named`. A found agent whose files cannot be planned is left out and said; a named one stops
+/// init.
+///
+/// # Errors
+///
+/// A named agent's files cannot be planned.
 fn planned_hooks(
     scope: Scope,
     worktree: Option<&Path>,
@@ -449,11 +477,20 @@ fn planned_hooks(
         settings: Vec::new(),
         set_up: Vec::new(),
         not_set_up: Vec::new(),
+        told: Vec::new(),
     };
     for &setup in setups {
-        match hooks::planned(scope, worktree, setup) {
-            Ok(settings) => {
-                planned.settings.extend(settings);
+        match agent_file::planned(scope, worktree, setup) {
+            Ok(plan) => {
+                planned.settings.extend(plan.files);
+                // What to add comes before what to turn on once it is there.
+                let title = setup.agent.title();
+                let steps = plan.told.iter().map(String::as_str);
+                planned.told.extend(
+                    steps
+                        .chain(setup.told.iter().copied())
+                        .map(|told| format!("{title}: to do yourself: {told}")),
+                );
                 planned.set_up.push(setup);
             }
             Err(error) if !are_named => planned.not_set_up.push(format!(
@@ -468,13 +505,13 @@ fn planned_hooks(
     Ok(planned)
 }
 
-/// The changes that write Cortex's current hooks to each of `settings`, the settings that hold
-/// them already said on stdout instead.
+/// The changes that write each of `settings`, those that hold what init writes already said on
+/// stdout instead.
 ///
 /// # Errors
 ///
 /// Stdout cannot be written.
-fn settings_changes(settings: Vec<hooks::Settings>) -> anyhow::Result<Vec<Change>> {
+fn settings_changes(settings: Vec<AgentFile>) -> anyhow::Result<Vec<Change>> {
     let mut changes = Vec::new();
     for settings in settings {
         if settings.is_current() {
@@ -543,6 +580,7 @@ fn ignore_change(found: Found, lines: &[&str]) -> Option<Change> {
         },
         before: found.text,
         owner: Owner::Repository { folder: None },
+        is_executable: false,
     })
 }
 
@@ -609,6 +647,11 @@ fn apply((root, linked): (&Path, Option<&Path>), changes: Vec<Change>) -> anyhow
         };
         let before = change.before.as_deref().map(str::as_bytes);
         backup.replace(&change.file, change.kind, before, change.after.as_bytes())?;
+        // A file written over keeps its permissions: on Unix, Cline's switch for a hook is its
+        // executable bit, which the user may have turned off.
+        if change.is_executable && change.before.is_none() {
+            made_executable(&change.file)?;
+        }
         said.push(change.said);
     }
     for line in said {
@@ -620,6 +663,33 @@ fn apply((root, linked): (&Path, Option<&Path>), changes: Vec<Change>) -> anyhow
             backup.folder().display()
         ))?;
     }
+    Ok(())
+}
+
+/// Makes the file at `path`, which init just wrote, executable by the user alone, as an agent that
+/// runs it as a program needs.
+///
+/// # Errors
+///
+/// The file's permissions cannot be set.
+#[cfg(unix)]
+fn made_executable(path: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("making {} executable", path.display()))
+}
+
+/// Nothing: Windows runs a script by its name, and its files carry no such bit.
+///
+/// # Errors
+///
+/// None.
+#[cfg(not(unix))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the Unix version of the same function can fail"
+)]
+fn made_executable(_: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 

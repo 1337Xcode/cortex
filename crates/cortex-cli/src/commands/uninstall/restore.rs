@@ -3,8 +3,9 @@
 //! before, from the run's backup copy once the copy is checked against the hash the manifest
 //! keeps, or is removed when the run made it; a folder the run made for an agent's hooks file, as
 //! its manifest records, is removed once nothing is left in it. A file changed
-//! since keeps the change: Cortex's hooks come out of an agent's settings and the very lines the
-//! run added out of a `.gitignore`, while Cortex's own configuration stays as the user left it.
+//! since keeps the change: Cortex's hooks or MCP server come out of an agent's settings and the
+//! very lines the run added out of a `.gitignore`, while Cortex's own configuration, and a file of
+//! Cortex's own in an agent's folder (a plugin, a hook script), stay as the user left them.
 //! Only plain files are read or written, never through a link, and a repository's file only while
 //! the folder it is in is still the repository's own. Every write is atomic and made only while
 //! the file still holds what was read.
@@ -17,7 +18,7 @@ use anyhow::{Context as _, bail};
 use cortex_core::{ContentHash, MAX_SETTINGS_BYTES, canonical_root, read_text_file};
 
 use super::runs::Run;
-use crate::agents::{claude, settings};
+use crate::agents::{claude, mcp, settings};
 use crate::backup::{BackupCopy, Changed, Kind, holds, replace_unchanged};
 use crate::commands::init::without_lines;
 
@@ -213,8 +214,29 @@ fn taken_out(
                 "hooks",
             )
         }
+        Kind::AgentMcp { agent } => {
+            let file = crate::agents::setup(agent)
+                .and_then(|setup| setup.mcp.as_ref())
+                .with_context(|| {
+                    format!(
+                        "{} holds the MCP server of an agent this Cortex does not know",
+                        path.display()
+                    )
+                })?;
+            (
+                mcp::without(current, program, file).with_context(|| {
+                    format!(
+                        "{} changed since init and could not be read; Cortex's MCP server is left \
+                         in it",
+                        path.display()
+                    )
+                })?,
+                "MCP server",
+            )
+        }
         Kind::Gitignore { lines } => (without_lines(current, lines), "lines"),
-        Kind::CortexConfig => {
+        // A file of Cortex's own the user changed is theirs now.
+        Kind::AgentFile { .. } | Kind::CortexConfig => {
             return Ok(Some(format!(
                 "kept {}, which changed since init",
                 path.display()

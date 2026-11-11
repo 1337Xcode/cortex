@@ -11,11 +11,9 @@
 
 mod common;
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
-use common::init::{git, run};
+use common::init::{agents_lines, cortex, git, snapshot};
 use common::{Printed, StopsDaemon, TestResult};
 use cortex_core::canonical_root;
 use serde_json::{Value, json};
@@ -462,13 +460,6 @@ fn checked(case: &Case) -> TestResult {
     Ok(())
 }
 
-/// Runs `cortex <args> --root <repo>` with `home` as the home folder and git on the PATH.
-fn cortex(args: &[&str], repo: &Path, home: &Path) -> TestResult<Printed> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
-    command.args(args).arg("--root").arg(repo);
-    run(&mut command, home, &["git"])
-}
-
 /// The file init said it wrote `title`'s hooks to.
 fn written_to(done: &Printed, title: &str) -> TestResult<PathBuf> {
     let prefix = format!("{title}: hooks written to ");
@@ -481,24 +472,6 @@ fn written_to(done: &Printed, title: &str) -> TestResult<PathBuf> {
         .split_once(", which serve")
         .map_or(line, |(path, _)| path);
     Ok(PathBuf::from(path))
-}
-
-/// The lines doctor's agents check printed, its fixes with them.
-fn agents_lines(doctor: &Printed) -> Vec<String> {
-    let lines: Vec<&str> = doctor.stdout.lines().collect();
-    let mut found = Vec::new();
-    for (at, line) in lines.iter().enumerate() {
-        if line.contains("  agents: ") {
-            found.push((*line).to_owned());
-            if let Some(fix) = lines
-                .get(at + 1)
-                .filter(|next| next.starts_with("      fix: "))
-            {
-                found.push((*fix).to_owned());
-            }
-        }
-    }
-    found
 }
 
 /// `written` with every list item running Cortex's hook of `agent` at `event` taken out, as a
@@ -532,29 +505,6 @@ fn take_out(value: &mut Value, marker: &str) -> TestResult {
         _ => {}
     }
     Ok(())
-}
-
-/// Every file and folder under `folders` but git's and Cortex's own (`.git`, `.cortex`), each with
-/// its bytes (none for a folder), by path.
-fn snapshot(folders: &[&Path]) -> TestResult<BTreeMap<PathBuf, Option<Vec<u8>>>> {
-    let mut found = BTreeMap::new();
-    let mut pending: Vec<PathBuf> = folders.iter().map(|folder| folder.to_path_buf()).collect();
-    while let Some(folder) = pending.pop() {
-        for entry in std::fs::read_dir(&folder)? {
-            let entry = entry?;
-            let path = entry.path();
-            if matches!(entry.file_name().to_str(), Some(".git" | ".cortex")) {
-                continue;
-            }
-            if entry.file_type()?.is_dir() {
-                found.insert(path.clone(), None);
-                pending.push(path);
-            } else {
-                found.insert(path.clone(), Some(std::fs::read(&path)?));
-            }
-        }
-    }
-    Ok(found)
 }
 
 /// Copilot at the project's scope in a repository that already has an empty `.github`: init makes

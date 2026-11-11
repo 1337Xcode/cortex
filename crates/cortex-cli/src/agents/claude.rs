@@ -32,5 +32,8 @@ pub(crate) const SETUP: super::Setup = super::Setup {
         style: STYLE,
         read_instead: None,
     }),
+    own: None,
+    mcp: None,
+    told_lines: None,
     told: &[],
 };

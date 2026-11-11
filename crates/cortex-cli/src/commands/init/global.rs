@@ -23,9 +23,10 @@ use cortex_core::{LayerKind, UserFolder, canonical_root, create_private_folder};
 use super::consent::{self, ConfigFile};
 use super::{
     Found, Owner, Scope, apply, check_claude_code, hooks, known_agents, place, planned_hooks,
-    selected, settings_changes,
+    say_told, selected, settings_changes,
 };
 use crate::agents::Setup;
+use crate::agents::own::holds_cortex_files;
 use crate::commands::uninstall::runs::{self, Run};
 use crate::{adoption, output};
 
@@ -90,12 +91,7 @@ pub(super) fn run(is_yes: bool, names: &[String]) -> anyhow::Result<()> {
     adoption::forget_all(&user)?;
     adoption::switch(&user.adopt_path(), true)?;
     output::line(TURNED_ON)?;
-    for setup in &planned.set_up {
-        for step in setup.told {
-            output::line(&format!("{}: to do yourself: {step}", setup.agent.title()))?;
-        }
-    }
-    Ok(())
+    say_told(&planned.told)
 }
 
 /// Refuses when a repository that `cortex init` set up, as the backups in the user's folder
@@ -127,28 +123,47 @@ fn refuse_both_scopes(user: &UserFolder, setups: &[&'static Setup]) -> anyhow::R
     )
 }
 
-/// Each file of `run`'s repository, or of the linked working tree it started in, that holds
-/// Cortex's hooks for `setup`'s agent, run by `program` or an older Cortex, said with the uninstall
-/// that takes them out.
+/// Each file or folder of `run`'s repository, or of the linked working tree it started in, that
+/// holds Cortex's hooks or files of its own for `setup`'s agent, run by `program` or an older
+/// Cortex, said with the uninstall that takes them out.
 ///
 /// # Errors
 ///
-/// A settings file cannot be read.
+/// A file cannot be read, or the agent's files cannot be made.
 fn doubled_in(run: &Run, setup: &Setup, program: &str) -> anyhow::Result<Vec<String>> {
-    let Some(project) = setup.hooks.as_ref().and_then(|hooks| hooks.project) else {
-        return Ok(Vec::new());
+    let project = setup.hooks.as_ref().and_then(|hooks| hooks.project);
+    let own = match setup
+        .own
+        .as_ref()
+        .filter(|own| own.loads_both)
+        .and_then(|own| Some((own.project?, own.files)))
+    {
+        Some((project, files)) => Some((project, files(program)?)),
+        None => None,
     };
     let mut found = Vec::new();
     for folder in &run.bounds {
-        let file = place::joined(folder, project);
-        if hooks::holds_cortex_hooks(&file, setup, program)? {
-            found.push(format!(
+        let mut holding = Vec::new();
+        if let Some(project) = project {
+            let file = place::joined(folder, project);
+            if hooks::holds_cortex_hooks(&file, setup, program)? {
+                holding.push(file);
+            }
+        }
+        if let Some((project, written)) = &own {
+            let inner = place::joined(folder, project);
+            if holds_cortex_files(&inner, written)? {
+                holding.push(inner);
+            }
+        }
+        found.extend(holding.into_iter().map(|path| {
+            format!(
                 "{} holds {}'s; `cortex uninstall --root {}` takes them out",
-                file.display(),
+                path.display(),
                 setup.agent.title(),
                 run.manifest.repository
-            ));
-        }
+            )
+        }));
     }
     Ok(found)
 }

@@ -1,9 +1,14 @@
 //! What `cortex init` writes for each agent: the registry of agents, how each is found, and the
-//! files that set Cortex up in it. Adding an agent means one file here and one registry line.
+//! files that set Cortex up in it: hooks merged into a settings file, files of Cortex's own (a
+//! plugin, hook scripts), Cortex's MCP server merged into JSON settings, and the lines the user
+//! adds to a file Cortex does not write. Adding an agent means one file here and one registry
+//! line.
 
+mod amp;
 mod antigravity;
 mod augment;
 pub(crate) mod claude;
+mod cline;
 mod codex;
 pub(crate) mod command;
 mod copilot;
@@ -13,18 +18,29 @@ mod devin;
 mod droid;
 mod entries;
 mod gemini;
+mod goose;
 pub(crate) mod handler;
+mod hermes;
 mod junie;
+mod kilo;
 mod kiro;
+pub(crate) mod mcp;
+mod openclaw;
+mod opencode;
 mod openhands;
+pub(crate) mod own;
 mod qwen;
 pub(crate) mod settings;
 mod trae;
+pub(crate) mod user_path;
+mod yaml;
 
 use std::path::Path;
 
 use cortex_core::{Agent, find_program};
 
+use self::mcp::McpFile;
+use self::own::OwnFiles;
 use self::settings::Style;
 
 /// One agent `cortex init` sets up.
@@ -37,9 +53,30 @@ pub(crate) struct Setup {
     pub(crate) found_by: FoundBy,
     /// Where its hooks go and how, if Cortex writes them into a settings file.
     pub(crate) hooks: Option<HooksFile>,
+    /// The files of Cortex's own it reads, if Cortex writes any: a plugin, hook scripts.
+    pub(crate) own: Option<OwnFiles>,
+    /// Where Cortex's MCP server goes, if Cortex writes it into JSON settings.
+    pub(crate) mcp: Option<McpFile>,
+    /// The lines the user adds to a file of the agent's that Cortex does not write, if any.
+    pub(crate) told_lines: Option<ToldLines>,
     /// What the user does themselves for the hooks to run, said after init: Cortex never writes an
     /// agent's trust or approval.
     pub(crate) told: &'static [&'static str],
+}
+
+/// Lines for the user to add to a file of an agent's that Cortex does not write (YAML, which
+/// Cortex has no writer for): init says them, and doctor looks for them.
+#[derive(Debug)]
+pub(crate) struct ToldLines {
+    /// The file, relative to the home folder with `/` between folders.
+    pub(crate) file: &'static str,
+    /// Why Cortex writes nothing there itself, said with the lines.
+    pub(crate) why: &'static str,
+    /// The lines for this program, each ending with a line break; an error when the program's
+    /// path cannot be written for the agent.
+    pub(crate) lines: fn(&str) -> anyhow::Result<String>,
+    /// The texts the lines put in the file for this program, each of which doctor looks for.
+    pub(crate) signs: fn(&str) -> anyhow::Result<Vec<String>>,
 }
 
 /// How an agent is found: any of its folders in the user's home holding the agent's own files, or
@@ -87,6 +124,13 @@ pub(crate) const SETUPS: &[&Setup] = &[
     &trae::SETUP,
     &crush::SETUP,
     &openhands::SETUP,
+    &opencode::SETUP,
+    &kilo::SETUP,
+    &amp::SETUP,
+    &openclaw::SETUP,
+    &cline::SETUP,
+    &hermes::SETUP,
+    &goose::SETUP,
 ];
 
 /// The setup of the agent named `name` on the command line.
@@ -98,14 +142,14 @@ pub(crate) fn setup(name: &str) -> Option<&'static Setup> {
 }
 
 /// Whether `setup`'s agent is on this machine: one of its folders in `home` holding anything but
-/// the hooks file Cortex writes there, or one of its programs on the `PATH` outside `repository`.
+/// the files Cortex writes there, or one of its programs on the `PATH` outside `repository`.
 pub(crate) fn is_found(setup: &Setup, home: &Path, repository: &Path) -> bool {
-    let written = setup.hooks.as_ref().map(|hooks| hooks.user);
+    let written = users_files(setup);
     let has_folder = setup
         .found_by
         .folders
         .iter()
-        .any(|folder| holds_agents_own(home, folder, written));
+        .any(|folder| holds_agents_own(home, folder, &written));
     has_folder || {
         let names: Vec<String> = setup
             .found_by
@@ -118,17 +162,40 @@ pub(crate) fn is_found(setup: &Setup, home: &Path, repository: &Path) -> bool {
     }
 }
 
+/// The files of the home folder, relative to it with `/` between folders, that init may write for
+/// `setup`'s agent at the user's scope: its hooks file, the files of Cortex's own in its folder,
+/// and its MCP settings.
+pub(crate) fn users_files(setup: &Setup) -> Vec<String> {
+    let mut files: Vec<String> = setup
+        .hooks
+        .iter()
+        .map(|hooks| hooks.user.to_owned())
+        .collect();
+    if let Some(own) = &setup.own
+        && let Some(folder) = own.user
+    {
+        // The files' names do not depend on the program they run.
+        let names = (own.files)("cortex").unwrap_or_default();
+        let folder = folder.in_home();
+        files.extend(names.iter().map(|file| format!("{folder}/{}", file.name)));
+    }
+    if let Some(mcp) = &setup.mcp {
+        files.extend(mcp.user.iter().map(|file| file.in_home()));
+    }
+    files
+}
+
 /// Whether the folder `folder` of the home folder `home` holds an entry besides `written`, the
-/// home-relative file Cortex writes hooks to, and the folders on the way to it: an empty folder,
-/// or one holding only Cortex's own file, is no sign of the agent, since an earlier `cortex init
-/// --agents` makes it.
-fn holds_agents_own(home: &Path, folder: &str, written: Option<&str>) -> bool {
+/// home-relative files Cortex writes, and the folders on the way to them: an empty folder, or one
+/// holding only Cortex's own files, is no sign of the agent, since an earlier `cortex init
+/// --agents` makes them.
+fn holds_agents_own(home: &Path, folder: &str, written: &[String]) -> bool {
     let Ok(entries) = std::fs::read_dir(home.join(folder)) else {
         return false;
     };
     entries.flatten().any(|entry| {
         let path = format!("{folder}/{}", entry.file_name().to_string_lossy());
-        let is_on_the_way = written.is_some_and(|written| {
+        let is_on_the_way = written.iter().any(|written| {
             written
                 .strip_prefix(path.as_str())
                 .is_some_and(|rest| rest.starts_with('/'))
@@ -136,7 +203,7 @@ fn holds_agents_own(home: &Path, folder: &str, written: Option<&str>) -> bool {
         if is_on_the_way && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             return holds_agents_own(home, &path, written);
         }
-        Some(path.as_str()) != written
+        !written.contains(&path)
     })
 }
 
@@ -154,8 +221,8 @@ fn program_names(program: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Every agent is named once, by the name its adapter has, which `cortex hook --agent` takes;
-    /// every hooks file's style names the same agent.
+    /// Every agent is named once; every agent Cortex writes anything for has an adapter of the same
+    /// name, which `cortex hook --agent` takes, and every hooks file's style names that agent.
     #[test]
     fn every_setup_is_its_adapter_s() {
         let mut names: Vec<&str> = SETUPS.iter().map(|setup| setup.agent.name()).collect();
@@ -164,17 +231,19 @@ mod tests {
         assert_eq!(names.len(), SETUPS.len());
         for setup in SETUPS {
             let name = setup.agent.name();
-            assert!(cortex_hook::adapter(name).is_some(), "{name}");
+            let writes = setup.hooks.is_some() || setup.own.is_some() || setup.mcp.is_some();
+            assert!(!writes || cortex_hook::adapter(name).is_some(), "{name}");
             if let Some(hooks) = &setup.hooks {
                 assert_eq!(hooks.style.agent, name);
             }
         }
     }
 
-    /// Every agent's file of the repository's that init writes hooks to is one git is told to
-    /// leave out, since a hook names this machine's program.
+    /// Every agent's file of the repository's that init writes hooks to, and every file of
+    /// Cortex's own it writes in a repository's folder, is one git is told to leave out, since it
+    /// names this machine's program.
     #[test]
-    fn every_local_file_is_left_out_of_git() {
+    fn every_local_file_is_left_out_of_git() -> anyhow::Result<()> {
         for setup in SETUPS {
             if let Some(project) = setup.hooks.as_ref().and_then(|hooks| hooks.project) {
                 assert!(
@@ -182,7 +251,19 @@ mod tests {
                     "{project}"
                 );
             }
+            if let Some(own) = &setup.own
+                && let Some(folder) = own.project
+            {
+                for file in (own.files)("/opt/cortex")? {
+                    let path = format!("{folder}/{}", file.name);
+                    assert!(
+                        cortex_core::IGNORE_LOCAL_FILES.contains(&path.as_str()),
+                        "{path}"
+                    );
+                }
+            }
         }
+        Ok(())
     }
 
     /// An agent is found by its folder in the home folder once the folder holds a file besides
@@ -204,6 +285,9 @@ mod tests {
                 style: claude::STYLE,
                 read_instead: None,
             }),
+            own: None,
+            mcp: None,
+            told_lines: None,
             told: &[],
         };
         assert!(!is_found(&unknown, home.path(), repository.path()));
@@ -235,6 +319,9 @@ mod tests {
                 style: claude::STYLE,
                 read_instead: None,
             }),
+            own: None,
+            mcp: None,
+            told_lines: None,
             told: &[],
         };
         let hooks = home.path().join(".none-agent").join("hooks");

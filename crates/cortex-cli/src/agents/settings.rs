@@ -296,7 +296,7 @@ pub(crate) fn without_cortex_hooks(
 /// # Errors
 ///
 /// The JSON cannot be written, which a map of JSON values never fails at.
-fn text_of(settings: Map<String, Value>) -> anyhow::Result<String> {
+pub(super) fn text_of(settings: Map<String, Value>) -> anyhow::Result<String> {
     let mut text = serde_json::to_string_pretty(&Value::Object(settings))?;
     text.push('\n');
     Ok(text)
@@ -347,7 +347,7 @@ fn lists_in<'s>(settings: &'s Map<String, Value>, style: &Style) -> Vec<&'s Vec<
 ///
 /// The text is not JSON, which is said with where, never with the text itself, or is not an
 /// object.
-fn parsed(existing: Option<&str>) -> anyhow::Result<Map<String, Value>> {
+pub(super) fn parsed(existing: Option<&str>) -> anyhow::Result<Map<String, Value>> {
     let text = existing.map(|text| text.strip_prefix('\u{feff}').unwrap_or(text));
     let Some(text) = text.filter(|text| !text.trim().is_empty()) else {
         return Ok(Map::new());

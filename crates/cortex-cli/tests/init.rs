@@ -363,7 +363,7 @@ fn init_without_git_or_any_agent_says_so() -> TestResult {
             "note: no agent Cortex sets up was found on this machine, so no hooks are written; \
              once one is installed, run `cortex init` again, or name one with `--agents` (claude, \
              codex, qwen, gemini, droid, devin, augment, junie, cursor, copilot, antigravity, \
-             kiro, trae, crush, openhands)"
+             kiro, trae, crush, openhands, opencode, kilo, amp, openclaw, cline, hermes, goose)"
         ]
     );
     assert!(!repo.path().join(".claude").exists());

@@ -18,6 +18,7 @@
 mod purge;
 mod restore;
 pub(crate) mod runs;
+mod users;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,12 +26,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use cortex_core::ipc::Role;
-use cortex_core::{MAX_SETTINGS_BYTES, RepoId, UserFolder, read_text_file};
+use cortex_core::{RepoId, UserFolder};
 use cortex_daemon::is_running;
 use cortex_hook::{ClientError, stop_any};
 
 use super::init::{Scope, switch_off};
-use crate::backup::replace_unchanged;
+use crate::backup::{Changed, Kind, replace_unchanged};
 use crate::{output, repository, upgrade};
 
 /// How long uninstall gives the daemon to stop, from the first request: it drains its inbox and
@@ -125,7 +126,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         &mut report,
     );
     if args.scope == Scope::Project {
-        report.said.extend(users_hooks(&program));
+        report.said.extend(users::users_hooks(&user, &program));
     }
     // A daemon that did not stop, or a purge that failed, matters more than an output that could
     // not be written.
@@ -191,7 +192,14 @@ fn undo_all(runs: &[runs::Run], program: &str, report: &mut Report) {
         let failed_before = report.failures.len();
         for change in run.manifest.files.iter().rev() {
             match restore::undo(run, change, program) {
-                Ok(Some(line)) => report.said.push(line),
+                Ok(Some(line)) => {
+                    report.said.push(line);
+                    if let Some(after) = after_removal(change)
+                        && !report.said.iter().any(|said| said.ends_with(after))
+                    {
+                        report.said.push(format!("note: {after}"));
+                    }
+                }
                 Ok(None) => {}
                 Err(error) => report.failures.push(format!("error: {error:#}")),
             }
@@ -206,6 +214,15 @@ fn undo_all(runs: &[runs::Run], program: &str, report: &mut Report) {
             ));
         }
     }
+}
+
+/// What uninstall says once it took out `change`, a file of Cortex's own of an agent that leaves
+/// something for the user to undo then; none for any other change.
+fn after_removal(change: &Changed) -> Option<&'static str> {
+    let Kind::AgentFile { agent } = &change.kind else {
+        return None;
+    };
+    crate::agents::setup(agent)?.own.as_ref()?.after_removal
 }
 
 /// Writes `run`'s manifest again, marked as undone, provided it still holds what was read.
@@ -266,45 +283,6 @@ fn purge_or_keep(
         }
         None => purge::purged(root, user, runs, &mut report.said),
     }
-}
-
-/// The notes to give for each agent whose user's own settings hold Cortex's hooks, which run in
-/// every repository and which only `--scope user` takes out (init writes them there for an
-/// agent with no file of the repository's): one per file holding them, none when none does.
-fn users_hooks(program: &str) -> Vec<String> {
-    let Some(home) = std::env::home_dir() else {
-        return Vec::new();
-    };
-    crate::agents::SETUPS
-        .iter()
-        .filter_map(|setup| {
-            let hooks = setup.hooks.as_ref()?;
-            let settings = hooks
-                .user
-                .split('/')
-                .fold(home.clone(), |path, part| path.join(part));
-            let found = read_text_file(&settings, MAX_SETTINGS_BYTES)
-                .map_err(anyhow::Error::from)
-                .and_then(|text| {
-                    text.map_or(Ok(Vec::new()), |text| {
-                        crate::agents::settings::cortex_commands(&text, program, &hooks.style)
-                    })
-                });
-            let title = setup.agent.title();
-            match found {
-                Ok(commands) if commands.is_empty() => None,
-                Ok(_) => Some(format!(
-                    "note: {} holds Cortex's {title} hooks, which run in every repository; \
-                     `cortex uninstall --scope user` takes them out",
-                    settings.display()
-                )),
-                Err(error) => Some(format!(
-                    "note: could not tell whether {} holds Cortex's {title} hooks: {error:#}",
-                    settings.display()
-                )),
-            }
-        })
-        .collect()
 }
 
 /// Writes what `report` holds: its lines to stdout, then its notes and failures to stderr.

@@ -16,14 +16,31 @@ pub const IGNORE_ALL_BUT_SHARED: [&str; 2] = [".cortex/*", "!.cortex/shared/"];
 /// The line that leaves out Claude Code's local settings, where a project's Cortex hooks are.
 pub const IGNORE_LOCAL_SETTINGS: &str = ".claude/settings.local.json";
 
-/// The lines that leave out each agent's file of a repository's that init writes hooks to: the
-/// agent reads it and git does not share it, since a hook names this machine's program.
-pub const IGNORE_LOCAL_FILES: [&str; 5] = [
+/// The lines that leave out each agent's file of a repository's that init writes hooks, a plugin
+/// or a hook script to: the agent reads it and git does not share it, since it names this
+/// machine's program. Cline's hook scripts are named for both systems, since one repository may
+/// be set up on both.
+pub const IGNORE_LOCAL_FILES: [&str; 20] = [
     IGNORE_LOCAL_SETTINGS,
     ".devin/config.local.json",
     ".augment/settings.local.json",
     ".github/hooks/cortex.json",
     ".kiro/hooks/cortex.json",
+    ".opencode/plugins/cortex.js",
+    ".kilo/plugin/cortex.js",
+    ".amp/plugins/cortex.js",
+    ".clinerules/hooks/TaskStart",
+    ".clinerules/hooks/TaskResume",
+    ".clinerules/hooks/UserPromptSubmit",
+    ".clinerules/hooks/PostToolUse",
+    ".clinerules/hooks/PreCompact",
+    ".clinerules/hooks/TaskComplete",
+    ".clinerules/hooks/TaskStart.ps1",
+    ".clinerules/hooks/TaskResume.ps1",
+    ".clinerules/hooks/UserPromptSubmit.ps1",
+    ".clinerules/hooks/PostToolUse.ps1",
+    ".clinerules/hooks/PreCompact.ps1",
+    ".clinerules/hooks/TaskComplete.ps1",
 ];
 
 /// `line` without its line ending, `\n` or `\r\n`.

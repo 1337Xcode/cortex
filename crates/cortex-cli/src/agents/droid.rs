@@ -41,5 +41,8 @@ pub(crate) const SETUP: Setup = Setup {
         style: STYLE,
         read_instead: Some(".factory/settings.json"),
     }),
+    own: None,
+    mcp: None,
+    told_lines: None,
     told: &[],
 };

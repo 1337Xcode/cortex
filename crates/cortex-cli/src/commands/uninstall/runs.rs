@@ -82,6 +82,32 @@ pub(crate) fn of_repositories(
     Ok(runs)
 }
 
+/// The BLAKE3 hash, in hexadecimal, of everything any run of init recorded writing to a file of
+/// Cortex's own in an agent's folder, by the file's path as recorded, from the backups of the
+/// user folder `user`, the user's runs and the repositories' alike.
+///
+/// # Errors
+///
+/// The backup folder or a manifest cannot be read.
+pub(crate) fn own_files_written(
+    user: &UserFolder,
+) -> anyhow::Result<std::collections::BTreeMap<PathBuf, Vec<String>>> {
+    let mut passed_over = Vec::new();
+    let mut runs = of_user(user, &mut passed_over)?;
+    runs.extend(of_repositories(user, &mut passed_over)?);
+    let mut written: std::collections::BTreeMap<PathBuf, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for changed in runs.iter().flat_map(|run| &run.manifest.files) {
+        if let crate::backup::Kind::AgentFile { .. } = changed.kind {
+            written
+                .entry(PathBuf::from(&changed.path))
+                .or_default()
+                .push(changed.written_blake3.clone());
+        }
+    }
+    Ok(written)
+}
+
 /// The runs that changed the user's own files, whatever repository each set up, newest first,
 /// from the backups of the user folder `user`. A manifest this build cannot read is passed over,
 /// with a note saying so added to `notes`.

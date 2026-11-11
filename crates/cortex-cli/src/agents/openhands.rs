@@ -45,6 +45,9 @@ pub(crate) const SETUP: Setup = Setup {
         style: STYLE,
         read_instead: None,
     }),
+    own: None,
+    mcp: None,
+    told_lines: None,
     told: &[
         "run OpenHands with its local backend, in a folder with no `.openhands/hooks.json` of its \
          own: another backend runs hooks away from this machine, and a repository's hooks file \
