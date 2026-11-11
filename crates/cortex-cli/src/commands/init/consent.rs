@@ -1,9 +1,10 @@
 //! The questions `cortex init` asks once: measure Cortex's effect against a holdout of tasks (yes
 //! by default), and share facts with the team through a committed `.cortex/shared/` (no). Each
 //! answer is kept where it takes effect: the holdout in the repository's `.cortex/config.toml` (or
-//! the user's own `~/.cortex/config.toml`, when the user set it there), and the sharing in the
-//! repository's `.gitignore` (a team that shares has committed it). A question answered there is
-//! not asked again. `--yes` takes the defaults; otherwise questions go to stderr and answers come a
+//! the user's own `~/.cortex/config.toml`, when the user set it there or ran `cortex init
+//! --global`), and the sharing in the repository's `.gitignore` (a team that shares has committed
+//! it). `--global` asks the holdout alone: sharing is decided for one repository at a time, by
+//! `cortex init` there. A question answered there is not asked again. `--yes` takes the defaults; otherwise questions go to stderr and answers come a
 //! line at a time from a terminal. Without one init refuses rather than wait on input that may
 //! never come.
 
@@ -185,12 +186,13 @@ fn parsed(line: &str, default: bool) -> Option<bool> {
     }
 }
 
-/// The repository's configuration `file` with the holdout answer added, unless it was kept.
+/// The configuration `file`, the repository's or the user's, with the holdout answer added,
+/// unless it was kept.
 ///
 /// # Errors
 ///
 /// The answer cannot be added (see [`answered`]).
-pub(super) fn repository_config(
+pub(super) fn with_answers(
     file: ConfigFile<'_>,
     kept: Kept,
     answers: Answers,
@@ -365,7 +367,7 @@ mod tests {
             ..NO_FILE
         };
         assert_eq!(
-            repository_config(file, NONE_KEPT, answers)?.as_deref(),
+            with_answers(file, NONE_KEPT, answers)?.as_deref(),
             Some(
                 "mode = \"small\"\n\n# The answer to a question `cortex init` asked; change it \
                  here.\n[holdout]\nshare = 0.1\n"
@@ -380,7 +382,7 @@ mod tests {
             ..answers
         };
         assert_eq!(
-            repository_config(crlf, NONE_KEPT, declined)?.as_deref(),
+            with_answers(crlf, NONE_KEPT, declined)?.as_deref(),
             Some(
                 "mode = \"small\"\r\n\r\n# The answer to a question `cortex init` asked; change \
                  it here.\r\n[holdout]\r\nshare = 0\r\n"
@@ -390,13 +392,13 @@ mod tests {
             holdout: Some(true),
             sharing: Some(false),
         };
-        assert_eq!(repository_config(NO_FILE, kept, answers)?, None);
+        assert_eq!(with_answers(NO_FILE, kept, answers)?, None);
         let own_table = ConfigFile {
             text: Some("[holdout]\n"),
             ..NO_FILE
         };
         assert_eq!(
-            repository_config(own_table, NONE_KEPT, answers)?.as_deref(),
+            with_answers(own_table, NONE_KEPT, answers)?.as_deref(),
             Some(
                 "[holdout]\n# The answer to a question `cortex init` asked; change it here.\n\
                  share = 0.1\n"
@@ -406,7 +408,7 @@ mod tests {
             text: Some("holdout = { other = 1 }\n"),
             ..NO_FILE
         };
-        let refused = repository_config(inline_table, NONE_KEPT, answers);
+        let refused = with_answers(inline_table, NONE_KEPT, answers);
         assert!(
             refused.as_ref().is_err_and(|error| error.to_string()
                 == "adding an answer to f: set `holdout.share` there by hand"),

@@ -10,6 +10,10 @@
 //! repository (see [`purge`]), only once every change is undone and the daemon has stopped, so
 //! that no backup a retry needs is lost. Nothing is said until all of that is done, so that an
 //! output closed early never stops it partway. Running it again changes nothing.
+//!
+//! `--global` undoes `cortex init --global`: every change init made to the user's own files is
+//! undone, whatever repository or none it was made for, and adoption is turned off. Repositories
+//! Cortex set up on its own keep their `.cortex/`, which `cortex uninstall` in each takes out.
 
 mod purge;
 mod restore;
@@ -25,7 +29,7 @@ use cortex_core::{MAX_SETTINGS_BYTES, RepoId, UserFolder, read_text_file};
 use cortex_daemon::is_running;
 use cortex_hook::{ClientError, stop_any};
 
-use super::init::Scope;
+use super::init::{Scope, switch_off};
 use crate::backup::replace_unchanged;
 use crate::{output, repository, upgrade};
 
@@ -47,6 +51,9 @@ pub(crate) struct Args {
     /// log in the user's folder.
     #[arg(long)]
     purge: bool,
+    /// Undo `cortex init --global`: every change to the user's own files, and adoption.
+    #[arg(long, conflicts_with_all = ["root", "scope", "purge"])]
+    global: bool,
 }
 
 /// What uninstall says once it is done: lines for stdout, and for stderr the changes it could not
@@ -71,6 +78,9 @@ struct Report {
 /// stderr, the others undone all the same), a daemon that does not stop, a purge that fails, or
 /// an output that cannot be written.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
+    if args.global {
+        return run_global();
+    }
     let root = repository::root(args.root.as_deref())?;
     let user = UserFolder::of_current_user().context("finding the home folder")?;
     let program = crate::program::this_program()?;
@@ -91,6 +101,19 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     }
     undo_all(&repository_runs, &program, &mut report);
     undo_all(&user_runs, &program, &mut report);
+    // Forgotten before the daemon stops, so that no hook serves the repository again meanwhile.
+    if let Err(error) = cortex_core::forget_set_up(&user, &root) {
+        report.failures.push(format!(
+            "error: could not forget that the repository is set up here: {error}"
+        ));
+    }
+    if user.adopt_path().is_file() {
+        report.notes.push(
+            "note: adoption is on, so Cortex sets this repository up again the next time an agent \
+             works in it; `cortex off` keeps it off here"
+                .to_owned(),
+        );
+    }
     let stopped = stopped(&root, &user);
     if let Ok(line) = &stopped {
         report.said.push(line.clone());
@@ -109,6 +132,47 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let written = said(&report);
     stopped?;
     purged?;
+    written?;
+    if !report.failures.is_empty() {
+        bail!(
+            "{} of init's changes could not be undone; each is named above",
+            report.failures.len()
+        );
+    }
+    Ok(())
+}
+
+/// Undoes init's changes to the user's own files and turns adoption off, then says what it did.
+///
+/// # Errors
+///
+/// No home folder, a change that could not be undone (each named on stderr, the others undone all
+/// the same), adoption that cannot be turned off, or an output that cannot be written.
+fn run_global() -> anyhow::Result<()> {
+    let user = UserFolder::of_current_user().context("finding the home folder")?;
+    let program = crate::program::this_program()?;
+    let mut report = Report::default();
+    let runs = runs::of_user(&user, &mut report.notes)?;
+    if runs.is_empty() {
+        report.said.push(format!(
+            "nothing to restore: no manifest of init's in {} changed your own files",
+            user.path().join("backups").display()
+        ));
+    }
+    undo_all(&runs, &program, &mut report);
+    let switched = switch_off(&user);
+    if let Ok(was_on) = switched {
+        report.said.push(
+            if was_on {
+                "adoption: off; Cortex sets up no repository on its own"
+            } else {
+                "adoption: was off"
+            }
+            .to_owned(),
+        );
+    }
+    let written = said(&report);
+    switched?;
     written?;
     if !report.failures.is_empty() {
         bail!(
@@ -281,7 +345,7 @@ fn remove_if_empty(folder: &Path) -> anyhow::Result<()> {
 ///
 /// The daemon cannot be asked, does not answer or does not stop within [`STOP_WITHIN`], or whether
 /// one runs cannot be found.
-fn stopped(root: &Path, user: &UserFolder) -> anyhow::Result<String> {
+pub(crate) fn stopped(root: &Path, user: &UserFolder) -> anyhow::Result<String> {
     let repo_id = RepoId::of(root);
     let files = user.run_files(&repo_id);
     let until = Instant::now() + STOP_WITHIN;

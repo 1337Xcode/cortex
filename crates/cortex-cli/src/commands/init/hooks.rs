@@ -29,8 +29,9 @@ pub(super) struct Settings {
 }
 
 /// The settings `scope` names for `setup`'s agent in the repository whose canonical root is `root`,
-/// with the hooks of its adapter merged in; `None` for an agent whose hooks Cortex does not write
-/// into a settings file. Nothing is written.
+/// or the user's own settings when there is no repository (`cortex init --global`), with the hooks
+/// of its adapter merged in; `None` for an agent whose hooks Cortex does not write into a settings
+/// file. Nothing is written.
 ///
 /// # Errors
 ///
@@ -39,7 +40,7 @@ pub(super) struct Settings {
 /// this program's path cannot be written for the agent's shell.
 pub(super) fn planned(
     scope: Scope,
-    root: &Path,
+    root: Option<&Path>,
     setup: &'static Setup,
 ) -> anyhow::Result<Option<Settings>> {
     let Some(hooks) = &setup.hooks else {
@@ -47,8 +48,8 @@ pub(super) fn planned(
     };
     let adapter = cortex_hook::adapter(setup.agent.name())
         .with_context(|| format!("finding the {} adapter", setup.agent.title()))?;
-    let (file, owner) = match (scope, hooks.project) {
-        (Scope::Project, Some(project)) => {
+    let (file, owner) = match (scope, hooks.project, root) {
+        (Scope::Project, Some(project), Some(root)) => {
             let (folder, name) = split(project);
             (
                 place::file_in(root, folder, name)?,
@@ -71,7 +72,7 @@ pub(super) fn planned(
         refuse_hidden_hooks(read_instead, setup)?;
     }
     let program = crate::program::this_program()?;
-    if let Some(project) = hooks.project {
+    if let (Some(project), Some(root)) = (hooks.project, root) {
         refuse_both_scopes((root, project), owner, setup, &program)?;
     }
     let after = settings::merged(before.as_deref(), &program, adapter.hooks(), &hooks.style)
@@ -115,12 +116,7 @@ fn refuse_both_scopes(
             (place::joined(&home, hooks.user), " --scope user")
         }
     };
-    let Some(text) = read_text_file(&other, MAX_SETTINGS_BYTES)? else {
-        return Ok(());
-    };
-    let holds = settings::cortex_commands(&text, program, &hooks.style)
-        .is_ok_and(|commands| !commands.is_empty());
-    if holds {
+    if holds_cortex_hooks(&other, setup, program)? {
         let title = setup.agent.title();
         bail!(
             "{} holds Cortex's {title} hooks already, and {title} runs the hooks of both files, \
@@ -130,6 +126,27 @@ fn refuse_both_scopes(
         );
     }
     Ok(())
+}
+
+/// Whether the settings file `path` of `setup`'s agent holds Cortex's hooks, run by `program` or an
+/// older Cortex. A file that is not there, or not the JSON the agent reads, runs none.
+///
+/// # Errors
+///
+/// The file cannot be read.
+pub(super) fn holds_cortex_hooks(
+    path: &Path,
+    setup: &Setup,
+    program: &str,
+) -> anyhow::Result<bool> {
+    let Some(hooks) = &setup.hooks else {
+        return Ok(false);
+    };
+    let Some(text) = read_text_file(path, MAX_SETTINGS_BYTES)? else {
+        return Ok(false);
+    };
+    Ok(settings::cortex_commands(&text, program, &hooks.style)
+        .is_ok_and(|commands| !commands.is_empty()))
 }
 
 /// Refuses when `read_instead`, a file of the home folder that `setup`'s agent reads hooks from

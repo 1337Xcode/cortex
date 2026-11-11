@@ -5,8 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
-use cortex_core::canonical_root;
+use anyhow::{Context, bail};
+use cortex_core::{canonical_root, working_tree_top};
 
 /// The repository root `given` names, or the one the current folder is in, in its canonical form,
 /// so that every spelling of one folder names one repository.
@@ -35,6 +35,46 @@ pub(crate) fn root_and_worktree(given: Option<&Path>) -> anyhow::Result<(PathBuf
         Some(located) => Ok((located.repository_root().to_path_buf(), located.root)),
         None => alone(&current),
     }
+}
+
+/// The repository `cortex off` and `cortex on` work on: the folder `--root` names; else the
+/// repository the current folder is in, as [`root`] finds it; else the top of the git working tree
+/// the current folder is in, below the home folder, which Cortex would set up on its own; else the
+/// current folder. Never the home folder or a folder holding it, whose `.cortex` is the user's
+/// own.
+///
+/// # Errors
+///
+/// The current folder cannot be read, the folder is missing or not a folder, or it is the home
+/// folder or holds it.
+pub(crate) fn switched_root(given: Option<&Path>) -> anyhow::Result<PathBuf> {
+    let home = std::env::home_dir().context("finding the home folder")?;
+    let home = canonical(&home)?;
+    let root = match given {
+        Some(given) => canonical(given)?,
+        None => {
+            let current = std::env::current_dir().context("reading the current folder")?;
+            match cortex_hook::locate_marked(&current, Some(&home)) {
+                Some(located) => located.repository_root().to_path_buf(),
+                None => {
+                    let current = canonical(&current)?;
+                    let top = current
+                        .starts_with(&home)
+                        .then(|| working_tree_top(&current, &home).map(Path::to_path_buf))
+                        .flatten();
+                    top.unwrap_or(current)
+                }
+            }
+        }
+    };
+    if home.starts_with(&root) {
+        bail!(
+            "{} is the home folder or holds it, whose .cortex is your own: name a repository with \
+             --root",
+            root.display()
+        );
+    }
+    Ok(root)
 }
 
 /// `worktree`, the working tree a command was run in, when it is a linked working tree of the

@@ -38,6 +38,7 @@ use crate::retrieval::Service;
 use crate::runs::Runs;
 use crate::signatures::Signatures;
 use crate::troubles::Taken;
+use crate::welcome::WelcomeLine;
 use crate::worktree::Worktree;
 
 /// Most connections served at once. Hooks and commands hold a connection for one exchange, so more
@@ -76,6 +77,8 @@ pub(crate) struct Server {
     latencies: Mutex<Latencies>,
     /// Probes, `cortex doctor`'s, answered since the daemon started.
     probes_answered: AtomicU64,
+    /// The line that tells the user Cortex set the repository up on its own, while it is held.
+    welcome: WelcomeLine,
 }
 
 /// How long before its hook stops reading a reply holding text must be sent: the moment the reply
@@ -203,12 +206,15 @@ struct Undo {
     stop: Option<Event>,
     /// The failures the answer took to tell the user.
     troubles: Option<Taken>,
+    /// Whether the answer took the line that tells the user Cortex set the repository up.
+    is_welcome: bool,
 }
 
 impl Server {
     /// A server for a daemon started now, whose writer reads `inbox`, answering from the graph of
     /// `snapshot`, the uncommitted diff of `worktree` or of the event's working tree among
-    /// `linked`, and the signature changes `signatures` holds, with `service`.
+    /// `linked`, and the signature changes `signatures` holds, with `service`, telling the user
+    /// once what `welcome` holds.
     pub(crate) fn new(
         inbox: Arc<Inbox>,
         (snapshot, worktree, linked, signatures): (
@@ -217,7 +223,7 @@ impl Server {
             Arc<Linked>,
             Arc<Signatures>,
         ),
-        service: Arc<OnceLock<Service>>,
+        (service, welcome): (Arc<OnceLock<Service>>, WelcomeLine),
     ) -> Self {
         Self {
             started: Instant::now(),
@@ -232,6 +238,7 @@ impl Server {
             runs: Arc::default(),
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
+            welcome,
         }
     }
 
@@ -675,16 +682,25 @@ impl Server {
         }
         let given = if is_probe { Vec::new() } else { answer.given };
         // A session's start tells the user, never the model, which steps the daemon runs on its
-        // own failed since the user was last told; a probe's start is no user's, a start answered
-        // too late reaches no one, and an agent that shows its user no hook's message cannot tell
-        // them, so none of those takes them.
-        let (to_user, troubles) = (matches!(asked, Asked::Primer)
-            && !is_probe
+        // own failed since the user was last told, and a session's start or a prompt that Cortex
+        // set the repository up on its own; a probe is no user's, an answer too late reaches no
+        // one, and an agent that shows its user no hook's message cannot tell them, so none of
+        // those takes either.
+        let can_tell = !is_probe
             && agent.shows_user_messages()
-            && !is_too_late_to_send(answer_by_ms, now_ms()))
-        .then(|| self.inbox.take_troubles(now_ms()))
-        .flatten()
-        .map_or((None, None), |(text, taken)| (Some(text), Some(taken)));
+            && !is_too_late_to_send(answer_by_ms, now_ms());
+        let welcome = (can_tell && matches!(asked, Asked::Primer | Asked::WorkOrder))
+            .then(|| self.welcome.take())
+            .flatten();
+        let (said, troubles) = (can_tell && matches!(asked, Asked::Primer))
+            .then(|| self.inbox.take_troubles(now_ms()))
+            .flatten()
+            .map_or((None, None), |(text, taken)| (Some(text), Some(taken)));
+        let to_user = match (welcome, said) {
+            (Some(welcome), Some(said)) => Some(format!("{welcome}\n{said}")),
+            (Some(welcome), None) => Some(welcome.to_owned()),
+            (None, said) => said,
+        };
         Answered {
             body: ResponseBody::Reply {
                 text: answer.text,
@@ -696,6 +712,7 @@ impl Server {
                 claims: if is_probe { Vec::new() } else { answer.claims },
                 stop: held_stop,
                 troubles,
+                is_welcome: welcome.is_some(),
             },
         }
     }
@@ -723,6 +740,9 @@ impl Server {
         }
         if let Some(taken) = undo.troubles {
             self.inbox.put_back_troubles(taken);
+        }
+        if undo.is_welcome {
+            self.welcome.put_back();
         }
     }
 
@@ -1038,7 +1058,7 @@ mod tests {
     #[test]
     fn a_stop_holds_when_its_answer_cannot_be_written() -> TestResult {
         let inbox = Arc::new(Inbox::default());
-        let server = Server::new(Arc::clone(&inbox), Default::default(), Arc::default());
+        let server = Server::new(Arc::clone(&inbox), Default::default(), Default::default());
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let answered = runtime.block_on(async {
             let (client, mut daemon) = tokio::io::duplex(64);
@@ -1066,7 +1086,7 @@ mod tests {
     fn failures_in_a_reply_that_never_arrived_are_kept() -> TestResult {
         let inbox = Arc::new(Inbox::default());
         inbox.note_trouble(Step::Mining, "reading the history: bad object", now_ms());
-        let server = Server::new(Arc::clone(&inbox), Default::default(), Arc::default());
+        let server = Server::new(Arc::clone(&inbox), Default::default(), Default::default());
         let start = cortex_core::Event {
             hook: HookKind::SessionStart,
             ..stop_event()?
@@ -1144,7 +1164,7 @@ mod tests {
     fn a_closed_inbox_takes_no_events() -> TestResult {
         let inbox = Arc::new(Inbox::default());
         inbox.close();
-        let server = Server::new(Arc::clone(&inbox), Default::default(), Arc::default());
+        let server = Server::new(Arc::clone(&inbox), Default::default(), Default::default());
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let event = Received {
             request: Request {

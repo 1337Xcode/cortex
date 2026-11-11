@@ -94,7 +94,8 @@ fn doctor_is_green_after_init_with_a_daemon() -> TestResult {
             "ok    hooks",
             "ok    silenced",
             "ok    binary",
-            "ok    daemon"
+            "ok    daemon",
+            "ok    adoption"
         ]
     );
     let latency: Vec<(&str, &str)> = run

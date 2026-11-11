@@ -19,10 +19,16 @@
 //! Then it finds the repository's daemon or starts one, waits for its first index (see
 //! [`daemon`]), and runs `cortex doctor`'s checks, whose failures it reports without failing: what
 //! init writes is written by then.
+//!
+//! `--global` sets up no repository: every agent found gets Cortex's hooks in the user's own
+//! settings, the questions are kept in the user's `~/.cortex/config.toml`, and Cortex then sets up
+//! on its own each repository an agent works in (see [`global`] and [`adopt`]).
 
+mod adopt;
 mod consent;
 mod daemon;
 mod git;
+mod global;
 mod hooks;
 mod ignores;
 mod place;
@@ -44,7 +50,9 @@ use crate::backup::{Backup, Kind};
 use crate::commands::doctor::{Finding, checked, claude_code_version};
 use crate::output;
 
+pub(crate) use self::adopt::{Adopted, adopt};
 use self::consent::{Answers, ConfigFile, Kept};
+pub(crate) use self::global::switch_off;
 use self::ignores::Ignored;
 pub(crate) use self::ignores::without_lines;
 pub(crate) use self::place::own_folder;
@@ -66,6 +74,10 @@ pub(crate) struct Args {
     /// found on this machine when left out.
     #[arg(long, value_delimiter = ',')]
     agents: Vec<String>,
+    /// Set up no repository: write the agents' hooks to the user's own settings, and have Cortex
+    /// set up each repository an agent works in on its own.
+    #[arg(long, conflicts_with_all = ["root", "scope"])]
+    global: bool,
 }
 
 /// Where Claude Code reads the hooks Cortex writes.
@@ -190,22 +202,11 @@ impl Files {
                 Some((ignored, Found::read(ignore_file(root)?)?))
             }
         };
-        let (mut settings, mut set_up, mut not_set_up) = (Vec::new(), Vec::new(), Vec::new());
-        for &setup in setups {
-            match hooks::planned(scope, root.worktree(), setup) {
-                Ok(planned) => {
-                    settings.extend(planned);
-                    set_up.push(setup);
-                }
-                Err(error) if !are_named => not_set_up.push(format!(
-                    "note: {} was found but is not set up: {error:#}; `cortex init --agents {}` \
-                     sets it up once that is fixed",
-                    setup.agent.title(),
-                    setup.agent.name()
-                )),
-                Err(error) => return Err(error),
-            }
-        }
+        let Planned {
+            settings,
+            set_up,
+            not_set_up,
+        } = planned_hooks(scope, Some(root.worktree()), setups, are_named)?;
         Ok(Self {
             users_config: Found::read_only(user.config_path())?,
             repository_config: Found::read(repository_config)?,
@@ -250,15 +251,8 @@ impl Files {
             let lines = ignores::needed(&ignored, answers.sharing, &made);
             changes.extend(ignore_change(gitignore, &lines));
         }
-        for settings in self.settings {
-            if settings.is_current() {
-                output::line(&settings.current())?;
-            } else {
-                changes.push(settings.into_change());
-            }
-        }
-        let repository =
-            consent::repository_config(self.repository_config.config(), kept, answers)?;
+        changes.extend(settings_changes(self.settings)?);
+        let repository = consent::with_answers(self.repository_config.config(), kept, answers)?;
         if let Some(after) = repository {
             let owner = Owner::Repository {
                 folder: Some(".cortex"),
@@ -296,6 +290,9 @@ struct Change {
 /// left unanswered, a file that cannot be read, is read-only or would be written outside the
 /// repository, or a backup or a write that fails.
 pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
+    if args.global {
+        return global::run(args.yes, &args.agents);
+    }
     let root = found_root(args)?;
     let (setups, are_named) = selected(&args.agents, &root.folder)?;
     if setups.is_empty() {
@@ -311,7 +308,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         let versions = adapter
             .versions()
             .context("the Claude Code adapter names no versions")?;
-        check_claude_code(&root, versions)?;
+        check_claude_code(&root.folder, versions)?;
     }
     let files = Files::found(args.scope, &root, &setups, are_named)?;
     for line in &files.not_set_up {
@@ -323,7 +320,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let mut terminal = stdin.is_terminal().then(|| stdin.lock());
     let answers = consent::answers(kept, args.yes, terminal.as_mut())?;
     let changes = files.changes(kept, answers)?;
-    apply(&root, changes)?;
+    apply((&root.folder, root.linked.as_deref()), changes)?;
     daemon::started_and_indexed(&root.folder)?;
     for setup in &set_up {
         for step in setup.told {
@@ -418,14 +415,80 @@ fn found_root(args: &Args) -> anyhow::Result<Root> {
     Ok(root)
 }
 
-/// Checks that Claude Code, asked its version in `root`'s folder, is one the `versions` Cortex
-/// knows allow, and says what it found.
+/// What [`planned_hooks`] found: the settings each agent's hooks go to, the agents set up, and
+/// what init says of each found agent left out.
+struct Planned {
+    /// The settings each agent's hooks go to.
+    settings: Vec<hooks::Settings>,
+    /// The agents set up: their hooks planned, or with no hooks file Cortex writes; in order.
+    set_up: Vec<&'static Setup>,
+    /// What init says of each agent found on this machine whose hooks cannot be planned.
+    not_set_up: Vec<String>,
+}
+
+/// The hooks of each of `setups` planned at `scope` for the working tree `worktree` (none for the
+/// user's own settings alone, as `--global` writes), which the command line named when
+/// `are_named`. A found agent whose hooks cannot be planned is left out and said; a named one
+/// stops init.
+///
+/// # Errors
+///
+/// A named agent's hooks cannot be planned.
+fn planned_hooks(
+    scope: Scope,
+    worktree: Option<&Path>,
+    setups: &[&'static Setup],
+    are_named: bool,
+) -> anyhow::Result<Planned> {
+    let mut planned = Planned {
+        settings: Vec::new(),
+        set_up: Vec::new(),
+        not_set_up: Vec::new(),
+    };
+    for &setup in setups {
+        match hooks::planned(scope, worktree, setup) {
+            Ok(settings) => {
+                planned.settings.extend(settings);
+                planned.set_up.push(setup);
+            }
+            Err(error) if !are_named => planned.not_set_up.push(format!(
+                "note: {} was found but is not set up: {error:#}; `cortex init --agents {}` sets \
+                 it up once that is fixed",
+                setup.agent.title(),
+                setup.agent.name()
+            )),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(planned)
+}
+
+/// The changes that write Cortex's current hooks to each of `settings`, the settings that hold
+/// them already said on stdout instead.
+///
+/// # Errors
+///
+/// Stdout cannot be written.
+fn settings_changes(settings: Vec<hooks::Settings>) -> anyhow::Result<Vec<Change>> {
+    let mut changes = Vec::new();
+    for settings in settings {
+        if settings.is_current() {
+            output::line(&settings.current())?;
+        } else {
+            changes.push(settings.into_change());
+        }
+    }
+    Ok(changes)
+}
+
+/// Checks that Claude Code, asked its version in `folder`, is one the `versions` Cortex knows
+/// allow, and says what it found.
 ///
 /// # Errors
 ///
 /// Claude Code is older than the oldest of `versions`, or stdout cannot be written.
-fn check_claude_code(root: &Root, versions: Versions) -> anyhow::Result<()> {
-    match claude_code_version(&root.folder, versions) {
+fn check_claude_code(folder: &Path, versions: Versions) -> anyhow::Result<()> {
+    match claude_code_version(folder, versions) {
         Some(Finding::Fail { what, fix }) => {
             bail!("{what}; {fix}, then run `cortex init` again")
         }
@@ -436,16 +499,18 @@ fn check_claude_code(root: &Root, versions: Versions) -> anyhow::Result<()> {
 }
 
 /// The file init adds its ignore lines to for `root`: the `.gitignore` at its top, or, in a linked
-/// working tree, whose `.gitignore` belongs to its branch, the exclude file git names for it.
+/// working tree, whose `.gitignore` belongs to its branch, or for a repository Cortex sets up on
+/// its own, whose `.gitignore` belongs to its team, the exclude file git names for it.
 ///
 /// # Errors
 ///
 /// The file is a link, or cannot be found; git cannot name the exclude file.
 fn ignore_file(root: &Root) -> anyhow::Result<PathBuf> {
-    match &root.linked {
-        None => place::unlinked_file_in(&root.folder, ".gitignore"),
-        Some(linked) => {
-            let file = ignores::exclude_file(linked, &root.git_bound)?;
+    match (&root.linked, root.is_adopted) {
+        (None, false) => place::unlinked_file_in(&root.folder, ".gitignore"),
+        (linked, _) => {
+            let top = linked.as_deref().unwrap_or(&root.folder);
+            let file = ignores::exclude_file(top, &root.git_bound)?;
             let (folder, name) = file
                 .parent()
                 .zip(file.file_name().and_then(|name| name.to_str()))
@@ -476,22 +541,21 @@ fn ignore_change(found: Found, lines: &[&str]) -> Option<Change> {
     })
 }
 
-/// Writes each of `changes` for the repository `root`, each backed up first: the repository's
-/// files in a folder of this run's own in its `.cortex/backups/`, with the manifest also in the
-/// user's `~/.cortex/backups/`, and the user's files there, each folder made when a first file for
-/// it changes, an agent's folder of the repository's in the working tree init started in. Then
-/// says what it wrote and where the backups are, so that a closed stdout never stops it partway.
+/// Writes each of `changes` for the repository whose root is `root`, started in the linked
+/// working tree `linked` when it was, each backed up first: the repository's files in a folder of
+/// this run's own in its `.cortex/backups/`, with the manifest also in the user's
+/// `~/.cortex/backups/`, and the user's files there, each folder made when a first file for it
+/// changes, an agent's folder of the repository's in the working tree init started in. For
+/// `--global`, which changes the user's files alone, `root` is the home folder, which the
+/// manifest names. Then says what it wrote and where the backups are, so that a closed stdout
+/// never stops it partway.
 ///
 /// # Errors
 ///
 /// A folder or a backup cannot be made, a file changed since it was read, a write fails, or stdout
 /// cannot be written.
-fn apply(root: &Root, changes: Vec<Change>) -> anyhow::Result<()> {
-    let (worktree, linked, root) = (
-        root.worktree(),
-        root.linked.as_deref(),
-        root.folder.as_path(),
-    );
+fn apply((root, linked): (&Path, Option<&Path>), changes: Vec<Change>) -> anyhow::Result<()> {
+    let worktree = linked.unwrap_or(root);
     let now_ms = unix_millis(SystemTime::now());
     let mut repository: Option<Backup> = None;
     let mut user: Option<Backup> = None;

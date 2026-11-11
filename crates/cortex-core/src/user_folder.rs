@@ -54,6 +54,40 @@ impl UserFolder {
         self.0.join("run")
     }
 
+    /// The file whose presence turns adoption on: Cortex then sets up on its own a repository an
+    /// agent works in that is not set up yet (see [`crate::adoption_candidate`]).
+    #[must_use]
+    pub fn adopt_path(&self) -> PathBuf {
+        self.0.join("adopt")
+    }
+
+    /// The folder of the folders Cortex refused to set up on its own, one file each, so that hooks
+    /// stop asking.
+    #[must_use]
+    pub fn refused_folder(&self) -> PathBuf {
+        self.run_folder().join("refused")
+    }
+
+    /// The file that says Cortex refused to set up on its own the folder with id `repo_id`.
+    #[must_use]
+    pub fn refusal_path(&self, repo_id: &RepoId) -> PathBuf {
+        self.refused_folder().join(repo_id.as_str())
+    }
+
+    /// The file whose lock a daemon setting up the folder with id `repo_id` holds while it does,
+    /// and while it then serves the folder, so that a second start for the folder sets nothing up.
+    #[must_use]
+    pub fn adopting_path(&self, repo_id: &RepoId) -> PathBuf {
+        self.run_folder().join(format!("{repo_id}.adopt"))
+    }
+
+    /// The file that records the repository with id `repo_id` as set up for Cortex on this
+    /// machine (see [`crate::is_set_up_here`]).
+    #[must_use]
+    pub fn set_up_path(&self, repo_id: &RepoId) -> PathBuf {
+        self.0.join("repositories").join(repo_id.as_str())
+    }
+
     /// The run files of the daemon of the repository with id `repo_id`.
     #[must_use]
     pub fn run_files(&self, repo_id: &RepoId) -> RunFiles {
@@ -144,6 +178,16 @@ mod tests {
             Path::new("/home/dev/.cortex/config.toml")
         );
         assert_eq!(folder.logs_folder(), Path::new("/home/dev/.cortex/logs"));
+        assert_eq!(folder.adopt_path(), Path::new("/home/dev/.cortex/adopt"));
+        assert_eq!(
+            folder.refusal_path(&id),
+            run.join("refused").join(id.as_str())
+        );
+        assert_eq!(folder.adopting_path(&id), run.join(format!("{id}.adopt")));
+        assert_eq!(
+            folder.set_up_path(&id),
+            Path::new("/home/dev/.cortex/repositories").join(id.as_str())
+        );
         assert_eq!(files.socket_path(), run.join(format!("{id}.sock")));
         assert_eq!(files.lock_path(), run.join(format!("{id}.lock")));
         assert_eq!(files.pid_path(), run.join(format!("{id}.pid")));

@@ -24,7 +24,7 @@ pub(crate) struct Run {
     /// The folders every file it changed is in: the repository, and the linked working tree it
     /// started in when it started in one; none for a run on the user's own files, which may be
     /// wherever a link led init.
-    pub(super) bounds: Vec<PathBuf>,
+    pub(crate) bounds: Vec<PathBuf>,
     /// What it changed.
     pub(crate) manifest: Manifest,
 }
@@ -41,6 +41,22 @@ pub(crate) fn of_repository(
     root: &Path,
     notes: &mut Vec<String>,
 ) -> anyhow::Result<Vec<Run>> {
+    let mut runs = of_repositories(user, notes)?;
+    runs.retain(|run| Path::new(&run.manifest.repository) == root);
+    Ok(runs)
+}
+
+/// The runs that changed the files of any repository, newest first, from the backups of the user
+/// folder `user`. A manifest this build cannot read is passed over, with a note saying so added
+/// to `notes`.
+///
+/// # Errors
+///
+/// The backup folder or a manifest cannot be read.
+pub(crate) fn of_repositories(
+    user: &UserFolder,
+    notes: &mut Vec<String>,
+) -> anyhow::Result<Vec<Run>> {
     let mut runs = Vec::new();
     for (started, name) in run_folders(&user.path().join("backups"))? {
         let path = user
@@ -51,10 +67,8 @@ pub(crate) fn of_repository(
         let Some(manifest) = read(&path, notes)? else {
             continue;
         };
-        if Path::new(&manifest.repository) != root {
-            continue;
-        }
-        let mut bounds = vec![root.to_path_buf()];
+        let root = PathBuf::from(&manifest.repository);
+        let mut bounds = vec![root.clone()];
         bounds.extend(manifest.worktree.as_ref().map(PathBuf::from));
         runs.push(Run {
             started,

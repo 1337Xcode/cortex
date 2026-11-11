@@ -5,8 +5,10 @@
 //! agent text (a session's start, a prompt) it asks the daemon for that text with the event, and
 //! writes it in the agent's hook protocol to the output it was given, when the whole answer came in
 //! time. Whatever else happens it writes nothing and the hook exits 0; what went wrong goes to the
-//! hook log.
+//! hook log. A working folder in no repository set up for Cortex is offered, once adoption is on,
+//! to a daemon started to set it up (see [`crate::adopt`]), and the hook gives nothing.
 
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::panic::AssertUnwindSafe;
@@ -20,7 +22,7 @@ use crate::adapter::{Adapter, HookEntry, NormalizeError, Stamp, adapter, shortes
 use crate::client::{Answer, ClientError, ask, ask_served};
 use crate::fail_open::{self, Outcome};
 use crate::stdin::{self, StdinError};
-use crate::{log, root, spawn, stop};
+use crate::{adopt, log, root, spawn, stop};
 
 /// The hook waits for its payload, counted from its start, its event's hard timeout divided by
 /// this: a third, 500 ms at a session's start and 100 ms at a stop. An agent may write the payload
@@ -184,11 +186,22 @@ impl Hook {
         let payload_wait = entry.hard_timeout / PAYLOAD_WAIT_DIVISOR;
         let payload = stdin::read_payload(input, self.started + payload_wait)?;
         let home = self.home.as_deref();
-        let locate = |cwd: &Path| root::locate(cwd, home);
+        // The working folder no repository set up for Cortex holds, when the payload names one.
+        let unplaced: RefCell<Option<PathBuf>> = RefCell::new(None);
+        let locate = |cwd: &Path| {
+            let located = root::locate(cwd, home);
+            if located.is_none() {
+                unplaced.replace(Some(cwd.to_path_buf()));
+            }
+            located
+        };
         let Some(event) =
             adapter.normalize(entry.event_name, &payload, &locate, stamp(self.now))?
         else {
-            return Ok(None);
+            return match unplaced.into_inner() {
+                Some(cwd) => self.offer(&cwd, &payload).map(|()| None),
+                None => Ok(None),
+            };
         };
         let user = UserFolder::in_home(home.ok_or(Failure::NoHome)?);
         let files = user.run_files(&RepoId::of(&event.repo_root));
@@ -240,6 +253,28 @@ impl Hook {
             }
             Err(error) => Err(error.into()),
         }
+    }
+
+    /// Offers the folder holding `cwd`, a working folder no repository set up for Cortex holds, to
+    /// a daemon that sets it up when adoption is on, and gives the agent nothing. A probe, `cortex
+    /// doctor`'s, which `payload` may be, changes nothing and offers nothing.
+    ///
+    /// # Errors
+    ///
+    /// No home folder, or a daemon that could not be started.
+    fn offer(&self, cwd: &Path, payload: &[u8]) -> Result<(), Failure> {
+        if crate::shaped::payload::may_be_probe(payload) {
+            return Ok(());
+        }
+        let home = self.home.as_deref().ok_or(Failure::NoHome)?;
+        // INVARIANT: fail-open. Setting a folder up runs in the daemon started for it, never on
+        // the hook's path: the hook reads file metadata, starts the daemon detached, and returns.
+        let offered = adopt::offer(cwd, (home, &std::env::temp_dir()), self.now)
+            .map_err(Failure::StartDaemon)?;
+        if offered == adopt::Offered::Started(spawn::Started::Now) {
+            self.note("a daemon was started to set up the working folder's repository");
+        }
+        Ok(())
     }
 
     /// Writes `what` to the hook log as [`Hook::note`] does, from the hook's own thread, which must

@@ -15,6 +15,8 @@ mod import;
 mod init;
 mod mcp;
 mod note;
+mod off;
+mod on;
 mod receipts;
 mod status;
 mod uninstall;
@@ -39,6 +41,11 @@ pub(crate) enum Command {
     Doctor(doctor::Args),
     /// Undo what init did to a repository and stop its daemon.
     Uninstall(uninstall::Args),
+    /// Turn Cortex off in a repository: its hooks give nothing there, and it is never set up on
+    /// its own.
+    Off(off::Args),
+    /// Turn Cortex on again in a repository `cortex off` turned it off in.
+    On(on::Args),
     /// Show what each task of recent sessions took: turns, tool calls, tokens and estimated cost.
     Receipts(receipts::Args),
     /// Show the code the retrieval engine finds for a question, with its reasons and what the
@@ -81,6 +88,8 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Init(args) => init::run(&args),
         Command::Doctor(args) => doctor::run(&args),
         Command::Uninstall(args) => uninstall::run(&args),
+        Command::Off(args) => off::run(&args),
+        Command::On(args) => on::run(&args),
         Command::Receipts(args) => receipts::run(&args),
         Command::Where(args) => where_::run(&args),
         Command::Why(args) => why::run(&args),

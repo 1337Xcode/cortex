@@ -31,6 +31,10 @@ pub(super) struct Root {
     /// The linked working tree init started in, canonical, when it started in one: `folder` is
     /// then its repository's main working tree.
     pub(super) linked: Option<PathBuf>,
+    /// Whether Cortex sets the repository up on its own, for an agent that works in it (see
+    /// [`super::adopt`]): its ignore lines then go to the exclude file git keeps, never to a file
+    /// its team commits.
+    pub(super) is_adopted: bool,
 }
 
 impl Root {
@@ -78,6 +82,7 @@ pub(super) fn find(start: &Path, home: &Path) -> anyhow::Result<Root> {
                     without_git: Some(why),
                     git_bound,
                     linked: None,
+                    is_adopted: false,
                 },
                 &home,
             );
@@ -89,6 +94,7 @@ pub(super) fn find(start: &Path, home: &Path) -> anyhow::Result<Root> {
             without_git: without_git.map(str::to_owned),
             git_bound,
             linked,
+            is_adopted: false,
         },
         &home,
     )

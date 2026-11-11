@@ -15,7 +15,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
-use cortex_core::{ConfigLayer, MAX_SETTINGS_BYTES, read_text_file, setting_value, with_setting};
+use cortex_core::{
+    ConfigLayer, MAX_SETTINGS_BYTES, SwitchKey, UserFolder, read_text_file, setting_value,
+    switch_key, with_setting,
+};
 use cortex_daemon::settings::Place;
 
 use crate::backup::replace_unchanged;
@@ -35,6 +38,9 @@ const BACKUP_EXTENSION: &str = "toml.cortex-backup";
 /// the configuration refuses, a file the value cannot be placed in without changing anything else
 /// it says, or a file or copy that cannot be written.
 pub(crate) fn set(root: &Path, place: Place, key: &str, value_text: &str) -> anyhow::Result<()> {
+    if let Some(switch) = switch_key(key) {
+        return set_switch(switch, value_text);
+    }
     let path = file_of(root, place)?;
     let backup = path.with_extension(BACKUP_EXTENSION);
     refuse_unless_file(&path)?;
@@ -65,6 +71,30 @@ pub(crate) fn set(root: &Path, place: Place, key: &str, value_text: &str) -> any
         "kept what {} held before as {}",
         path.display(),
         backup.display()
+    ))
+}
+
+/// Turns `switch` on or off as `value_text`, `true` or `false`, says, by writing or removing its
+/// file in the user's folder, whichever file was named: a switch is the user's alone.
+///
+/// # Errors
+///
+/// A value other than `true` or `false`, no home folder, or a file that cannot be written or
+/// removed.
+fn set_switch(switch: &SwitchKey, value_text: &str) -> anyhow::Result<()> {
+    let is_on = match value_text.trim() {
+        "true" => true,
+        "false" => false,
+        _ => bail!("`{}` takes true or false", switch.name),
+    };
+    let user = UserFolder::of_current_user().context("finding the home folder")?;
+    let file = switch.file(&user);
+    crate::adoption::switch(&file, is_on)?;
+    output::line(&format!(
+        "set {} = {is_on} ({} {})",
+        switch.name,
+        if is_on { "wrote" } else { "removed" },
+        file.display()
     ))
 }
 

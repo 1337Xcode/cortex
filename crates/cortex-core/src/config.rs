@@ -16,6 +16,7 @@
 //! instead: [`load`] reads it first, [`LoadedConfig::settings`] lists it, and [`with_setting`]
 //! checks it and offers it as the nearest key.
 
+mod adopt;
 mod compaction;
 mod coordination;
 mod edit;
@@ -26,12 +27,14 @@ mod profile;
 mod registry;
 mod retrieval;
 mod set;
+mod switches;
 mod warnings;
 
 use std::collections::BTreeMap;
 
 use thiserror::Error;
 
+pub use self::adopt::AdoptConfig;
 pub use self::compaction::CompactionConfig;
 pub use self::coordination::CoordinationConfig;
 pub use self::effective::{Setting, SettingSource};
@@ -40,6 +43,7 @@ pub use self::profile::{PROFILE_KEY, Profile};
 pub use self::registry::{ConfigKey, config_key, config_keys};
 pub use self::retrieval::{MAX_WORK_ORDER_TOKENS, RetrievalConfig, TypeWeights};
 pub use self::set::{SetError, setting_value, with_setting};
+pub use self::switches::{SWITCH_KEYS, SwitchKey, switch_key};
 pub use self::warnings::WarningsConfig;
 use crate::ScaleMode;
 
@@ -187,6 +191,8 @@ pub struct Config {
     pub hints: HintsConfig,
     /// The `compaction.*` keys: what a compaction is given.
     pub compaction: CompactionConfig,
+    /// The `adopt.*` keys: which folders Cortex sets up on its own.
+    pub adopt: AdoptConfig,
 }
 
 impl Default for Config {
@@ -216,6 +222,7 @@ impl Default for Config {
             is_strict_mode: false,
             hints: HintsConfig::default(),
             compaction: CompactionConfig::default(),
+            adopt: AdoptConfig::default(),
         }
     }
 }
@@ -492,6 +499,7 @@ mod tests {
                 is_strict_mode: false,
                 hints: HintsConfig::default(),
                 compaction: CompactionConfig::default(),
+                adopt: AdoptConfig::default(),
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -591,6 +599,7 @@ mod tests {
                     is_redundant_commands: true,
                 },
                 compaction: CompactionConfig { is_keep_list: true },
+                adopt: AdoptConfig::default(),
             }
         );
         Ok(())

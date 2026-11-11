@@ -45,6 +45,7 @@ impl Scene {
         let home = tempfile::tempdir()?;
         let repo = home.path().join(folder);
         std::fs::create_dir_all(repo.join(".cortex"))?;
+        cortex_core::record_set_up(&UserFolder::in_home(home.path()), &canonical_root(&repo)?)?;
         std::fs::write(repo.join("app.py"), "def kept():\n    pass\n")?;
         let files =
             UserFolder::in_home(home.path()).run_files(&RepoId::of(&canonical_root(&repo)?));

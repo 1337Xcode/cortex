@@ -9,6 +9,7 @@
 //! probes; none runs a command a settings file names, since a repository can name any program
 //! there.
 
+mod adoption;
 mod agent;
 mod agents;
 mod daemon;
@@ -71,6 +72,7 @@ const CHECKS: &[Check] = &[
     ("agent", agent::check),
     ("daemon", daemon::answers),
     ("latency", latency::probes),
+    ("adoption", adoption::state),
 ];
 
 /// Runs every check on the repository, prints each finding, and fails when any check did.

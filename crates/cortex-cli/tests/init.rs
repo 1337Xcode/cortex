@@ -482,7 +482,8 @@ fn init_starts_the_daemon_and_runs_doctor() -> TestResult {
             "ok    silenced",
             "ok    binary",
             "ok    agent",
-            "ok    daemon"
+            "ok    daemon",
+            "ok    adoption"
         ],
         "{}",
         done.stdout

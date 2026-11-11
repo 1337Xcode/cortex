@@ -83,6 +83,7 @@ fn marked_repository() -> TestResult<(tempfile::TempDir, std::path::PathBuf, Run
     let home = tempfile::tempdir()?;
     let repo = home.path().join("repo");
     std::fs::create_dir_all(repo.join(".cortex"))?;
+    cortex_core::record_set_up(&UserFolder::in_home(home.path()), &canonical_root(&repo)?)?;
     let files = run_files_of(home.path(), &canonical_root(&repo)?)?;
     Ok((home, repo, files))
 }

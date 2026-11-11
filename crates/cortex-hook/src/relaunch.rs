@@ -19,8 +19,8 @@
 /// The flag of `cortex daemon` that starts the daemon anew instead of running it.
 pub const RELAUNCH_FLAG: &str = "--relaunch";
 
-/// Starts `program daemon --root <root>` with no handle of this process, and returns once it is
-/// created. It is not waited for, and its process and thread handles are left to this process's
+/// Starts `program daemon --root <root>`, with `--adopt` for [`Purpose::Adopt`], with no handle of
+/// this process, and returns once it is created. It is not waited for, and its process and thread handles are left to this process's
 /// exit, a moment later. A failure is also written to the hook log in the user folder of `home`,
 /// when there is one, since this process's own error output goes nowhere.
 ///
@@ -31,9 +31,10 @@ pub const RELAUNCH_FLAG: &str = "--relaunch";
 pub fn relaunch_daemon(
     program: &std::path::Path,
     root: &std::path::Path,
+    purpose: crate::spawn::Purpose,
     home: Option<&std::path::Path>,
 ) -> std::io::Result<()> {
-    let started = start_anew(program, root);
+    let started = start_anew(program, root, purpose);
     if let (Err(error), Some(home)) = (&started, home) {
         let now = std::time::SystemTime::now();
         let line = format!(
@@ -53,14 +54,19 @@ pub fn relaunch_daemon(
 ///
 /// As [`relaunch_daemon`].
 #[cfg(windows)]
-fn start_anew(program: &std::path::Path, root: &std::path::Path) -> std::io::Result<()> {
+fn start_anew(
+    program: &std::path::Path,
+    root: &std::path::Path,
+    purpose: crate::spawn::Purpose,
+) -> std::io::Result<()> {
+    let adopt = (purpose == crate::spawn::Purpose::Adopt).then_some(crate::spawn::ADOPT_FLAG);
     let words = [
         program.to_str(),
         Some("daemon"),
         Some("--root"),
         root.to_str(),
     ];
-    let words: Option<Vec<&str>> = words.into_iter().collect();
+    let words: Option<Vec<&str>> = words.into_iter().chain(adopt.map(Some)).collect();
     let words = words.ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -150,7 +156,8 @@ mod tests {
     fn a_failed_start_is_logged() -> Result<(), Box<dyn std::error::Error>> {
         let home = tempfile::tempdir()?;
         let missing = home.path().join("no-such-program.exe");
-        assert!(relaunch_daemon(&missing, home.path(), Some(home.path())).is_err());
+        let purpose = crate::spawn::Purpose::Serve;
+        assert!(relaunch_daemon(&missing, home.path(), purpose, Some(home.path())).is_err());
         let logs = cortex_core::UserFolder::in_home(home.path()).logs_folder();
         let log = std::fs::read_to_string(logs.join("hook.log"))?;
         assert!(

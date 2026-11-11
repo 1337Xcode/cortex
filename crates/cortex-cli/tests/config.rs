@@ -80,12 +80,13 @@ fn each_value_shows_the_file_it_came_from() -> TestResult {
         "retrieval.max_code_spans = 2 (default)",
         "mode = \"auto\" (default)",
         "holdout.share = 0.1 (default)",
+        "adopt.enabled = false (default)",
     ] {
         assert!(lines.contains(&expected), "{expected}\n{}", printed.stdout);
     }
-    // 18 keys of the main settings, 11 retrieval, 5 warning, 12 coordination, 3 hint and 1
-    // compaction key, and the profile.
-    assert_eq!(lines.len(), 51, "{}", printed.stdout);
+    // 18 keys of the main settings, 11 retrieval, 5 warning, 12 coordination, 3 hint, 1
+    // compaction and 2 adoption keys, and the profile.
+    assert_eq!(lines.len(), 53, "{}", printed.stdout);
     let mut sorted = lines.clone();
     sorted.sort_unstable();
     assert_eq!(lines, sorted);

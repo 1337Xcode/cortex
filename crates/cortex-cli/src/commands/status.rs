@@ -3,8 +3,9 @@
 //! then whether the index is ready, the scale mode, how many files are stored, parsed and waiting
 //! to be parsed, how far the history is mined, what the gate asks before it hands a work order
 //! over (the cold-start rule's bars, or the chance a kept confidence model must give, and whether a
-//! kept model cannot be used), and what the self-check last found of the work orders given. The
-//! store is only read.
+//! kept model cannot be used), and what the self-check last found of the work orders given; last,
+//! once the user has turned it on, whether Cortex sets repositories up on its own and the folders
+//! it refused. The store is only read.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -57,6 +58,14 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     }
     for line in index_lines(&root, &loaded.config)? {
         output::line(&line)?;
+    }
+    // Adoption is said once the user has used it: on, or with refusals still remembered.
+    if let Some(user) = UserFolder::of_current_user()
+        && (user.adopt_path().is_file() || crate::adoption::latest(&user)?.0 > 0)
+    {
+        for line in crate::adoption::lines(&user)? {
+            output::line(&line)?;
+        }
     }
     Ok(())
 }

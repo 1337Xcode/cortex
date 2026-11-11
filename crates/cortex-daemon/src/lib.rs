@@ -1,6 +1,7 @@
 //! The daemon: the long-lived process that keeps a repository's index, and its only writer.
 //!
-//! It takes the repository's run lock, listens for hooks and commands at once (so that requests
+//! It takes the repository's run lock, records the repository as set up on this machine in the
+//! user's own folder (which hooks look for before they serve it), listens for hooks and commands at once (so that requests
 //! made while it starts wait for it rather than fail), then takes the store's writer, records the
 //! hook events that arrive while the grammars load, and indexes what changed since the last index,
 //! recording events between the index's write transactions. Then it watches the repository and
@@ -56,6 +57,7 @@ mod test_store;
 mod told;
 mod troubles;
 mod upkeep;
+mod welcome;
 mod worktree;
 
 pub use instance::is_running;
@@ -85,6 +87,7 @@ use self::pending::Pending;
 use self::retrieval::{EditSettings, FailureSettings, Service, Settings};
 use self::server::Server;
 use self::signatures::Signatures;
+use self::welcome::WelcomeLine;
 use self::worktree::Worktree;
 
 /// Threads that serve connections. Requests are short; two keep one slow client from delaying
@@ -113,6 +116,10 @@ pub fn run(root: &Path, note: &mut dyn FnMut(&str) -> anyhow::Result<()>) -> any
     let user = UserFolder::in_home(&home);
     let repo_id = RepoId::of(root);
     let _instance = Instance::acquire(&user, &repo_id)?;
+    // Hooks serve only a repository the user's own folder records as set up on this machine, and
+    // a daemon runs only where init, Cortex's own set-up or the user started it.
+    cortex_core::record_set_up(&user, root)
+        .context("recording the repository as set up on this machine")?;
     // Started once the repository is held, so that only the daemon serving it writes its log, and
     // dropped before the hold is let go, so that every line is written before another daemon may
     // start.
@@ -165,7 +172,10 @@ fn listen_and_serve(
             Arc::clone(&shared.linked),
             Arc::clone(&shared.signatures),
         ),
-        Arc::clone(&shared.service),
+        (
+            Arc::clone(&shared.service),
+            WelcomeLine::of(&root.join(".cortex")),
+        ),
     );
     runtime.spawn(Arc::new(server).serve(listener));
     let served = index_and_serve(root, (repo_id, &shared, home), note);

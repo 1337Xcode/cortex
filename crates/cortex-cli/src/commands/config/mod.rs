@@ -3,13 +3,16 @@
 //! `.cortex/config.toml`), in the order of the keys' names, as text or as JSON; and `cortex config
 //! set <key> <value>`, which writes one key into the repository's file, or the user's with
 //! `--user`. The configuration's own registry reads and shows each key, and checks what is set.
+//! A switch (`adopt.enabled`) is no line of a file but a file's presence in the user's folder: it
+//! is shown as `user` when on and `default` when off, and set by writing or removing that file,
+//! whichever file `--user` names.
 
 mod write;
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use cortex_core::{Setting, SettingSource};
+use cortex_core::{SWITCH_KEYS, Setting, SettingSource, UserFolder};
 use cortex_daemon::settings::{self, ConfigFile, Place};
 use serde::Serialize;
 
@@ -61,6 +64,9 @@ struct Row {
     source: &'static str,
     /// What the key changes.
     description: &'static str,
+    /// Its value as a configuration file would set it, for the text listing.
+    #[serde(skip)]
+    shown: String,
 }
 
 /// Lists the settings in effect, or sets one key.
@@ -96,12 +102,14 @@ fn list(root: &Path, is_json: bool) -> anyhow::Result<()> {
     for warning in &loaded.warnings {
         output::note(&format!("warning: {warning}"))?;
     }
-    let settings = loaded.settings();
+    let mut rows = loaded
+        .settings()
+        .iter()
+        .map(|setting| row(setting, &files))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    rows.extend(switch_rows()?);
+    rows.sort_by_key(|row| row.key);
     if is_json {
-        let rows = settings
-            .iter()
-            .map(|setting| row(setting, &files))
-            .collect::<anyhow::Result<Vec<_>>>()?;
         let json = serde_json::to_string_pretty(&rows).context("writing the settings as JSON")?;
         // JSON escapes every control character inside its strings, so its own line breaks are the
         // only ones, and each line is printed as it is.
@@ -110,11 +118,33 @@ fn list(root: &Path, is_json: bool) -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    for setting in &settings {
-        let source = source_name(setting.source, &files)?;
-        output::line(&format!("{} = {} ({source})", setting.key, setting.value))?;
+    for row in &rows {
+        output::line(&format!("{} = {} ({})", row.key, row.shown, row.source))?;
     }
     Ok(())
+}
+
+/// Each switch as `--json` prints it: `true` from the user's folder when its file is there, else
+/// `false` by default.
+///
+/// # Errors
+///
+/// No home folder.
+fn switch_rows() -> anyhow::Result<Vec<Row>> {
+    let user = UserFolder::of_current_user().context("finding the home folder")?;
+    Ok(SWITCH_KEYS
+        .iter()
+        .map(|switch| {
+            let is_on = switch.is_on(&user);
+            Row {
+                key: switch.name,
+                value: serde_json::Value::Bool(is_on),
+                source: if is_on { "user" } else { "default" },
+                description: switch.description,
+                shown: is_on.to_string(),
+            }
+        })
+        .collect())
 }
 
 /// `setting` as `--json` prints it, its source named from the `files` read.
@@ -129,6 +159,7 @@ fn row(setting: &Setting, files: &[ConfigFile]) -> anyhow::Result<Row> {
             .with_context(|| format!("writing the value of `{}` as JSON", setting.key))?,
         source: source_name(setting.source, files)?,
         description: setting.description,
+        shown: setting.value.to_string(),
     })
 }
 

@@ -85,6 +85,23 @@ pub(crate) struct Payload<'a> {
     pub(crate) cortex_probe: Option<bool>,
 }
 
+/// The one field of a payload that says whether the call is `cortex doctor`'s probe.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ProbeMark {
+    /// Whether the call is a probe.
+    #[serde(deserialize_with = "lenient")]
+    cortex_probe: Option<bool>,
+}
+
+/// Whether `payload`, a hook's JSON (a byte-order mark before it allowed), may be `cortex
+/// doctor`'s probe: it says so, or it is no JSON the hook can read.
+pub(crate) fn may_be_probe(payload: &[u8]) -> bool {
+    let payload = payload.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(payload);
+    serde_json::from_slice::<ProbeMark>(payload)
+        .map_or(true, |mark| mark.cortex_probe == Some(true))
+}
+
 /// What a tool was given.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -382,6 +399,18 @@ fn has_drive(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A payload saying it is a probe, or one that is no JSON at all, may be a probe; one that
+    /// says nothing, or that it is none, or names the field leniently with another type, is not.
+    #[test]
+    fn a_probe_is_told_by_its_field() {
+        assert!(may_be_probe(br#"{"cortex_probe": true, "cwd": "x"}"#));
+        assert!(may_be_probe(b"\xEF\xBB\xBF{\"cortex_probe\": true}"));
+        assert!(may_be_probe(b"not json"));
+        assert!(!may_be_probe(br#"{"cwd": "x"}"#));
+        assert!(!may_be_probe(br#"{"cortex_probe": false}"#));
+        assert!(!may_be_probe(br#"{"cortex_probe": "yes"}"#));
+    }
 
     /// Grep's output is read for 50 files at most, each once, so a long output costs no more:
     /// 60 match lines give the first 50 files, and a file's second line adds nothing; output that

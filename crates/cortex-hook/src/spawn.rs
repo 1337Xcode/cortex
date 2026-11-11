@@ -1,6 +1,8 @@
 //! Starting a repository's daemon from a hook that found none: in the background, detached from
 //! the agent, never waited for. The daemon binds its endpoint before anything else, so the next
-//! hook finds it within moments; the hook that started it goes without.
+//! hook finds it within moments; the hook that started it goes without. A folder not set up yet is
+//! handed the same way to a daemon started to set it up first (`--adopt`), which decides whether
+//! it may.
 
 use std::io;
 use std::path::Path;
@@ -13,6 +15,18 @@ use cortex_core::{RunFiles, create_private_folder, open_private_file};
 /// moments; hooks that find none meanwhile leave the start under way alone, and a daemon that
 /// keeps failing costs one process every ten seconds, not one per tool call.
 const RESTART_GAP: Duration = Duration::from_secs(10);
+
+/// The flag of `cortex daemon` that has it set the folder up on its own before it runs.
+pub const ADOPT_FLAG: &str = "--adopt";
+
+/// What a daemon is started for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    /// Serving a repository set up for Cortex.
+    Serve,
+    /// Setting a folder up on its own first, when the configuration allows it, then serving it.
+    Adopt,
+}
 
 /// Whether a start was made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +51,37 @@ pub fn start_daemon(
     files: &RunFiles,
     now: SystemTime,
 ) -> io::Result<Started> {
+    start_gapped(program, (root, Purpose::Serve), files, now)
+}
+
+/// Starts `cortex daemon --root <folder> --adopt` as [`start_daemon`] starts a daemon, with the
+/// same gap between two starts for one folder, whose run files are `files`: the daemon sets the
+/// folder up first when it may, and remembers a refusal otherwise.
+///
+/// # Errors
+///
+/// As [`start_daemon`].
+pub fn start_adoption(
+    program: &Path,
+    folder: &Path,
+    files: &RunFiles,
+    now: SystemTime,
+) -> io::Result<Started> {
+    start_gapped(program, (folder, Purpose::Adopt), files, now)
+}
+
+/// Starts `cortex daemon` for `root` and `purpose` from the binary at `program`, unless a hook
+/// started one for the folder whose run files are `files` less than [`RESTART_GAP`] before `now`.
+///
+/// # Errors
+///
+/// As [`start_daemon`].
+fn start_gapped(
+    program: &Path,
+    (root, purpose): (&Path, Purpose),
+    files: &RunFiles,
+    now: SystemTime,
+) -> io::Result<Started> {
     let marker = files.start_path();
     let is_recent = std::fs::metadata(&marker)
         .and_then(|metadata| metadata.modified())
@@ -46,7 +91,7 @@ pub fn start_daemon(
     if is_recent {
         return Ok(Started::Recently);
     }
-    start_daemon_now(program, root, files, now).map(|()| Started::Now)
+    start_marked(program, (root, purpose), files, now).map(|()| Started::Now)
 }
 
 /// Starts `cortex daemon --root <root>` as [`start_daemon`] does, whenever a start was made: for a
@@ -61,6 +106,21 @@ pub fn start_daemon(
 pub fn start_daemon_now(
     program: &Path,
     root: &Path,
+    files: &RunFiles,
+    now: SystemTime,
+) -> io::Result<()> {
+    start_marked(program, (root, Purpose::Serve), files, now)
+}
+
+/// Marks a start at `now` in the run files `files` and starts `cortex daemon --root <root>`,
+/// `--adopt` added for [`Purpose::Adopt`], as [`start_daemon_now`] says.
+///
+/// # Errors
+///
+/// As [`start_daemon_now`].
+fn start_marked(
+    program: &Path,
+    (root, purpose): (&Path, Purpose),
     files: &RunFiles,
     now: SystemTime,
 ) -> io::Result<()> {
@@ -80,6 +140,9 @@ pub fn start_daemon_now(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if purpose == Purpose::Adopt {
+        command.arg(ADOPT_FLAG);
+    }
     #[cfg(windows)]
     command.arg(crate::relaunch::RELAUNCH_FLAG);
     // The child is not waited for: it outlives the hook by design, and dropping the handle neither
@@ -149,6 +212,30 @@ mod tests {
         assert_eq!(soon?, Started::Recently);
         let later = start_daemon(&program, &root, &files, now + Duration::from_secs(10));
         assert!(later.is_err(), "{later:?}");
+        Ok(())
+    }
+
+    /// A start to set a folder up keeps the same gap as a start to serve it: within ten seconds of
+    /// either, neither is made again. The program here does not exist, so a start that is made
+    /// fails.
+    #[test]
+    fn an_adoption_keeps_the_gap() -> Result<(), Box<dyn Error>> {
+        let home = tempfile::tempdir()?;
+        let folder = home.path().join("repo");
+        std::fs::create_dir(&folder)?;
+        let files = UserFolder::in_home(home.path()).run_files(&RepoId::of(&folder));
+        let program = home.path().join("no-such-program");
+        let now = SystemTime::now();
+        assert!(start_adoption(&program, &folder, &files, now).is_err());
+        let soon = now + Duration::from_secs(9);
+        assert_eq!(
+            start_adoption(&program, &folder, &files, soon)?,
+            Started::Recently
+        );
+        assert_eq!(
+            start_daemon(&program, &folder, &files, soon)?,
+            Started::Recently
+        );
         Ok(())
     }
 

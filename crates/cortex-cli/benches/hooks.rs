@@ -425,6 +425,9 @@ impl Down {
         std::fs::create_dir(repo.path().join(".cortex")).expect("the .cortex folder");
         #[allow(clippy::expect_used)]
         let root = canonical_root(repo.path()).expect("the repository's canonical root");
+        // Set up on this machine, as init leaves it, so that hooks serve it.
+        #[allow(clippy::expect_used)]
+        cortex_core::record_set_up(&user, &root).expect("the record of the set-up");
         let files = user.run_files(&RepoId::of(&root));
         #[allow(clippy::expect_used)]
         create_private_folder(&user.run_folder()).expect("the run folder");

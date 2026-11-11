@@ -9,12 +9,14 @@
 //! each, [`identifier_tokens`] splits names and paths into the words a search matches, and
 //! [`estimate_tokens`] sizes the text Cortex injects. Its only I/O is what every process needs
 //! alike: canonicalizing a repository's folder, reading where git keeps a working tree's
-//! repository, creating folders and files only their user can read, reading a small text file
+//! repository, looking at which folders above a working folder hold a `.git` or a `.cortex/off`
+//! ([`adoption_candidate`]), creating folders and files only their user can read, reading a small text file
 //! whole, and finding and running another program, bounded in time and output.
 
 #![warn(clippy::pedantic)]
 
 mod activity;
+mod adoption;
 mod agent_shell;
 mod child;
 mod config;
@@ -45,6 +47,7 @@ mod reminder_tag;
 mod repo_id;
 mod root;
 mod scale_mode;
+mod set_up;
 mod task;
 mod text_file;
 mod tokens;
@@ -57,15 +60,20 @@ pub use activity::{
     CommandKind, EventKind, EventMeta, EventSource, PROMPT_EXCERPT_CHARS, PromptExcerpt,
     SessionStatus, TaskOutcome,
 };
+pub use adoption::{
+    ADOPTED_FILE, Candidate, OFF_FILE, Places, Refusal, adoption_candidate, is_turned_off,
+    working_tree_top,
+};
 pub use agent_shell::{AGENT_SHELL_MARKERS, is_agent_shell};
 pub use child::{Captured, capture, time_fed};
 pub use config::{
-    CompactionConfig, Config, ConfigError, ConfigKey, ConfigLayer, CoordinationConfig,
+    AdoptConfig, CompactionConfig, Config, ConfigError, ConfigKey, ConfigLayer, CoordinationConfig,
     DEFAULT_HOLDOUT_SHARE, DEFAULT_IDLE_SHUTDOWN_MINUTES, DEFAULT_MAX_FILE_BYTES,
     DEFAULT_MMAP_BYTES, DEFAULT_PARSE_TIMEOUT_MS, HintsConfig, LoadedConfig, MAX_MMAP_BYTES,
-    MAX_WORK_ORDER_TOKENS, ModeSetting, PROFILE_KEY, Profile, RetrievalConfig, SetError, Setting,
-    SettingSource, TypeWeights, WarningsConfig, config_key, config_keys,
-    keys_set as config_keys_set, load as load_config, setting_value, with_setting,
+    MAX_WORK_ORDER_TOKENS, ModeSetting, PROFILE_KEY, Profile, RetrievalConfig, SWITCH_KEYS,
+    SetError, Setting, SettingSource, SwitchKey, TypeWeights, WarningsConfig, config_key,
+    config_keys, keys_set as config_keys_set, load as load_config, setting_value, switch_key,
+    with_setting,
 };
 pub use coordination::{PositionMode, WorkingTree};
 pub use estimate::estimate_tokens;
@@ -102,6 +110,7 @@ pub use reminder_tag::{REMINDER_TAGS, holds_reminder_tag};
 pub use repo_id::RepoId;
 pub use root::canonical_root;
 pub use scale_mode::ScaleMode;
+pub use set_up::{forget_set_up, is_set_up_here, record_set_up};
 pub use task::{is_held_out, task_id_of_prompt};
 pub use text_file::{MAX_SETTINGS_BYTES, TextFileError, read_text_file};
 pub use tokens::identifier_tokens;

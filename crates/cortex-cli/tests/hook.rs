@@ -377,6 +377,10 @@ fn an_openclaw_session_through_the_binary_is_recorded() -> TestResult {
 fn marked_repository() -> TestResult<(tempfile::TempDir, PathBuf)> {
     let (home, repo) = repository()?;
     std::fs::create_dir(repo.join(".cortex"))?;
+    cortex_core::record_set_up(
+        &UserFolder::in_home(home.path()),
+        &cortex_core::canonical_root(&repo)?,
+    )?;
     Ok((home, repo))
 }
 

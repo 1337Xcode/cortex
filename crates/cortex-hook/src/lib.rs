@@ -7,6 +7,7 @@
 #![warn(clippy::pedantic)]
 
 mod adapter;
+mod adopt;
 mod amp;
 mod antigravity;
 mod augment;
@@ -47,5 +48,5 @@ pub use relaunch::RELAUNCH_FLAG;
 pub use relaunch::relaunch_daemon;
 pub use root::{locate, locate_marked};
 pub use run::run;
-pub use spawn::{Started, start_daemon, start_daemon_now};
+pub use spawn::{ADOPT_FLAG, Purpose, Started, start_adoption, start_daemon, start_daemon_now};
 pub use stop::{Stop, stop_any, stop_if_older};

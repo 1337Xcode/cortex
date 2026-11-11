@@ -7,6 +7,7 @@
     reason = "each test file uses a different part of these helpers"
 )]
 
+pub mod adopting;
 pub mod calc;
 pub mod fake_daemon;
 pub mod git;

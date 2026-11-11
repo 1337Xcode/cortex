@@ -8,6 +8,29 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- `cortex init --global` sets Cortex up once for the user: every agent found gets Cortex's
+  hooks in its user settings, beside the user's own, the holdout question is kept in
+  `~/.cortex/config.toml`, and adoption is turned on (`adopt.enabled`, which `cortex config`
+  shows and sets). It refuses while a repository `cortex init` set up holds Cortex's hooks in
+  its own settings, so that no agent runs Cortex twice there. From then on, the first hook from
+  a git repository below the home folder that is not set up starts a daemon that sets it up on
+  its own, all or nothing: `.cortex/` and its lines in the exclude file git keeps, never a
+  `.gitignore`. The first session start or prompt after that tells the user once, in the
+  message the agent shows its user and never to the model, that Cortex set the repository up
+  and that `cortex off` turns it off; the tests check this with Claude Code's and Codex's
+  payloads. The home folder, the temporary folder, the user's own Cortex folder, folders
+  outside git and folders named by the new `adopt.exclude` setting are never set up and keep
+  nothing of Cortex's; a refusal is remembered so that hooks stop asking, and `cortex status`
+  and `cortex doctor` show it, while a set-up that fails is logged and tried again later. The
+  hook itself only looks at file metadata and starts the daemon in the background; it reads no
+  configuration, runs no git, and a `cortex doctor` probe offers nothing. `cortex uninstall
+  --global` gives each agent's file back byte for byte and turns adoption off. `cortex off`
+  turns Cortex off in one repository, and `cortex on` turns it on again.
+- Hooks serve only a repository the user's own folder records as set up on this machine
+  (`~/.cortex/repositories/`, written when its daemon starts, removed by `cortex uninstall`): a
+  `.cortex` folder a repository carries in its files no longer makes hooks serve it.
+  These were run through the binary with recorded payloads; a live agent session has not run
+  them yet.
 - `cortex init --agents` also writes Cortex's hooks for Cursor, GitHub Copilot, Antigravity,
   Kiro, TRAE, Crush (in `crush.json`, the JSON form Crush still reads beside its newer `crushrc`)
   and OpenHands, each in its own hooks file and shape as its documentation gives it, beside the
@@ -218,6 +241,8 @@ All notable changes to this project are documented in this file. The format is b
 - A file the prompt names, by its path or by a rare name defined in it, now leads the work order
   with its code, and the folders of a path the prompt names are no longer search words: a prompt
   naming `src/app/helpers.py` no longer ranks every file under `src/app` above the one it names.
+- A repository set up by an earlier build is served by hooks again once its daemon has started
+  under this one and recorded it: run `cortex init` in it once.
 - Cortex is licensed under the Apache License, Version 2.0, alone (see `LICENSE` and `NOTICE`).
   Commits before this change were offered under the MIT license or Apache-2.0, at the user's
   option, and stay available under those terms.
