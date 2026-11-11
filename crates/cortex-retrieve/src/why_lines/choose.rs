@@ -157,15 +157,10 @@ fn line_of(candidate: &Candidate<'_>, with_reason: bool) -> Option<String> {
     if subject.is_empty() {
         return None;
     }
-    let owned: Vec<String> = candidate
-        .owned
-        .iter()
-        .map(|lines| match (lines.start_line(), lines.end_line()) {
-            (start, end) if start == end => start.to_string(),
-            (start, end) => format!("{start}-{end}"),
-        })
-        .collect();
-    let mut line = format!("  why {}: commit \"{subject}\"", owned.join(","));
+    let mut line = format!(
+        "  why {}: commit \"{subject}\"",
+        lines_text(&candidate.owned)
+    );
     let reason = candidate
         .text
         .reason
@@ -183,17 +178,37 @@ fn line_of(candidate: &Candidate<'_>, with_reason: bool) -> Option<String> {
     if let Some(refs) = refs {
         let _ = write!(line, " ({refs})");
     }
-    if let Some(day) = utc_text(candidate.commit.committed_at_s.saturating_mul(1_000)) {
+    if let Some(day) = day_of(candidate.commit.committed_at_s) {
         line.push_str(", ");
-        line.push_str(day.get(..10).unwrap_or(&day));
+        line.push_str(&day);
     }
     // A line the agent would get altered, or take for its own words, is not written.
     (!holds_reminder_tag(&line)).then_some(line)
 }
 
+/// `lines` as a line names them: each stretch as its first and last line (`118-131`), one line as
+/// its number, the stretches joined by commas.
+fn lines_text(lines: &[LineRange]) -> String {
+    let named: Vec<String> = lines
+        .iter()
+        .map(|lines| match (lines.start_line(), lines.end_line()) {
+            (start, end) if start == end => start.to_string(),
+            (start, end) => format!("{start}-{end}"),
+        })
+        .collect();
+    named.join(",")
+}
+
+/// The day `committed_at_s`, in UTC seconds, falls on, as `2025-11-03`; none for a time that has no
+/// date.
+pub(crate) fn day_of(committed_at_s: i64) -> Option<String> {
+    let text = utc_text(committed_at_s.saturating_mul(1_000))?;
+    Some(text.get(..10).unwrap_or(&text).to_owned())
+}
+
 /// What `commit` names: its pull request and the issues it fixes, then the first test file it
 /// touched; none when it names nothing.
-fn references(commit: &ReasonCommit) -> Option<String> {
+pub(crate) fn references(commit: &ReasonCommit) -> Option<String> {
     let mut numbers = Vec::new();
     if let Some(number) = commit.pull_request {
         numbers.push(format!("PR #{number}"));
@@ -225,7 +240,7 @@ fn references(commit: &ReasonCommit) -> Option<String> {
 
 /// `text`, a person's words from the repository, as a work order quotes them: without control
 /// characters or the characters that hide or reorder text, double quotes made single, trimmed.
-fn quoted(text: &str) -> String {
+pub(crate) fn quoted(text: &str) -> String {
     // Text from the repository is data: nothing in it can break the quotes around it, start a line
     // or steer a terminal.
     let kept: String = text

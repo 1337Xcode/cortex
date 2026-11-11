@@ -30,7 +30,7 @@ pub use choose::MAX_REASON_TOKENS;
 /// of the daemon's history worker, whose queue a few prompts share, and a text missed now is
 /// asked for again by the next prompt that needs it.
 pub const MAX_TEXT_ASKS: usize = 4;
-pub(crate) use choose::choose;
+pub(crate) use choose::{choose, day_of, quoted, references};
 
 /// The two lines of a commit's message worth showing, as the daemon holds them: untrusted text
 /// from the repository, written into a work order only as quoted data with its control characters
@@ -225,7 +225,7 @@ pub(crate) fn ask_missing(
 
 /// Of the blames `kept`, the narrowest that covers every line of `span`, the first by its first
 /// line among equals; its runs that meet the span, cut to it, as lines and commits.
-fn covering(kept: &[BlameRecord], span: LineRange) -> Option<BlamedSpan> {
+pub(crate) fn covering(kept: &[BlameRecord], span: LineRange) -> Option<BlamedSpan> {
     let record = kept
         .iter()
         .filter(|record| {

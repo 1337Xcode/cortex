@@ -120,6 +120,8 @@ fn warned_lines(queries: Queries<'_>, open: &[WarningRecord]) -> Result<Vec<Stri
             WarningKind::Test => {
                 plain_path(queries, warning.source)?.map(|source| format!("the tests of {source}"))
             }
+            // Never open: an origin note asks for no follow-up.
+            WarningKind::Origin => None,
         };
         let Some(why) = why else {
             continue;

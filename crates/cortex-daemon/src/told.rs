@@ -53,6 +53,14 @@ impl Told {
         warned
     }
 
+    /// Whether task `task_id` was told a warning of `kind`, recorded or not yet.
+    pub(crate) fn has_told(&self, task_id: Ulid, kind: WarningKind) -> bool {
+        let tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        tasks.iter().any(|(task, told)| {
+            *task == task_id && told.iter().any(|(told_kind, _, _)| *told_kind == kind)
+        })
+    }
+
     /// Forgets that task `task_id` was told `pairs`: its warnings never reached the agent.
     pub(crate) fn forget(&self, task_id: Ulid, pairs: &[Pair]) {
         let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
@@ -128,6 +136,24 @@ mod tests {
             seen,
             [BTreeSet::new(), BTreeSet::from([pair]), BTreeSet::new()]
         );
+        Ok(())
+    }
+
+    /// A task told an origin note has told it, of that kind only; another task has not, and a task
+    /// whose note was forgotten (it never reached the agent) has not either.
+    #[test]
+    fn a_task_says_which_kinds_it_was_told() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut store = writer(root.path())?;
+        let a = add_file(&mut store, "a.py", 1)?;
+        let (first, second) = (Ulid::from_seed(1, b"task"), Ulid::from_seed(2, b"task"));
+        let told = Told::default();
+        told.deciding(first, |_| warned(WarningKind::Origin, a, a));
+        assert!(told.has_told(first, WarningKind::Origin));
+        assert!(!told.has_told(first, WarningKind::Test));
+        assert!(!told.has_told(second, WarningKind::Origin));
+        told.forget(first, &[(WarningKind::Origin, a, a)]);
+        assert!(!told.has_told(first, WarningKind::Origin));
         Ok(())
     }
 

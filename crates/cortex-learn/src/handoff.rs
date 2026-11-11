@@ -2,7 +2,8 @@
 //! learned, in place of any its session left before. A task that edited a file, or that was cut
 //! off (its answer never ended: the session ended, the next prompt came first, or its turn
 //! stopped on an error such as a usage limit) having read one, leaves how it ended, the files it
-//! edited and read, the warnings its edits got that were not resolved, and its last check command
+//! edited and read, the warnings its edits got that were not resolved (an origin note asks for no
+//! follow-up and is never open), and its last check command
 //! when that one failed, so that another session, of any agent, can pick the work up once this
 //! one is done with it. A task that succeeds closes the open handoffs its own session left that
 //! name a file it edited: the work it settled, and no other.
@@ -55,7 +56,7 @@ pub(crate) fn leave_handoff(
         .queries()
         .warnings_of_task(state.task_id())?
         .into_iter()
-        .filter(|warning| warning.resolved != Some(true))
+        .filter(|warning| warning.record.kind.expects_follow_up() && warning.resolved != Some(true))
         .map(|warning| warning.id)
         .collect();
     let record = HandoffRecord {

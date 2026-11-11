@@ -50,7 +50,8 @@ fn resolved_after(
 /// hand, from the steps: `b.py` read at 1,020, after: resolved; `c.py` read at 1,005, before the
 /// warning, and not again: not resolved; `d.py` edited at 1,030: resolved; `e.py` read at 1,040 by
 /// a read that failed, which touched nothing: not resolved; and `a.py` itself, named by a warning
-/// at the very moment it was edited, and not touched after: not resolved.
+/// at the very moment it was edited, and not touched after: not resolved. An origin note about
+/// `b.py` is not resolved by the read of `b.py` after it: it asks for no follow-up.
 #[test]
 fn a_warning_is_resolved_by_a_later_read_or_edit_of_its_file() -> TestResult {
     let mut store = Store::new()?;
@@ -74,6 +75,7 @@ fn a_warning_is_resolved_by_a_later_read_or_edit_of_its_file() -> TestResult {
         (WarningKind::CallSite, a, d),
         (WarningKind::CoChange, a, e),
         (WarningKind::CallSite, b, a),
+        (WarningKind::Origin, b, b),
     ];
     let (_, resolved) = resolved_after(&mut store, ("s1", 1_000, &steps), (1_010, &warned))?;
     assert_eq!(
@@ -82,6 +84,7 @@ fn a_warning_is_resolved_by_a_later_read_or_edit_of_its_file() -> TestResult {
             Some(true),
             Some(false),
             Some(true),
+            Some(false),
             Some(false),
             Some(false)
         ]
@@ -130,5 +133,32 @@ fn only_the_ended_task_s_warnings_are_marked() -> TestResult {
         other.iter().map(|row| row.resolved).collect::<Vec<_>>(),
         [None]
     );
+    Ok(())
+}
+
+/// An edit of `a.py` at 1,010 brings a co-change warning naming `b.py` and an origin note naming
+/// `a.py`, and the task ends with neither file touched after, its outcome unknown: the handoff it
+/// leaves lists the co-change warning as open and not the origin note, which asks for no follow-up.
+#[test]
+fn a_handoff_lists_no_origin_note_as_open() -> TestResult {
+    let mut store = Store::new()?;
+    let nodes = store.index(&["a.py", "b.py"])?;
+    let [a, b] = nodes[..] else {
+        return Err("two nodes".into());
+    };
+    let steps = [edit("s1", 1_010, "a.py", &[(1, 2)])?];
+    let warned = [(WarningKind::CoChange, a, b), (WarningKind::Origin, a, a)];
+    let (task_id, _) = resolved_after(&mut store, ("s1", 1_000, &steps), (1_010, &warned))?;
+    let given = store.writer.queries().warnings_of_task(task_id)?;
+    let cochange = given
+        .iter()
+        .find(|row| row.record.kind == WarningKind::CoChange)
+        .ok_or("no co-change warning")?
+        .id;
+    let handoffs = store.writer.queries().open_handoffs_since(0)?;
+    let [handoff] = &handoffs[..] else {
+        return Err(format!("one handoff, not {}", handoffs.len()).into());
+    };
+    assert_eq!(handoff.record.open_warnings, [cochange]);
     Ok(())
 }

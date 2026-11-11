@@ -1,6 +1,7 @@
 //! What a task did so far, read from its latest rows, and the warnings it has not followed up: those
 //! whose file it did not read or edit after them, by the rule the task's end marks them resolved
-//! with. The recap names them; strict mode holds a stop on those of changed signatures.
+//! with. An origin note asks for no follow-up and is never open. The recap names them; strict
+//! mode holds a stop on those of changed signatures.
 //!
 //! The task's latest [`MAX_TASK_ROWS`] rows are read. When it has more, a warning's follow-up may
 //! lie among those not read, so none is taken as open: what is said is only what can be told.
@@ -39,7 +40,7 @@ pub(crate) fn so_far(queries: Queries<'_>, task_id: Ulid) -> Result<SoFar, Store
         .into_iter()
         .rev()
         .map(|row| row.record)
-        .filter(|warning| !is_followed_up(warning, &events))
+        .filter(|warning| warning.kind.expects_follow_up() && !is_followed_up(warning, &events))
         .collect();
     Ok(SoFar { events, open })
 }

@@ -49,7 +49,7 @@ pub(crate) fn event(
         .filter(|_| is_tool_event);
     let mut tool_target = match tool.map(|tool| tools.aim(tool, entry.hook, &payload, &located)) {
         Some(Aim::Outside) => return Ok(None),
-        Some(Aim::Target(target)) => Some(target),
+        Some(Aim::Target(target)) => Some(*target),
         Some(Aim::Nothing) | None => None,
     };
     let tool_result = tool

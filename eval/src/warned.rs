@@ -33,10 +33,15 @@ impl Warned {
 /// The warnings of a run, by the name of their kind.
 pub(crate) type Warnings = BTreeMap<String, Warned>;
 
-/// The warnings of `rows`, each its kind and its label (none until its task ended), by kind.
+/// The warnings of `rows`, each its kind and its label (none until its task ended), by kind: only
+/// the kinds that expect a follow-up, since the share resolved is their precision; an origin note
+/// names the file just edited and asks nothing, so it is left out.
 pub(crate) fn warnings_of(rows: impl IntoIterator<Item = (WarningKind, Option<bool>)>) -> Warnings {
     let mut warnings = Warnings::new();
-    for (kind, resolved) in rows {
+    for (kind, resolved) in rows
+        .into_iter()
+        .filter(|(kind, _)| kind.expects_follow_up())
+    {
         let held = warnings.entry(kind.name().to_owned()).or_default();
         *held = held.add(Warned {
             given: 1,
@@ -72,13 +77,15 @@ mod tests {
     /// Counted by kind, worked by hand: two call-site warnings, one resolved and one not, and a
     /// test warning whose task has not ended give call sites 2 given, 2 labelled, 1 resolved, and
     /// tests 1 given, 0 labelled; added to another run's resolved co-change warning, the total is
-    /// 4 given, 3 labelled, 2 resolved.
+    /// 4 given, 3 labelled, 2 resolved. An origin note, resolved or not, counts in none of them.
     #[test]
     fn warnings_are_counted_by_kind() {
         let warnings = warnings_of([
             (WarningKind::CallSite, Some(true)),
             (WarningKind::CallSite, Some(false)),
             (WarningKind::Test, None),
+            (WarningKind::Origin, Some(true)),
+            (WarningKind::Origin, Some(false)),
         ]);
         let warned = |given, labelled, resolved| Warned {
             given,

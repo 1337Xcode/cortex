@@ -8,6 +8,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- An origin note after an edit, part of the experimental why-lines and off by default with them
+  (`history.why`): when the lines an edit of one hunk replaced came from a normal commit that
+  names an issue or touched a test, the edit is told once a task, as a warning line, which
+  commit wrote them (`The lines this edit replaced in src/money.py came from commit "Round
+  half-even for tax" (fixes #612; test: tests/test_money.py), 2025-09-14.`), with no line
+  number. Claude Code's report of an edit gives the hash of the file before it and the lines it
+  replaced, which are looked up in the blame the daemon already keeps of that content; nothing is
+  blamed for an edit. The note asks for nothing: it is never an open warning and is not counted
+  with the warnings. Tested on scripted stores, and through the real binary on a scripted
+  repository; not run with a live agent yet.
 - Why-lines, an experimental feature that is off by default (`history.why`, the `why_lines`
   feature): under the code a work order shows, at most `history.max_reasons` lines (2) of
   `history.max_tokens` tokens (120) saying why those lines look as they do, from the commits

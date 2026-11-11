@@ -4,12 +4,15 @@
 //! task was warned about already, and renders them within their token cap.
 //!
 //! The rules are a table, one file each: a co-change companion not touched yet, call sites of a
-//! symbol whose signature changed, and the edited file's tests. Adding a rule is a file and a line
-//! in [`RULES`]. In tiny mode only the call-site rule runs: with so little history the others guess.
+//! symbol whose signature changed, the edited file's tests, and where the replaced lines came from
+//! (an origin note, read from git history only while `history.why` is on). Adding a rule is a
+//! file and a line in [`RULES`]. In tiny mode only the call-site rule runs: with so little history
+//! the others guess, and no work order shows code there, so no blame is kept for an origin.
 
 mod call_site;
 mod cochange;
 mod facts;
+mod origin;
 mod test_companion;
 
 use std::collections::BTreeSet;
@@ -19,6 +22,7 @@ use cortex_store::{NodeId, WarningRecord};
 
 pub use call_site::MAX_LISTED_CALL_SITES;
 pub use facts::{EditQuery, MAX_CHECKED_CALLER_FILES, edit_facts, task_so_far};
+pub use origin::{Origin, OriginQuery, edit_origin};
 pub use test_companion::MAX_LISTED_TESTS;
 pub(crate) use test_companion::is_own_test;
 
@@ -108,6 +112,9 @@ pub struct EditFacts {
     pub drifts: Vec<Drift>,
     /// Its test files.
     pub tests: Vec<TestFile>,
+    /// Where the lines the edit replaced came from, when that is worth a note; none when it was
+    /// not looked up ([`edit_origin`], which the caller runs only while `history.why` is on).
+    pub origin: Option<Origin>,
 }
 
 /// What the task did so far, as the rules read it.
@@ -164,7 +171,8 @@ struct Rule {
 }
 
 /// Every rule, in the order their warnings come within an edit's cap: by how often agents followed
-/// them up on the evaluation suite (call sites most, then the tests, then co-change partners).
+/// them up on the evaluation suite (call sites most, then the tests, then co-change partners), and
+/// last the origin note, which asks for no follow-up and is the first to go when the cap binds.
 const RULES: &[Rule] = &[
     Rule {
         kind: WarningKind::CallSite,
@@ -180,6 +188,11 @@ const RULES: &[Rule] = &[
         kind: WarningKind::CoChange,
         is_on_when_tiny: false,
         find: cochange::warnings,
+    },
+    Rule {
+        kind: WarningKind::Origin,
+        is_on_when_tiny: false,
+        find: origin::warnings,
     },
 ];
 

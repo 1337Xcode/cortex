@@ -9,7 +9,8 @@ CLI uses as well.
   without loading the index, the store or a runtime.
 - Wait for the daemon past its deadline, or block, deny or change an agent's tool call.
 - Keep what a tool read, wrote or printed. A payload's file contents and edit text are skipped
-  unread, a shell's output is measured as it is read, never kept, and a search's output is read
+  unread, but for Claude Code's `originalFile` of an edit, read to be hashed and dropped (its
+  hash and the lines the edit replaced travel to the daemon), a shell's output is measured as it is read, never kept, and a search's output is read
   for the files it names (at most 50 and 4 KiB of paths, inside the repository), never for the
   text it matched.
 - Read more of an agent's transcript than the one value it looks for: for a Codex shell command,

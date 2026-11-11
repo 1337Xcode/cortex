@@ -209,7 +209,7 @@ fn a_damaged_warning_row_is_reported() -> TestResult {
 }
 
 /// The counts: three files named, two of them marked, one of those resolved; with none stored,
-/// all three counts are 0.
+/// all three counts are 0. An origin note, marked and resolved too, counts in none of them.
 #[test]
 fn warnings_are_counted() -> TestResult {
     let scratch = Scratch::new()?;
@@ -231,9 +231,16 @@ fn warnings_are_counted() -> TestResult {
         target,
         strength: 0.5,
     };
-    let ids = record_all(&mut writer, &[warned(schema), warned(test), warned(orders)])?;
+    let origin = WarningRecord {
+        kind: WarningKind::Origin,
+        ..warned(orders)
+    };
+    let ids = record_all(
+        &mut writer,
+        &[origin, warned(schema), warned(test), warned(orders)],
+    )?;
     let mut transaction = writer.transaction()?;
-    for (id, is_resolved) in ids.iter().zip([true, false]) {
+    for (id, is_resolved) in ids.iter().zip([true, true, false]) {
         transaction.resolve_warning(*id, is_resolved)?;
     }
     transaction.commit()?;

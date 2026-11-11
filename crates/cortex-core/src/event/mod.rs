@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 pub use self::check_counts::CheckCounts;
 pub use self::failed_output::{FailedOutput, FailedOutputError, MAX_FAILED_OUTPUT_BYTES};
 pub use self::kinds::{Agent, CompactTrigger, HookKind, StartSource, ToolKind};
-use crate::{Identifier, RepoPath, Ulid};
+use crate::{ContentHash, Identifier, RepoPath, Ulid};
 
 /// Most characters of a shell command an event carries: enough to tell which program ran and how,
 /// short enough that a long script costs nothing to carry.
@@ -215,6 +215,16 @@ pub struct ToolTarget {
     /// failed. It travels to the daemon with the event and is never stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed_output: Option<FailedOutput>,
+    /// For an edit, the lines each hunk replaced, numbered in the file as it was before the edit:
+    /// from the first line the hunk removed to the last. A hunk that only added lines replaced
+    /// none and gives none; an edit of more than [`MAX_RANGES`] hunks gives none at all (protocol
+    /// 11.3 added it).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaced: Vec<LineRange>,
+    /// For an edit, the hash of the whole file before it, as the agent's tool reported the file:
+    /// the hash travels, the file's text never does (protocol 11.3 added it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_hash: Option<ContentHash>,
 }
 
 impl ToolTarget {
@@ -432,6 +442,8 @@ impl fmt::Debug for ToolTarget {
             .field("hits", &self.hits)
             .field("more_paths", &self.more_paths)
             .field("failed_output", &self.failed_output)
+            .field("replaced", &self.replaced)
+            .field("before_hash", &self.before_hash)
             .finish()
     }
 }

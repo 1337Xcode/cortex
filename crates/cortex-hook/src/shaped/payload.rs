@@ -1,10 +1,12 @@
 //! The hook payload Claude Code defined, as much of it as Cortex reads. Every field is optional and read
 //! leniently: a field of another type than expected reads as absent, so one odd field never costs
 //! the event. The fields Cortex does not read are skipped unread: file contents, edits' old and new
-//! text, the assistant's messages. A shell's output is measured, never kept. A response's `content`
-//! is held as the payload's own bytes, unread, and only a search's is then read for the paths it
-//! names, never for the text it matched.
+//! text, the assistant's messages. The one file text read, an edit's `originalFile`, is read only
+//! to be hashed and is dropped with the payload. A shell's output is measured, never kept. A
+//! response's `content` is held as the payload's own bytes, unread, and only a search's is then
+//! read for the paths it names, never for the text it matched.
 
+use std::borrow::Cow;
 use std::fmt;
 
 use cortex_core::MAX_HITS;
@@ -149,6 +151,10 @@ pub(crate) struct ToolResponse<'a> {
     /// For an edit or a write, the stretches of lines it changed.
     #[serde(rename = "structuredPatch", deserialize_with = "lenient")]
     pub(crate) structured_patch: Option<Vec<Hunk>>,
+    /// For an edit or a write of a file that existed, the whole file as it was before: read only
+    /// to be hashed, never kept.
+    #[serde(rename = "originalFile", borrow, deserialize_with = "lenient")]
+    pub(crate) original_file: Option<Cow<'a, str>>,
     /// The size of a shell's standard output.
     #[serde(deserialize_with = "lenient")]
     pub(crate) stdout: Option<TextLength>,
@@ -192,12 +198,15 @@ pub(crate) struct ReadFile {
     pub(crate) total_lines: Option<i64>,
 }
 
-/// One stretch of an edit's diff, in the file as it is after the edit: the changed lines and up to
-/// three unchanged ones on each side.
+/// One stretch of an edit's diff: the changed lines and up to three unchanged ones on each side,
+/// where it starts in the file before the edit and in the file after it.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(crate) struct Hunk {
-    /// The stretch's first line.
+    /// The stretch's first line in the file before the edit.
+    #[serde(deserialize_with = "lenient")]
+    pub(crate) old_start: Option<i64>,
+    /// The stretch's first line in the file after the edit.
     #[serde(deserialize_with = "lenient")]
     pub(crate) new_start: Option<i64>,
     /// How many lines it has.

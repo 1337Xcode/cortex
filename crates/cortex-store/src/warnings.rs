@@ -85,17 +85,26 @@ pub(crate) fn resolve(
 }
 
 impl Queries<'_> {
-    /// How many warnings the store holds, marked and resolved.
+    /// How many warnings the store holds, marked and resolved: those that expect a follow-up, the
+    /// origin notes left out.
     ///
     /// # Errors
     ///
     /// SQLite errors and counts that cannot be read back.
     pub fn warning_counts(self) -> Result<WarningCounts, StoreError> {
+        let counted: Vec<&str> = WarningKind::ALL
+            .iter()
+            .filter(|kind| kind.expects_follow_up())
+            .map(|kind| kind.name())
+            .collect();
+        let counted = serde_json::to_string(&counted).map_err(|_| StoreError::NotText {
+            column: "warnings.kind",
+        })?;
         let (given, labelled, resolved): (i64, i64, i64) = self
             .connection()
             .prepare_cached(schema::WARNING_COUNTS)
             .and_then(|mut statement| {
-                statement.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                statement.query_row([counted], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             })
             .map_err(sqlite("counting warnings"))?;
         // Only a sum over resolutions damaged outside Cortex can be below zero.

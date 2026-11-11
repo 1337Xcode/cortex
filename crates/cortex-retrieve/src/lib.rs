@@ -110,8 +110,8 @@ pub use two_stage::{STAGED_FILES, Staged, two_stage};
 pub use uncommitted::{UNCOMMITTED_WEIGHT, UncommittedMatch, uncommitted};
 pub use warnings::{
     CallSite, Drift, EditFacts, EditQuery, Linked, MAX_CHECKED_CALLER_FILES, MAX_LISTED_CALL_SITES,
-    MAX_LISTED_TESTS, MAX_WARNING_TOKENS, NamedFile, Partner, TaskSoFar, TestFile, Warned, Warning,
-    edit_facts, task_so_far, warnings_after_edit,
+    MAX_LISTED_TESTS, MAX_WARNING_TOKENS, NamedFile, Origin, OriginQuery, Partner, TaskSoFar,
+    TestFile, Warned, Warning, edit_facts, edit_origin, task_so_far, warnings_after_edit,
 };
 pub use why::{
     MAX_LINKS_PER_KIND, MAX_WHY_SESSIONS, MAX_WHY_TOKENS, MAX_WHY_WARNINGS, Why, WhyAt, why,

@@ -16,7 +16,9 @@ const FULL_JSON: &str = concat!(
     r#""end_line":13}],"cut_after":2000,"pattern":"def divide","command":"pytest -q","#,
     r#""hits":["calc/ops.py","#,
     r#""tests/test_ops.py"],"more_paths":["calc/__init__.py"],"#,
-    r#""failed_output":"FAILED (failures=1)\n"},"tool_result":{"#,
+    r#""failed_output":"FAILED (failures=1)\n","replaced":[{"start_line":12,"end_line":13}],"#,
+    r#""before_hash":"0101010101010101010101010101010101010101010101010101010101010101"},"#,
+    r#""tool_result":{"#,
     r#""exit_code":3,"is_success":false,"is_interrupted":false,"output_bytes":42},"#,
     r#""prompt_text":"fix divide","transcript_path":"/home/dev/t.jsonl","model":"sonnet","#,
     r#""subagent_type":"Explore","compact_trigger":"manual","end_reason":"other"}"#
@@ -49,6 +51,8 @@ fn full_event() -> Result<Event, Box<dyn std::error::Error>> {
             ],
             more_paths: vec![RepoPath::new("calc/__init__.py")?],
             failed_output: FailedOutput::tail_of("FAILED (failures=1)\n"),
+            replaced: vec![LineRange::new(12, 13)?],
+            before_hash: Some(ContentHash::from_bytes([1; 32])),
         }),
         tool_result: Some(ToolResult {
             exit_code: Some(3),

@@ -106,12 +106,7 @@ pub fn target(path: &str, ranges: &[(u32, u32)]) -> TestResult<ToolTarget> {
             .iter()
             .map(|(start, end)| LineRange::new(*start, *end))
             .collect::<Result<_, _>>()?,
-        cut_after: None,
-        pattern: None,
-        command: None,
-        hits: Vec::new(),
-        more_paths: Vec::new(),
-        failed_output: None,
+        ..ToolTarget::default()
     })
 }
 

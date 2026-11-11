@@ -22,8 +22,9 @@ use payload::Payload;
 pub(crate) enum Aim {
     /// Nothing Cortex records: a tool of another kind, or a call with no input.
     Nothing,
-    /// A target inside the repository, or one with no file at all, such as a shell's command.
-    Target(ToolTarget),
+    /// A target inside the repository, or one with no file at all, such as a shell's command, held
+    /// apart so that the other answers stay small.
+    Target(Box<ToolTarget>),
     /// A file or folder outside the repository: the call is none of the repository's business.
     Outside,
 }

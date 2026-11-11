@@ -79,6 +79,7 @@ pub fn edit_facts(
         linked,
         drifts,
         tests,
+        origin: None,
     }))
 }
 

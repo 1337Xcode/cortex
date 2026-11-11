@@ -159,6 +159,7 @@ fn fullest_warnings() -> TestResult<String> {
             file: tests,
             confidence: 0.8,
         }],
+        origin: None,
     };
     let warned = warnings_after_edit(
         &facts,

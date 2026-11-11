@@ -7,9 +7,16 @@
 //! and the store already holds the file as it is, the signature changes that index found, which the
 //! writer keeps a short while, stand in. The edited file is read once and parsed at most once
 //! for the warnings and the notices' contracts together. Nothing is written here.
+//!
+//! While `history.why` is on, outside tiny mode and until the task was told its origin note,
+//! the edit's origin is looked up too, from the history worker's blames and texts only, by what
+//! the agent reported of the edit: the hash of the file before it and the lines it replaced
+//! (`cortex_retrieve::edit_origin`). A lookup that fails costs the edit its note alone.
 
-use cortex_core::{Event, ScaleMode};
-use cortex_retrieve::{EditQuery, edit_facts, task_so_far, warnings_after_edit};
+use cortex_core::{Event, ScaleMode, WarningKind};
+use cortex_retrieve::{
+    EditQuery, Origin, OriginQuery, edit_facts, edit_origin, task_so_far, warnings_after_edit,
+};
 use cortex_store::{FileRow, Queries, StoreError, SymbolId, TaskRow};
 
 use super::on_disk::OnDisk;
@@ -106,10 +113,19 @@ impl Service {
             link_decay: self.edits.link_decay,
             max_file_bytes: self.max_file_bytes,
         };
-        let Some(facts) = edit_facts(queries, &asked)? else {
+        let Some(mut facts) = edit_facts(queries, &asked)? else {
             return Ok(Answer::default());
         };
         let mut so_far = task_so_far(queries, task_id, facts.edited.node)?;
+        let was_told_origin = told.has_told(task_id, WarningKind::Origin)
+            || so_far
+                .warned
+                .iter()
+                .any(|(kind, _, _)| *kind == WarningKind::Origin);
+        // The note goes once a task and not in tiny mode: no text is asked for one never given.
+        if mode != ScaleMode::Tiny && !was_told_origin {
+            facts.origin = self.origin_of(queries, event, &row.file.path);
+        }
         let warned = told.deciding(task_id, |told| {
             so_far.warned.extend(told.iter().copied());
             warnings_after_edit(&facts, &so_far, &self.edits.warnings, mode)
@@ -132,6 +148,29 @@ impl Service {
                 .collect(),
             claims: claims.into_iter().collect(),
             ..Answer::default()
+        })
+    }
+
+    /// The origin of `event`, an edit of the file at `path`, while `history.why` is on and the
+    /// agent reported the hash of the file before the edit and the lines it replaced; none
+    /// otherwise. A store that cannot be read gives none, and the error is logged, so that the
+    /// edit's other warnings stand.
+    fn origin_of(
+        &self,
+        queries: Queries<'_>,
+        event: &Event,
+        path: &cortex_core::RepoPath,
+    ) -> Option<Origin> {
+        let why = self.why_lines.as_ref()?;
+        let target = event.tool_target.as_ref()?;
+        let query = OriginQuery {
+            history: &*why.jobs,
+            replaced: &target.replaced,
+            before_hash: target.before_hash?,
+        };
+        edit_origin(queries, path, &query).unwrap_or_else(|error| {
+            tracing::warn!(error = %format!("{error:#}"), "an edit's origin failed");
+            None
         })
     }
 

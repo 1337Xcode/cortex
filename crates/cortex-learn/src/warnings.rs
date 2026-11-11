@@ -37,8 +37,9 @@ fn is_resolved(row: &WarningRow, steps: &[Step]) -> bool {
 }
 
 /// Whether a read or an edit that did not fail, of the file whose node is `file`, at `at_ms`,
-/// follows up `warning`: it is of the file the warning named, and came after it.
+/// follows up `warning`: it is of the file the warning named, and came after it. A warning of a
+/// kind that asks for no follow-up (an origin note) is never resolved: nothing follows it up.
 #[must_use]
 pub fn resolves(warning: &WarningRecord, file: Option<NodeId>, at_ms: i64) -> bool {
-    file == Some(warning.target) && at_ms > warning.at_ms
+    warning.kind.expects_follow_up() && file == Some(warning.target) && at_ms > warning.at_ms
 }

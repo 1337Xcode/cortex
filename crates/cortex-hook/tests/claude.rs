@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use cortex_core::ipc::{LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES, Request, RequestBody, encode};
 use cortex_core::{
-    Agent, CompactTrigger, Event, FailedOutput, HookKind, LineRange, MAX_FAILED_OUTPUT_BYTES,
-    RepoPath, ShellCommand, StartSource, ToolKind, ToolResult, ToolTarget,
+    Agent, CompactTrigger, ContentHash, Event, FailedOutput, HookKind, LineRange,
+    MAX_FAILED_OUTPUT_BYTES, RepoPath, ShellCommand, StartSource, ToolKind, ToolResult, ToolTarget,
 };
 use cortex_hook::{Located, NormalizeError, adapter};
 use proptest::prelude::*;
@@ -25,6 +25,12 @@ use common::fixture::{
     assert_shape, event_name, fixture_names, id, json_value, locate, native, read_fixture, root,
     stamp,
 };
+
+/// `calc/ops.py` as the captured edit found it, as its `originalFile` holds it: `divide`, on
+/// lines 12 and 13, divides by floor.
+const OPS_BEFORE_EDIT: &str = "\"\"\"Arithmetic helpers.\"\"\"\n\n\ndef add(a, b):\n    \
+                               return a + b\n\n\ndef mul(a, b):\n    return a * b\n\n\n\
+                               def divide(a, b):\n    return a // b\n";
 
 /// The main session of most fixtures.
 const S1: &str = "00000000-0000-4000-8000-000000000001";
@@ -259,7 +265,17 @@ fn expected() -> TestResult<Vec<(&'static str, Option<Event>)>> {
             Some(tool(
                 PostTool,
                 S1,
-                (ToolKind::Edit, file(ops, &[(13, 13)])?, ok(None, None)),
+                (
+                    ToolKind::Edit,
+                    // The captured edit replaced line 13, and the file before it hashes as
+                    // its `originalFile`.
+                    file(ops, &[(13, 13)])?.map(|target| ToolTarget {
+                        replaced: target.ranges.clone(),
+                        before_hash: Some(ContentHash::of(OPS_BEFORE_EDIT.as_bytes())),
+                        ..target
+                    }),
+                    ok(None, None),
+                ),
             )?),
         ),
         (
@@ -630,7 +646,8 @@ fn fields_a_later_claude_code_adds_change_nothing() -> TestResult {
 
 /// The newest version's payloads, captured from the same steps as the table's, make the same
 /// events as the table's in all but their values: the same fields filled, the hook among them, and
-/// no event where the table's make none.
+/// no event where the table's make none. The lines an edit replaced are left out of the
+/// comparison: the captured edits differ there, the newest only adding a line.
 #[test]
 fn the_newest_payloads_normalize_like_the_tabled_ones() -> TestResult {
     let claude = adapter("claude").ok_or("no Claude Code adapter")?;
@@ -641,7 +658,17 @@ fn the_newest_payloads_normalize_like_the_tabled_ones() -> TestResult {
         let current = payload_of(newest, &name)?;
         let older = claude.normalize(&event_name(&tabled)?, &tabled, &locate, stamp())?;
         let newer = claude.normalize(&event_name(&current)?, &current, &locate, stamp())?;
-        assert_eq!(shape(newer.as_ref())?, shape(older.as_ref())?, "{name}");
+        let without_replaced = |shape: Vec<String>| -> Vec<String> {
+            shape
+                .into_iter()
+                .filter(|path| !path.starts_with("/tool_target/replaced"))
+                .collect()
+        };
+        assert_eq!(
+            without_replaced(shape(newer.as_ref())?),
+            without_replaced(shape(older.as_ref())?),
+            "{name}"
+        );
     }
     Ok(())
 }
@@ -923,6 +950,72 @@ fn edit_ranges(patch: serde_json::Value) -> TestResult<Vec<(u32, u32)>> {
         .into_iter()
         .map(|range| (range.start_line(), range.end_line()))
         .collect())
+}
+
+/// The lines an edit replaced, as first and last line numbered before it, and the hash of the file
+/// before it.
+type Replaced = (Vec<(u32, u32)>, Option<ContentHash>);
+
+/// The lines an edit records as replaced for the hunks `patch`, numbered before the edit, and
+/// the hash it records of the file before it.
+fn edit_replaced(patch: serde_json::Value) -> TestResult<Replaced> {
+    let event = edited("post-tool-use-edit.json", "PostToolUse", &locate, |value| {
+        value["tool_response"]["structuredPatch"] = patch;
+    })?;
+    let target = event.tool_target.unwrap_or_default();
+    let replaced = target
+        .replaced
+        .into_iter()
+        .map(|range| (range.start_line(), range.end_line()))
+        .collect();
+    Ok((replaced, target.before_hash))
+}
+
+/// An edit records the lines it replaced, numbered in the file before it: its hunk's first line
+/// before the edit (`oldStart`), counted on over the unchanged and removed lines, never over the
+/// added ones. Worked by hand:
+/// - from 10, `   -+`: 10, 11, 12 unchanged, 13 removed: 13..13 (the captured edit);
+/// - from 5, `   --   `: 8 and 9 removed: 8..9, where the lines changed after the edit name the
+///   line before the gap, 7;
+/// - from 1, `+  -+`: 1 added, which is not in the file before; 1 and 2 unchanged, 3 removed:
+///   3..3;
+/// - from 4, `-+-`: 4 removed, a line added, 5 removed: 4..5;
+/// - from 1, `++   `: only added lines replace nothing: none;
+/// - two hunks, one only adding, give the other's lines: 41..41;
+/// - a hunk without its lines, or without its first line before the edit, gives none;
+/// - 17 hunks are more than an event holds: none.
+///
+/// The file before the captured edit hashes as its `originalFile`; one with none (a file the
+/// write created) has no hash.
+#[test]
+fn edits_record_the_lines_they_replaced_and_the_file_before() -> TestResult {
+    let one = |start, marks| -> TestResult<Vec<(u32, u32)>> {
+        Ok(edit_replaced(serde_json::json!([hunk(start, marks)]))?.0)
+    };
+    assert_eq!(one(10, "   -+")?, [(13, 13)]);
+    assert_eq!(one(5, "   --   ")?, [(8, 9)]);
+    assert_eq!(one(1, "+  -+")?, [(3, 3)]);
+    assert_eq!(one(4, "-+-")?, [(4, 5)]);
+    assert_eq!(one(1, "++   ")?, []);
+    let two = serde_json::json!([hunk(3, " + "), hunk(40, " -+ ")]);
+    assert_eq!(edit_replaced(two)?.0, [(41, 41)]);
+    let bare =
+        serde_json::json!([{ "oldStart": 20, "oldLines": 3, "newStart": 20, "newLines": 3 }]);
+    assert_eq!(edit_replaced(bare)?.0, []);
+    let unplaced = serde_json::json!([{ "newStart": 20, "newLines": 1, "lines": ["-a", "+b"] }]);
+    assert_eq!(edit_replaced(unplaced)?.0, []);
+    let many: Vec<serde_json::Value> = (0..17).map(|at| hunk(at * 10 + 1, "-+")).collect();
+    assert_eq!(edit_replaced(many.into())?.0, []);
+    let (_, before) = edit_replaced(serde_json::json!([hunk(10, "   -+")]))?;
+    assert_eq!(before, Some(ContentHash::of(OPS_BEFORE_EDIT.as_bytes())));
+    let created = edited("post-tool-use-edit.json", "PostToolUse", &locate, |value| {
+        value["tool_response"]["originalFile"] = serde_json::Value::Null;
+    })?;
+    assert_eq!(
+        created.tool_target.and_then(|target| target.before_hash),
+        None
+    );
+    Ok(())
 }
 
 /// One hunk from line `new_start`, its diff lines marked by `marks` (one character each).

@@ -227,6 +227,7 @@ fn an_edit_s_facts_are_read_from_the_store_and_the_disk() -> TestResult {
                 file: named(test, "tests/test_orders.py")?,
                 confidence: 0.8,
             }],
+            origin: None,
         })
     );
     Ok(())

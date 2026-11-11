@@ -23,7 +23,7 @@ impl Protocol {
     /// The protocol this build speaks.
     pub const CURRENT: Self = Self {
         major: 11,
-        minor: 2,
+        minor: 3,
     };
 
     /// Whether a process speaking this protocol can talk to one speaking `other`.

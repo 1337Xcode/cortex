@@ -143,7 +143,7 @@ impl Tools for ToolTable {
             },
             ToolKind::Other => return Aim::Nothing,
         };
-        Aim::Target(target)
+        Aim::Target(Box::new(target))
     }
 
     fn result(&self, _: ToolKind, event_name: &str, payload: &Payload<'_>) -> Option<ToolResult> {

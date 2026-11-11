@@ -90,7 +90,8 @@ most Cortex can have added to them, since a text that arrives later in a session
 times.
 
 The warnings every session's edits got are counted by kind, with how many their tasks' ends
-labelled and how many were resolved: the file a warning named was read or edited after it. The
+labelled and how many were resolved: the file a warning named was read or edited after it. Only
+the kinds that expect a follow-up count: an origin note asks for none. The
 warnings' precision is the share of the labelled ones that were resolved, with its interval
 resampling whole tasks.
 

@@ -103,6 +103,42 @@ fn a_task_is_recalled_by_its_edits_its_open_warnings_and_its_prompt() -> TestRes
     Ok(())
 }
 
+/// An origin note is never an open warning. The task edited `main.py` at 10 and `calc/ops.py` at
+/// 11, was warned at 11 that `main.py` calls `add`, whose signature changed, and was given at 12 an
+/// origin note about `main.py`: the note asks for nothing, so it neither shows nor hides the open
+/// warning naming the same file.
+#[test]
+fn an_origin_note_is_never_open() -> TestResult {
+    let mut repo = Repo::new()?;
+    let (ops, add) = file(&mut repo, "calc/ops.py")?;
+    let (main, _) = file(&mut repo, "main.py")?;
+    let task = task(&mut repo, None)?;
+    acted(
+        &mut repo,
+        task,
+        (ToolKind::Edit, "main.py", main),
+        (10, true),
+    )?;
+    acted(
+        &mut repo,
+        task,
+        (ToolKind::Edit, "calc/ops.py", ops),
+        (11, true),
+    )?;
+    warned(&mut repo, task, (WarningKind::CallSite, add, main), 11)?;
+    warned(&mut repo, task, (WarningKind::Origin, main, main), 12)?;
+    assert_eq!(
+        recapped(&repo)?.as_deref(),
+        Some(
+            "[cortex] Before the compaction, the task in progress:\n\
+             - edited calc/ops.py, main.py\n\
+             - was warned of main.py, which calls a signature this task changed; not read or \
+             edited since\n"
+        )
+    );
+    Ok(())
+}
+
 /// No open task, or one that edited nothing, was warned of nothing and kept no prompt: no recap.
 /// A failed edit is not an edit.
 #[test]

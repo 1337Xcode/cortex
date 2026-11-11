@@ -5,8 +5,8 @@
 use std::borrow::Cow;
 
 use cortex_core::{
-    HookKind, LineRange, MAX_COMMAND_CHARS, MAX_RANGES, RepoPath, ShellCommand, ToolKind,
-    ToolResult, ToolTarget,
+    ContentHash, HookKind, LineRange, MAX_COMMAND_CHARS, MAX_RANGES, RepoPath, ShellCommand,
+    ToolKind, ToolResult, ToolTarget,
 };
 
 use crate::adapter::Located;
@@ -111,6 +111,12 @@ fn aim(tool: ToolKind, hook: HookKind, payload: &Payload<'_>, located: &Located)
                 place => ToolTarget {
                     path: place.path(),
                     ranges: response.map(lines_changed).unwrap_or_default(),
+                    replaced: response.map(lines_replaced).unwrap_or_default(),
+                    // INVARIANT: no-content-stored (the file before the edit leaves the hook as
+                    // its hash only)
+                    before_hash: response
+                        .and_then(|response| response.original_file.as_deref())
+                        .map(|text| ContentHash::of(text.as_bytes())),
                     ..ToolTarget::default()
                 },
             }
@@ -139,7 +145,7 @@ fn aim(tool: ToolKind, hook: HookKind, payload: &Payload<'_>, located: &Located)
         },
         ToolKind::Other => return Aim::Nothing,
     };
-    Aim::Target(target)
+    Aim::Target(Box::new(target))
 }
 
 /// The lines a read returned: none when it returned the whole file or nothing.
@@ -178,6 +184,37 @@ fn lines_changed(response: &ToolResponse) -> Vec<LineRange> {
         return Vec::new();
     }
     ranges
+}
+
+/// The stretches of lines an edit or a write replaced, one per hunk of its diff that removed lines,
+/// numbered in the file before it; none past [`MAX_RANGES`] hunks, as for the lines it changed.
+fn lines_replaced(response: &ToolResponse) -> Vec<LineRange> {
+    let hunks = response.structured_patch.as_deref().unwrap_or_default();
+    if hunks.len() > MAX_RANGES {
+        return Vec::new();
+    }
+    hunks.iter().filter_map(replaced_in).collect()
+}
+
+/// The lines one hunk removed, numbered in the file before the edit: from its first removed line
+/// to its last, the unchanged lines between them included. None for a hunk that removed nothing,
+/// and for one without its first line before the edit or its lines, which cannot be told apart.
+fn replaced_in(hunk: &Hunk) -> Option<LineRange> {
+    let mut line = hunk.old_start?;
+    let mut removed: Option<(i64, i64)> = None;
+    for mark in hunk.lines.as_deref()? {
+        match mark {
+            LineMark::Unchanged => line = line.saturating_add(1),
+            LineMark::Removed => {
+                removed = Some(removed.map_or((line, line), |(first, _)| (first, line)));
+                line = line.saturating_add(1);
+            }
+            // An added line is not in the file before the edit.
+            LineMark::Added | LineMark::Other => {}
+        }
+    }
+    let (first, last) = removed?;
+    LineRange::new(u32::try_from(first).ok()?, u32::try_from(last).ok()?).ok()
 }
 
 /// The lines one hunk changed: from its first changed line to its last, the unchanged lines around

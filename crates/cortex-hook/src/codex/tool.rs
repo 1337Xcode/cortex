@@ -82,7 +82,7 @@ impl Tools for CodexTools {
             },
             _ => return Aim::Nothing,
         };
-        Aim::Target(target)
+        Aim::Target(Box::new(target))
     }
 
     fn result(&self, tool: ToolKind, _: &str, payload: &Payload<'_>) -> Option<ToolResult> {
@@ -145,11 +145,11 @@ fn patch_aim(text: &str, cwd: Option<&str>, located: &Located) -> Aim {
         };
     }
     let more_paths = inside.split_off(1);
-    Aim::Target(ToolTarget {
+    Aim::Target(Box::new(ToolTarget {
         path: inside.pop(),
         more_paths,
         ..ToolTarget::default()
-    })
+    }))
 }
 
 /// The files the headers of the patch `text` name, each once, in order: at most

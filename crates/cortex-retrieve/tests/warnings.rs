@@ -104,6 +104,7 @@ fn facts(named: &[NamedFile]) -> TestResult<EditFacts> {
             file: file(named, 8)?,
             confidence: 0.8,
         }],
+        origin: None,
     })
 }
 
@@ -532,6 +533,7 @@ fn the_weakest_warning_goes_when_the_text_is_too_long() -> TestResult {
         linked: Vec::new(),
         drifts: Vec::new(),
         tests: Vec::new(),
+        origin: None,
     };
     let warned = warnings_after_edit(
         &facts,
@@ -633,6 +635,7 @@ proptest! {
             linked: Vec::new(),
             drifts: Vec::new(),
             tests: Vec::new(),
+            origin: None,
         };
         for (at, co_changes, confidence) in partners {
             facts.partners.push(Partner {

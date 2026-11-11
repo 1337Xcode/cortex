@@ -1087,10 +1087,10 @@ pub(crate) const FACTS_IN_FILES: &str = "SELECT DISTINCT a.fact_id FROM fact_anc
 pub(crate) const FACT_ANCHORS_OF: &str =
     "SELECT node_id, anchor_hash FROM fact_anchors WHERE fact_id = ?1 ORDER BY node_id";
 
-/// How many warnings were given, how many of them are marked, and how many of those resolved: each
-/// row one file a warning named.
-pub(crate) const WARNING_COUNTS: &str =
-    "SELECT count(*), count(resolved), coalesce(sum(resolved), 0) FROM warnings";
+/// How many warnings of the kinds the JSON array ?1 names were given, how many of them are marked,
+/// and how many of those resolved: each row one file a warning named.
+pub(crate) const WARNING_COUNTS: &str = "SELECT count(*), count(resolved), \
+    coalesce(sum(resolved), 0) FROM warnings WHERE kind IN (SELECT value FROM json_each(?1))";
 
 /// The warnings of one task, in the order they were recorded, read back as [`crate::warnings`]
 /// reads them.

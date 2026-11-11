@@ -292,7 +292,7 @@ fn warnings(queries: Queries<'_>, file: NodeId, now_ms: i64) -> Result<Part, Sto
 }
 
 /// `warning` as a line, `now_ms` saying how long ago it was given; none when a file or a symbol it
-/// names cannot be named as it is.
+/// names cannot be named as it is, and none for an origin note.
 fn warning_line(
     queries: Queries<'_>,
     warning: &WarningRecord,
@@ -313,6 +313,8 @@ fn warning_line(
             .next()
             .filter(|name| is_plain(name))
             .map(|name| format!("calls {name}, whose signature changed {when}")),
+        // An origin note names the file just edited and asks for nothing: no warning to list.
+        WarningKind::Origin => None,
     };
     Ok(said.map(|said| format!("  - {target} {said}")))
 }

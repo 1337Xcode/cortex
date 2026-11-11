@@ -85,7 +85,8 @@ files it should and prunes and caps the blames kept. The queue's bound and order
 bound and order, the memories' bounds, which owners are looked through, the line-end comparison and
 the rule that keeps git away from hooks and the index have tests of their own. The CLI's why-lines
 test runs the real binary with `history.why` on: a prompt's work order gets the fix's why-line once
-the blame is kept. The CLI's daemon and server tests
+the blame is kept, and an edit of the line the fix wrote, its event sent once the watcher has
+indexed the edited file, gets the origin note. The CLI's daemon and server tests
 run the real binary on temporary repositories with an empty home folder, including the endpoint's
 permissions on each platform; its learning test sends captured Claude Code payloads through
 `cortex hook` and reads what two tasks of a session left in the store, its meter test sends a

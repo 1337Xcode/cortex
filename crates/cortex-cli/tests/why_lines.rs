@@ -19,6 +19,7 @@ use std::time::Duration;
 use common::calc::{MAIN, TESTS, captured, prompt, repository};
 use common::hook_call::hook;
 use common::{Daemon, TestResult, graph_of, isolate, wait_for};
+use cortex_core::ContentHash;
 use cortex_store::Reader;
 use serde_json::Value;
 
@@ -117,6 +118,21 @@ fn history(root: &Path, home: &Path) -> TestResult<String> {
     Ok(fix)
 }
 
+/// The daemon on the repository at `root`, with `home` as the user's home folder, in medium mode
+/// with `history.why` on and nothing held out, once its graph is built.
+fn started(root: &Path, home: &Path) -> TestResult<Daemon> {
+    std::fs::create_dir_all(root.join(".cortex"))?;
+    std::fs::write(
+        root.join(".cortex/config.toml"),
+        "mode = \"medium\"\nhistory.why = true\n[holdout]\nshare = 0\n",
+    )?;
+    let daemon = Daemon::start(root, home)?;
+    let line = daemon.first_line()?;
+    assert!(line.starts_with("cortex: daemon ready"), "{line}");
+    wait_for(|| Ok(graph_of(root, home)?.is_some()))?;
+    Ok(daemon)
+}
+
 /// Runs `cortex hook` on `payload` as Claude Code does, and returns what it gave the agent.
 fn given(payload: &Value, home: &Path) -> TestResult<Option<String>> {
     let event = payload["hook_event_name"]
@@ -130,6 +146,15 @@ fn given(payload: &Value, home: &Path) -> TestResult<Option<String>> {
         home,
     )?;
     call.context(&event)
+}
+
+/// The hash the store of the repository at `root` holds for `calc/ops.py`, as the index read it.
+fn indexed_hash(root: &Path) -> TestResult<Option<ContentHash>> {
+    let reader = Reader::open(&root.join(".cortex"), 0)?;
+    let ops = reader
+        .queries()
+        .file(&cortex_core::RepoPath::new("calc/ops.py")?)?;
+    Ok(ops.and_then(|ops| ops.file.content_hash))
 }
 
 /// Whether the store of the repository at `root` keeps a blame naming the commit `oid`.
@@ -156,15 +181,7 @@ fn has_blame_naming(root: &Path, oid: &str) -> TestResult<bool> {
 fn a_work_order_carries_the_reason_once_the_blame_is_kept() -> TestResult {
     let (home, repo) = repository()?;
     let fix = history(&repo, home.path())?;
-    std::fs::create_dir_all(repo.join(".cortex"))?;
-    std::fs::write(
-        repo.join(".cortex/config.toml"),
-        "mode = \"medium\"\nhistory.why = true\n[holdout]\nshare = 0\n",
-    )?;
-    let daemon = Daemon::start(&repo, home.path())?;
-    let line = daemon.first_line()?;
-    assert!(line.starts_with("cortex: daemon ready"), "{line}");
-    wait_for(|| Ok(graph_of(&repo, home.path())?.is_some()))?;
+    let _daemon = started(&repo, home.path())?;
     let home = home.path();
 
     given(&captured("session-start-startup.json", &repo)?, home)?;
@@ -192,5 +209,85 @@ fn a_work_order_carries_the_reason_once_the_blame_is_kept() -> TestResult {
         .collect();
     let cold_lines: Vec<&str> = cold.lines().collect();
     assert_eq!(without, cold_lines);
+    Ok(())
+}
+
+/// `calc/ops.py` once the agent's edit made `add` convert its arguments, on line 5.
+const OPS_EDITED: &str = "\"\"\"Arithmetic helpers.\"\"\"\n\n\ndef add(a, b):\n    \
+                          return float(a) + float(b)\n\n\ndef mul(a, b):\n    return a * b\n\n\n\
+                          def divide(a, b):\n    return a / b\n";
+
+/// The origin note the edit of line 5 gets, typed by hand: the fix wrote the line, names issue #7
+/// and touched the tests, on day 2.
+const ORIGIN_5: &str = "[cortex] The line this edit replaced in calc/ops.py came from commit \
+                        \"Make add return the sum\" (fixes #7; test: tests/test_ops.py), 2026-01-03.";
+
+/// The captured edit made the edit of line 5 of `calc/ops.py` as HEAD holds it, from session
+/// [`LATER`]: one hunk, starting at line 2 with three lines around the change.
+fn edit_of_line_5(root: &Path) -> TestResult<Value> {
+    let mut edit = captured("post-tool-use-edit.json", root)?;
+    edit["session_id"] = Value::from(LATER);
+    let (old, new) = ("    return (a + b)", "    return float(a) + float(b)");
+    edit["tool_input"]["old_string"] = Value::from(old);
+    edit["tool_input"]["new_string"] = Value::from(new);
+    let response = &mut edit["tool_response"];
+    response["oldString"] = Value::from(old);
+    response["newString"] = Value::from(new);
+    response["originalFile"] = Value::from(OPS_HEAD);
+    let hunk = &mut response["structuredPatch"][0];
+    for field in ["oldStart", "newStart"] {
+        hunk[field] = Value::from(2);
+    }
+    for field in ["oldLines", "newLines"] {
+        hunk[field] = Value::from(7);
+    }
+    hunk["lines"] = Value::from(vec![
+        " ".to_owned(),
+        " ".to_owned(),
+        " def add(a, b):".to_owned(),
+        format!("-{old}"),
+        format!("+{new}"),
+        " ".to_owned(),
+        " ".to_owned(),
+        " def mul(a, b):".to_owned(),
+    ]);
+    Ok(edit)
+}
+
+/// Once the blame of `calc/ops.py` is kept, a session asks about `add` and edits its line 5, which
+/// the fix wrote (the formatting commit that owns it at HEAD looked through): the edit is told the
+/// line came from the fix, with the issue and the test it names. The edit's event is sent only once
+/// the watcher has indexed the edited file, so the note comes from the blame of the file before
+/// the edit, as the agent reported it, and not from the index having fallen behind.
+#[test]
+fn an_edit_is_told_where_the_lines_it_replaced_came_from() -> TestResult {
+    let (home, repo) = repository()?;
+    let fix = history(&repo, home.path())?;
+    let _daemon = started(&repo, home.path())?;
+    let home = home.path();
+    given(&captured("session-start-startup.json", &repo)?, home)?;
+    let asked = prompt(&repo, ASKED)?;
+    given(&asked, home)?;
+    wait_for(|| has_blame_naming(&repo, &fix))?;
+
+    let mut start = captured("session-start-startup.json", &repo)?;
+    start["session_id"] = Value::from(LATER);
+    given(&start, home)?;
+    let mut again = asked;
+    again["session_id"] = Value::from(LATER);
+    let warm = given(&again, home)?.ok_or("no work order")?;
+    assert!(
+        warm.lines().any(|line| line == WHY_5),
+        "the premise: {warm}"
+    );
+
+    std::fs::write(repo.join("calc/ops.py"), OPS_EDITED)?;
+    let edited = ContentHash::of(OPS_EDITED.as_bytes());
+    wait_for(|| Ok(indexed_hash(&repo)? == Some(edited)))?;
+    let told = given(&edit_of_line_5(&repo)?, home)?.ok_or("nothing told")?;
+    assert!(
+        told.lines().any(|line| line == ORIGIN_5),
+        "{ORIGIN_5}\nin\n{told}"
+    );
     Ok(())
 }

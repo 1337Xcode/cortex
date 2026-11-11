@@ -30,6 +30,15 @@ impl ContentHash {
         Self(bytes)
     }
 
+    /// The hash written as 64 lower-case hexadecimal characters, as `Display` writes it; `None`
+    /// for any other text.
+    #[must_use]
+    pub fn from_hex(text: &str) -> Option<Self> {
+        let mut bytes = [0_u8; 32];
+        read_hex(text, &mut bytes)?;
+        Some(Self(bytes))
+    }
+
     /// Its first 16 bytes: the short hash of the same bytes, as [`ShortHash::of`] gives it.
     #[must_use]
     pub fn short(&self) -> ShortHash {
@@ -62,21 +71,8 @@ impl ShortHash {
     /// for any other text.
     #[must_use]
     pub fn from_hex(text: &str) -> Option<Self> {
-        if text.len() != 32 {
-            return None;
-        }
         let mut bytes = [0_u8; 16];
-        for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks(2)) {
-            let digit = |c: u8| match c {
-                b'0'..=b'9' => Some(c - b'0'),
-                b'a'..=b'f' => Some(c - b'a' + 10),
-                _ => None,
-            };
-            let [high, low] = pair else {
-                return None;
-            };
-            *byte = (digit(*high)? << 4) | digit(*low)?;
-        }
+        read_hex(text, &mut bytes)?;
         Some(Self(bytes))
     }
 }
@@ -94,6 +90,43 @@ impl<'de> serde::Deserialize<'de> for ShortHash {
         let text = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
         Self::from_hex(&text).ok_or_else(|| {
             serde::de::Error::custom("not a short hash of 32 hexadecimal characters")
+        })
+    }
+}
+
+/// Fills `bytes` from `text`, two lower-case hexadecimal characters a byte; `None` unless `text`
+/// is exactly that long and holds nothing else.
+fn read_hex(text: &str, bytes: &mut [u8]) -> Option<()> {
+    if text.len() != bytes.len() * 2 {
+        return None;
+    }
+    for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks(2)) {
+        let digit = |c: u8| match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            _ => None,
+        };
+        let [high, low] = pair else {
+            return None;
+        };
+        *byte = (digit(*high)? << 4) | digit(*low)?;
+    }
+    Some(())
+}
+
+impl serde::Serialize for ContentHash {
+    /// Its 64 lower-case hexadecimal characters.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ContentHash {
+    /// Read from its 64 lower-case hexadecimal characters, and from nothing else.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        Self::from_hex(&text).ok_or_else(|| {
+            serde::de::Error::custom("not a content hash of 64 hexadecimal characters")
         })
     }
 }
@@ -208,6 +241,24 @@ mod tests {
             serde_json::from_str::<ShortHash>(r#""AF1349B9F5F9A1A6A0404DEA36DCC949""#).is_err()
         );
         assert!(serde_json::from_str::<ShortHash>("16").is_err());
+        Ok(())
+    }
+
+    /// A content hash travels as its hexadecimal (the empty input's, from the official vectors),
+    /// and is read back from that alone: not upper case, not the short hash's 32 characters.
+    #[test]
+    fn a_content_hash_travels_as_its_hexadecimal() -> Result<(), serde_json::Error> {
+        let empty = ContentHash::of(b"");
+        let json = serde_json::to_string(&empty)?;
+        assert_eq!(
+            json,
+            r#""af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262""#
+        );
+        assert_eq!(serde_json::from_str::<ContentHash>(&json)?, empty);
+        assert!(serde_json::from_str::<ContentHash>(&json.to_uppercase()).is_err());
+        assert!(
+            serde_json::from_str::<ContentHash>(r#""af1349b9f5f9a1a6a0404dea36dcc949""#).is_err()
+        );
         Ok(())
     }
 
