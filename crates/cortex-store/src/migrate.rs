@@ -769,7 +769,10 @@ mod tests {
              VALUES ('s1', 7, 'read', 1, 2)",
             [],
         )?;
-        migrate(&mut connection, MIGRATIONS, &backups)?;
+        let twenty_second = MIGRATIONS
+            .get(..22)
+            .ok_or("fewer than twenty-two migrations")?;
+        migrate(&mut connection, twenty_second, &backups)?;
         assert_eq!(schema_version(&connection)?, 22);
         let place: (Option<String>, Option<String>) = connection.query_row(
             "SELECT worktree, branch FROM positions WHERE session_id = 's1'",
@@ -777,6 +780,43 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         assert_eq!(place, (None, None));
+        Ok(())
+    }
+
+    /// The twenty-third schema adds the blame cache, the change cards and their terms, on an empty
+    /// store and on a twenty-second-schema store, which keeps the position it holds.
+    #[test]
+    fn the_twenty_third_schema_adds_history() -> Result<(), Box<dyn std::error::Error>> {
+        let history = ["blame_cache", "change_cards", "commit_terms"].map(str::to_owned);
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 23);
+        let found = objects(&connection)?;
+        assert!(history.iter().all(|name| found.contains(name)), "{found:?}");
+
+        let (folder, mut connection) = database()?;
+        let backups = folder.path().join("backups");
+        let twenty_second = MIGRATIONS
+            .get(..22)
+            .ok_or("fewer than twenty-two migrations")?;
+        migrate(&mut connection, twenty_second, &backups)?;
+        connection.execute(
+            "INSERT INTO positions (session_id, node_id, mode, since, last_ts) \
+             VALUES ('s1', 7, 'read', 1, 2)",
+            [],
+        )?;
+        assert!(!objects(&connection)?.contains(&history[0]));
+        migrate(&mut connection, MIGRATIONS, &backups)?;
+        assert_eq!(schema_version(&connection)?, 23);
+        let found = objects(&connection)?;
+        assert!(history.iter().all(|name| found.contains(name)), "{found:?}");
+        let kept: i64 = connection.query_row(
+            "SELECT count(*) FROM positions WHERE session_id = 's1'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(kept, 1);
         Ok(())
     }
 

@@ -44,11 +44,7 @@ impl Queries<'_> {
         if words.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
-        let expression = words
-            .iter()
-            .map(|word| format!("\"{}\"", word.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(" OR ");
+        let expression = match_expression(words);
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         self.connection()
             .prepare_cached(schema::SEARCH_MATCH)
@@ -111,6 +107,16 @@ impl Queries<'_> {
             })
             .map_err(sqlite("finding symbols by name"))
     }
+}
+
+/// The full-text expression that matches any of `words`, each a phrase in double quotes with its
+/// own quotes doubled.
+pub(crate) fn match_expression(words: &[&str]) -> String {
+    words
+        .iter()
+        .map(|word| format!("\"{}\"", word.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" OR ")
 }
 
 /// `text` with the characters `LIKE` reads as wildcards, and its escape character, escaped by `\`.

@@ -13,7 +13,9 @@
 mod activity;
 mod anchors;
 mod archetype;
+mod blame_cache;
 mod calibration;
+mod change_cards;
 mod checkpoint;
 mod claims;
 mod cochange;
@@ -63,7 +65,9 @@ pub use activity::{
 };
 pub use anchors::{AnchorState, ROOT_ANCHOR_HASH};
 pub use archetype::ArchetypeRecord;
+pub use blame_cache::{BlameRecord, BlameRunRecord};
 pub use calibration::{CalibrationAttempt, CalibrationRecord, LabelledInjection};
+pub use change_cards::{CardKind, ChangeCardRecord, MAX_CARD_ISSUES, MAX_CARD_NODES};
 pub use checkpoint::CheckpointFailures;
 pub use cochange::{CountedFile, FileCommitsRow, GitStateKey, PairRow};
 pub use coordination::{

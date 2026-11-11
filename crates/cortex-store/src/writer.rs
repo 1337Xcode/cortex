@@ -9,7 +9,9 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::activity::{self, EventRecord, SessionRecord, TaskRecord};
 use crate::archetype::{self, ArchetypeRecord};
+use crate::blame_cache::{self, BlameRecord};
 use crate::calibration::{self, CalibrationAttempt};
+use crate::change_cards::{self, ChangeCardRecord};
 use crate::checkpoint::{CheckpointFailures, Checkpointer};
 use crate::claims;
 use crate::cochange::{self, FileCommitsRow, GitStateKey, PairRow};
@@ -486,6 +488,61 @@ impl WriteTx<'_> {
     /// [`StoreError::TransactionLost`] and SQLite errors.
     pub fn remove_transitions(&mut self, pairs: &[(NodeId, NodeId)]) -> Result<u64, StoreError> {
         self.atomically(|connection| transitions::remove(connection, pairs))
+    }
+
+    /// Stores a blame, replacing the one of the same file content and lines.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Invalid`] for lines out of order or a run whose commit id is not
+    /// hexadecimal, [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn put_blame(&mut self, record: &BlameRecord) -> Result<(), StoreError> {
+        self.atomically(|connection| blame_cache::put(connection, record))
+    }
+
+    /// Stores the card of a commit with its `tokens`, the words to match it by, replacing the
+    /// card of the same commit and its terms. The caller finds the words; the store is given
+    /// neither the subject nor the message.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Invalid`] for an id that is not hexadecimal or more than three references or
+    /// one that is not an issue reference, [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn put_change_card(
+        &mut self,
+        card: &ChangeCardRecord,
+        tokens: &[String],
+    ) -> Result<(), StoreError> {
+        self.atomically(|connection| change_cards::put(connection, card, tokens))
+    }
+
+    /// Removes the cards of the commits in `oids` with their terms: how many cards.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn remove_change_cards(&mut self, oids: &[String]) -> Result<u64, StoreError> {
+        self.atomically(|connection| change_cards::remove(connection, oids))
+    }
+
+    /// Deletes at most `limit` blames made for a file content that no indexed file has now: how
+    /// many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn delete_blames_of_missing_files(&mut self, limit: u64) -> Result<u64, StoreError> {
+        self.atomically(|connection| retention::delete_blames_of_missing_files(connection, limit))
+    }
+
+    /// Deletes at most `limit` blames past the `keep` newest, the oldest computed first: how
+    /// many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn cap_blames(&mut self, keep: u64, limit: u64) -> Result<u64, StoreError> {
+        self.atomically(|connection| retention::cap_blames(connection, (keep, limit)))
     }
 
     /// Keeps `attempt` as the last time the confidence model was fitted.

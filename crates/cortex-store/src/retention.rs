@@ -116,6 +116,40 @@ pub(crate) fn delete_retired_facts(
     )
 }
 
+/// Deletes at most `limit` blames made for a file content that no indexed file has now: how many.
+///
+/// # Errors
+///
+/// SQLite errors.
+pub(crate) fn delete_blames_of_missing_files(
+    connection: &Connection,
+    limit: u64,
+) -> Result<u64, StoreError> {
+    run(
+        connection,
+        schema::BLAME_DELETE_MISSING,
+        [as_sql(limit)],
+        "deleting blames of files that changed",
+    )
+}
+
+/// Deletes at most `limit` blames past the `keep` newest, the oldest computed first: how many.
+///
+/// # Errors
+///
+/// SQLite errors.
+pub(crate) fn cap_blames(
+    connection: &Connection,
+    (keep, limit): (u64, u64),
+) -> Result<u64, StoreError> {
+    run(
+        connection,
+        schema::BLAME_OVER_CAP,
+        (as_sql(keep), as_sql(limit)),
+        "capping cached blames",
+    )
+}
+
 /// `count` as SQLite takes a number, a count past what it holds read as the most it does.
 fn as_sql(count: u64) -> i64 {
     i64::try_from(count).unwrap_or(i64::MAX)

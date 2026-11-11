@@ -103,10 +103,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 22,
         sql: include_str!("../migrations/0022_position_worktree.sql"),
     },
+    Migration {
+        version: 23,
+        sql: include_str!("../migrations/0023_history.sql"),
+    },
 ];
 
 /// The schema version this build reads and writes: the last migration's number.
-pub(crate) const SCHEMA_VERSION: u32 = 22;
+pub(crate) const SCHEMA_VERSION: u32 = 23;
 
 /// Adds a session, or for one already stored takes the facts given over those kept and makes it
 /// live again; it keeps its first start time. `?9` is the live status's stored name.
@@ -674,6 +678,101 @@ pub(crate) const TRANSITION_SET: &str = "INSERT INTO transitions (src, dst, weig
 /// two-number arrays in ?1.
 pub(crate) const TRANSITIONS_REMOVE: &str = "DELETE FROM transitions WHERE (src, dst) IN \
     (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1))";
+
+/// The columns of a change card, in the order a card is read back.
+macro_rules! card_columns {
+    () => {
+        "oid, first_parent, committed_at, kind, pr, issues, has_reason, file_nodes, \
+         symbol_nodes, test_nodes, carded_at"
+    };
+}
+
+/// Stores the blame (?4, its runs as JSON) of lines ?2 to ?3 of the file hashed ?1, computed at ?5,
+/// replacing the blame of the same range.
+pub(crate) const BLAME_PUT: &str = "INSERT INTO blame_cache \
+    (file_hash, first_line, last_line, runs, computed_at) VALUES (?1, ?2, ?3, ?4, ?5) \
+    ON CONFLICT (file_hash, first_line, last_line) DO UPDATE SET \
+    runs = excluded.runs, computed_at = excluded.computed_at";
+
+/// The blames of the file hashed ?1 whose lines overlap ?2 to ?3, by first line and then last.
+pub(crate) const BLAME_OVERLAPPING: &str = "SELECT first_line, last_line, runs, computed_at \
+    FROM blame_cache WHERE file_hash = ?1 AND first_line <= ?3 AND last_line >= ?2 \
+    ORDER BY first_line, last_line";
+
+/// How many blames are kept.
+pub(crate) const BLAME_ROWS: &str = "SELECT count(*) FROM blame_cache";
+
+/// Deletes at most ?1 of the blames of a hash that no indexed file has now.
+pub(crate) const BLAME_DELETE_MISSING: &str = "DELETE FROM blame_cache \
+    WHERE (file_hash, first_line, last_line) IN \
+    (SELECT file_hash, first_line, last_line FROM blame_cache \
+     WHERE file_hash NOT IN (SELECT content_hash FROM files WHERE content_hash IS NOT NULL) \
+     LIMIT ?1)";
+
+/// Deletes at most ?2 of the blames past the ?1 newest, the oldest computed first.
+pub(crate) const BLAME_OVER_CAP: &str = "DELETE FROM blame_cache \
+    WHERE (file_hash, first_line, last_line) IN \
+    (SELECT file_hash, first_line, last_line FROM blame_cache \
+     ORDER BY computed_at, file_hash, first_line, last_line \
+     LIMIT min(?2, max(0, (SELECT count(*) FROM blame_cache) - ?1)))";
+
+/// Whether a card of the commit ?1 is kept.
+pub(crate) const CARD_EXISTS: &str = "SELECT 1 FROM change_cards WHERE oid = ?1";
+
+/// Stores a card, replacing the card of the same commit.
+pub(crate) const CARD_PUT: &str = concat!(
+    "INSERT INTO change_cards (",
+    card_columns!(),
+    ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) ON CONFLICT (oid) DO UPDATE SET \
+     first_parent = excluded.first_parent, committed_at = excluded.committed_at, \
+     kind = excluded.kind, pr = excluded.pr, issues = excluded.issues, \
+     has_reason = excluded.has_reason, file_nodes = excluded.file_nodes, \
+     symbol_nodes = excluded.symbol_nodes, test_nodes = excluded.test_nodes, \
+     carded_at = excluded.carded_at"
+);
+
+/// Deletes the terms of the commits in the JSON array ?1.
+pub(crate) const TERMS_DELETE: &str =
+    "DELETE FROM commit_terms WHERE oid IN (SELECT value FROM json_each(?1))";
+
+/// Adds the terms ?2 of the commit ?1.
+pub(crate) const TERMS_INSERT: &str = "INSERT INTO commit_terms (oid, tokens) VALUES (?1, ?2)";
+
+/// Deletes the cards of the commits in the JSON array ?1.
+pub(crate) const CARDS_DELETE: &str =
+    "DELETE FROM change_cards WHERE oid IN (SELECT value FROM json_each(?1))";
+
+/// The cards of the commits in the JSON array ?1, by commit.
+pub(crate) const CARDS_BY_OID: &str = concat!(
+    "SELECT ",
+    card_columns!(),
+    " FROM change_cards WHERE oid IN (SELECT value FROM json_each(?1)) ORDER BY oid"
+);
+
+/// The cards of the commits that came from the pull request ?1 or name the issue ?2 (`#` and its
+/// number), newest first and then by commit.
+pub(crate) const CARDS_NUMBERED: &str = concat!(
+    "SELECT ",
+    card_columns!(),
+    " FROM change_cards WHERE pr = ?1 UNION SELECT ",
+    card_columns!(),
+    " FROM change_cards WHERE issues <> '[]' AND \
+     EXISTS (SELECT 1 FROM json_each(change_cards.issues) WHERE value = ?2) \
+     ORDER BY committed_at DESC, oid"
+);
+
+/// The cards whose terms best match the full-text expression ?1, best first and then by commit,
+/// at most ?2, each with its BM25 score made positive: the index gives the best match the lowest.
+pub(crate) const CARDS_MATCHING: &str = concat!(
+    "SELECT ",
+    card_columns!(),
+    ", score FROM (SELECT oid, -rank AS score FROM commit_terms \
+     WHERE commit_terms MATCH ?1 ORDER BY rank, oid LIMIT ?2) JOIN change_cards USING (oid) \
+     ORDER BY score DESC, oid"
+);
+
+/// How many cards are kept.
+pub(crate) const CARD_ROWS: &str = "SELECT count(*) FROM change_cards";
 
 /// The newest confidence model kept.
 pub(crate) const CALIBRATION_LATEST: &str = "SELECT version, coefficients, samples, auc, trained_at \
@@ -1572,6 +1671,119 @@ mod tests {
         ]
     }
 
+    /// The blames of a file's content that overlap a range are found from the start of the table's
+    /// key, the file's hash, and never by reading every blame, as the query plan shows.
+    #[test]
+    fn cached_blames_are_found_by_their_key() -> Result<(), Box<dyn std::error::Error>> {
+        let connection = Connection::open_in_memory()?;
+        for migration in MIGRATIONS {
+            connection.execute_batch(migration.sql)?;
+        }
+        let mut statement =
+            connection.prepare(&["EXPLAIN QUERY PLAN ", BLAME_OVERLAPPING].concat())?;
+        let steps: Vec<String> = statement
+            .query_map((&[0_u8; 32][..], 1, 2), |row| row.get(3))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert!(
+            steps
+                .first()
+                .is_some_and(|step| step.contains("USING PRIMARY KEY (file_hash=?")),
+            "{steps:?}"
+        );
+        Ok(())
+    }
+
+    /// The history tables, column by column. The full-text table's columns have no type.
+    fn expected_history_columns() -> [(&'static str, Vec<Column>); 3] {
+        [
+            (
+                "blame_cache",
+                column_list(&[
+                    ("file_hash", "BLOB", 1),
+                    ("first_line", "INTEGER", 2),
+                    ("last_line", "INTEGER", 3),
+                    ("runs", "TEXT", 0),
+                    ("computed_at", "INTEGER", 0),
+                ]),
+            ),
+            (
+                "change_cards",
+                column_list(&[
+                    ("oid", "TEXT", 1),
+                    ("first_parent", "TEXT", 0),
+                    ("committed_at", "INTEGER", 0),
+                    ("kind", "TEXT", 0),
+                    ("pr", "INTEGER", 0),
+                    ("issues", "TEXT", 0),
+                    ("has_reason", "INTEGER", 0),
+                    ("file_nodes", "TEXT", 0),
+                    ("symbol_nodes", "TEXT", 0),
+                    ("test_nodes", "TEXT", 0),
+                    ("carded_at", "INTEGER", 0),
+                ]),
+            ),
+            (
+                "commit_terms",
+                column_list(&[("oid", "", 0), ("tokens", "", 0)]),
+            ),
+        ]
+    }
+
+    /// The tables the twenty-third migration adds hold no text but the columns listed here, which
+    /// hold commit ids, JSON of numbers and references, a fixed kind and the words a caller chose:
+    /// no column can hold a subject, a message or a person's name.
+    #[test]
+    fn the_history_tables_hold_no_text_a_person_wrote() -> Result<(), Box<dyn std::error::Error>> {
+        let connection = Connection::open_in_memory()?;
+        let tables = |connection: &Connection| -> rusqlite::Result<Vec<String>> {
+            connection
+                .prepare(
+                    "SELECT name FROM sqlite_schema WHERE type = 'table' \
+                     AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'commit_terms_%' ORDER BY name",
+                )?
+                .query_map([], |row| row.get(0))?
+                .collect()
+        };
+        let (before, rest) = MIGRATIONS.split_at(22);
+        for migration in before {
+            connection.execute_batch(migration.sql)?;
+        }
+        let old = tables(&connection)?;
+        for migration in rest {
+            connection.execute_batch(migration.sql)?;
+        }
+        let added: Vec<String> = tables(&connection)?
+            .into_iter()
+            .filter(|table| !old.contains(table))
+            .collect();
+        assert_eq!(added, ["blame_cache", "change_cards", "commit_terms"]);
+        let allowed: [(&str, &[&str]); 3] = [
+            ("blame_cache", &["runs"]),
+            (
+                "change_cards",
+                &[
+                    "oid",
+                    "first_parent",
+                    "kind",
+                    "issues",
+                    "file_nodes",
+                    "symbol_nodes",
+                    "test_nodes",
+                ],
+            ),
+            ("commit_terms", &["oid", "tokens"]),
+        ];
+        for (table, expected) in allowed {
+            let text: Vec<String> = columns(&connection, table)?
+                .into_iter()
+                .filter(|(_, kind, _)| kind == "TEXT" || kind.is_empty())
+                .map(|(name, _, _)| name)
+                .collect();
+            assert_eq!(text, expected, "{table}");
+        }
+        Ok(())
+    }
+
     /// Which files hold a reference of a name that goes through an import is read from the index of
     /// those references alone, as the query plan shows, and the condition both write is the
     /// resolution's stored name.
@@ -1774,7 +1986,7 @@ mod tests {
         }
         let mut statement = connection.prepare(
             "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' \
-             AND name NOT LIKE 'search_index_%' ORDER BY name",
+             AND name NOT LIKE 'search_index_%' AND name NOT LIKE 'commit_terms_%' ORDER BY name",
         )?;
         let tables: Vec<String> = statement
             .query_map([], |row| row.get(0))?
@@ -1783,8 +1995,11 @@ mod tests {
             tables,
             [
                 "archetypes",
+                "blame_cache",
                 "calibration",
+                "change_cards",
                 "cochange_stats",
+                "commit_terms",
                 "edges",
                 "episodes",
                 "events",
@@ -1820,6 +2035,7 @@ mod tests {
             .chain(&expected_injection_columns())
             .chain(&expected_coordination_columns())
             .chain(&expected_fact_columns())
+            .chain(&expected_history_columns())
         {
             assert_eq!(&columns(&connection, table)?, expected, "{table}");
         }

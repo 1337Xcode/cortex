@@ -123,6 +123,13 @@ pub enum StoreError {
         /// The table and column, such as `sessions.cwd`.
         column: &'static str,
     },
+    /// A value to store is not what its column holds: an object id that is not hexadecimal, an
+    /// issue reference with a character no reference has, more references than a card keeps.
+    #[error("{column} cannot hold the value given")]
+    Invalid {
+        /// The table and column, such as `change_cards.oid`.
+        column: &'static str,
+    },
     /// A value of the `meta` table cannot be read back as what its key holds.
     #[error("stored meta {key} cannot be read")]
     CorruptMeta {
