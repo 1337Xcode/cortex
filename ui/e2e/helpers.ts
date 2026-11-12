@@ -1,8 +1,10 @@
 // Shared steps of the browser checks: open the map on a fixture and wait until it has drawn,
 // collect console errors, and read pixels back from a screenshot (decoded by the page itself, so
 // no image library is needed).
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { parseGraph, type GraphSnapshot } from '../src/api/graph';
+import { rgbaOf, type Oklch } from '../src/theme/oklch';
+import { SIZE } from '../src/theme/tokens';
 import type { Fixture } from './fixtures';
 import { MAP_URL, serveFixture } from './serve';
 
@@ -14,12 +16,24 @@ export interface PageRecord {
   readonly foreign: string[];
 }
 
-/** Opens the map on `fixture` in `scheme` and waits for two drawn frames. */
+/** Where the page remembers that the first-open sentence was dismissed. */
+const INTRO_KEY = 'cortex-map-intro-dismissed';
+
+/**
+ * Opens the map on `fixture` in `scheme` and waits for two drawn frames. The first-open sentence
+ * counts as dismissed unless `isFirstOpen`, so checks of other things see the map as it usually is.
+ */
 export async function openMap(
   page: Page,
   fixture: Fixture,
   scheme: 'dark' | 'light' = 'dark',
+  isFirstOpen = false,
 ): Promise<PageRecord> {
+  if (!isFirstOpen) {
+    await page.addInitScript((key) => {
+      window.localStorage.setItem(key, 'true');
+    }, INTRO_KEY);
+  }
   const errors: string[] = [];
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
@@ -63,16 +77,21 @@ export interface Region {
 }
 
 /**
- * Counts the pixels of a screenshot region whose largest channel difference from `background`
- * (`#rrggbb`) is above `threshold`, and the box around them. With `color`, counts only pixels
- * within `threshold` of that colour instead.
+ * Counts the pixels of a screenshot region whose largest channel difference from `background` is
+ * above `threshold`, and the box around them. With `color`, counts only pixels within `threshold`
+ * of that colour instead.
  */
 export async function inkIn(
   page: Page,
   region: Region,
-  options: { readonly background: string; readonly threshold: number; readonly color?: string },
+  colors: { readonly background: Oklch; readonly threshold: number; readonly color?: Oklch },
 ): Promise<{ count: number; box: Region | null }> {
   const png = (await page.screenshot({ clip: region })).toString('base64');
+  const options = {
+    background: rgbaOf(colors.background).slice(0, 3),
+    color: colors.color === undefined ? null : rgbaOf(colors.color).slice(0, 3),
+    threshold: colors.threshold,
+  };
   return page.evaluate(
     async ({ png, region, options }) => {
       // Decoded from bytes, not fetched from a data: URL, which the page's policy refuses.
@@ -83,15 +102,12 @@ export async function inkIn(
       if (context === null) throw new Error('no 2D context');
       context.drawImage(bitmap, 0, 0);
       const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
-      const channels = (hex: string): number[] =>
-        [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
-      const reference = channels(options.color ?? options.background);
+      const reference = options.color ?? options.background;
       let count = 0;
       let [minX, minY, maxX, maxY] = [Infinity, Infinity, -Infinity, -Infinity];
       for (let i = 0; i < data.length; i += 4) {
         const diff = Math.max(...reference.map((value, c) => Math.abs((data[i + c] ?? 0) - value)));
-        const isInk =
-          options.color === undefined ? diff > options.threshold : diff <= options.threshold;
+        const isInk = options.color === null ? diff > options.threshold : diff <= options.threshold;
         if (!isInk) continue;
         count += 1;
         const x = (i / 4) % bitmap.width;
@@ -140,6 +156,27 @@ export async function searchAndPick(page: Page, text: string): Promise<void> {
     page.getByRole('list', { name: 'Search results' }).getByRole('button').first(),
   ).toBeVisible();
   await page.keyboard.press('Enter');
+}
+
+/** The selected file's panel. */
+export function filePanel(page: Page): Locator {
+  return page.locator('aside.file-panel');
+}
+
+/**
+ * The canvas edges the chrome covers, as the camera reads them: the top bar's bottom, the overview
+ * panel's right edge on a wide screen, the file panel's width when one is open.
+ */
+export async function chromeInsets(
+  page: Page,
+  isPanelOpen: boolean,
+): Promise<{ top: number; right: number; bottom: number; left: number }> {
+  const top = await headerBottom(page);
+  const left = await page
+    .locator('aside.overview-panel')
+    .evaluate((element) => Math.ceil(element.getBoundingClientRect().right))
+    .catch(() => 0);
+  return { top, right: isPanelOpen ? SIZE.panel : 0, bottom: 0, left };
 }
 
 /** The bottom edge of the top bar in CSS pixels. */

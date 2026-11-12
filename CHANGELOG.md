@@ -32,6 +32,22 @@ All notable changes to this project are documented in this file. The format is b
   hidden canvas, so the driver compiles them side by side and the map's own canvas reuses them.
   On a Windows laptop (Intel Iris Xe, Direct3D 11, Chromium 158), at 100,000 files and in fresh
   browsers, the first load went from 1.83 to 1.98 s to 0.89 to 0.95 s over five runs each.
+- The map's design system: one token table for every colour, size and timing, sizes on a 4 px grid
+  with spacing growing by about the golden ratio, colours in OKLCH that meet WCAG AA in both themes,
+  Geist and Geist Mono bundled from the map's own address (the canvas waits for them before its
+  first label), and shadcn/ui components on Radix and Tailwind CSS. An overview panel on the left
+  lists the pairs of files changed together most often, the busiest files and the files with a
+  suspect fact, five rows at a time; the summary strip stays one line of whole sentences; the file
+  panel has a breadcrumb of its folders and sections that collapse to their title and count, with
+  history in pages of ten. Shapes carry meaning (a second ring for a suspect fact, a filled centre
+  for a recent file, a dimmed outline for a file never read), every mark and link explains itself
+  under the pointer with its number, a sentence on first open says what the picture is, `L` shows
+  the legend, and an empty map says Cortex may still be reading the repository and appears by
+  itself once there are files. Browser checks fail on any box whose content spills out of it, on
+  text below 12 px or not set in Geist, and count the keys each question takes. The built map grew
+  from 330,648 to 425,294 bytes gzipped (52,584 of them the two fonts); on the Windows laptop
+  above, the first load at 100,000 files was 790 to 862 ms over five fresh browsers, against 762 to
+  859 ms before.
 - Evaluation tasks for the history features, and the runner support they need. A task that says
   `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
   deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that

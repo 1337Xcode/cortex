@@ -31,8 +31,20 @@ describe('summarySentences', () => {
     expect(text.ok ? text.sentences.map(plain) : text.error).toEqual([
       'Strongest coupling: [a/one.rs] and [a/two.rs] changed together in 31 commits.',
       'Most worked on in the last 7 days: src/orders/ (52,310 tokens attributed).',
-      'Agents have read 312 of them (26%).',
+      'Agents have read 312 of the 1,204 files (26%).',
       '1,204 files in 87 folders.',
+    ]);
+  });
+
+  it('gives each sentence a short form for the one-line strip', () => {
+    const text = summarySentences(LEARNED, sevenFileSnapshot());
+    const short = (sentence: SummarySentence): string =>
+      plain({ ...sentence, parts: sentence.short });
+    expect(text.ok ? text.sentences.map(short) : text.error).toEqual([
+      '[a/one.rs] and [a/two.rs]: 31 commits together.',
+      'Busiest folder: src/orders/.',
+      '26% read by agents.',
+      '1,204 files.',
     ]);
   });
 

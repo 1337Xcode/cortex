@@ -34,6 +34,7 @@ function contentTypeOf(path: string): string {
     css: 'text/css; charset=utf-8',
     svg: 'image/svg+xml',
     json: 'application/json',
+    woff2: 'font/woff2',
   };
   return types[extension] ?? 'application/octet-stream';
 }

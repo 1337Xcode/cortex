@@ -13,8 +13,17 @@ function key(name: string, change: Partial<KeyInput> = {}): KeyInput {
 describe('shortcutFor', () => {
   it('maps the keys the controls show', () => {
     expect(
-      ['/', 'z', 'C', '+', '-', 'ArrowUp', 'Escape'].map((name) => shortcutFor(key(name))),
-    ).toEqual(['focusSearch', 'fit', 'center', 'zoomIn', 'zoomOut', 'panUp', 'clear']);
+      ['/', 'z', 'C', '+', '-', 'ArrowUp', 'l', 'Escape'].map((name) => shortcutFor(key(name))),
+    ).toEqual([
+      'focusSearch',
+      'fit',
+      'center',
+      'zoomIn',
+      'zoomOut',
+      'panUp',
+      'toggleLegend',
+      'clear',
+    ]);
   });
 
   it('leaves keys typed into a field to the field, except Escape', () => {

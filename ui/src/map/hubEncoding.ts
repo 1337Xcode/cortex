@@ -3,7 +3,7 @@
 // each drawn file to its hub. All neutral; outside the focus they dim with everything else.
 import { RING_SPACING } from '../layout/constants';
 import { CANVAS_SIZE, OPACITY } from '../theme/tokens';
-import { rgba, type Rgba } from '../theme/rgba';
+import { rgbaOf, type Rgba } from '../theme/oklch';
 import { focusShare, writeRgba, type FrameStyle } from './frameStyle';
 import type { LineBuffers } from './linkEncoding';
 import type { Scene } from './scene';
@@ -76,7 +76,7 @@ export function encodeHubSquares(
   marked: Uint8Array,
 ): HubBuffers {
   const ids = Uint32Array.from([...visibility.openHubs, ...visibility.collapsedHubs]).sort();
-  const hub = rgba(style.colors.canvas.hub);
+  const hub = rgbaOf(style.colors.canvas.hub);
   const colors = { fill: hub, line: hub, marked };
   return encodeNodes(scene, ids, () => CANVAS_SIZE.hubHalfSidePx, colors, style);
 }
@@ -102,7 +102,7 @@ export function encodeCollapsedHubs(
   marked: Uint8Array,
 ): HubBuffers {
   const hub = style.colors.canvas.hub;
-  const colors = { fill: rgba(hub, OPACITY.collapsedFill), line: rgba(hub), marked };
+  const colors = { fill: rgbaOf(hub, OPACITY.collapsedFill), line: rgbaOf(hub), marked };
   const radiusOf = (hub: number): number => collapsedRadius(scene, hub);
   return encodeNodes(scene, visibility.collapsedHubs, radiusOf, colors, style);
 }
@@ -118,7 +118,7 @@ export function encodeFileDiscs(
     ? new Uint32Array(0)
     : visibility.openHubs.filter((hub) => (scene.hubOwnRadius[hub] ?? 0) > 0);
   const canvas = style.colors.canvas;
-  const colors = { fill: rgba(canvas.collapsedFill), line: rgba(canvas.unread), marked };
+  const colors = { fill: rgbaOf(canvas.collapsedFill), line: rgbaOf(canvas.unread), marked };
   return encodeNodes(scene, holders, (hub) => scene.hubOwnRadius[hub] ?? 0, colors, style);
 }
 
@@ -148,7 +148,7 @@ export function encodeHubLinks(
     if (standIn < 0 || standIn === h) drawn.push(h);
   }
   const buffers = emptyLines(drawn.length);
-  const color = rgba(style.colors.canvas.hubLink, OPACITY.hubLink);
+  const color = rgbaOf(style.colors.canvas.hubLink, OPACITY.hubLink);
   for (const [row, hub] of drawn.entries()) {
     const parent = hubParent[hub] ?? 0;
     buffers.ids[row] = hub;
@@ -175,7 +175,7 @@ export function encodeSpokes(scene: Scene, visibility: Visibility, style: FrameS
     (file) => (scene.hubOwnRadius[fileHub[file] ?? 0] ?? 0) <= maxOwnRadius,
   );
   const buffers = emptyLines(files.length);
-  const color = rgba(style.colors.canvas.hubLink, OPACITY.spoke);
+  const color = rgbaOf(style.colors.canvas.hubLink, OPACITY.spoke);
   for (let row = 0; row < files.length; row += 1) {
     const file = files[row] ?? 0;
     const hub = fileHub[file] ?? 0;

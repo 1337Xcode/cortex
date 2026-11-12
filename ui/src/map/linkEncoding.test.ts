@@ -6,7 +6,7 @@ import { DARK_COLORS } from '../theme/tokens';
 import type { FrameStyle } from './frameStyle';
 import { neighbourhoodOf } from './highlight';
 import { countLinksByKind, dashOf, encodeLinks, linkOpacity } from './linkEncoding';
-import { boxKey, nearBox, prominentLinks } from './linkProminence';
+import { boxKey, nearBox, overviewLinks, prominentLinks } from './linkProminence';
 import { sevenFileScene, testLink } from './testScene';
 import { computeVisibility } from './visibility';
 
@@ -115,7 +115,7 @@ describe('link prominence', () => {
   it('keeps only the strongest few of a kind once dense', () => {
     const limits = { denseAbove: 20, strongestPerKind: 3 };
     const marked = prominentLinks(dense, all, { minStrength: 0, box: everywhere, limits });
-    const strong = Array.from(marked ?? []).flatMap((flag, id) => (flag === 1 ? [id] : []));
+    const strong = Array.from(marked?.marked ?? []).flatMap((flag, id) => (flag === 1 ? [id] : []));
     expect(strong).toEqual([18, 19, 20]);
   });
 
@@ -125,19 +125,36 @@ describe('link prominence', () => {
     const limits = { denseAbove: 10, strongestPerKind: 3 };
     // Files 4 and 5 have 6 + 6 - 1 = 11 links, more than 10: (4,5) 0.33, (4,6) 0.34, (5,6) 0.41.
     const marked = prominentLinks(dense, all, { minStrength: 0, box, limits });
-    expect(Array.from(marked ?? []).flatMap((flag, id) => (flag === 1 ? [id] : []))).toEqual([
-      18, 19, 20,
-    ]);
+    expect(
+      Array.from(marked?.marked ?? []).flatMap((flag, id) => (flag === 1 ? [id] : [])),
+    ).toEqual([18, 19, 20]);
   });
 
   it('draws the rest faint (0.05 of 255 = 13), under the strong ones', () => {
     const marked = new Uint8Array(21);
     marked[20] = 1;
-    const lines = encodeLinks(dense, all, { ...style, minStrength: 0 }, marked);
+    const lines = encodeLinks(dense, all, { ...style, minStrength: 0 }, { marked, rest: 'faint' });
     expect(lines.ids[20]).toBe(20);
     expect([lines.colors[3], lines.colors[20 * 4 + 3]]).toEqual([
       13,
       Math.round(255 * (0.2 + 0.4 * 0.41)),
+    ]);
+  });
+
+  it('draws only the strongest few of any kind on the overview, and none of the rest', () => {
+    // The three strongest of the 21 are 20 (0.41), 19 (0.34) and 18 (0.33).
+    const overview = overviewLinks(dense, all, { minStrength: 0, box: everywhere, count: 3 });
+    const lines = encodeLinks(dense, all, { ...style, minStrength: 0 }, overview);
+    expect(Array.from(lines.ids)).toEqual([18, 19, 20]);
+  });
+
+  it("still draws the focus file's links on the overview", () => {
+    // File 0's six links (ids 0 to 5) come last, after the three strongest.
+    const overview = overviewLinks(dense, all, { minStrength: 0, box: everywhere, count: 3 });
+    const neighbourhood = neighbourhoodOf(dense, 0, 0);
+    const focused = { ...style, minStrength: 0, neighbourhood };
+    expect(Array.from(encodeLinks(dense, all, focused, overview).ids)).toEqual([
+      18, 19, 20, 0, 1, 2, 3, 4, 5,
     ]);
   });
 

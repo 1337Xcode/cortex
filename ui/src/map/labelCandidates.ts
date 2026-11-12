@@ -8,7 +8,7 @@ import type { Neighbourhood } from './highlight';
 import { collapsedRadius } from './hubEncoding';
 import { placeLabels, type LabelCandidate, type ScreenBox, type ScreenSize } from './labels';
 import type { Scene } from './scene';
-import { formatCount } from '../text/format';
+import { folderLabel } from '../text/vocabulary';
 import type { Visibility } from './visibility';
 
 /** Measures the width in pixels of `text` at a type size and weight. */
@@ -140,11 +140,11 @@ function fileCandidate(inputs: LabelInputs, id: number, priority: number): Label
   return candidate(inputs, node, fileRadiusPx(inputs, id));
 }
 
-/** A folder's label: its name, and for a collapsed folder its file count ("orders · 25"). */
+/** A folder's label: its name, and for a collapsed folder its file count ("orders · 25 files"). */
 export function hubLabelText(scene: Scene, hub: number, isCollapsed: boolean): string {
   const name = scene.hubName[hub] ?? '';
-  if (name === '' || !isCollapsed) return name;
-  return `${name} · ${formatCount(scene.layout.hubFileCount[hub] ?? 0)}`;
+  if (name === '') return name;
+  return folderLabel(name, isCollapsed ? (scene.layout.hubFileCount[hub] ?? 0) : null);
 }
 
 function hubCandidate(
@@ -186,7 +186,10 @@ function gatherCandidates(inputs: LabelInputs): LabelNode[] {
     pushIf(list, hubCandidate(inputs, hub, openHubRadiusPx(inputs, hub), false));
   }
   for (const hub of visibility.collapsedHubs) {
-    pushIf(list, hubCandidate(inputs, hub, collapsedRadiusPx(inputs, hub), true));
+    // A folder drawn smaller than a word is left unnamed: its name would crowd its neighbours'.
+    const radiusPx = collapsedRadiusPx(inputs, hub);
+    if (radiusPx * 2 < LABEL.collapsedMinLabelPx) continue;
+    pushIf(list, hubCandidate(inputs, hub, radiusPx, true));
   }
   if (2 ** inputs.camera.zoom >= LABEL.fileMinPixelsPerUnit) {
     for (const id of visibility.visibleFiles) {
@@ -246,15 +249,29 @@ function nodeObstacles(inputs: LabelInputs): ScreenBox[] {
   return boxes;
 }
 
-/** The labels to draw this frame: the candidates that pass the collision rule, where they fit. */
+/**
+ * The labels to draw this frame: the candidates that pass the collision rule, where they fit. The
+ * hovered or selected file is named first and may cover other nodes (its backing keeps it
+ * readable): in a dense ring every side of it is another file, and the file the person is looking
+ * at must never go unnamed. Everything else keeps clear of the nodes and of that name.
+ */
 export function chooseLabels(inputs: LabelInputs): CanvasLabel[] {
-  const placed = placeLabels(gatherCandidates(inputs), {
-    area: inputs.area,
-    obstacles: [...inputs.chrome, ...nodeObstacles(inputs)],
-    paddingPx: LABEL.paddingPx,
-    maxCount: LABEL.maxCount,
-  });
-  return placed.map(({ candidate: node, spot }) => {
+  const candidates = gatherCandidates(inputs);
+  const rules = { area: inputs.area, paddingPx: LABEL.paddingPx };
+  const focus = placeLabels(
+    candidates.filter((node) => node.priority === PRIORITY.focus),
+    { ...rules, obstacles: inputs.chrome, maxCount: 1 },
+  );
+  const focusBoxes = focus.flatMap(({ candidate, spot }) => candidate.spots[spot] ?? []);
+  const others = placeLabels(
+    candidates.filter((node) => node.priority !== PRIORITY.focus),
+    {
+      ...rules,
+      obstacles: [...inputs.chrome, ...nodeObstacles(inputs), ...focusBoxes],
+      maxCount: LABEL.maxCount - focus.length,
+    },
+  );
+  return [...focus, ...others].map(({ candidate: node, spot }) => {
     const side = LABEL_SIDES[spot] ?? 'below';
     const { key, text, kind, worldX, worldY, sizePx, isDimmed } = node;
     const drawing = drawingOf(side, node.distancePx);

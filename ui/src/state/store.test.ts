@@ -156,13 +156,38 @@ describe('map store: selection, hover and threshold', () => {
     expect(store.getState().flyTo).toEqual({ file: 1, target: 'file', serial: 2 });
   });
 
-  it("asks to frame a known file's folder and keeps that file selected", async () => {
-    const store = await readyStore(3);
-    store.getState().showFolderOf(2);
-    expect(store.getState().selectedFile).toBe(2);
-    expect(store.getState().flyTo).toEqual({ file: 2, target: 'folder', serial: 1 });
-    store.getState().showFolderOf(3);
-    expect(store.getState().flyTo).toEqual({ file: 2, target: 'folder', serial: 1 });
+  it('asks to frame a folder files sit under, keeps the selection, and ignores others', async () => {
+    const store = createMapStore(() => NOW_MS);
+    const nested = snapshotOf(2);
+    const files = [
+      { ...nested.files[0]!, path: 'src/a.rs' },
+      { ...nested.files[1]!, path: 'src/b/c.rs' },
+    ];
+    await store
+      .getState()
+      .loadGraph(() => Promise.resolve({ ok: true, value: { ...nested, files } }));
+    store.getState().selectFile(1);
+    store.getState().showFolder('src/b');
+    expect(store.getState().selectedFile).toBe(1);
+    expect(store.getState().flyTo).toEqual({ target: 'folder', folder: 'src/b', serial: 1 });
+    // "src/a" is a file's path without its extension, not a folder; "sr" is only a prefix.
+    store.getState().showFolder('src/a');
+    store.getState().showFolder('sr');
+    expect(store.getState().flyTo).toEqual({ target: 'folder', folder: 'src/b', serial: 1 });
+    store.getState().showFolder('');
+    expect(store.getState().flyTo).toEqual({ target: 'folder', folder: '', serial: 2 });
+  });
+
+  it('keeps the empty state while asking again quietly, and shows files once they arrive', async () => {
+    const store = createMapStore(() => NOW_MS);
+    await store.getState().loadGraph(() => Promise.resolve(ready(0)));
+    expect(store.getState().load.status).toBe('empty');
+    const later = deferred<ApiResult<GraphSnapshot>>();
+    const asking = store.getState().loadGraph(later.fetcher, { isQuiet: true });
+    expect(store.getState().load.status).toBe('empty');
+    later.settle(ready(2));
+    await asking;
+    expect(store.getState().load.status).toBe('ready');
   });
 
   it('hovers a known file only, and clears hover and selection on a new load', async () => {

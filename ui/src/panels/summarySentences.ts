@@ -1,17 +1,23 @@
-// The summary strip's sentences, in plain words with numbers from the repository: what is indexed,
-// how much agents have read, the strongest coupled pair and the busiest folder. A cold repository
-// gets one sentence saying the map shows its structure alone. Ids the summary names are checked
-// against the snapshot here, so a summary from another moment of the store is refused, not shown.
+// The summary's sentences, in plain words with numbers from the repository: what is indexed, how
+// much agents have read, the strongest coupled pair and the busiest folder. A cold repository gets
+// one sentence saying the map shows its structure alone. Each sentence has a short form for the
+// one-line strip. Ids the summary names are checked against the snapshot here, so a summary from
+// another moment of the store is refused, not shown.
 import type { GraphSnapshot } from '../api/graph';
 import type { ApiError } from '../api/guard';
 import type { MapSummary } from '../api/summary';
 import { countOf, formatCount, formatPercent } from '../text/format';
 
+/** A piece of a sentence: plain text, or a file the page renders as a button that flies to it. */
+export type SentencePart = string | { readonly file: number; readonly path: string };
+
 /** One sentence, optionally naming files the person can jump to. */
 export interface SummarySentence {
   readonly key: 'indexed' | 'cold' | 'explored' | 'pair' | 'busiest';
-  /** The sentence as pieces: plain text, or a file the strip renders as a button. */
-  readonly parts: readonly (string | { readonly file: number; readonly path: string })[];
+  /** The sentence in full. */
+  readonly parts: readonly SentencePart[];
+  /** The same sentence shorter, for the one-line strip when the full one does not fit. */
+  readonly short: readonly SentencePart[];
 }
 
 /** The sentences, or the reason the summary cannot be shown with this snapshot. */
@@ -33,25 +39,31 @@ function pairSentence(
   const from = fileRef(snapshot, pair.from);
   const to = fileRef(snapshot, pair.to);
   if (from === null || to === null) return 'bad';
+  const commits = countOf(pair.commits, 'commit');
   return {
     key: 'pair',
-    parts: [
-      'Strongest coupling: ',
-      from,
-      ' and ',
-      to,
-      ` changed together in ${countOf(pair.commits, 'commit')}.`,
-    ],
+    parts: ['Strongest coupling: ', from, ' and ', to, ` changed together in ${commits}.`],
+    short: [from, ' and ', to, `: ${commits} together.`],
   };
 }
 
 function exploredSentence(summary: MapSummary): SummarySentence {
   const read = summary.explored_files;
-  const text =
-    read === 0
-      ? 'Agents have not read any of these files yet.'
-      : `Agents have read ${formatCount(read)} of them (${formatPercent(read, summary.files)}).`;
-  return { key: 'explored', parts: [text] };
+  if (read === 0) {
+    return {
+      key: 'explored',
+      parts: ['Agents have not read any of these files yet.'],
+      short: ['No file read by agents yet.'],
+    };
+  }
+  const share = formatPercent(read, summary.files);
+  return {
+    key: 'explored',
+    parts: [
+      `Agents have read ${formatCount(read)} of the ${countOf(summary.files, 'file')} (${share}).`,
+    ],
+    short: [`${share} read by agents.`],
+  };
 }
 
 function busiestSentence(summary: MapSummary): SummarySentence | null {
@@ -60,18 +72,28 @@ function busiestSentence(summary: MapSummary): SummarySentence | null {
   const window =
     summary.window_days === 1 ? 'the last day' : `the last ${summary.window_days} days`;
   const tokens = `${countOf(busiest.tokens, 'token')} attributed`;
-  return { key: 'busiest', parts: [`Most worked on in ${window}: ${busiest.path}/ (${tokens}).`] };
+  return {
+    key: 'busiest',
+    parts: [`Most worked on in ${window}: ${busiest.path}/ (${tokens}).`],
+    short: [`Busiest folder: ${busiest.path}/.`],
+  };
 }
 
-/** Builds the strip's sentences for `summary`, checked against `snapshot`, most useful first. */
+/** Builds the sentences for `summary`, checked against `snapshot`, most useful first. */
 export function summarySentences(summary: MapSummary, snapshot: GraphSnapshot): SummaryText {
+  const files = countOf(summary.files, 'file');
   const indexed: SummarySentence = {
     key: 'indexed',
-    parts: [`${countOf(summary.files, 'file')} in ${countOf(summary.folders, 'folder')}.`],
+    parts: [`${files} in ${countOf(summary.folders, 'folder')}.`],
+    short: [`${files}.`],
   };
   if (!summary.learned) {
-    const cold = 'Cortex has not learned anything here yet, so the map shows the structure alone.';
-    return { ok: true, sentences: [{ key: 'cold', parts: [cold] }, indexed] };
+    const cold: SummarySentence = {
+      key: 'cold',
+      parts: ['Cortex has not learned anything here yet, so the map shows the structure alone.'],
+      short: ['Nothing learned yet: the structure alone.'],
+    };
+    return { ok: true, sentences: [cold, indexed] };
   }
   const pair = pairSentence(summary, snapshot);
   if (pair === 'bad') {

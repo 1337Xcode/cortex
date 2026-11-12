@@ -37,17 +37,13 @@ export type DetailState =
   | { readonly status: 'ready'; readonly detail: FileDetail };
 
 /**
- * What a fly request frames: the file itself, close enough that its folder is open, or the whole
- * folder the file is in.
+ * A request to move the camera: to a file, close enough that its folder is open, or to a whole
+ * folder, by its path ('' for the repository), framed open. `serial` grows with each request, so
+ * asking twice for the same place flies twice.
  */
-export type FlyTarget = 'file' | 'folder';
-
-/** A request to move the camera to a file or to its folder. */
-export interface FlyRequest {
-  readonly file: number;
-  readonly target: FlyTarget;
-  readonly serial: number;
-}
+export type FlyRequest =
+  | { readonly target: 'file'; readonly file: number; readonly serial: number }
+  | { readonly target: 'folder'; readonly folder: string; readonly serial: number };
 
 /** Loads one file's detail. */
 export type DetailFetcher = (id: number, signal: AbortSignal) => Promise<ApiResult<FileDetail>>;
@@ -59,17 +55,20 @@ export interface MapState {
   readonly detail: DetailState;
   /** The id of the selected file, or null; always a valid id of the ready snapshot. */
   readonly selectedFile: number | null;
-  /**
-   * The last request to move the camera to a selected file (from search, the summary or the side
-   * panel); `serial` grows with each request, so asking twice for the same file flies twice.
-   */
+  /** The last request to move the camera (from search, the lists, the breadcrumb). */
   readonly flyTo: FlyRequest | null;
   /** The id of the file under the pointer, or null; always a valid id of the ready snapshot. */
   readonly hoveredFile: number | null;
   /** Learned links weaker than this (0 to 1) are not drawn. */
   readonly minStrength: number;
-  /** Starts a snapshot load, cancelling the one in flight; clears selection and hover. */
-  readonly loadGraph: (fetcher: Fetcher<GraphSnapshot>) => Promise<void>;
+  /**
+   * Starts a snapshot load, cancelling the one in flight; clears selection and hover. A quiet load
+   * (asking again while the map is empty) keeps the current state until the answer arrives.
+   */
+  readonly loadGraph: (
+    fetcher: Fetcher<GraphSnapshot>,
+    options?: { readonly isQuiet: boolean },
+  ) => Promise<void>;
   /** Cancels the snapshot load in flight and ignores its response. */
   readonly cancelLoad: () => void;
   /** Starts a summary load, cancelling the one in flight. */
@@ -82,10 +81,16 @@ export interface MapState {
    */
   readonly selectFile: (id: number | null, options?: { readonly fly: boolean }) => void;
   /**
-   * Keeps file `id` selected and asks the camera to frame the whole folder it is in, open; the
-   * keyboard's way into a folder drawn collapsed. An unknown id does nothing.
+   * Asks the camera to frame folder `path` whole and open, keeping the selection; the keyboard's
+   * way into a folder drawn collapsed. A path no file of the snapshot sits under does nothing.
    */
-  readonly showFolderOf: (id: number) => void;
+  readonly showFolder: (path: string) => void;
+  /** Whether the overview panel is open where it can be closed (a narrow screen). */
+  readonly isOverviewOpen: boolean;
+  readonly setOverviewOpen: (isOpen: boolean) => void;
+  /** Whether the sentence that says what the picture is shows. */
+  readonly isIntroOpen: boolean;
+  readonly setIntroOpen: (isOpen: boolean) => void;
   /** Marks the file under the pointer; an unknown id clears it. */
   readonly hoverFile: (id: number | null) => void;
   /** Sets the link strength threshold, clamped to 0 to 1; a value that is not a number is ignored. */
@@ -123,6 +128,14 @@ function knownId(load: LoadState, id: number | null): number | null {
   return Number.isInteger(id) && id >= 0 && id < load.snapshot.files.length ? id : null;
 }
 
+/** Whether `path` is the repository ('') or a folder some file of the snapshot sits under. */
+function isFolderOf(load: LoadState, path: string): boolean {
+  if (load.status !== 'ready') return false;
+  if (path === '') return true;
+  const prefix = `${path}/`;
+  return load.snapshot.files.some((file) => file.path.startsWith(prefix));
+}
+
 function detailOutcome(result: ApiResult<FileDetail>, id: number, load: LoadState): DetailState {
   if (!result.ok) return { status: 'error', id, error: result.error };
   const path = load.status === 'ready' ? load.snapshot.files[id]?.path : undefined;
@@ -147,17 +160,15 @@ export function createMapStore(clockMs: () => number = Date.now) {
     flyTo: null,
     hoveredFile: null,
     minStrength: DEFAULT_MIN_STRENGTH,
+    isOverviewOpen: false,
+    isIntroOpen: false,
 
-    loadGraph: async (fetcher) => {
+    loadGraph: async (fetcher, options) => {
       const request = graphRequests.begin();
       detailRequests.cancel();
-      set({
-        load: { status: 'loading' },
-        selectedFile: null,
-        flyTo: null,
-        hoveredFile: null,
-        detail: { status: 'idle' },
-      });
+      const reset = { selectedFile: null, flyTo: null, hoveredFile: null };
+      if (options?.isQuiet === true) set(reset);
+      else set({ ...reset, load: { status: 'loading' }, detail: { status: 'idle' } });
       const result = await fetcher(request.signal);
       if (!request.isCurrent()) return;
       if (!result.ok) set({ load: { status: 'error', error: result.error } });
@@ -204,14 +215,21 @@ export function createMapStore(clockMs: () => number = Date.now) {
         return;
       }
       const serial = (get().flyTo?.serial ?? 0) + 1;
-      set({ selectedFile: selected, flyTo: { file: selected, target: 'file', serial } });
+      set({ selectedFile: selected, flyTo: { target: 'file', file: selected, serial } });
     },
 
-    showFolderOf: (id) => {
-      const selected = knownId(get().load, id);
-      if (selected === null) return;
+    showFolder: (path) => {
+      if (!isFolderOf(get().load, path)) return;
       const serial = (get().flyTo?.serial ?? 0) + 1;
-      set({ selectedFile: selected, flyTo: { file: selected, target: 'folder', serial } });
+      set({ flyTo: { target: 'folder', folder: path, serial } });
+    },
+
+    setOverviewOpen: (isOpen) => {
+      set({ isOverviewOpen: isOpen });
+    },
+
+    setIntroOpen: (isOpen) => {
+      set({ isIntroOpen: isOpen });
     },
 
     hoverFile: (id) => {

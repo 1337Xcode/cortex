@@ -51,13 +51,13 @@ describe('camera', () => {
     const { minX, minY, maxX, maxY } = scene.bounds;
     const [left, top] = toScreen(camera, SCREEN, minX, minY);
     const [right, bottom] = toScreen(camera, SCREEN, maxX, maxY);
-    // Visible: x 0..600, y 80..600; padding 48 on every side.
-    expect(left).toBeGreaterThanOrEqual(48 - 1e-6);
-    expect(right).toBeLessThanOrEqual(552 + 1e-6);
-    expect(top).toBeGreaterThanOrEqual(128 - 1e-6);
-    expect(bottom).toBeLessThanOrEqual(552 + 1e-6);
-    const touchesX = Math.abs(left - 48) < 1e-3 && Math.abs(right - 552) < 1e-3;
-    const touchesY = Math.abs(top - 128) < 1e-3 && Math.abs(bottom - 552) < 1e-3;
+    // Visible: x 0..600, y 80..600; padding 52 on every side.
+    expect(left).toBeGreaterThanOrEqual(52 - 1e-6);
+    expect(right).toBeLessThanOrEqual(548 + 1e-6);
+    expect(top).toBeGreaterThanOrEqual(132 - 1e-6);
+    expect(bottom).toBeLessThanOrEqual(548 + 1e-6);
+    const touchesX = Math.abs(left - 52) < 1e-3 && Math.abs(right - 548) < 1e-3;
+    const touchesY = Math.abs(top - 132) < 1e-3 && Math.abs(bottom - 548) < 1e-3;
     expect(touchesX || touchesY).toBe(true);
   });
 

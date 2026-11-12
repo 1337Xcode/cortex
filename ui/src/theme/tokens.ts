@@ -1,85 +1,314 @@
 // Design tokens: every colour, size, opacity and timing the map uses. Components, layers and the
 // stylesheet read from here and hold no literal values of their own.
+//
+// Sizes sit on one 4 px grid. Spacing grows by about the golden ratio from 8 px on (8, 12, 20, 32,
+// 52), rounded to the grid; type steps by its square root and by the ratio itself (13 x 1.618 is
+// 21), and every line height is a grid step, so text lines line up with the boxes around them.
+// Colours are written in OKLCH: a neutral ramp of twelve steps per theme, one accent hue, and the
+// status hues as the accent's split complement at the accent's own lightness and chroma, so none
+// shouts over another.
 import type { LinkKind } from '../api/graph';
+import { oklch, type Oklch } from './oklch';
+
+/** The grid every size, gap and line height is a multiple of, in pixels. */
+export const GRID_PX = 4;
+
+/** The golden ratio, which the spacing and type scales follow. */
+export const GOLDEN_RATIO = (1 + Math.sqrt(5)) / 2;
+
+/** Spacing steps in pixels, from a hairline gap to the space between regions. */
+export const SPACE = { xs: 4, sm: 8, md: 12, lg: 20, xl: 32, xxl: 52 } as const;
+
+/** One step of the spacing scale. */
+export type SpaceStep = keyof typeof SPACE;
+
+/** One step of the type scale: its size and the grid line height it sits on, in pixels. */
+export interface TypeStep {
+  readonly sizePx: number;
+  readonly lineHeightPx: number;
+}
+
+/**
+ * Type steps. Small is the least any text on the map is drawn at; body is the panels' text; heading
+ * names a section; title names the selected file.
+ */
+export const TYPE = {
+  small: { sizePx: 12, lineHeightPx: 16 },
+  body: { sizePx: 13, lineHeightPx: 20 },
+  heading: { sizePx: 16, lineHeightPx: 24 },
+  title: { sizePx: 21, lineHeightPx: 32 },
+} as const satisfies Readonly<Record<string, TypeStep>>;
+
+/** Font weights of the variable fonts. */
+export const WEIGHT = { regular: 400, medium: 500, strong: 600 } as const;
+
+/**
+ * The two families the map ships and draws every word in: Geist for words, Geist Mono for paths,
+ * line numbers, code and numbers in tables. The fallbacks only show if a font failed to load.
+ */
+export const FONT = {
+  sans: '"Geist", system-ui, sans-serif',
+  mono: '"Geist Mono", ui-monospace, monospace',
+} as const;
+
+/** The family names the fonts register under, which the page waits for before drawing labels. */
+export const FONT_NAME = { sans: 'Geist', mono: 'Geist Mono' } as const;
+
+/** Sizes of the page's chrome, in pixels, each a multiple of the grid. */
+export const SIZE = {
+  /** Buttons, the search box and the summary strip. */
+  control: 32,
+  /** The small buttons inside a control: zoom steps, a section's toggle. */
+  controlCompact: 24,
+  /** A list row: one body line and its padding. */
+  row: 28,
+  icon: 16,
+  /** The key hint beside a button's name. */
+  keyHint: 16,
+  /** The selected file's panel. */
+  panel: 340,
+  /** The overview panel on the left, and the search box above it. */
+  overview: 300,
+  legend: 380,
+  /** The zoom percentage between its two buttons. */
+  zoomValue: 48,
+  /** The first-open sentence's card. */
+  intro: 380,
+  radius: 8,
+  radiusSmall: 4,
+  /** The sample beside each legend entry. */
+  swatchWidth: 28,
+  swatchHeight: 16,
+} as const;
+
+/**
+ * Stroke widths in pixels: lines, not boxes, so they are not grid steps. The hairline is every
+ * border; the focus ring is drawn outside its control.
+ */
+export const STROKE = {
+  hairline: 1,
+  focus: 2,
+  focusOffset: 2,
+  /** A fact's coloured edge in the panel. */
+  edge: 4,
+  /** A file's outline in the legend's samples, and a never-read file's thinner one. */
+  mark: 1.5,
+  markThin: 0.75,
+} as const;
+
+/** Layout rules of the page that are not sizes. */
+export const LAYOUT = {
+  /** Below this viewport width the panels become bottom sheets and the chrome compacts. */
+  narrowBelow: 720,
+  /** A bottom sheet's height as a share of the viewport. */
+  sheetHeightShare: 0.58,
+  /** The search results' and the legend's greatest height as a share of the viewport. */
+  popoverHeightShare: 0.7,
+} as const;
+
+/**
+ * How many rows a list shows before "Show N more", how many a page of history holds, and the most
+ * rows an overview list keeps (its strongest; a long tail is for search, not a list).
+ */
+export const LIST = { rows: 5, historyPage: 10, most: 25 } as const;
+
+/** The hue of the one accent: learned links, the selection and the focus ring. */
+export const ACCENT_HUE = 290;
+
+/** How far each status hue sits from the accent's complement, in degrees. */
+export const SPLIT_DEGREES = 35;
+
+/** The hue of red, kept for an error or a broken anchor. */
+export const DANGER_HUE = 25;
+
+/** A hue turned into 0 to 360 degrees. */
+function wrapHue(degrees: number): number {
+  return ((degrees % 360) + 360) % 360;
+}
+
+/** The status hues: the accent's split complement (green for recent, amber for suspect). */
+export const STATUS_HUE = {
+  recent: wrapHue(ACCENT_HUE + 180 + SPLIT_DEGREES),
+  suspect: wrapHue(ACCENT_HUE + 180 - SPLIT_DEGREES),
+} as const;
+
+/** The hue and chroma of the neutral ramp: a cool grey. */
+const NEUTRAL_HUE = 260;
+
+/** Lightness of each step of the dark theme's neutral ramp, ground to brightest text. */
+const DARK_RAMP_L = [0.17, 0.2, 0.235, 0.27, 0.31, 0.36, 0.43, 0.52, 0.62, 0.7, 0.79, 0.95];
+
+/** Lightness of each step of the light theme's neutral ramp, brightest surface to darkest text. */
+const LIGHT_RAMP_L = [1, 0.975, 0.955, 0.925, 0.89, 0.85, 0.78, 0.62, 0.56, 0.5, 0.46, 0.22];
+
+/** A ramp of twelve neutral steps at one chroma. */
+function neutralRamp(lightness: readonly number[], chroma: number): readonly Oklch[] {
+  return lightness.map((l) => oklch(l, l === 1 ? 0 : chroma, NEUTRAL_HUE));
+}
+
+/** The twelve neutral steps of each theme. */
+export const NEUTRAL = {
+  dark: neutralRamp(DARK_RAMP_L, 0.012),
+  light: neutralRamp(LIGHT_RAMP_L, 0.004),
+} as const;
+
+/** The lightness and chroma the accent and every status hue share in each theme. */
+export const SIGNAL = { dark: { l: 0.77, c: 0.12 }, light: { l: 0.52, c: 0.11 } } as const;
 
 /** The colours of the canvas: neutral by default, colour only where it means something. */
 export interface CanvasColors {
   /** The faint dot grid behind the graph. */
-  readonly gridDot: string;
-  /** Folder hubs: the small square and the collapsed node's outline. */
-  readonly hub: string;
-  /** A collapsed hub's fill. */
-  readonly collapsedFill: string;
-  /** The faint dashed line from a hub to its parent, and a file's spoke to its hub. */
-  readonly hubLink: string;
+  readonly gridDot: Oklch;
+  /** Folder squares and a collapsed folder's outline. */
+  readonly hub: Oklch;
+  /** A collapsed folder's fill. */
+  readonly collapsedFill: Oklch;
+  /** The faint dashed line from a folder to its parent, and a file's spoke to its folder. */
+  readonly hubLink: Oklch;
   /** A file's outline. */
-  readonly file: string;
-  /** A file no agent has read yet (the Fog). */
-  readonly unread: string;
+  readonly file: Oklch;
+  /** A file no agent has read yet: a dimmed outline. */
+  readonly unread: Oklch;
   /** A file read or edited by an agent in the last 24 hours. */
-  readonly recent: string;
+  readonly recent: Oklch;
   /** A file with a suspect fact. */
-  readonly suspect: string;
-  /** Hub and file names drawn on the canvas. */
-  readonly label: string;
+  readonly suspect: Oklch;
+  /** Folder and file names drawn on the canvas. */
+  readonly label: Oklch;
 }
 
-/** The colours of one theme. Text pairs meet WCAG AA (4.5:1), graphics 3:1 (see the tests). */
+/** The colours of one theme. Text pairs meet WCAG AA (4.5:1), marks 3:1 (see the tests). */
 export interface ThemeColors {
-  readonly background: string;
-  readonly surface: string;
-  readonly border: string;
-  readonly text: string;
-  readonly textMuted: string;
+  /** The ground under the canvas. */
+  readonly background: Oklch;
+  /** Panels, the search box and every control. */
+  readonly surface: Oklch;
+  /** A control under the pointer, an open section's header. */
+  readonly raised: Oklch;
+  readonly border: Oklch;
+  readonly text: Oklch;
+  readonly textMuted: Oklch;
   /** The one accent: learned links, the selection and the focus ring. */
-  readonly accent: string;
-  readonly danger: string;
+  readonly accent: Oklch;
+  /** Text drawn on the accent. */
+  readonly onAccent: Oklch;
+  /** An error. */
+  readonly danger: Oklch;
   readonly canvas: CanvasColors;
 }
 
-/** Light theme: a near-white ground, slate neutrals and a deep violet accent. */
-export const LIGHT_COLORS: ThemeColors = {
-  background: '#f6f7f9',
-  surface: '#ffffff',
-  border: '#ccd3dc',
-  text: '#161b22',
-  textMuted: '#4a5361',
-  accent: '#6d28d9',
-  danger: '#b3261e',
-  canvas: {
-    gridDot: '#d3d9e0',
-    hub: '#3f4854',
-    collapsedFill: '#dde2e8',
-    hubLink: '#8f99a6',
-    file: '#5c6674',
-    unread: '#b9c0ca',
-    recent: '#15803d',
-    suspect: '#b45309',
-    label: '#2a313b',
-  },
-};
+/** The accent and status colours of a theme at its signal lightness and chroma. */
+function signals(theme: keyof typeof SIGNAL): {
+  accent: Oklch;
+  recent: Oklch;
+  suspect: Oklch;
+  danger: Oklch;
+} {
+  const { l, c } = SIGNAL[theme];
+  return {
+    accent: oklch(l, c, ACCENT_HUE),
+    recent: oklch(l, c, STATUS_HUE.recent),
+    suspect: oklch(l, c, STATUS_HUE.suspect),
+    danger: oklch(l, c, DANGER_HUE),
+  };
+}
 
-/** Dark theme (the default look): a near-black ground, grey neutrals and a light violet accent. */
-export const DARK_COLORS: ThemeColors = {
-  background: '#121418',
-  surface: '#1a1e24',
-  border: '#323944',
-  text: '#e6e9ee',
-  textMuted: '#9ea7b5',
-  accent: '#a98bfa',
-  danger: '#ff8a80',
-  canvas: {
-    gridDot: '#2a2f37',
-    hub: '#8a93a1',
-    collapsedFill: '#2b313a',
-    hubLink: '#555e6b',
-    file: '#8e98a7',
-    unread: '#454c57',
-    recent: '#4ade80',
-    suspect: '#fbbf24',
-    label: '#c8ced7',
-  },
-};
+/** Step `index` (1 to 12) of a ramp. */
+function step(ramp: readonly Oklch[], index: number): Oklch {
+  const color = ramp[index - 1];
+  if (color === undefined) throw new Error(`the neutral ramp has no step ${index}`);
+  return color;
+}
+
+/** The dark theme (the default look): a near-black ground, cool greys and a light violet accent. */
+export const DARK_COLORS: ThemeColors = (() => {
+  const n = NEUTRAL.dark;
+  const { accent, recent, suspect, danger } = signals('dark');
+  return {
+    background: step(n, 1),
+    surface: step(n, 2),
+    raised: step(n, 3),
+    border: step(n, 5),
+    text: step(n, 12),
+    textMuted: step(n, 11),
+    accent,
+    onAccent: step(n, 1),
+    danger,
+    canvas: {
+      gridDot: step(n, 4),
+      hub: step(n, 10),
+      collapsedFill: step(n, 4),
+      hubLink: step(n, 7),
+      file: step(n, 10),
+      unread: step(n, 8),
+      recent,
+      suspect,
+      label: step(n, 11),
+    },
+  };
+})();
+
+/** The light theme: a near-white ground, the same greys darkened and a deep violet accent. */
+export const LIGHT_COLORS: ThemeColors = (() => {
+  const n = NEUTRAL.light;
+  const { accent, recent, suspect, danger } = signals('light');
+  return {
+    background: step(n, 2),
+    surface: step(n, 1),
+    raised: step(n, 3),
+    border: step(n, 5),
+    text: step(n, 12),
+    textMuted: step(n, 11),
+    accent,
+    onAccent: step(n, 1),
+    danger,
+    canvas: {
+      gridDot: step(n, 5),
+      hub: step(n, 10),
+      collapsedFill: step(n, 4),
+      hubLink: step(n, 7),
+      file: step(n, 10),
+      unread: step(n, 8),
+      recent,
+      suspect,
+      label: step(n, 11),
+    },
+  };
+})();
+
+/** The page's colour roles, in the order the checks list them. */
+const PAGE_ROLES = [
+  'background',
+  'surface',
+  'raised',
+  'border',
+  'text',
+  'textMuted',
+  'accent',
+  'onAccent',
+  'danger',
+] as const;
+
+/** The canvas's colour roles. */
+const CANVAS_ROLES = [
+  'gridDot',
+  'hub',
+  'collapsedFill',
+  'hubLink',
+  'file',
+  'unread',
+  'recent',
+  'suspect',
+  'label',
+] as const;
+
+/** Every colour of a theme by role name, the canvas roles prefixed `canvas.`. */
+export function colorRoles(colors: ThemeColors): [string, Oklch][] {
+  return [
+    ...PAGE_ROLES.map((role): [string, Oklch] => [role, colors[role]]),
+    ...CANVAS_ROLES.map((role): [string, Oklch] => [`canvas.${role}`, colors.canvas[role]]),
+  ];
+}
 
 /** Both themes by name; the page picks one from the system preference. */
 export const THEMES = { light: LIGHT_COLORS, dark: DARK_COLORS } as const;
@@ -98,7 +327,7 @@ export const LINK_DASH_PX: Readonly<Record<LinkKind, readonly [number, number] |
   work_order: [1.5, 3.5],
 };
 
-/** Dash pattern of the hub-to-parent lines, in pixels. */
+/** Dash pattern of the folder-to-parent lines, in pixels. */
 export const HUB_LINK_DASH_PX = [3, 4] as const;
 
 /** Opacities, from 0 to 1. */
@@ -106,7 +335,7 @@ export const OPACITY = {
   /** A learned link at weight 0; weight 1 draws at `linkMax`, linearly between. */
   linkMin: 0.2,
   linkMax: 0.6,
-  /** A collapsed folder's disc fill, in the hub colour. */
+  /** A collapsed folder's disc fill, in the folder colour. */
   collapsedFill: 0.3,
   /** A link past the strongest few of its kind while the frame is dense. */
   linkFaint: 0.05,
@@ -115,7 +344,7 @@ export const OPACITY = {
   /** Anything outside the hovered or selected file's neighbourhood, as a share of its alpha. */
   dimmed: 0.18,
   hubLink: 0.6,
-  /** The spoke from a file to its hub. */
+  /** The spoke from a file to its folder. */
   spoke: 0.28,
   grid: 1,
   /** A label outside the focus. */
@@ -130,8 +359,7 @@ export const CANVAS_SIZE = {
    * A file circle's radius in world units grows with the square root of its lines, clamped.
    * The cap keeps neighbours apart: the closest two files of a folder are one ring spacing (10)
    * apart, and two circles of 2.8 with a suspect ring and the thick selection outline still leave
-   * a gap at every zoom
-   * where single files are drawn (see the tests).
+   * a gap at every zoom where single files are drawn (see the tests).
    */
   fileRadiusMin: 1.2,
   fileRadiusMax: 2.8,
@@ -151,7 +379,10 @@ export const CANVAS_SIZE = {
    * than that, each open folder draws its own files as one disc.
    */
   fileMinRingSpacingPx: 8,
-  /** Half the side of a hub's square, in pixels. */
+  /**
+   * Half the side of a folder's square, in pixels: a 6 px square. Off the grid on purpose: an 8 px
+   * square swallowed the smallest folders' discs (5 px across) and read as a cluster of blocks.
+   */
   hubHalfSidePx: 3,
   collapsedStrokePx: 1.5,
   /** A collapsed folder's radius as a share of the circle its sub-tree covers. */
@@ -166,33 +397,42 @@ export const CANVAS_SIZE = {
   spokeMaxRings: 2,
   gridPitchPx: 16,
   gridDotRadiusPx: 0.75,
+  /** How near the pointer must come to a mark or a link to point at it, in pixels. */
+  pickRadiusPx: 4,
 } as const;
 
-/** Labels drawn on the canvas. */
+/** Labels drawn on the canvas, in the same family and at the same smallest size as the page. */
 export const LABEL = {
-  hubSizePx: 12,
-  fileSizePx: 11,
-  hubWeight: 600,
-  fileWeight: 400,
+  hubSizePx: TYPE.small.sizePx,
+  fileSizePx: TYPE.small.sizePx,
+  hubWeight: WEIGHT.strong,
+  fileWeight: WEIGHT.regular,
   /** Space between a node and its label, in pixels. */
-  gapPx: 4,
-  /** Clear space kept around every label so neighbours never touch, in pixels. */
-  paddingPx: 2,
+  gapPx: SPACE.xs,
+  /**
+   * Clear space kept around every label so neighbours never touch, in pixels: half a grid step, as
+   * a whole step leaves the hovered file nameless where its folder's square sits close beside it.
+   */
+  paddingPx: SPACE.xs / 2,
   /** The backing's padding around the text, in pixels. */
-  backingPaddingPx: [3, 1] as const,
+  backingPaddingPx: [SPACE.xs, 0] as const,
   /** Files get names once the camera shows at least this many pixels per world unit (rings 20 px apart). */
   fileMinPixelsPerUnit: 2,
   /** The most labels in one frame; beyond this the frame costs more than the labels help. */
   maxCount: 260,
+  /** A collapsed folder is named only when it draws at least this many pixels across. */
+  collapsedMinLabelPx: 12,
   /** Line height as a share of the type size, for collision boxes. */
-  lineHeight: 1.25,
+  lineHeight: TYPE.small.lineHeightPx / TYPE.small.sizePx,
 } as const;
 
 /**
  * When more than `denseAbove` drawn links have an end near the screen, only the strongest
- * `strongestPerKind` of each kind (and the hovered or selected file's) keep their strength.
+ * `strongestPerKind` of each kind (and the hovered or selected file's) keep their strength. While
+ * files are too small to draw one by one (the overview), only the `overviewStrongest` strongest
+ * links of the whole frame are drawn at all, until the person zooms in or selects a file.
  */
-export const LINK_DENSITY = { denseAbove: 40, strongestPerKind: 6 } as const;
+export const LINK_DENSITY = { denseAbove: 40, strongestPerKind: 6, overviewStrongest: 12 } as const;
 
 /** Camera limits and steps. */
 export const CAMERA = {
@@ -201,7 +441,7 @@ export const CAMERA = {
   minZoom: -14,
   maxZoom: 5,
   /** Space kept around the graph when fitting it, in pixels. */
-  fitPaddingPx: 48,
+  fitPaddingPx: SPACE.xxl,
   /**
    * Fitting never zooms in past this level (8 pixels per world unit): a small repository fills
    * the view, but its files never draw larger than 24 pixels across.
@@ -216,6 +456,9 @@ export const CAMERA = {
 /** Motion: 150 ms eased, none when the person asks for reduced motion. */
 export const MOTION = { durationMs: 150, reducedDurationMs: 0 } as const;
 
+/** How long the pointer rests on something before its explanation shows, in milliseconds. */
+export const TOOLTIP_DELAY_MS = 300;
+
 /** A file read or edited by an agent within this many milliseconds counts as recent (24 hours). */
 export const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -225,52 +468,5 @@ export const DEFAULT_MIN_STRENGTH = 0.25;
 /** How long the search box waits after the last key before asking, in milliseconds. */
 export const SEARCH_DEBOUNCE_MS = 120;
 
-/** The side panel lists at most this many links per kind. */
-export const PANEL_LINKS_PER_KIND = 5;
-
-/** Spacing scale in pixels. */
-export const SPACING = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 } as const;
-
-/** Type sizes in pixels. */
-export const TYPE_SIZES = { small: 12, body: 14, heading: 16, title: 20 } as const;
-
-/** Sizes of the page's chrome in pixels. */
-export const CHROME = {
-  panelWidth: 380,
-  radius: 8,
-  pillRadius: 999,
-  controlHeight: 32,
-  focusRingWidth: 2,
-  focusRingOffset: 2,
-  borderWidth: 1,
-  /** Below this viewport width the side panel becomes a bottom sheet and the chrome compacts. */
-  narrowBelow: 720,
-  /** The bottom sheet's height as a share of the viewport. */
-  sheetHeightShare: 0.58,
-  searchWidth: 420,
-  /** The search results' and the legend's greatest height as a share of the viewport. */
-  popoverHeightShare: 0.6,
-  legendWidth: 300,
-  zoomStepSize: 22,
-  keyHintHeight: 16,
-  chevronSize: 6,
-  /** The swatch beside each legend entry. */
-  swatchWidth: 28,
-  swatchHeight: 8,
-  swatchTallHeight: 14,
-  /**
-   * A file sample's outline in the legend, and a never-read file's thinner one: the canvas's two
-   * widths scaled up together, so the small sample stays readable and the difference shows.
-   */
-  swatchFileStrokePx: 1.5,
-  swatchUnreadStrokePx: 0.9,
-  /** The coloured edge of a fact in the side panel. */
-  factEdge: 3,
-} as const;
-
-/** The system font stack; the map ships no web fonts. */
-export const FONT_FAMILY =
-  'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
-
-/** The monospace stack for paths. */
-export const MONO_FAMILY = 'ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace';
+/** While the map has no files, the page asks the daemon again this often, in milliseconds. */
+export const EMPTY_RECHECK_MS = 5000;

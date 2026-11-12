@@ -12,6 +12,7 @@ export type ShortcutAction =
   | 'panRight'
   | 'panUp'
   | 'panDown'
+  | 'toggleLegend'
   | 'clear';
 
 /** The keys of `KeyboardEvent.key` and the action each starts. */
@@ -29,6 +30,8 @@ const SHORTCUTS: ReadonlyMap<string, ShortcutAction> = new Map([
   ['ArrowRight', 'panRight'],
   ['ArrowUp', 'panUp'],
   ['ArrowDown', 'panDown'],
+  ['l', 'toggleLegend'],
+  ['L', 'toggleLegend'],
   ['Escape', 'clear'],
 ]);
 

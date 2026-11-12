@@ -3,7 +3,7 @@
 // its centre; a never-read file is drawn with a thinner outline (set by the file encoder). Drawn
 // as one layer of rings and dots over the files.
 import { CANVAS_SIZE } from '../theme/tokens';
-import { rgba } from '../theme/rgba';
+import { rgbaOf } from '../theme/oklch';
 import { fileMark } from './fileEncoding';
 import { focusShare, writeRgba, type FrameStyle } from './frameStyle';
 import type { HubBuffers } from './hubEncoding';
@@ -40,8 +40,8 @@ export function encodeFileMarks(
     fillColors: new Uint8ClampedArray(count * 4),
     lineColors: new Uint8ClampedArray(count * 4),
   };
-  const suspect = rgba(style.colors.canvas.suspect);
-  const recent = rgba(style.colors.canvas.recent);
+  const suspect = rgbaOf(style.colors.canvas.suspect);
+  const recent = rgbaOf(style.colors.canvas.recent);
   for (const [row, id] of marked.entries()) {
     const file = scene.snapshot.files[id];
     const radius = scene.fileRadius[id] ?? 0;

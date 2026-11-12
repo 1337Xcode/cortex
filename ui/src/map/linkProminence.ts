@@ -1,7 +1,9 @@
 // Which learned links draw at full strength. While few links are near the screen, all of them do.
 // Past a density, only the strongest few of each kind near the screen keep their strength (and the
 // hovered or selected file's links, which the encoder always draws strong); the rest draw faint,
-// so a dense folder reads as its strongest couplings instead of a haze.
+// so a dense folder reads as its strongest couplings instead of a haze. On the overview, where
+// files are too small to draw one by one, only the strongest few links of the frame are drawn at
+// all, until the person zooms in or points at or selects a file.
 import { LINK_KINDS, type LinkKind } from '../api/graph';
 import type { Camera } from './camera';
 import type { ScreenSize } from './labels';
@@ -15,6 +17,13 @@ export interface WorldBox {
   readonly minY: number;
   readonly maxX: number;
   readonly maxY: number;
+}
+
+/** The links that keep their strength, by link id (1 marks one), and what becomes of the rest. */
+export interface Prominence {
+  readonly marked: Uint8Array;
+  /** The rest draw faint, or are not drawn at all. */
+  readonly rest: 'faint' | 'hidden';
 }
 
 /** How many links near the screen make the frame dense, and how many per kind stay strong then. */
@@ -64,9 +73,16 @@ function nearLinks(
   return near;
 }
 
+/** Link ids strongest first; equal weights by link id. */
+function strongestFirst(scene: Scene, ids: readonly number[]): number[] {
+  const weightOf = (id: number): number => scene.snapshot.links[id]?.weight ?? 0;
+  // INVARIANT: deterministic (ties by link id, never by the order the browser sorts in)
+  return [...ids].sort((a, b) => weightOf(b) - weightOf(a) || a - b);
+}
+
 /**
- * Marks the links that draw at full strength (1) by link id, or returns null when every drawn
- * link does (the frame is not dense). Strongest first; equal weights by link id.
+ * The links that draw at full strength, the rest faint, or null when every drawn link does (the
+ * frame is not dense): the strongest `strongestPerKind` of each kind near the screen.
  */
 export function prominentLinks(
   scene: Scene,
@@ -76,16 +92,30 @@ export function prominentLinks(
     readonly box: WorldBox;
     readonly limits: ProminenceLimits;
   },
-): Uint8Array | null {
+): Prominence | null {
   const near = nearLinks(scene, visibility, options.minStrength, options.box);
   const total = LINK_KINDS.reduce((sum, kind) => sum + near[kind].length, 0);
   if (total <= options.limits.denseAbove) return null;
   const marked = new Uint8Array(scene.snapshot.links.length);
-  const weightOf = (id: number): number => scene.snapshot.links[id]?.weight ?? 0;
   for (const kind of LINK_KINDS) {
-    // INVARIANT: deterministic (ties by link id, never by the order the browser sorts in)
-    const strongest = [...near[kind]].sort((a, b) => weightOf(b) - weightOf(a) || a - b);
+    const strongest = strongestFirst(scene, near[kind]);
     for (const id of strongest.slice(0, options.limits.strongestPerKind)) marked[id] = 1;
   }
-  return marked;
+  return { marked, rest: 'faint' };
+}
+
+/**
+ * The overview's links: the `count` strongest drawn links near the screen, of any kind, and none
+ * of the rest, so the first sight of a repository is its strongest couplings, not a tangle.
+ */
+export function overviewLinks(
+  scene: Scene,
+  visibility: Visibility,
+  options: { readonly minStrength: number; readonly box: WorldBox; readonly count: number },
+): Prominence {
+  const near = nearLinks(scene, visibility, options.minStrength, options.box);
+  const marked = new Uint8Array(scene.snapshot.links.length);
+  const all = LINK_KINDS.flatMap((kind) => near[kind]);
+  for (const id of strongestFirst(scene, all).slice(0, options.count)) marked[id] = 1;
+  return { marked, rest: 'hidden' };
 }

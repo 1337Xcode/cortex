@@ -1,26 +1,28 @@
-// The map in a browser, driven with the keyboard: the summary strip, search to a file and its
-// selection, the side panel's sections, Escape, Fit and Center, the legend, and the dimming of
-// everything outside the hovered or selected file's neighbourhood. Every check reads what the
-// page shows: text, focus, or pixels of the canvas. Hover is checked in pixels only: the status
-// line announces the selection, never the pointer.
+// The map in a browser, driven with the keyboard: the one-line summary strip and the overview
+// panel, search to a file and its selection, the side panel's sections, Escape, Fit and Center,
+// the legend, the first-open sentence, and the dimming of everything outside the hovered or
+// selected file's neighbourhood. Every check reads what the page shows: text, focus, or pixels of
+// the canvas. Hover is checked in pixels and in its explanation; the status line announces the
+// selection, never the pointer.
 import { expect, test } from '@playwright/test';
 import { fitCamera, toScreen } from '../src/map/camera';
 import { buildScene } from '../src/map/scene';
-import { DARK_COLORS } from '../src/theme/tokens';
+import { DARK_COLORS, SIZE } from '../src/theme/tokens';
 import { coldFixture, smallFixture } from './fixtures';
+import { MAP_URL, serveFixture } from './serve';
 import {
+  chromeInsets,
+  filePanel,
   headerBottom,
   inkIn,
   nextFrames,
   openMap,
   searchAndPick,
   snapshotOf,
-  tabTo,
   type PageRecord,
 } from './helpers';
 
 const VIEWPORT = { width: 1440, height: 900 };
-const PANEL_WIDTH = 380;
 
 let record: PageRecord = { errors: [], foreign: [] };
 
@@ -34,10 +36,10 @@ test.describe('ten-file repository', () => {
     record = await openMap(page, smallFixture(Date.now()));
   });
 
-  test('the summary strip states the repository in plain sentences', async ({ page }) => {
+  test('the overview states the repository in plain sentences', async ({ page }) => {
     await expect(page.getByTestId('summary-indexed')).toHaveText('10 files in 5 folders.');
     await expect(page.getByTestId('summary-explored')).toHaveText(
-      'Agents have read 7 of them (70%).',
+      'Agents have read 7 of the 10 files (70%).',
     );
     await expect(page.getByTestId('summary-pair')).toHaveText(
       'Strongest coupling: book.rs and mod.rs changed together in 12 commits.',
@@ -47,33 +49,68 @@ test.describe('ten-file repository', () => {
     );
   });
 
-  test('the summary strip keeps to one line until asked for all of it', async ({ page }) => {
+  test('the summary strip stays one line of whole sentences', async ({ page }) => {
     const strip = page.getByRole('region', { name: 'Summary' });
-    // One line at 14 px, padded, inside the 32 px control height.
-    expect((await strip.boundingBox())?.height).toBeLessThanOrEqual(34);
-    await expect(strip.getByTestId('summary-pair')).toBeVisible();
-    await tabTo(page, '.summary-toggle');
-    await page.keyboard.press('Enter');
-    await expect(strip.getByRole('button', { name: 'Show less' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
+    // One control high: 32 px, whatever it holds.
+    expect((await strip.boundingBox())?.height).toBe(SIZE.control);
+    // The most useful sentence leads, whole; nothing is cut inside a word.
+    await expect(strip.locator('[data-strip]').first()).toHaveText(
+      'Strongest coupling: book.rs and mod.rs changed together in 12 commits.',
     );
-    expect((await strip.boundingBox())?.height).toBeGreaterThan(60);
+    await expect(strip).not.toContainText('…');
+    await expect(strip.getByRole('button', { name: /Show all/ })).toHaveCount(0);
+  });
+
+  test('the overview lists the strongest pairs, the busiest files and what needs attention', async ({
+    page,
+  }) => {
+    const overview = page.getByRole('complementary', { name: 'Overview' });
+    // Co-change pairs by commits: book+mod 12, book+payment 9, book+orders 6, invoice+tax 5,
+    // payment+orders 3.
+    await expect(overview.getByTestId('overview-pairs').getByRole('listitem')).toHaveText([
+      'book.rs and mod.rs12 commits',
+      'book.rs and payment.rs9 commits',
+      'book.rs and orders.rs6 commits',
+      'invoice.rs and tax.rs5 commits',
+      'payment.rs and orders.rs3 commits',
+    ]);
+    // Seven files have tokens; five show, then "Show 2 more".
+    const busiest = overview.getByTestId('overview-busiest');
+    await expect(busiest.getByRole('listitem')).toHaveCount(5);
+    await expect(busiest.getByRole('listitem').first()).toHaveText('payment.rs29,910 tokens');
+    await busiest.getByRole('button', { name: 'Show 2 more' }).click();
+    await expect(busiest.getByRole('listitem')).toHaveCount(7);
+    await expect(overview.getByTestId('overview-attention').getByRole('listitem')).toHaveText([
+      'book.rs1 suspect fact',
+    ]);
+    // A row is a button that flies to its file and selects it.
+    await overview
+      .getByRole('button', { name: /^src\/orders\/book.rs has 1 suspect fact/ })
+      .click();
+    await expect(page.locator('#panel-title')).toHaveText('book.rs');
   });
 
   test('search flies to a file, selects it and moves focus into its panel', async ({ page }) => {
     await searchAndPick(page, 'book');
-    await expect(page.getByRole('heading', { name: 'book.rs', level: 2 })).toBeFocused();
+    await expect(page.locator('#panel-title')).toBeFocused();
     // book.rs links above 0.25: mod.rs 0.9, payment.rs 0.8, tests/orders.rs 0.55, ui/app.ts 0.45.
     await expect(page.getByTestId('map-status')).toHaveText(
       'Highlighting src/orders/book.rs and 4 linked files; other files are dimmed.',
     );
   });
 
-  test('the side panel shows every section, and each one empty says so', async ({ page }) => {
+  test('the side panel shows every section with its count, and each one empty says so', async ({
+    page,
+  }) => {
     await searchAndPick(page, 'book');
-    const panel = page.getByRole('complementary');
+    const panel = filePanel(page);
     await expect(panel.getByText('src/orders/book.rs', { exact: true })).toBeVisible();
+    await expect(
+      panel.getByRole('navigation', { name: 'Folders of the selected file' }),
+    ).toHaveText(
+      // The slashes between the folders are drawn by the stylesheet, not written in the page.
+      'Repositorysrcorders',
+    );
     await expect(panel.locator('dl')).toHaveText(
       /^Lines500Agent reads14Commits21Tokens attributed18,300$/,
     );
@@ -82,6 +119,13 @@ test.describe('ten-file repository', () => {
     await expect(panel.locator('dd', { hasText: '18,300' })).toHaveAccessibleDescription(
       'Tokens of agent turns whose last read or edit was this file.',
     );
+    // Linked files and facts are open; history and what Cortex told agents are closed.
+    const toggle = (name: RegExp) => panel.getByRole('button', { name });
+    await expect(toggle(/^Linked files/)).toHaveAttribute('aria-expanded', 'true');
+    await expect(toggle(/^Facts/)).toHaveAttribute('aria-expanded', 'true');
+    await expect(toggle(/^History/)).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle(/^What Cortex told agents/)).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle(/^Linked files/)).toHaveText('Linked files4');
     await expect(panel.getByTestId('panel-links-co_change')).toHaveText(
       'Changed togethermod.rs12 commitspayment.rs9 commitsorders.rs6 commits',
     );
@@ -94,33 +138,37 @@ test.describe('ten-file repository', () => {
     await expect(panel.getByTestId('panel-facts').locator('li[data-status="suspect"]')).toHaveText(
       'SuspectconventionA cancelled order keeps its book entry.',
     );
+    await toggle(/^History/).click();
     await expect(panel.getByTestId('panel-history')).toContainText(
       'Keep cancelled orders in the book',
     );
-    await expect(panel.getByTestId('panel-told').locator('li')).toHaveText([
+    await toggle(/^What Cortex told agents/).click();
+    await expect(panel.getByTestId('panel-told').getByRole('listitem')).toHaveText([
       /Work order.*then read or edited/,
       /Warning.*not known yet/,
     ]);
 
-    await tabTo(page, '.panel button.link-button[title="src/orders/mod.rs"]');
+    await panel
+      .getByRole('button', { name: /^book.rs changed with mod.rs in 12 of 21 commits/ })
+      .focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: 'mod.rs', level: 2 })).toBeFocused();
+    await expect(page.locator('#panel-title')).toHaveText('mod.rs');
+    await expect(page.locator('#panel-title')).toBeFocused();
     await expect(panel.getByTestId('panel-facts')).toHaveText(
-      'FactsNo facts are recorded for this file.',
+      'Facts0No facts are recorded for this file.',
     );
+    // A section opened for one file stays open for the next.
+    await expect(toggle(/^History/)).toHaveAttribute('aria-expanded', 'true');
     await expect(panel.getByTestId('panel-history')).toHaveText(
-      "HistoryNo commit history read for this file yet; Cortex fills it in as it reads the repository's history.",
-    );
-    await expect(panel.getByTestId('panel-told')).toHaveText(
-      'What Cortex told agentsCortex has not named this file to an agent yet.',
+      "History0No commit history read for this file yet; Cortex fills it in as it reads the repository's history.",
     );
   });
 
   test('Escape closes the panel and returns focus to the search box', async ({ page }) => {
     await searchAndPick(page, 'payment');
-    await expect(page.getByRole('complementary')).toBeVisible();
+    await expect(filePanel(page)).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('complementary')).toHaveCount(0);
+    await expect(filePanel(page)).toHaveCount(0);
     await expect(page.getByRole('searchbox')).toBeFocused();
     await expect(page.getByTestId('map-status')).toHaveText('No file is highlighted.');
   });
@@ -134,14 +182,19 @@ test.describe('ten-file repository', () => {
     expect(stepped / Number(fitted?.replace('%', ''))).toBeCloseTo(1.3, 1);
     await page.keyboard.press('z');
     await expect(zoom).toHaveText(fitted ?? '');
-    const top = await headerBottom(page);
-    const visible = { x: 0, y: top, width: VIEWPORT.width, height: VIEWPORT.height - top };
+    const insets = await chromeInsets(page, false);
+    const visible = {
+      x: insets.left,
+      y: insets.top,
+      width: VIEWPORT.width - insets.left,
+      height: VIEWPORT.height - insets.top,
+    };
     const ink = await inkIn(page, visible, { background: DARK_COLORS.background, threshold: 60 });
     expect(ink.box).not.toBeNull();
     // The graph spans most of the visible area on one axis and stays clear of its edges.
     const box = ink.box ?? visible;
     expect(Math.max(box.width / visible.width, box.height / visible.height)).toBeGreaterThan(0.6);
-    expect(box.y).toBeGreaterThan(top + 4);
+    expect(box.y).toBeGreaterThan(insets.top + 4);
     expect(box.y + box.height).toBeLessThan(VIEWPORT.height - 4);
   });
 
@@ -149,8 +202,11 @@ test.describe('ten-file repository', () => {
     page,
   }) => {
     await searchAndPick(page, 'book');
-    const top = await headerBottom(page);
-    const middle = { x: (VIEWPORT.width - PANEL_WIDTH) / 2, y: top + (VIEWPORT.height - top) / 2 };
+    const insets = await chromeInsets(page, true);
+    const middle = {
+      x: insets.left + (VIEWPORT.width - insets.left - insets.right) / 2,
+      y: insets.top + (VIEWPORT.height - insets.top) / 2,
+    };
     const around = { x: middle.x - 25, y: middle.y - 25, width: 50, height: 50 };
     const accent = { background: DARK_COLORS.background, color: DARK_COLORS.accent, threshold: 40 };
     const centred = await inkIn(page, around, accent);
@@ -166,35 +222,44 @@ test.describe('ten-file repository', () => {
     expect(back.count).toBeGreaterThan(40);
   });
 
-  test('the legend counts links by kind and files by state, and the slider changes them', async ({
+  test('the legend counts each shape and says what it means; the slider changes the counts', async ({
     page,
   }) => {
-    await tabTo(page, 'button.legend-toggle');
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('l');
     const legend = page.getByRole('region', { name: 'Legend' });
     await expect(legend.getByRole('button', { name: 'Legend' })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
+    const count = (id: string) => legend.getByTestId(id).locator('.legend-count');
+    const meaning = (id: string) => legend.getByTestId(id).locator('.legend-meaning');
     // At 0.25: co-change 0.7, 0.9, 0.8, 0.55, 0.3; used together 0.6, 0.4, 0.5; work order 0.35, 0.45.
-    await expect(legend.getByTestId('legend-co_change')).toHaveText('Changed together5');
-    await expect(legend.getByTestId('legend-used_together')).toHaveText('Used together3');
-    await expect(legend.getByTestId('legend-work_order')).toHaveText('Named in a work order2');
-    await expect(legend.getByTestId('legend-recent')).toContainText('2');
-    await expect(legend.getByTestId('legend-suspect')).toHaveText('Has a suspect fact1');
-    await expect(legend.getByTestId('legend-unread')).toHaveText('Never read by an agent3');
-    await expect(legend.getByTestId('legend-folders')).toContainText('5');
-    await tabTo(page, 'input[type="range"]');
-    await expect(page.getByRole('slider')).toBeFocused();
+    await expect(count('legend-co_change')).toHaveText('5');
+    await expect(count('legend-used_together')).toHaveText('3');
+    await expect(count('legend-work_order')).toHaveText('2');
+    await expect(meaning('legend-co_change')).toHaveText(
+      'Solid: the two files changed in the same commits.',
+    );
+    // payment.rs 2 h and app.ts 5 h ago are recent; view.ts (72 h) is not.
+    await expect(count('legend-recent')).toHaveText('2');
+    await expect(meaning('legend-recent')).toHaveText('A filled centre, in green.');
+    await expect(count('legend-suspect')).toHaveText('1');
+    await expect(meaning('legend-suspect')).toHaveText('A second ring, in amber.');
+    // Never read, and neither recent nor suspect: README, tests/orders.rs, ui/view.ts.
+    await expect(count('legend-unread')).toHaveText('3');
+    await expect(count('legend-folders')).toHaveText('5');
+    await legend.getByRole('slider').focus();
     for (let i = 0; i < 5; i += 1) await page.keyboard.press('ArrowLeft');
     await expect(legend.locator('output')).toHaveText('0.00');
-    await expect(legend.getByTestId('legend-work_order')).toHaveText('Named in a work order3');
+    await expect(count('legend-work_order')).toHaveText('3');
   });
 
-  test('hovering a file dims every file outside its neighbourhood', async ({ page }) => {
+  test('hovering a file dims every file outside its neighbourhood and explains the file', async ({
+    page,
+  }) => {
     const scene = buildScene(snapshotOf(smallFixture(Date.now())));
-    const top = await headerBottom(page);
-    const camera = fitCamera(scene, VIEWPORT, { top, right: 0, bottom: 0, left: 0 });
+    const insets = await chromeInsets(page, false);
+    const camera = fitCamera(scene, VIEWPORT, insets);
     const at = (id: number): [number, number] =>
       toScreen(camera, VIEWPORT, scene.layout.fileX[id] ?? 0, scene.layout.fileY[id] ?? 0);
     // src/lib.rs (3) is no neighbour of payment.rs (6); its outline is the plain file grey.
@@ -208,8 +273,52 @@ test.describe('ten-file repository', () => {
     await expect
       .poll(async () => (await inkIn(page, libBox, ink)).count)
       .toBeLessThan(before.count / 4);
+    // payment.rs: 220 lines, 9 reads, 13 commits, edited 2 hours ago.
+    await expect(page.getByRole('tooltip')).toHaveText(
+      'payment.rs: 220 lines, read 9 times by agents, changed in 13 commits. Read or edited in the last 24 hours.',
+    );
     // Hover is not announced; only a selection is.
     await expect(page.getByTestId('map-status')).toHaveText('No file is highlighted.');
+  });
+});
+
+test.describe('first open', () => {
+  test('says what the picture is once, and the legend says it again', async ({ page }) => {
+    record = await openMap(page, smallFixture(Date.now()), 'dark', true);
+    const intro = page.getByRole('region', { name: 'What this map shows' });
+    await expect(intro).toHaveText(
+      'Folders are squares, files are circles on their rings; lines join files that change together.Got it',
+    );
+    await intro.getByRole('button', { name: 'Got it' }).click();
+    await expect(intro).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByTestId('map-status')).toBeAttached();
+    await expect(intro).toHaveCount(0);
+    await page.keyboard.press('l');
+    await page.getByRole('button', { name: 'What does this picture show?' }).click();
+    await expect(intro).toBeVisible();
+  });
+});
+
+test.describe('empty repository', () => {
+  test('says Cortex may still be reading it, and shows the map once files arrive', async ({
+    page,
+  }) => {
+    const empty = { ...coldFixture(), graph: { version: 1 as const, files: [], links: [] } };
+    const errors: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    const foreign = await serveFixture(page, empty);
+    await page.goto(MAP_URL);
+    await expect(page.getByRole('status')).toHaveText('No files in the map yet.');
+    await expect(page.getByText(/^Cortex may still be reading this repository/)).toBeVisible();
+    // The index fills: the next answer has files, and the page shows the map by itself (it asks
+    // again every 5 seconds), with a summary of the files it now shows.
+    await serveFixture(page, smallFixture(Date.now()));
+    await expect(page.getByTestId('map-status')).toBeAttached({ timeout: 15_000 });
+    await expect(page.getByTestId('summary-indexed')).toHaveText('10 files in 5 folders.');
+    record = { errors, foreign };
   });
 });
 

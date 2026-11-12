@@ -8,7 +8,8 @@ import type { FrameStyle } from './frameStyle';
 import { neighbourhoodOf } from './highlight';
 import { focusHubs } from './hubEncoding';
 import { chooseLabels, spotOf, type LabelInputs } from './labelCandidates';
-import { sevenFileScene, testLink } from './testScene';
+import { buildScene } from './scene';
+import { sevenFileScene, testFile, testLink } from './testScene';
 import { computeVisibility } from './visibility';
 
 const scene = sevenFileScene([testLink(0, 4, 'co_change', 0.9)]);
@@ -53,7 +54,7 @@ describe('chooseLabels', () => {
   it('names every folder but the root, and no file, at zoom 0.5 (1.41 pixels a unit, below 2)', () => {
     // a, c and b/deep collapse (15 * 1.41 = 21 pixels, below 24) and are named with their file counts.
     const keys = chooseLabels(inputs(0.5, null)).map((label) => label.text);
-    expect([...keys].sort()).toEqual(['a · 2', 'b', 'c · 1', 'deep · 1']);
+    expect([...keys].sort()).toEqual(['a · 2 files', 'b', 'c · 1 file', 'deep · 1 file']);
   });
 
   it('names the files too at zoom 1 (2 pixels a unit)', () => {
@@ -68,8 +69,40 @@ describe('chooseLabels', () => {
     expect(labels.slice(0, 2).every((label) => !label.isDimmed)).toBe(true);
     // Lit: README.md (f0), mid.rs (f4) and their hubs, the root (h0, unnamed) and b (h2).
     const lit = new Set(['f0', 'f4', 'h2']);
-    expect(labels.map((label) => label.text)).toContain('a · 2');
+    expect(labels.map((label) => label.text)).toContain('a · 2 files');
     for (const label of labels) expect(label.isDimmed, label.text).toBe(!lit.has(label.key));
+  });
+
+  it('names the focus file in a dense ring, where every side of it covers another file', () => {
+    // Forty files in one folder at zoom 2 (rings 40 pixels apart); "f20.rs" at 8 pixels a
+    // character is 48 pixels wide, so each of its four spots covers a neighbouring circle, and a
+    // focus label kept clear of nodes is never placed.
+    const files = Array.from({ length: 40 }, (_, id) =>
+      testFile(id, `d/f${String(id).padStart(2, '0')}.rs`),
+    );
+    const ring = buildScene({ version: 1, files, links: [] });
+    const camera = lookAt(ring.layout.hubX[1] ?? 0, ring.layout.hubY[1] ?? 0, 2, NO_INSETS);
+    const visibility = computeVisibility(ring.layout, levelOfDetail(ring.layout, 2), true);
+    const neighbourhood = neighbourhoodOf(ring, 20, 0.25);
+    const style: FrameStyle = {
+      colors: DARK_COLORS,
+      nowMs: 0,
+      neighbourhood,
+      selected: null,
+      minStrength: 0.25,
+    };
+    const labels = chooseLabels({
+      scene: ring,
+      visibility,
+      camera,
+      screen: SCREEN,
+      area: { left: 0, top: 0, ...SCREEN },
+      chrome: [],
+      neighbourhood,
+      markedHubs: focusHubs(ring, visibility, style),
+      measure: (text) => text.length * 8,
+    });
+    expect(labels[0]?.text).toBe('f20.rs');
   });
 
   it('keeps placed boxes 4 pixels apart at least (2 of padding around each)', () => {

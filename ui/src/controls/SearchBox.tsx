@@ -2,6 +2,7 @@
 // flies to the first result and selects it; the arrow keys walk the results; Escape closes them.
 import { useId, useRef, type KeyboardEvent, type ReactElement, type RefObject } from 'react';
 import { visibleText } from '../api/guard';
+import { ClippedLabel } from '../components/Clipped';
 import type { SearchResult } from '../api/search';
 import type { Scene } from '../map/scene';
 import { useSearch, type SearchState } from './useSearch';
@@ -15,9 +16,11 @@ function stateLine(state: SearchState): string | null {
     case 'loading':
       return 'Searching.';
     case 'error':
-      return `Search failed (${state.error.code}): ${state.error.message}`;
+      return `Search failed (${state.error.code}): ${state.error.message}. Try again in a moment.`;
     case 'ready':
-      return state.results.length === 0 ? `Nothing matches "${state.query}".` : null;
+      return state.results.length === 0
+        ? `Nothing matches "${state.query}". Search by part of a path, a file name or a symbol.`
+        : null;
   }
 }
 
@@ -33,14 +36,15 @@ function ResultButton(props: {
     <button
       type="button"
       className="search-result"
+      aria-label={`${visibleText(result.name)}, ${result.kind === 'symbol' ? 'symbol' : 'file'}, ${where}`}
       onClick={() => {
         props.onChoose(result);
       }}
       onKeyDown={props.onKey}
     >
-      <span className="search-result-name">{visibleText(result.name)}</span>
+      <ClippedLabel text={visibleText(result.name)} kind="words" className="search-result-name" />
       <span className="search-result-kind">{result.kind === 'symbol' ? 'symbol' : 'file'}</span>
-      <span className="search-result-path">{where}</span>
+      <ClippedLabel text={where} kind="path" className="search-result-path" />
     </button>
   );
 }
@@ -132,7 +136,13 @@ export function SearchBox({
       <kbd className="key-hint search-key" aria-hidden="true">
         /
       </kbd>
-      <div className="search-popover" id={listId} hidden={!isShown}>
+      <div
+        className="search-popover"
+        id={listId}
+        hidden={!isShown}
+        data-overlay="true"
+        data-scroll-area="true"
+      >
         {line === null ? null : (
           <p className="search-state" role="status">
             {line}

@@ -3,7 +3,7 @@
 // to put a colour into a typed array.
 import type { ThemeColors } from '../theme/tokens';
 import { OPACITY } from '../theme/tokens';
-import type { Rgba } from '../theme/rgba';
+import type { Rgba } from '../theme/oklch';
 import type { Neighbourhood } from './highlight';
 
 /** The shared inputs of one frame's encoders. */

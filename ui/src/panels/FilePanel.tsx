@@ -1,11 +1,19 @@
-// The side panel for the selected file. Opens on the right (a bottom sheet on narrow screens);
-// takes focus when the selection came from the keyboard; Escape or Close clears the selection and
-// returns focus to where it was before the panel opened.
+// The panel of the selected file. Opens on the right (a bottom sheet on narrow screens); takes
+// focus when the selection came from the keyboard; Escape or Close clears the selection and returns
+// focus to where it was before the panel opened. Its header holds the breadcrumb of the file's
+// folders, its name and path; its numbers come next, then sections that collapse to their title
+// and count: the linked files and the facts open (what usually changes with this file, and which
+// rules apply to it, the questions asked most), the history and what Cortex told agents closed
+// until asked.
+import { X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, type ReactElement } from 'react';
 import { fetchFileDetail } from '../api/file';
+import { ClippedText } from '../components/Clipped';
+import { Button } from '../components/ui/button';
 import type { Scene } from '../map/scene';
 import { useMapStore } from '../state/store';
 import { baseName } from '../text/format';
+import { Breadcrumb } from './Breadcrumb';
 import {
   FactsSection,
   HistorySection,
@@ -29,26 +37,6 @@ function useEscapeToClose(close: () => void): void {
   }, [close]);
 }
 
-/**
- * Frames the folder of file `id`, open: the keyboard's way into a folder the map draws collapsed
- * (search for any file in it, then this button).
- */
-function FolderButton({ scene, id }: { scene: Scene; id: number }): ReactElement {
-  const showFolderOf = useMapStore((state) => state.showFolderOf);
-  const folder = scene.layout.hubPath[scene.layout.fileHub[id] ?? 0] ?? '';
-  return (
-    <button
-      type="button"
-      className="pill panel-folder"
-      onClick={() => {
-        showFolderOf(id);
-      }}
-    >
-      {folder === '' ? 'Show the whole repository' : `Show the folder ${folder}/`}
-    </button>
-  );
-}
-
 /** The panel for file `id` of `scene`. */
 export function FilePanel({
   scene,
@@ -66,6 +54,7 @@ export function FilePanel({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const returnTo = useRef<Element | null>(null);
   const file = scene.snapshot.files[id];
+  const path = file?.path ?? '';
 
   useLayoutEffect(() => {
     returnTo.current = document.activeElement;
@@ -74,7 +63,7 @@ export function FilePanel({
     void loadDetail(fetchFileDetail);
   }, [id, loadDetail]);
   useEffect(() => {
-    if (flyTo?.file === id && flyTo.target === 'file') headingRef.current?.focus();
+    if (flyTo?.target === 'file' && flyTo.file === id) headingRef.current?.focus();
   }, [flyTo, id]);
 
   const close = (): void => {
@@ -84,30 +73,34 @@ export function FilePanel({
   useEscapeToClose(close);
 
   return (
-    <aside className="panel" aria-labelledby="panel-title">
+    <aside className="panel file-panel" aria-labelledby="panel-title">
       <header className="panel-header">
-        <div className="panel-title-block">
-          <h2 id="panel-title" ref={headingRef} tabIndex={-1}>
-            {baseName(file?.path ?? '')}
-          </h2>
-          <p className="panel-path">{file?.path}</p>
-          <FolderButton scene={scene} id={id} />
+        <div className="panel-header-row">
+          <Breadcrumb path={path} />
+          <Button
+            variant="ghost"
+            size="icon-compact"
+            className="panel-close text-muted-foreground hover:text-foreground"
+            aria-label="Close the file panel"
+            aria-keyshortcuts="Escape"
+            title="Close (Escape)"
+            onClick={close}
+          >
+            <X aria-hidden="true" />
+          </Button>
         </div>
-        <button
-          type="button"
-          className="pill panel-close"
-          aria-label="Close the file panel"
-          aria-keyshortcuts="Escape"
-          onClick={close}
-        >
-          Close
-        </button>
+        <h2 id="panel-title" className="panel-title" ref={headingRef} tabIndex={-1}>
+          <ClippedText text={baseName(path)} kind="words" />
+        </h2>
+        <ClippedText text={path} kind="path" className="panel-path" />
       </header>
-      {file === undefined ? null : <NumbersSection file={file} />}
-      <LinksSection scene={scene} id={id} />
-      <FactsSection detail={detail} id={id} />
-      <HistorySection detail={detail} id={id} />
-      <ToldSection detail={detail} id={id} />
+      <div className="panel-body" data-scroll-area="true">
+        {file === undefined ? null : <NumbersSection file={file} />}
+        <LinksSection scene={scene} id={id} />
+        <FactsSection detail={detail} id={id} />
+        <HistorySection detail={detail} id={id} />
+        <ToldSection detail={detail} id={id} />
+      </div>
     </aside>
   );
 }

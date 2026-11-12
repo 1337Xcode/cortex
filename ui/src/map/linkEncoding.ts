@@ -5,8 +5,9 @@
 // strength; the rest dim while a focus is set.
 import type { GraphLink, LinkKind } from '../api/graph';
 import { CANVAS_SIZE, LINK_DASH_PX, OPACITY } from '../theme/tokens';
-import { rgba } from '../theme/rgba';
+import { rgbaOf } from '../theme/oklch';
 import { focusShare, writeRgba, type FrameStyle } from './frameStyle';
+import type { Prominence } from './linkProminence';
 import type { Scene } from './scene';
 import type { Visibility } from './visibility';
 
@@ -46,19 +47,24 @@ export function isLinkDrawn(link: GraphLink, visibility: Visibility, minStrength
   return from < 0 || from !== (visibility.fileStandIn[link.to] ?? -1);
 }
 
-/** The drawn link ids: faint ones first, then full-strength ones, the focus file's links last. */
+/**
+ * The drawn link ids: faint ones first, then full-strength ones, the focus file's links last.
+ * Links the prominence hides are left out, unless they are the focus file's.
+ */
 function drawOrder(
   scene: Scene,
   visibility: Visibility,
   style: FrameStyle,
-  prominent: Uint8Array | null,
+  prominent: Prominence | null,
 ): Uint32Array {
   const focus = style.neighbourhood?.focus ?? -1;
   const layers: [number[], number[], number[]] = [[], [], []];
   for (const [id, link] of scene.snapshot.links.entries()) {
     if (!isLinkDrawn(link, visibility, style.minStrength)) continue;
     const isFocused = link.from === focus || link.to === focus;
-    const isStrong = prominent === null || prominent[id] === 1;
+    const isStrong = prominent === null || prominent.marked[id] === 1;
+    // A link that is not strong was not marked, so a prominence is set.
+    if (!isFocused && !isStrong && prominent.rest === 'hidden') continue;
     layers[isFocused ? 2 : isStrong ? 1 : 0].push(id);
   }
   return Uint32Array.from(layers.flat());
@@ -66,13 +72,13 @@ function drawOrder(
 
 /**
  * Encodes the learned links `visibility` and the threshold leave on screen. Links `prominent`
- * does not mark (when it is not null) draw at `OPACITY.linkFaint`.
+ * does not mark (when it is not null) draw at `OPACITY.linkFaint`, or not at all.
  */
 export function encodeLinks(
   scene: Scene,
   visibility: Visibility,
   style: FrameStyle,
-  prominent: Uint8Array | null,
+  prominent: Prominence | null,
 ): LineBuffers {
   const ids = drawOrder(scene, visibility, style, prominent);
   const count = ids.length;
@@ -84,7 +90,7 @@ export function encodeLinks(
     widths: new Float32Array(count),
     dashes: new Float32Array(count * 2),
   };
-  const accent = rgba(style.colors.accent);
+  const accent = rgbaOf(style.colors.accent);
   const focus = style.neighbourhood?.focus ?? -1;
   for (let row = 0; row < count; row += 1) {
     const link = scene.snapshot.links[ids[row] ?? 0];
@@ -92,7 +98,7 @@ export function encodeLinks(
     buffers.sources.set(drawnEnd(scene, visibility, link.from), row * 2);
     buffers.targets.set(drawnEnd(scene, visibility, link.to), row * 2);
     const isFocused = link.from === focus || link.to === focus;
-    const isStrong = prominent === null || prominent[ids[row] ?? 0] === 1;
+    const isStrong = prominent === null || prominent.marked[ids[row] ?? 0] === 1;
     const weightAlpha = isStrong ? linkOpacity(link.weight) : OPACITY.linkFaint;
     const alpha = isFocused ? OPACITY.linkFocused : weightAlpha;
     writeRgba(buffers.colors, row, accent, alpha * focusShare(isFocused, style));

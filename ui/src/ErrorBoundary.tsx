@@ -28,7 +28,10 @@ export class ErrorBoundary extends Component<{ readonly children: ReactNode }, B
     return (
       <main className="page-state">
         <h1>Cortex map</h1>
-        <p role="alert">{describeRenderFailure(this.state.error)}</p>
+        <p className="page-state-title" role="alert">
+          {describeRenderFailure(this.state.error)}
+        </p>
+        <p className="page-state-next">Reload this page to start the map again.</p>
       </main>
     );
   }

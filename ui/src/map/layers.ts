@@ -3,8 +3,8 @@
 // geometry layer takes binary attributes straight from the typed arrays.
 import { OrthographicView, type Layer, type LayerExtension } from '@deck.gl/core';
 import { ScatterplotLayer, TextLayer } from '@deck.gl/layers';
-import { CANVAS_SIZE, FONT_FAMILY, LABEL, OPACITY, type ThemeColors } from '../theme/tokens';
-import { rgba } from '../theme/rgba';
+import { CANVAS_SIZE, FONT, LABEL, OPACITY, type ThemeColors } from '../theme/tokens';
+import { rgbaOf } from '../theme/oklch';
 import { DashedLineLayer } from './dashedLineLayer';
 import type { FileBuffers } from './fileEncoding';
 import type { HubBuffers } from './hubEncoding';
@@ -73,6 +73,8 @@ function lineLayer(id: string, lines: LineBuffers, overrides: LayerOverrides): L
       },
     },
     widthUnits: 'pixels',
+    // Learned links explain themselves under the pointer; the structure lines do not.
+    pickable: id === LAYER_ID.links,
   });
 }
 
@@ -158,7 +160,7 @@ function gridLayer(dots: Float32Array, colors: ThemeColors, overrides: LayerOver
     data: { length: dots.length / 2, attributes: { getPosition: { value: dots, size: 2 } } },
     radiusUnits: 'pixels',
     getRadius: CANVAS_SIZE.gridDotRadiusPx,
-    getFillColor: [...rgba(colors.canvas.gridDot, OPACITY.grid)],
+    getFillColor: [...rgbaOf(colors.canvas.gridDot, OPACITY.grid)],
   });
 }
 
@@ -171,9 +173,9 @@ function labelLayer(
 ): Layer[] {
   const ofKind = labels.filter((label) => label.kind === kind);
   if (ofKind.length === 0) return [];
-  const text = rgba(colors.canvas.label);
-  const faint = rgba(colors.canvas.label, OPACITY.labelDimmed);
-  const backing = rgba(colors.background, OPACITY.labelBacking);
+  const text = rgbaOf(colors.canvas.label);
+  const faint = rgbaOf(colors.canvas.label, OPACITY.labelDimmed);
+  const backing = rgbaOf(colors.background, OPACITY.labelBacking);
   const layer = new TextLayer<CanvasLabel>({
     ...overrides,
     id: kind === 'hub' ? LAYER_ID.hubLabels : LAYER_ID.fileLabels,
@@ -185,7 +187,7 @@ function labelLayer(
     getColor: (label) => [...(label.isDimmed ? faint : text)],
     getTextAnchor: (label) => label.anchor,
     getAlignmentBaseline: (label) => label.baseline,
-    fontFamily: FONT_FAMILY,
+    fontFamily: FONT.sans,
     fontWeight: kind === 'hub' ? LABEL.hubWeight : LABEL.fileWeight,
     characterSet: 'auto',
     background: true,

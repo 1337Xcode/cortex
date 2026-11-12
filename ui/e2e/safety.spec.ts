@@ -15,13 +15,15 @@ test("the map draws under the daemon's security headers with no error", async ({
   await expect(page.getByTestId('summary-indexed')).toHaveText('10 files in 5 folders.');
   // A file's panel loads its detail: one more request under the policy.
   await searchAndPick(page, 'book');
+  await page.getByRole('button', { name: /^History/ }).click();
   await expect(page.getByTestId('panel-history')).toContainText('Keep cancelled orders');
   expect(record.errors, 'console errors').toEqual([]);
   expect(record.foreign, 'requests to other origins').toEqual([]);
 });
 
 test('a render that throws shows the failed state, not a blank page', async ({ page }) => {
-  // The history section is the one place that reads a date's UTC year; make that throw.
+  // The history and told sections read a date's UTC year, and both open only when asked; make
+  // that throw, then open the history.
   await page.addInitScript(() => {
     Date.prototype.getUTCFullYear = () => {
       throw new Error('the year cannot be read');
@@ -29,6 +31,7 @@ test('a render that throws shows the failed state, not a blank page', async ({ p
   });
   const record = await openMap(page, smallFixture(Date.now()));
   await searchAndPick(page, 'book');
+  await page.getByRole('button', { name: /^History/ }).click();
   await expect(page.getByRole('alert')).toHaveText(
     'The map stopped with an error (render): the year cannot be read',
   );

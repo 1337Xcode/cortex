@@ -1,17 +1,28 @@
-// The side panel's sections for one file, each with its own empty state: its numbers, its
+// The file panel's numbers and sections, each with its own empty state: the file's counts, its
 // strongest links by kind, the facts anchored to it (suspect ones marked), the stored history of
-// its commits, and what Cortex told agents about it with whether they then used it.
-import { useId, type ReactElement } from 'react';
-import type { FactStatus, FileDetail, ToldKind } from '../api/file';
-import { LINK_KINDS, type GraphFile } from '../api/graph';
+// its commits in pages of ten, and what Cortex told agents about it with whether they then used it.
+// Every section collapses to its title and count.
+import { useId, useState, type ReactElement, type ReactNode } from 'react';
+import type { FactStatus, FileDetail, FileHistoryEntry, ToldKind } from '../api/file';
+import { LINK_KINDS, type GraphFile, type LinkKind } from '../api/graph';
 import { visibleText } from '../api/guard';
-import { LINK_KIND_NAMES } from '../controls/Legend';
+import { ClippedText } from '../components/Clipped';
+import { Button } from '../components/ui/button';
 import type { Scene } from '../map/scene';
-import { useMapStore, type DetailState } from '../state/store';
+import { type DetailState } from '../state/store';
 import { countOf, formatCount, formatDate } from '../text/format';
 import { distinctNames } from '../text/names';
-import { PANEL_LINKS_PER_KIND } from '../theme/tokens';
+import {
+  LINK_KIND_NAMES,
+  NUMBER_NAMES,
+  TOKENS_ATTRIBUTED_MEANING,
+  linkSentence,
+} from '../text/vocabulary';
+import { LIST } from '../theme/tokens';
 import { strongestLinks, type PanelLink } from './fileLinks';
+import { FileRow } from './FileRow';
+import { RowList } from './RowList';
+import { Section } from './Section';
 
 const STATUS_NAMES: Readonly<Record<FactStatus, string>> = {
   active: 'Active',
@@ -24,18 +35,14 @@ const TOLD_NAMES: Readonly<Record<ToldKind, string>> = {
   warning: 'Warning',
 };
 
-/** What the attributed tokens count, for the panel's description of that number. */
-export const TOKENS_ATTRIBUTED_MEANING =
-  'Tokens of agent turns whose last read or edit was this file.';
-
 /** The file's counts as a definition list; each name says exactly what it counts. */
 export function NumbersSection({ file }: { file: GraphFile }): ReactElement {
   const descriptionId = useId();
   const rows: [string, number, string | null][] = [
-    ['Lines', file.lines, null],
-    ['Agent reads', file.reads, null],
-    ['Commits', file.commits, null],
-    ['Tokens attributed', file.tokens, descriptionId],
+    [NUMBER_NAMES.lines, file.lines, null],
+    [NUMBER_NAMES.reads, file.reads, null],
+    [NUMBER_NAMES.commits, file.commits, null],
+    [NUMBER_NAMES.tokens, file.tokens, descriptionId],
   ];
   return (
     <>
@@ -54,58 +61,59 @@ export function NumbersSection({ file }: { file: GraphFile }): ReactElement {
   );
 }
 
-function LinkRow(props: { link: PanelLink; name: string; isCoChange: boolean }): ReactElement {
-  const { link, name, isCoChange } = props;
-  const selectFile = useMapStore((state) => state.selectFile);
-  const measure = isCoChange
-    ? countOf(link.commits, 'commit')
-    : `strength ${link.weight.toFixed(2)}`;
+/** One linked file as a row that flies to it, with what the link counts. */
+function linkRow(
+  scene: Scene,
+  id: number,
+  kind: LinkKind,
+  link: PanelLink,
+  name: string,
+): ReactNode {
+  const self = scene.snapshot.files[id];
+  const other = scene.snapshot.files[link.other];
+  if (self === undefined || other === undefined) return null;
+  const measure =
+    kind === 'co_change' ? countOf(link.commits, 'commit') : `strength ${link.weight.toFixed(2)}`;
+  const graphLink = { from: id, to: link.other, kind, weight: link.weight, commits: link.commits };
   return (
-    <li>
-      <button
-        type="button"
-        className="link-button"
-        title={link.path}
-        onClick={() => {
-          selectFile(link.other, { fly: true });
-        }}
-      >
-        {name}
-      </button>
-      <span className="panel-muted">{measure}</span>
-    </li>
+    <FileRow
+      file={link.other}
+      name={name}
+      nameKind="words"
+      measure={measure}
+      sentence={linkSentence(graphLink, self, other)}
+    />
   );
 }
 
-/** The file's strongest links of each kind. */
+/** The file's strongest links of each kind; open at first. */
 export function LinksSection({ scene, id }: { scene: Scene; id: number }): ReactElement {
-  const grouped = strongestLinks(scene, id, PANEL_LINKS_PER_KIND);
+  const grouped = strongestLinks(scene, id, LIST.most);
   // Names are told apart across every list the panel shows at once.
   const shown = LINK_KINDS.flatMap((kind) => grouped[kind].map((link) => link.path));
-  const names = new Map(shown.map((path, i) => [path, distinctNames(shown)[i] ?? path]));
+  const distinct = distinctNames(shown);
+  const names = new Map(shown.map((path, i) => [path, distinct[i] ?? path]));
+  const total = LINK_KINDS.reduce((sum, kind) => sum + grouped[kind].length, 0);
   return (
-    <section className="panel-section" aria-labelledby="panel-links">
-      <h3 id="panel-links">Linked files</h3>
+    <Section title="Linked files" count={total} isOpenAtFirst testId="panel-links">
       {LINK_KINDS.map((kind) => (
         <div key={kind} className="panel-kind" data-testid={`panel-links-${kind}`}>
           <h4>{LINK_KIND_NAMES[kind]}</h4>
           {grouped[kind].length === 0 ? (
             <p className="panel-empty">None learned yet.</p>
           ) : (
-            <ul className="panel-list">
-              {grouped[kind].map((link) => (
-                <LinkRow
-                  key={link.other}
-                  link={link}
-                  name={names.get(link.path) ?? link.path}
-                  isCoChange={kind === 'co_change'}
-                />
-              ))}
-            </ul>
+            <RowList
+              items={grouped[kind]}
+              keyOf={(link) => link.other}
+              label={LINK_KIND_NAMES[kind]}
+              renderRow={(link) =>
+                linkRow(scene, id, kind, link, names.get(link.path) ?? link.path)
+              }
+            />
           )}
         </div>
       ))}
-    </section>
+    </Section>
   );
 }
 
@@ -120,54 +128,43 @@ export function detailFor(detail: DetailState, id: number): DetailState {
   return isOther ? { status: 'loading', id } : detail;
 }
 
-function DetailBody({
-  detail: stored,
-  id,
-  children,
-}: {
-  detail: DetailState;
-  id: number;
-  children: (detail: FileDetail) => ReactElement;
-}): ReactElement {
-  const detail = detailFor(stored, id);
-  if (detail.status === 'ready') return children(detail.detail);
-  if (detail.status === 'error') {
-    return (
-      <p className="panel-empty" role="alert">
-        Could not load this ({detail.error.code}): {detail.error.message}
-      </p>
-    );
-  }
-  return <p className="panel-empty">Loading.</p>;
-}
-
-/** One section fed by the file's detail, with its title, test id and empty text. */
+/** One section fed by the file's detail, with its title, count, test id and empty text. */
 function DetailSection(props: {
   title: string;
   testId: string;
   detail: DetailState;
   id: number;
-  isEmpty: (detail: FileDetail) => boolean;
+  isOpenAtFirst: boolean;
+  countOf: (detail: FileDetail) => number;
   empty: string;
   children: (detail: FileDetail) => ReactElement;
 }): ReactElement {
+  const detail = detailFor(props.detail, props.id);
+  const count = detail.status === 'ready' ? props.countOf(detail.detail) : null;
   return (
-    <section className="panel-section" data-testid={props.testId} aria-label={props.title}>
-      <h3>{props.title}</h3>
-      <DetailBody detail={props.detail} id={props.id}>
-        {(detail) =>
-          props.isEmpty(detail) ? (
-            <p className="panel-empty">{props.empty}</p>
-          ) : (
-            props.children(detail)
-          )
-        }
-      </DetailBody>
-    </section>
+    <Section
+      title={props.title}
+      count={count}
+      isOpenAtFirst={props.isOpenAtFirst}
+      testId={props.testId}
+    >
+      {detail.status === 'error' ? (
+        <p className="panel-empty" role="alert">
+          Could not load this ({detail.error.code}): {detail.error.message}. Select the file again
+          to retry.
+        </p>
+      ) : detail.status !== 'ready' ? (
+        <p className="panel-empty">Loading.</p>
+      ) : count === 0 ? (
+        <p className="panel-empty">{props.empty}</p>
+      ) : (
+        props.children(detail.detail)
+      )}
+    </Section>
   );
 }
 
-/** The facts anchored to the file; suspect ones are marked in words and colour. */
+/** The facts anchored to the file; suspect ones are marked in words and colour. Open at first. */
 export function FactsSection({ detail, id }: { detail: DetailState; id: number }): ReactElement {
   return (
     <DetailSection
@@ -175,15 +172,16 @@ export function FactsSection({ detail, id }: { detail: DetailState; id: number }
       testId="panel-facts"
       detail={detail}
       id={id}
-      isEmpty={(d) => d.facts.length === 0}
+      isOpenAtFirst
+      countOf={(d) => d.facts.length}
       empty="No facts are recorded for this file."
     >
       {(d) => (
-        <ul className="panel-list panel-facts">
+        <ul className="fact-list">
           {d.facts.map((fact) => (
             <li key={fact.id} data-status={fact.status}>
               <span className="fact-status">{STATUS_NAMES[fact.status]}</span>
-              <span className="panel-muted">{visibleText(fact.kind)}</span>
+              <span className="fact-kind">{visibleText(fact.kind)}</span>
               <p className="fact-text">{visibleText(fact.text)}</p>
             </li>
           ))}
@@ -193,7 +191,65 @@ export function FactsSection({ detail, id }: { detail: DetailState; id: number }
   );
 }
 
-/** The stored commit subjects that touched the file, newest first. */
+/** "11 to 20 of 34": the rows a history page shows. */
+export function pageRange(page: number, total: number): string {
+  const first = page * LIST.historyPage + 1;
+  const last = Math.min(total, (page + 1) * LIST.historyPage);
+  return `${formatCount(first)} to ${formatCount(last)} of ${formatCount(total)}`;
+}
+
+/** The history in pages of ten, newest first, with buttons to the newer and older pages. */
+function HistoryPages({ history }: { history: readonly FileHistoryEntry[] }): ReactElement {
+  const [page, setPage] = useState(0);
+  const pages = Math.ceil(history.length / LIST.historyPage);
+  const rows = history.slice(page * LIST.historyPage, (page + 1) * LIST.historyPage);
+  return (
+    <>
+      <ul className="history-list">
+        {rows.map((entry, index) => (
+          <li key={page * LIST.historyPage + index}>
+            <ClippedText
+              text={visibleText(entry.subject)}
+              kind="words"
+              className="history-subject"
+            />
+            <span className="history-meta">
+              {formatDate(entry.date_s * 1000)}
+              {entry.refs === '' ? '' : ` ${visibleText(entry.refs)}`}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {pages > 1 ? (
+        <nav className="pager" aria-label="History pages">
+          <Button
+            size="compact"
+            disabled={page === 0}
+            onClick={() => {
+              setPage(page - 1);
+            }}
+          >
+            Newer
+          </Button>
+          <span className="pager-range" aria-live="polite">
+            {pageRange(page, history.length)}
+          </span>
+          <Button
+            size="compact"
+            disabled={page >= pages - 1}
+            onClick={() => {
+              setPage(page + 1);
+            }}
+          >
+            Older
+          </Button>
+        </nav>
+      ) : null}
+    </>
+  );
+}
+
+/** The stored commit subjects that touched the file, newest first. Closed at first. */
 export function HistorySection({ detail, id }: { detail: DetailState; id: number }): ReactElement {
   return (
     <DetailSection
@@ -201,22 +257,11 @@ export function HistorySection({ detail, id }: { detail: DetailState; id: number
       testId="panel-history"
       detail={detail}
       id={id}
-      isEmpty={(d) => d.history.length === 0}
+      isOpenAtFirst={false}
+      countOf={(d) => d.history.length}
       empty="No commit history read for this file yet; Cortex fills it in as it reads the repository's history."
     >
-      {(d) => (
-        <ul className="panel-list">
-          {d.history.map((entry, index) => (
-            <li key={index}>
-              <span className="history-subject">{visibleText(entry.subject)}</span>
-              <span className="panel-muted">
-                {formatDate(entry.date_s * 1000)}
-                {entry.refs === '' ? '' : ` ${visibleText(entry.refs)}`}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+      {(d) => <HistoryPages history={d.history} />}
     </DetailSection>
   );
 }
@@ -234,20 +279,24 @@ export function ToldSection({ detail, id }: { detail: DetailState; id: number })
       testId="panel-told"
       detail={detail}
       id={id}
-      isEmpty={(d) => d.told.length === 0}
+      isOpenAtFirst={false}
+      countOf={(d) => d.told.length}
       empty="Cortex has not named this file to an agent yet."
     >
       {(d) => (
-        <ul className="panel-list">
-          {d.told.map((entry, index) => (
-            <li key={index} data-used={String(entry.used)}>
+        <RowList
+          items={d.told.map((entry, index) => ({ entry, index }))}
+          keyOf={({ index }) => index}
+          label="Times Cortex named this file"
+          renderRow={({ entry }) => (
+            <p className="told-row" data-used={String(entry.used)}>
               <span>{TOLD_NAMES[entry.kind]}</span>
-              <span className="panel-muted">
+              <span className="told-meta">
                 {formatDate(entry.at_ms)}, {usedText(entry.used)}
               </span>
-            </li>
-          ))}
-        </ul>
+            </p>
+          )}
+        />
       )}
     </DetailSection>
   );

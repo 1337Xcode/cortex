@@ -1,18 +1,21 @@
 // The map: the deck.gl canvas, what pointing at and clicking its nodes does, and the controls and
-// legend beside it. Hovering a file highlights it and its neighbours; clicking a file selects it;
-// clicking a folder flies in until it opens.
+// legend beside it. Hovering a file highlights it and its neighbours; every mark and link under
+// the pointer says what it is, with its number; clicking a file selects it; clicking a folder
+// flies in until it opens.
 import type { PickingInfo } from '@deck.gl/core';
 import DeckGL from '@deck.gl/react';
-import { useMemo, useRef, type ReactElement } from 'react';
+import { useMemo, useRef, useState, type ReactElement } from 'react';
 import { Controls } from '../controls/Controls';
 import { Legend } from '../controls/Legend';
 import { useMapStore } from '../state/store';
+import { fontMeasurer } from '../text/measure';
 import { useThemeName } from '../theme/media';
-import { THEMES } from '../theme/tokens';
+import { CANVAS_SIZE, FONT, SPACE, THEMES } from '../theme/tokens';
 import { cameraOnHub, type Insets } from './camera';
 import { buildLayers, LAYER_ID, MAP_VIEW, type FrameBuffers } from './layers';
 import { MapStatus } from './MapStatus';
-import { createTextMeasurer } from './measureText';
+import type { MeasureText } from './labelCandidates';
+import { explainPick } from './mapTooltip';
 import type { Scene } from './scene';
 import { useFrame } from './useFrame';
 import { useMapCamera } from './useMapCamera';
@@ -50,6 +53,47 @@ function cursorFor({
   return isHovering ? 'pointer' : 'grab';
 }
 
+/** Label widths in the canvas labels' family, rounded up so a label's box always holds it. */
+function labelMeasurer(): MeasureText {
+  const measure = fontMeasurer();
+  return (text, sizePx, weight) => Math.ceil(measure(text, `${weight} ${sizePx}px ${FONT.sans}`));
+}
+
+/** What the pointer is on: where, and the sentence that explains it. */
+interface Pointed {
+  readonly x: number;
+  readonly y: number;
+  readonly text: string;
+}
+
+/**
+ * The explanation beside the pointer, kept off the pointer itself and on the side of it with the
+ * more room, so it never runs off the screen.
+ */
+function PointerTooltip(props: {
+  pointed: Pointed | null;
+  screen: { width: number; height: number };
+}): ReactElement | null {
+  const { pointed, screen } = props;
+  if (pointed === null) return null;
+  const isLeft = pointed.x > screen.width / 2;
+  const isAbove = pointed.y > screen.height / 2;
+  return (
+    <div
+      className="map-tooltip"
+      role="tooltip"
+      data-left={isLeft}
+      data-above={isAbove}
+      style={{
+        left: isLeft ? pointed.x - SPACE.md : pointed.x + SPACE.md,
+        top: isAbove ? pointed.y - SPACE.md : pointed.y + SPACE.md,
+      }}
+    >
+      {pointed.text}
+    </div>
+  );
+}
+
 /** The map of one snapshot. Mount it again (a new `key`) for a new snapshot. */
 export function MapView({
   scene,
@@ -72,7 +116,8 @@ export function MapView({
   const controlsRef = useRef<HTMLDivElement>(null);
   const controlsBox = useElementBox(controlsRef);
   const chrome = useMemo(() => [controlsBox], [controlsBox]);
-  const measure = useMemo(() => createTextMeasurer(), []);
+  const measure = useMemo(() => labelMeasurer(), []);
+  const [pointed, setPointed] = useState<Pointed | null>(null);
   const { viewState, camera, follow, moveTo, act } = useMapCamera(scene, screen, insets);
   const frame = useFrame({
     scene,
@@ -111,11 +156,15 @@ export function MapView({
           layers={layers}
           onHover={(info) => {
             hoverFile(pickedFile(info, frame));
+            const text = explainPick(info, frame, scene, receivedMs);
+            setPointed(text === null ? null : { x: info.x, y: info.y, text });
           }}
+          pickingRadius={CANVAS_SIZE.pickRadiusPx}
           onClick={onClick}
           getCursor={cursorFor}
         />
       </div>
+      <PointerTooltip pointed={pointed} screen={screen} />
       <MapStatus scene={scene} selected={selected} minStrength={minStrength} />
       <div className="map-controls" ref={controlsRef}>
         <Controls zoom={camera.zoom} onAction={act} />

@@ -4,7 +4,7 @@
 // selected file is outlined in the accent; files outside the focus are dimmed.
 import type { GraphFile } from '../api/graph';
 import { CANVAS_SIZE, RECENT_WINDOW_MS } from '../theme/tokens';
-import { rgba } from '../theme/rgba';
+import { rgbaOf, type Oklch, type Rgba } from '../theme/oklch';
 import { focusShare, writeRgba, type FrameStyle } from './frameStyle';
 import type { Scene } from './scene';
 import type { Visibility } from './visibility';
@@ -30,7 +30,7 @@ export interface FileBuffers {
   readonly lineWidths: Float32Array;
 }
 
-function markColor(mark: FileMark, style: FrameStyle): string {
+function markColor(mark: FileMark, style: FrameStyle): Oklch {
   const canvas = style.colors.canvas;
   if (mark === 'suspect') return canvas.suspect;
   if (mark === 'recent') return canvas.recent;
@@ -49,9 +49,9 @@ export function encodeFiles(scene: Scene, visibility: Visibility, style: FrameSt
     lineColors: new Uint8ClampedArray(count * 4),
     lineWidths: new Float32Array(count),
   };
-  const fill = rgba(style.colors.background);
-  const accent = rgba(style.colors.accent);
-  const palette = new Map<FileMark, ReturnType<typeof rgba>>();
+  const fill = rgbaOf(style.colors.background);
+  const accent = rgbaOf(style.colors.accent);
+  const palette = new Map<FileMark, Rgba>();
   for (let row = 0; row < count; row += 1) {
     const id = ids[row] ?? 0;
     const file = scene.snapshot.files[id];
@@ -65,7 +65,7 @@ export function encodeFiles(scene: Scene, visibility: Visibility, style: FrameSt
     const mark = fileMark(file, style.nowMs, scene.hasReads);
     let color = palette.get(mark);
     if (color === undefined) {
-      color = rgba(markColor(mark, style));
+      color = rgbaOf(markColor(mark, style));
       palette.set(mark, color);
     }
     writeRgba(buffers.lineColors, row, isSelected ? accent : color, share);

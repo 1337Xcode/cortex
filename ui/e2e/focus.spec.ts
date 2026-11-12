@@ -5,16 +5,17 @@
 import { expect, test, type Page } from '@playwright/test';
 import { levelOfDetail, HubState } from '../src/layout/lod';
 import { buildScene } from '../src/map/scene';
-import { CAMERA, CHROME, DARK_COLORS } from '../src/theme/tokens';
+import { CAMERA, DARK_COLORS } from '../src/theme/tokens';
 import { largeFixture, smallFixture } from './fixtures';
 import {
+  chromeInsets,
+  filePanel,
   headerBottom,
   inkIn,
   nextFrames,
   openMap,
   searchAndPick,
   snapshotOf,
-  tabTo,
   type PageRecord,
   type Region,
 } from './helpers';
@@ -86,17 +87,17 @@ test.describe('ten-file repository', () => {
     await page.keyboard.type('payment');
     const result = page.getByRole('list', { name: 'Search results' }).getByRole('button').first();
     await result.click();
-    await expect(page.getByRole('complementary')).toBeVisible();
+    await expect(filePanel(page)).toBeVisible();
     // The result the pointer picked is gone with its list.
     await expect(result).toBeHidden();
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('complementary')).toHaveCount(0);
+    await expect(filePanel(page)).toHaveCount(0);
     await expect(box).toBeFocused();
   });
 });
 
 test.describe('two-thousand-file repository', () => {
-  test('the folder button opens a folder the map draws collapsed, filling the view', async ({
+  test("the breadcrumb's last folder opens a folder the map draws collapsed, filling the view", async ({
     page,
   }) => {
     const fixture = largeFixture(2_000);
@@ -112,21 +113,29 @@ test.describe('two-thousand-file repository', () => {
     const hub = layout.fileHub[id] ?? 0;
     const path = fixture.graph.files[id]?.path ?? '';
     await searchAndPick(page, path);
-    await expect(page.getByRole('heading', { level: 2 })).toBeFocused();
+    await expect(page.locator('#panel-title')).toBeFocused();
     const folder = layout.hubPath[hub] ?? '';
-    await tabTo(page, '.panel-folder');
-    await expect(page.locator('.panel-folder')).toHaveText(`Show the folder ${folder}/`);
+    const crumb = filePanel(page).getByRole('button', { name: `Show the folder ${folder}/` });
+    // The breadcrumb comes before the title, so Shift+Tab walks back to it.
+    for (
+      let i = 0;
+      i < 20 && !(await crumb.evaluate((e) => e === document.activeElement));
+      i += 1
+    ) {
+      await page.keyboard.press('Shift+Tab');
+    }
+    await expect(crumb).toBeFocused();
     await page.keyboard.press('Enter');
     await nextFrames(page);
     const zoom = await shownZoom(page);
     expect(levelOfDetail(layout, zoom).state[hub]).toBe(HubState.Open);
-    // The folder's circle fills the area the top bar and the panel leave, less the fit padding.
-    const top = await headerBottom(page);
-    const room =
-      Math.min(VIEWPORT.width - CHROME.panelWidth, VIEWPORT.height - top) / 2 - CAMERA.fitPaddingPx;
+    // The folder's circle fills the area the top bar and the panels leave, less the fit padding.
+    const insets = await chromeInsets(page, true);
+    const width = VIEWPORT.width - insets.left - insets.right;
+    const room = Math.min(width, VIEWPORT.height - insets.top) / 2 - CAMERA.fitPaddingPx;
     expect(((layout.hubRadius[hub] ?? 0) * 2 ** zoom) / room).toBeCloseTo(1, 1);
     // The selection stays, and focus stays on the button.
     await expect(page.getByTestId('map-status')).toContainText(path);
-    await expect(page.locator('.panel-folder')).toBeFocused();
+    await expect(crumb).toBeFocused();
   });
 });

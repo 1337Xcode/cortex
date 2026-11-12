@@ -1,6 +1,9 @@
-// The camera controls at the bottom left: Fit (Z), Center (C), and the zoom percentage with − and +.
-// Native buttons with their shortcut shown beside the name.
+// The camera controls at the bottom of the map: Fit (Z), Center (C), and the zoom percentage with
+// − and +. Native buttons with their shortcut shown beside the name; the zoom reads in tabular
+// figures so its width does not jump as it changes.
+import { Minus, Plus } from 'lucide-react';
 import type { ReactElement } from 'react';
+import { Button } from '../components/ui/button';
 import { formatZoom } from '../map/camera';
 import type { ShortcutAction } from './shortcuts';
 
@@ -22,54 +25,54 @@ export function Controls({
 }): ReactElement {
   return (
     <div className="controls" role="group" aria-label="Camera">
-      <button
-        type="button"
-        className="pill"
+      <Button
         aria-keyshortcuts="Z"
+        title="Fit the whole map (Z)"
         onClick={() => {
           onAction('fit');
         }}
       >
         <span>Fit</span>
         <KeyHint name="Z" />
-      </button>
-      <button
-        type="button"
-        className="pill"
+      </Button>
+      <Button
         aria-keyshortcuts="C"
+        title="Center on the selected file (C)"
         onClick={() => {
           onAction('center');
         }}
       >
         <span>Center</span>
         <KeyHint name="C" />
-      </button>
-      <div className="pill zoom-row">
-        <output className="zoom-value" aria-label="Zoom">
-          {formatZoom(zoom)}
-        </output>
-        <button
-          type="button"
-          className="zoom-step"
+      </Button>
+      <div className="zoom-row">
+        <Button
+          variant="ghost"
+          size="icon-compact"
           aria-label="Zoom out"
           aria-keyshortcuts="-"
+          title="Zoom out (-)"
           onClick={() => {
             onAction('zoomOut');
           }}
         >
-          −
-        </button>
-        <button
-          type="button"
-          className="zoom-step"
+          <Minus aria-hidden="true" />
+        </Button>
+        <output className="zoom-value" aria-label="Zoom">
+          {formatZoom(zoom)}
+        </output>
+        <Button
+          variant="ghost"
+          size="icon-compact"
           aria-label="Zoom in"
           aria-keyshortcuts="+"
+          title="Zoom in (+)"
           onClick={() => {
             onAction('zoomIn');
           }}
         >
-          +
-        </button>
+          <Plus aria-hidden="true" />
+        </Button>
       </div>
     </div>
   );

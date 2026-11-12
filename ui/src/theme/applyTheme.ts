@@ -1,53 +1,98 @@
 // Writes the tokens of the active theme onto the document as CSS custom properties, so the
-// stylesheet reads tokens and never literal values. Follows the system's colour scheme and its
+// stylesheet and the components read tokens and never literal values. Colours take the names the
+// shadcn/ui components read (`--background`, `--primary`, `--muted-foreground`, ...), in OKLCH, so
+// the components and the canvas draw from one table. Follows the system's colour scheme and its
 // reduced-motion setting as they change.
+import { cssOf } from './oklch';
 import {
-  CANVAS_SIZE,
-  CHROME,
-  FONT_FAMILY,
-  MONO_FAMILY,
+  FONT,
+  LAYOUT,
   MOTION,
   OPACITY,
-  SPACING,
+  SIZE,
+  SPACE,
+  STROKE,
   THEMES,
-  TYPE_SIZES,
+  TYPE,
+  WEIGHT,
   type ThemeColors,
 } from './tokens';
 import { DARK_QUERY, REDUCED_MOTION_QUERY } from './media';
+
+/** A camelCase token name in kebab case: `controlCompact` is `control-compact`. */
+function kebab(name: string): string {
+  return name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+}
+
+/** The colour properties of one theme, by the names the components read. */
+function colorProperties(colors: ThemeColors): [string, string][] {
+  const { canvas } = colors;
+  const roles: [string, string][] = [
+    ['background', cssOf(colors.background)],
+    ['foreground', cssOf(colors.text)],
+    ['card', cssOf(colors.surface)],
+    ['card-foreground', cssOf(colors.text)],
+    ['popover', cssOf(colors.surface)],
+    ['popover-foreground', cssOf(colors.text)],
+    ['primary', cssOf(colors.accent)],
+    ['primary-foreground', cssOf(colors.onAccent)],
+    ['secondary', cssOf(colors.raised)],
+    ['secondary-foreground', cssOf(colors.text)],
+    ['muted', cssOf(colors.raised)],
+    ['muted-foreground', cssOf(colors.textMuted)],
+    ['accent', cssOf(colors.raised)],
+    ['accent-foreground', cssOf(colors.text)],
+    ['destructive', cssOf(colors.danger)],
+    ['border', cssOf(colors.border)],
+    ['input', cssOf(colors.border)],
+    ['ring', cssOf(colors.accent)],
+    ['recent', cssOf(canvas.recent)],
+    ['suspect', cssOf(canvas.suspect)],
+    ['unread', cssOf(canvas.unread)],
+    ['hub', cssOf(canvas.hub)],
+    ['file', cssOf(canvas.file)],
+  ];
+  return roles.map(([name, value]) => [`--${name}`, value]);
+}
+
+/** The size, type, stroke and font properties, which both themes share. */
+function scaleProperties(): [string, string][] {
+  const properties: [string, string][] = [];
+  for (const [name, value] of Object.entries(SPACE))
+    properties.push([`--space-${name}`, `${value}px`]);
+  for (const [name, value] of Object.entries(SIZE)) {
+    properties.push([`--size-${kebab(name)}`, `${value}px`]);
+  }
+  for (const [name, value] of Object.entries(STROKE)) {
+    properties.push([`--stroke-${kebab(name)}`, `${value}px`]);
+  }
+  for (const [name, value] of Object.entries(WEIGHT))
+    properties.push([`--weight-${name}`, String(value)]);
+  for (const [name, step] of Object.entries(TYPE)) {
+    properties.push([`--type-${name}-size`, `${step.sizePx}px`]);
+    properties.push([`--type-${name}-line`, `${step.lineHeightPx}px`]);
+  }
+  properties.push(
+    ['--font-family-sans', FONT.sans],
+    ['--font-family-mono', FONT.mono],
+    ['--sheet-height', `${LAYOUT.sheetHeightShare * 100}vh`],
+    ['--popover-height', `${LAYOUT.popoverHeightShare * 100}vh`],
+    ['--collapsed-fill-opacity', String(OPACITY.collapsedFill)],
+  );
+  return properties;
+}
 
 /** The CSS custom properties for one theme and motion setting, name to value. */
 export function themeProperties(
   colors: ThemeColors,
   isReducedMotion: boolean,
 ): ReadonlyMap<string, string> {
-  const properties = new Map<string, string>([
-    ['--color-background', colors.background],
-    ['--color-surface', colors.surface],
-    ['--color-border', colors.border],
-    ['--color-text', colors.text],
-    ['--color-text-muted', colors.textMuted],
-    ['--color-accent', colors.accent],
-    ['--color-danger', colors.danger],
-    ['--color-recent', colors.canvas.recent],
-    ['--color-suspect', colors.canvas.suspect],
-    ['--color-unread', colors.canvas.unread],
-    ['--color-hub', colors.canvas.hub],
-    ['--color-file', colors.canvas.file],
-    ['--collapsed-fill-opacity', String(OPACITY.collapsedFill)],
-    ['--collapsed-stroke-width', `${CANVAS_SIZE.collapsedStrokePx}px`],
-    ['--font-family', FONT_FAMILY],
-    ['--font-mono', MONO_FAMILY],
-    ['--motion-duration', `${isReducedMotion ? MOTION.reducedDurationMs : MOTION.durationMs}ms`],
+  const duration = isReducedMotion ? MOTION.reducedDurationMs : MOTION.durationMs;
+  return new Map([
+    ...colorProperties(colors),
+    ...scaleProperties(),
+    ['--motion-duration', `${duration}ms`],
   ]);
-  for (const [name, value] of Object.entries(SPACING))
-    properties.set(`--space-${name}`, `${value}px`);
-  for (const [name, value] of Object.entries(TYPE_SIZES))
-    properties.set(`--size-${name}`, `${value}px`);
-  for (const [name, value] of Object.entries(CHROME)) {
-    const kebab = name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-    properties.set(`--chrome-${kebab}`, name.endsWith('Share') ? `${value * 100}vh` : `${value}px`);
-  }
-  return properties;
 }
 
 function apply(root: HTMLElement, isDark: boolean, isReducedMotion: boolean): void {

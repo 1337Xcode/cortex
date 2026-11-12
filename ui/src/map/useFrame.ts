@@ -28,7 +28,7 @@ import {
 import type { ScreenBox, ScreenSize } from './labels';
 import type { FrameBuffers } from './layers';
 import { encodeLinks, type LineBuffers } from './linkEncoding';
-import { boxKey, nearBox, prominentLinks, type WorldBox } from './linkProminence';
+import { boxKey, nearBox, overviewLinks, prominentLinks, type WorldBox } from './linkProminence';
 import type { Scene } from './scene';
 import { computeVisibility, type Visibility } from './visibility';
 
@@ -115,6 +115,8 @@ function useLabels(inputs: LabelInputs): readonly CanvasLabel[] {
 /**
  * The learned links, re-encoded when the drawn set, the focus or the box near the screen changes
  * (the box moves in quarter-screen steps, so panning re-encodes a few times, not every frame).
+ * On the overview (files not drawn one by one, no file pointed at or selected) only the strongest
+ * few are drawn.
  */
 function useProminentLinks(
   scene: Scene,
@@ -126,10 +128,18 @@ function useProminentLinks(
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the key stands for the box
   const stableBox = useMemo(() => box, [key]);
   const { minStrength } = style;
-  const prominent = useMemo(
-    () => prominentLinks(scene, visibility, { minStrength, box: stableBox, limits: LINK_DENSITY }),
-    [scene, visibility, minStrength, stableBox],
-  );
+  const isOverview = !visibility.areFilesShown && style.neighbourhood === null;
+  const prominent = useMemo(() => {
+    if (!isOverview) {
+      return prominentLinks(scene, visibility, {
+        minStrength,
+        box: stableBox,
+        limits: LINK_DENSITY,
+      });
+    }
+    const count = LINK_DENSITY.overviewStrongest;
+    return overviewLinks(scene, visibility, { minStrength, box: stableBox, count });
+  }, [scene, visibility, minStrength, stableBox, isOverview]);
   return useMemo(
     () => encodeLinks(scene, visibility, style, prominent),
     [scene, visibility, style, prominent],

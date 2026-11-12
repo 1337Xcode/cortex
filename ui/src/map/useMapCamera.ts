@@ -4,7 +4,7 @@
 import { LinearInterpolator, type OrthographicViewState } from '@deck.gl/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isKeyField, shortcutFor, type ShortcutAction } from '../controls/shortcuts';
-import { useMapStore } from '../state/store';
+import { useMapStore, type FlyRequest } from '../state/store';
 import { useReducedMotion } from '../theme/media';
 import { CAMERA, MOTION } from '../theme/tokens';
 import {
@@ -80,9 +80,22 @@ function moveFor(action: ShortcutAction, camera: Camera, context: CameraContext)
     case 'panDown':
       return panBy(camera, 0, step);
     case 'focusSearch':
+    case 'toggleLegend':
     case 'clear':
       return null;
   }
+}
+
+/** Where a fly request takes the camera; null for a folder the layout does not have. */
+function flyTarget(
+  scene: Scene,
+  camera: Camera,
+  flyTo: FlyRequest,
+  view: { readonly screen: ScreenSize; readonly insets: Insets },
+): Camera | null {
+  if (flyTo.target === 'file') return cameraOnFile(scene, camera, flyTo.file, view.insets);
+  const hub = scene.layout.hubPath.indexOf(flyTo.folder);
+  return hub < 0 ? null : cameraOnHub(scene, hub, view.screen, view.insets);
 }
 
 /** The camera's state and the ways to move it. */
@@ -140,12 +153,8 @@ export function useMapCamera(scene: Scene, screen: ScreenSize, insets: Insets): 
   const camera = cameraOf(viewState);
   if (flyTo !== null && flyTo.serial !== flownSerial) {
     setFlownSerial(flyTo.serial);
-    const hub = scene.layout.fileHub[flyTo.file] ?? 0;
-    const next =
-      flyTo.target === 'folder'
-        ? cameraOnHub(scene, hub, screen, insets)
-        : cameraOnFile(scene, camera, flyTo.file, insets);
-    setMoved(viewStateOf(next, durationMs));
+    const next = flyTarget(scene, camera, flyTo, { screen, insets });
+    if (next !== null) setMoved(viewStateOf(next, durationMs));
   }
   useCameraKeys(camera, context, moveTo);
 

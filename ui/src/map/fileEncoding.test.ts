@@ -52,10 +52,10 @@ describe('encodeFiles', () => {
 
   it('outlines the selected file in the accent, thicker, and fills with the background', () => {
     const files = encodeFiles(scene, visibility, plain);
-    // Dark accent #a98bfa, file #8e98a7, background #121418.
-    expect(Array.from(files.lineColors.subarray(8, 12))).toEqual([169, 139, 250, 255]);
-    expect(Array.from(files.lineColors.subarray(0, 4))).toEqual([142, 152, 167, 255]);
-    expect(Array.from(files.fillColors.subarray(0, 4))).toEqual([18, 20, 24, 255]);
+    // Dark accent #b3a7fb, file #9a9fa6, background #0c1015, as Chromium paints their tokens.
+    expect(Array.from(files.lineColors.subarray(8, 12))).toEqual([179, 167, 251, 255]);
+    expect(Array.from(files.lineColors.subarray(0, 4))).toEqual([154, 159, 166, 255]);
+    expect(Array.from(files.fillColors.subarray(0, 4))).toEqual([12, 16, 21, 255]);
     expect(
       [files.lineWidths[2], files.lineWidths[0]].map((w) => Math.round((w ?? 0) * 10)),
     ).toEqual([22, 11]);
@@ -95,10 +95,11 @@ describe('second channel of the marks', () => {
     // 100 lines: radius 1.9, ring 2.5, dot 0.855.
     expect(marks.radii[0]).toBeCloseTo(2.5, 5);
     expect(marks.radii[1]).toBeCloseTo(0.855, 5);
-    // Ring: suspect #fbbf24 outline, no fill. Dot: recent #4ade80 fill, no outline.
-    expect(Array.from(marks.lineColors.subarray(0, 4))).toEqual([251, 191, 36, 255]);
+    // Ring: suspect #e1a956 outline, no fill. Dot: recent #82c984 fill, no outline (as Chromium
+    // paints their tokens).
+    expect(Array.from(marks.lineColors.subarray(0, 4))).toEqual([225, 169, 86, 255]);
     expect(marks.fillColors[3]).toBe(0);
-    expect(Array.from(marks.fillColors.subarray(4, 8))).toEqual([74, 222, 128, 255]);
+    expect(Array.from(marks.fillColors.subarray(4, 8))).toEqual([130, 201, 132, 255]);
     expect(marks.lineColors[7]).toBe(0);
   });
 
