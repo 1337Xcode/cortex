@@ -1,0 +1,126 @@
+// Tests for the text the panels show: the summary strip's sentences and the side panel's
+// strongest links, with every expected sentence written out.
+import { describe, expect, it } from 'vitest';
+import type { MapSummary } from '../api/summary';
+import { sevenFileScene, sevenFileSnapshot, testLink } from '../map/testScene';
+import { distinctNames } from '../text/names';
+import { strongestLinks } from './fileLinks';
+import { detailFor } from './fileSections';
+import { summarySentences, type SummarySentence } from './summarySentences';
+
+const LEARNED: MapSummary = {
+  version: 1,
+  files: 1204,
+  folders: 87,
+  explored_files: 312,
+  learned: true,
+  strongest_pair: { from: 1, to: 2, commits: 31 },
+  busiest_folder: { path: 'src/orders', tokens: 52310 },
+  window_days: 7,
+};
+
+function plain(sentence: SummarySentence): string {
+  return sentence.parts
+    .map((part) => (typeof part === 'string' ? part : `[${part.path}]`))
+    .join('');
+}
+
+describe('summarySentences', () => {
+  it('says what is indexed, read, coupled and busiest, in plain sentences', () => {
+    const text = summarySentences(LEARNED, sevenFileSnapshot());
+    expect(text.ok ? text.sentences.map(plain) : text.error).toEqual([
+      'Strongest coupling: [a/one.rs] and [a/two.rs] changed together in 31 commits.',
+      'Most worked on in the last 7 days: src/orders/ (52,310 tokens attributed).',
+      'Agents have read 312 of them (26%).',
+      '1,204 files in 87 folders.',
+    ]);
+  });
+
+  it('says a cold repository shows its structure alone', () => {
+    const cold = {
+      ...LEARNED,
+      files: 1,
+      folders: 1,
+      explored_files: 0,
+      learned: false,
+      strongest_pair: null,
+      busiest_folder: null,
+    };
+    const text = summarySentences(cold, sevenFileSnapshot());
+    expect(text.ok ? text.sentences.map(plain) : text.error).toEqual([
+      'Cortex has not learned anything here yet, so the map shows the structure alone.',
+      '1 file in 1 folder.',
+    ]);
+  });
+
+  it('says when nothing has been read, and leaves out what it cannot name', () => {
+    const quiet = { ...LEARNED, explored_files: 0, strongest_pair: null, busiest_folder: null };
+    const text = summarySentences(quiet, sevenFileSnapshot());
+    expect(text.ok ? text.sentences.map(plain) : text.error).toEqual([
+      'Agents have not read any of these files yet.',
+      '1,204 files in 87 folders.',
+    ]);
+  });
+
+  it('refuses a pair naming a file the map does not have', () => {
+    const text = summarySentences(
+      { ...LEARNED, strongest_pair: { from: 1, to: 7, commits: 2 } },
+      sevenFileSnapshot(),
+    );
+    expect(text.ok ? 'shown' : text.error.code).toBe('bad_range');
+  });
+});
+
+describe('strongestLinks', () => {
+  it('lists each kind strongest first, ties by path, at most the asked number', () => {
+    const scene = sevenFileScene([
+      testLink(0, 1, 'co_change', 0.5),
+      testLink(0, 2, 'co_change', 0.9),
+      testLink(0, 6, 'co_change', 0.5),
+      testLink(0, 4, 'work_order', 0.3),
+    ]);
+    const links = strongestLinks(scene, 0, 2);
+    expect(links.co_change.map((link) => link.path)).toEqual(['a/two.rs', 'a/one.rs']);
+    expect(links.used_together).toEqual([]);
+    expect(links.work_order).toEqual([{ other: 4, path: 'b/mid.rs', weight: 0.3, commits: 0 }]);
+  });
+});
+
+describe('detailFor', () => {
+  const detail = { version: 1 as const, id: 4, path: 'b/mid.rs', facts: [], history: [], told: [] };
+
+  it('shows the detail of the panel file only', () => {
+    expect(detailFor({ status: 'ready', detail }, 4)).toEqual({ status: 'ready', detail });
+    expect(detailFor({ status: 'ready', detail }, 5)).toEqual({ status: 'loading', id: 5 });
+  });
+
+  it('reads an error or a load for another file as this one still loading', () => {
+    const error = { code: 'network', message: 'down' } as const;
+    expect(detailFor({ status: 'error', id: 4, error }, 6)).toEqual({ status: 'loading', id: 6 });
+    expect(detailFor({ status: 'error', id: 6, error }, 6)).toEqual({
+      status: 'error',
+      id: 6,
+      error,
+    });
+    expect(detailFor({ status: 'idle' }, 6)).toEqual({ status: 'idle' });
+  });
+});
+
+describe('distinctNames', () => {
+  it('keeps base names that are unique, even when a path repeats', () => {
+    expect(distinctNames(['src/a.rs', 'src/b.rs', 'src/a.rs'])).toEqual(['a.rs', 'b.rs', 'a.rs']);
+  });
+
+  it('adds the folder to names that collide, and the whole folder path when folders collide too', () => {
+    expect(distinctNames(['src/orders/mod.rs', 'src/billing/mod.rs', 'lib.rs'])).toEqual([
+      'mod.rs in orders',
+      'mod.rs in billing',
+      'lib.rs',
+    ]);
+    expect(distinctNames(['a/x/mod.rs', 'b/x/mod.rs', 'mod.rs'])).toEqual([
+      'mod.rs in a/x',
+      'mod.rs in b/x',
+      'mod.rs in the root',
+    ]);
+  });
+});

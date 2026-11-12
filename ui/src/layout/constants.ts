@@ -16,17 +16,15 @@ export const SLOTS_PER_RING_STEP = 6;
 /** A hub with no files of its own still keeps this many rings clear around its centre for its drawn core. */
 export const MIN_RINGS = 1;
 
-/** Clear space kept between a sub-tree's covering circle and its neighbours and parent's files. */
-export const SUBTREE_GAP = RING_SPACING;
+/**
+ * Clear space kept between a sub-tree's covering circle and its sector's edges and its parent's
+ * own rings. With the padding inside every covering circle, a sub-tree's files stay at least
+ * gap + padding = 10 (one ring spacing) from its parent's files, and twice that from a sibling's.
+ */
+export const SUBTREE_GAP = RING_SPACING / 2;
 
 /** Margin added to each hub's covering radius so its outline and label do not touch the neighbours. */
 export const HUB_PADDING = RING_SPACING / 2;
-
-/**
- * Each sub-directory is guaranteed this share of an equal split of the full circle, so a hub
- * with one file beside a hub with ten thousand still gets a wedge wide enough to stay clear.
- */
-export const MIN_SECTOR_SHARE = 0.25;
 
 /** The angle at which a hub's sub-directory sectors start, in radians from the positive x axis. */
 export const SECTOR_START_ANGLE = 0;
@@ -36,12 +34,3 @@ export const SECTOR_START_ANGLE = 0;
  * in pixels. Below it the rings would be smaller than a few pixels and only cost frame time.
  */
 export const COLLAPSE_BELOW_RADIUS_PX = 24;
-
-/** On-screen radius in pixels of a collapsed node holding one file. */
-export const COLLAPSED_BASE_RADIUS_PX = 3;
-
-/** Extra radius in pixels per square root of files in a collapsed node (area grows with file count). */
-export const COLLAPSED_RADIUS_PX_PER_SQRT_FILE = 0.75;
-
-/** Collapsed nodes never draw larger than this radius in pixels, whatever their file count. */
-export const COLLAPSED_MAX_RADIUS_PX = COLLAPSE_BELOW_RADIUS_PX;

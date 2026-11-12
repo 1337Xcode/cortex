@@ -11,37 +11,42 @@ import { generatePaths, shuffled } from './testPaths';
  *   README.md  a/one.rs  a/two.rs  b/deep/leaf.rs  b/mid.rs  b/zed.rs  c/only.rs
  *
  * Hubs in pre-order, children by name: 0 root, 1 a, 2 b, 3 b/deep, 4 c.
- * Constants: ring spacing R = 10, subtree gap G = 10, hub padding P = 5, minimum sector share 0.25.
+ * Constants: ring spacing R = 10, subtree gap G = 5, hub padding P = 5.
  * Ring k has 6k slots, slot s at angle 2*pi*s/(6k), at distance k*R from its hub.
+ * A child's sector is 2*pi * (r + G) / (sum of r + G over its siblings), and its distance from
+ * the hub is max(own + r + G, (r + G) / sin(min(sector / 2, pi / 2))).
  *
  * Covering radii (own rings one ring = 10; padding 5):
  *   a, c, b/deep: one ring, no children         -> 10 + 5 = 15
- *   b: own 10; one child b/deep, sector 2*pi.   -> child distance = max(10 + 15 + 10, (15 + 10)/sin(pi/2))
- *      = max(35, 25) = 35; reach 35 + 15 = 50; radius = 50 + 5 = 55
- *   root: own 10; children a (2 files), b (3), c (1), total 6; floor = 0.25 * 2*pi / 3 = pi/6,
- *      spare = 2*pi - 3*pi/6 = 3*pi/2:
- *        sector a = pi/6 + 3*pi/2 * 2/6 = 2*pi/3  (120 degrees)
- *        sector b = pi/6 + 3*pi/2 * 3/6 = 11*pi/12 (165 degrees)
- *        sector c = pi/6 + 3*pi/2 * 1/6 = 5*pi/12 (75 degrees)
- *      distance = max(10 + 55 + 10, (15 + 10)/sin 60, (55 + 10)/sin 82.5, (15 + 10)/sin 37.5)
- *               = max(75, 28.87, 65.56, 41.07) = 75
- *      reach = 75 + 55 = 130; radius = 130 + 5 = 135.
+ *   b: own 10; one child b/deep, sector 2*pi, half angle capped at pi/2:
+ *      distance = max(10 + 15 + 5, (15 + 5) / 1) = max(30, 20) = 30; reach 30 + 15 = 45;
+ *      radius = 45 + 5 = 50
+ *   root: own 10; children a (15), b (50), c (15); needs 20, 55, 20, total 95:
+ *        sector a = 2*pi * 20/95 = 8*pi/19  (75.789 degrees)
+ *        sector b = 2*pi * 55/95 = 22*pi/19 (208.421 degrees)
+ *        sector c = 8*pi/19
+ *      a: max(10 + 15 + 5, 20 / sin(4*pi/19)) = max(30, 20 / 0.614212713) = 32.562009198
+ *      b: half angle 11*pi/19 is past pi/2, so max(10 + 50 + 5, 55 / 1) = 65
+ *      c: as a, 32.562009198
+ *      reach = max(32.56 + 15, 65 + 50, 32.56 + 15) = 115; radius = 115 + 5 = 120.
  *
- * Sector centres from angle 0: a 60 degrees; b 120 + 82.5 = 202.5; c 285 + 37.5 = 322.5.
- *   a  = 75 * (cos 60, sin 60)      = (37.5, 64.951905284)
- *   b  = 75 * (cos 202.5, sin 202.5) = (-69.290964938, -28.701257427)
- *   c  = 75 * (cos 322.5, sin 322.5) = (59.501500522, -45.657107176)
+ * Sector centres from angle 0: a at 4*pi/19; b at 8*pi/19 + 11*pi/19 = pi; c at 30*pi/19 + 4*pi/19
+ * = 34*pi/19 (that is, -4*pi/19). At angle 4*pi/19 and distance 20 / sin(4*pi/19), a's y is
+ * exactly 20 and its x is 20 / tan(4*pi/19) = 25.696000525.
+ *   a  = (25.696000525, 20)
+ *   b  = 65 * (cos pi, sin pi) = (-65, 0)
+ *   c  = (25.696000525, -20)
  * b has one sub-directory, whose sector is the full circle, so its centre is at 180 degrees,
- * 35 away: b/deep = b + (-35, 0) = (-104.290964938, -28.701257427).
+ * 30 away: b/deep = b + (-30, 0) = (-95, 0).
  *
  * Files: slot 0 of ring 1 is (+10, 0) from the hub; slot 1 is 10 * (cos 60, sin 60) = (5, 8.660254038).
  *   README.md  root slot 0 = (10, 0)
- *   a/one.rs   a + (10, 0)     = (47.5, 64.951905284)
- *   a/two.rs   a + (5, 8.66...) = (42.5, 73.612159322)
- *   b/deep/leaf.rs  deep + (10, 0) = (-94.290964938, -28.701257427)
- *   b/mid.rs   b + (10, 0)     = (-59.290964938, -28.701257427)
- *   b/zed.rs   b + (5, 8.66...) = (-64.290964938, -20.041003390)
- *   c/only.rs  c + (10, 0)     = (69.501500522, -45.657107176)
+ *   a/one.rs   a + (10, 0)       = (35.696000525, 20)
+ *   a/two.rs   a + (5, 8.66...)  = (30.696000525, 28.660254038)
+ *   b/deep/leaf.rs  deep + (10, 0) = (-85, 0)
+ *   b/mid.rs   b + (10, 0)       = (-55, 0)
+ *   b/zed.rs   b + (5, 8.66...)  = (-60, 8.660254038)
+ *   c/only.rs  c + (10, 0)       = (35.696000525, -20)
  *
  * Positions are stored as float32, which has a step of about 7.6e-6 near 65, so each expected
  * value is rounded to float32 before the comparison and the two must agree to 1e-6.
@@ -120,17 +125,17 @@ describe('layoutPaths on the seven-file tree', () => {
     expect(layout.hubPath).toEqual(['', 'a', 'b', 'b/deep', 'c']);
     expect(Array.from(layout.hubParent)).toEqual([-1, 0, 0, 2, 0]);
     expect(Array.from(layout.hubFileCount)).toEqual([7, 2, 3, 1, 1]);
-    expect(Array.from(layout.hubRadius)).toEqual([135, 15, 55, 15, 15]);
+    expect(Array.from(layout.hubRadius)).toEqual([120, 15, 50, 15, 15]);
     expect(Array.from(layout.fileHub)).toEqual([0, 1, 1, 3, 2, 2, 4]);
   });
 
   it('puts the hubs where the worked example puts them', () => {
     const expected: [number, number][] = [
       [0, 0],
-      [37.5, 64.951905284],
-      [-69.290964938, -28.701257427],
-      [-104.290964938, -28.701257427],
-      [59.501500522, -45.657107176],
+      [25.696000525, 20],
+      [-65, 0],
+      [-95, 0],
+      [25.696000525, -20],
     ];
     for (const [h, [x, y]] of expected.entries()) {
       expectFloat32(layout.hubX[h], x);
@@ -141,12 +146,12 @@ describe('layoutPaths on the seven-file tree', () => {
   it('puts the files where the worked example puts them', () => {
     const expected: [number, number][] = [
       [10, 0],
-      [47.5, 64.951905284],
-      [42.5, 73.612159322],
-      [-94.290964938, -28.701257427],
-      [-59.290964938, -28.701257427],
-      [-64.290964938, -20.04100339],
-      [69.501500522, -45.657107176],
+      [35.696000525, 20],
+      [30.696000525, 28.660254038],
+      [-85, 0],
+      [-55, 0],
+      [-60, 8.660254038],
+      [35.696000525, -20],
     ];
     for (const [f, [x, y]] of expected.entries()) {
       expectFloat32(layout.fileX[f], x);
@@ -183,31 +188,47 @@ describe('layoutPaths determinism and stability', () => {
     expect(Array.from(after.hubY.slice(0, 5))).toEqual(Array.from(before.hubY));
   });
 
-  it('keeps unchanged sub-trees rigid, but moves their hubs, when a file joins a sibling directory', () => {
+  it('moves nothing but one file when a file joins a directory without widening it', () => {
     // a/three.rs sorts between a/one.rs and a/two.rs: a/two.rs moves from slot 1 to slot 2.
-    // Sector sizes at the root are shares of the root's total, so a's count 2 -> 3 resizes every
-    // sibling's sector: hubs b and c cannot keep their absolute positions. What stays fixed is
-    // each unchanged sub-tree's shape: every file and sub-hub keeps its offset from its own hub.
+    // Three files still fit on a's one ring, so a's covering radius stays 15, every sector at the
+    // root keeps its size and no hub moves.
     const before = layoutPaths(SEVEN_FILES);
     const withNew = [...SEVEN_FILES, 'a/three.rs'];
     const after = layoutPaths(withNew);
+    const was = positionsByPath(SEVEN_FILES, before);
+    const now = positionsByPath(withNew, after);
+    for (const [path, position] of was) {
+      if (path === 'a/two.rs') continue;
+      expect(now.get(path), path).toEqual(position);
+    }
+    // Slot 2 of ring 1 is at 2 * 2*pi/6 = 120 degrees: a + (-5, 8.660254038).
+    expectClose((now.get('a/two.rs')?.[0] ?? 0) - (after.hubX[1] ?? 0), -5);
+    expectClose((now.get('a/two.rs')?.[1] ?? 0) - (after.hubY[1] ?? 0), 8.660254038);
+    expect(Array.from(after.hubX)).toEqual(Array.from(before.hubX));
+  });
+
+  it('keeps unchanged sub-trees rigid, but moves their hubs, when a sibling directory widens', () => {
+    // Six more files in a need a second ring: a's radius grows from 15 to 25, so the root's
+    // sectors are resized and b and c move. What stays fixed is each unchanged sub-tree's shape:
+    // every file and sub-hub of b and c keeps its offset from its own hub.
+    const before = layoutPaths(SEVEN_FILES);
+    const added = ['a/n1.rs', 'a/n2.rs', 'a/n3.rs', 'a/n4.rs', 'a/n5.rs', 'a/n6.rs'];
+    const withNew = [...SEVEN_FILES, ...added];
+    const after = layoutPaths(withNew);
+    expect(after.hubRadius[1]).toBe(25);
     const was = offsetsByPath(SEVEN_FILES, before);
     const now = offsetsByPath(withNew, after);
     for (const [path, offset] of was) {
-      if (path === 'a/two.rs') continue;
+      if (path.startsWith('a/')) continue;
       expectClose(now.get(path)?.[0], offset[0]);
       expectClose(now.get(path)?.[1], offset[1]);
     }
-    // Slot 2 of ring 1 is at 2 * 2*pi/6 = 120 degrees: (-5, 8.660254038).
-    expectClose(now.get('a/two.rs')?.[0], -5);
-    expectClose(now.get('a/two.rs')?.[1], 8.660254038);
-    // b's hub moved because its sector was resized, and b/deep moved with it, by the same amount.
     const bMoved = Math.hypot(
       (after.hubX[2] ?? 0) - (before.hubX[2] ?? 0),
       (after.hubY[2] ?? 0) - (before.hubY[2] ?? 0),
     );
     expect(bMoved).toBeGreaterThan(1);
-    expectClose((after.hubX[3] ?? 0) - (after.hubX[2] ?? 0), -35);
+    expectClose((after.hubX[3] ?? 0) - (after.hubX[2] ?? 0), -30);
     expectClose((after.hubY[3] ?? 0) - (after.hubY[2] ?? 0), 0);
   });
 });
@@ -269,8 +290,9 @@ describe('layoutPaths geometry', () => {
   });
 
   it('keeps a wide, lopsided fan-out apart', () => {
-    // One directory of 500 files beside eight of one file each: the big one's sector is wider
-    // than a half turn (0.25 of an even share as a floor, the rest by count: about 4.8 rad).
+    // One directory of 500 files (13 rings, radius 135) beside eight of one file each (radius
+    // 15): sectors by need, 140 against 8 * 20 = 160, give the big one 2*pi * 140/300 = 2.93 rad
+    // and each small one 0.42 rad, so the small ones sit 20 / sin(0.21) = 96 out.
     const big = Array.from({ length: 500 }, (_, i) => `big/f${String(i).padStart(3, '0')}.rs`);
     const small = Array.from({ length: 8 }, (_, i) => `d${i}/x.rs`);
     expectSubtreesApart(layoutPaths([...big, ...small]));

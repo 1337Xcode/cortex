@@ -1,15 +1,16 @@
 // The deterministic radial layout: a pure function from file paths to positions.
 //
 // Each directory is a hub. Its own files sit on rings around it in path order. Its
-// sub-directories sit on one outer ring in name order, each in an angular sector proportional
-// to the number of files below it, so sub-trees never overlap. Nothing depends on file contents,
-// the clock or randomness: the same set of paths always gives the same bytes.
+// sub-directories sit around it in name order, each in an angular sector proportional to the
+// room its sub-tree needs (its covering radius plus the gap), and each as close to the hub as its
+// sector and the hub's own rings allow, so sub-trees never overlap and never sit further out than
+// they must. Nothing depends on file contents, the clock or randomness: the same set of paths
+// always gives the same bytes.
 import type { HierarchyNode } from 'd3-hierarchy';
 import { compareBytes, isStrictlySortedBytes } from '../text/byteOrder';
 import {
   HUB_PADDING,
   MIN_RINGS,
-  MIN_SECTOR_SHARE,
   RING_SPACING,
   SECTOR_START_ANGLE,
   SLOTS_PER_RING_STEP,
@@ -59,36 +60,33 @@ function largest(values: readonly number[]): number {
   return best;
 }
 
-/** The angle of each sub-directory's sector, in order; they add up to a full circle. */
-function sectorSizes(childFileCounts: readonly number[]): number[] {
-  const total = childFileCounts.reduce((sum, count) => sum + count, 0);
-  const floor = (MIN_SECTOR_SHARE * TAU) / childFileCounts.length;
-  const spare = TAU - floor * childFileCounts.length;
-  return childFileCounts.map((count) => floor + (spare * count) / total);
+/**
+ * The angle of each sub-directory's sector, in order; they add up to a full circle. Each is
+ * proportional to the room its sub-tree needs across the sector, its radius plus the gap, so a
+ * small sub-tree beside a large one is not pushed far out to fit a sliver.
+ */
+function sectorSizes(childRadii: readonly number[]): number[] {
+  const needs = childRadii.map((radius) => radius + SUBTREE_GAP);
+  const total = needs.reduce((sum, need) => sum + need, 0);
+  return needs.map((need) => (TAU * need) / total);
 }
 
 /**
- * The distance from a hub to the centres of its sub-directory hubs. Far enough that each
- * sub-tree's circle (plus the gap) fits inside its own sector and clears the hub's rings.
+ * The distance from a hub to one sub-directory's centre: the least that keeps the sub-tree's
+ * circle (plus the gap) clear of the hub's own rings and inside its sector. A sector wider than
+ * a half turn bounds nothing, so its half angle is capped at a quarter turn.
  */
-function childDistance(
-  ownRadius: number,
-  sectors: readonly number[],
-  radii: readonly number[],
-): number {
-  let distance = ownRadius + largest(radii) + SUBTREE_GAP;
-  for (const [index, radius] of radii.entries()) {
-    const halfAngle = Math.min((sectors[index] ?? TAU) / 2, Math.PI / 2);
-    distance = Math.max(distance, (radius + SUBTREE_GAP) / Math.sin(halfAngle));
-  }
-  return distance;
+function childDistance(ownRadius: number, sector: number, radius: number): number {
+  const halfAngle = Math.min(sector / 2, Math.PI / 2);
+  return Math.max(ownRadius + radius + SUBTREE_GAP, (radius + SUBTREE_GAP) / Math.sin(halfAngle));
 }
 
 /** Sizes of every hub, computed from the leaves up. */
 interface HubSizes {
   readonly fileCount: Uint32Array;
   readonly ownRadius: Float64Array;
-  readonly childDistance: Float64Array;
+  /** Each hub's distance from its parent hub; 0 for the root. */
+  readonly parentDistance: Float64Array;
   readonly radius: Float64Array;
 }
 
@@ -109,16 +107,14 @@ function measureHubs(hubs: readonly Hub[], indexOf: ReadonlyMap<Hub, number>): H
       radius[h] = (ownRadius[h] ?? 0) + HUB_PADDING;
       continue;
     }
-    const sectors = sectorSizes(children.map((c) => fileCount[c] ?? 0));
-    distance[h] = childDistance(
-      ownRadius[h] ?? 0,
-      sectors,
-      children.map((c) => radius[c] ?? 0),
-    );
-    const reach = (distance[h] ?? 0) + largest(children.map((c) => radius[c] ?? 0));
-    radius[h] = Math.max(ownRadius[h] ?? 0, reach) + HUB_PADDING;
+    const sectors = sectorSizes(children.map((c) => radius[c] ?? 0));
+    const reaches = children.map((c, i) => {
+      distance[c] = childDistance(ownRadius[h] ?? 0, sectors[i] ?? TAU, radius[c] ?? 0);
+      return (distance[c] ?? 0) + (radius[c] ?? 0);
+    });
+    radius[h] = Math.max(ownRadius[h] ?? 0, largest(reaches)) + HUB_PADDING;
   }
-  return { fileCount, ownRadius, childDistance: distance, radius };
+  return { fileCount, ownRadius, parentDistance: distance, radius };
 }
 
 /** Writes the positions of a hub's own files onto rings around its centre. */
@@ -172,12 +168,12 @@ function placeHubs(
     layout.hubFileCount[h] = sizes.fileCount[h] ?? 0;
     placeFiles(hub, x[h] ?? 0, y[h] ?? 0, layout, h);
     const indexes = children.map((child) => indexOf.get(child) ?? 0);
-    const sectors = sectorSizes(indexes.map((c) => sizes.fileCount[c] ?? 0));
+    const sectors = sectorSizes(indexes.map((c) => sizes.radius[c] ?? 0));
     let start = SECTOR_START_ANGLE;
     for (const [i, child] of indexes.entries()) {
       const sector = sectors[i] ?? 0;
       const angle = start + sector / 2;
-      const distance = sizes.childDistance[h] ?? 0;
+      const distance = sizes.parentDistance[child] ?? 0;
       x[child] = (x[h] ?? 0) + distance * Math.cos(angle);
       y[child] = (y[h] ?? 0) + distance * Math.sin(angle);
       layout.hubParent[child] = h;

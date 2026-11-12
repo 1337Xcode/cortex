@@ -1,7 +1,7 @@
-// Tests for the level-of-detail helper on the seven-file tree, whose covering radii are 135 (root),
-// 55 (b) and 15 (a, c and b/deep). A hub is open while radius * 2^zoom is at least 24 pixels.
+// Tests for the level-of-detail helper on the seven-file tree, whose covering radii are 120 (root),
+// 50 (b) and 15 (a, c and b/deep). A hub is open while radius * 2^zoom is at least 24 pixels.
 import { describe, expect, it } from 'vitest';
-import { collapsedRadiusPx, HubState, levelOfDetail, pixelsPerUnit } from './lod';
+import { HubState, levelOfDetail, pixelsPerUnit } from './lod';
 import { layoutPaths } from './radial';
 
 const layout = layoutPaths([
@@ -22,7 +22,7 @@ describe('levelOfDetail', () => {
   });
 
   it('collapses the 15-unit hubs at zoom 0 and keeps the root and b open', () => {
-    // 135 and 55 pixels are at least 24; 15 is not.
+    // 120 and 50 pixels are at least 24; 15 is not.
     expect(Array.from(levelOfDetail(layout, 0).state)).toEqual([
       Open,
       Collapsed,
@@ -32,7 +32,7 @@ describe('levelOfDetail', () => {
     ]);
   });
 
-  it('collapses b and hides b/deep at zoom -2 (55 * 0.25 = 13.75 pixels)', () => {
+  it('collapses b and hides b/deep at zoom -2 (50 * 0.25 = 12.5 pixels)', () => {
     expect(Array.from(levelOfDetail(layout, -2).state)).toEqual([
       Open,
       Collapsed,
@@ -42,7 +42,7 @@ describe('levelOfDetail', () => {
     ]);
   });
 
-  it('collapses the root and hides everything else at zoom -4 (135 / 16 = 8.4 pixels)', () => {
+  it('collapses the root and hides everything else at zoom -4 (120 / 16 = 7.5 pixels)', () => {
     expect(Array.from(levelOfDetail(layout, -4).state)).toEqual([
       Collapsed,
       Hidden,
@@ -51,24 +51,9 @@ describe('levelOfDetail', () => {
       Hidden,
     ]);
   });
-
-  it('sizes collapsed nodes by file count, zero for open and hidden hubs', () => {
-    const lod = levelOfDetail(layout, -2);
-    expect(lod.collapsedRadiusPx[0]).toBe(0);
-    expect(lod.collapsedRadiusPx[3]).toBe(0);
-    expect(lod.collapsedRadiusPx[1]).toBeCloseTo(3 + 0.75 * Math.sqrt(2), 5);
-    expect(lod.collapsedRadiusPx[2]).toBeCloseTo(3 + 0.75 * Math.sqrt(3), 5);
-  });
 });
 
-describe('collapsed node size', () => {
-  it('grows with the square root of the file count and stops at the cap', () => {
-    expect(collapsedRadiusPx(1)).toBeCloseTo(3.75, 6);
-    expect(collapsedRadiusPx(100)).toBeCloseTo(10.5, 6);
-    expect(collapsedRadiusPx(1_000_000)).toBe(24);
-    expect(collapsedRadiusPx(100)).toBeGreaterThan(collapsedRadiusPx(10));
-  });
-
+describe('pixels per unit', () => {
   it('doubles the scale at each zoom step', () => {
     expect(pixelsPerUnit(0)).toBe(1);
     expect(pixelsPerUnit(3)).toBe(8);

@@ -1,7 +1,8 @@
 // Tests for the snapshot guard and the fetch call: one accepted snapshot, then one rejected
 // input per rule of the contract, with the literal error code each must give.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchGraph, parseGraph, type GraphErrorCode } from './graph';
+import type { ApiErrorCode } from './guard';
+import { fetchGraph, parseGraph } from './graph';
 
 function file(id: number, path: string): Record<string, unknown> {
   return {
@@ -13,6 +14,8 @@ function file(id: number, path: string): Record<string, unknown> {
     touched_ms: null,
     facts: 0,
     suspect: 0,
+    reads: 3,
+    commits: 2,
   };
 }
 
@@ -21,10 +24,10 @@ function snapshot(overrides: Record<string, unknown> = {}): Record<string, unkno
     version: 1,
     files: [file(0, 'a.rs'), file(1, 'b.rs'), file(2, 'c.rs')],
     links: [
-      { from: 0, to: 1, kind: 'co_change', weight: 0.8 },
-      { from: 0, to: 2, kind: 'co_change', weight: 0.2 },
-      { from: 1, to: 2, kind: 'used_together', weight: 1 },
-      { from: 0, to: 2, kind: 'work_order', weight: 0 },
+      { from: 0, to: 1, kind: 'co_change', weight: 0.8, commits: 6 },
+      { from: 0, to: 2, kind: 'co_change', weight: 0.2, commits: 0 },
+      { from: 1, to: 2, kind: 'used_together', weight: 1, commits: 0 },
+      { from: 0, to: 2, kind: 'work_order', weight: 0, commits: 0 },
     ],
     ...overrides,
   };
@@ -43,7 +46,7 @@ describe('parseGraph accepts', () => {
     );
     expect(result).toEqual({
       ok: true,
-      snapshot: {
+      value: {
         version: 1,
         files: [{ ...file(0, 'a.rs'), touched_ms: 1762900000000 }],
         links: [],
@@ -55,7 +58,7 @@ describe('parseGraph accepts', () => {
     const result = parseGraph(snapshot());
     expect(result.ok).toBe(true);
     if (result.ok)
-      expect(result.snapshot.links.map((link) => link.kind)).toEqual([
+      expect(result.value.links.map((link) => link.kind)).toEqual([
         'co_change',
         'co_change',
         'used_together',
@@ -73,7 +76,7 @@ describe('parseGraph accepts', () => {
   });
 });
 
-const REJECTED: [string, unknown, GraphErrorCode][] = [
+const REJECTED: [string, unknown, ApiErrorCode][] = [
   ['null', null, 'bad_shape'],
   ['an array at the top', [], 'bad_shape'],
   ['an unknown version', snapshot({ version: 2 }), 'bad_version'],
@@ -91,6 +94,12 @@ const REJECTED: [string, unknown, GraphErrorCode][] = [
   ['a . segment', withFile(0, { path: './a.rs' }), 'bad_shape'],
   ['a .. segment', withFile(0, { path: 'a/../b.rs' }), 'bad_shape'],
   ['a control character', withFile(0, { path: 'a\nb.rs' }), 'bad_shape'],
+  ['a zero-width space', withFile(0, { path: 'a\u200bb.rs' }), 'bad_shape'],
+  ['a right-to-left mark', withFile(0, { path: 'a\u200fb.rs' }), 'bad_shape'],
+  ['a right-to-left override', withFile(0, { path: 'src/\u202ecod.rs' }), 'bad_shape'],
+  ['a first-strong isolate', withFile(0, { path: 'a\u2068b.rs' }), 'bad_shape'],
+  ['a byte-order mark', withFile(0, { path: '\ufeffa.rs' }), 'bad_shape'],
+  ['touched_ms past the latest date', withFile(0, { touched_ms: 8.64e15 + 1 }), 'bad_range'],
   ['lines as a string', withFile(0, { lines: '10' }), 'bad_shape'],
   ['negative tokens', withFile(0, { tokens: -1 }), 'bad_shape'],
   ['fractional facts', withFile(0, { facts: 1.5 }), 'bad_shape'],
@@ -99,6 +108,20 @@ const REJECTED: [string, unknown, GraphErrorCode][] = [
   ['interest below 0', withFile(0, { interest: -0.1 }), 'bad_shape'],
   ['touched_ms missing instead of null', withFile(0, { touched_ms: undefined }), 'bad_shape'],
   ['touched_ms negative', withFile(0, { touched_ms: -5 }), 'bad_shape'],
+  ['a missing reads count', withFile(0, { reads: undefined }), 'bad_shape'],
+  ['negative reads', withFile(0, { reads: -1 }), 'bad_shape'],
+  ['commits as a string', withFile(2, { commits: '4' }), 'bad_shape'],
+  ['fractional commits', withFile(1, { commits: 0.5 }), 'bad_shape'],
+  [
+    'a link with a missing commits count',
+    snapshot({ links: [{ from: 0, to: 1, kind: 'co_change', weight: 1 }] }),
+    'bad_shape',
+  ],
+  [
+    'commits on a link that is not co_change',
+    snapshot({ links: [{ from: 0, to: 1, kind: 'used_together', weight: 1, commits: 3 }] }),
+    'bad_range',
+  ],
   [
     'paths out of order',
     snapshot({ files: [file(0, 'b.rs'), file(1, 'a.rs')], links: [] }),
@@ -111,46 +134,50 @@ const REJECTED: [string, unknown, GraphErrorCode][] = [
   ],
   [
     'a link to an id past the end',
-    snapshot({ links: [{ from: 0, to: 3, kind: 'co_change', weight: 1 }] }),
+    snapshot({ links: [{ from: 0, to: 3, kind: 'co_change', weight: 1, commits: 0 }] }),
     'bad_range',
   ],
   [
     'a link with from equal to to',
-    snapshot({ links: [{ from: 1, to: 1, kind: 'co_change', weight: 1 }] }),
+    snapshot({ links: [{ from: 1, to: 1, kind: 'co_change', weight: 1, commits: 0 }] }),
     'bad_range',
   ],
   [
     'a link with from above to',
-    snapshot({ links: [{ from: 2, to: 1, kind: 'co_change', weight: 1 }] }),
+    snapshot({ links: [{ from: 2, to: 1, kind: 'co_change', weight: 1, commits: 0 }] }),
     'bad_range',
   ],
   [
     'a link with a missing from',
-    snapshot({ links: [{ to: 1, kind: 'co_change', weight: 1 }] }),
+    snapshot({ links: [{ to: 1, kind: 'co_change', weight: 1, commits: 0 }] }),
     'bad_shape',
   ],
   [
     'an unknown kind',
-    snapshot({ links: [{ from: 0, to: 1, kind: 'imports', weight: 1 }] }),
+    snapshot({ links: [{ from: 0, to: 1, kind: 'imports', weight: 1, commits: 0 }] }),
     'bad_kind',
   ],
   [
     'a kind that is not a string',
-    snapshot({ links: [{ from: 0, to: 1, kind: 3, weight: 1 }] }),
+    snapshot({ links: [{ from: 0, to: 1, kind: 3, weight: 1, commits: 0 }] }),
     'bad_shape',
   ],
   [
     'a weight above 1',
-    snapshot({ links: [{ from: 0, to: 1, kind: 'co_change', weight: 2 }] }),
+    snapshot({ links: [{ from: 0, to: 1, kind: 'co_change', weight: 2, commits: 0 }] }),
     'bad_shape',
   ],
-  ['a missing weight', snapshot({ links: [{ from: 0, to: 1, kind: 'co_change' }] }), 'bad_shape'],
+  [
+    'a missing weight',
+    snapshot({ links: [{ from: 0, to: 1, kind: 'co_change', commits: 0 }] }),
+    'bad_shape',
+  ],
   [
     'links out of kind order',
     snapshot({
       links: [
-        { from: 0, to: 1, kind: 'work_order', weight: 1 },
-        { from: 0, to: 2, kind: 'co_change', weight: 1 },
+        { from: 0, to: 1, kind: 'work_order', weight: 1, commits: 0 },
+        { from: 0, to: 2, kind: 'co_change', weight: 1, commits: 0 },
       ],
     }),
     'bad_order',
@@ -159,8 +186,8 @@ const REJECTED: [string, unknown, GraphErrorCode][] = [
     'links out of from order within a kind',
     snapshot({
       links: [
-        { from: 1, to: 2, kind: 'co_change', weight: 1 },
-        { from: 0, to: 2, kind: 'co_change', weight: 1 },
+        { from: 1, to: 2, kind: 'co_change', weight: 1, commits: 0 },
+        { from: 0, to: 2, kind: 'co_change', weight: 1, commits: 0 },
       ],
     }),
     'bad_order',
@@ -169,8 +196,8 @@ const REJECTED: [string, unknown, GraphErrorCode][] = [
     'a repeated link',
     snapshot({
       links: [
-        { from: 0, to: 1, kind: 'co_change', weight: 1 },
-        { from: 0, to: 1, kind: 'co_change', weight: 1 },
+        { from: 0, to: 1, kind: 'co_change', weight: 1, commits: 0 },
+        { from: 0, to: 1, kind: 'co_change', weight: 1, commits: 0 },
       ],
     }),
     'bad_order',
@@ -186,7 +213,7 @@ describe('parseGraph rejects', () => {
 
   it('with a message that names the field', () => {
     const result = parseGraph(
-      snapshot({ links: [{ from: 0, to: 1, kind: 'imports', weight: 1 }] }),
+      snapshot({ links: [{ from: 0, to: 1, kind: 'imports', weight: 1, commits: 0 }] }),
     );
     expect(result).toEqual({
       ok: false,
@@ -212,12 +239,21 @@ describe('fetchGraph', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('reports a non-200 status', async () => {
+  it('reports a status that is not 2xx', async () => {
+    stubFetch(new Response('', { status: 500 }));
+    const result = await fetchGraph(new AbortController().signal);
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'http_status', message: 'the daemon answered 500' },
+    });
+  });
+
+  it('reports a 404 as not found', async () => {
     stubFetch(new Response('', { status: 404 }));
     const result = await fetchGraph(new AbortController().signal);
     expect(result).toEqual({
       ok: false,
-      error: { code: 'http_status', message: 'the daemon answered 404' },
+      error: { code: 'not_found', message: 'the daemon answered 404' },
     });
   });
 
