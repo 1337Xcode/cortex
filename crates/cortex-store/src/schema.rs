@@ -1119,6 +1119,10 @@ pub(crate) const WARNING_COUNTS: &str = "SELECT count(*), count(resolved), \
 /// reads them.
 pub(crate) const WARNINGS_OF_TASK: &str = "SELECT warning_id, task_id, ts, kind, src_node, \
     dst_node, strength, resolved FROM warnings WHERE task_id = ?1 ORDER BY warning_id";
+/// The newest warnings, newest first by time then row, at most ?1 of them; the columns are those
+/// of [`WARNINGS_OF_TASK`].
+pub(crate) const LATEST_WARNINGS: &str = "SELECT warning_id, task_id, ts, kind, src_node, \
+    dst_node, strength, resolved FROM warnings ORDER BY ts DESC, warning_id DESC LIMIT ?1";
 /// The warnings not resolved yet (their task not ended) that name, as edited or as warned of, the
 /// file at node ?1 or a symbol in it, the latest first.
 pub(crate) const OPEN_WARNINGS_ABOUT: &str = "WITH mine AS (SELECT node_id FROM nodes \

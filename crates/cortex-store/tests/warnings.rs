@@ -136,6 +136,15 @@ fn warnings_are_read_back_and_resolved() -> TestResult {
         writer.queries().warnings_of_task(second)?,
         [unresolved(tests_id, tests)]
     );
+    // The newest first, by time then row: the tests warning at 3,000, then the caller and the
+    // companion, both at 2,000, the later row first; asking for two keeps those two.
+    let latest: Vec<(WarningId, Option<bool>)> = writer
+        .queries()
+        .latest_warnings(2)?
+        .iter()
+        .map(|row| (row.id, row.resolved))
+        .collect();
+    assert_eq!(latest, [(tests_id, None), (caller_id, Some(false))]);
     Ok(())
 }
 

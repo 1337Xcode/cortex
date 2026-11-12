@@ -165,6 +165,25 @@ impl Queries<'_> {
         rows.into_iter().map(RawWarning::check).collect()
     }
 
+    /// The newest warnings, newest first by time then by the order they were recorded, at most
+    /// `limit` of them, open and resolved alike.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn latest_warnings(self, limit: usize) -> Result<Vec<WarningRow>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = self
+            .connection()
+            .prepare_cached(schema::LATEST_WARNINGS)
+            .map_err(sqlite("reading warnings"))?;
+        let rows = statement
+            .query_map([limit], read)
+            .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
+            .map_err(sqlite("reading warnings"))?;
+        rows.into_iter().map(RawWarning::check).collect()
+    }
+
     /// The warnings of task `task_id`, in the order they were recorded.
     ///
     /// # Errors
