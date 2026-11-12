@@ -163,14 +163,16 @@ fn a_cold_repository_shows_its_structure_alone() -> TestResult {
 }
 
 /// The first screen's numbers: 5 files in the 2 folders `docs` and `src`; 3 files read (the
-/// guide, the app and the orders file); something is learned; the pair of files that changed
-/// together most is 1 and 2 with 6 commits (the other pair has 4); of the tokens since the window
+/// guide, the app and the orders file); something is learned; the strongest pair of files that
+/// changed together is 2 and 3, of confidence 0.9 over 4 commits, ranked as the graph ranks its
+/// links, by confidence before commits (1 and 2 changed together in more commits, 6, at 0.8),
+/// so the pair named is always one the graph draws; of the tokens since the window
 /// began at 2,200 ms, `src` took 100 + 200 = 300 (the app's response at 2,050 is before it) and
 /// `docs` took 400, so `docs` is the busiest.
 #[test]
 fn the_summary_is_the_first_screen_as_counted_by_hand() -> TestResult {
     let fixture = scripted()?;
-    let expected = r#"{"version":1,"files":5,"folders":2,"explored_files":3,"learned":true,"strongest_pair":{"from":1,"to":2,"commits":6},"busiest_folder":{"path":"docs","tokens":400},"window_days":7}"#;
+    let expected = r#"{"version":1,"files":5,"folders":2,"explored_files":3,"learned":true,"strongest_pair":{"from":2,"to":3,"commits":4},"busiest_folder":{"path":"docs","tokens":400},"window_days":7}"#;
     assert_eq!(get(&fixture, "api/summary")?, (200, expected.to_owned()));
     Ok(())
 }

@@ -88,6 +88,31 @@ pub(super) fn read(
     Ok(links)
 }
 
+/// The strongest co-change link of all, in the order [`read`] keeps links by: the pair the summary
+/// names. Being the strongest of both its files, it is always among the links [`read`] gives, so
+/// the summary never names a pair the map does not draw. None when no two listed files changed
+/// together.
+///
+/// # Errors
+///
+/// SQLite errors and stored values that cannot be read back.
+pub(super) fn strongest_co_change(
+    queries: Queries<'_>,
+    listing: &Listing,
+) -> Result<Option<Link>, StoreError> {
+    let pairs = co_change(queries, listing)?;
+    Ok(pairs
+        .iter()
+        .map(|(&(from, to), &(weight, commits))| Link {
+            from,
+            to,
+            kind: Kind::CoChange,
+            weight,
+            commits,
+        })
+        .min_by(|a, b| stronger(Some(a), Some(b))))
+}
+
 /// The pair of ids `from` and `to` as a key, the smaller first; none for a file with itself.
 fn pair_of(from: usize, to: usize) -> Option<(usize, usize)> {
     match from.cmp(&to) {

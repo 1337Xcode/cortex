@@ -1,6 +1,7 @@
 //! `api/summary`: the numbers of the map's first screen: how many files and folders are indexed,
-//! how many agents have read, whether anything has been learned at all, the pair of files that
-//! changed together most often, and the folder agents spent the most tokens in lately.
+//! how many agents have read, whether anything has been learned at all, the pair of files most
+//! strongly changed together (ranked as the graph ranks its links, so the map always draws it), and
+//! the folder agents spent the most tokens in lately.
 //!
 //! Files are those `api/graph` lists, and a file's id names it in both. The only time-dependent
 //! number, the busiest folder, reads the clock through [`Source::now_ms`] alone.
@@ -9,11 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use axum::http::StatusCode;
 use axum::response::Response;
-use cortex_core::EdgeType;
 use cortex_store::{Queries, StoreError};
 use serde::Serialize;
 
 use super::Ask;
+use super::links;
 use super::listing::Listing;
 use super::reply::{Failure, json, respond};
 use crate::map::site::Site;
@@ -42,7 +43,7 @@ struct Summary {
     explored_files: usize,
     /// Whether any link, fact, read or token is stored.
     learned: bool,
-    /// The two files that changed together in the most commits.
+    /// The two files that changed together most strongly, as the graph ranks its links.
     strongest_pair: Option<Pair>,
     /// The folder whose own files took the most tokens in the window.
     busiest_folder: Option<Busiest>,
@@ -96,7 +97,11 @@ fn summary_of(
         .filter(|row| row.reads > 0)
         .filter(|row| listing.id_of_node(row.node).is_some())
         .count();
-    let strongest_pair = strongest_pair(queries, listing)?;
+    let strongest_pair = links::strongest_co_change(queries, listing)?.map(|link| Pair {
+        from: link.from,
+        to: link.to,
+        commits: link.commits,
+    });
     let learned = !reads.is_empty()
         || strongest_pair.is_some()
         || !queries.file_tokens(0)?.is_empty()
@@ -127,33 +132,6 @@ fn folder_count(listing: &Listing) -> usize {
         }
     }
     folders.len()
-}
-
-/// The pair of files with the most commits that changed both, the smaller ids first on a tie.
-fn strongest_pair(queries: Queries<'_>, listing: &Listing) -> Result<Option<Pair>, StoreError> {
-    let mut best: Option<Pair> = None;
-    queries.each_edge_of_type(EdgeType::CoChange, |row| {
-        let (Some(a), Some(b)) = (
-            listing.id_of_node(row.src),
-            listing.id_of_node(row.edge.dst),
-        ) else {
-            return Ok(());
-        };
-        if a == b {
-            return Ok(());
-        }
-        let (from, to) = (a.min(b), a.max(b));
-        let commits = u64::from(row.edge.count);
-        let is_better = best.as_ref().is_none_or(|held| {
-            (commits, std::cmp::Reverse((from, to)))
-                > (held.commits, std::cmp::Reverse((held.from, held.to)))
-        });
-        if is_better {
-            best = Some(Pair { from, to, commits });
-        }
-        Ok(())
-    })?;
-    Ok(best)
 }
 
 /// The folder whose own files took the most tokens since the window began, the first by path on a
