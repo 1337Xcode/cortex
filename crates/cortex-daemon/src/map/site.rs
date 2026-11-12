@@ -226,10 +226,15 @@ mod tests {
 
     /// A source over a folder that holds no store: the API's data answers are not read here.
     fn source() -> Arc<Source> {
+        source_told_by(Arc::default())
+    }
+
+    /// A source like [`source`] whose first index is the one `inbox` notes.
+    fn source_told_by(inbox: Arc<crate::inbox::Inbox>) -> Arc<Source> {
         Arc::new(Source::new(
             (std::path::PathBuf::from("no-store-here"), 0),
             cortex_retrieve::GraphSettings::default(),
-            (Arc::default(), Arc::default()),
+            (Arc::default(), Arc::default(), inbox),
             crate::map::MapSettings::of(&cortex_core::Config::default()),
         ))
     }
@@ -313,7 +318,7 @@ mod tests {
             200,
             Some("application/json".to_owned()),
             format!(
-                "{{\"version\":\"{}\",\"has_assets\":true}}",
+                "{{\"version\":\"{}\",\"has_assets\":true,\"index\":\"reading\"}}",
                 env!("CARGO_PKG_VERSION")
             )
             .into_bytes(),
@@ -334,6 +339,36 @@ mod tests {
             assert_eq!(given, expected, "{path}");
             assert_common_headers(&response);
         }
+        Ok(())
+    }
+
+    /// The health says `reading` while the daemon's first index of the repository is under way,
+    /// and `ready` once the writer notes it done.
+    #[test]
+    fn the_health_says_whether_the_first_index_is_done() -> TestResult {
+        let inbox = Arc::new(crate::inbox::Inbox::default());
+        let token = Token::generate()?;
+        let path = format!("/{}/api/health", token.as_str());
+        let site = Arc::new(Site::new(
+            PORT,
+            token,
+            &TWO,
+            source_told_by(Arc::clone(&inbox)),
+        )?);
+        let body = |site: &Arc<Site>| -> Result<String, Box<dyn std::error::Error>> {
+            let (_, given) = get(site, &Method::GET, &path, &[])?;
+            Ok(String::from_utf8(given.2)?)
+        };
+        let version = env!("CARGO_PKG_VERSION");
+        assert_eq!(
+            body(&site)?,
+            format!("{{\"version\":\"{version}\",\"has_assets\":true,\"index\":\"reading\"}}")
+        );
+        inbox.mark_indexed();
+        assert_eq!(
+            body(&site)?,
+            format!("{{\"version\":\"{version}\",\"has_assets\":true,\"index\":\"ready\"}}")
+        );
         Ok(())
     }
 
@@ -359,7 +394,7 @@ mod tests {
         assert_eq!(
             health.2,
             format!(
-                "{{\"version\":\"{}\",\"has_assets\":false}}",
+                "{{\"version\":\"{}\",\"has_assets\":false,\"index\":\"reading\"}}",
                 env!("CARGO_PKG_VERSION")
             )
             .into_bytes()

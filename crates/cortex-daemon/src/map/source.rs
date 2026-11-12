@@ -14,6 +14,7 @@ use cortex_store::{Reader, StoreError};
 use super::settings::{HistoryLimits, MapSettings};
 use crate::graph::Snapshot;
 use crate::history::Jobs;
+use crate::inbox::Inbox;
 
 /// What the map's endpoints read.
 #[derive(Debug)]
@@ -28,6 +29,8 @@ pub(crate) struct Source {
     texts: Arc<Jobs>,
     /// The graph's snapshot, which counts the changes of the store.
     snapshot: Arc<Snapshot>,
+    /// The writer's inbox, read only for whether the daemon's first index is done.
+    inbox: Arc<Inbox>,
     /// The time now in UTC milliseconds; the one place the clock enters an answer, so that a test
     /// can fix it.
     clock: fn() -> i64,
@@ -38,11 +41,12 @@ pub(crate) struct Source {
 impl Source {
     /// A source reading the store in `folder`, opened with `mmap_bytes`, weighing with
     /// `settings`, reading commit subjects from `texts`, told of the store's changes by
-    /// `snapshot` and showing `settings_shown` of the configuration; its clock is the system's.
+    /// `snapshot` and of the first index by `inbox`, and showing `settings_shown` of the
+    /// configuration; its clock is the system's.
     pub(crate) fn new(
         (folder, mmap_bytes): (PathBuf, u64),
         settings: GraphSettings,
-        (texts, snapshot): (Arc<Jobs>, Arc<Snapshot>),
+        (texts, snapshot, inbox): (Arc<Jobs>, Arc<Snapshot>, Arc<Inbox>),
         settings_shown: MapSettings,
     ) -> Self {
         Self {
@@ -51,6 +55,7 @@ impl Source {
             settings,
             texts,
             snapshot,
+            inbox,
             clock: crate::host::now_ms,
             settings_shown,
         }
@@ -82,6 +87,12 @@ impl Source {
     /// What brings a stored score or link weight forward to now.
     pub(super) fn settings(&self) -> &GraphSettings {
         &self.settings
+    }
+
+    /// Whether the daemon's first index of the repository is done: until it is, the store holds
+    /// only some of the repository's files, or none.
+    pub(super) fn is_first_index_done(&self) -> bool {
+        self.inbox.counts().is_indexed
     }
 
     /// The history Cortex reads, as the configuration limits it.

@@ -77,7 +77,8 @@ fn has_built_map() -> bool {
 /// same address. The address is on 127.0.0.1 with a 64-digit token. With the token, the health
 /// answers 200 with the daemon's version; a wrong token gets 404, a request naming another host
 /// or sent from another site's page 403, a POST 405, and the token without its slash a 308 to the
-/// address; each with an empty body, `Referrer-Policy: no-referrer` and no CORS header. The map does not answer on the IPv6 loopback, nor on this machine's own network
+/// address; each with an empty body, `Referrer-Policy: no-referrer` and no CORS header. The health
+/// says `reading` until the daemon's first index is done and `ready` from then on. The map does not answer on the IPv6 loopback, nor on this machine's own network
 /// address when it has one.
 #[test]
 fn the_map_is_served_on_127_0_0_1_behind_its_guard() -> TestResult {
@@ -109,7 +110,21 @@ fn the_map_is_served_on_127_0_0_1_behind_its_guard() -> TestResult {
     );
     let host = format!("Host: 127.0.0.1:{port}");
 
-    let health = send(port, &format!("GET /{token}/api/health HTTP/1.1\r\n{host}"))?;
+    // The health says `reading` until the daemon's first index is done, then `ready`.
+    let until = Instant::now() + INDEXED_WITHIN;
+    let health = loop {
+        let health = send(port, &format!("GET /{token}/api/health HTTP/1.1\r\n{host}"))?;
+        let body = String::from_utf8_lossy(&health.body).into_owned();
+        if body.ends_with(r#""index":"ready"}"#) {
+            break health;
+        }
+        assert!(body.ends_with(r#""index":"reading"}"#), "{body}");
+        assert!(
+            Instant::now() < until,
+            "the first index did not end: {body}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
     assert_eq!(health.status, 200);
     assert!(
         health
@@ -124,7 +139,7 @@ fn the_map_is_served_on_127_0_0_1_behind_its_guard() -> TestResult {
     assert_eq!(
         String::from_utf8(health.body)?,
         format!(
-            "{{\"version\":\"{}\",\"has_assets\":{}}}",
+            "{{\"version\":\"{}\",\"has_assets\":{},\"index\":\"ready\"}}",
             env!("CARGO_PKG_VERSION"),
             has_built_map()
         )

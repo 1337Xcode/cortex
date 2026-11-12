@@ -244,7 +244,11 @@ fn index_and_serve(
         Source::new(
             (root.join(".cortex"), config.mmap_bytes),
             GraphSettings::from(&config),
-            (Arc::clone(&shared.history), Arc::clone(&shared.snapshot)),
+            (
+                Arc::clone(&shared.history),
+                Arc::clone(&shared.snapshot),
+                Arc::clone(&shared.inbox),
+            ),
             MapSettings::of(&config),
         ),
     );

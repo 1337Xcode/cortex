@@ -60,7 +60,7 @@ fn site_over(root: tempfile::TempDir, texts: Arc<Jobs>) -> TestResult<Fixture> {
     let source = Source::new(
         (root.path().join(".cortex"), 0),
         weights,
-        (texts, Arc::clone(&snapshot)),
+        (texts, Arc::clone(&snapshot), Arc::default()),
         MapSettings::of(&Config::default()),
     )
     .with_clock(|| NOW_MS);
