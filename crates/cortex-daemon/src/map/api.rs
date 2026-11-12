@@ -6,6 +6,7 @@
 //! gives is sorted by a rule its module states, and every number comes from the store as it stood
 //! in one read, so that one store gives byte-identical bodies.
 
+mod activity;
 mod facts;
 mod file;
 mod graph;
@@ -21,6 +22,7 @@ mod summary;
 #[cfg(test)]
 mod tests;
 mod told;
+mod warnings;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,13 +56,15 @@ pub(super) struct Ask {
 type Endpoint = fn(&Site, &Ask) -> Response;
 
 /// Every endpoint, by the name that follows [`PREFIX`].
-const ENDPOINTS: [(&str, Endpoint); 6] = [
+const ENDPOINTS: [(&str, Endpoint); 8] = [
+    ("activity", activity::answer),
     ("file", file::answer),
     ("graph", graph::answer),
     ("health", health::answer),
     ("receipts", receipts::answer),
     ("search", search::answer),
     ("summary", summary::answer),
+    ("warnings", warnings::answer),
 ];
 
 /// The answer to a request for `endpoint`, the path after [`PREFIX`], with the address `uri`: the

@@ -309,6 +309,48 @@ fn a_fact_s_word_from_the_page_is_written_by_the_daemon_s_writer() -> TestResult
     Ok(())
 }
 
+/// The activity feed: the agents' events, newest first as stored. Session `s2` read the guide
+/// (id 0) at 3,000; session `s1` edited the orders file (id 2) at 2,300, read it at 2,200 and read
+/// the app (id 1) at 2,100 and 2,000. The watcher's edit of `src/util.rs` at 2,400 is no agent's
+/// and is left out. Both sessions are Claude Code's.
+#[test]
+fn the_activity_is_the_agents_events_newest_first() -> TestResult {
+    let fixture = scripted()?;
+    let event = |at: i64, kind: &str, session: &str, file: usize| {
+        format!(
+            r#"{{"at_ms":{at},"kind":"{kind}","session":"{session}","agent":"claude","title":"Claude Code","file":{file}}}"#
+        )
+    };
+    let events = [
+        event(3_000, "read", "s2", 0),
+        event(2_300, "edit", "s1", 2),
+        event(2_200, "read", "s1", 2),
+        event(2_100, "read", "s1", 1),
+        event(2_000, "read", "s1", 1),
+    ];
+    let expected = format!(r#"{{"version":1,"events":[{}]}}"#, events.join(","));
+    assert_eq!(get(&fixture, "api/activity")?, (200, expected));
+    assert_eq!(get(&fixture, "api/activity/1")?.0, 404);
+    Ok(())
+}
+
+/// The warnings, newest first: at 2,320 an edit of the orders file (id 2) was warned of its test
+/// (id 3), which was not then read or edited; at 2,310 an edit of the app (id 1) was warned of the
+/// orders file, which usually changes with it, and its task has not ended, so it is open. Both
+/// were written with strength 0.5.
+#[test]
+fn the_warnings_are_listed_newest_first_with_what_became_of_them() -> TestResult {
+    let fixture = scripted()?;
+    let expected = concat!(
+        r#"{"version":1,"warnings":["#,
+        r#"{"at_ms":2320,"kind":"test","source":2,"target":3,"strength":0.5,"state":"not_followed"},"#,
+        r#"{"at_ms":2310,"kind":"cochange","source":1,"target":2,"strength":0.5,"state":"open"}"#,
+        "]}"
+    );
+    assert_eq!(get(&fixture, "api/warnings")?, (200, expected.to_owned()));
+    Ok(())
+}
+
 /// A search finds files by path and symbols by name, ASCII case ignored, exact names first, then
 /// names that start with the text, then the rest, each by path and line. For `order`: the file
 /// `orders.rs` (a name that starts with it) and the symbol `OrderBook` of the same path (line 40),
