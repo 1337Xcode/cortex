@@ -339,7 +339,7 @@ mod tests {
             200,
             Some("application/json".to_owned()),
             format!(
-                "{{\"version\":\"{}\",\"has_assets\":true,\"index\":\"reading\"}}",
+                "{{\"version\":\"{}\",\"has_assets\":true,\"index\":\"reading\",\"daemon\":null}}",
                 env!("CARGO_PKG_VERSION")
             )
             .into_bytes(),
@@ -383,12 +383,16 @@ mod tests {
         let version = env!("CARGO_PKG_VERSION");
         assert_eq!(
             body(&site)?,
-            format!("{{\"version\":\"{version}\",\"has_assets\":true,\"index\":\"reading\"}}")
+            format!(
+                "{{\"version\":\"{version}\",\"has_assets\":true,\"index\":\"reading\",\"daemon\":null}}"
+            )
         );
         inbox.mark_indexed();
         assert_eq!(
             body(&site)?,
-            format!("{{\"version\":\"{version}\",\"has_assets\":true,\"index\":\"ready\"}}")
+            format!(
+                "{{\"version\":\"{version}\",\"has_assets\":true,\"index\":\"ready\",\"daemon\":null}}"
+            )
         );
         Ok(())
     }
@@ -415,7 +419,7 @@ mod tests {
         assert_eq!(
             health.2,
             format!(
-                "{{\"version\":\"{}\",\"has_assets\":false,\"index\":\"reading\"}}",
+                "{{\"version\":\"{}\",\"has_assets\":false,\"index\":\"reading\",\"daemon\":null}}",
                 env!("CARGO_PKG_VERSION")
             )
             .into_bytes()

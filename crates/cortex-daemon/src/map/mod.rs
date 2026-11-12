@@ -21,12 +21,13 @@ mod live;
 mod settings;
 mod site;
 mod source;
+mod status;
 #[cfg(test)]
 mod table;
 mod token;
 
 use std::net::Ipv4Addr;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
 use axum::Router;
@@ -38,6 +39,7 @@ use self::connections::Capped;
 pub(crate) use self::settings::MapSettings;
 use self::site::Site;
 pub(crate) use self::source::Source;
+pub(crate) use self::status::Status;
 use self::token::Token;
 
 /// How long an ask for the address waits for the daemon to have read its configuration, which it
@@ -65,6 +67,9 @@ pub(crate) struct Map {
     configured: watch::Sender<Option<Configured>>,
     /// The map as served, once it is.
     serving: Mutex<Option<Serving>>,
+    /// What gives the daemon's status report, once the server is made; held weakly, as the server
+    /// holds the map.
+    status: OnceLock<Weak<dyn Status>>,
 }
 
 /// What the daemon's configuration sets for the map: the port to serve on and what it reads.
@@ -104,6 +109,7 @@ impl Default for Map {
         Self {
             configured: watch::Sender::new(None),
             serving: Mutex::new(None),
+            status: OnceLock::new(),
         }
     }
 }
@@ -112,10 +118,22 @@ impl Map {
     /// Sets the port to serve on, from `ui.port`, and what the map reads, once the daemon has read
     /// its configuration.
     pub(crate) fn configure(&self, port: u16, source: Source) {
+        let source = match self.status.get() {
+            Some(status) => source.with_status(Weak::clone(status)),
+            None => source,
+        };
         self.configured.send_replace(Some(Configured {
             port,
             source: Arc::new(source),
         }));
+    }
+
+    /// Takes `status` as what gives the daemon's status report to the map's health panel; called
+    /// once the server is made, before the daemon reads its configuration. A second call changes
+    /// nothing.
+    pub(crate) fn report_from(&self, status: Weak<dyn Status>) {
+        // A daemon makes one server; were it asked twice, the first stays.
+        let _ = self.status.set(status);
     }
 
     /// The answer to an ask for the map's address: the address, the map served from now on if it

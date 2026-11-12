@@ -942,6 +942,13 @@ impl Server {
     }
 }
 
+impl crate::map::Status for Server {
+    /// The status `cortex status` reads, for the map's health panel.
+    fn status_report(&self) -> StatusReport {
+        self.report()
+    }
+}
+
 /// An answer saying a request could not be served.
 fn error(message: &str) -> ResponseBody {
     ResponseBody::Error {

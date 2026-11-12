@@ -188,7 +188,11 @@ fn listen_and_serve(
             Arc::clone(&shared.map),
         ),
     );
-    runtime.spawn(Arc::new(server).serve(listener));
+    let server = Arc::new(server);
+    let status: Arc<dyn map::Status> = Arc::<Server>::clone(&server);
+    shared.map.report_from(Arc::downgrade(&status));
+    drop(status);
+    runtime.spawn(server.serve(listener));
     let served = index_and_serve(root, (repo_id, &shared, home), note);
     // However the work ended, before the writer opened included, the server takes no more events
     // in the moment it has left: nothing would record them.

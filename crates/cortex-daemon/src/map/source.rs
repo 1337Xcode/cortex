@@ -6,12 +6,13 @@
 //! numbers to weigh with and a read of text the daemon holds in memory.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use cortex_retrieve::GraphSettings;
 use cortex_store::{Reader, StoreError};
 
 use super::settings::{HistoryLimits, MapSettings};
+use super::status::Status;
 use crate::graph::Snapshot;
 use crate::history::Jobs;
 use crate::inbox::Inbox;
@@ -36,6 +37,8 @@ pub(crate) struct Source {
     clock: fn() -> i64,
     /// What the answers carry of the configuration.
     settings_shown: MapSettings,
+    /// What gives the daemon's status report; none in a test that has no server.
+    status: Option<Weak<dyn Status>>,
 }
 
 impl Source {
@@ -58,7 +61,24 @@ impl Source {
             inbox,
             clock: crate::host::now_ms,
             settings_shown,
+            status: None,
         }
+    }
+
+    /// This source with `status` giving the daemon's status report.
+    pub(super) fn with_status(self, status: Weak<dyn Status>) -> Self {
+        Self {
+            status: Some(status),
+            ..self
+        }
+    }
+
+    /// The daemon's status report now; none when no server gives one, or the server is gone.
+    pub(super) fn status_report(&self) -> Option<cortex_core::ipc::StatusReport> {
+        self.status
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .map(|status| status.status_report())
     }
 
     /// This source with `clock` as its clock.

@@ -10,6 +10,7 @@
 
 use std::collections::BTreeSet;
 
+use cortex_core::ipc::HistoryReport;
 use cortex_store::{ChangeCardRecord, Queries, StoreError};
 use serde::Serialize;
 
@@ -36,7 +37,12 @@ pub(super) enum Reader {
 
 /// What the history worker is, as `source` reports it.
 pub(super) fn reader_of(source: &Source) -> Reader {
-    match source.history_report() {
+    reader_from(source.history_report().as_ref())
+}
+
+/// What the history worker is, from its report: none while it does not run.
+pub(super) fn reader_from(report: Option<&HistoryReport>) -> Reader {
+    match report {
         None => Reader::Off,
         Some(report) if report.refused.is_some() => Reader::Refused,
         Some(_) => Reader::On,

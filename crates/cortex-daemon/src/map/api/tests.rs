@@ -8,6 +8,7 @@
 //! weights bring interest and links of use forward by 0.5 for each task since they were written;
 //! the second of the two tasks is the latest.
 
+mod health;
 mod history;
 mod script;
 
@@ -59,6 +60,15 @@ fn site_over(root: tempfile::TempDir, texts: Arc<Jobs>) -> TestResult<Fixture> {
 
 /// A site like [`site_over`]'s whose daemon's inbox is `inbox`, where its writes are asked.
 fn site_told(root: tempfile::TempDir, texts: Arc<Jobs>, inbox: Arc<Inbox>) -> TestResult<Fixture> {
+    site_reporting(root, (texts, inbox), None)
+}
+
+/// A site like [`site_told`]'s whose daemon's status report comes from `status`, when one does.
+fn site_reporting(
+    root: tempfile::TempDir,
+    (texts, inbox): (Arc<Jobs>, Arc<Inbox>),
+    status: Option<std::sync::Weak<dyn crate::map::Status>>,
+) -> TestResult<Fixture> {
     let weights = GraphSettings {
         link_decay: 0.5,
         interest_decay: 0.5,
@@ -72,6 +82,10 @@ fn site_told(root: tempfile::TempDir, texts: Arc<Jobs>, inbox: Arc<Inbox>) -> Te
         MapSettings::of(&Config::default(), root.path()),
     )
     .with_clock(|| NOW_MS);
+    let source = match status {
+        Some(status) => source.with_status(status),
+        None => source,
+    };
     let token = Token::generate()?;
     let token_text = token.as_str().to_owned();
     let assets: &'static [Asset] = &[];

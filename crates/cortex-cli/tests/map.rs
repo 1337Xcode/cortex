@@ -112,13 +112,14 @@ fn the_map_is_served_on_127_0_0_1_behind_its_guard() -> TestResult {
 
     // The health says `reading` until the daemon's first index is done, then `ready`.
     let until = Instant::now() + INDEXED_WITHIN;
-    let health = loop {
+    let (health, value) = loop {
         let health = send(port, &format!("GET /{token}/api/health HTTP/1.1\r\n{host}"))?;
-        let body = String::from_utf8_lossy(&health.body).into_owned();
-        if body.ends_with(r#""index":"ready"}"#) {
-            break health;
+        let value: serde_json::Value = serde_json::from_slice(&health.body)?;
+        if value["index"] == "ready" {
+            break (health, value);
         }
-        assert!(body.ends_with(r#""index":"reading"}"#), "{body}");
+        let body = String::from_utf8_lossy(&health.body).into_owned();
+        assert_eq!(value["index"], "reading", "{body}");
         assert!(
             Instant::now() < until,
             "the first index did not end: {body}"
@@ -136,14 +137,15 @@ fn the_map_is_served_on_127_0_0_1_behind_its_guard() -> TestResult {
             .headers
             .contains(&"cache-control: no-store".to_owned())
     );
-    assert_eq!(
-        String::from_utf8(health.body)?,
-        format!(
-            "{{\"version\":\"{}\",\"has_assets\":{},\"index\":\"ready\"}}",
-            env!("CARGO_PKG_VERSION"),
-            has_built_map()
-        )
-    );
+    assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(value["has_assets"], has_built_map());
+    // The daemon's part comes from its own status report: it has run, its miner has a state, and
+    // with history off by default its history worker is off.
+    let daemon = &value["daemon"];
+    assert!(daemon["uptime_ms"].as_u64().is_some(), "{value}");
+    assert!(daemon["git"].as_str().is_some(), "{value}");
+    assert_eq!(daemon["history"], "off", "{value}");
+    assert!(daemon["errors"].is_array(), "{value}");
     let wrong_token = "0".repeat(64);
     let origin = "Origin: http://evil.example";
     for (head, status) in [
