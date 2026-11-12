@@ -10,7 +10,7 @@ use cortex_store::{Queries, StoreError};
 use serde::Serialize;
 
 use super::Ask;
-use super::links::{self, Link};
+use super::links::{self, Kind, Link};
 use super::listing::{ListedFile, Listing};
 use super::numbers::{self, FileNumbers};
 use super::reply::{Failure, json, respond};
@@ -72,6 +72,9 @@ struct LinkEntry {
     weight: f64,
     /// For a co-change link, the commits that changed both files.
     commits: u64,
+    /// What its weight was made from, by its kind: the commits that changed both files (as
+    /// `commits` says), the tasks that used both, or the work orders that named both.
+    count: u64,
 }
 
 /// The graph of the store `site` reads, as JSON.
@@ -137,6 +140,11 @@ fn link_entry(link: &Link) -> LinkEntry {
         to: link.to,
         kind: link.kind.name(),
         weight: link.weight,
-        commits: link.commits,
+        commits: if link.kind == Kind::CoChange {
+            link.count
+        } else {
+            0
+        },
+        count: link.count,
     }
 }

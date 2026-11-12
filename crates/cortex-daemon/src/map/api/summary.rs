@@ -104,7 +104,7 @@ fn summary_of(
     let strongest_pair = links::strongest_co_change(queries, listing)?.map(|link| Pair {
         from: link.from,
         to: link.to,
-        commits: link.commits,
+        commits: link.count,
     });
     let learned = !reads.is_empty()
         || strongest_pair.is_some()

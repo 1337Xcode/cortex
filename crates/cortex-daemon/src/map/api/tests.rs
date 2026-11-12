@@ -123,7 +123,9 @@ fn get(fixture: &Fixture, path: &str) -> TestResult<Given> {
 /// and 2 (the other direction says 0.5), 0.9 of 4 commits between 2 and 3 (the other says 0.6);
 /// used together, files 1 and 4 at 2.5 written a task ago, 1.25 now, over the most a link can
 /// weigh, 5: 0.25; work orders, two named files 1 and 2 together, one named 1 and 3 and one 2 and
-/// 3 (the third work order names a file alone): over 2, 1.0, 0.5 and 0.5.
+/// 3 (the third work order names a file alone): over 2, 1.0, 0.5 and 0.5. Each link's count is
+/// what its weight was made from: the co-change links' 6 and 4 commits, the one task that linked
+/// files 1 and 4, and the work orders' 2, 1 and 1.
 #[test]
 fn the_graph_is_the_store_as_counted_by_hand() -> TestResult {
     let fixture = scripted()?;
@@ -135,12 +137,12 @@ fn the_graph_is_the_store_as_counted_by_hand() -> TestResult {
         r#"{"id":4,"path":"src/util.rs","lines":5,"interest":0.0,"tokens":0,"touched_ms":null,"facts":0,"suspect":0,"reads":0,"commits":0,"commits_counted":false}"#,
     ];
     let links = [
-        r#"{"from":1,"to":2,"kind":"co_change","weight":0.8,"commits":6}"#,
-        r#"{"from":2,"to":3,"kind":"co_change","weight":0.9,"commits":4}"#,
-        r#"{"from":1,"to":4,"kind":"used_together","weight":0.25,"commits":0}"#,
-        r#"{"from":1,"to":2,"kind":"work_order","weight":1.0,"commits":0}"#,
-        r#"{"from":1,"to":3,"kind":"work_order","weight":0.5,"commits":0}"#,
-        r#"{"from":2,"to":3,"kind":"work_order","weight":0.5,"commits":0}"#,
+        r#"{"from":1,"to":2,"kind":"co_change","weight":0.8,"commits":6,"count":6}"#,
+        r#"{"from":2,"to":3,"kind":"co_change","weight":0.9,"commits":4,"count":4}"#,
+        r#"{"from":1,"to":4,"kind":"used_together","weight":0.25,"commits":0,"count":1}"#,
+        r#"{"from":1,"to":2,"kind":"work_order","weight":1.0,"commits":0,"count":2}"#,
+        r#"{"from":1,"to":3,"kind":"work_order","weight":0.5,"commits":0,"count":1}"#,
+        r#"{"from":2,"to":3,"kind":"work_order","weight":0.5,"commits":0,"count":1}"#,
     ];
     let expected = format!(
         r#"{{"version":1,"files":[{}],"links":[{}]}}"#,

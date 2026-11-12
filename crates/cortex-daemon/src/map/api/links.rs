@@ -54,8 +54,9 @@ pub(super) struct Link {
     pub(super) kind: Kind,
     /// How strong it is, from 0 to 1.
     pub(super) weight: f64,
-    /// For a co-change link, the commits that changed both files; 0 for the other kinds.
-    pub(super) commits: u64,
+    /// What its weight was made from, by its kind: the commits that changed both files, the tasks
+    /// that used both, or the delivered work orders that named both.
+    pub(super) count: u64,
 }
 
 /// A link's strength and commits, by its two files' ids with the smaller first.
@@ -104,12 +105,12 @@ pub(super) fn strongest_co_change(
     let pairs = co_change(queries, listing)?;
     Ok(pairs
         .iter()
-        .map(|(&(from, to), &(weight, commits))| Link {
+        .map(|(&(from, to), &(weight, count))| Link {
             from,
             to,
             kind: Kind::CoChange,
             weight,
-            commits,
+            count,
         })
         .min_by(|a, b| stronger(Some(a), Some(b))))
 }
@@ -129,7 +130,7 @@ fn add_edge(
     pairs: &mut Pairs,
     listing: &Listing,
     (src, dst): (NodeId, NodeId),
-    (weight, commits): (f64, u64),
+    (weight, count): (f64, u64),
 ) {
     let (Some(from), Some(to)) = (listing.id_of_node(src), listing.id_of_node(dst)) else {
         return;
@@ -141,9 +142,9 @@ fn add_edge(
         return;
     }
     let weight = weight.clamp(0.0, 1.0);
-    let entry = pairs.entry(key).or_insert((weight, commits));
+    let entry = pairs.entry(key).or_insert((weight, count));
     if weight > entry.0 {
-        *entry = (weight, commits);
+        *entry = (weight, count);
     }
 }
 
@@ -163,7 +164,7 @@ fn co_change(queries: Queries<'_>, listing: &Listing) -> Result<Pairs, StoreErro
 }
 
 /// The used-together pairs: each link's weight brought forward to the latest task, over the most
-/// a link can weigh; a link that faded out is none.
+/// a link can weigh, and the tasks that linked the two files; a link that faded out is none.
 fn used_together(
     queries: Queries<'_>,
     listing: &Listing,
@@ -180,7 +181,7 @@ fn used_together(
             &mut pairs,
             listing,
             (row.src, row.edge.dst),
-            (now / MAX_LINK_WEIGHT, 0),
+            (now / MAX_LINK_WEIGHT, u64::from(row.edge.count)),
         );
         Ok(())
     })?;
@@ -188,7 +189,7 @@ fn used_together(
 }
 
 /// The work-order pairs: how many work orders named both files, over the most any pair was named
-/// together.
+/// together, and that number.
 fn work_orders(queries: Queries<'_>, listing: &Listing) -> Result<Pairs, StoreError> {
     let mut counts: BTreeMap<(usize, usize), u64> = BTreeMap::new();
     for order in queries.delivered_work_orders()? {
@@ -215,7 +216,7 @@ fn work_orders(queries: Queries<'_>, listing: &Listing) -> Result<Pairs, StoreEr
                 reason = "counts of work orders stay far below 2^52"
             )]
             let weight = count as f64 / most as f64;
-            (key, (weight, 0))
+            (key, (weight, count))
         })
         .collect())
 }
@@ -225,12 +226,12 @@ fn work_orders(queries: Queries<'_>, listing: &Listing) -> Result<Pairs, StoreEr
 fn strongest(kind: Kind, pairs: &Pairs, file_count: usize) -> Vec<Link> {
     let mut links: Vec<Link> = pairs
         .iter()
-        .map(|(&(from, to), &(weight, commits))| Link {
+        .map(|(&(from, to), &(weight, count))| Link {
             from,
             to,
             kind,
             weight,
-            commits,
+            count,
         })
         .collect();
     let mut ends: Vec<Vec<usize>> = vec![Vec::new(); file_count];
@@ -260,20 +261,18 @@ fn strongest(kind: Kind, pairs: &Pairs, file_count: usize) -> Vec<Link> {
 /// two whose only 2 commits agree; a link of another kind by its weight.
 fn rank_of(link: &Link) -> f64 {
     match link.kind {
-        Kind::CoChange => {
-            partner_rank(link.weight, u32::try_from(link.commits).unwrap_or(u32::MAX))
-        }
+        Kind::CoChange => partner_rank(link.weight, u32::try_from(link.count).unwrap_or(u32::MAX)),
         Kind::UsedTogether | Kind::WorkOrder => link.weight,
     }
 }
 
-/// How two links order from strongest: by [`rank_of`], then commits, both larger first, then by
-/// the files' ids, smaller first. A link that is missing sorts last, which never happens.
+/// How two links order from strongest: by [`rank_of`], then their counts, both larger first,
+/// then by the files' ids, smaller first. A link that is missing sorts last, which never happens.
 fn stronger(a: Option<&Link>, b: Option<&Link>) -> std::cmp::Ordering {
     match (a, b) {
         (Some(a), Some(b)) => rank_of(b)
             .total_cmp(&rank_of(a))
-            .then(b.commits.cmp(&a.commits))
+            .then(b.count.cmp(&a.count))
             .then((a.from, a.to).cmp(&(b.from, b.to))),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -329,12 +328,12 @@ mod tests {
     /// ranks 0.6 ln 2 = 0.416, last.
     #[test]
     fn equal_weights_are_ordered_by_commits_then_ids() {
-        let link = |to, weight, commits| Link {
+        let link = |to, weight, count| Link {
             from: 0,
             to,
             kind: Kind::CoChange,
             weight,
-            commits,
+            count,
         };
         let mut links = [
             link(1, 0.5, 5),
@@ -360,12 +359,12 @@ mod tests {
         }
         let links: Vec<Link> = pairs
             .iter()
-            .map(|(&(from, to), &(weight, commits))| Link {
+            .map(|(&(from, to), &(weight, count))| Link {
                 from,
                 to,
                 kind: Kind::CoChange,
                 weight,
-                commits,
+                count,
             })
             .collect();
         let best = links
