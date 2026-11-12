@@ -21,8 +21,17 @@ export interface BusiestFiles {
 }
 
 /**
- * The strongest co-change pairs, in the graph's own order, the one the summary ranks its strongest
- * pair by: weight, then commits, then the ids of the two files.
+ * How strongly a co-change pair changes together, as the daemon ranks co-change links and the
+ * summary its strongest pair: the link's weight times ln(1 + commits), so that two files that
+ * changed together in 62 commits outrank two whose only 2 commits agree.
+ */
+export function pairRank(link: GraphLink): number {
+  return link.weight * Math.log1p(link.commits);
+}
+
+/**
+ * The strongest co-change pairs, in the graph's own order: by `pairRank`, then commits, then the
+ * ids of the two files.
  */
 export function coupledPairs(snapshot: GraphSnapshot): CoupledPair[] {
   const pairs: CoupledPair[] = [];
@@ -35,7 +44,7 @@ export function coupledPairs(snapshot: GraphSnapshot): CoupledPair[] {
   // INVARIANT: deterministic (ties by commits, then by the files' ids)
   pairs.sort(
     (a, b) =>
-      b.link.weight - a.link.weight ||
+      pairRank(b.link) - pairRank(a.link) ||
       b.link.commits - a.link.commits ||
       a.link.from - b.link.from ||
       a.link.to - b.link.to,

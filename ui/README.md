@@ -17,8 +17,10 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   is cut inside a word. A repository Cortex has learned nothing about says so, and the map shows
   its structure alone.
 - The overview panel on the left: the agent sessions running in the repository now, every summary
-  sentence, the strongest pairs of files changed together (by the link's strength, then its
-  commits, the order the summary's strongest pair is chosen by; each row shows its commits and
+  sentence, the strongest pairs of files changed together (by the link's strength times the
+  logarithm of one plus its commits, as Cortex ranks a file's partners and the summary its
+  strongest pair, so a pair that often changed together comes before one of two commits; each
+  row shows its commits and
   says "changed with mod.rs in 12 of 21 commits" on hover), the busiest files (by the tokens
   attributed to them, or by commits before agents worked on any) and the files that need attention
   (a suspect fact). Each list shows five rows and then "Show N more", and each row is a button that

@@ -277,5 +277,14 @@ pub fn edges<F: Copy + Ord + Hash, S: BuildHasher>(
 
 /// A partner's rank: its confidence times `ln(1 + co-changes)`.
 fn rank<F>(partner: &(f64, u32, F)) -> f64 {
-    partner.0 * f64::from(partner.1).ln_1p()
+    partner_rank(partner.0, partner.1)
+}
+
+/// How strongly two files change together, as the miner ranks a file's partners: the confidence
+/// times `ln(1 + co-changes)`, so that a pair that changed together often outranks one whose only
+/// two commits happen to agree. Used wherever co-change partners are ranked, so that every list
+/// orders them the same way.
+#[must_use]
+pub fn partner_rank(confidence: f64, co_changes: u32) -> f64 {
+    confidence * f64::from(co_changes).ln_1p()
 }

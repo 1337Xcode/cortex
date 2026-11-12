@@ -27,9 +27,9 @@ function snapshot(files: GraphFile[]): GraphSnapshot {
 }
 
 describe('overview lists', () => {
-  it('lists co-change pairs by weight, then commits, then ids; other kinds are left out', () => {
-    // Weights: a+c 0.9, a+b 0.5, b+c 0.3. b+c has the most commits (7) but the least weight; the
-    // used-together a+d (0.8) is no co-change pair.
+  it('lists co-change pairs by rank, then commits, then ids; other kinds are left out', () => {
+    // Ranks, weight times ln(1 + commits): a+c 0.9 ln 5 = 1.448, a+b 0.5 ln 5 = 0.805, b+c 0.3 ln 8
+    // = 0.624. The used-together a+d (0.8) is no co-change pair.
     const pairs = coupledPairs(snapshot(FILES)).map((pair) => `${pair.from.path}+${pair.to.path}`);
     expect(pairs).toEqual(['a.rs+c.rs', 'a.rs+b.rs', 'b.rs+c.rs']);
   });
@@ -46,6 +46,19 @@ describe('overview lists', () => {
       (pair) => `${pair.from.path}+${pair.to.path}`,
     );
     expect(pairs).toEqual(['a.rs+b.rs', 'a.rs+c.rs', 'b.rs+c.rs']);
+  });
+
+  it('puts a frequent pair before a perfect pair of two commits', () => {
+    // a+b at weight 0.5 over 62 commits ranks 0.5 ln 63 = 2.072; a+c at 1.0 over 2 ranks ln 3 =
+    // 1.099, so a+b comes first though it weighs less.
+    const links: GraphLink[] = [
+      { from: 0, to: 2, kind: 'co_change', weight: 1, commits: 2 },
+      { from: 0, to: 1, kind: 'co_change', weight: 0.5, commits: 62 },
+    ];
+    const pairs = coupledPairs({ version: 1, files: FILES, links }).map(
+      (pair) => `${pair.from.path}+${pair.to.path}`,
+    );
+    expect(pairs).toEqual(['a.rs+b.rs', 'a.rs+c.rs']);
   });
 
   it('ranks the busiest files by tokens, ties by path', () => {

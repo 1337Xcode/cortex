@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 
 use cortex_core::EdgeType;
+use cortex_git::cochange::partner_rank;
 use cortex_learn::{FADED_OUT_BELOW, MAX_LINK_WEIGHT, decayed};
 use cortex_retrieve::GraphSettings;
 use cortex_store::{NodeId, Queries, StoreError};
@@ -220,7 +221,7 @@ fn work_orders(queries: Queries<'_>, listing: &Listing) -> Result<Pairs, StoreEr
 }
 
 /// The links of `kind` among `pairs` that are among the [`KEPT_PER_FILE`] strongest of either of
-/// their files, as links: a link is stronger by weight, then by commits, then by the files' ids.
+/// their files, as links, ranked as [`stronger`] orders them.
 fn strongest(kind: Kind, pairs: &Pairs, file_count: usize) -> Vec<Link> {
     let mut links: Vec<Link> = pairs
         .iter()
@@ -254,13 +255,24 @@ fn strongest(kind: Kind, pairs: &Pairs, file_count: usize) -> Vec<Link> {
     links
 }
 
-/// How two links order from strongest: by weight, then commits, both larger first, then by the
-/// files' ids, smaller first. A link that is missing sorts last, which never happens.
+/// How strong `link` is, for ranking: a co-change link by the miner's own partner rank, its
+/// weight times `ln(1 + commits)`, so that two files that changed together in 62 commits outrank
+/// two whose only 2 commits agree; a link of another kind by its weight.
+fn rank_of(link: &Link) -> f64 {
+    match link.kind {
+        Kind::CoChange => {
+            partner_rank(link.weight, u32::try_from(link.commits).unwrap_or(u32::MAX))
+        }
+        Kind::UsedTogether | Kind::WorkOrder => link.weight,
+    }
+}
+
+/// How two links order from strongest: by [`rank_of`], then commits, both larger first, then by
+/// the files' ids, smaller first. A link that is missing sorts last, which never happens.
 fn stronger(a: Option<&Link>, b: Option<&Link>) -> std::cmp::Ordering {
     match (a, b) {
-        (Some(a), Some(b)) => b
-            .weight
-            .total_cmp(&a.weight)
+        (Some(a), Some(b)) => rank_of(b)
+            .total_cmp(&rank_of(a))
             .then(b.commits.cmp(&a.commits))
             .then((a.from, a.to).cmp(&(b.from, b.to))),
         (Some(_), None) => std::cmp::Ordering::Less,
@@ -285,7 +297,7 @@ mod tests {
         for from in 0..10_u32 {
             for to in (from + 1)..10 {
                 let weight = 0.01 * f64::from(from + to + 1);
-                pairs.insert((from as usize, to as usize), (weight, 0));
+                pairs.insert((from as usize, to as usize), (weight, 2));
             }
         }
         let kept = strongest(Kind::CoChange, &pairs, 10);
@@ -305,15 +317,16 @@ mod tests {
     fn a_link_weak_for_one_end_stays_for_the_other() {
         let mut pairs = Pairs::new();
         for leaf in 1..=10_u32 {
-            pairs.insert((0, leaf as usize), (0.01 * f64::from(leaf), 0));
+            pairs.insert((0, leaf as usize), (0.01 * f64::from(leaf), 2));
         }
         let kept = strongest(Kind::CoChange, &pairs, 11);
         assert_eq!(kept.len(), 10);
     }
 
-    /// Links rank by weight, then commits, then ids, never by chance: of four links of file 0,
-    /// (0, 4) weighs most, (0, 2) ties the next two on weight but has more commits, and of (0, 1)
-    /// and (0, 3), which tie on both, the lower id comes first.
+    /// Co-change links rank by weight times `ln(1 + commits)`, then commits, then ids, never by
+    /// chance: (0, 2) at 0.5 of 6 commits ranks 0.5 ln 7 = 0.973; (0, 1) and (0, 3) at 0.5 of 5
+    /// rank 0.5 ln 6 = 0.896 each, the lower id first; (0, 4) weighs most, 0.6, but over 1 commit
+    /// ranks 0.6 ln 2 = 0.416, last.
     #[test]
     fn equal_weights_are_ordered_by_commits_then_ids() {
         let link = |to, weight, commits| Link {
@@ -331,6 +344,37 @@ mod tests {
         ];
         links.sort_by(|a, b| stronger(Some(a), Some(b)));
         let order: Vec<usize> = links.iter().map(|link| link.to).collect();
-        assert_eq!(order, [4, 2, 1, 3]);
+        assert_eq!(order, [2, 1, 3, 4]);
+    }
+
+    /// A file's most frequent partner is kept though small files' every commit agrees with it:
+    /// file 0 shares 60 commits with file 1 at confidence 0.75 (rank 0.75 ln 61 = 3.083) and 2 of
+    /// 2 with each of files 2 to 10 at 1.0 (rank ln 3 = 1.099). Of file 0's ten links it keeps
+    /// eight, file 1's first; the nine small links each stay too, as each is its leaf's only link.
+    #[test]
+    fn a_frequent_partner_outranks_a_perfect_pair_of_two_commits() {
+        let mut pairs = Pairs::new();
+        pairs.insert((0, 1), (0.75, 60));
+        for leaf in 2..=10_usize {
+            pairs.insert((0, leaf), (1.0, 2));
+        }
+        let links: Vec<Link> = pairs
+            .iter()
+            .map(|(&(from, to), &(weight, commits))| Link {
+                from,
+                to,
+                kind: Kind::CoChange,
+                weight,
+                commits,
+            })
+            .collect();
+        let best = links
+            .iter()
+            .min_by(|a, b| stronger(Some(a), Some(b)))
+            .map(|link| (link.from, link.to));
+        assert_eq!(best, Some((0, 1)));
+        let kept = strongest(Kind::CoChange, &pairs, 11);
+        assert_eq!(kept.len(), 10);
+        assert!(kept.iter().any(|link| (link.from, link.to) == (0, 1)));
     }
 }
