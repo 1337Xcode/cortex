@@ -141,7 +141,7 @@ fn rate(value: f64) -> String {
 
 /// A median or a difference of medians, grouped in threes, with its tenths when it has any (a
 /// median of an even count of whole numbers can end in a half).
-fn quantity(value: f64) -> String {
+pub(in crate::commands) fn quantity(value: f64) -> String {
     let sign = if value < 0.0 { "-" } else { "" };
     let tenths = (value.abs() * 10.0).round() as u64;
     let whole = grouped(tenths / 10);
@@ -342,7 +342,7 @@ pub(super) fn counted(count: u64, one: &str, many: &str) -> String {
 }
 
 /// `number` with its digits grouped in threes, as `153,282`.
-fn grouped(number: u64) -> String {
+pub(in crate::commands) fn grouped(number: u64) -> String {
     let digits = number.to_string();
     let mut text = String::with_capacity(digits.len() * 4 / 3);
     for (index, digit) in digits.chars().enumerate() {

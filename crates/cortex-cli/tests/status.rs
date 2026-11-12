@@ -100,7 +100,8 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
          mode: not counted yet\nfiles: 0 stored, 0 parsed\nco-change: nothing mined yet\n\
          gate: bar 0.50, 0.10 when 3 kinds agree\n\
          self-check: no work order given is labelled yet\n\
-         warnings: none given yet\n"
+         warnings: none given yet\n\
+         savings: not measured yet, 0 of 30 held-out and 0 of 30 treated tasks so far\n"
     );
     index(root, &mut writer)?;
     let ready = status(root, home.path())?;
@@ -110,7 +111,8 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
          co-change: nothing mined yet\n\
          gate: bar 0.50, 0.10 when 3 kinds agree\n\
          self-check: no work order given is labelled yet\n\
-         warnings: none given yet\n"
+         warnings: none given yet\n\
+         savings: not measured yet, 0 of 30 held-out and 0 of 30 treated tasks so far\n"
     );
     drop(writer);
     std::fs::write(root.join(".cortex/config.toml"), "mode = \"small\"\n")?;
@@ -121,7 +123,8 @@ fn status_reports_the_daemon_the_index_and_the_mode() -> TestResult {
          files: 3 stored, 2 parsed\nco-change: nothing mined yet\n\
          gate: bar 0.50, 0.10 when 3 kinds agree\n\
          self-check: no work order given is labelled yet\n\
-         warnings: none given yet\n"
+         warnings: none given yet\n\
+         savings: not measured yet, 0 of 30 held-out and 0 of 30 treated tasks so far\n"
     );
     Ok(())
 }
@@ -184,7 +187,8 @@ fn status_finds_the_repository_from_a_folder_inside_it() -> TestResult {
          co-change: nothing mined yet\n\
          gate: bar 0.50, 0.10 when 3 kinds agree\n\
          self-check: no work order given is labelled yet\n\
-         warnings: none given yet\n"
+         warnings: none given yet\n\
+         savings: not measured yet, 0 of 30 held-out and 0 of 30 treated tasks so far\n"
     );
     Ok(())
 }
@@ -218,7 +222,8 @@ fn status_shows_the_gate_as_the_self_check_left_it() -> TestResult {
          gate: bar 0.60, 0.20 when 3 kinds agree\n\
          self-check: precision 0.52 over the latest 100 work orders given; the bar is raised 2 \
          of 4 steps, by 0.10, last when 130 work orders had been labelled\n\
-         warnings: none given yet\n"
+         warnings: none given yet\n\
+         savings: not measured yet, 0 of 30 held-out and 0 of 30 treated tasks so far\n"
     );
     let store = rusqlite::Connection::open(root.join(".cortex/cortex.db"))?;
     store.execute(
@@ -232,7 +237,8 @@ fn status_shows_the_gate_as_the_self_check_left_it() -> TestResult {
         unreadable.stdout,
         "daemon: not running\nindex: ready\nmode: tiny\nfiles: 1 stored, 1 parsed\n\
          co-change: nothing mined yet\ngate: the self-check's record cannot be read\n\
-         warnings: none given yet\n"
+         warnings: none given yet\n\
+         savings: not measured yet, 0 of 30 held-out and 0 of 30 treated tasks so far\n"
     );
     Ok(())
 }

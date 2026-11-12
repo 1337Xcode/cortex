@@ -7,6 +7,8 @@
 mod cache;
 mod text;
 
+pub(super) use self::text::{grouped, quantity};
+
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 

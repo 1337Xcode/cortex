@@ -475,6 +475,13 @@ fn status_lines(
         Err(error) => return Err(error.into()),
     }
     lines.push(warnings_line(queries.warning_counts()?));
+    // No session is asked for: only the arms and their comparison are read.
+    let report = cortex_meter::recorded(
+        queries,
+        &cortex_meter::Selection::StartedSince(i64::MAX),
+        None,
+    )?;
+    lines.push(super::savings::status_line(&report.holdout));
     lines.extend(next_file_line(queries.next_file_use()?));
     lines.extend(health_line(queries.fact_health()?));
     Ok(lines)

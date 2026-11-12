@@ -8,6 +8,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- `cortex statusline`, for Claude Code's status line: one line with the tokens Cortex added to
+  the session and what the holdout comparison measured, which says savings are not measured yet
+  until each arm has 30 ended tasks. It only reads, and prints nothing on any problem. `cortex
+  status` gains the same comparison as its `savings:` line.
 - `ui.editor_url`, a new key: the address the map's file panel opens a file in the editor with,
   `{path}` standing for the file's absolute path as a URL path and `{line}` for a line
   (`vscode://file{path}:{line}` by default; empty for none). A web, file or script scheme, an

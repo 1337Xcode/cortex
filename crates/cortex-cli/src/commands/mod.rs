@@ -19,7 +19,9 @@ mod note;
 mod off;
 mod on;
 mod receipts;
+mod savings;
 mod status;
+mod statusline;
 mod uninstall;
 mod version;
 mod where_;
@@ -49,6 +51,10 @@ pub(crate) enum Command {
     On(on::Args),
     /// Show what each task of recent sessions took: turns, tool calls, tokens and estimated cost.
     Receipts(receipts::Args),
+    /// Print one line for Claude Code's status line: the tokens Cortex added to the session and
+    /// what the holdout comparison measured (reads the session from stdin; prints nothing on any
+    /// error).
+    Statusline(statusline::Args),
     /// Show the code the retrieval engine finds for a question, with its reasons and what the
     /// gate would say.
     Where(where_::Args),
@@ -94,6 +100,7 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Off(args) => off::run(&args),
         Command::On(args) => on::run(&args),
         Command::Receipts(args) => receipts::run(&args),
+        Command::Statusline(args) => statusline::run(&args),
         Command::Where(args) => where_::run(&args),
         Command::Why(args) => why::run(&args),
         Command::Mcp(args) => mcp::run(&args),
