@@ -439,6 +439,31 @@ fn excerpts_and_watcher_events_read_back() -> TestResult {
     Ok(())
 }
 
+/// The newest events come newest first, as many as asked: of three stored in the order 30, 10,
+/// 20 ms (the order kept, not the time), the two newest are the 20 ms event (seq 3) then the 10 ms
+/// one (seq 2); asking for none gives none.
+#[test]
+fn the_latest_events_come_newest_first() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    committed(&mut writer, |transaction| {
+        for ts in [30, 10, 20] {
+            transaction.append_event(&event(None, ts, EventKind::Read)?)?;
+        }
+        Ok(())
+    })?;
+    let reader = scratch.reader()?;
+    let latest: Vec<(u64, i64)> = reader
+        .queries()
+        .latest_events(2)?
+        .into_iter()
+        .map(|row| (row.seq, row.record.ts_ms))
+        .collect();
+    assert_eq!(latest, [(3, 20), (2, 10)]);
+    assert_eq!(reader.queries().latest_events(0)?, []);
+    Ok(())
+}
+
 /// A task touched a file when one of its own events read or edited it: task `first` read a.py,
 /// edited b.py and searched with c.py's node on its event; task `other` read c.py. So `first`
 /// touched a.py and b.py and not c.py (a search is no read, and the other task's read is not its

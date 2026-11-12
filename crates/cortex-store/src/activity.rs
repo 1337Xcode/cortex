@@ -485,6 +485,16 @@ impl Queries<'_> {
         self.event_rows(schema::EVENTS_AFTER, (after, limit))
     }
 
+    /// The newest events, newest first by the order they were stored, at most `limit` of them.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn latest_events(self, limit: usize) -> Result<Vec<EventRow>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.event_rows(schema::LATEST_EVENTS, [limit])
+    }
+
     /// The events one statement finds with `params`.
     fn event_rows(
         self,

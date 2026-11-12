@@ -250,6 +250,10 @@ pub(crate) const READS_OF_SESSION: &str = "SELECT seq, task_id, session_id, ts, 
 pub(crate) const EVENTS_AFTER: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, path, \
      range_start, range_end, meta FROM events WHERE seq > ?1 ORDER BY seq LIMIT ?2";
 
+/// The newest events, newest first, at most ?1 of them.
+pub(crate) const LATEST_EVENTS: &str = "SELECT seq, task_id, session_id, ts, kind, node_id, path, \
+     range_start, range_end, meta FROM events ORDER BY seq DESC LIMIT ?1";
+
 /// How many objects the database defines; 0 for a new, empty database.
 pub(crate) const COUNT_OBJECTS: &str = "SELECT count(*) FROM sqlite_schema";
 /// Whether the `meta` table exists (1) or not (0).
