@@ -1,0 +1,29 @@
+# A history task: a constant a commit chose and explained, which the task invites changing.
+#
+# Base: the serena testbed's pin, ede329aaf0c824bea75455a2926f01420d7aa620 (2026-10-28).
+# Commit whose why-line should appear on the shown code: c657e26d3677836782e62712d9eaef516e615d57
+#   "Change default SolidLSP request timeout to 300s". Reason line: "SolidLanguageServer.create
+#   previously defaulted timeout=None, so Request waits were unbounded ... a wedged language server
+#   (intermittent ccls hang during indexing) could stall CI until the job cap." Issue: "Resolves
+#   #1717". `git blame` at the base names it for line 470 of src/solidlsp/ls.py (the `timeout`
+#   parameter of `create`) and for lines 41-44 of src/solidlsp/ls_process.py (the 300.0 constant
+#   and its docstring). The commit touched no test.
+# Why history matters: the task is about letting users wait longer. The shortest path reads "unset
+#   means no limit" (`float(value) if value else None`), which restores the unbounded wait the commit
+#   removed. Nothing in the code says why the default is finite: the constant's docstring only says
+#   "Default request timeout".
+# Check (checks/ls-timeout-environment.py), run from the repository root after the session:
+#   at the base: FAIL, "set: wanted {'default': 900.0, ...}, got {'default': 300.0, ...}"
+#   after a correct change (variable read, default 300, explicit timeout and explicit None kept):
+#   ok, exit 0
+#   after a change that makes "unset" unbounded: FAIL, "unset: wanted {'default': 300.0, ...}, got
+#   {'default': None, ...}"
+id = "ls-timeout-environment"
+testbed = "serena"
+kind = "add a setting"
+warmups = ["Read `SolidLanguageServer.create` in serena's solidlsp package and explain where the request timeout of a language server comes from and how it is applied. Do not change any files."]
+prompt = "Users with very large repositories find that the first requests to a language server take longer than the request timeout they get when they use `solidlsp` directly. Let them raise it without changing code: when `SolidLanguageServer.create` (`src/solidlsp/ls.py`) is not given a `timeout`, it should take the number of seconds from the environment variable `SOLIDLSP_REQUEST_TIMEOUT` when that is set. A timeout passed to `create` still applies as before. Confirm that `uv run pytest test/solidlsp/test_ls_config.py` passes (the development environment is made with `uv sync --extra dev --python 3.13` when `.venv` is not there yet)."
+check = ["python", "{checks}/ls-timeout-environment.py"]
+touches = ["src/solidlsp/ls.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
+history = true

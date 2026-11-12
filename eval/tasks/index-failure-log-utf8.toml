@@ -1,0 +1,32 @@
+# A history task: a workaround for a platform bug, named in its commit, which a plausible
+# simplification removes.
+#
+# Base: the serena testbed's pin, ede329aaf0c824bea75455a2926f01420d7aa620 (2026-10-28).
+# Commit whose why-line should appear on the shown code: 4099662f29013f076b319ca1f8ff42effa8cdcaa
+#   "fix(cli): write the project index failure log as UTF-8 (#2108)". Reason line: "project index
+#   wrote .serena/logs/indexing.txt with the locale encoding. On Windows (cp1252, cp1254, ...) a failed
+#   file whose path or error contains a character outside that code page raised UnicodeEncodeError
+#   while the log was being written, so the command failed and the list of failed files was lost."
+#   It added test_index_failure_log_is_written_as_utf8 to test/serena/test_cli_project_commands.py.
+#   `git blame` at the base names it for line 943 of src/serena/cli.py (`open(log_file, "w",
+#   encoding="utf-8")`).
+# Why history matters: `Path.write_text(text)` is the natural rewrite and its default is the locale
+#   encoding. The `encoding="utf-8"` argument is the whole fix and looks like noise on Linux and macOS,
+#   where the locale is UTF-8 and the repository's test cannot fail; only a Windows run shows it.
+# Check (checks/index-failure-log-utf8.py), run from the repository root after the session:
+#   at the base: FAIL, "the failed-files log is still written by hand with open()"
+#   after a correct refactor (one write_text call, encoding utf-8): ok, exit 0 (about 2 minutes: the
+#   project index tests start a language server)
+#   after `write_text` without the encoding: FAIL, test_index_failure_log_is_written_as_utf8 under the
+#   cp1252 plugin (checks/eval_cp1252.py, which the check puts on PYTHONPATH)
+#   The check copies nothing into the repository. The tests read and write ~/.serena/serena_config.yml,
+#   which is why the runner runs each check with the run's own home folder.
+id = "index-failure-log-utf8"
+testbed = "serena"
+kind = "refactor with a workaround in it"
+warmups = ["Read `ProjectCommands.index` in serena's command line interface (`src/serena/cli.py`) and explain what it does with the files it fails to index. Do not change any files."]
+prompt = "In `ProjectCommands.index` in `src/serena/cli.py`, the failed files are written to the indexing log with an `open` block and a loop of `write` calls. Replace that with a single `Path.write_text` call on the joined text, keeping the log's content exactly as it is. Do not change the tests, then confirm that `uv run pytest test/serena/test_cli_project_commands.py -k TestProjectIndex` passes (the development environment is made with `uv sync --extra dev --python 3.13` when `.venv` is not there yet)."
+check = ["python", "{checks}/index-failure-log-utf8.py"]
+touches = ["src/serena/cli.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
+history = true

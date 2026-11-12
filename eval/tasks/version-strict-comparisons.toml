@@ -1,0 +1,18 @@
+# Control: ordinary feature work where history is irrelevant, to measure what the why-lines cost.
+#
+# Base: the serena testbed's pin, ede329aaf0c824bea75455a2926f01420d7aa620 (2026-10-28).
+# Why history does not matter: `Version` (src/serena/util/version.py) is a small self-contained class;
+#   the new methods mirror the existing ones, and the specification of the new behaviour is in the
+#   prompt. No commit's reason bears on the answer, so a why-line on the code shown is noise to this task.
+# Check (checks/version-strict-comparisons.py), run from the repository root after the session:
+#   at the base: FAIL, "AttributeError: 'Version' object has no attribute 'is_greater_than'"
+#   after a correct change: ok, exit 0
+id = "version-strict-comparisons"
+testbed = "serena"
+kind = "add a method following conventions"
+warmups = ["Read the `Version` class in serena's version utilities (`src/serena/util/version.py`) and explain how it compares versions. Do not change any files."]
+prompt = "Add two methods to `Version` in `src/serena/util/version.py`, `is_greater_than(*components)` and `is_less_than(*components)`, next to `is_at_least`, `is_at_most` and `is_equal`. They compare exactly the components given, as `is_equal` does: `Version(\"1.2.3\").is_greater_than(1, 2, 2)` is true, `is_greater_than(1, 2, 3)` is false, and so is `is_greater_than(1, 2)`, because only the two components given are compared and they are equal. `is_less_than` is the mirror image. Write docstrings in the style of the existing ones."
+check = ["python", "{checks}/version-strict-comparisons.py"]
+touches = ["src/serena/util/version.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]
+history = true

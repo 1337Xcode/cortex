@@ -1,0 +1,30 @@
+# A history task: a constant a commit chose and explained, which the task invites changing.
+#
+# Base: the serena testbed's pin, ede329aaf0c824bea75455a2926f01420d7aa620 (2026-10-28).
+# Commit whose why-line should appear on the shown code: 0e253442b7aa23a519d488d0e8d027ad375970bb
+#   "Return all clangd references instead of clangd's default of at most 1000". Reason line: clangd
+#   is started with --limit-references=0 "so find_referencing_symbols and the other
+#   reference-based tools no longer stop silently at clangd's default limit of 1000 references".
+#   It touched test/solidlsp/cpp/test_clangd_dependency_provider.py. `git blame` at the base names
+#   it for lines 318 and 320 of src/solidlsp/language_servers/clangd_language_server.py (the
+#   `--limit-references=0` argument and the comment above it).
+# Why history matters: the task adds a way to set a limit and leaves open what happens when none is
+#   set. Without the reason, "no setting" reads as "use clangd's own limit" (no flag, or a number),
+#   which brings back the silent stop at 1000 references. Weakness to know: the code comment and
+#   docs/02-usage/050_configuration.md (line 524) also state the 0 (all references); the why-line
+#   adds the cause, not the fact.
+# Check (checks/clangd-max-references-setting.py), run from the repository root after the session:
+#   at the base: FAIL, "max_references must reach clangd: wanted ['--limit-references=200'], got
+#   ['--limit-references=0']"
+#   after a correct change (setting reaches clangd, default stays 0, user's own limit still wins,
+#   old tests kept): ok, exit 0
+#   after a change with no flag when unset: FAIL, "no setting must still return every reference"
+id = "clangd-max-references-setting"
+testbed = "serena"
+kind = "add a setting"
+warmups = ["Read `ClangdLanguageServer.DependencyProvider.create_launch_command` in serena's clangd language server and explain how the command line clangd is started with is put together. Do not change any files."]
+prompt = "Add a `max_references` entry to the `cpp` language server settings (`ls_specific_settings[\"cpp\"]`, the clangd settings listed in the docstring of `ClangdLanguageServer` in `src/solidlsp/language_servers/clangd_language_server.py`): a positive integer that caps how many references clangd returns, which Serena passes to clangd as its `--limit-references` option. List the new entry in that docstring and add tests next to the existing launch command tests in `test/solidlsp/cpp/test_clangd_dependency_provider.py`, leaving the existing tests as they are. Then confirm that `uv run pytest test/solidlsp/cpp/test_clangd_dependency_provider.py` passes (the development environment is made with `uv sync --extra dev --python 3.13` when `.venv` is not there yet)."
+check = ["python", "{checks}/clangd-max-references-setting.py"]
+touches = ["src/solidlsp/language_servers/clangd_language_server.py", "test/solidlsp/cpp/test_clangd_dependency_provider.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
+history = true

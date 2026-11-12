@@ -1,0 +1,20 @@
+# Control: ordinary feature work where history is irrelevant, to measure what the why-lines cost.
+#
+# Base: the hono testbed's pin, 61f7c59e50244ab4d2dd83c151928cf7ea448510 (2026-11-07, "4.13.17").
+# Why history does not matter: the middleware is 8 lines of logic and its one option is shown next to
+#   the new one; the behaviour of the new option is fully given in the prompt. (An old commit, 8f5ba57d,
+#   moved it from `headers.append` to `headers.set`, and the code already shows `set`.)
+# Check (checks/powered-by-enabled.py), run from the repository root after the session:
+#   at the base: FAIL, a vitest assertion on the `/off` route (the header is still set)
+#   after a correct change: ok, exit 0
+#   Needs the dependencies installed (`npx --yes pnpm@12.6.0 install --frozen-lockfile` when
+#   node_modules is missing).
+id = "powered-by-enabled"
+testbed = "hono"
+kind = "add an option to a class"
+warmups = ["Read hono's `poweredBy` middleware (`src/middleware/powered-by/index.ts`) and its test, and explain what it does. Do not change any files."]
+prompt = "Add an `enabled` option to the `poweredBy` middleware in `src/middleware/powered-by/index.ts`, a boolean that defaults to true. With `enabled: false` the middleware does not set the `X-Powered-By` header at all, whatever `serverName` is. Document the option in the options type the way `serverName` is, and add a test for it to `src/middleware/powered-by/index.test.ts` next to the existing ones. Then run `node_modules/.bin/vp test --run --project main src/middleware/powered-by/index.test.ts` to confirm they pass (install the dependencies with `pnpm install --frozen-lockfile` when `node_modules` is not there yet)."
+check = ["python", "{checks}/powered-by-enabled.py"]
+touches = ["src/middleware/powered-by/index.ts", "src/middleware/powered-by/index.test.ts"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
+history = true

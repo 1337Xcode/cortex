@@ -11,7 +11,7 @@ the agent's version and model, and where its credentials came from.
 | --- | --- |
 | `testbeds.toml` | Each testbed: a git repository at a pinned commit |
 | `tasks/<id>.toml` | One task: its testbed, its kind, the prompts of its warm-up sessions, the prompt of its measured session, the success check, the files a correct solution touches, the tools the agent may use, any project rules (`[[notes]]`: a rule's text, what it is about as `cortex note --at` takes it, and its kind), optionally a regression (`regression = "<file name>"`), and optionally `history = true` for a task that needs the repository's git history |
-| `checks/<id>.py` | Each task's success check, run from the repository's root after the sessions; exit code 0 is success |
+| `checks/<id>.py` | Each task's success check, run from the repository's root after the sessions; exit code 0 is success. `checks/eval_cp1252.py` is not a check: it is a pytest plugin that the check of `index-failure-log-utf8` loads |
 | `regressions/<file name>` | A unified diff a task names with `regression`: a small bug in the testbed's library code, so that the task starts from a broken state |
 | `results/<date>-<commit>/` | An evaluation's `runs.json` (each run's counts), `summary.json` and `summary.txt`, named for the day it ran and the commit it measured |
 

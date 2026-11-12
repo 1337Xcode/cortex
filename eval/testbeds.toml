@@ -12,3 +12,9 @@ name = "itsdangerous"
 url = "https://github.com/pallets/itsdangerous"
 commit = "672971d66a2ef9f85151e53283113f33d642dabd"
 description = "A Python library that signs data, 15 Python files and about 1,700 lines: a tiny repository"
+
+[[testbed]]
+name = "hono"
+url = "https://github.com/honojs/hono"
+commit = "61f7c59e50244ab4d2dd83c151928cf7ea448510"
+description = "A TypeScript web framework for the edge and for Node, Bun and Deno: 190 non-test source files and 2,921 commits at the pin, squash-merged pull requests with conventional titles"

@@ -1,0 +1,17 @@
+# Control: ordinary feature work where history is irrelevant, to measure what the why-lines cost.
+#
+# Base: the serena testbed's pin, ede329aaf0c824bea75455a2926f01420d7aa620 (2026-10-28).
+# Why history does not matter: a new static method beside `TextOutputUtils.limit_length`, with the
+#   output format fixed by the prompt. Nothing in the file's history changes what a correct method does.
+# Check (checks/limit-lines.py), run from the repository root after the session:
+#   at the base: FAIL, "AttributeError: type object 'TextOutputUtils' has no attribute 'limit_lines'"
+#   after a correct change: ok, exit 0
+id = "limit-lines"
+testbed = "serena"
+kind = "add a method following conventions"
+warmups = ["Read `TextOutputUtils.limit_length` in serena's text utilities (`src/serena/util/text_utils.py`) and explain how it shortens a result. Do not change any files."]
+prompt = "Add a static method `limit_lines(result: str, max_lines: int) -> str` to `TextOutputUtils` in `src/serena/util/text_utils.py`, next to `limit_length` and documented in the same style. It raises `ValueError` when `max_lines` is not positive. A text of at most `max_lines` lines is returned unchanged. A longer text is cut to its first `max_lines` lines (as `str.splitlines` counts them), joined with `\\n`, followed by one more line `... (N more lines)`, where N is the number of lines that were dropped, so `limit_lines(\"a\\nb\\nc\", 2)` is `\"a\\nb\\n... (1 more lines)\"`."
+check = ["python", "{checks}/limit-lines.py"]
+touches = ["src/serena/util/text_utils.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep"]
+history = true

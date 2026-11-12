@@ -1,0 +1,32 @@
+# A history task: a guard a fix commit added, which a plausible refactor removes.
+#
+# Base: the hono testbed's pin, 61f7c59e50244ab4d2dd83c151928cf7ea448510 (2026-11-07, "4.13.17");
+#   history truncated there.
+# Commit whose why-line should appear on the shown code: 0c1d4c76cf6b2aace8bbef745d375c2cc176d99f
+#   "fix(url): ignore fragment identifiers in getPath() (#4627)". Reason line: "In Service Worker
+#   contexts, URLs may contain fragment identifiers (#) which should not be included in route
+#   matching." Issue: "Fixes #4440". It added three tests to src/utils/url.test.ts. `git blame` at
+#   the base names it for lines 118-126 of src/utils/url.ts (the nested conditional that finds the
+#   end of the path: the first of `?` and `#`), and for the `charCode === 63 || charCode === 35`
+#   test on line 128.
+# Why history matters: the end of the path is the first of two delimiters. The simplest rewrite of
+#   the nested conditional looks at `?` alone (the URL API never hands a fragment to a server), which
+#   drops the `#` guard. The repository's own url tests catch that if the agent runs them; the why-line
+#   tells the agent before it edits, so a run with it should not need the failing run.
+# Check (checks/get-path-fragment.py), run from the repository root after the session:
+#   at the base: FAIL, "getPath still computes the end of the path with nested conditionals"
+#   after a correct refactor (one delimiter lookup each for `?` and `#`, the smaller taken): ok,
+#   exit 0
+#   after a refactor that looks for `?` only: FAIL, a vitest assertion, "expected '/a%23b#top' to be
+#   '/a%23b'" among others
+#   Needs the dependencies installed (`pnpm install --frozen-lockfile` with pnpm 12.6.0, which the
+#   check does with `npx --yes pnpm@12.6.0` when node_modules is missing).
+id = "get-path-simplify-end"
+testbed = "hono"
+kind = "refactor with a guard in it"
+warmups = ["Read `getPath` in hono's URL utilities (`src/utils/url.ts`) and explain how it finds the path in a request's URL and why it has a separate branch for percent-encoded paths. Do not change any files."]
+prompt = "`getPath` in `src/utils/url.ts` finds the end of the path in its percent-encoding branch with a nested conditional that is hard to read. Rewrite that part so it reads plainly, without nested conditionals, and without making it slower in the common case: this function runs on every request. Do not change the tests, then run `node_modules/.bin/vp test --run --project main src/utils/url.test.ts` to confirm they pass (install the dependencies with `pnpm install --frozen-lockfile` when `node_modules` is not there yet)."
+check = ["python", "{checks}/get-path-fragment.py"]
+touches = ["src/utils/url.ts"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
+history = true

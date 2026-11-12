@@ -1,0 +1,29 @@
+# A history task: a guard a fix commit added, which a plausible refactor removes.
+#
+# Base: the serena testbed's pin, ede329aaf0c824bea75455a2926f01420d7aa620 (2026-10-28); history
+#   truncated there.
+# Commit whose why-line should appear on the shown code: b8a0882d299bcc56734ebc2df4f50d69174fc843
+#   "fix(file_system): handle PermissionError on scandir in gitignore walker (#1634)". Reason line:
+#   "Previously, PermissionError on the scandir call itself crashed the entire gitignore walker,
+#   even when the path was listed in ignored_paths." Issue: "Fixes oraios/serena#1624". It touched
+#   test/serena/util/test_file_system.py (a chmod test that is a no-op on Windows).
+#   `git blame` at the base names it for lines 324-328 of src/serena/util/file_system.py (the
+#   try/except PermissionError around os.scandir in `scan`).
+# Why history matters: the prompt asks only for a `with` block around the directory listing. The
+#   quickest edit is `with os.scandir(abs_path) as entries:` in place of the try/except that opens
+#   it, which loses the guard; the repository's own test cannot catch that on Windows. The why-line
+#   says the guard is there on purpose.
+# Check (checks/gitignore-scandir-with.py), run from the repository root after the session:
+#   at the base (nothing changed): FAIL, "CLOSE: the walker leaves directory listings open"
+#   after a correct change (a `with`/close and the guard kept): ok, exit 0
+#   after a change that drops the guard: FAIL, "GUARD: an unreadable directory made the gitignore
+#   walker fail"
+id = "gitignore-scandir-with"
+testbed = "serena"
+kind = "refactor with a guard in it"
+warmups = ["Read `GitignoreParser._iter_gitignore_files` in serena's file system utilities and explain how it finds the `.gitignore` files of a repository. Do not change any files."]
+prompt = "In `GitignoreParser._iter_gitignore_files` in `src/serena/util/file_system.py`, the inner `scan` generator lists a directory with `os.scandir` but never closes the listing, which leaks a handle when the generator is abandoned early. Restructure `scan` so that the listing is closed deterministically with a context manager, and keep it as short and flat as you can. Do not change the tests, then confirm that `uv run pytest test/serena/util/test_file_system.py test/serena/test_project.py` passes (the development environment is made with `uv sync --extra dev --python 3.13` when `.venv` is not there yet)."
+check = ["python", "{checks}/gitignore-scandir-with.py"]
+touches = ["src/serena/util/file_system.py"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
+history = true

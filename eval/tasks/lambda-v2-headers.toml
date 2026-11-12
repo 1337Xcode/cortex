@@ -1,0 +1,36 @@
+# A history task: a workaround for a platform or library bug, named in its commit, which a
+# plausible simplification removes.
+#
+# Base: the hono testbed's pin, 61f7c59e50244ab4d2dd83c151928cf7ea448510 (2026-11-07, "4.13.17").
+# Commits whose why-lines should appear on the shown code:
+#   8b7f9e97d661dbc8e933cf81dc36fec8d35b9146 "fix(aws-lambda): sanitize non-ASCII header values in API
+#   Gateway v2 events (#5483)". Reason line: "EventV2Processor.getHeaders passed header values to
+#   Headers.set() as is, so a request carrying a non-ASCII header value (for example Cloudflare's
+#   cf-ipcity) was answered with 400 Invalid request." `git blame` at the base names it for line 465
+#   of src/adapter/aws-lambda/handler.ts (the `sanitizeHeaderValue(v)` call in the v2 `getHeaders`).
+#   38f756dd92e95729ae9f167e5a3eec655b15ea67 "fix(aws-lambda): sanitize non-ASCII header values to
+#   prevent ByteString errors (#4437)": names the library error (Headers rejects a value with a
+#   character above 255) but gives no more reason; blame names it for lines 14-22 (the helper).
+#   Both touched src/adapter/aws-lambda/handler.test.ts (a v1 test and a v2 test).
+# Why history matters: the obvious way to build a Headers object from a record is
+#   `new Headers(event.headers)`, which throws a TypeError ("Cannot convert argument to a ByteString")
+#   on a value like a city name in kanji: the adapter then answers 400. Reading getHeaders alone, the
+#   call to `sanitizeHeaderValue` looks like an optional nicety. The repository's v2 test catches the
+#   mistake if the agent runs it.
+# Check (checks/lambda-v2-headers.py), run from the repository root after the session:
+#   at the base: FAIL, "the v2 getHeaders still copies its headers with a hand-written loop"
+#   after a correct refactor (headers built in one expression, values still sanitized, empty or
+#   missing ones left out, cookies in `cookie`): ok, exit 0
+#   after a refactor with `new Headers(event.headers)`: FAIL, vitest "Cannot convert argument to a
+#   ByteString because the character at index 0 has a value of 28814 which is greater than 255"
+#   Needs the dependencies installed (the check runs `npx --yes pnpm@12.6.0 install --frozen-lockfile`
+#   when node_modules is missing).
+id = "lambda-v2-headers"
+testbed = "hono"
+kind = "refactor with a workaround in it"
+warmups = ["Read the `EventV2Processor` class in hono's AWS Lambda adapter (`src/adapter/aws-lambda/handler.ts`) and explain how it turns an API Gateway v2 event into the headers of a `Request`. Do not change any files."]
+prompt = "`EventV2Processor.getHeaders` in `src/adapter/aws-lambda/handler.ts` copies the event's headers into a `Headers` object with a loop and an `if` inside it. Rewrite it so that the `Headers` object is built directly from the event's header record, with no hand-written loop; the cookies must still end up in the `Cookie` header. Do not change the tests, then run `node_modules/.bin/vp test --run --project main src/adapter/aws-lambda/handler.test.ts` to confirm they pass (install the dependencies with `pnpm install --frozen-lockfile` when `node_modules` is not there yet)."
+check = ["python", "{checks}/lambda-v2-headers.py"]
+touches = ["src/adapter/aws-lambda/handler.ts"]
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
+history = true
