@@ -129,6 +129,15 @@ impl Source {
             .wrapping_add(self.snapshot.generation())
     }
 
+    /// Hands `ask` to the daemon's writer and returns where it will answer; none when the daemon
+    /// is stopping or too many requests wait.
+    pub(super) fn ask_writer(
+        &self,
+        ask: crate::asked::Ask,
+    ) -> Option<std::sync::mpsc::Receiver<Result<cortex_core::ipc::ResponseBody, String>>> {
+        self.inbox.push_ask(ask)
+    }
+
     /// Notes that the map is in use, which puts off the daemon's idle stop as any request does.
     pub(super) fn note_in_use(&self) {
         self.inbox.note_request();

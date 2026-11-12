@@ -23,8 +23,10 @@ use super::super::assets::Asset;
 use super::super::site::Site;
 use super::super::source::Source;
 use super::super::token::Token;
+use crate::asked::AtWork;
 use crate::graph::Snapshot;
 use crate::history::Jobs;
+use crate::inbox::{Inbox, Work};
 use crate::test_store::{TestResult, add_file, writer};
 
 /// The port the site pretends to listen on.
@@ -51,6 +53,11 @@ struct Fixture {
 
 /// A site over `root`'s store, reading commit subjects from `texts`.
 fn site_over(root: tempfile::TempDir, texts: Arc<Jobs>) -> TestResult<Fixture> {
+    site_told(root, texts, Arc::default())
+}
+
+/// A site like [`site_over`]'s whose daemon's inbox is `inbox`, where its writes are asked.
+fn site_told(root: tempfile::TempDir, texts: Arc<Jobs>, inbox: Arc<Inbox>) -> TestResult<Fixture> {
     let weights = GraphSettings {
         link_decay: 0.5,
         interest_decay: 0.5,
@@ -60,7 +67,7 @@ fn site_over(root: tempfile::TempDir, texts: Arc<Jobs>) -> TestResult<Fixture> {
     let source = Source::new(
         (root.path().join(".cortex"), 0),
         weights,
-        (texts, Arc::clone(&snapshot), Arc::default()),
+        (texts, Arc::clone(&snapshot), inbox),
         MapSettings::of(&Config::default(), root.path()),
     )
     .with_clock(|| NOW_MS);
@@ -217,6 +224,88 @@ fn the_receipts_are_the_last_week_of_the_report() -> TestResult {
     )?;
     assert_eq!(answer["recorded"], serde_json::to_value(&report)?);
     assert_eq!(get(&fixture, "api/receipts/1")?.0, 404);
+    Ok(())
+}
+
+/// What the site answers a POST of `path` under its token from the map's own page.
+fn post(fixture: &Fixture, path: &str) -> TestResult<Given> {
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/{}/{path}", fixture.token))
+        .header("host", format!("127.0.0.1:{PORT}"))
+        .header("origin", format!("http://127.0.0.1:{PORT}"))
+        .body(())?;
+    let (mut parts, ()) = request.into_parts();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let response = fixture.site.answer(&mut parts).await;
+        let status = response.status().as_u16();
+        let body = to_bytes(response.into_body(), 1 << 24).await?;
+        Ok((status, String::from_utf8(body.to_vec())?))
+    })
+}
+
+/// The person's word on a fact, sent from the map's page, is carried out by the daemon's writer
+/// (here a thread taking the inbox's requests as the daemon's does) and answered once written:
+/// fact 2, a candidate about `src/orders.rs`, confirmed is active; fact 1, active, retired is gone
+/// from the file's panel; fact 99 does not exist, and the writer's refusal says so with 409. The
+/// orders file's panel then lists fact 2 active and fact 3 still suspect, fact 1 no more.
+#[test]
+fn a_fact_s_word_from_the_page_is_written_by_the_daemon_s_writer() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let texts = script(root.path())?;
+    let inbox = Arc::new(Inbox::default());
+    let fixture = site_told(root, texts, Arc::clone(&inbox))?;
+    let mut store = writer(fixture.root.path())?;
+    let taking = Arc::clone(&inbox);
+    let worker = std::thread::spawn(move || -> Result<usize, String> {
+        let timing = cortex_coord::Timing::of(&cortex_core::CoordinationConfig::default());
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut done = 0;
+        while done < 3 && std::time::Instant::now() < until {
+            if let Work::Ask(job) = taking.wait(Some(until)) {
+                job.carry_out(&mut store, (NOW_MS, &AtWork::default(), &timing))
+                    .map_err(|error| error.to_string())?;
+                done += 1;
+            }
+        }
+        Ok(done)
+    });
+    let confirmed = post(&fixture, "api/facts/2/confirm")?;
+    let retired = post(&fixture, "api/facts/1/retire")?;
+    let missing = post(&fixture, "api/facts/99/confirm")?;
+    let taken = worker.join().map_err(|_| "the writer thread panicked")??;
+    assert_eq!(taken, 3);
+    assert_eq!(
+        confirmed,
+        (200, r#"{"version":1,"id":2,"status":"active"}"#.to_owned())
+    );
+    assert_eq!(
+        retired,
+        (200, r#"{"version":1,"id":1,"status":"retired"}"#.to_owned())
+    );
+    assert_eq!(missing.0, 409);
+    assert!(missing.1.contains("there is no fact 99"), "{}", missing.1);
+    let (_, panel) = get(&fixture, "api/file/2")?;
+    assert!(
+        panel.contains(r#""facts":[{"id":2,"kind":"convention","status":"active","#),
+        "{panel}"
+    );
+    assert!(
+        panel.contains(r#"{"id":3,"kind":"convention","status":"suspect","#),
+        "{panel}"
+    );
+    assert!(!panel.contains(r#"{"id":1,"#), "{panel}");
+    assert_eq!(post(&fixture, "api/facts/2/edit")?.0, 404);
+    // A GET of a write's path writes nothing: it is no endpoint, and the writer is asked nothing.
+    assert_eq!(get(&fixture, "api/facts/3/retire")?.0, 404);
+    let soon = std::time::Instant::now() + std::time::Duration::from_millis(200);
+    assert!(
+        !matches!(inbox.wait(Some(soon)), Work::Ask(_)),
+        "a GET asked the writer"
+    );
     Ok(())
 }
 

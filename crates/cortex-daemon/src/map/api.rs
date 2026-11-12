@@ -6,6 +6,7 @@
 //! gives is sorted by a rule its module states, and every number comes from the store as it stood
 //! in one read, so that one store gives byte-identical bodies.
 
+mod facts;
 mod file;
 mod graph;
 mod health;
@@ -29,6 +30,7 @@ use axum::response::Response;
 
 use super::site::Site;
 
+pub(super) use self::facts::write as write_fact;
 pub(super) use self::listing::{Listing, ListingCache};
 
 /// The path every endpoint's name follows, after the token.

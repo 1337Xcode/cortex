@@ -24,7 +24,7 @@ use cortex_store::StoreError;
 
 use super::api::{self, Listing, ListingCache};
 use super::assets::{Asset, WITHOUT_MAP, find};
-use super::guard::{Asked, Seen, Verdict, admit};
+use super::guard::{self, Asked, Seen, Verdict, admit};
 use super::live;
 use super::source::Source;
 use super::token::Token;
@@ -127,6 +127,13 @@ impl Site {
     /// The answer to a request the guard let through for `rest`, the path after the token, whose
     /// head is `parts`.
     async fn serve(self: &Arc<Self>, rest: &str, parts: &mut Parts) -> Response {
+        if parts.method == axum::http::Method::POST {
+            // The guard lets a POST through only for a write the map takes.
+            return match rest.strip_prefix(guard::WRITES) {
+                Some(write) => api::write_fact(Arc::clone(self), write).await,
+                None => self.empty(StatusCode::METHOD_NOT_ALLOWED),
+            };
+        }
         if rest == live::PATH {
             let pacing = self.source.pacing();
             return live::answer(Arc::clone(self), parts, pacing).await;

@@ -12,7 +12,13 @@
 //! 3. Its path starts with `/<token>/`, or is `/<token>` alone: anything else is answered 404
 //!    with nothing in it, so a request without the token learns nothing about what the map
 //!    serves.
-//! 4. Its method is GET: the map changes nothing, so anything else, HEAD included, is 405.
+//! 4. Its method is GET; or it is a POST under [`WRITES`] (the person's word on a fact) that
+//!    carries an `Origin`, which rule 2 has found to be the map's own: a browser always sends one
+//!    with a POST, so a POST without it is no request the map's page makes and is refused with
+//!    403. What keeps other programs on this machine out is the token, not this rule: a program
+//!    holding the token can send any header, and can already give the same word with
+//!    `cortex facts`. A POST of any other path is 405, as is any other method, HEAD included; a
+//!    POST under [`WRITES`] that names no word on a fact is 404.
 //!
 //! A GET of `/<token>` alone is sent on to `/<token>/` with a 308: the page names its files and
 //! the API relative to the address, which must end with a slash for them to stay under it.
@@ -24,6 +30,10 @@
 use axum::http::{Method, StatusCode};
 
 use super::token::Token;
+
+/// The paths after the token a POST may name: the writes the map takes, each carried out by the
+/// daemon's writer.
+pub(crate) const WRITES: &str = "api/facts/";
 
 /// A header of a request as the guard sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,8 +87,17 @@ pub(crate) fn admit<'a>(asked: &Asked<'a>, port: u16, token: &Token) -> Verdict<
     let Some(verdict) = under_token(asked.path, token) else {
         return Verdict::Refuse(StatusCode::NOT_FOUND);
     };
-    if asked.method != Method::GET {
+    if asked.method == Method::GET {
+        return verdict;
+    }
+    let is_write = asked.method == Method::POST
+        && matches!(verdict, Verdict::Serve(rest) if rest.starts_with(WRITES));
+    if !is_write {
         return Verdict::Refuse(StatusCode::METHOD_NOT_ALLOWED);
+    }
+    // The Origin, when present, was checked above to be the map's own; a write needs it present.
+    if asked.origin == Seen::Absent {
+        return Verdict::Refuse(StatusCode::FORBIDDEN);
     }
     verdict
 }
@@ -146,10 +165,12 @@ mod tests {
         let wrong_token = format!("/{}/api/health", "0".repeat(64));
         let token_alone = format!("/{t}");
         let wrong_alone = format!("/{}", "0".repeat(64));
+        let confirm = format!("/{t}/api/facts/3/confirm");
+        let page_origin = Seen::Once("http://127.0.0.1:8123");
         let (get, post, head) = (&Method::GET, &Method::POST, &Method::HEAD);
         let ours = Seen::Once("127.0.0.1:8123");
         // (what the row checks, method, Host, Origin, path, status or the path served)
-        let rows: [Row<'_>; 23] = [
+        let rows: [Row<'_>; 28] = [
             ("served", get, ours, Seen::Absent, &health, Ok("api/health")),
             (
                 "by its name",
@@ -298,6 +319,46 @@ mod tests {
                 Err(405),
             ),
             ("POST", post, ours, Seen::Absent, &health, Err(405)),
+            (
+                "POST of a fact's word from the page",
+                post,
+                ours,
+                page_origin,
+                &confirm,
+                Ok("api/facts/3/confirm"),
+            ),
+            (
+                "POST of a fact's word without an Origin",
+                post,
+                ours,
+                Seen::Absent,
+                &confirm,
+                Err(403),
+            ),
+            (
+                "POST of a fact's word from another site",
+                post,
+                ours,
+                Seen::Once("http://evil.example"),
+                &confirm,
+                Err(403),
+            ),
+            (
+                "POST of anything else from the page",
+                post,
+                ours,
+                page_origin,
+                &health,
+                Err(405),
+            ),
+            (
+                "PUT of a fact's word from the page",
+                &Method::PUT,
+                ours,
+                page_origin,
+                &confirm,
+                Err(405),
+            ),
             ("HEAD", head, ours, Seen::Absent, &health, Err(405)),
         ];
         for (name, method, host, origin, path, expected) in rows {
