@@ -1,15 +1,19 @@
 // The page's state: the graph snapshot, the summary and the selected file's detail with their
-// load states; the selected and hovered files; and the strength below which learned links are
-// hidden. A response that arrives after a newer request, or after the request was cancelled, is
-// dropped.
+// load states; whether the daemon is still reading the repository; the live sessions; the selected
+// and hovered files; the strength below which learned links are hidden; and the view the map is
+// coloured by. A response that arrives after a newer request, or after the request was cancelled,
+// is dropped. A live frame replaces the live state and touches nothing else.
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import type { FileDetail } from '../api/file';
 import type { GraphSnapshot } from '../api/graph';
 import type { ApiError, ApiResult } from '../api/guard';
+import type { Health, IndexState } from '../api/health';
+import type { LiveState } from '../api/live';
 import type { Fetcher } from '../api/request';
 import type { MapSummary } from '../api/summary';
 import { DEFAULT_MIN_STRENGTH } from '../theme/tokens';
+import { DEFAULT_VIEW, VIEWS, type ViewName } from '../views/registry';
 
 /** What the page knows about the snapshot. */
 export type LoadState =
@@ -45,6 +49,21 @@ export type FlyRequest =
   | { readonly target: 'file'; readonly file: number; readonly serial: number }
   | { readonly target: 'folder'; readonly folder: string; readonly serial: number };
 
+/** What the page knows about the daemon's first reading of the repository. */
+export type IndexKnowledge =
+  | { readonly status: 'unknown' }
+  | { readonly status: 'error'; readonly error: ApiError }
+  | { readonly status: IndexState };
+
+/**
+ * The live view: connecting until the first frame, then open with the last frame's state, or
+ * paused while the connection is lost and a new one is on its way.
+ */
+export type LiveStatus =
+  | { readonly status: 'connecting' }
+  | { readonly status: 'open'; readonly state: LiveState }
+  | { readonly status: 'paused' };
+
 /** Loads one file's detail. */
 export type DetailFetcher = (id: number, signal: AbortSignal) => Promise<ApiResult<FileDetail>>;
 
@@ -61,6 +80,12 @@ export interface MapState {
   readonly hoveredFile: number | null;
   /** Learned links weaker than this (0 to 1) are not drawn. */
   readonly minStrength: number;
+  /** Whether the daemon is still reading the repository, asked while the map is empty. */
+  readonly index: IndexKnowledge;
+  /** The live sessions, as the last frame said. */
+  readonly live: LiveStatus;
+  /** The view the map is coloured by. */
+  readonly view: ViewName;
   /**
    * Starts a snapshot load, cancelling the one in flight; clears selection and hover. A quiet load
    * (asking again while the map is empty) keeps the current state until the answer arrives.
@@ -95,6 +120,14 @@ export interface MapState {
   readonly hoverFile: (id: number | null) => void;
   /** Sets the link strength threshold, clamped to 0 to 1; a value that is not a number is ignored. */
   readonly setMinStrength: (value: number) => void;
+  /** Asks the daemon whether it is still reading the repository, cancelling the question in flight. */
+  readonly loadHealth: (fetcher: Fetcher<Health>) => Promise<void>;
+  /** Takes a live frame: the whole live state. */
+  readonly takeLive: (state: LiveState) => void;
+  /** Marks the live view paused: its connection is lost and another is on its way. */
+  readonly pauseLive: () => void;
+  /** Colours the map by `name`'s view; a name the registry does not have is ignored. */
+  readonly setView: (name: string) => void;
 }
 
 /** One kind of request: a newer start or a cancel makes every older start stale. */
@@ -151,6 +184,7 @@ export function createMapStore(clockMs: () => number = Date.now) {
   const graphRequests = requestSlot();
   const summaryRequests = requestSlot();
   const detailRequests = requestSlot();
+  const healthRequests = requestSlot();
 
   return createStore<MapState>()((set, get) => ({
     load: { status: 'loading' },
@@ -160,6 +194,9 @@ export function createMapStore(clockMs: () => number = Date.now) {
     flyTo: null,
     hoveredFile: null,
     minStrength: DEFAULT_MIN_STRENGTH,
+    index: { status: 'unknown' },
+    live: { status: 'connecting' },
+    view: DEFAULT_VIEW,
     isOverviewOpen: false,
     isIntroOpen: false,
 
@@ -180,6 +217,7 @@ export function createMapStore(clockMs: () => number = Date.now) {
       graphRequests.cancel();
       summaryRequests.cancel();
       detailRequests.cancel();
+      healthRequests.cancel();
     },
 
     loadSummary: async (fetcher) => {
@@ -240,6 +278,30 @@ export function createMapStore(clockMs: () => number = Date.now) {
     setMinStrength: (value) => {
       if (!Number.isFinite(value)) return;
       set({ minStrength: Math.min(1, Math.max(0, value)) });
+    },
+
+    loadHealth: async (fetcher) => {
+      const request = healthRequests.begin();
+      const result = await fetcher(request.signal);
+      if (!request.isCurrent()) return;
+      set({
+        index: result.ok
+          ? { status: result.value.index }
+          : { status: 'error', error: result.error },
+      });
+    },
+
+    takeLive: (state) => {
+      set({ live: { status: 'open', state } });
+    },
+
+    pauseLive: () => {
+      set({ live: { status: 'paused' } });
+    },
+
+    setView: (name) => {
+      const view = VIEWS.find((entry) => entry.name === name);
+      if (view !== undefined && view.name !== get().view) set({ view: view.name });
     },
   }));
 }

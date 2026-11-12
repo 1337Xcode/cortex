@@ -1,17 +1,20 @@
-// The overview panel on the left: the repository at a glance, the files that change together, the
-// busiest files and what needs attention, each a short list of five with "Show N more" and every
-// row a button that flies to its file. Each section collapses to its title and count; all four
-// are open at first, since each answers a question asked on first sight. On a narrow screen it is
-// a bottom sheet opened from the controls, with a Close button.
+// The overview panel on the left: the agent sessions running now, the repository at a glance, the
+// files that change together, the busiest files and what needs attention, each a short list of
+// five with "Show N more" and every row a button that flies to its file. Each section collapses to
+// its title and count; the live sessions open while any runs, and the other four are open at
+// first, since each answers a question asked on first sight. On a narrow screen it is a bottom
+// sheet opened from the controls, with a Close button.
 import { X } from 'lucide-react';
 import { useMemo, type ReactElement, type RefObject } from 'react';
 import type { GraphSnapshot } from '../api/graph';
+import type { Scene } from '../map/scene';
 import { Button } from '../components/ui/button';
 import { useMapStore } from '../state/store';
 import { countOf, formatCount } from '../text/format';
 import { distinctNames } from '../text/names';
 import { LINK_KIND_NAMES, NUMBER_NAMES, linkSentence } from '../text/vocabulary';
 import { FileRow } from './FileRow';
+import { LiveSessions } from './LiveSessions';
 import { busiestFiles, coupledPairs, filesNeedingAttention } from './overviewLists';
 import { RowList } from './RowList';
 import { Section } from './Section';
@@ -61,7 +64,7 @@ function ChangedTogether({ snapshot }: { snapshot: GraphSnapshot }): ReactElemen
         <RowList
           items={pairs}
           keyOf={(pair) => `${pair.link.from}:${pair.link.to}`}
-          label="Files changed together, most commits first"
+          label="Files changed together, strongest first"
           renderRow={(pair) => {
             const [a, b] = distinctNames([pair.from.path, pair.to.path]);
             return (
@@ -154,15 +157,16 @@ function NeedsAttention({ snapshot }: { snapshot: GraphSnapshot }): ReactElement
 
 /** The overview panel; `isSheet` makes it the closable bottom sheet of a narrow screen. */
 export function OverviewPanel({
-  snapshot,
+  scene,
   isSheet,
   panelRef,
 }: {
-  snapshot: GraphSnapshot;
+  scene: Scene;
   isSheet: boolean;
   panelRef: RefObject<HTMLElement | null>;
 }): ReactElement {
   const setOverviewOpen = useMapStore((state) => state.setOverviewOpen);
+  const { snapshot } = scene;
   return (
     <aside
       className="panel overview-panel"
@@ -191,6 +195,7 @@ export function OverviewPanel({
         <h2 className="visually-hidden">Overview</h2>
       )}
       <div className="panel-body" data-scroll-area="true">
+        <LiveSessions scene={scene} />
         <AtAGlance snapshot={snapshot} />
         <ChangedTogether snapshot={snapshot} />
         <Busiest snapshot={snapshot} />

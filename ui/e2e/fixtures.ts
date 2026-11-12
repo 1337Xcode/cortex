@@ -1,7 +1,8 @@
 // Repositories the browser checks are served: a ten-file one with every kind of data (reads,
 // recent edits, a suspect fact, links of all three kinds, history, what Cortex told agents), a
 // cold one where nothing has been learned, and a generated one of 100,000 files. Each follows the
-// daemon's contract, so the page's real guards accept it.
+// daemon's contract, so the page's real guards accept it. Each also has a health (finished
+// reading) and a live state (no session running) unless a test gives others.
 
 /** A JSON value as the fixtures write them. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -35,7 +36,23 @@ export interface Fixture {
   readonly symbols: readonly FixtureSymbol[];
   /** `api/file/<id>` bodies by id; any other file id gets an empty detail. */
   readonly details: ReadonlyMap<number, Json>;
+  /** `api/health`. */
+  readonly health: Json;
+  /** The live state sent when the page opens `api/live`. */
+  readonly live: Json;
 }
+
+/** The health of a daemon that has finished reading the repository. */
+export const READY_HEALTH: Json = { version: '0.0.0', has_assets: true, index: 'ready' };
+
+/** The health of a daemon still reading the repository for the first time. */
+export const READING_HEALTH: Json = { version: '0.0.0', has_assets: true, index: 'reading' };
+
+/** The live state with no session running. */
+export const NO_SESSIONS: Json = { version: 1, sessions: [] };
+
+/** The history limits every fixture's summary states. */
+const HISTORY_LIMITS: Json = { max_commits: 5000, max_age_days: 365, max_files_per_commit: 30 };
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -141,6 +158,7 @@ export function smallFixture(nowMs: number): Fixture {
       { kind: 'work_order', at_ms: nowMs - HOUR_MS, used: true },
       { kind: 'warning', at_ms: nowMs - 30 * HOUR_MS, used: null },
     ],
+    editor_url: 'vscode://file/C:/repo/src/orders/book.rs:1',
   };
   return {
     graph: { version: 1, files, links },
@@ -153,6 +171,7 @@ export function smallFixture(nowMs: number): Fixture {
       strongest_pair: { from: 4, to: 5, commits: 12 },
       busiest_folder: { path: 'src/orders', tokens: 52310 },
       window_days: 7,
+      history: HISTORY_LIMITS,
     },
     symbols: [
       { file: 4, name: 'OrderBook', line: 40 },
@@ -160,6 +179,8 @@ export function smallFixture(nowMs: number): Fixture {
       { file: 6, name: 'charge_order', line: 88 },
     ],
     details: new Map([[4, book]]),
+    health: READY_HEALTH,
+    live: NO_SESSIONS,
   };
 }
 
@@ -188,9 +209,12 @@ export function coldFixture(): Fixture {
       strongest_pair: null,
       busiest_folder: null,
       window_days: 7,
+      history: HISTORY_LIMITS,
     },
     symbols: [],
     details: new Map(),
+    health: READY_HEALTH,
+    live: NO_SESSIONS,
   };
 }
 
@@ -280,8 +304,84 @@ export function largeFixture(count: number): Fixture {
       strongest_pair: null,
       busiest_folder: null,
       window_days: 7,
+      history: HISTORY_LIMITS,
     },
     symbols: [],
     details: new Map(),
+    health: READY_HEALTH,
+    live: NO_SESSIONS,
   };
+}
+
+/** One live session as `api/live` lists it; `files` are (id, mode) pairs, newest first. */
+export function liveSession(
+  id: string,
+  agent: { readonly name: string; readonly title: string },
+  files: readonly (readonly [number, string])[],
+  nowMs: number,
+): Json {
+  return {
+    id,
+    agent: agent.name,
+    title: agent.title,
+    files: files.map(([file, mode], index) => ({ file, mode, last_ms: nowMs - index * 60_000 })),
+  };
+}
+
+/** The agents the live fixtures use. */
+export const AGENTS = {
+  claude: { name: 'claude', title: 'Claude Code' },
+  codex: { name: 'codex', title: 'Codex' },
+  cursor: { name: 'cursor', title: 'Cursor' },
+  other: { name: 'aider', title: 'Aider' },
+} as const;
+
+/**
+ * Three sessions on the ten-file repository: Claude Code editing book.rs after reading mod.rs,
+ * payment.rs and tax.rs; Codex reading invoice.rs after app.ts; Cursor claiming tests/orders.rs.
+ * Sorted by id, as the daemon sends them.
+ */
+export function threeSessions(nowMs: number): Json {
+  return {
+    version: 1,
+    sessions: [
+      liveSession(
+        '3f2a9c1e',
+        AGENTS.claude,
+        [
+          [4, 'edit'],
+          [5, 'read'],
+          [6, 'read'],
+          [2, 'read'],
+        ],
+        nowMs,
+      ),
+      liveSession(
+        '9b1c40aa',
+        AGENTS.codex,
+        [
+          [1, 'read'],
+          [8, 'read'],
+        ],
+        nowMs,
+      ),
+      liveSession('c0de7731', AGENTS.cursor, [[7, 'claim']], nowMs),
+    ],
+  };
+}
+
+/** `count` sessions spread over a repository of `fileCount` files, each with ten files. */
+export function manySessions(count: number, fileCount: number, nowMs: number): Json {
+  const agents = [AGENTS.claude, AGENTS.codex, AGENTS.cursor, AGENTS.other];
+  const sessions: Json[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const start = Math.floor(((index + 0.5) * fileCount) / count);
+    const files: [number, string][] = Array.from({ length: 10 }, (_, step) => [
+      Math.min(fileCount - 1, start + step * 7),
+      step === 0 ? 'edit' : 'read',
+    ]);
+    const id = `s${String(index).padStart(3, '0')}-session`;
+    sessions.push(liveSession(id, agents[index % agents.length] ?? AGENTS.other, files, nowMs));
+  }
+  return { version: 1, sessions };
 }

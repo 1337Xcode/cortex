@@ -1,12 +1,18 @@
-// Gathers the labels a frame could draw, in the order they matter: the focus file, then its
-// neighbours, then hub names (bigger sub-trees first), then file names once the rings are far
-// enough apart to read them (longer files first). Each offers a spot below, above, right and left
+// Gathers the labels a frame could draw, in the order they matter: the focus file, then the live
+// sessions' markers, then the focus file's neighbours, then hub names (bigger sub-trees first),
+// then file names once the rings are far enough apart to read them (longer files first). Each offers a spot below, above, right and left
 // of its node; the collision rule in `labels.ts` keeps the ones that fit, where they fit.
-import { CANVAS_SIZE, LABEL } from '../theme/tokens';
+import { CANVAS_SIZE, LABEL, type AgentFamily } from '../theme/tokens';
 import { toScreen, type Camera } from './camera';
 import type { Neighbourhood } from './highlight';
 import { collapsedRadius } from './hubEncoding';
-import { placeLabels, type LabelCandidate, type ScreenBox, type ScreenSize } from './labels';
+import {
+  placeLabels,
+  type LabelCandidate,
+  type PlacedLabel,
+  type ScreenBox,
+  type ScreenSize,
+} from './labels';
 import type { Scene } from './scene';
 import { folderLabel } from '../text/vocabulary';
 import type { Visibility } from './visibility';
@@ -25,7 +31,9 @@ export interface LabelNode extends LabelCandidate {
   /** Identifies the node: `h<hub>` or `f<file>`, stable across frames. */
   readonly key: string;
   readonly text: string;
-  readonly kind: 'hub' | 'file';
+  readonly kind: LabelKind;
+  /** A marker's agent family, whose colour its name is drawn in; null for hubs and files. */
+  readonly family: AgentFamily | null;
   readonly worldX: number;
   readonly worldY: number;
   /** Pixels from the node's centre to the near edge of its label. */
@@ -35,11 +43,30 @@ export interface LabelNode extends LabelCandidate {
   readonly isDimmed: boolean;
 }
 
+/** What a label names: a folder, a file, or a live session's marker. */
+export type LabelKind = 'hub' | 'file' | 'marker';
+
+/** A live session's marker as a label wants it: where, how large, and its name. */
+export interface MarkerLabel {
+  /** Identifies the session's label across frames: `s<session id>`. */
+  readonly key: string;
+  readonly text: string;
+  readonly family: AgentFamily;
+  /** The file the diamond is drawn around, or null when a folder stands in for it. */
+  readonly file: number | null;
+  readonly worldX: number;
+  readonly worldY: number;
+  /** Half the diamond's diagonal, in pixels. */
+  readonly radiusPx: number;
+}
+
 /** A label chosen for the canvas, with what the text layer needs to draw it. */
 export interface CanvasLabel {
   readonly key: string;
   readonly text: string;
-  readonly kind: 'hub' | 'file';
+  readonly kind: LabelKind;
+  /** A marker's agent family, whose colour its name is drawn in; null for hubs and files. */
+  readonly family: AgentFamily | null;
   readonly worldX: number;
   readonly worldY: number;
   readonly sizePx: number;
@@ -65,9 +92,20 @@ export interface LabelInputs {
   /** 1 for hubs holding a focus file, from `focusHubs`. */
   readonly markedHubs: Uint8Array;
   readonly measure: MeasureText;
+  /** The live sessions' markers, which are named after the focus file and before the rest. */
+  readonly markers: readonly MarkerLabel[];
 }
 
-const PRIORITY = { focus: 4e9, neighbour: 3e9, hub: 2e9 } as const;
+const PRIORITY = { focus: 4e9, marker: 3.5e9, neighbour: 3e9, hub: 2e9 } as const;
+
+/** Each kind's type size and weight. */
+const LABEL_TYPE: Readonly<
+  Record<LabelKind, { readonly sizePx: number; readonly weight: number }>
+> = {
+  hub: { sizePx: LABEL.hubSizePx, weight: LABEL.hubWeight },
+  file: { sizePx: LABEL.fileSizePx, weight: LABEL.fileWeight },
+  marker: { sizePx: LABEL.fileSizePx, weight: LABEL.markerWeight },
+};
 
 /** A label's width, height and distance from its node's centre, in pixels. */
 export interface LabelSize {
@@ -93,15 +131,14 @@ export function spotOf(side: LabelSide, x: number, y: number, size: LabelSize): 
 
 type NodeFields = Pick<
   LabelNode,
-  'key' | 'text' | 'kind' | 'worldX' | 'worldY' | 'priority' | 'isDimmed'
+  'key' | 'text' | 'kind' | 'family' | 'worldX' | 'worldY' | 'priority' | 'isDimmed'
 >;
 
 function candidate(inputs: LabelInputs, node: NodeFields, radiusPx: number): LabelNode | null {
   const [x, y] = toScreen(inputs.camera, inputs.screen, node.worldX, node.worldY);
   if (x < 0 || y < 0 || x > inputs.screen.width || y > inputs.screen.height) return null;
-  const isHub = node.kind === 'hub';
-  const sizePx = isHub ? LABEL.hubSizePx : LABEL.fileSizePx;
-  const width = inputs.measure(node.text, sizePx, isHub ? LABEL.hubWeight : LABEL.fileWeight);
+  const { sizePx, weight } = LABEL_TYPE[node.kind];
+  const width = inputs.measure(node.text, sizePx, weight);
   const size = { width, height: sizePx * LABEL.lineHeight, distance: radiusPx + LABEL.gapPx };
   const spots = LABEL_SIDES.map((side) => spotOf(side, x, y, size));
   return { ...node, spots, distancePx: size.distance, sizePx };
@@ -120,9 +157,25 @@ function collapsedRadiusPx(inputs: LabelInputs, hub: number): number {
   return Math.max(radiusPx, CANVAS_SIZE.collapsedMinPx);
 }
 
+/** The largest marker diamond around each marked file, by file id; kept per marker list. */
+const RINGS = new WeakMap<readonly MarkerLabel[], ReadonlyMap<number, number>>();
+
+function ringsOf(markers: readonly MarkerLabel[]): ReadonlyMap<number, number> {
+  const known = RINGS.get(markers);
+  if (known !== undefined) return known;
+  const rings = new Map<number, number>();
+  for (const { file, radiusPx } of markers) {
+    if (file !== null) rings.set(file, Math.max(rings.get(file) ?? 0, radiusPx));
+  }
+  RINGS.set(markers, rings);
+  return rings;
+}
+
+/** A drawn file's radius in pixels, out to the diamond of a live marker around it, if any. */
 function fileRadiusPx(inputs: LabelInputs, id: number): number {
   const scale = 2 ** inputs.camera.zoom;
-  return Math.max((inputs.scene.fileRadius[id] ?? 0) * scale, CANVAS_SIZE.fileRadiusMinPx);
+  const circle = Math.max((inputs.scene.fileRadius[id] ?? 0) * scale, CANVAS_SIZE.fileRadiusMinPx);
+  return Math.max(circle, ringsOf(inputs.markers).get(id) ?? 0);
 }
 
 function fileCandidate(inputs: LabelInputs, id: number, priority: number): LabelNode | null {
@@ -132,6 +185,7 @@ function fileCandidate(inputs: LabelInputs, id: number, priority: number): Label
     key: `f${id}`,
     text: scene.fileName[id] ?? '',
     kind: 'file' as const,
+    family: null,
     worldX: scene.layout.fileX[id] ?? 0,
     worldY: scene.layout.fileY[id] ?? 0,
     priority,
@@ -160,6 +214,7 @@ function hubCandidate(
     key: `h${hub}`,
     text,
     kind: 'hub' as const,
+    family: null,
     worldX: scene.layout.hubX[hub] ?? 0,
     worldY: scene.layout.hubY[hub] ?? 0,
     priority: PRIORITY.hub + (scene.layout.hubFileCount[hub] ?? 0),
@@ -176,8 +231,13 @@ function pushIf(list: LabelNode[], label: LabelNode | null): void {
 function gatherCandidates(inputs: LabelInputs): LabelNode[] {
   const list: LabelNode[] = [];
   const { neighbourhood, visibility, scene } = inputs;
-  if (neighbourhood !== null) {
+  if (neighbourhood !== null)
     pushIf(list, fileCandidate(inputs, neighbourhood.focus, PRIORITY.focus));
+  for (const marker of inputs.markers) {
+    const node = { ...marker, kind: 'marker' as const, priority: PRIORITY.marker, isDimmed: false };
+    pushIf(list, candidate(inputs, node, marker.radiusPx));
+  }
+  if (neighbourhood !== null) {
     for (const id of neighbourhood.neighbours) {
       pushIf(list, fileCandidate(inputs, id, PRIORITY.neighbour));
     }
@@ -246,14 +306,53 @@ function nodeObstacles(inputs: LabelInputs): ScreenBox[] {
   for (const hub of visibility.collapsedHubs) {
     push(nodeBox(inputs, hubX[hub] ?? 0, hubY[hub] ?? 0, collapsedRadiusPx(inputs, hub)));
   }
+  for (const marker of inputs.markers) {
+    push(nodeBox(inputs, marker.worldX, marker.worldY, marker.radiusPx));
+  }
   return boxes;
+}
+
+/** The boxes the placed labels take. */
+function boxesOf(placed: readonly PlacedLabel<LabelNode>[]): ScreenBox[] {
+  return placed.flatMap(({ candidate, spot }) => candidate.spots[spot] ?? []);
+}
+
+/**
+ * The live sessions' markers' names: clear of every node where they fit, and where they do not
+ * (zoomed out, a marker sits on a folder's disc, and every side of it is the disc) over the nodes,
+ * as the focus name is, at most `LABEL.markerOverMax` of them; always clear of each other, of the
+ * names in `taken` and of the chrome.
+ */
+function placeMarkers(
+  inputs: LabelInputs,
+  candidates: readonly LabelNode[],
+  taken: readonly ScreenBox[],
+  nodes: readonly ScreenBox[],
+): PlacedLabel<LabelNode>[] {
+  const rules = { area: inputs.area, paddingPx: LABEL.paddingPx, maxCount: LABEL.maxCount };
+  const markers = candidates.filter((node) => node.priority === PRIORITY.marker);
+  const clear = placeLabels(markers, {
+    ...rules,
+    obstacles: [...inputs.chrome, ...taken, ...nodes],
+  });
+  const isPlaced = new Set(clear.map((placed) => placed.candidate));
+  const over = placeLabels(
+    markers.filter((node) => !isPlaced.has(node)),
+    {
+      ...rules,
+      obstacles: [...inputs.chrome, ...taken, ...boxesOf(clear)],
+      maxCount: LABEL.markerOverMax,
+    },
+  );
+  return [...clear, ...over];
 }
 
 /**
  * The labels to draw this frame: the candidates that pass the collision rule, where they fit. The
  * hovered or selected file is named first and may cover other nodes (its backing keeps it
  * readable): in a dense ring every side of it is another file, and the file the person is looking
- * at must never go unnamed. Everything else keeps clear of the nodes and of that name.
+ * at must never go unnamed. The live sessions' markers are named next (see `placeMarkers`).
+ * Everything else keeps clear of the nodes and of those names.
  */
 export function chooseLabels(inputs: LabelInputs): CanvasLabel[] {
   const candidates = gatherCandidates(inputs);
@@ -262,19 +361,20 @@ export function chooseLabels(inputs: LabelInputs): CanvasLabel[] {
     candidates.filter((node) => node.priority === PRIORITY.focus),
     { ...rules, obstacles: inputs.chrome, maxCount: 1 },
   );
-  const focusBoxes = focus.flatMap(({ candidate, spot }) => candidate.spots[spot] ?? []);
+  const nodes = nodeObstacles(inputs);
+  const named = [...focus, ...placeMarkers(inputs, candidates, boxesOf(focus), nodes)];
   const others = placeLabels(
-    candidates.filter((node) => node.priority !== PRIORITY.focus),
+    candidates.filter((node) => node.priority < PRIORITY.marker),
     {
       ...rules,
-      obstacles: [...inputs.chrome, ...nodeObstacles(inputs), ...focusBoxes],
-      maxCount: LABEL.maxCount - focus.length,
+      obstacles: [...inputs.chrome, ...nodes, ...boxesOf(named)],
+      maxCount: LABEL.maxCount - named.length,
     },
   );
-  return [...focus, ...others].map(({ candidate: node, spot }) => {
+  return [...named, ...others].map(({ candidate: node, spot }) => {
     const side = LABEL_SIDES[spot] ?? 'below';
-    const { key, text, kind, worldX, worldY, sizePx, isDimmed } = node;
+    const { key, text, kind, family, worldX, worldY, sizePx, isDimmed } = node;
     const drawing = drawingOf(side, node.distancePx);
-    return { key, text, kind, worldX, worldY, sizePx, isDimmed, side, ...drawing };
+    return { key, text, kind, family, worldX, worldY, sizePx, isDimmed, side, ...drawing };
   });
 }

@@ -33,7 +33,7 @@ All notable changes to this project are documented in this file. The format is b
   packages it says that it skipped them. `cargo xtask verify --full` runs the map's browser checks
   and checks its first load and frame rate at 100,000 files against their budgets (2 s, and 45
   frames per second at the 5th percentile) on macOS and Linux, and prints them on Windows.
-- The map prepares its GPU programs while its data loads, starting all five links at once on a
+- The map prepares its GPU programs while its data loads, starting all their links at once on a
   hidden canvas, so the driver compiles them side by side and the map's own canvas reuses them.
   On a Windows laptop (Intel Iris Xe, Direct3D 11, Chromium 158), at 100,000 files and in fresh
   browsers, the first load went from 1.83 to 1.98 s to 0.89 to 0.95 s over five runs each.
@@ -53,6 +53,24 @@ All notable changes to this project are documented in this file. The format is b
   from 330,648 to 425,294 bytes gzipped (52,584 of them the two fonts); on the Windows laptop
   above, the first load at 100,000 files was 790 to 862 ms over five fresh browsers, against 762 to
   859 ms before.
+- The map's views and live sessions. A switch beside the zoom, and the keys 1 to 5, colour the
+  graph by Default, Fog (files agents have read lit, the rest dim), Heat (tokens attributed, in four
+  steps of the accent on a log scale), Coupling (learned links per file) or Recent (read or edited
+  in the last 24 hours); shapes keep their meaning in every view, and the legend names the view and
+  counts each step. While agent sessions run, each is a diamond in its agent's colour around the
+  file it worked on last, named with the agent and a short session id, with a fading line back
+  through its last ten files; the overview lists the sessions, five at a time, each flying to its
+  newest file. The page reads them from a WebSocket at its own address, sends nothing, drops a frame
+  that breaks the contract, and while the connection is lost says the live view is paused, hides
+  the markers and tries again after 1 s, doubling to 30 s. Files with facts carry a badge on their
+  rim once zoomed in, amber when a fact is suspect. The file panel has an "Open in editor" link when
+  the daemon gives one with an editor's own scheme, and its commit count says on hover and focus
+  which history it counts, so 0 never reads as "never committed". The overview ranks the files
+  changed together by the link's strength, as the summary ranks its strongest pair, and an empty
+  map says whether Cortex is still reading the repository. On the Windows laptop above, at 100,000
+  files in fresh browsers, the first load was 826 to 922 ms over five runs with no session and 848
+  to 895 ms with twenty sessions marked, and a pan and zoom held 59.9 and 59.5 frames per second at
+  the 5th percentile. The built map grew from 425,294 to 434,433 bytes gzipped.
 - Evaluation tasks for the history features, and the runner support they need. A task that says
   `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
   deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that

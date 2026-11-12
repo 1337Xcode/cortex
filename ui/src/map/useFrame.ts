@@ -1,7 +1,14 @@
 // Assembles one frame's buffers with each piece rebuilt only when its own inputs change: the level
 // of detail only when a hub crosses its threshold, the files and links only when the level, the
-// focus, the threshold or the theme change, and the grid and labels as the camera moves.
+// focus, the threshold, the view or the theme change, the live markers when a live frame arrives
+// or the zoom changes their size, and the grid and labels as the camera moves. A live frame
+// rebuilds only the markers and the labels; the layout and the camera never depend on it.
 import { useMemo } from 'react';
+import type { LiveSession } from '../api/live';
+import { sessionName } from '../text/liveWords';
+import type { ViewPaint } from '../views/paint';
+import { agentFamily } from './agents';
+import { areBadgesShown, encodeBadges } from './badges';
 import { levelOfDetail, type LevelOfDetail } from '../layout/lod';
 import { RING_SPACING } from '../layout/constants';
 import { CANVAS_SIZE, HUB_LINK_DASH_PX, LINK_DENSITY, type ThemeColors } from '../theme/tokens';
@@ -23,11 +30,13 @@ import {
   chooseLabels,
   type CanvasLabel,
   type LabelInputs,
+  type MarkerLabel,
   type MeasureText,
 } from './labelCandidates';
 import type { ScreenBox, ScreenSize } from './labels';
 import type { FrameBuffers } from './layers';
 import { encodeLinks, type LineBuffers } from './linkEncoding';
+import { encodeLive, type LiveBuffers } from './liveEncoding';
 import { boxKey, nearBox, overviewLinks, prominentLinks, type WorldBox } from './linkProminence';
 import type { Scene } from './scene';
 import { computeVisibility, type Visibility } from './visibility';
@@ -47,6 +56,10 @@ export interface FrameInputs {
   readonly insets: Insets;
   /** Boxes of the page's controls over the canvas; labels stay off them. */
   readonly chrome: readonly ScreenBox[];
+  /** The view the files are coloured by. */
+  readonly view: ViewPaint;
+  /** The live sessions to mark; empty while none runs or the live view is paused. */
+  readonly sessions: readonly LiveSession[];
 }
 
 /** The part of the screen the chrome leaves clear. */
@@ -91,6 +104,7 @@ function useLevel(scene: Scene, zoom: number): LevelOfDetail {
 function useLabels(inputs: LabelInputs): readonly CanvasLabel[] {
   const { scene, visibility, camera, screen, area, chrome, neighbourhood, markedHubs, measure } =
     inputs;
+  const { markers } = inputs;
   const chosen = useMemo(
     () =>
       chooseLabels({
@@ -103,8 +117,9 @@ function useLabels(inputs: LabelInputs): readonly CanvasLabel[] {
         neighbourhood,
         markedHubs,
         measure,
+        markers,
       }),
-    [scene, visibility, camera, screen, area, chrome, neighbourhood, markedHubs, measure],
+    [scene, visibility, camera, screen, area, chrome, neighbourhood, markedHubs, measure, markers],
   );
   // Reused while the same labels are chosen, so the text layers are not rebuilt as the camera moves.
   const signature = labelsKey(chosen);
@@ -146,9 +161,36 @@ function useProminentLinks(
   );
 }
 
+/** The live sessions' buffers and their markers' labels, at `scale` pixels per world unit. */
+function useLive(
+  scene: Scene,
+  visibility: Visibility,
+  sessions: readonly LiveSession[],
+  view: { readonly colors: ThemeColors; readonly scale: number },
+): { readonly live: LiveBuffers; readonly markers: readonly MarkerLabel[] } {
+  const { colors, scale } = view;
+  return useMemo(() => {
+    const live = encodeLive(scene, visibility, sessions, { colors, scale });
+    const markers = live.spots.map((spot): MarkerLabel => {
+      const session = live.sessions[spot.session];
+      return {
+        key: `s${session?.id ?? ''}`,
+        text: session === undefined ? '' : sessionName(session),
+        family: agentFamily(session?.agent ?? ''),
+        file: spot.file,
+        worldX: spot.worldX,
+        worldY: spot.worldY,
+        radiusPx: spot.radiusPx,
+      };
+    });
+    return { live, markers };
+  }, [scene, visibility, sessions, colors, scale]);
+}
+
 /** The frame's buffers for the deck.gl layers. */
 export function useFrame(inputs: FrameInputs): FrameBuffers {
   const { scene, camera, screen, colors, selected, hovered, minStrength, nowMs } = inputs;
+  const { view } = inputs;
   const lod = useLevel(scene, camera.zoom);
   const areFilesShown = 2 ** camera.zoom * RING_SPACING >= CANVAS_SIZE.fileMinRingSpacingPx;
   const visibility = useMemo(
@@ -161,9 +203,11 @@ export function useFrame(inputs: FrameInputs): FrameBuffers {
     [scene, focus, minStrength],
   );
   const style = useMemo<FrameStyle>(
-    () => ({ colors, nowMs, neighbourhood, selected, minStrength }),
-    [colors, nowMs, neighbourhood, selected, minStrength],
+    () => ({ colors, nowMs, neighbourhood, selected, minStrength, view }),
+    [colors, nowMs, neighbourhood, selected, minStrength, view],
   );
+  const scale = 2 ** camera.zoom;
+  const isBadged = areBadgesShown(visibility, scale);
   const marked = useMemo(() => focusHubs(scene, visibility, style), [scene, visibility, style]);
   const geometry = useMemo(
     () => ({
@@ -173,10 +217,12 @@ export function useFrame(inputs: FrameInputs): FrameBuffers {
       fileDiscs: encodeFileDiscs(scene, visibility, style, marked),
       files: encodeFiles(scene, visibility, style),
       fileMarks: encodeFileMarks(scene, visibility, style),
+      badges: encodeBadges(scene, visibility, style, isBadged),
       hubs: encodeHubSquares(scene, visibility, style, marked),
     }),
-    [scene, visibility, style, marked],
+    [scene, visibility, style, marked, isBadged],
   );
+  const { live, markers } = useLive(scene, visibility, inputs.sessions, { colors, scale });
   const links = useProminentLinks(scene, visibility, style, nearBox(camera, screen));
   const grid = useMemo(() => gridDots(camera, screen), [camera, screen]);
   const area = useMemo(() => clearArea(screen, inputs.insets), [screen, inputs.insets]);
@@ -191,6 +237,10 @@ export function useFrame(inputs: FrameInputs): FrameBuffers {
     neighbourhood,
     markedHubs: marked,
     measure,
+    markers,
   });
-  return useMemo(() => ({ ...geometry, links, grid, labels }), [geometry, links, grid, labels]);
+  return useMemo(
+    () => ({ ...geometry, links, live, grid, labels }),
+    [geometry, links, live, grid, labels],
+  );
 }

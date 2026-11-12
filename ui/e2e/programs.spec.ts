@@ -119,8 +119,9 @@ test('the warm-up links every program side by side and the map links nothing new
   const isWarm = (event: GlEvent): boolean => event.context === 0;
   const warmLinks = events.filter((event) => event.kind === 'link' && isWarm(event));
   const mapLinks = events.filter((event) => event.kind === 'link' && !isWarm(event));
-  // The map's layers use five programs: circles, squares, dashed lines, glyphs, label backings.
-  expect(new Set(warmLinks.map((event) => event.sources)).size).toBe(5);
+  // The map's layers use six programs: circles, squares, diamonds (the live markers), dashed
+  // lines, glyphs and label backings.
+  expect(new Set(warmLinks.map((event) => event.sources)).size).toBe(6);
   const lastWarmLink = events.reduce(
     (last, event, index) => (event.kind === 'link' && isWarm(event) ? index : last),
     -1,

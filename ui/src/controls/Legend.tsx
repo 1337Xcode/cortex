@@ -1,18 +1,11 @@
-// The collapsible legend: each shape the canvas draws, with how many of each this repository has
-// and a line on what it means (shape first, colour confirms it); the slider that sets the link
-// strength threshold; and the way back to the sentence that says what the picture is. Collapsed by
-// default.
+// The collapsible legend: the active view by name, what its scale means with its numbers, and each
+// of its tones with how many files show it; the marks every view draws (the suspect ring, the
+// recent centre, fact badges, live markers and their trails) with their counts; the folder
+// shapes; each link kind with how many links the threshold leaves drawn, and the slider that sets
+// it; and the way back to the sentence that says what the picture is. Collapsed by default.
 import { ChevronUp } from 'lucide-react';
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useState,
-  type ReactElement,
-  type ReactNode,
-} from 'react';
-import { LINK_KINDS, type LinkKind } from '../api/graph';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactElement } from 'react';
+import { LINK_KINDS } from '../api/graph';
 import { Button } from '../components/ui/button';
 import { fileMark, type FileMark } from '../map/fileEncoding';
 import { countLinksByKind } from '../map/linkEncoding';
@@ -22,109 +15,27 @@ import { formatCount } from '../text/format';
 import {
   FOLDER_MEANINGS,
   FOLDER_NAMES,
+  FOLDER_RULE_SENTENCES,
   LINK_KIND_MEANINGS,
   LINK_KIND_NAMES,
-  MARK_MEANINGS,
-  MARK_NAMES,
+  OVERLAY_MARKS,
 } from '../text/vocabulary';
-import { CANVAS_SIZE, LINK_DASH_PX, SIZE, STROKE } from '../theme/tokens';
+import type { ViewPaint } from '../views/paint';
+import {
+  BadgeSample,
+  CircleSample,
+  DiamondSample,
+  FolderSample,
+  LineSample,
+  TrailSample,
+} from './legendSamples';
 import { isKeyField, shortcutFor } from './shortcuts';
-
-const MARK_ORDER: readonly FileMark[] = ['recent', 'suspect', 'unread', 'plain'];
-
-/** The sample's box and the sizes of what is drawn in it, in its own pixels. */
-const SAMPLE = {
-  width: SIZE.swatchWidth,
-  height: SIZE.swatchHeight,
-  centreX: SIZE.swatchWidth / 2,
-  centreY: SIZE.swatchHeight / 2,
-  fileRadius: SIZE.swatchHeight / 4,
-  ringRadius: SIZE.swatchHeight / 2 - STROKE.hairline,
-  squareSide: SIZE.swatchHeight / 2,
-  lineInset: STROKE.hairline,
-} as const;
 
 /** Counts the files showing each mark. */
 function countMarks(scene: Scene, nowMs: number): Readonly<Record<FileMark, number>> {
   const counts: Record<FileMark, number> = { suspect: 0, recent: 0, unread: 0, plain: 0 };
   for (const file of scene.snapshot.files) counts[fileMark(file, nowMs, scene.hasReads)] += 1;
   return counts;
-}
-
-/** The sample's box, drawn in the sample's own pixels. */
-function Sample({ children }: { children: ReactNode }): ReactElement {
-  return (
-    <svg
-      className="legend-sample"
-      viewBox={`0 0 ${SAMPLE.width} ${SAMPLE.height}`}
-      aria-hidden="true"
-    >
-      {children}
-    </svg>
-  );
-}
-
-function LineSample({ kind }: { kind: LinkKind }): ReactElement {
-  return (
-    <Sample>
-      <line
-        x1={SAMPLE.lineInset}
-        y1={SAMPLE.centreY}
-        x2={SAMPLE.width - SAMPLE.lineInset}
-        y2={SAMPLE.centreY}
-        className="legend-link"
-        strokeWidth={CANVAS_SIZE.linkFocusedWidthPx}
-        strokeDasharray={LINK_DASH_PX[kind].join(' ')}
-      />
-    </Sample>
-  );
-}
-
-/**
- * A file's sample with its shape: the suspect's second ring, the recent file's filled centre, the
- * never-read file's thinner, dimmed outline.
- */
-function CircleSample({ mark }: { mark: FileMark }): ReactElement {
-  const { centreX: cx, centreY: cy } = SAMPLE;
-  return (
-    <Sample>
-      <circle cx={cx} cy={cy} r={SAMPLE.fileRadius} className="legend-file" data-mark={mark} />
-      {mark === 'suspect' ? (
-        <circle cx={cx} cy={cy} r={SAMPLE.ringRadius} className="legend-ring" />
-      ) : null}
-      {mark === 'recent' ? (
-        <circle
-          cx={cx}
-          cy={cy}
-          r={SAMPLE.fileRadius * CANVAS_SIZE.recentDotShare}
-          className="legend-dot"
-        />
-      ) : null}
-    </Sample>
-  );
-}
-
-function FolderSample({ isCollapsed }: { isCollapsed: boolean }): ReactElement {
-  const side = isCollapsed ? SAMPLE.squareSide / 2 : SAMPLE.squareSide;
-  return (
-    <Sample>
-      {isCollapsed ? (
-        <circle
-          cx={SAMPLE.centreX}
-          cy={SAMPLE.centreY}
-          r={SAMPLE.ringRadius}
-          className="legend-collapsed"
-        />
-      ) : null}
-      <rect
-        x={SAMPLE.centreX - side / 2}
-        y={SAMPLE.centreY - side / 2}
-        width={side}
-        height={side}
-        className="legend-hub"
-      />
-    </Sample>
-  );
 }
 
 /** One legend entry: its sample, its name and meaning, and its count. */
@@ -140,7 +51,7 @@ function Entry(props: {
       {props.sample}
       <span className="legend-name">{props.name}</span>
       <span className="legend-count">{props.count === null ? '' : formatCount(props.count)}</span>
-      <span className="legend-meaning">{props.meaning}</span>
+      {props.meaning === '' ? null : <span className="legend-meaning">{props.meaning}</span>}
     </li>
   );
 }
@@ -170,22 +81,88 @@ function StrengthSlider(): ReactElement {
   );
 }
 
-/** The files' marks, each with how many files show it. */
-function FileEntries({ scene, nowMs }: { scene: Scene; nowMs: number }): ReactElement {
-  const markCounts = useMemo(() => countMarks(scene, nowMs), [scene, nowMs]);
-  const marks = MARK_ORDER.filter((mark) => mark !== 'unread' || scene.hasReads);
+/** The active view's name, scale and tones, each tone with how many files show it. */
+function ViewEntries({ view }: { view: ViewPaint }): ReactElement {
+  return (
+    <>
+      <h2 className="legend-heading" data-testid="legend-view">
+        {`View: ${view.title}`}
+      </h2>
+      <p className="legend-scale" data-testid="legend-scale">
+        {view.encoding.scale}
+        {view.encoding.isTinted ? ` ${FOLDER_RULE_SENTENCES[view.encoding.folderRule]}` : ''}
+      </p>
+      <ul className="legend-list">
+        {view.encoding.tones.map((tone) => (
+          <Entry
+            key={tone.key}
+            testId={`legend-${tone.key}`}
+            sample={
+              <CircleSample
+                role={tone.role}
+                isDim={tone.isDim}
+                isFilled={view.encoding.isTinted && !tone.isDim}
+                mark={tone.mark}
+              />
+            }
+            name={tone.name}
+            meaning={tone.meaning}
+            count={tone.count}
+          />
+        ))}
+      </ul>
+    </>
+  );
+}
+
+/**
+ * The marks drawn over files in every view, with their counts. A view whose tones already show the
+ * suspect ring and the recent centre (the default view) does not list them twice.
+ */
+function MarkEntries(props: {
+  scene: Scene;
+  nowMs: number;
+  view: ViewPaint;
+  liveCount: number;
+}): ReactElement {
+  const { scene, nowMs, view, liveCount } = props;
+  const marks = useMemo(() => countMarks(scene, nowMs), [scene, nowMs]);
+  const withFacts = useMemo(
+    () => scene.snapshot.files.filter((file) => file.facts > 0).length,
+    [scene],
+  );
+  const isShownByTones = view.encoding.tones.some((tone) => tone.mark !== null);
   return (
     <ul className="legend-list">
-      {marks.map((mark) => (
-        <Entry
-          key={mark}
-          testId={`legend-${mark}`}
-          sample={<CircleSample mark={mark} />}
-          name={MARK_NAMES[mark]}
-          meaning={MARK_MEANINGS[mark]}
-          count={markCounts[mark]}
-        />
-      ))}
+      {isShownByTones ? null : (
+        <>
+          <Entry
+            testId="legend-mark-suspect"
+            sample={<CircleSample role="file" isDim={false} mark="ring" />}
+            {...OVERLAY_MARKS.suspect}
+            count={marks.suspect}
+          />
+          <Entry
+            testId="legend-mark-recent"
+            sample={<CircleSample role="file" isDim={false} mark="dot" />}
+            {...OVERLAY_MARKS.recent}
+            count={marks.recent}
+          />
+        </>
+      )}
+      <Entry
+        testId="legend-badge"
+        sample={<BadgeSample />}
+        {...OVERLAY_MARKS.badge}
+        count={withFacts}
+      />
+      <Entry
+        testId="legend-marker"
+        sample={<DiamondSample />}
+        {...OVERLAY_MARKS.marker}
+        count={liveCount}
+      />
+      <Entry testId="legend-trail" sample={<TrailSample />} {...OVERLAY_MARKS.trail} count={null} />
     </ul>
   );
 }
@@ -235,16 +212,25 @@ function LinkEntries({ scene }: { scene: Scene }): ReactElement {
   );
 }
 
-function LegendBody({ scene, nowMs }: { scene: Scene; nowMs: number }): ReactElement {
+/** What the legend explains: the map of `scene`, coloured by `view`, with `liveCount` sessions marked. */
+interface LegendProps {
+  readonly scene: Scene;
+  readonly nowMs: number;
+  readonly view: ViewPaint;
+  readonly liveCount: number;
+}
+
+function LegendBody(props: LegendProps): ReactElement {
   const setIntroOpen = useMapStore((state) => state.setIntroOpen);
   return (
     <div className="legend-body" data-scroll-area="true">
-      <h2 className="legend-heading">Files</h2>
-      <FileEntries scene={scene} nowMs={nowMs} />
+      <ViewEntries view={props.view} />
+      <h2 className="legend-heading">Marks</h2>
+      <MarkEntries {...props} />
       <h2 className="legend-heading">Folders</h2>
-      <FolderEntries scene={scene} />
+      <FolderEntries scene={props.scene} />
       <h2 className="legend-heading">Links drawn</h2>
-      <LinkEntries scene={scene} />
+      <LinkEntries scene={props.scene} />
       <StrengthSlider />
       <Button
         variant="link"
@@ -279,7 +265,7 @@ function useLegendKey(toggle: () => void): void {
 }
 
 /** The legend, with a button that shows and hides it; `L` does the same. */
-export function Legend({ scene, nowMs }: { scene: Scene; nowMs: number }): ReactElement {
+export function Legend(props: LegendProps): ReactElement {
   const [isOpen, setIsOpen] = useState(false);
   const bodyId = useId();
   const toggle = useCallback(() => {
@@ -300,7 +286,7 @@ export function Legend({ scene, nowMs }: { scene: Scene; nowMs: number }): React
         <span>Legend</span>
       </Button>
       <div id={bodyId} className="legend-popover" hidden={!isOpen} data-overlay="true">
-        {isOpen ? <LegendBody scene={scene} nowMs={nowMs} /> : null}
+        {isOpen ? <LegendBody {...props} /> : null}
       </div>
     </section>
   );

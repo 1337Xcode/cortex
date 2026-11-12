@@ -1,10 +1,13 @@
-// The page: loads the snapshot and the summary, then shows the map with the search box and the
-// summary strip on top, the overview panel on the left and the selected file's panel on the right.
-// The canvas waits for the fonts as well, so no label is drawn in a fallback font. Loading, a
-// failure and an empty map each get a sentence that says what it means and what to do next; an
-// empty map is asked for again until files arrive.
+// The page: loads the snapshot and the summary and opens the live view, then shows the map with the
+// search box and the summary strip on top, the overview panel on the left and the selected file's
+// panel on the right. The canvas waits for the fonts as well, so no label is drawn in a fallback
+// font. Loading, a failure and an empty map each get a sentence that says what it means and what to
+// do next. While the map is empty the page asks whether Cortex is still reading the repository,
+// and once it has finished, asks for the map again.
 import { useEffect, useMemo, useRef, type ReactElement, type RefObject } from 'react';
 import { fetchGraph, type GraphSnapshot } from './api/graph';
+import { fetchHealth } from './api/health';
+import { BROWSER_LIVE_ENVIRONMENT, connectLive, liveSocketUrl } from './api/liveSocket';
 import { fetchSummary } from './api/summary';
 import { Button } from './components/ui/button';
 import { TooltipProvider } from './components/ui/tooltip';
@@ -19,12 +22,42 @@ import { useChromeInsets } from './map/useChromeInsets';
 import { FilePanel } from './panels/FilePanel';
 import { OverviewPanel } from './panels/OverviewPanel';
 import { SummaryStrip } from './panels/SummaryStrip';
-import { useMapStore, type LoadState } from './state/store';
+import { useMapStore, type IndexKnowledge, type LoadState } from './state/store';
 import { useIsNarrow } from './theme/media';
 import { EMPTY_RECHECK_MS } from './theme/tokens';
 
+/** What an empty map means, by what the page knows of the daemon's first reading. */
+function describeEmpty(index: IndexKnowledge): { readonly title: string; readonly next: string } {
+  const every = `${EMPTY_RECHECK_MS / 1000} seconds`;
+  switch (index.status) {
+    case 'unknown':
+      return {
+        title: 'No files in the map yet.',
+        next: 'Asking Cortex whether it is still reading this repository.',
+      };
+    case 'reading':
+      return {
+        title: 'Cortex is still reading this repository.',
+        next: `The map appears here by itself once it has finished. This page asks every ${every}.`,
+      };
+    case 'ready':
+      return {
+        title: 'This repository has no files to map.',
+        next: 'Cortex has finished reading it and found no files. Check cortex status in a terminal, then reload this page.',
+      };
+    case 'error':
+      return {
+        title: 'No files in the map yet.',
+        next: `Cortex did not say whether it is still reading this repository (${index.error.code}): ${index.error.message}. This page asks again every ${every}.`,
+      };
+  }
+}
+
 /** What a load state that is not ready means, and what the person can do about it. */
-export function describeLoad(load: Exclude<LoadState, { status: 'ready' }>): {
+export function describeLoad(
+  load: Exclude<LoadState, { status: 'ready' }>,
+  index: IndexKnowledge,
+): {
   readonly title: string;
   readonly next: string;
 } {
@@ -40,10 +73,7 @@ export function describeLoad(load: Exclude<LoadState, { status: 'ready' }>): {
         next: 'Check that Cortex is still running (run cortex status in a terminal), then reload this page.',
       };
     case 'empty':
-      return {
-        title: 'No files in the map yet.',
-        next: `Cortex may still be reading this repository. This page asks again every ${EMPTY_RECHECK_MS / 1000} seconds and shows the map as soon as there are files.`,
-      };
+      return describeEmpty(index);
   }
 }
 
@@ -69,24 +99,52 @@ function useSlashToSearch(input: RefObject<HTMLInputElement | null>): void {
 }
 
 /**
- * Asks for the snapshot again every `EMPTY_RECHECK_MS` while the map is empty, and for the summary
- * once files have arrived, so the summary counts the files the map shows and not the empty index.
+ * While the map is empty, asks every `EMPTY_RECHECK_MS` whether Cortex is still reading the
+ * repository; once it says it has finished, asks for the snapshot again, once. Once files have
+ * arrived, asks for the summary again, so it counts the files the map shows and not the empty index.
  */
 function useRecheckWhileEmpty(status: LoadState['status']): void {
   const loadGraph = useMapStore((state) => state.loadGraph);
   const loadSummary = useMapStore((state) => state.loadSummary);
+  const loadHealth = useMapStore((state) => state.loadHealth);
+  const index = useMapStore((state) => state.index.status);
   const wasEmpty = useRef(false);
+  const hasAskedOnceRead = useRef(false);
   useEffect(() => {
     if (status === 'ready' && wasEmpty.current) void loadSummary(fetchSummary);
     wasEmpty.current = status === 'empty';
-    if (status !== 'empty') return undefined;
+  }, [status, loadSummary]);
+  const isWaiting = status === 'empty' && index !== 'ready';
+  useEffect(() => {
+    if (!isWaiting) return undefined;
+    void loadHealth(fetchHealth);
     const timer = window.setInterval(() => {
-      void loadGraph(fetchGraph, { isQuiet: true });
+      void loadHealth(fetchHealth);
     }, EMPTY_RECHECK_MS);
     return () => {
       window.clearInterval(timer);
     };
-  }, [status, loadGraph, loadSummary]);
+  }, [isWaiting, loadHealth]);
+  useEffect(() => {
+    if (status !== 'empty' || index !== 'ready' || hasAskedOnceRead.current) return;
+    hasAskedOnceRead.current = true;
+    void loadGraph(fetchGraph, { isQuiet: true });
+  }, [status, index, loadGraph]);
+}
+
+/** Keeps the live view's socket open while the page is, reporting every frame to the store. */
+function useLiveView(): void {
+  const takeLive = useMapStore((state) => state.takeLive);
+  const pauseLive = useMapStore((state) => state.pauseLive);
+  useEffect(
+    () =>
+      connectLive(
+        liveSocketUrl(document.baseURI),
+        { onState: takeLive, onPaused: pauseLive },
+        BROWSER_LIVE_ENVIRONMENT,
+      ),
+    [takeLive, pauseLive],
+  );
 }
 
 /**
@@ -171,7 +229,7 @@ function ReadyMap({
         <SummaryStrip snapshot={snapshot} />
       </header>
       {isOverviewShown ? (
-        <OverviewPanel snapshot={snapshot} isSheet={isNarrow} panelRef={overviewRef} />
+        <OverviewPanel scene={scene} isSheet={isNarrow} panelRef={overviewRef} />
       ) : null}
       {selected === null ? null : <FilePanel scene={scene} id={selected} onClosed={restoreFocus} />}
       <Intro />
@@ -181,7 +239,8 @@ function ReadyMap({
 
 /** The page shown instead of the map while it loads, when it failed, or while it is empty. */
 function PageState({ load }: { load: Exclude<LoadState, { status: 'ready' }> }): ReactElement {
-  const { title, next } = describeLoad(load);
+  const index = useMapStore((state) => state.index);
+  const { title, next } = describeLoad(load, index);
   return (
     <main className="page-state">
       <h1>Cortex map</h1>
@@ -207,6 +266,7 @@ export function App(): ReactElement {
     return cancelLoad;
   }, [loadGraph, loadSummary, cancelLoad]);
   useRecheckWhileEmpty(load.status);
+  useLiveView();
 
   return (
     <TooltipProvider>

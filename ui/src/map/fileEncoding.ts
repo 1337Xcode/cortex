@@ -1,11 +1,14 @@
 // Encodes the drawn files into typed arrays for one deck.gl layer: positions and radii from the
-// layout, and an outline colour that says one thing each: a suspect fact (amber), read or edited
-// in the last 24 hours (green), never read while others were (dim), or nothing (neutral). The
-// selected file is outlined in the accent; files outside the focus are dimmed.
+// layout, and an outline in the colour of the file's tone in the active view (in the default view,
+// its mark: a suspect fact amber, read or edited in the last 24 hours green, never read while
+// others were dim, or nothing neutral). A tone the view puts in the background draws thinner; in a
+// view that tints, every other tone also fills the file with a share of its colour. The selected
+// file is outlined in the accent; files outside the focus are dimmed.
 import type { GraphFile } from '../api/graph';
-import { CANVAS_SIZE, RECENT_WINDOW_MS } from '../theme/tokens';
-import { rgbaOf, type Oklch, type Rgba } from '../theme/oklch';
-import { focusShare, writeRgba, type FrameStyle } from './frameStyle';
+import { CANVAS_SIZE, OPACITY, RECENT_WINDOW_MS } from '../theme/tokens';
+import { rgbaOf } from '../theme/oklch';
+import { toneColor } from '../views/view';
+import { focusShare, mixRgba, writeRgba, type FrameStyle } from './frameStyle';
 import type { Scene } from './scene';
 import type { Visibility } from './visibility';
 
@@ -30,13 +33,6 @@ export interface FileBuffers {
   readonly lineWidths: Float32Array;
 }
 
-function markColor(mark: FileMark, style: FrameStyle): Oklch {
-  const canvas = style.colors.canvas;
-  if (mark === 'suspect') return canvas.suspect;
-  if (mark === 'recent') return canvas.recent;
-  return mark === 'unread' ? canvas.unread : canvas.file;
-}
-
 /** Encodes the files `visibility` draws. */
 export function encodeFiles(scene: Scene, visibility: Visibility, style: FrameStyle): FileBuffers {
   const ids = visibility.visibleFiles;
@@ -51,26 +47,29 @@ export function encodeFiles(scene: Scene, visibility: Visibility, style: FrameSt
   };
   const fill = rgbaOf(style.colors.background);
   const accent = rgbaOf(style.colors.accent);
-  const palette = new Map<FileMark, Rgba>();
+  const { toneOf, tones, isTinted } = style.view.encoding;
+  const palette = tones.map((tone) => rgbaOf(toneColor(tone.role, style.colors)));
+  const fills = tones.map((tone, index) => {
+    const color = palette[index];
+    return !isTinted || tone.isDim || color === undefined
+      ? fill
+      : mixRgba(fill, color, OPACITY.toneFill);
+  });
   for (let row = 0; row < count; row += 1) {
     const id = ids[row] ?? 0;
-    const file = scene.snapshot.files[id];
-    if (file === undefined) continue;
     buffers.positions[row * 2] = scene.layout.fileX[id] ?? 0;
     buffers.positions[row * 2 + 1] = scene.layout.fileY[id] ?? 0;
     buffers.radii[row] = scene.fileRadius[id] ?? 0;
     const share = focusShare(style.neighbourhood?.isMember[id] === 1, style);
-    writeRgba(buffers.fillColors, row, fill, 1);
     const isSelected = id === style.selected;
-    const mark = fileMark(file, style.nowMs, scene.hasReads);
-    let color = palette.get(mark);
-    if (color === undefined) {
-      color = rgbaOf(markColor(mark, style));
-      palette.set(mark, color);
-    }
+    const tone = toneOf[id] ?? 0;
+    // A file dimmed by the focus loses its tint with its outline's strength.
+    writeRgba(buffers.fillColors, row, share < 1 ? fill : (fills[tone] ?? fill), 1);
+    const color = palette[tone] ?? fill;
     writeRgba(buffers.lineColors, row, isSelected ? accent : color, share);
     const isFocus = isSelected || id === style.neighbourhood?.focus;
-    const restingPx = mark === 'unread' ? CANVAS_SIZE.fileStrokeUnreadPx : CANVAS_SIZE.fileStrokePx;
+    const isDim = tones[tone]?.isDim === true;
+    const restingPx = isDim ? CANVAS_SIZE.fileStrokeUnreadPx : CANVAS_SIZE.fileStrokePx;
     buffers.lineWidths[row] = isFocus ? CANVAS_SIZE.fileStrokeFocusedPx : restingPx;
   }
   return buffers;

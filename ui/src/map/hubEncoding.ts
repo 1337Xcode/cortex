@@ -1,9 +1,13 @@
 // Encodes the folder structure: open hubs as small squares, collapsed hubs as one node sized by
 // their file count, a faint dashed line from each drawn hub to its parent, and a faint spoke from
-// each drawn file to its hub. All neutral; outside the focus they dim with everything else.
+// each drawn file to its hub. All neutral, except that in a view that tints folders a folder drawn
+// whole (or as one disc of its files) is edged in its strongest file's tone; outside the focus they
+// dim with everything else.
 import { RING_SPACING } from '../layout/constants';
 import { CANVAS_SIZE, OPACITY } from '../theme/tokens';
 import { rgbaOf, type Rgba } from '../theme/oklch';
+import { NO_TONE } from '../views/folderTones';
+import { toneColor } from '../views/view';
 import { focusShare, writeRgba, type FrameStyle } from './frameStyle';
 import type { LineBuffers } from './linkEncoding';
 import type { Scene } from './scene';
@@ -38,6 +42,29 @@ interface NodeColors {
   readonly fill: Rgba;
   readonly line: Rgba;
   readonly marked: Uint8Array;
+  /** Each hub's edge in its view tone, or null to keep `line` for every hub. */
+  readonly toneLine: ((hub: number) => Rgba) | null;
+}
+
+/**
+ * Each hub's edge colour in the active view, from its strongest tone in `tones` (own files or the
+ * whole sub-tree); null when the view keeps folders neutral. A folder with no file keeps `line`.
+ */
+function toneLineOf(
+  style: FrameStyle,
+  pick: 'own' | 'tree',
+  line: Rgba,
+): ((hub: number) => Rgba) | null {
+  const folders = style.view.folders;
+  if (folders === null) return null;
+  const tones = folders[pick];
+  const palette = style.view.encoding.tones.map((tone) =>
+    rgbaOf(toneColor(tone.role, style.colors)),
+  );
+  return (hub) => {
+    const tone = tones[hub] ?? NO_TONE;
+    return tone === NO_TONE ? line : (palette[tone] ?? line);
+  };
 }
 
 function encodeNodes(
@@ -55,7 +82,7 @@ function encodeNodes(
     fillColors: new Uint8ClampedArray(count * 4),
     lineColors: new Uint8ClampedArray(count * 4),
   };
-  const { fill, line } = colors;
+  const { fill, line, toneLine } = colors;
   for (let row = 0; row < count; row += 1) {
     const hub = ids[row] ?? 0;
     buffers.positions[row * 2] = scene.layout.hubX[hub] ?? 0;
@@ -63,7 +90,7 @@ function encodeNodes(
     buffers.radii[row] = radiusOf(hub);
     const share = focusShare(colors.marked[hub] === 1, style);
     writeRgba(buffers.fillColors, row, fill, share);
-    writeRgba(buffers.lineColors, row, line, share);
+    writeRgba(buffers.lineColors, row, toneLine === null ? line : toneLine(hub), share);
   }
   return buffers;
 }
@@ -77,7 +104,7 @@ export function encodeHubSquares(
 ): HubBuffers {
   const ids = Uint32Array.from([...visibility.openHubs, ...visibility.collapsedHubs]).sort();
   const hub = rgbaOf(style.colors.canvas.hub);
-  const colors = { fill: hub, line: hub, marked };
+  const colors = { fill: hub, line: hub, marked, toneLine: null };
   return encodeNodes(scene, ids, () => CANVAS_SIZE.hubHalfSidePx, colors, style);
 }
 
@@ -102,7 +129,9 @@ export function encodeCollapsedHubs(
   marked: Uint8Array,
 ): HubBuffers {
   const hub = style.colors.canvas.hub;
-  const colors = { fill: rgbaOf(hub, OPACITY.collapsedFill), line: rgbaOf(hub), marked };
+  const line = rgbaOf(hub);
+  const toneLine = toneLineOf(style, 'tree', line);
+  const colors = { fill: rgbaOf(hub, OPACITY.collapsedFill), line, marked, toneLine };
   const radiusOf = (hub: number): number => collapsedRadius(scene, hub);
   return encodeNodes(scene, visibility.collapsedHubs, radiusOf, colors, style);
 }
@@ -118,7 +147,9 @@ export function encodeFileDiscs(
     ? new Uint32Array(0)
     : visibility.openHubs.filter((hub) => (scene.hubOwnRadius[hub] ?? 0) > 0);
   const canvas = style.colors.canvas;
-  const colors = { fill: rgbaOf(canvas.collapsedFill), line: rgbaOf(canvas.unread), marked };
+  const line = rgbaOf(canvas.unread);
+  const toneLine = toneLineOf(style, 'own', line);
+  const colors = { fill: rgbaOf(canvas.collapsedFill), line, marked, toneLine };
   return encodeNodes(scene, holders, (hub) => scene.hubOwnRadius[hub] ?? 0, colors, style);
 }
 

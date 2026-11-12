@@ -20,7 +20,10 @@ export interface BusiestFiles {
   readonly files: readonly GraphFile[];
 }
 
-/** The co-change pairs with the most commits, most first; equal counts by weight, then by path. */
+/**
+ * The strongest co-change pairs, in the graph's own order, the one the summary ranks its strongest
+ * pair by: weight, then commits, then the ids of the two files.
+ */
 export function coupledPairs(snapshot: GraphSnapshot): CoupledPair[] {
   const pairs: CoupledPair[] = [];
   for (const link of snapshot.links) {
@@ -29,13 +32,13 @@ export function coupledPairs(snapshot: GraphSnapshot): CoupledPair[] {
     if (link.kind !== 'co_change' || from === undefined || to === undefined) continue;
     pairs.push({ link, from, to });
   }
-  // INVARIANT: deterministic (ties by weight, then by the byte order of the paths)
+  // INVARIANT: deterministic (ties by commits, then by the files' ids)
   pairs.sort(
     (a, b) =>
-      b.link.commits - a.link.commits ||
       b.link.weight - a.link.weight ||
-      compareBytes(a.from.path, b.from.path) ||
-      compareBytes(a.to.path, b.to.path),
+      b.link.commits - a.link.commits ||
+      a.link.from - b.link.from ||
+      a.link.to - b.link.to,
   );
   return pairs.slice(0, LIST.most);
 }

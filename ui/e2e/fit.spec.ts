@@ -1,6 +1,7 @@
 // Nothing spilled, nothing crammed, one family: at 1440x900 and 390x844 in both themes, on the
 // ten-file repository with a file selected and every section open, on the cold repository and on
-// the overview of 100,000 files, every element is walked and the check fails on
+// the overview of 100,000 files, with each view and its legend, with three live sessions and with
+// the live view paused, every element is walked and the check fails on
 // - a box whose content is wider or taller than the box, unless the box is a declared scroll area
 //   (an open overlay, such as the search results, is checked on its own, apart from its anchor);
 // - visible text drawn below 12 px;
@@ -8,9 +9,9 @@
 // A last check delays the font files and sees that the canvas waits for them before it draws.
 import { expect, test, type Page } from '@playwright/test';
 import { TYPE } from '../src/theme/tokens';
-import { coldFixture, largeFixture, smallFixture, type Fixture } from './fixtures';
+import { coldFixture, largeFixture, smallFixture, threeSessions, type Fixture } from './fixtures';
 import { filePanel, nextFrames, openMap, searchAndPick } from './helpers';
-import { MAP_URL, serveFixture } from './serve';
+import { liveChannel, MAP_URL, serveFixture } from './serve';
 
 const SIZES = [
   { name: '1440x900', width: 1440, height: 900 },
@@ -109,6 +110,38 @@ for (const size of SIZES) {
       await page.keyboard.press('Tab');
       await page.keyboard.press('l');
       expect(await findProblems(page, TYPE.small.sizePx), 'legend').toEqual([]);
+      expect(record.errors).toEqual([]);
+    });
+
+    test(`${prefix}: every view with its legend, live sessions and the paused live view`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(size);
+      const nowMs = Date.now();
+      const fixture: Fixture = { ...smallFixture(nowMs), live: threeSessions(nowMs) };
+      const record = await openMap(page, fixture, scheme);
+      if (size.width < 720) await page.getByRole('button', { name: 'Overview' }).click();
+      await expect(page.getByTestId('overview-live').getByRole('listitem')).toHaveCount(3);
+      expect(await findProblems(page, TYPE.small.sizePx), 'live sessions').toEqual([]);
+      if (size.width < 720) await page.getByRole('button', { name: 'Close the overview' }).click();
+      await page.getByRole('button', { name: 'Legend' }).click();
+      for (const [key, title] of [
+        ['1', 'Default'],
+        ['2', 'Fog'],
+        ['3', 'Heat'],
+        ['4', 'Coupling'],
+        ['5', 'Recent'],
+      ] as const) {
+        await page.keyboard.press(key);
+        await expect(page.getByTestId('legend-view')).toHaveText(`View: ${title}`);
+        expect(await findProblems(page, TYPE.small.sizePx), title).toEqual([]);
+      }
+      await page.getByRole('button', { name: 'Legend' }).click();
+      const live = liveChannel(page);
+      live.setRefusing(true);
+      live.closeAll();
+      await expect(page.getByTestId('live-paused')).toBeVisible();
+      expect(await findProblems(page, TYPE.small.sizePx), 'paused').toEqual([]);
       expect(record.errors).toEqual([]);
     });
 

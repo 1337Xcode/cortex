@@ -2,6 +2,8 @@
 // links the test supplies. Positions and radii are in the layout tests' comment: hubs 0 root
 // (covering radius 120), 1 a (15), 2 b (50), 3 b/deep (15), 4 c (15); README.md sits at (10, 0).
 import type { GraphFile, GraphLink, GraphSnapshot } from '../api/graph';
+import { defaultView } from '../views/default';
+import { paintView, type ViewPaint } from '../views/paint';
 import { buildScene, type Scene } from './scene';
 
 /** The seven paths in byte order; their index is their id. */
@@ -44,6 +46,11 @@ export function sevenFileSnapshot(
 /** The seven-file scene with `links`. */
 export function sevenFileScene(links: readonly GraphLink[] = []): Scene {
   return buildScene(sevenFileSnapshot(links));
+}
+
+/** The default view of `scene`, "now" at `nowMs`, for a frame style. */
+export function defaultPaint(scene: Scene, nowMs = 0): ViewPaint {
+  return paintView(defaultView, scene, nowMs);
 }
 
 /** A link with no commits, for kinds other than co-change. */

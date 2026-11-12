@@ -18,15 +18,17 @@ import { generatePaths } from '../layout/testPaths';
 import { CANVAS_SIZE, DARK_COLORS } from '../theme/tokens';
 import { suspectRingRadius } from './fileMarks';
 import { buildAdjacency, buildScene, fileRadiusFor, ownRingsRadius } from './scene';
-import { sevenFileScene, sevenFileSnapshot, testFile, testLink } from './testScene';
+import { defaultPaint, sevenFileScene, sevenFileSnapshot, testFile, testLink } from './testScene';
 import { computeVisibility } from './visibility';
 
+// Folders stay neutral in the default view, so its paint fits every scene these tests build.
 const style: FrameStyle = {
   colors: DARK_COLORS,
   nowMs: 0,
   neighbourhood: null,
   selected: null,
   minStrength: 0.25,
+  view: defaultPaint(sevenFileScene()),
 };
 
 describe('scene', () => {

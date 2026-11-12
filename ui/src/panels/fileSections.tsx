@@ -8,14 +8,16 @@ import { LINK_KINDS, type GraphFile, type LinkKind } from '../api/graph';
 import { visibleText } from '../api/guard';
 import { ClippedText } from '../components/Clipped';
 import { Button } from '../components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import type { Scene } from '../map/scene';
-import { type DetailState } from '../state/store';
+import { useMapStore, type DetailState } from '../state/store';
 import { countOf, formatCount, formatDate } from '../text/format';
 import { distinctNames } from '../text/names';
 import {
   LINK_KIND_NAMES,
   NUMBER_NAMES,
   TOKENS_ATTRIBUTED_MEANING,
+  commitsMeaning,
   linkSentence,
 } from '../text/vocabulary';
 import { LIST } from '../theme/tokens';
@@ -35,28 +37,71 @@ const TOLD_NAMES: Readonly<Record<ToldKind, string>> = {
   warning: 'Warning',
 };
 
-/** The file's counts as a definition list; each name says exactly what it counts. */
+/** One of the file's numbers: its name, its value, and what it counts when that needs saying. */
+interface NumberRow {
+  readonly name: string;
+  readonly value: number;
+  readonly meaning: string | null;
+}
+
+/**
+ * A number that needs explaining: it takes keyboard focus and says what it counts in a tooltip on
+ * hover and focus; its `dd` is described by the same sentence for screen readers.
+ */
+function ExplainedNumber({ value, meaning }: { value: number; meaning: string }): ReactElement {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="number-explained" tabIndex={0}>
+          {formatCount(value)}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{meaning}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * The file's counts as a definition list; each name says exactly what it counts, and the commits
+ * and tokens, whose meaning is not plain from the name, explain themselves on hover and focus.
+ */
 export function NumbersSection({ file }: { file: GraphFile }): ReactElement {
-  const descriptionId = useId();
-  const rows: [string, number, string | null][] = [
-    [NUMBER_NAMES.lines, file.lines, null],
-    [NUMBER_NAMES.reads, file.reads, null],
-    [NUMBER_NAMES.commits, file.commits, null],
-    [NUMBER_NAMES.tokens, file.tokens, descriptionId],
+  const idPrefix = useId();
+  const summary = useMapStore((state) => state.summary);
+  const limits = summary.status === 'ready' ? summary.summary.history : null;
+  const rows: NumberRow[] = [
+    { name: NUMBER_NAMES.lines, value: file.lines, meaning: null },
+    { name: NUMBER_NAMES.reads, value: file.reads, meaning: null },
+    {
+      name: NUMBER_NAMES.commits,
+      value: file.commits,
+      meaning: commitsMeaning(file.commits, limits),
+    },
+    { name: NUMBER_NAMES.tokens, value: file.tokens, meaning: TOKENS_ATTRIBUTED_MEANING },
   ];
   return (
     <>
       <dl className="panel-numbers">
-        {rows.map(([name, value, described]) => (
-          <div key={name} title={described === null ? undefined : TOKENS_ATTRIBUTED_MEANING}>
-            <dt>{name}</dt>
-            <dd aria-describedby={described ?? undefined}>{formatCount(value)}</dd>
+        {rows.map((row, index) => (
+          <div key={row.name}>
+            <dt>{row.name}</dt>
+            <dd aria-describedby={row.meaning === null ? undefined : `${idPrefix}-${index}`}>
+              {row.meaning === null ? (
+                formatCount(row.value)
+              ) : (
+                <ExplainedNumber value={row.value} meaning={row.meaning} />
+              )}
+            </dd>
           </div>
         ))}
       </dl>
-      <p id={descriptionId} className="visually-hidden">
-        {TOKENS_ATTRIBUTED_MEANING}
-      </p>
+      {rows.map((row, index) =>
+        row.meaning === null ? null : (
+          <p key={row.name} id={`${idPrefix}-${index}`} className="visually-hidden">
+            {row.meaning}
+          </p>
+        ),
+      )}
     </>
   );
 }

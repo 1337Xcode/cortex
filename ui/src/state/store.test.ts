@@ -29,7 +29,7 @@ function ready(count: number): ApiResult<GraphSnapshot> {
 }
 
 function detailFor(id: number, path = `f${String(id).padStart(3, '0')}.rs`): FileDetail {
-  return { version: 1, id, path, facts: [], history: [], told: [] };
+  return { version: 1, id, path, facts: [], history: [], told: [], editor_url: null };
 }
 
 /** The fixed clock of the tests' stores. */
@@ -44,6 +44,7 @@ const SUMMARY: MapSummary = {
   strongest_pair: null,
   busiest_folder: null,
   window_days: 7,
+  history: { max_commits: 5000, max_age_days: 365, max_files_per_commit: 30 },
 };
 
 /** A fetcher the test settles by hand, to order responses exactly. */
@@ -262,5 +263,42 @@ describe('map store: summary and detail', () => {
     slow.settle({ ok: true, value: detailFor(0) });
     await first;
     expect(store.getState().detail).toEqual({ status: 'ready', detail: detailFor(1) });
+  });
+});
+
+describe('map store: views, live state and the first reading', () => {
+  it('opens on the default view, switches to a known view and ignores an unknown name', () => {
+    const store = createMapStore(() => NOW_MS);
+    expect(store.getState().view).toBe('default');
+    store.getState().setView('heat');
+    expect(store.getState().view).toBe('heat');
+    store.getState().setView('nonsense');
+    expect(store.getState().view).toBe('heat');
+  });
+
+  it('connects, takes each frame whole, and pauses without touching the selection', async () => {
+    const store = await readyStore(3);
+    store.getState().selectFile(1);
+    expect(store.getState().live).toEqual({ status: 'connecting' });
+    const frame = {
+      version: 1 as const,
+      sessions: [{ id: 'a', agent: 'claude', title: 'Claude Code', files: [] }],
+    };
+    store.getState().takeLive(frame);
+    expect(store.getState().live).toEqual({ status: 'open', state: frame });
+    store.getState().pauseLive();
+    expect(store.getState().live).toEqual({ status: 'paused' });
+    expect([store.getState().selectedFile, store.getState().flyTo]).toEqual([1, null]);
+  });
+
+  it('keeps what the health says of the first reading, or its error', async () => {
+    const store = createMapStore(() => NOW_MS);
+    expect(store.getState().index).toEqual({ status: 'unknown' });
+    const health = { version: '0.4.0', has_assets: true, index: 'reading' as const };
+    await store.getState().loadHealth(() => Promise.resolve({ ok: true, value: health }));
+    expect(store.getState().index).toEqual({ status: 'reading' });
+    const error = { code: 'network' as const, message: 'down' };
+    await store.getState().loadHealth(() => Promise.resolve({ ok: false, error }));
+    expect(store.getState().index).toEqual({ status: 'error', error });
   });
 });

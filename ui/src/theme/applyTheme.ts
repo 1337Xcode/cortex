@@ -5,6 +5,7 @@
 // reduced-motion setting as they change.
 import { cssOf } from './oklch';
 import {
+  AGENT_FAMILIES,
   FONT,
   LAYOUT,
   MOTION,
@@ -51,6 +52,13 @@ function colorProperties(colors: ThemeColors): [string, string][] {
     ['unread', cssOf(canvas.unread)],
     ['hub', cssOf(canvas.hub)],
     ['file', cssOf(canvas.file)],
+    ['lit', cssOf(canvas.lit)],
+    ['badge', cssOf(canvas.badge)],
+    ...canvas.scale.map((color, i): [string, string] => [`scale-${i + 1}`, cssOf(color)]),
+    ...AGENT_FAMILIES.map((family): [string, string] => [
+      `agent-${family}`,
+      cssOf(colors.agents[family]),
+    ]),
   ];
   return roles.map(([name, value]) => [`--${name}`, value]);
 }
@@ -78,6 +86,7 @@ function scaleProperties(): [string, string][] {
     ['--sheet-height', `${LAYOUT.sheetHeightShare * 100}vh`],
     ['--popover-height', `${LAYOUT.popoverHeightShare * 100}vh`],
     ['--collapsed-fill-opacity', String(OPACITY.collapsedFill)],
+    ['--tone-fill-opacity', String(OPACITY.toneFill)],
   );
   return properties;
 }

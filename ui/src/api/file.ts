@@ -1,6 +1,7 @@
 // One file's detail for the side panel: the facts anchored to it, the stored history of its
-// blamed commits, and the times Cortex named it to an agent with whether the agent then used it.
-// Links come from the graph snapshot and are not repeated here.
+// blamed commits, the times Cortex named it to an agent with whether the agent then used it, and
+// the link that opens it in the person's editor. Links come from the graph snapshot and are not
+// repeated here.
 import {
   API_VERSION,
   checkMaxLength,
@@ -37,6 +38,9 @@ export const MAX_HISTORY = 10;
 
 /** The most "told" entries the daemon returns. */
 export const MAX_TOLD = 20;
+
+/** The longest editor link the page accepts, in characters. */
+export const MAX_EDITOR_URL_CHARS = 2048;
 
 /** A fact's state: confirmed, waiting for confirmation, or no longer matching the code. */
 export const FACT_STATUSES = ['active', 'candidate', 'suspect'] as const;
@@ -82,6 +86,8 @@ export interface FileDetail {
   readonly facts: readonly FileFact[];
   readonly history: readonly FileHistoryEntry[];
   readonly told: readonly ToldEntry[];
+  /** The daemon's link to open the file in an editor (`vscode://file/...`), or null when turned off. */
+  readonly editor_url: string | null;
 }
 
 /** The relative URL of one file's detail. */
@@ -172,6 +178,10 @@ function detailParser(askedId: number): (value: unknown) => FileDetail {
       facts,
       history,
       told,
+      editor_url:
+        record['editor_url'] === null
+          ? null
+          : readCappedString(record, 'editor_url', MAX_EDITOR_URL_CHARS, 'file'),
     };
   };
 }

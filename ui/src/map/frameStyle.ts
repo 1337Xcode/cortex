@@ -1,7 +1,8 @@
 // The inputs every encoder shares for one frame: the theme's colours, the moment "recent" is
-// measured from, the focus neighbourhood and the selection. Plus the small writer the encoders use
-// to put a colour into a typed array.
+// measured from, the focus neighbourhood, the selection and the view the files are coloured by.
+// Plus the small writer the encoders use to put a colour into a typed array.
 import type { ThemeColors } from '../theme/tokens';
+import type { ViewPaint } from '../views/paint';
 import { OPACITY } from '../theme/tokens';
 import type { Rgba } from '../theme/oklch';
 import type { Neighbourhood } from './highlight';
@@ -16,11 +17,23 @@ export interface FrameStyle {
   readonly selected: number | null;
   /** Learned links below this weight are not drawn. */
   readonly minStrength: number;
+  /** The view the files' outlines and the folders drawn whole are coloured by. */
+  readonly view: ViewPaint;
 }
 
 /** The alpha share for something inside (1) or outside (`OPACITY.dimmed`) the focus. */
 export function focusShare(isInFocus: boolean, style: FrameStyle): number {
   return style.neighbourhood === null || isInFocus ? 1 : OPACITY.dimmed;
+}
+
+/**
+ * `over` laid on `under` at `share` (0 to 1), as one opaque colour: each channel moved that share of
+ * the way from `under`'s to `over`'s, rounded. A fill mixed this way hides what lies beneath it.
+ */
+export function mixRgba(under: Rgba, over: Rgba, share: number): Rgba {
+  const at = (channel: 0 | 1 | 2): number =>
+    Math.round(under[channel] + (over[channel] - under[channel]) * share);
+  return [at(0), at(1), at(2), 255];
 }
 
 /** Writes `color` into `target` at row `index` (4 channels), scaling its alpha by `alphaShare`. */

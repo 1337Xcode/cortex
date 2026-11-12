@@ -571,6 +571,59 @@
     align-self: flex-start;
   }
 
+  /* A live session's mark beside its row: a small diamond in its agent's colour. */
+  .agent-mark {
+    flex: none;
+    width: var(--space-sm);
+    height: var(--space-sm);
+    rotate: 45deg;
+    background: var(--agent-other);
+  }
+
+  .agent-mark[data-agent='claude'] {
+    background: var(--agent-claude);
+  }
+
+  .agent-mark[data-agent='codex'] {
+    background: var(--agent-codex);
+  }
+
+  .agent-mark[data-agent='cursor'] {
+    background: var(--agent-cursor);
+  }
+
+  .agent-mark[data-agent='gemini'] {
+    background: var(--agent-gemini);
+  }
+
+  /* A session whose files the map does not hold: not a button, so it takes back the row padding. */
+  .live-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    min-height: var(--size-row);
+    padding: 0 var(--space-sm);
+  }
+
+  .live-row-text {
+    flex: 1 1 auto;
+  }
+
+  /* A number that explains itself on hover and focus. */
+  .number-explained {
+    text-decoration: underline dotted;
+    text-decoration-color: var(--muted-foreground);
+    text-underline-offset: var(--stroke-focus-offset);
+    cursor: help;
+  }
+
+  .editor-link {
+    align-self: flex-start;
+    margin-top: var(--space-xs);
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+  }
+
   .glance-list {
     display: flex;
     flex-direction: column;
@@ -696,6 +749,41 @@
     border-radius: var(--size-radius);
   }
 
+  /* The view switch: one row of buttons on a card, the active view filled in the accent. */
+  .view-switch {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    height: var(--size-control);
+    padding: 0 var(--space-xs);
+    background: var(--card);
+    border: var(--stroke-hairline) solid var(--border);
+    border-radius: var(--size-radius);
+  }
+
+  .view-option[aria-pressed='true'] {
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+
+  .view-option[aria-pressed='true'] .key-hint {
+    color: var(--primary-foreground);
+    border-color: var(--primary-foreground);
+  }
+
+  /* The live view's paused state, with the controls so it is seen at every size. */
+  .live-paused {
+    display: flex;
+    align-items: center;
+    height: var(--size-control);
+    padding: 0 var(--space-md);
+    color: var(--foreground);
+    background: var(--card);
+    border: var(--stroke-hairline) solid var(--border);
+    border-radius: var(--size-radius);
+    font-size: var(--type-small-size);
+  }
+
   .zoom-value {
     width: var(--size-zoom-value);
     text-align: center;
@@ -787,23 +875,82 @@
     stroke: var(--primary);
   }
 
+  /*
+   * A file's sample in a view's tone: the role names the colour, a dim tone draws thinner, and a
+   * tinting view's tone fills the circle with a share of its colour, as the canvas does.
+   */
   .legend-file {
+    --tone: var(--file);
     fill: none;
-    stroke: var(--file);
+    stroke: var(--tone);
     stroke-width: var(--stroke-mark);
   }
 
-  .legend-file[data-mark='recent'] {
-    stroke: var(--recent);
+  .legend-file[data-role='recent'] {
+    --tone: var(--recent);
   }
 
-  .legend-file[data-mark='suspect'] {
-    stroke: var(--suspect);
+  .legend-file[data-role='suspect'] {
+    --tone: var(--suspect);
   }
 
-  .legend-file[data-mark='unread'] {
-    stroke: var(--unread);
+  .legend-file[data-role='unread'] {
+    --tone: var(--unread);
+  }
+
+  .legend-file[data-role='lit'] {
+    --tone: var(--lit);
+  }
+
+  .legend-file[data-role='scale1'] {
+    --tone: var(--scale-1);
+  }
+
+  .legend-file[data-role='scale2'] {
+    --tone: var(--scale-2);
+  }
+
+  .legend-file[data-role='scale3'] {
+    --tone: var(--scale-3);
+  }
+
+  .legend-file[data-role='scale4'] {
+    --tone: var(--scale-4);
+  }
+
+  .legend-file[data-dim='true'] {
     stroke-width: var(--stroke-mark-thin);
+  }
+
+  .legend-file[data-fill='true'] {
+    fill: var(--tone);
+    fill-opacity: var(--tone-fill-opacity);
+  }
+
+  .legend-badge {
+    fill: var(--badge);
+    stroke: var(--background);
+    stroke-width: var(--stroke-hairline);
+  }
+
+  .legend-marker {
+    fill: none;
+    stroke: var(--agent-claude);
+    stroke-width: var(--stroke-mark);
+  }
+
+  .legend-trail {
+    stroke: var(--agent-claude);
+    stroke-width: var(--stroke-mark);
+  }
+
+  .legend-stop {
+    fill: var(--agent-claude);
+  }
+
+  .legend-scale {
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
   }
 
   .legend-ring {
@@ -932,7 +1079,8 @@
     bottom: var(--space-sm);
   }
 
-  .app[data-narrow='true'] .controls .key-hint {
+  .app[data-narrow='true'] .controls .key-hint,
+  .app[data-narrow='true'] .view-switch .key-hint {
     display: none;
   }
 

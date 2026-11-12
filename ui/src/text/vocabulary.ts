@@ -2,6 +2,7 @@
 // explanations shown on hover and focus, so the same thing is always called the same. Sentences
 // that carry a number say what the number counts.
 import type { GraphFile, GraphLink, LinkKind } from '../api/graph';
+import type { HistoryLimits } from '../api/summary';
 import type { FileMark } from '../map/fileEncoding';
 import { countOf, formatCount } from './format';
 
@@ -39,6 +40,33 @@ export const MARK_MEANINGS: Readonly<Record<FileMark, string>> = {
   plain: 'A plain grey circle.',
 };
 
+/** The marks drawn over files in every view, as the legend names them and says how they look. */
+export const OVERLAY_MARKS = {
+  suspect: { name: 'Second ring', meaning: 'A suspect fact; amber, in every view.' },
+  recent: {
+    name: 'Filled centre',
+    meaning: 'Read or edited in the last 24 hours; green, in every view.',
+  },
+  badge: {
+    name: 'Has facts',
+    meaning: 'A dot on the rim, amber when a fact is suspect; drawn once zoomed in.',
+  },
+  marker: {
+    name: 'An agent working now',
+    meaning: "A diamond around its newest file, in its agent's colour.",
+  },
+  trail: {
+    name: 'Where it worked before',
+    meaning: 'A line back through its last files, fainter with age.',
+  },
+} as const;
+
+/** What a folder drawn whole shows in a view that tints, by the view's folder rule. */
+export const FOLDER_RULE_SENTENCES = {
+  strongest: 'A folder drawn whole is lit when any of its files is.',
+  typical: 'A folder drawn whole takes the step of its typical file.',
+} as const;
+
 /** The folder marks, as the legend names them. */
 export const FOLDER_NAMES = {
   folder: 'Folders',
@@ -63,6 +91,20 @@ export const NUMBER_NAMES = {
 export const TOKENS_ATTRIBUTED_MEANING =
   'Tokens of agent turns whose last read or edit was this file.';
 
+/**
+ * What a file's commit count counts: only the history Cortex reads, so a count of 0 says no commit
+ * it read changed the file, never that the file was never committed. Without the limits (the
+ * summary not loaded yet) it says so without them.
+ */
+export function commitsMeaning(commits: number, limits: HistoryLimits | null): string {
+  const read =
+    limits === null
+      ? 'Commits Cortex read that changed this file'
+      : `Commits Cortex read that changed this file: the last ${countOf(limits.max_commits, 'commit')} within ${countOf(limits.max_age_days, 'day')}, leaving out commits that changed more than ${countOf(limits.max_files_per_commit, 'file')}`;
+  if (commits > 0) return `${read}.`;
+  return `${read}. None of them changed it; older changes, and changes in larger commits, are not counted.`;
+}
+
 /** A file's name: the last segment of its path. */
 function nameOf(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1);
@@ -78,10 +120,21 @@ export function fileSentence(file: GraphFile, mark: FileMark): string {
   const parts = [
     `${nameOf(file.path)}: ${countOf(file.lines, 'line')}`,
     `read ${countOf(file.reads, 'time')} by agents`,
-    `changed in ${countOf(file.commits, 'commit')}`,
+    // Zero counts only the commits Cortex read, so it is never said as "never changed".
+    file.commits === 0
+      ? 'not changed in the commits Cortex read'
+      : `changed in ${countOf(file.commits, 'commit')}`,
   ];
   const state = mark === 'plain' ? '' : ` ${MARK_NAMES[mark]}.`;
   return `${parts.join(', ')}.${state}`;
+}
+
+/** What a file's fact badge says, for hover: how many facts, and how many of them are suspect. */
+export function badgeSentence(file: GraphFile): string {
+  const facts = `${nameOf(file.path)} has ${countOf(file.facts, 'fact')}`;
+  if (file.suspect === 0) return `${facts}.`;
+  if (file.facts === 1) return `${facts}, and it is suspect.`;
+  return `${facts}, ${formatCount(file.suspect)} of them suspect.`;
 }
 
 /** What a folder drawn whole says, for hover. */

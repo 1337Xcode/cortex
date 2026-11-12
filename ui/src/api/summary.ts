@@ -1,6 +1,6 @@
 // The summary behind the first screen's strip of sentences: counts of files, folders and explored
-// files, whether anything has been learned, the strongest co-change pair and the busiest folder.
-// Parsed by hand at the edge like every other response.
+// files, whether anything has been learned, the strongest co-change pair, the busiest folder and
+// the limits of the history Cortex reads. Parsed by hand at the edge like every other response.
 import {
   API_VERSION,
   fail,
@@ -19,7 +19,7 @@ import { fetchChecked } from './request';
 // INVARIANT: local-only (relative to the page, so only the daemon that served it is asked)
 export const SUMMARY_URL = 'api/summary';
 
-/** The co-change link with the most commits. */
+/** The strongest co-change link, in the graph's own order: weight, then commits, then ids. */
 export interface StrongestPair {
   readonly from: number;
   readonly to: number;
@@ -30,6 +30,16 @@ export interface StrongestPair {
 export interface BusiestFolder {
   readonly path: string;
   readonly tokens: number;
+}
+
+/** The limits of the commit history Cortex reads, which every commit count is taken within. */
+export interface HistoryLimits {
+  /** The most recent commits read. */
+  readonly max_commits: number;
+  /** Commits older than this many days are not read. */
+  readonly max_age_days: number;
+  /** A commit that changed more files than this is left out. */
+  readonly max_files_per_commit: number;
 }
 
 /** The first screen's numbers, all measured from the store. */
@@ -45,6 +55,7 @@ export interface MapSummary {
   readonly busiest_folder: BusiestFolder | null;
   /** The window, in days, the busiest folder is measured over. */
   readonly window_days: number;
+  readonly history: HistoryLimits;
 }
 
 function readPair(record: JsonRecord): StrongestPair | null {
@@ -66,6 +77,16 @@ function readFolder(record: JsonRecord): BusiestFolder | null {
   return { path: readPath(folder, 'path', where), tokens: readCount(folder, 'tokens', where) };
 }
 
+function readHistory(record: JsonRecord): HistoryLimits {
+  const where = 'summary.history';
+  const history = readRecord(record['history'], where);
+  return {
+    max_commits: readCount(history, 'max_commits', where),
+    max_age_days: readCount(history, 'max_age_days', where),
+    max_files_per_commit: readCount(history, 'max_files_per_commit', where),
+  };
+}
+
 function parseSummaryRecord(value: unknown): MapSummary {
   const where = 'summary';
   const record = readRecord(value, where);
@@ -79,6 +100,7 @@ function parseSummaryRecord(value: unknown): MapSummary {
     strongest_pair: readPair(record),
     busiest_folder: readFolder(record),
     window_days: readCount(record, 'window_days', where),
+    history: readHistory(record),
   };
   if (summary.explored_files > summary.files) {
     return fail('bad_range', `${where}.explored_files: more than the ${summary.files} files`);

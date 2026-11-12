@@ -14,6 +14,7 @@ function summary(overrides: Record<string, unknown> = {}): Record<string, unknow
     strongest_pair: { from: 4, to: 9, commits: 31 },
     busiest_folder: { path: 'src/orders', tokens: 52310 },
     window_days: 7,
+    history: { max_commits: 5000, max_age_days: 365, max_files_per_commit: 30 },
     ...overrides,
   };
 }
@@ -70,6 +71,23 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
     'bad_shape',
   ],
   ['a missing window', summary({ window_days: undefined }), 'bad_shape'],
+  ['missing history limits', summary({ history: undefined }), 'bad_shape'],
+  ['history limits that are not an object', summary({ history: [5000, 365, 30] }), 'bad_shape'],
+  [
+    'history limits without the most commits',
+    summary({ history: { max_age_days: 365, max_files_per_commit: 30 } }),
+    'bad_shape',
+  ],
+  [
+    'a negative age in the history limits',
+    summary({ history: { max_commits: 5000, max_age_days: -1, max_files_per_commit: 30 } }),
+    'bad_shape',
+  ],
+  [
+    'a fractional files per commit in the history limits',
+    summary({ history: { max_commits: 5000, max_age_days: 365, max_files_per_commit: 2.5 } }),
+    'bad_shape',
+  ],
   [
     'not learned while files were read',
     summary({ learned: false, strongest_pair: null }),

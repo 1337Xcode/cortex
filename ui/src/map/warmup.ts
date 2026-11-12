@@ -45,6 +45,7 @@ function placeholderLabel(kind: CanvasLabel['kind']): CanvasLabel {
     key: `warmup-${kind}`,
     text: '0',
     kind,
+    family: kind === 'marker' ? 'other' : null,
     worldX: 0,
     worldY: 0,
     sizePx: kind === 'hub' ? LABEL.hubSizePx : LABEL.fileSizePx,
@@ -56,7 +57,7 @@ function placeholderLabel(kind: CanvasLabel['kind']): CanvasLabel {
   };
 }
 
-/** The frame the warm-up layers are built from: no geometry, one hub label and one file label. */
+/** The frame the warm-up layers are built from: no geometry, one label of each kind. */
 function warmupFrame(): FrameBuffers {
   return {
     grid: new Float32Array(0),
@@ -74,8 +75,17 @@ function warmupFrame(): FrameBuffers {
       lineWidths: new Float32Array(0),
     },
     fileMarks: noHubs(),
+    badges: noHubs(),
     hubs: noHubs(),
-    labels: [placeholderLabel('hub'), placeholderLabel('file')],
+    live: {
+      sessions: [],
+      files: [],
+      markers: noHubs(),
+      spots: [],
+      trails: noLines(),
+      stops: noHubs(),
+    },
+    labels: [placeholderLabel('hub'), placeholderLabel('file'), placeholderLabel('marker')],
   };
 }
 

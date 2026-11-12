@@ -7,7 +7,7 @@ import type { FrameStyle } from './frameStyle';
 import { neighbourhoodOf } from './highlight';
 import { countLinksByKind, dashOf, encodeLinks, linkOpacity } from './linkEncoding';
 import { boxKey, nearBox, overviewLinks, prominentLinks } from './linkProminence';
-import { sevenFileScene, testLink } from './testScene';
+import { defaultPaint, sevenFileScene, testLink } from './testScene';
 import { computeVisibility } from './visibility';
 
 // 0 README-a/one co-change 0.9; 1 a/one-a/two used together 0.1 (below the 0.25 threshold);
@@ -25,6 +25,7 @@ const style: FrameStyle = {
   neighbourhood: null,
   selected: null,
   minStrength: 0.25,
+  view: defaultPaint(scene),
 };
 
 function visibilityAt(zoom: number) {

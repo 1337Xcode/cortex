@@ -16,11 +16,16 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   the last week, how many files agents have read, how many files and folders are indexed). Nothing
   is cut inside a word. A repository Cortex has learned nothing about says so, and the map shows
   its structure alone.
-- The overview panel on the left: every summary sentence, the pairs of files changed together most
-  often, the busiest files (by the tokens attributed to them, or by commits before agents worked on
-  any) and the files that need attention (a suspect fact). Each list shows five rows and then "Show
-  N more", and each row is a button that flies to its file and selects it. Each section collapses
-  to its title and count. On a narrow screen the overview is a bottom sheet opened from the top bar.
+- The overview panel on the left: the agent sessions running in the repository now, every summary
+  sentence, the strongest pairs of files changed together (by the link's strength, then its
+  commits, the order the summary's strongest pair is chosen by; each row shows its commits and
+  says "changed with mod.rs in 12 of 21 commits" on hover), the busiest files (by the tokens
+  attributed to them, or by commits before agents worked on any) and the files that need attention
+  (a suspect fact). Each list shows five rows and then "Show N more", and each row is a button that
+  flies to its file and selects it. Each section collapses to its title and count. The live
+  sessions open while one runs and say "No agent session is running in this repository",
+  collapsed, while none does. On a narrow screen the overview is a bottom sheet opened from the top
+  bar.
 - The graph. Shape says what a mark is and colour confirms it: folders are squares and files are
   hollow circles sized by their line count; a file with a suspect fact has a second ring (amber), a
   file an agent read or edited in the last 24 hours a filled centre (green), and a file no agent
@@ -30,6 +35,30 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   are drawn. Where many links are near the screen only the strongest few of each kind stay strong,
   and on the overview, until the person zooms in or picks a file, only the strongest few are drawn
   at all. The legend shows each shape with its count and one line on what it means.
+- Views. A switch beside the zoom (and the keys `1` to `5`) colours the same graph to answer one
+  question at a time; shapes keep their meaning in every view and only colours change. Default is
+  the look above. Fog lights the files agents have read and leaves the rest dim and thin, so a
+  repository no agent has worked in is all fog, on purpose. Heat steps the tokens attributed to
+  each file through four shades of the accent on a log scale from the fewest to the most any file
+  has. Coupling steps how many learned links each file has, of any kind and strength, the same
+  way. Recent lights the files an agent read or edited in the 24 hours before the map loaded. In
+  these four views a lit file is also filled with a share of its colour, and a folder drawn whole
+  takes the colour of its strongest file. The legend names the active view, says what its scale
+  means with its numbers, and counts the files in each step.
+- Live sessions. While an agent session runs in the repository, a diamond in its agent's colour
+  (one colour each for Claude Code, Codex, Cursor and Gemini, a shared grey for the rest) sits
+  around the file it worked on last, named with the agent and a short session id, and a line runs
+  back through the last ten files it worked on, fainter with each step. Zoomed out, a file drawn
+  inside a folder is marked at the folder. Under the pointer a marker says what the session is doing
+  ("Claude Code session 3f2a… is editing book.rs; before that it read mod.rs and payment.rs").
+  The daemon pushes the whole live state over a WebSocket at the page's own address, and the page
+  sends nothing back; a frame never moves the camera or the layout. A frame that breaks the
+  contract is dropped with a console warning. When the connection is lost the page says "Live view paused,
+  reconnecting", hides the markers rather than show them stale, and tries again after 1 s, doubling
+  up to 30 s.
+- Fact badges. Zoomed in far enough to read file names, a file with facts carries a small dot on
+  its rim, amber when one of them is suspect (that file also keeps its second ring); the count is
+  said on hover.
 - Level of detail. Zoomed out, a folder whose rings would be too small to read draws whole, as a
   translucent disc around its square, named with its file count ("orders · 25 files") once it is
   large enough to carry a name; links of its files are drawn to it. While rings are only a few
@@ -52,15 +81,21 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   count. Its strongest links of each kind and the facts anchored to it are open, as they answer the
   questions asked most (what usually changes with this file, and which rules apply to it). The
   commits its stored history names, in pages of ten ("11 to 20 of 34"), and each time Cortex named
-  it to an agent, with whether the agent then read or edited it, open when asked.
+  it to an agent, with whether the agent then read or edited it, open when asked. Its commits and
+  tokens say what they count on hover and keyboard focus: the commits are only those of the history
+  Cortex reads (its most recent commits, within an age, leaving out commits that changed too many
+  files, each limit as the daemon reports it), so 0 never reads as "never committed". "Open in
+  editor" opens the file in the editor the daemon names; the page shows the link only when its
+  scheme is not a web, script, data or file address.
 - Long text (paths, names, commit subjects) is cut at a path or word boundary with an ellipsis and
   shown whole on hover and on keyboard focus; nothing scrolls sideways.
 - On first open, one sentence says what the picture is. Once dismissed it stays dismissed (the
   browser's local storage remembers it), and the legend opens it again.
 - Every state says what it means and what to do next: loading, a failure with its cause, nothing
-  found by a search, and an empty map. The map's data does not say whether Cortex is still reading
-  the repository, so an empty map says that it may be; the page asks again every 5 seconds and
-  shows the map by itself once there are files.
+  found by a search, and an empty map. While the map is empty the page asks the daemon's health
+  every 5 seconds: while Cortex is still reading the repository it says so, and once it has
+  finished the page asks for the map again and shows it by itself; a repository Cortex finished
+  reading with no files says that plainly.
 - Text from the repository is shown as text. A path holding an invisible or bidirectional
   formatting character is refused; in commit subjects, refs and facts such characters show as
   `�`. If drawing the page fails, it shows the error instead of a blank page.
@@ -76,6 +111,7 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
 | `C`                                 | Centre on the selected file, or on the graph                       |
 | `+` and `-`                         | Zoom in and out by a factor of 1.3                                 |
 | `L`                                 | Show or hide the legend                                            |
+| `1` to `5`                          | Colour the map by the Default, Fog, Heat, Coupling or Recent view  |
 | Arrow keys                          | Pan, unless a search result has the focus                          |
 | Escape                              | Close the search results, or close the side panel and return focus |
 | Enter on a folder of the breadcrumb | Open that folder, filling the view, and keep the file selected     |
@@ -110,20 +146,21 @@ only the token names (`p-sm`, `h-control`, `text-small`, `bg-primary`) onto the 
 
 ## What is here
 
-| Path              | Holds                                                                                      |
-| ----------------- | ------------------------------------------------------------------------------------------ |
-| `src/api/`        | One client per endpoint, each with a guard that refuses what the contract forbids          |
-| `src/state/`      | The Zustand store: load states, the selected and hovered file, the link strength threshold |
-| `src/layout/`     | The deterministic radial layout and the level-of-detail helper, both pure functions        |
-| `src/map/`        | The deck.gl canvas: encoders from the layout's typed arrays, label placement, the camera   |
-| `src/controls/`   | Fit, Center and zoom, the legend, the search box and the shortcut table                    |
-| `src/panels/`     | The summary strip, the overview panel and the file panel, with their sections and lists    |
-| `src/components/` | The shadcn/ui components (button, tooltip, collapsible) and text cut to its box            |
-| `src/fonts/`      | Loading the two bundled fonts, which the canvas waits for                                  |
-| `src/intro/`      | The sentence shown on first open                                                           |
-| `src/theme/`      | Design tokens for both themes (every colour, size, opacity and timing) and their CSS       |
-| `src/text/`       | The map's words, cutting text at a boundary, measuring it, formatting numbers and dates    |
-| `e2e/`            | Playwright checks driven with the keyboard, the measurement on 100,000 files, screenshots  |
+| Path              | Holds                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| `src/api/`        | One client per endpoint, and the live view's socket, each with a guard against the contract |
+| `src/state/`      | The Zustand store: load states, the selected and hovered file, the link strength threshold  |
+| `src/layout/`     | The deterministic radial layout and the level-of-detail helper, both pure functions         |
+| `src/map/`        | The deck.gl canvas: encoders from the layout's typed arrays, label placement, the camera    |
+| `src/views/`      | The views, one file each and one registry line: each sorts files into tones with a legend   |
+| `src/controls/`   | Fit, Center and zoom, the legend, the search box and the shortcut table                     |
+| `src/panels/`     | The summary strip, the overview panel and the file panel, with their sections and lists     |
+| `src/components/` | The shadcn/ui components (button, tooltip, collapsible) and text cut to its box             |
+| `src/fonts/`      | Loading the two bundled fonts, which the canvas waits for                                   |
+| `src/intro/`      | The sentence shown on first open                                                            |
+| `src/theme/`      | Design tokens for both themes (every colour, size, opacity and timing) and their CSS        |
+| `src/text/`       | The map's words, cutting text at a boundary, measuring it, formatting numbers and dates     |
+| `e2e/`            | Playwright checks driven with the keyboard, the measurement on 100,000 files, screenshots   |
 
 The layout turns a sorted list of paths into positions. The same set of paths always gives the
 same bytes, and a change to a file's contents moves nothing. Only adding or removing files moves
@@ -161,16 +198,19 @@ area), on text below 12 px and on text not set in Geist; it also delays the font
 that the canvas waits for them. `e2e/steps.spec.ts` answers the questions the map is for with the
 keyboard alone, counts the keys and screens each takes, asserts both and prints them as a table.
 `e2e/colors.spec.ts` compares every colour token as Chromium paints it with the canvas's channels.
+`e2e/live.spec.ts` answers the live view's socket from inside the test and pushes frames: the
+markers move and the camera does not, the live sessions list and fly, a refused frame is dropped,
+and a lost connection pauses and comes back.
 Setting `CORTEX_SHOTS_DIR` makes `e2e/shots.spec.ts` write screenshots of every state at 1440x900
 and 390x844 in both themes into that folder.
 
 ## The first load
 
-Before the map can draw, the browser's GPU driver compiles and links its five shader programs
-(circles, squares, dashed lines, glyphs and label backings). deck.gl links them one at a time and
+Before the map can draw, the browser's GPU driver compiles and links its six shader programs
+(circles, squares, the live markers' diamonds, dashed lines, glyphs and label backings). deck.gl links them one at a time and
 waits for each, and on Direct3D drivers each takes a few hundred milliseconds. While the snapshot
 loads, the page therefore builds every layer the map uses, empty and invisible, on a hidden canvas
-whose layers start all five links at once (`src/map/prelink.ts`), so the driver compiles them side
+whose layers start all six links at once (`src/map/prelink.ts`), so the driver compiles them side
 by side while the page waits for the daemon. The browser keeps linked programs, and the map's own
 canvas then links the same programs from that cache. On a Windows laptop (Intel Iris Xe, Direct3D
 11, Chromium 158), at 100,000 files and in fresh browsers, this took the first load from 1.83 to

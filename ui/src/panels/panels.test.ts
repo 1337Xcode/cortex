@@ -17,7 +17,11 @@ const LEARNED: MapSummary = {
   strongest_pair: { from: 1, to: 2, commits: 31 },
   busiest_folder: { path: 'src/orders', tokens: 52310 },
   window_days: 7,
+  history: { max_commits: 5000, max_age_days: 365, max_files_per_commit: 30 },
 };
+
+/** The seven-file snapshot holding the summary's strongest pair, a/one.rs and a/two.rs. */
+const PAIRED = sevenFileSnapshot([{ from: 1, to: 2, kind: 'co_change', weight: 0.8, commits: 31 }]);
 
 function plain(sentence: SummarySentence): string {
   return sentence.parts
@@ -27,7 +31,7 @@ function plain(sentence: SummarySentence): string {
 
 describe('summarySentences', () => {
   it('says what is indexed, read, coupled and busiest, in plain sentences', () => {
-    const text = summarySentences(LEARNED, sevenFileSnapshot());
+    const text = summarySentences(LEARNED, PAIRED);
     expect(text.ok ? text.sentences.map(plain) : text.error).toEqual([
       'Strongest coupling: [a/one.rs] and [a/two.rs] changed together in 31 commits.',
       'Most worked on in the last 7 days: src/orders/ (52,310 tokens attributed).',
@@ -37,7 +41,7 @@ describe('summarySentences', () => {
   });
 
   it('gives each sentence a short form for the one-line strip', () => {
-    const text = summarySentences(LEARNED, sevenFileSnapshot());
+    const text = summarySentences(LEARNED, PAIRED);
     const short = (sentence: SummarySentence): string =>
       plain({ ...sentence, parts: sentence.short });
     expect(text.ok ? text.sentences.map(short) : text.error).toEqual([
@@ -81,6 +85,18 @@ describe('summarySentences', () => {
     );
     expect(text.ok ? 'shown' : text.error.code).toBe('bad_range');
   });
+
+  it('refuses a pair the map holds no co-change link for, or holds with other commits', () => {
+    // Both files exist, but the map links them only as used together, or with 30 commits, not 31.
+    const usedTogether = sevenFileSnapshot([testLink(1, 2, 'used_together', 0.8)]);
+    const otherCount = sevenFileSnapshot([
+      { from: 1, to: 2, kind: 'co_change', weight: 0.8, commits: 30 },
+    ]);
+    for (const snapshot of [sevenFileSnapshot(), usedTogether, otherCount]) {
+      const text = summarySentences(LEARNED, snapshot);
+      expect(text.ok ? 'shown' : text.error.code).toBe('bad_range');
+    }
+  });
 });
 
 describe('strongestLinks', () => {
@@ -99,7 +115,15 @@ describe('strongestLinks', () => {
 });
 
 describe('detailFor', () => {
-  const detail = { version: 1 as const, id: 4, path: 'b/mid.rs', facts: [], history: [], told: [] };
+  const detail = {
+    version: 1 as const,
+    id: 4,
+    path: 'b/mid.rs',
+    facts: [],
+    history: [],
+    told: [],
+    editor_url: null,
+  };
 
   it('shows the detail of the panel file only', () => {
     expect(detailFor({ status: 'ready', detail }, 4)).toEqual({ status: 'ready', detail });

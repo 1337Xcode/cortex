@@ -155,6 +155,39 @@ export const NEUTRAL = {
 /** The lightness and chroma the accent and every status hue share in each theme. */
 export const SIGNAL = { dark: { l: 0.77, c: 0.12 }, light: { l: 0.52, c: 0.11 } } as const;
 
+/**
+ * Lightness of each step of the views' sequential scale, weakest to strongest: the accent's hue
+ * at its chroma, in equal steps of 0.08, from the dimmest that still stands 3:1 off the ground up
+ * to the accent's own lightness (dark) or down past it (light).
+ */
+const SCALE_L = { dark: [0.53, 0.61, 0.69, 0.77], light: [0.64, 0.56, 0.48, 0.4] } as const;
+
+/** The views' sequential scale: four colours, weakest to strongest. */
+export type ScaleColors = readonly [Oklch, Oklch, Oklch, Oklch];
+
+/** The agent families the live markers tell apart; every other agent shares the neutral `other`. */
+export const AGENT_FAMILIES = ['claude', 'codex', 'cursor', 'gemini', 'other'] as const;
+
+/** One of `AGENT_FAMILIES`. */
+export type AgentFamily = (typeof AGENT_FAMILIES)[number];
+
+/**
+ * The hue of each named agent family, at the signal lightness: rose, cyan, blue and lime, each at
+ * least 35 degrees from the accent (290), the status hues (75, 145) and red (25).
+ */
+export const AGENT_HUE: Readonly<Record<Exclude<AgentFamily, 'other'>, number>> = {
+  claude: 345,
+  codex: 200,
+  cursor: 250,
+  gemini: 110,
+};
+
+/**
+ * The agent families' chroma per theme, the same for every family: the signal chroma in the dark
+ * theme, and lower in the light one, where cyan at the signal lightness has no more in sRGB.
+ */
+const AGENT_CHROMA = { dark: SIGNAL.dark.c, light: 0.085 } as const;
+
 /** The colours of the canvas: neutral by default, colour only where it means something. */
 export interface CanvasColors {
   /** The faint dot grid behind the graph. */
@@ -175,6 +208,12 @@ export interface CanvasColors {
   readonly suspect: Oklch;
   /** Folder and file names drawn on the canvas. */
   readonly label: Oklch;
+  /** A file the Fog view lights up: one an agent has read. */
+  readonly lit: Oklch;
+  /** The views' sequential scale, weakest to strongest (the accent's hue at its chroma). */
+  readonly scale: ScaleColors;
+  /** A file's fact badge; a badge with a suspect fact is drawn in `suspect`. */
+  readonly badge: Oklch;
 }
 
 /** The colours of one theme. Text pairs meet WCAG AA (4.5:1), marks 3:1 (see the tests). */
@@ -195,6 +234,8 @@ export interface ThemeColors {
   /** An error. */
   readonly danger: Oklch;
   readonly canvas: CanvasColors;
+  /** Each agent family's live marker, trail and name. */
+  readonly agents: Readonly<Record<AgentFamily, Oklch>>;
 }
 
 /** The accent and status colours of a theme at its signal lightness and chroma. */
@@ -210,6 +251,26 @@ function signals(theme: keyof typeof SIGNAL): {
     recent: oklch(l, c, STATUS_HUE.recent),
     suspect: oklch(l, c, STATUS_HUE.suspect),
     danger: oklch(l, c, DANGER_HUE),
+  };
+}
+
+/** The views' sequential scale of a theme. */
+function scaleOf(theme: keyof typeof SIGNAL): ScaleColors {
+  const [a, b, c, d] = SCALE_L[theme];
+  const at = (l: number): Oklch => oklch(l, SIGNAL[theme].c, ACCENT_HUE);
+  return [at(a), at(b), at(c), at(d)];
+}
+
+/** The agent family colours of a theme; `other` is the neutral it is given. */
+function agentsOf(theme: keyof typeof SIGNAL, other: Oklch): Record<AgentFamily, Oklch> {
+  const { l } = SIGNAL[theme];
+  const c = AGENT_CHROMA[theme];
+  return {
+    claude: oklch(l, c, AGENT_HUE.claude),
+    codex: oklch(l, c, AGENT_HUE.codex),
+    cursor: oklch(l, c, AGENT_HUE.cursor),
+    gemini: oklch(l, c, AGENT_HUE.gemini),
+    other,
   };
 }
 
@@ -244,7 +305,11 @@ export const DARK_COLORS: ThemeColors = (() => {
       recent,
       suspect,
       label: step(n, 11),
+      lit: step(n, 12),
+      scale: scaleOf('dark'),
+      badge: step(n, 11),
     },
+    agents: agentsOf('dark', step(n, 11)),
   };
 })();
 
@@ -272,7 +337,11 @@ export const LIGHT_COLORS: ThemeColors = (() => {
       recent,
       suspect,
       label: step(n, 11),
+      lit: step(n, 12),
+      scale: scaleOf('light'),
+      badge: step(n, 11),
     },
+    agents: agentsOf('light', step(n, 11)),
   };
 })();
 
@@ -300,13 +369,20 @@ const CANVAS_ROLES = [
   'recent',
   'suspect',
   'label',
+  'lit',
+  'badge',
 ] as const;
 
-/** Every colour of a theme by role name, the canvas roles prefixed `canvas.`. */
+/**
+ * Every colour of a theme by role name: the canvas roles prefixed `canvas.`, the scale's steps
+ * `canvas.scale.1` to `canvas.scale.4`, the agent families `agent.`.
+ */
 export function colorRoles(colors: ThemeColors): [string, Oklch][] {
   return [
     ...PAGE_ROLES.map((role): [string, Oklch] => [role, colors[role]]),
     ...CANVAS_ROLES.map((role): [string, Oklch] => [`canvas.${role}`, colors.canvas[role]]),
+    ...colors.canvas.scale.map((color, i): [string, Oklch] => [`canvas.scale.${i + 1}`, color]),
+    ...AGENT_FAMILIES.map((family): [string, Oklch] => [`agent.${family}`, colors.agents[family]]),
   ];
 }
 
@@ -351,6 +427,16 @@ export const OPACITY = {
   labelDimmed: 0.4,
   /** The backing behind canvas labels, so they read over lines. */
   labelBacking: 0.82,
+  /**
+   * How far a tinting view fills a file towards its tone's colour, from the ground: enough to
+   * read the scale at a glance, little enough that the outline and the recent dot stay clear.
+   */
+  toneFill: 0.3,
+  /** A live marker's diamond fill, in its agent's colour, so the file beneath still shows. */
+  markerFill: 0.16,
+  /** A trail's newest step; each older one fades evenly down to `trailOldest`. */
+  trailNewest: 0.5,
+  trailOldest: 0.1,
 } as const;
 
 /** Sizes on the canvas. Units say which are pixels and which are world units of the layout. */
@@ -399,6 +485,19 @@ export const CANVAS_SIZE = {
   gridDotRadiusPx: 0.75,
   /** How near the pointer must come to a mark or a link to point at it, in pixels. */
   pickRadiusPx: 4,
+  /** A live marker's diamond clears its file's circle by this many pixels. */
+  markerGapPx: 3,
+  /** A live marker's diamond is never smaller than this, half its diagonal in pixels. */
+  markerMinPx: 7,
+  /** Each further session on the same spot draws its diamond this many pixels larger. */
+  markerStackPx: 4,
+  markerStrokePx: 2,
+  trailWidthPx: 1.25,
+  /** The dot on each earlier file of a session's trail, in pixels. */
+  trailStopPx: 2,
+  /** A fact badge on a file's rim, in pixels, with a ground-coloured edge to part it from the rim. */
+  badgeRadiusPx: 3,
+  badgeEdgePx: 1,
 } as const;
 
 /** Labels drawn on the canvas, in the same family and at the same smallest size as the page. */
@@ -407,6 +506,13 @@ export const LABEL = {
   fileSizePx: TYPE.small.sizePx,
   hubWeight: WEIGHT.strong,
   fileWeight: WEIGHT.regular,
+  /** A live marker's name: its agent and short session id, in the agent's colour. */
+  markerWeight: WEIGHT.strong,
+  /**
+   * The most live markers named over other nodes in one frame (zoomed out, on folders' discs);
+   * more would bury the folders' names, and every session is named in its row and on hover.
+   */
+  markerOverMax: 6,
   /** Space between a node and its label, in pixels. */
   gapPx: SPACE.xs,
   /**
@@ -470,3 +576,15 @@ export const SEARCH_DEBOUNCE_MS = 120;
 
 /** While the map has no files, the page asks the daemon again this often, in milliseconds. */
 export const EMPTY_RECHECK_MS = 5000;
+
+/**
+ * The live view: a lost connection is tried again after `reconnectFirstMs`, doubling each time up
+ * to `reconnectMaxMs`; a session id is shown by its first `shortIdChars` characters; a marker's
+ * explanation names at most `namedBefore` of the files the session worked on before its newest.
+ */
+export const LIVE = {
+  reconnectFirstMs: 1000,
+  reconnectMaxMs: 30_000,
+  shortIdChars: 4,
+  namedBefore: 3,
+} as const;

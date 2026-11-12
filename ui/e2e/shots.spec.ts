@@ -1,12 +1,21 @@
 // Screenshots of every state of the map at 1440x900 and 390x844 in both themes, written to the
 // folder named by CORTEX_SHOTS_DIR for a person to look at: first open, the overview, a search, a
 // selected file with every section open, the legend, nothing found, the cold, empty, loading and
-// failed states, and 100,000 files. Skipped when that variable is unset.
+// failed states, each view with its legend, three live sessions, the paused live view, and
+// 100,000 files with and without twenty sessions. Skipped when that variable is unset.
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { coldFixture, largeFixture, smallFixture, type Fixture } from './fixtures';
+import {
+  coldFixture,
+  largeFixture,
+  manySessions,
+  READING_HEALTH,
+  smallFixture,
+  threeSessions,
+  type Fixture,
+} from './fixtures';
 import { nextFrames, openMap } from './helpers';
-import { MAP_URL, serveFixture } from './serve';
+import { liveChannel, MAP_URL, serveFixture } from './serve';
 
 const SHOTS_DIR = process.env['CORTEX_SHOTS_DIR'] ?? '';
 const SIZES = [
@@ -74,10 +83,15 @@ for (const size of SIZES) {
       await shoot(page, `${prefix}-08-cold`);
       const empty: Fixture = { ...coldFixture(), graph: { version: 1, files: [], links: [] } };
       await page.unrouteAll();
+      await serveFixture(page, { ...empty, health: READING_HEALTH });
+      await page.goto(MAP_URL);
+      await expect(page.getByText('Cortex is still reading this repository.')).toBeVisible();
+      await shoot(page, `${prefix}-09-empty-reading`);
+      await page.unrouteAll();
       await serveFixture(page, empty);
       await page.goto(MAP_URL);
-      await expect(page.getByText('No files in the map yet.')).toBeVisible();
-      await shoot(page, `${prefix}-09-empty`);
+      await expect(page.getByText('This repository has no files to map.')).toBeVisible();
+      await shoot(page, `${prefix}-09-empty-finished`);
       let release = (): void => undefined;
       const held = new Promise<void>((resolve) => {
         release = resolve;
@@ -93,6 +107,57 @@ for (const size of SIZES) {
       await expect(page.getByRole('alert')).toBeVisible();
       await shoot(page, `${prefix}-11-failed`);
       expect(record.errors.filter((error) => !error.includes('500'))).toEqual([]);
+    });
+
+    test(`${prefix}: views and live sessions`, async ({ page }) => {
+      await page.setViewportSize(size);
+      const nowMs = Date.now();
+      const fixture: Fixture = { ...smallFixture(nowMs), live: threeSessions(nowMs) };
+      const record = await openMap(page, fixture, scheme);
+      if (!isNarrow) {
+        await expect(page.getByTestId('overview-live').getByRole('listitem')).toHaveCount(3);
+      }
+      await shoot(page, `${prefix}-15-live`);
+      for (const [key, name] of [
+        ['2', 'fog'],
+        ['3', 'heat'],
+        ['4', 'coupling'],
+        ['5', 'recent'],
+      ] as const) {
+        await page.keyboard.press(key);
+        if (key === '2') await page.keyboard.press('l');
+        await shoot(page, `${prefix}-16-view-${name}`);
+      }
+      await page.keyboard.press('l');
+      await page.keyboard.press('1');
+      await page.keyboard.press('/');
+      await page.keyboard.type('book');
+      await expect(page.locator('.search-popover')).not.toContainText('Searching.');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('.file-panel')).toBeVisible();
+      await shoot(page, `${prefix}-17-live-selected`);
+      await page.keyboard.press('Escape');
+      const live = liveChannel(page);
+      live.setRefusing(true);
+      live.closeAll();
+      await expect(page.getByTestId('live-paused')).toBeVisible();
+      await shoot(page, `${prefix}-18-live-paused`);
+      expect(record.errors).toEqual([]);
+    });
+
+    test(`${prefix}: 100,000 files with twenty sessions, in Heat`, async ({ page }) => {
+      test.setTimeout(240_000);
+      await page.setViewportSize(size);
+      const large: Fixture = largeFixture(100_000);
+      const record = await openMap(
+        page,
+        { ...large, live: manySessions(20, 100_000, Date.now()) },
+        scheme,
+      );
+      await shoot(page, `${prefix}-19-large-live`);
+      await page.keyboard.press('3');
+      await shoot(page, `${prefix}-20-large-heat`);
+      expect(record.errors).toEqual([]);
     });
 
     test(`${prefix}: 100,000 files`, async ({ page }) => {

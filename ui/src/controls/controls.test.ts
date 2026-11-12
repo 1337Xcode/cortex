@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { sevenFileScene } from '../map/testScene';
 import { countOf, formatCount, formatDate, formatPercent } from '../text/format';
-import { shortcutFor, type KeyInput } from './shortcuts';
+import { shortcutFor, viewIndexFor, type KeyInput } from './shortcuts';
 import { checkResults, stateForText } from './useSearch';
 
 function key(name: string, change: Partial<KeyInput> = {}): KeyInput {
@@ -36,6 +36,21 @@ describe('shortcutFor', () => {
     expect(shortcutFor(key('z', { ctrlKey: true }))).toBeNull();
     expect(shortcutFor(key('+', { metaKey: true }))).toBeNull();
     expect(shortcutFor(key('q'))).toBeNull();
+  });
+});
+
+describe('viewIndexFor', () => {
+  it('picks views 1 to 5 by their digit, and nothing past the count, in a field or with a modifier', () => {
+    expect(['1', '3', '5', '6', '0', 'a'].map((name) => viewIndexFor(key(name), 5))).toEqual([
+      0,
+      2,
+      4,
+      null,
+      null,
+      null,
+    ]);
+    expect(viewIndexFor(key('2', { isInField: true }), 5)).toBeNull();
+    expect(viewIndexFor(key('2', { altKey: true }), 5)).toBeNull();
   });
 });
 

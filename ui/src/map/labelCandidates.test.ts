@@ -9,7 +9,7 @@ import { neighbourhoodOf } from './highlight';
 import { focusHubs } from './hubEncoding';
 import { chooseLabels, spotOf, type LabelInputs } from './labelCandidates';
 import { buildScene } from './scene';
-import { sevenFileScene, testFile, testLink } from './testScene';
+import { defaultPaint, sevenFileScene, testFile, testLink } from './testScene';
 import { computeVisibility } from './visibility';
 
 const scene = sevenFileScene([testLink(0, 4, 'co_change', 0.9)]);
@@ -26,6 +26,7 @@ function inputs(zoom: number, focus: number | null): LabelInputs {
     neighbourhood,
     selected: null,
     minStrength: 0.25,
+    view: defaultPaint(scene),
   };
   return {
     scene,
@@ -37,6 +38,7 @@ function inputs(zoom: number, focus: number | null): LabelInputs {
     neighbourhood,
     markedHubs: focusHubs(scene, visibility, style),
     measure: (text) => text.length * 6,
+    markers: [],
   };
 }
 
@@ -73,6 +75,24 @@ describe('chooseLabels', () => {
     for (const label of labels) expect(label.isDimmed, label.text).toBe(!lit.has(label.key));
   });
 
+  it('names a live marker on a folder drawn whole, in its agent family, before any folder', () => {
+    // At zoom 0.5 folder a (hub 1) is drawn whole, a disc of 15 x 0.8 x 1.41 = 17 pixels: every
+    // side of a 7-pixel marker at its centre lies on the disc, yet the marker is named, second
+    // only to the focus, and the folder's own name keeps clear of it.
+    const marker = {
+      key: 'sa',
+      text: 'Claude Code 3f2a…',
+      family: 'claude' as const,
+      file: null,
+      worldX: scene.layout.hubX[1] ?? 0,
+      worldY: scene.layout.hubY[1] ?? 0,
+      radiusPx: 7,
+    };
+    const labels = chooseLabels({ ...inputs(0.5, null), markers: [marker] });
+    expect(labels[0]).toMatchObject({ key: 'sa', kind: 'marker', family: 'claude' });
+    expect(labels.map((label) => label.text)).toContain('a · 2 files');
+  });
+
   it('names the focus file in a dense ring, where every side of it covers another file', () => {
     // Forty files in one folder at zoom 2 (rings 40 pixels apart); "f20.rs" at 8 pixels a
     // character is 48 pixels wide, so each of its four spots covers a neighbouring circle, and a
@@ -90,6 +110,7 @@ describe('chooseLabels', () => {
       neighbourhood,
       selected: null,
       minStrength: 0.25,
+      view: defaultPaint(ring),
     };
     const labels = chooseLabels({
       scene: ring,
@@ -101,6 +122,7 @@ describe('chooseLabels', () => {
       neighbourhood,
       markedHubs: focusHubs(ring, visibility, style),
       measure: (text) => text.length * 8,
+      markers: [],
     });
     expect(labels[0]?.text).toBe('f20.rs');
   });

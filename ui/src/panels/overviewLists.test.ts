@@ -27,10 +27,25 @@ function snapshot(files: GraphFile[]): GraphSnapshot {
 }
 
 describe('overview lists', () => {
-  it('lists co-change pairs by commits, then weight; other kinds are left out', () => {
-    // b+c has 7 commits; a+c and a+b have 4 each, a+c the heavier (0.9 against 0.5).
+  it('lists co-change pairs by weight, then commits, then ids; other kinds are left out', () => {
+    // Weights: a+c 0.9, a+b 0.5, b+c 0.3. b+c has the most commits (7) but the least weight; the
+    // used-together a+d (0.8) is no co-change pair.
     const pairs = coupledPairs(snapshot(FILES)).map((pair) => `${pair.from.path}+${pair.to.path}`);
-    expect(pairs).toEqual(['b.rs+c.rs', 'a.rs+c.rs', 'a.rs+b.rs']);
+    expect(pairs).toEqual(['a.rs+c.rs', 'a.rs+b.rs', 'b.rs+c.rs']);
+  });
+
+  it('breaks equal weights by commits, then by the files ids', () => {
+    // Three pairs of weight 0.5: a+c and b+c with 4 commits, a+b with 6. a+b first (more
+    // commits); a+c before b+c (from 0 before from 1).
+    const links: GraphLink[] = [
+      { from: 1, to: 2, kind: 'co_change', weight: 0.5, commits: 4 },
+      { from: 0, to: 2, kind: 'co_change', weight: 0.5, commits: 4 },
+      { from: 0, to: 1, kind: 'co_change', weight: 0.5, commits: 6 },
+    ];
+    const pairs = coupledPairs({ version: 1, files: FILES, links }).map(
+      (pair) => `${pair.from.path}+${pair.to.path}`,
+    );
+    expect(pairs).toEqual(['a.rs+b.rs', 'a.rs+c.rs', 'b.rs+c.rs']);
   });
 
   it('ranks the busiest files by tokens, ties by path', () => {

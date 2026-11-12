@@ -8,7 +8,7 @@ import { expect, test } from '@playwright/test';
 import { fitCamera, toScreen } from '../src/map/camera';
 import { buildScene } from '../src/map/scene';
 import { DARK_COLORS, SIZE } from '../src/theme/tokens';
-import { coldFixture, smallFixture } from './fixtures';
+import { coldFixture, READING_HEALTH, smallFixture } from './fixtures';
 import { MAP_URL, serveFixture } from './serve';
 import {
   chromeInsets,
@@ -65,13 +65,13 @@ test.describe('ten-file repository', () => {
     page,
   }) => {
     const overview = page.getByRole('complementary', { name: 'Overview' });
-    // Co-change pairs by commits: book+mod 12, book+payment 9, book+orders 6, invoice+tax 5,
-    // payment+orders 3.
+    // Co-change pairs by weight, as the summary ranks them: book+mod 0.9 (12 commits),
+    // book+payment 0.8 (9), invoice+tax 0.7 (5), book+orders 0.55 (6), payment+orders 0.3 (3).
     await expect(overview.getByTestId('overview-pairs').getByRole('listitem')).toHaveText([
       'book.rs and mod.rs12 commits',
       'book.rs and payment.rs9 commits',
-      'book.rs and orders.rs6 commits',
       'invoice.rs and tax.rs5 commits',
+      'book.rs and orders.rs6 commits',
       'payment.rs and orders.rs3 commits',
     ]);
     // Seven files have tokens; five show, then "Show 2 more".
@@ -162,6 +162,23 @@ test.describe('ten-file repository', () => {
     await expect(panel.getByTestId('panel-history')).toHaveText(
       "History0No commit history read for this file yet; Cortex fills it in as it reads the repository's history.",
     );
+  });
+
+  test('the panel opens its file in an editor and says what its commits count', async ({
+    page,
+  }) => {
+    await searchAndPick(page, 'book');
+    const panel = filePanel(page);
+    await expect(panel.getByRole('link', { name: 'Open in editor' })).toHaveAttribute(
+      'href',
+      'vscode://file/C:/repo/src/orders/book.rs:1',
+    );
+    const commits = panel.locator('dd', { hasText: '21' });
+    const meaning =
+      'Commits Cortex read that changed this file: the last 5,000 commits within 365 days, leaving out commits that changed more than 30 files.';
+    await expect(commits).toHaveAccessibleDescription(meaning);
+    await commits.locator('.number-explained').focus();
+    await expect(page.getByRole('tooltip')).toHaveText(meaning);
   });
 
   test('Escape closes the panel and returns focus to the search box', async ({ page }) => {
@@ -301,24 +318,68 @@ test.describe('first open', () => {
 });
 
 test.describe('empty repository', () => {
-  test('says Cortex may still be reading it, and shows the map once files arrive', async ({
+  const empty = { ...coldFixture(), graph: { version: 1 as const, files: [], links: [] } };
+
+  test('says Cortex is still reading it, and shows the map once it has', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    const foreign = await serveFixture(page, { ...empty, health: READING_HEALTH });
+    await page.goto(MAP_URL);
+    await expect(page.getByRole('status')).toHaveText('Cortex is still reading this repository.');
+    await expect(
+      page.getByText(/^The map appears here by itself once it has finished/),
+    ).toBeVisible();
+    // The reading ends: the health says so, the page asks for the map again by itself (it asks
+    // every 5 seconds), and shows it with a summary of the files it now shows.
+    await serveFixture(page, smallFixture(Date.now()));
+    await expect(page.getByTestId('map-status')).toBeAttached({ timeout: 15_000 });
+    await expect(page.getByTestId('summary-indexed')).toHaveText('10 files in 5 folders.');
+    record = { errors, foreign };
+  });
+
+  test('says plainly that there is nothing to map once Cortex has finished reading', async ({
     page,
   }) => {
-    const empty = { ...coldFixture(), graph: { version: 1 as const, files: [], links: [] } };
     const errors: string[] = [];
     page.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text());
     });
     const foreign = await serveFixture(page, empty);
     await page.goto(MAP_URL);
-    await expect(page.getByRole('status')).toHaveText('No files in the map yet.');
-    await expect(page.getByText(/^Cortex may still be reading this repository/)).toBeVisible();
-    // The index fills: the next answer has files, and the page shows the map by itself (it asks
-    // again every 5 seconds), with a summary of the files it now shows.
-    await serveFixture(page, smallFixture(Date.now()));
-    await expect(page.getByTestId('map-status')).toBeAttached({ timeout: 15_000 });
-    await expect(page.getByTestId('summary-indexed')).toHaveText('10 files in 5 folders.');
+    await expect(page.getByRole('status')).toHaveText('This repository has no files to map.');
+    await expect(
+      page.getByText(/^Cortex has finished reading it and found no files/),
+    ).toBeVisible();
+    await expect(page.getByText(/still reading/)).toHaveCount(0);
     record = { errors, foreign };
+  });
+});
+
+test.describe('the editor link and a file no commit Cortex read changed', () => {
+  test('a link the page may not follow is not shown, and zero commits is not "never"', async ({
+    page,
+  }) => {
+    const cold = coldFixture();
+    const detail = {
+      version: 1,
+      id: 1,
+      path: 'src/cli.rs',
+      facts: [],
+      history: [],
+      told: [],
+      editor_url: 'javascript:alert(1)',
+    };
+    record = await openMap(page, { ...cold, details: new Map([[1, detail]]) });
+    await searchAndPick(page, 'cli.rs');
+    const panel = filePanel(page);
+    await expect(panel.getByTestId('panel-facts')).toContainText('No facts are recorded');
+    await expect(panel.getByRole('link')).toHaveCount(0);
+    await expect(panel.locator('dd', { hasText: /^0$/ }).first()).toBeVisible();
+    await expect(panel.locator('dd').nth(2)).toHaveAccessibleDescription(
+      /^Commits Cortex read that changed this file: .*\. None of them changed it; older changes, and changes in larger commits, are not counted\.$/,
+    );
   });
 });
 

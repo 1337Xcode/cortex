@@ -2,7 +2,8 @@
 // much agents have read, the strongest coupled pair and the busiest folder. A cold repository gets
 // one sentence saying the map shows its structure alone. Each sentence has a short form for the
 // one-line strip. Ids the summary names are checked against the snapshot here, so a summary from
-// another moment of the store is refused, not shown.
+// another moment of the store is refused, not shown: the strongest pair must be one of the map's
+// co-change links, with the same commits.
 import type { GraphSnapshot } from '../api/graph';
 import type { ApiError } from '../api/guard';
 import type { MapSummary } from '../api/summary';
@@ -38,7 +39,14 @@ function pairSentence(
   if (pair === null) return null;
   const from = fileRef(snapshot, pair.from);
   const to = fileRef(snapshot, pair.to);
-  if (from === null || to === null) return 'bad';
+  const isLink = snapshot.links.some(
+    (link) =>
+      link.kind === 'co_change' &&
+      link.from === pair.from &&
+      link.to === pair.to &&
+      link.commits === pair.commits,
+  );
+  if (from === null || to === null || !isLink) return 'bad';
   const commits = countOf(pair.commits, 'commit');
   return {
     key: 'pair',
@@ -97,7 +105,7 @@ export function summarySentences(summary: MapSummary, snapshot: GraphSnapshot): 
   }
   const pair = pairSentence(summary, snapshot);
   if (pair === 'bad') {
-    const message = 'the summary names a file the map does not have';
+    const message = 'the summary names a pair of files the map does not link';
     return { ok: false, error: { code: 'bad_range', message } };
   }
   // Most useful first: the strip shows one line, and the first sentence is the one always seen.

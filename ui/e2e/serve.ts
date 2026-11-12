@@ -1,10 +1,12 @@
 // Serves the built page and a fixture's API to a Playwright page without a server: every request
 // to the map's origin is answered from `dist/` or the fixture, under the same `/<token>/` prefix
-// the daemon uses. Any request to another origin is aborted and recorded, so a test can assert
-// that nothing left the page's origin. Every response carries the daemon's security headers, so the
-// page is checked under the same content security policy it runs under for real.
+// the daemon uses, and the live view's WebSocket is answered by a stand-in that sends the
+// fixture's live state on connect and whatever frames a test pushes after. Any request to another
+// origin is aborted and recorded, so a test can assert that nothing left the page's origin. Every
+// response carries the daemon's security headers, so the page is checked under the same content
+// security policy it runs under for real.
 import { join } from 'node:path';
-import type { Page } from '@playwright/test';
+import type { Page, WebSocketRoute } from '@playwright/test';
 import type { Fixture, FixtureSymbol, Json } from './fixtures';
 
 /** The origin and token the page is served under. */
@@ -103,7 +105,7 @@ function symbolHit(
 
 function emptyDetail(fixture: Fixture, id: number): Json {
   const path = fixture.graph.files[id]?.path ?? '';
-  return { version: 1, id, path, facts: [], history: [], told: [] };
+  return { version: 1, id, path, facts: [], history: [], told: [], editor_url: null };
 }
 
 /** The body for one API path, or null for a 404. */
@@ -115,6 +117,7 @@ function apiBody(
 ): string | null {
   if (path === 'api/graph') return bodies.graph;
   if (path === 'api/summary') return bodies.summary;
+  if (path === 'api/health') return JSON.stringify(fixture.health);
   if (path === 'api/search') return JSON.stringify(searchFixture(fixture, search.get('q') ?? ''));
   const match = /^api\/file\/(\d+)$/.exec(path);
   if (match === null) return null;
@@ -123,8 +126,66 @@ function apiBody(
   return JSON.stringify(fixture.details.get(id) ?? emptyDetail(fixture, id));
 }
 
+/** The live view's stand-in server of one page, which a test drives. */
+export interface LiveChannel {
+  /** Sends `frame` as text to every socket the page holds open. */
+  readonly push: (frame: Json | string) => void;
+  /** Closes every open socket, as a daemon that stopped would. */
+  readonly closeAll: () => void;
+  /**
+   * While true, a socket the page opens is closed at once, so the live view stays paused; while
+   * false, it is answered with the last state pushed (the fixture's at first).
+   */
+  readonly setRefusing: (isRefusing: boolean) => void;
+  /** How many sockets the page has opened. */
+  readonly openedCount: () => number;
+}
+
+/** Each served page's live channel. */
+const CHANNELS = new WeakMap<Page, LiveChannel>();
+
+/** The live channel of a page `serveFixture` served. */
+export function liveChannel(page: Page): LiveChannel {
+  const channel = CHANNELS.get(page);
+  if (channel === undefined) throw new Error('the page was not served by serveFixture');
+  return channel;
+}
+
+/** Answers the page's `api/live` socket with `first`, and returns the channel that drives it. */
+async function routeLive(page: Page, first: Json): Promise<LiveChannel> {
+  const open = new Set<WebSocketRoute>();
+  let last = JSON.stringify(first);
+  let isRefusing = false;
+  let opened = 0;
+  await page.routeWebSocket(/\/api\/live$/, (socket) => {
+    opened += 1;
+    if (isRefusing) {
+      void socket.close();
+      return;
+    }
+    open.add(socket);
+    socket.onClose(() => open.delete(socket));
+    socket.send(last);
+  });
+  return {
+    push: (frame) => {
+      last = typeof frame === 'string' ? frame : JSON.stringify(frame);
+      for (const socket of open) socket.send(last);
+    },
+    closeAll: () => {
+      for (const socket of open) void socket.close();
+      open.clear();
+    },
+    setRefusing: (value) => {
+      isRefusing = value;
+    },
+    openedCount: () => opened,
+  };
+}
+
 /** Routes every request of `page`; returns the list that collects requests to other origins. */
 export async function serveFixture(page: Page, fixture: Fixture): Promise<string[]> {
+  CHANNELS.set(page, await routeLive(page, fixture.live));
   const foreign: string[] = [];
   const bodies = { graph: JSON.stringify(fixture.graph), summary: JSON.stringify(fixture.summary) };
   await page.route('**/*', async (route) => {

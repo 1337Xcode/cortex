@@ -1,7 +1,8 @@
 // Measures the map on a generated repository of 100,000 files: the first load (from navigation to
 // two drawn frames) in five fresh browsers, each with nothing cached, and the frame rate over a
-// scripted pan and zoom, sampled with requestAnimationFrame in the page. Prints them with the
-// platform. When CORTEX_MAP_SCALE_FILE names a file, writes the GPU's numbers there as JSON for
+// scripted pan and zoom, sampled with requestAnimationFrame in the page; once with no agent
+// session running and once with twenty live sessions marked, each with a ten-file trail. Prints
+// them with the platform. When CORTEX_MAP_SCALE_FILE names a file, writes the GPU's numbers there as JSON for
 // `cargo xtask verify --full`, which checks them against the map's budgets (2 s, 45 fps).
 // Chromium runs on the machine's GPU through ANGLE (Direct3D 11 on Windows, Metal on macOS, its
 // default elsewhere), since its default headless software renderer measures the CPU, not the map.
@@ -9,7 +10,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { arch, cpus, platform, release } from 'node:os';
 import { dirname } from 'node:path';
 import { chromium, expect, test, type Page } from '@playwright/test';
-import { largeFixture, type Fixture } from './fixtures';
+import { largeFixture, manySessions, type Fixture, type Json } from './fixtures';
 import { MAP_URL, serveFixture } from './serve';
 
 const FILE_COUNT = 100_000;
@@ -112,6 +113,13 @@ async function flyIntoFiles(page: Page): Promise<void> {
   for (let step = 0; step < 4; step += 1) await page.mouse.wheel(0, 120);
 }
 
+/** How many sessions a live state lists. */
+function sessionCount(live: Json): number {
+  if (typeof live !== 'object' || live === null || Array.isArray(live)) return 0;
+  const sessions = live['sessions'];
+  return Array.isArray(sessions) ? sessions.length : 0;
+}
+
 /** What one browser measured. */
 interface Measured {
   readonly renderer: string;
@@ -144,6 +152,14 @@ async function measure(
   report(`[${label}] renderer: ${renderer}; browser ${browser.version()}`);
   report(`[${label}] first load: ${firstLoadMs.toFixed(0)} ms from navigation to two drawn frames`);
   const p5Fps: number[] = [];
+  const sessions = sessionCount(fixture.live);
+  if (isPanned && sessions > 0) {
+    // The sessions are marked before the pan starts, so the frames measured draw them.
+    const toggle = page
+      .getByTestId('overview-live')
+      .getByRole('button', { name: /^Live sessions/ });
+    await expect(toggle).toHaveText(`Live sessions${sessions}`);
+  }
   if (isPanned) {
     for (const where of ['over the whole map', 'among single files']) {
       if (where === 'among single files') await flyIntoFiles(page);
@@ -173,8 +189,11 @@ function writeRecord(platformLine: string, runs: readonly Measured[]): void {
   writeFileSync(path, JSON.stringify(record));
 }
 
+/** The live sessions marked in the second measurement. */
+const LIVE_SESSIONS = 20;
+
 test('100,000 files: first load and frame rate over a pan and zoom', async () => {
-  test.setTimeout(420_000);
+  test.setTimeout(900_000);
   const cpu = cpus()[0]?.model ?? 'unknown CPU';
   const platformLine = `${platform()} ${release()} ${arch()}, ${cpu} x${cpus().length}`;
   report(`platform: ${platformLine}, viewport 1440x900`);
@@ -184,5 +203,11 @@ test('100,000 files: first load and frame rate over a pan and zoom', async () =>
     runs.push(await measure(`GPU ${run}`, gpuArgs(), fixture, run === FRESH_LOADS));
   }
   writeRecord(platformLine, runs);
+  const live: Fixture = { ...fixture, live: manySessions(LIVE_SESSIONS, FILE_COUNT, Date.now()) };
+  for (let run = 1; run <= FRESH_LOADS; run += 1) {
+    const label = `GPU ${run}, ${LIVE_SESSIONS} sessions`;
+    const measured = await measure(label, gpuArgs(), live, run === FRESH_LOADS);
+    expect(measured.firstLoadMs).toBeGreaterThan(0);
+  }
   await measure('software (headless default)', [], fixture, true);
 });

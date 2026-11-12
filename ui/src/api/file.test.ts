@@ -22,6 +22,7 @@ function detail(overrides: Record<string, unknown> = {}): Record<string, unknown
       { kind: 'work_order', at_ms: 1762900000000, used: true },
       { kind: 'warning', at_ms: 1762800000000, used: null },
     ],
+    editor_url: 'vscode://file/C:/repo/src/orders.rs:1',
     ...overrides,
   };
 }
@@ -43,6 +44,16 @@ describe('parseFileDetail accepts', () => {
     expect(parseFileDetail(latest, 12).ok).toBe(true);
   });
 
+  it('an editor link turned off', () => {
+    const off = detail({ editor_url: null });
+    expect(parseFileDetail(off, 12)).toEqual({ ok: true, value: off });
+  });
+
+  it('an editor link of exactly 2,048 characters', () => {
+    const url = `vscode://file/${'a'.repeat(2048 - 'vscode://file/'.length)}`;
+    expect(parseFileDetail(detail({ editor_url: url }), 12).ok).toBe(true);
+  });
+
   it('a fact of exactly 240 characters', () => {
     const facts = [{ id: 1, kind: 'note', status: 'candidate', text: 'x'.repeat(240) }];
     expect(parseFileDetail(detail({ facts }), 12).ok).toBe(true);
@@ -58,6 +69,13 @@ const history = (change: Record<string, unknown>): Record<string, unknown> =>
 
 const REJECTED: [string, unknown, ApiErrorCode][] = [
   ['a string at the top', 'file', 'bad_shape'],
+  ['a missing editor link', detail({ editor_url: undefined }), 'bad_shape'],
+  ['an editor link that is not text', detail({ editor_url: 7 }), 'bad_shape'],
+  [
+    'an editor link of 2,049 characters',
+    detail({ editor_url: `vscode://file/${'a'.repeat(2049 - 'vscode://file/'.length)}` }),
+    'bad_range',
+  ],
   ['an unknown version', detail({ version: 3 }), 'bad_version'],
   ['another id than asked', detail({ id: 13 }), 'bad_range'],
   ['a path with a backslash', detail({ path: 'src\\orders.rs' }), 'bad_shape'],

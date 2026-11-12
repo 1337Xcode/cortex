@@ -4,7 +4,7 @@
 // first; an opened panel or popover is one more). Each row asserts the answer's text and the
 // counts, so an answer that gets harder to reach turns this red; the table is printed at the end.
 import { expect, test, type Page } from '@playwright/test';
-import { smallFixture } from './fixtures';
+import { smallFixture, threeSessions, type Fixture } from './fixtures';
 import { filePanel, openMap } from './helpers';
 
 /** Keys pressed and screens seen while answering one question. */
@@ -56,9 +56,10 @@ function question(
   title: string,
   target: { readonly keys: number; readonly screens: number },
   answer: (page: Page, steps: Steps) => Promise<string>,
+  fixture: (nowMs: number) => Fixture = smallFixture,
 ): void {
   test(title, async ({ page }) => {
-    const record = await openMap(page, smallFixture(Date.now()));
+    const record = await openMap(page, fixture(Date.now()));
     const steps = new Steps(page);
     const text = await answer(page, steps);
     rows.push({ question: title, answer: text, keys: steps.keys, screens: steps.screens });
@@ -159,7 +160,9 @@ question(
   },
 );
 
-question('Why is book.rs the way it is?', { keys: 14, screens: 2 }, async (page, steps) => {
+// The panel's header and numbers hold three stops before its sections: "Open in editor" and the
+// commits and tokens numbers, which explain what they count on focus.
+question('Why is book.rs the way it is?', { keys: 17, screens: 2 }, async (page, steps) => {
   await openFile(page, steps, 'book');
   await steps.tabTo(filePanel(page).getByRole('button', { name: /^History/ }));
   await steps.press('Enter');
@@ -170,7 +173,7 @@ question('Why is book.rs the way it is?', { keys: 14, screens: 2 }, async (page,
 
 question(
   'What did Cortex tell agents about book.rs, and did it help?',
-  { keys: 15, screens: 2 },
+  { keys: 18, screens: 2 },
   async (page, steps) => {
     await openFile(page, steps, 'book');
     await steps.tabTo(filePanel(page).getByRole('button', { name: /^What Cortex told agents/ }));
@@ -178,6 +181,78 @@ question(
     const first = filePanel(page).getByTestId('panel-told').getByRole('listitem').first();
     await expect(first).toContainText('then read or edited');
     return (await first.textContent()) ?? '';
+  },
+);
+
+question(
+  'Where are agents working right now?',
+  { keys: 0, screens: 1 },
+  async (page) => {
+    const rows = page.getByTestId('overview-live').getByRole('listitem');
+    await expect(rows).toHaveText([
+      'Claude Code 3f2a… editing book.rs',
+      'Codex 9b1c… reading invoice.rs',
+      'Cursor c0de… claimed orders.rs',
+    ]);
+    return '3 sessions: Claude Code on book.rs, Codex on invoice.rs, Cursor on tests/orders.rs';
+  },
+  (nowMs) => ({ ...smallFixture(nowMs), live: threeSessions(nowMs) }),
+);
+
+/** Picks the view of `key` and opens the legend, which names the view and its scale. */
+async function openView(page: Page, steps: Steps, key: string, title: string): Promise<void> {
+  await steps.press(key);
+  await steps.press('l');
+  steps.sees();
+  await expect(page.getByTestId('legend-view')).toHaveText(`View: ${title}`);
+}
+
+/** A legend entry's name and count, as one string. */
+async function entry(page: Page, key: string): Promise<string> {
+  const row = page.getByTestId(`legend-${key}`);
+  const name = (await row.locator('.legend-name').textContent()) ?? '';
+  const count = (await row.locator('.legend-count').textContent()) ?? '';
+  return `${name}: ${count}`;
+}
+
+question('What are the hotspots? (the Heat view)', { keys: 2, screens: 2 }, async (page, steps) => {
+  await openView(page, steps, '3', 'Heat');
+  // Tokens 900 to 29,910 on a log scale: book.rs (18,300) and payment.rs (29,910) are hottest.
+  expect(await entry(page, 'heat-4')).toBe('18,300 to 29,910 tokens: 2');
+  expect(await entry(page, 'heat-none')).toBe('No tokens attributed: 3');
+  return '2 files at 18,300 to 29,910 tokens; 3 with none';
+});
+
+question(
+  'What have agents explored, and what have they never looked at? (the Fog view)',
+  { keys: 2, screens: 2 },
+  async (page, steps) => {
+    await openView(page, steps, '2', 'Fog');
+    expect(await entry(page, 'fog-lit')).toBe('Read by an agent: 7');
+    expect(await entry(page, 'fog-dim')).toBe('Never read: 3');
+    return '7 files read, 3 in fog';
+  },
+);
+
+question(
+  'Which files are tied to the most others? (the Coupling view)',
+  { keys: 2, screens: 2 },
+  async (page, steps) => {
+    await openView(page, steps, '4', 'Coupling');
+    // Links per file: payment.rs 5, book.rs 4, five files 2, three files 1.
+    expect(await entry(page, 'coupling-4')).toBe('4 to 5 links: 2');
+    expect(await entry(page, 'coupling-1')).toBe('1 link: 3');
+    return 'book.rs and payment.rs, with 4 and 5 links';
+  },
+);
+
+question(
+  'What changed recently? (the Recent view)',
+  { keys: 2, screens: 2 },
+  async (page, steps) => {
+    await openView(page, steps, '5', 'Recent');
+    expect(await entry(page, 'recent-lit')).toBe('Read or edited in the last 24 hours: 2');
+    return '2 files read or edited in the last 24 hours';
   },
 );
 

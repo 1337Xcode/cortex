@@ -7,7 +7,7 @@ import type { FrameStyle } from './frameStyle';
 import { neighbourhoodOf } from './highlight';
 import { encodeFileMarks } from './fileMarks';
 import { buildScene } from './scene';
-import { sevenFileScene, sevenFileSnapshot, testFile, testLink } from './testScene';
+import { defaultPaint, sevenFileScene, sevenFileSnapshot, testFile, testLink } from './testScene';
 import { computeVisibility } from './visibility';
 
 const NOW_MS = 1_762_900_000_000;
@@ -41,6 +41,7 @@ describe('encodeFiles', () => {
     neighbourhood: null,
     selected: 2,
     minStrength: 0.25,
+    view: defaultPaint(scene, NOW_MS),
   };
 
   it('writes positions from the layout and radii from the lines', () => {
@@ -87,6 +88,7 @@ describe('second channel of the marks', () => {
     neighbourhood: null,
     selected: null,
     minStrength: 0,
+    view: defaultPaint(scene, NOW_MS),
   };
 
   it('rings a suspect file 0.6 outside its circle and dots a recent one at 0.45 of its radius', () => {

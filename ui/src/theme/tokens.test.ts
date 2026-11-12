@@ -180,6 +180,35 @@ describe.each(THEME_CASES)('%s theme', (_name, colors) => {
     );
   });
 
+  it.each([
+    ['the lit file of the Fog view', canvas.lit],
+    ['a fact badge', canvas.badge],
+    ...canvas.scale.map((color, i): [string, typeof color] => [
+      `step ${i + 1} of the scale`,
+      color,
+    ]),
+  ])('draws %s at 3:1 or more against the background', (_label, mark) => {
+    expect(contrast(mark, colors.background)).toBeGreaterThanOrEqual(3);
+  });
+
+  it.each(Object.entries(colors.agents))(
+    "writes the %s agent's marker name at 4.5:1 or more on the background",
+    (_family, color) => {
+      expect(contrast(color, colors.background)).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it('steps the scale away from the ground at matched hue and chroma, and lights the Fog above never read', () => {
+    const steps = canvas.scale.map((color) => contrast(color, colors.background));
+    expect(steps).toEqual([...steps].sort((x, y) => x - y));
+    expect(new Set(steps).size).toBe(4);
+    for (const color of canvas.scale)
+      expect([color.c, color.h]).toEqual([colors.accent.c, ACCENT_HUE]);
+    expect(contrast(canvas.lit, colors.background)).toBeGreaterThan(
+      contrast(canvas.unread, colors.background),
+    );
+  });
+
   it('keeps the grid fainter than every drawn line', () => {
     const grid = contrast(canvas.gridDot, colors.background);
     expect(grid).toBeLessThan(contrast(canvas.hubLink, colors.background));

@@ -1,11 +1,11 @@
 // The panel of the selected file. Opens on the right (a bottom sheet on narrow screens); takes
 // focus when the selection came from the keyboard; Escape or Close clears the selection and returns
 // focus to where it was before the panel opened. Its header holds the breadcrumb of the file's
-// folders, its name and path; its numbers come next, then sections that collapse to their title
+// folders, its name and path, and the link that opens it in an editor; its numbers come next, then sections that collapse to their title
 // and count: the linked files and the facts open (what usually changes with this file, and which
 // rules apply to it, the questions asked most), the history and what Cortex told agents closed
 // until asked.
-import { X } from 'lucide-react';
+import { SquareArrowOutUpRight, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, type ReactElement } from 'react';
 import { fetchFileDetail } from '../api/file';
 import { ClippedText } from '../components/Clipped';
@@ -14,7 +14,9 @@ import type { Scene } from '../map/scene';
 import { useMapStore } from '../state/store';
 import { baseName } from '../text/format';
 import { Breadcrumb } from './Breadcrumb';
+import { editorHref } from './editorLink';
 import {
+  detailFor,
   FactsSection,
   HistorySection,
   LinksSection,
@@ -37,6 +39,19 @@ function useEscapeToClose(close: () => void): void {
   }, [close]);
 }
 
+/** "Open in editor", when the file's detail carries a link that may be followed. */
+function EditorLink({ href }: { href: string | null }): ReactElement | null {
+  if (href === null) return null;
+  return (
+    <Button asChild variant="link" size="inline" className="editor-link">
+      <a href={href} rel="noreferrer">
+        <SquareArrowOutUpRight aria-hidden="true" />
+        Open in editor
+      </a>
+    </Button>
+  );
+}
+
 /** The panel for file `id` of `scene`. */
 export function FilePanel({
   scene,
@@ -55,6 +70,8 @@ export function FilePanel({
   const returnTo = useRef<Element | null>(null);
   const file = scene.snapshot.files[id];
   const path = file?.path ?? '';
+  const own = detailFor(detail, id);
+  const href = own.status === 'ready' ? editorHref(own.detail.editor_url) : null;
 
   useLayoutEffect(() => {
     returnTo.current = document.activeElement;
@@ -93,6 +110,7 @@ export function FilePanel({
           <ClippedText text={baseName(path)} kind="words" />
         </h2>
         <ClippedText text={path} kind="path" className="panel-path" />
+        <EditorLink href={href} />
       </header>
       <div className="panel-body" data-scroll-area="true">
         {file === undefined ? null : <NumbersSection file={file} />}

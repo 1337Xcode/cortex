@@ -1,16 +1,19 @@
 // Builds the deck.gl layers of one frame from the encoded buffers, bottom to top: the dot grid,
-// hub-to-parent lines, spokes, learned links, collapsed hubs, files, hub squares, labels. Every
-// geometry layer takes binary attributes straight from the typed arrays.
+// hub-to-parent lines, spokes, learned links, collapsed hubs, files with their marks and fact
+// badges, the live sessions' trails, hub squares, the live markers, labels. Every geometry layer
+// takes binary attributes straight from the typed arrays.
 import { OrthographicView, type Layer, type LayerExtension } from '@deck.gl/core';
 import { ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { CANVAS_SIZE, FONT, LABEL, OPACITY, type ThemeColors } from '../theme/tokens';
+import type { Rgba } from '../theme/oklch';
 import { rgbaOf } from '../theme/oklch';
 import { DashedLineLayer } from './dashedLineLayer';
 import type { FileBuffers } from './fileEncoding';
 import type { HubBuffers } from './hubEncoding';
 import type { CanvasLabel } from './labelCandidates';
 import type { LineBuffers } from './linkEncoding';
-import { SquareLayer } from './squareLayer';
+import type { LiveBuffers } from './liveEncoding';
+import { DiamondLayer, SquareLayer } from './shapeLayers';
 
 /** The map's one view: a flat camera driven by the pointer; the page handles the keyboard itself. */
 export const MAP_VIEW = new OrthographicView({
@@ -28,9 +31,14 @@ export const LAYER_ID = {
   fileDiscs: 'file-discs',
   fileMarks: 'file-marks',
   files: 'files',
+  badges: 'badges',
+  trails: 'live-trails',
+  trailStops: 'live-stops',
   hubs: 'hubs',
+  markers: 'live-markers',
   hubLabels: 'hub-labels',
   fileLabels: 'file-labels',
+  markerLabels: 'marker-labels',
 } as const;
 
 /** Everything one frame draws. */
@@ -44,7 +52,11 @@ export interface FrameBuffers {
   readonly files: FileBuffers;
   /** The suspect rings and recent dots over the files (radius in world units). */
   readonly fileMarks: HubBuffers;
+  /** The fact badges on files' rims (radius in pixels). */
+  readonly badges: HubBuffers;
   readonly hubs: HubBuffers;
+  /** The live sessions: markers, trails and their stops. */
+  readonly live: LiveBuffers;
   readonly labels: readonly CanvasLabel[];
 }
 
@@ -73,7 +85,7 @@ function lineLayer(id: string, lines: LineBuffers, overrides: LayerOverrides): L
       },
     },
     widthUnits: 'pixels',
-    // Learned links explain themselves under the pointer; the structure lines do not.
+    // Learned links explain themselves under the pointer; the structure lines and trails do not.
     pickable: id === LAYER_ID.links,
   });
 }
@@ -131,6 +143,52 @@ function fileLayer(files: FileBuffers, overrides: LayerOverrides): Layer {
   });
 }
 
+/** Small round marks sized in pixels: the fact badges (which explain themselves) and trail stops. */
+function dotLayer(id: string, dots: HubBuffers, overrides: LayerOverrides): Layer {
+  return new ScatterplotLayer({
+    ...overrides,
+    id,
+    data: {
+      length: dots.ids.length,
+      attributes: {
+        getPosition: { value: dots.positions, size: 2 },
+        getRadius: { value: dots.radii, size: 1 },
+        getFillColor: { value: dots.fillColors, size: 4 },
+        getLineColor: { value: dots.lineColors, size: 4 },
+      },
+    },
+    radiusUnits: 'pixels',
+    stroked: true,
+    filled: true,
+    lineWidthUnits: 'pixels',
+    getLineWidth: CANVAS_SIZE.badgeEdgePx,
+    pickable: id === LAYER_ID.badges,
+  });
+}
+
+/** The live sessions' diamonds, sized in pixels; each explains its session under the pointer. */
+function markerLayer(markers: HubBuffers, overrides: LayerOverrides): Layer {
+  return new DiamondLayer({
+    ...overrides,
+    id: LAYER_ID.markers,
+    data: {
+      length: markers.ids.length,
+      attributes: {
+        getPosition: { value: markers.positions, size: 2 },
+        getRadius: { value: markers.radii, size: 1 },
+        getFillColor: { value: markers.fillColors, size: 4 },
+        getLineColor: { value: markers.lineColors, size: 4 },
+      },
+    },
+    radiusUnits: 'pixels',
+    stroked: true,
+    filled: true,
+    lineWidthUnits: 'pixels',
+    getLineWidth: CANVAS_SIZE.markerStrokePx,
+    pickable: true,
+  });
+}
+
 /** The second channel of the file marks: rings and dots, not pickable, so files below take the pointer. */
 function marksLayer(marks: HubBuffers, overrides: LayerOverrides): Layer {
   return new ScatterplotLayer({
@@ -164,6 +222,20 @@ function gridLayer(dots: Float32Array, colors: ThemeColors, overrides: LayerOver
   });
 }
 
+/** The text layer of each kind of label. */
+const LABEL_LAYER_IDS: Readonly<Record<CanvasLabel['kind'], string>> = {
+  hub: LAYER_ID.hubLabels,
+  file: LAYER_ID.fileLabels,
+  marker: LAYER_ID.markerLabels,
+};
+
+/** The weight each kind of label is set in. */
+const LABEL_WEIGHTS: Readonly<Record<CanvasLabel['kind'], number>> = {
+  hub: LABEL.hubWeight,
+  file: LABEL.fileWeight,
+  marker: LABEL.markerWeight,
+};
+
 /** One kind's labels, or nothing when it has none (an empty text layer makes an empty glyph atlas). */
 function labelLayer(
   labels: readonly CanvasLabel[],
@@ -176,24 +248,31 @@ function labelLayer(
   const text = rgbaOf(colors.canvas.label);
   const faint = rgbaOf(colors.canvas.label, OPACITY.labelDimmed);
   const backing = rgbaOf(colors.background, OPACITY.labelBacking);
+  const colorOf = (label: CanvasLabel): Rgba => {
+    if (label.family !== null) return rgbaOf(colors.agents[label.family]);
+    return label.isDimmed ? faint : text;
+  };
   const layer = new TextLayer<CanvasLabel>({
     ...overrides,
-    id: kind === 'hub' ? LAYER_ID.hubLabels : LAYER_ID.fileLabels,
+    id: LABEL_LAYER_IDS[kind],
     data: ofKind,
     getText: (label) => label.text,
     getPosition: (label) => [label.worldX, label.worldY],
     getPixelOffset: (label) => [label.offset[0], label.offset[1]],
     getSize: (label) => label.sizePx,
-    getColor: (label) => [...(label.isDimmed ? faint : text)],
+    getColor: (label) => [...colorOf(label)],
     getTextAnchor: (label) => label.anchor,
     getAlignmentBaseline: (label) => label.baseline,
     fontFamily: FONT.sans,
-    fontWeight: kind === 'hub' ? LABEL.hubWeight : LABEL.fileWeight,
+    fontWeight: LABEL_WEIGHTS[kind],
     characterSet: 'auto',
     background: true,
     getBackgroundColor: [...backing],
     backgroundPadding: LABEL.backingPaddingPx,
-    updateTriggers: { getColor: [colors.canvas.label], getBackgroundColor: [colors.background] },
+    updateTriggers: {
+      getColor: [colors.canvas.label, colors.agents],
+      getBackgroundColor: [colors.background],
+    },
   });
   return [layer];
 }
@@ -213,8 +292,13 @@ export function buildLayers(
     hubLayer(LAYER_ID.collapsed, frame.collapsed, false, overrides),
     fileLayer(frame.files, overrides),
     marksLayer(frame.fileMarks, overrides),
+    dotLayer(LAYER_ID.badges, frame.badges, overrides),
+    lineLayer(LAYER_ID.trails, frame.live.trails, overrides),
+    dotLayer(LAYER_ID.trailStops, frame.live.stops, overrides),
     hubLayer(LAYER_ID.hubs, frame.hubs, true, overrides),
+    markerLayer(frame.live.markers, overrides),
     ...labelLayer(frame.labels, 'hub', colors, overrides),
     ...labelLayer(frame.labels, 'file', colors, overrides),
+    ...labelLayer(frame.labels, 'marker', colors, overrides),
   ];
 }

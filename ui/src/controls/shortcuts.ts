@@ -1,5 +1,6 @@
-// The keyboard shortcuts, in one table: each key and what it does. Keys typed into a text field
-// belong to the field, except Escape; a key held with Ctrl, Alt or Meta is left to the browser.
+// The keyboard shortcuts, in one table: each key and what it does, and the digits that pick a
+// view. Keys typed into a text field belong to the field, except Escape; a key held with Ctrl, Alt
+// or Meta is left to the browser.
 
 /** What a shortcut does. */
 export type ShortcutAction =
@@ -51,6 +52,17 @@ export function shortcutFor(input: KeyInput): ShortcutAction | null {
   const action = SHORTCUTS.get(input.key) ?? null;
   if (action === null) return null;
   return input.isInField && action !== 'clear' ? null : action;
+}
+
+/**
+ * The view a key picks: `1` the first, `2` the second, up to `count`; null for any other key, a
+ * key held with Ctrl, Alt or Meta, or a key typed into a field.
+ */
+export function viewIndexFor(input: KeyInput, count: number): number | null {
+  if (input.ctrlKey || input.altKey || input.metaKey || input.isInField) return null;
+  if (!/^[1-9]$/.test(input.key)) return null;
+  const index = Number(input.key) - 1;
+  return index < count ? index : null;
 }
 
 /** Whether an event target is a control that uses typed or arrow keys itself. */
