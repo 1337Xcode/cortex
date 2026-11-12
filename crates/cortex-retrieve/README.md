@@ -65,6 +65,7 @@ read.
 ```sh
 cargo test -p cortex-retrieve
 cargo bench -p cortex-retrieve --bench spread
+cargo bench -p cortex-retrieve --bench experience
 ```
 
 Weights are worked out by hand in each test's comment; a property checks that the same rows in any
@@ -75,3 +76,6 @@ benchmark spreads over generated graphs of 10,000, 100,000 and 1,000,000 nodes (
 symbols, each referring to two symbols elsewhere, each file changing with three others and
 worked on with two) from five seeds, and spreads in two stages over the largest, its view by files
 built beforehand as the daemon builds it.
+The `experience` benchmark times the experience hint's worst look, one look a sample: 200 past
+task records all like the prompt, none of which can be told because every file they changed is
+gone from disk.

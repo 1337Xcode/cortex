@@ -5,7 +5,8 @@
 //! files' paths and opens each path, finds none, then searches the change cards, of which there
 //! are none. Measured is `experience_hint` alone, from its first query to its answer of no hint,
 //! with the graph and the similar-task seeds already worked out, as the work order has them; the
-//! rest of the retrieval is the hook benchmarks' to measure.
+//! rest of the retrieval is the hook benchmarks' to measure. Each sample is one look, so that
+//! `cargo xtask verify --full` reads a percentile of single looks against the hint's budget.
 //!
 //! The store is built once: three files of `src/orders/`, written to disk and indexed, then
 //! deleted from disk; a cluster of past tasks whose first words are the prompt's; and 200 tasks,
@@ -15,7 +16,7 @@
 mod common;
 
 use std::hint::black_box;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::{Repo, TestResult};
 use cortex_core::{FileFlags, RepoPath, TaskOutcome, Ulid};
@@ -104,13 +105,26 @@ fn experience(criterion: &mut Criterion) {
     let told = experience_hint(reader.queries(), &graph, &ask).expect("a look");
     assert_eq!(told, None, "no record can be told");
     let mut group = criterion.benchmark_group("experience");
+    // A microsecond of measuring time a sample is less than any look takes, so criterion runs
+    // each sample once and the percentile is of single looks (it warns that the samples take
+    // longer than the time it was given).
     group
         .sampling_mode(SamplingMode::Flat)
         .sample_size(SAMPLES)
-        .measurement_time(Duration::from_millis(50) * u32::try_from(SAMPLES).unwrap_or(100))
+        .measurement_time(Duration::from_micros(1) * u32::try_from(SAMPLES).unwrap_or(100))
         .warm_up_time(Duration::from_millis(500));
     group.bench_function("unrenderable_records_200", |bencher| {
-        bencher.iter(|| black_box(experience_hint(reader.queries(), &graph, &ask)));
+        bencher.iter_custom(|runs| {
+            (0..runs)
+                .map(|_| {
+                    let start = Instant::now();
+                    let told = black_box(experience_hint(reader.queries(), &graph, &ask));
+                    let took = start.elapsed();
+                    assert!(matches!(told, Ok(None)), "a look failed or told a record");
+                    took
+                })
+                .sum()
+        });
     });
     group.finish();
 }

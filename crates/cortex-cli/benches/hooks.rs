@@ -13,8 +13,10 @@
 //! it asks the daemon anything; and each event again from a repository whose daemon is down, so
 //! that the hook tries it, starts one and exits. Then retrieval alone: the prompt's work order
 //! asked of the running daemon directly, with no hook process to start, each from a session of its
-//! own. `cargo xtask verify --full` reads their samples and checks the budgets. Every sample is one
-//! hook process or one request, so the percentiles are of single runs.
+//! own. Before all of these, the prompt's and the edit's hooks again with the history features on,
+//! on a repository with a year of history and its caches warm, and the share of the store the
+//! history takes ([`history`]). `cargo xtask verify --full` reads their samples and checks the
+//! budgets. Every sample is one hook process or one request, so the percentiles are of single runs.
 
 #[path = "../tests/common/mod.rs"]
 mod common;
@@ -25,6 +27,8 @@ mod common;
 )]
 #[path = "../../cortex-index/benches/synthetic/mod.rs"]
 mod synthetic;
+
+mod history;
 
 use std::fs::File;
 use std::io::Write as _;
@@ -667,5 +671,5 @@ fn hooks(criterion: &mut Criterion) {
     drop(bench.daemon);
 }
 
-criterion_group!(benches, hooks);
+criterion_group!(benches, history::history, hooks);
 criterion_main!(benches);

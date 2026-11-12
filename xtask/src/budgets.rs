@@ -40,15 +40,16 @@ struct Budget {
 }
 
 /// The benchmarks the budgets read: each package and its benchmark target.
-const BENCHES: [(&str, &str); 4] = [
+const BENCHES: [(&str, &str); 5] = [
     ("cortex-index", "index"),
     ("cortex-retrieve", "spread"),
+    ("cortex-retrieve", "experience"),
     ("cortex-daemon", "upkeep"),
     ("cortex-cli", "hooks"),
 ];
 
 /// Every budget a benchmark checks. The limits are the product's latency budgets.
-const BUDGETS: [Budget; 24] = [
+const BUDGETS: [Budget; 27] = [
     Budget {
         group: "index",
         function: "initial_10k",
@@ -180,6 +181,33 @@ const BUDGETS: [Budget; 24] = [
         function: "medium_10k",
         what: "a prompt's retrieval in the daemon, 10,000 source files",
         limit: Duration::from_millis(120),
+        platforms: Platforms::Every,
+    },
+    // With the history features on and their caches warm, the prompt and the edit keep their
+    // budgets: the history adds reading what the history worker kept, never a run of git.
+    Budget {
+        group: "hooks_history",
+        function: "user_prompt_submit",
+        what: "UserPromptSubmit hook with the history features on, its why-lines kept, start to exit",
+        limit: Duration::from_millis(150),
+        platforms: Platforms::Reference,
+    },
+    Budget {
+        group: "hooks_history",
+        function: "post_tool_use_edit",
+        what: "PostToolUse hook on an edit with the history features on, told its origin, start to exit",
+        limit: Duration::from_millis(80),
+        platforms: Platforms::Reference,
+    },
+    // The experience hint is looked for inside a prompt's retrieval, so its worst look gets what
+    // the retrieval leaves of its 120 ms budget: on Windows, in November 2026, the retrieval took
+    // 35 ms at the 95th percentile on the hooks benchmark (with the history features off, as the
+    // retrieval benchmark runs), leaving 85 ms, and the hint's worst look took 8.5 ms.
+    Budget {
+        group: "experience",
+        function: "unrenderable_records_200",
+        what: "the experience hint's look over 200 records like the prompt, none renderable",
+        limit: Duration::from_millis(80),
         platforms: Platforms::Every,
     },
     // With the daemon down a hook tries it, starts one and exits: each event keeps its budget.
@@ -360,9 +388,11 @@ mod tests {
     }
 
     /// Every hook the benchmarks run has a budget, read from the hooks group with the daemon running
-    /// and from its own group with the daemon down; the index's two budgets, spreading's four,
-    /// upkeep's pass and retrieval's hold everywhere, spreading and retrieval within 120 ms; upkeep's
-    /// pass within 2 minutes, and its longest batch within 250 ms where the hooks' budgets hold.
+    /// and from its own group with the daemon down; the prompt and the edit with the history
+    /// features on keep the hooks' budgets where those hold; the index's two budgets, spreading's
+    /// four, upkeep's pass, retrieval's and the experience hint's hold everywhere, spreading and
+    /// retrieval within 120 ms and the hint within 80 ms; upkeep's pass within 2 minutes, and its
+    /// longest batch within 250 ms where the hooks' budgets hold.
     #[test]
     fn every_hook_benchmark_has_its_budget() {
         let hooks: Vec<(&str, u128)> = BUDGETS
@@ -415,9 +445,28 @@ mod tests {
                 "nodes/1000000",
                 "two_stage_nodes/1000000",
                 "run_large",
-                "medium_10k"
+                "medium_10k",
+                "unrenderable_records_200"
             ]
         );
+        let history: Vec<(&str, u128, Platforms)> = BUDGETS
+            .iter()
+            .filter(|budget| budget.group == "hooks_history")
+            .map(|budget| (budget.function, budget.limit.as_millis(), budget.platforms))
+            .collect();
+        assert_eq!(
+            history,
+            [
+                ("user_prompt_submit", 150, Platforms::Reference),
+                ("post_tool_use_edit", 80, Platforms::Reference)
+            ]
+        );
+        let experience: Vec<(&str, u128)> = BUDGETS
+            .iter()
+            .filter(|budget| budget.group == "experience")
+            .map(|budget| (budget.function, budget.limit.as_millis()))
+            .collect();
+        assert_eq!(experience, [("unrenderable_records_200", 80)]);
         let upkeep: Vec<(&str, u128, Platforms)> = BUDGETS
             .iter()
             .filter(|budget| budget.group == "upkeep")

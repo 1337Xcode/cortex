@@ -81,6 +81,18 @@ a hook that finds no daemon, starts one and exits. It fails when a hook fails or
 where it should answer, when a retrieval gives no work order, when the daemon did not handle each
 event's requests, or when a hook with the daemon down started none.
 
+Before those, it times the prompt and the edit again with `history.why`, `history.seeds` and
+`history.experience` on, on the same 10,000 files with a scripted year of history: 300 commits a
+day apart, five files each, change 500 of the Python files three times, and two commits in three
+give a reason and fix an issue. A session reads 200 of those files, upkeep runs until it has
+warmed its day's 200 and the history worker has blamed them and carded their commits, and three
+tasks leave their records. With the daemon stopped, it measures the pages SQLite's `dbstat` gives
+the history tables (`blame_cache`, `change_cards` and `commit_terms`, their indexes included)
+against every file in `.cortex/`, prints each share, and fails when together they take 2% or
+more. Then each sample is a session of its own: its prompt, checked to carry a why-line, the
+prompts leaving the number of blames kept as it was; and an edit of a function's header, its task
+opened by a start and a prompt first, checked to be told the commit the line came from.
+
 Configuration comes from `~/.cortex/config.toml`, then the repository's `.cortex/config.toml`; a
 file over 1 MiB is refused, and an unknown key prints a warning.
 

@@ -34,18 +34,23 @@ cargo xtask verify --full   # adds the benchmark budget checks
 7. `cargo deny check`: licences, advisories, bans and sources (`deny.toml`)
 
 `verify --full` then runs the slow tests (the same test command with `-- --ignored`) and the
-benchmarks (`cortex-index`'s `index`, `cortex-retrieve`'s `spread`, `cortex-cli`'s `hooks`), and
-checks the 95th percentile of each benchmark's single runs against its budget (`src/budgets.rs`).
+benchmarks (`cortex-index`'s `index`, `cortex-retrieve`'s `spread` and `experience`,
+`cortex-daemon`'s `upkeep`, `cortex-cli`'s `hooks`), and checks the 95th percentile of each
+benchmark's single runs against its budget (`src/budgets.rs`).
 The first index of 10,000 files must take 60 s at most and an index after one change 30 ms,
 everywhere. Spreading over generated graphs of 10,000, 100,000 and 1,000,000 nodes, two-stage
 spreading over the largest, and a prompt's retrieval in the daemon on a repository of 10,000 files
-must each take 120 ms at most, everywhere. Each hook, from its process's start to its exit, must
+must each take 120 ms at most, and the experience hint's worst look 80 ms, the room the retrieval
+leaves it, everywhere. Each hook, from its process's start to its exit, must
 take 120 ms for SessionStart (after a compaction too, with its recap), 150 ms for UserPromptSubmit
 (on a one-word prompt too, which asks for no work order), 40 ms for PreToolUse on a read, 80 ms for
 PostToolUse on an edit, 60 ms for Stop and 10 ms with no input, on macOS and Linux, where hook
-latency is specified. The first five hold too when the daemon is down and the hook starts one. On
+latency is specified. The first five hold too when the daemon is down and the hook starts one, and
+the prompt's and the edit's with the history features on and their caches warm. On
 Windows starting a process alone takes most of those 10 ms, so the hooks' percentiles are printed
-there and not checked. Every budget's line says what was measured.
+there and not checked. Every budget's line says what was measured. The `hooks` benchmark itself
+fails, everywhere, when the history features' tables take 2% or more of `.cortex/` on its
+repository of 10,000 files: a share of bytes is no timing sample for these checks to read.
 
 ## Tests
 
