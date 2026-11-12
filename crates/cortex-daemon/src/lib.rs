@@ -249,7 +249,7 @@ fn index_and_serve(
                 Arc::clone(&shared.snapshot),
                 Arc::clone(&shared.inbox),
             ),
-            MapSettings::of(&config),
+            MapSettings::of(&config, root),
         ),
     );
     inbox.keep_positions_by(Timing::of(&config.coordination));

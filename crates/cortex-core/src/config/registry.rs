@@ -193,7 +193,8 @@ mod tests {
         history.max_reasons = 5\n\
         history.max_tokens = 400\n\
         history.bot_patterns = [\"*[bot]\"]\n\
-        ui.port = 8123\n";
+        ui.port = 8123\n\
+        ui.editor_url = \"idea://open?file={path}&line={line}\"\n";
 
     /// The settings [`EVERY_KEY`] gives, every field away from its default.
     fn every_key_set() -> Config {
@@ -271,7 +272,10 @@ mod tests {
                 max_tokens: 400,
                 bot_patterns: vec!["*[bot]".to_owned()],
             },
-            ui: UiConfig { port: 8123 },
+            ui: UiConfig {
+                port: 8123,
+                editor_url: "idea://open?file={path}&line={line}".to_owned(),
+            },
         }
     }
 

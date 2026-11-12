@@ -100,6 +100,12 @@ impl Source {
         self.settings_shown.history
     }
 
+    /// The address that opens the file at repository path `path` in the person's editor; none
+    /// when `ui.editor_url` is empty.
+    pub(super) fn editor_url(&self, path: &str) -> Option<String> {
+        self.settings_shown.editor_url(path)
+    }
+
     /// The time now in UTC milliseconds.
     pub(super) fn now_ms(&self) -> i64 {
         (self.clock)()

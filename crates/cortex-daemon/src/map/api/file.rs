@@ -1,5 +1,6 @@
-//! `api/file/<id>`: what the map's side panel shows of one file: the facts about it, the commits
-//! behind its code, and the times Cortex named it to an agent.
+//! `api/file/<id>`: what the map's side panel shows of one file: the address that opens it in the
+//! person's editor, the facts about it, the commits behind its code, and the times Cortex named it
+//! to an agent.
 //!
 //! `<id>` is the file's id in `api/graph`, which holds only while the files do; an id that names
 //! no file is 404 with an empty body. Links of the file are in `api/graph` and are not repeated.
@@ -40,6 +41,8 @@ struct Panel {
     id: usize,
     /// The file's path.
     path: String,
+    /// The address that opens it in the editor, from `ui.editor_url`; none when that is empty.
+    editor_url: Option<String>,
     /// The facts about it, by id.
     facts: Vec<Fact>,
     /// The commits behind its code, newest first.
@@ -99,6 +102,7 @@ fn panel_of(
         version: VERSION,
         id,
         path: file.path.as_str().to_owned(),
+        editor_url: source.editor_url(file.path.as_str()),
         facts: facts_of(queries, file)?,
         history: history::of_file(queries, source, file)?,
         told: told::of_file(queries, file.node)?,

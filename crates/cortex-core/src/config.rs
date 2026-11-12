@@ -564,7 +564,10 @@ mod tests {
                     max_tokens: 120,
                     bot_patterns: Vec::new(),
                 },
-                ui: UiConfig { port: 0 },
+                ui: UiConfig {
+                    port: 0,
+                    editor_url: "vscode://file{path}:{line}".to_owned(),
+                },
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());

@@ -61,7 +61,7 @@ fn site_over(root: tempfile::TempDir, texts: Arc<Jobs>) -> TestResult<Fixture> {
         (root.path().join(".cortex"), 0),
         weights,
         (texts, Arc::clone(&snapshot), Arc::default()),
-        MapSettings::of(&Config::default()),
+        MapSettings::of(&Config::default(), root.path()),
     )
     .with_clock(|| NOW_MS);
     let token = Token::generate()?;
@@ -228,7 +228,25 @@ fn a_search_refuses_what_is_not_one_to_100_characters() -> TestResult {
     Ok(())
 }
 
-/// The orders file's panel. Facts, by number: 1 active, 2 a candidate, 3 suspect, as stored. History:
+/// `answer`'s body with its editor link checked and written as `EDITOR`: the default address,
+/// `vscode://file`, then the repository's root as a URL path (which differs from run to run, so
+/// only its start is checked here; `settings.rs` checks the whole form) and the file's `path` at
+/// line 1.
+fn with_editor(answer: (u16, String), path: &str) -> TestResult<(u16, String)> {
+    let (status, body) = answer;
+    let value: serde_json::Value = serde_json::from_str(&body)?;
+    let link = value
+        .get("editor_url")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("the panel has no editor link")?;
+    assert!(link.starts_with("vscode://file/"), "{link}");
+    assert!(link.ends_with(&format!("/{path}:1")), "{link}");
+    let written = format!(r#""editor_url":"{link}""#);
+    assert_eq!(body.matches(&written).count(), 1, "{body}");
+    Ok((status, body.replace(&written, r#""editor_url":"EDITOR""#)))
+}
+
+/// The orders file's panel: its editor link, then its facts, by number: 1 active, 2 a candidate, 3 suspect, as stored. History:
 /// the blame names commits 1 (a pull request, 482, and issue `#12`), 2 (neither) and a third
 /// whose subject the cache does not hold, which is left out; newest first, so 1 then 2. Told: two
 /// work orders that named the file (at 1,500 and 1,600), whose task read and edited it, so used,
@@ -251,12 +269,15 @@ fn a_file_s_panel_is_its_facts_history_and_what_it_was_told() -> TestResult {
         r#"{"kind":"work_order","at_ms":1500,"used":true}"#,
     ];
     let expected = format!(
-        r#"{{"version":1,"id":2,"path":"src/orders.rs","facts":[{}],"history":[{}],"told":[{}]}}"#,
+        r#"{{"version":1,"id":2,"path":"src/orders.rs","editor_url":"EDITOR","facts":[{}],"history":[{}],"told":[{}]}}"#,
         facts.join(","),
         history.join(","),
         told.join(",")
     );
-    assert_eq!(get(&fixture, "api/file/2")?, (200, expected));
+    assert_eq!(
+        with_editor(get(&fixture, "api/file/2")?, "src/orders.rs")?,
+        (200, expected)
+    );
     Ok(())
 }
 
@@ -273,12 +294,18 @@ fn a_file_the_agent_did_not_follow_up_is_marked_unused() -> TestResult {
         r#"{"kind":"work_order","at_ms":1600,"used":false}"#,
     ];
     let expected = format!(
-        r#"{{"version":1,"id":3,"path":"src/orders_test.rs","facts":[],"history":[],"told":[{}]}}"#,
+        r#"{{"version":1,"id":3,"path":"src/orders_test.rs","editor_url":"EDITOR","facts":[],"history":[],"told":[{}]}}"#,
         told.join(",")
     );
-    assert_eq!(get(&fixture, "api/file/3")?, (200, expected));
-    let bare = r#"{"version":1,"id":0,"path":"docs/guide.md","facts":[],"history":[],"told":[]}"#;
-    assert_eq!(get(&fixture, "api/file/0")?, (200, bare.to_owned()));
+    assert_eq!(
+        with_editor(get(&fixture, "api/file/3")?, "src/orders_test.rs")?,
+        (200, expected)
+    );
+    let bare = r#"{"version":1,"id":0,"path":"docs/guide.md","editor_url":"EDITOR","facts":[],"history":[],"told":[]}"#;
+    assert_eq!(
+        with_editor(get(&fixture, "api/file/0")?, "docs/guide.md")?,
+        (200, bare.to_owned())
+    );
     Ok(())
 }
 

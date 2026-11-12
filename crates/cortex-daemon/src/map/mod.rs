@@ -250,7 +250,10 @@ mod tests {
             (std::path::PathBuf::from("no-store-here"), 0),
             cortex_retrieve::GraphSettings::default(),
             (Arc::default(), Arc::default(), Arc::default()),
-            MapSettings::of(&cortex_core::Config::default()),
+            MapSettings::of(
+                &cortex_core::Config::default(),
+                std::path::Path::new("no-store-here"),
+            ),
         )
     }
 
