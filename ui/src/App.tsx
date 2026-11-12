@@ -7,6 +7,7 @@ import { fetchSummary } from './api/summary';
 import { SearchBox } from './controls/SearchBox';
 import { isKeyField, shortcutFor } from './controls/shortcuts';
 import { MapView } from './map/MapView';
+import { ProgramWarmup } from './map/ProgramWarmup';
 import { buildScene } from './map/scene';
 import { useChromeInsets } from './map/useChromeInsets';
 import { FilePanel } from './panels/FilePanel';
@@ -110,6 +111,7 @@ export function App(): ReactElement {
     <main className="page-state">
       <h1>Cortex map</h1>
       <p role={load.status === 'error' ? 'alert' : 'status'}>{describeLoad(load)}</p>
+      {load.status === 'loading' ? <ProgramWarmup /> : null}
     </main>
   );
 }

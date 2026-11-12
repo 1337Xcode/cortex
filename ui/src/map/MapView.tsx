@@ -1,7 +1,7 @@
 // The map: the deck.gl canvas, what pointing at and clicking its nodes does, and the controls and
 // legend beside it. Hovering a file highlights it and its neighbours; clicking a file selects it;
 // clicking a folder flies in until it opens.
-import { OrthographicView, type PickingInfo } from '@deck.gl/core';
+import type { PickingInfo } from '@deck.gl/core';
 import DeckGL from '@deck.gl/react';
 import { useMemo, useRef, type ReactElement } from 'react';
 import { Controls } from '../controls/Controls';
@@ -10,15 +10,13 @@ import { useMapStore } from '../state/store';
 import { useThemeName } from '../theme/media';
 import { THEMES } from '../theme/tokens';
 import { cameraOnHub, type Insets } from './camera';
-import { buildLayers, LAYER_ID, type FrameBuffers } from './layers';
+import { buildLayers, LAYER_ID, MAP_VIEW, type FrameBuffers } from './layers';
 import { MapStatus } from './MapStatus';
 import { createTextMeasurer } from './measureText';
 import type { Scene } from './scene';
 import { useFrame } from './useFrame';
 import { useMapCamera } from './useMapCamera';
 import { useElementBox, useScreenSize } from './useScreenSize';
-
-const VIEW = new OrthographicView({ id: 'map', controller: { keyboard: false, inertia: false } });
 
 /** The hub a pick hit, from either hub layer, or null. */
 function pickedHub(info: PickingInfo, frame: FrameBuffers): number | null {
@@ -105,7 +103,7 @@ export function MapView({
     <div className="map" ref={containerRef}>
       <div className="map-canvas">
         <DeckGL
-          views={VIEW}
+          views={MAP_VIEW}
           viewState={viewState}
           onViewStateChange={({ viewState: next }) => {
             follow(next);

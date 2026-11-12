@@ -28,6 +28,10 @@ All notable changes to this project are documented in this file. The format is b
   packages it says that it skipped them. `cargo xtask verify --full` runs the map's browser checks
   and checks its first load and frame rate at 100,000 files against their budgets (2 s, and 45
   frames per second at the 5th percentile) on macOS and Linux, and prints them on Windows.
+- The map prepares its GPU programs while its data loads, starting all five links at once on a
+  hidden canvas, so the driver compiles them side by side and the map's own canvas reuses them.
+  On a Windows laptop (Intel Iris Xe, Direct3D 11, Chromium 158), at 100,000 files and in fresh
+  browsers, the first load went from 1.83 to 1.98 s to 0.89 to 0.95 s over five runs each.
 - Evaluation tasks for the history features, and the runner support they need. A task that says
   `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
   deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that

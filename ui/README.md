@@ -109,8 +109,21 @@ fresh browsers and the frame rate over a scripted pan and zoom on a generated re
 100,000 files, with the platform it ran on; when `CORTEX_MAP_SCALE_FILE` names a file it writes
 them there, and `cargo xtask verify --full` checks them against the map's budgets (a first load
 within 2 s every time, 45 frames per second or more at the 5th percentile) on macOS and Linux and
-prints them on Windows. Setting `CORTEX_SHOTS_DIR` makes `e2e/shots.spec.ts` write
+prints them on Windows. `e2e/programs.spec.ts` checks that the map's GPU programs are prepared
+while the snapshot loads (see below). Setting `CORTEX_SHOTS_DIR` makes `e2e/shots.spec.ts` write
 screenshots of every state at 1440x900 and 390x844 in both themes into that folder.
+
+## The first load
+
+Before the map can draw, the browser's GPU driver compiles and links its five shader programs
+(circles, squares, dashed lines, glyphs and label backings). deck.gl links them one at a time and
+waits for each, and on Direct3D drivers each takes a few hundred milliseconds. While the snapshot
+loads, the page therefore builds every layer the map uses, empty and invisible, on a hidden canvas
+whose layers start all five links at once (`src/map/prelink.ts`), so the driver compiles them side
+by side while the page waits for the daemon. The browser keeps linked programs, and the map's own
+canvas then links the same programs from that cache. On a Windows laptop (Intel Iris Xe, Direct3D
+11, Chromium 158), at 100,000 files and in fresh browsers, this took the first load from 1.83 to
+1.98 s down to 0.89 to 0.95 s over five runs each.
 
 TypeScript is pinned to 6.0.3, the newest release whose JavaScript API the ESLint TypeScript
 plugin supports; the same compiler does the type check, so the linter and the check agree.

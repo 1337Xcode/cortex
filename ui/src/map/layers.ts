@@ -1,7 +1,7 @@
 // Builds the deck.gl layers of one frame from the encoded buffers, bottom to top: the dot grid,
 // hub-to-parent lines, spokes, learned links, collapsed hubs, files, hub squares, labels. Every
 // geometry layer takes binary attributes straight from the typed arrays.
-import type { Layer } from '@deck.gl/core';
+import { OrthographicView, type Layer, type LayerExtension } from '@deck.gl/core';
 import { ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { CANVAS_SIZE, FONT_FAMILY, LABEL, OPACITY, type ThemeColors } from '../theme/tokens';
 import { rgba } from '../theme/rgba';
@@ -11,6 +11,12 @@ import type { HubBuffers } from './hubEncoding';
 import type { CanvasLabel } from './labelCandidates';
 import type { LineBuffers } from './linkEncoding';
 import { SquareLayer } from './squareLayer';
+
+/** The map's one view: a flat camera driven by the pointer; the page handles the keyboard itself. */
+export const MAP_VIEW = new OrthographicView({
+  id: 'map',
+  controller: { keyboard: false, inertia: false },
+});
 
 /** Layer ids, which picking uses to tell what was hit. */
 export const LAYER_ID = {
@@ -42,9 +48,19 @@ export interface FrameBuffers {
   readonly labels: readonly CanvasLabel[];
 }
 
+/**
+ * Props set on every layer of a frame. The map sets none; the hidden canvas that prepares the
+ * map's GPU programs makes every layer invisible and adds the extension that does it.
+ */
+export interface LayerOverrides {
+  readonly visible?: boolean;
+  readonly extensions?: LayerExtension[];
+}
+
 /** Lines with per-row dashes; solid rows have a dash of 0, so every line kind shares one shader. */
-function lineLayer(id: string, lines: LineBuffers): Layer {
+function lineLayer(id: string, lines: LineBuffers, overrides: LayerOverrides): Layer {
   return new DashedLineLayer({
+    ...overrides,
     id,
     data: {
       length: lines.ids.length,
@@ -60,9 +76,15 @@ function lineLayer(id: string, lines: LineBuffers): Layer {
   });
 }
 
-function hubLayer(id: string, hubs: HubBuffers, isSquare: boolean): Layer {
+function hubLayer(
+  id: string,
+  hubs: HubBuffers,
+  isSquare: boolean,
+  overrides: LayerOverrides,
+): Layer {
   const isWorldSized = id !== LAYER_ID.hubs;
   const props = {
+    ...overrides,
     id,
     data: {
       length: hubs.ids.length,
@@ -84,8 +106,9 @@ function hubLayer(id: string, hubs: HubBuffers, isSquare: boolean): Layer {
   return isSquare ? new SquareLayer(props) : new ScatterplotLayer(props);
 }
 
-function fileLayer(files: FileBuffers): Layer {
+function fileLayer(files: FileBuffers, overrides: LayerOverrides): Layer {
   return new ScatterplotLayer({
+    ...overrides,
     id: LAYER_ID.files,
     data: {
       length: files.ids.length,
@@ -107,8 +130,9 @@ function fileLayer(files: FileBuffers): Layer {
 }
 
 /** The second channel of the file marks: rings and dots, not pickable, so files below take the pointer. */
-function marksLayer(marks: HubBuffers): Layer {
+function marksLayer(marks: HubBuffers, overrides: LayerOverrides): Layer {
   return new ScatterplotLayer({
+    ...overrides,
     id: LAYER_ID.fileMarks,
     data: {
       length: marks.ids.length,
@@ -127,8 +151,9 @@ function marksLayer(marks: HubBuffers): Layer {
   });
 }
 
-function gridLayer(dots: Float32Array, colors: ThemeColors): Layer {
+function gridLayer(dots: Float32Array, colors: ThemeColors, overrides: LayerOverrides): Layer {
   return new ScatterplotLayer({
+    ...overrides,
     id: LAYER_ID.grid,
     data: { length: dots.length / 2, attributes: { getPosition: { value: dots, size: 2 } } },
     radiusUnits: 'pixels',
@@ -142,6 +167,7 @@ function labelLayer(
   labels: readonly CanvasLabel[],
   kind: CanvasLabel['kind'],
   colors: ThemeColors,
+  overrides: LayerOverrides,
 ): Layer[] {
   const ofKind = labels.filter((label) => label.kind === kind);
   if (ofKind.length === 0) return [];
@@ -149,6 +175,7 @@ function labelLayer(
   const faint = rgba(colors.canvas.label, OPACITY.labelDimmed);
   const backing = rgba(colors.background, OPACITY.labelBacking);
   const layer = new TextLayer<CanvasLabel>({
+    ...overrides,
     id: kind === 'hub' ? LAYER_ID.hubLabels : LAYER_ID.fileLabels,
     data: ofKind,
     getText: (label) => label.text,
@@ -169,19 +196,23 @@ function labelLayer(
   return [layer];
 }
 
-/** The frame's layers, bottom to top. */
-export function buildLayers(frame: FrameBuffers, colors: ThemeColors): Layer[] {
+/** The frame's layers, bottom to top, each with `overrides` set. */
+export function buildLayers(
+  frame: FrameBuffers,
+  colors: ThemeColors,
+  overrides: LayerOverrides = {},
+): Layer[] {
   return [
-    gridLayer(frame.grid, colors),
-    hubLayer(LAYER_ID.fileDiscs, frame.fileDiscs, false),
-    lineLayer(LAYER_ID.hubLinks, frame.hubLinks),
-    lineLayer(LAYER_ID.spokes, frame.spokes),
-    lineLayer(LAYER_ID.links, frame.links),
-    hubLayer(LAYER_ID.collapsed, frame.collapsed, false),
-    fileLayer(frame.files),
-    marksLayer(frame.fileMarks),
-    hubLayer(LAYER_ID.hubs, frame.hubs, true),
-    ...labelLayer(frame.labels, 'hub', colors),
-    ...labelLayer(frame.labels, 'file', colors),
+    gridLayer(frame.grid, colors, overrides),
+    hubLayer(LAYER_ID.fileDiscs, frame.fileDiscs, false, overrides),
+    lineLayer(LAYER_ID.hubLinks, frame.hubLinks, overrides),
+    lineLayer(LAYER_ID.spokes, frame.spokes, overrides),
+    lineLayer(LAYER_ID.links, frame.links, overrides),
+    hubLayer(LAYER_ID.collapsed, frame.collapsed, false, overrides),
+    fileLayer(frame.files, overrides),
+    marksLayer(frame.fileMarks, overrides),
+    hubLayer(LAYER_ID.hubs, frame.hubs, true, overrides),
+    ...labelLayer(frame.labels, 'hub', colors, overrides),
+    ...labelLayer(frame.labels, 'file', colors, overrides),
   ];
 }
