@@ -40,7 +40,7 @@ pub fn primer(queries: Queries<'_>, graph: &Graph<NodeId>) -> Result<Option<Stri
     else {
         return Ok(None);
     };
-    let (files, lines) = queries.source_size(FileFlags::GENERATED.with(FileFlags::VENDORED))?;
+    let (files, lines) = queries.source_size(FileFlags::GENERATED_OR_VENDORED)?;
     let mut text = String::new();
     let _ = writeln!(
         text,

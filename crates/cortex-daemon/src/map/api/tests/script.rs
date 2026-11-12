@@ -94,7 +94,9 @@ fn store_files(writer: &mut Writer) -> TestResult<Nodes> {
     ];
     let orders = put(file("src/orders.rs", 80, symbols)?)?;
     let orders_test = put(file("src/orders_test.rs", 30, Vec::new())?)?;
-    let util = put(file("src/util.rs", 5, Vec::new())?)?;
+    let mut vendored = file("src/util.rs", 5, Vec::new())?;
+    vendored.file.flags = FileFlags::VENDORED;
+    let util = put(vendored)?;
     transaction.commit()?;
     Ok(Nodes {
         guide: guide.file_node,

@@ -4,9 +4,9 @@
 //!
 //! The scripted repository, in short. Files by path, which are their ids: 0 `docs/guide.md`,
 //! 1 `src/app.rs`, 2 `src/orders.rs` (defining `place_order` on line 10 and `OrderBook` on line
-//! 40), 3 `src/orders_test.rs`, 4 `src/util.rs`. The weights bring interest and links of use
-//! forward by 0.5 for each task since they were written; the second of the two tasks is the
-//! latest.
+//! 40), 3 `src/orders_test.rs`, 4 `src/util.rs` (vendored, so its commits are not counted). The
+//! weights bring interest and links of use forward by 0.5 for each task since they were written;
+//! the second of the two tasks is the latest.
 
 mod script;
 
@@ -127,11 +127,11 @@ fn get(fixture: &Fixture, path: &str) -> TestResult<Given> {
 fn the_graph_is_the_store_as_counted_by_hand() -> TestResult {
     let fixture = scripted()?;
     let files = [
-        r#"{"id":0,"path":"docs/guide.md","lines":10,"interest":0.0,"tokens":400,"touched_ms":3000,"facts":0,"suspect":0,"reads":1,"commits":0}"#,
-        r#"{"id":1,"path":"src/app.rs","lines":120,"interest":1.0,"tokens":150,"touched_ms":2100,"facts":1,"suspect":0,"reads":2,"commits":9}"#,
-        r#"{"id":2,"path":"src/orders.rs","lines":80,"interest":0.25,"tokens":300,"touched_ms":2300,"facts":3,"suspect":1,"reads":1,"commits":8}"#,
-        r#"{"id":3,"path":"src/orders_test.rs","lines":30,"interest":0.0,"tokens":0,"touched_ms":null,"facts":0,"suspect":0,"reads":0,"commits":4}"#,
-        r#"{"id":4,"path":"src/util.rs","lines":5,"interest":0.0,"tokens":0,"touched_ms":null,"facts":0,"suspect":0,"reads":0,"commits":0}"#,
+        r#"{"id":0,"path":"docs/guide.md","lines":10,"interest":0.0,"tokens":400,"touched_ms":3000,"facts":0,"suspect":0,"reads":1,"commits":0,"commits_counted":true}"#,
+        r#"{"id":1,"path":"src/app.rs","lines":120,"interest":1.0,"tokens":150,"touched_ms":2100,"facts":1,"suspect":0,"reads":2,"commits":9,"commits_counted":true}"#,
+        r#"{"id":2,"path":"src/orders.rs","lines":80,"interest":0.25,"tokens":300,"touched_ms":2300,"facts":3,"suspect":1,"reads":1,"commits":8,"commits_counted":true}"#,
+        r#"{"id":3,"path":"src/orders_test.rs","lines":30,"interest":0.0,"tokens":0,"touched_ms":null,"facts":0,"suspect":0,"reads":0,"commits":4,"commits_counted":true}"#,
+        r#"{"id":4,"path":"src/util.rs","lines":5,"interest":0.0,"tokens":0,"touched_ms":null,"facts":0,"suspect":0,"reads":0,"commits":0,"commits_counted":false}"#,
     ];
     let links = [
         r#"{"from":1,"to":2,"kind":"co_change","weight":0.8,"commits":6}"#,
@@ -158,7 +158,7 @@ fn a_cold_repository_shows_its_structure_alone() -> TestResult {
     let fixture = site_over(root, Arc::default())?;
     let file = |id, path, lines| {
         format!(
-            r#"{{"id":{id},"path":"{path}","lines":{lines},"interest":0.0,"tokens":0,"touched_ms":null,"facts":0,"suspect":0,"reads":0,"commits":0}}"#
+            r#"{{"id":{id},"path":"{path}","lines":{lines},"interest":0.0,"tokens":0,"touched_ms":null,"facts":0,"suspect":0,"reads":0,"commits":0,"commits_counted":true}}"#
         )
     };
     let expected = format!(

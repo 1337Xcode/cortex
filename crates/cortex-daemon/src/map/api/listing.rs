@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use cortex_core::RepoPath;
+use cortex_core::{FileFlags, RepoPath};
 use cortex_store::{FileId, NodeId, Queries, StoreError};
 
 use crate::map::source::Source;
@@ -23,6 +23,9 @@ pub(super) struct ListedFile {
     pub(super) node: NodeId,
     /// How many lines it has; none counted gives 0.
     pub(super) lines: u64,
+    /// Whether the history miner counts the commits that change it: not for a generated or
+    /// vendored file, whose 0 commits is then no count.
+    pub(super) counts_commits: bool,
 }
 
 /// The files the store holds that the map lists, by path in byte order.
@@ -65,6 +68,7 @@ impl Listing {
                     file: row.id,
                     node,
                     lines: row.file.line_count.unwrap_or(0),
+                    counts_commits: !row.file.flags.intersects(FileFlags::GENERATED_OR_VENDORED),
                 });
             }
         }

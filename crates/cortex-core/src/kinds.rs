@@ -185,6 +185,9 @@ impl FileFlags {
     pub const PARSED: Self = Self(16);
     /// Its name matches a secret pattern: recorded, never opened.
     pub const SECRET_PATTERN: Self = Self(32);
+    /// Generated or vendored: code nobody in the repository writes by hand, left out of the
+    /// source's size and of the commits mined for co-change.
+    pub const GENERATED_OR_VENDORED: Self = Self::GENERATED.with(Self::VENDORED);
 
     /// No flags.
     #[must_use]
@@ -210,6 +213,12 @@ impl FileFlags {
         self.0 & other.0 == other.0
     }
 
+    /// Whether any flag in `other` is set.
+    #[must_use]
+    pub fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
     /// These flags with `other` added.
     #[must_use]
     pub const fn with(self, other: Self) -> Self {
@@ -220,6 +229,22 @@ impl FileFlags {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file flagged generated, vendored or both is generated or vendored; one with neither, or
+    /// with other flags only, is not.
+    #[test]
+    fn generated_or_vendored_is_either_flag() {
+        let either = FileFlags::GENERATED_OR_VENDORED;
+        assert!(FileFlags::GENERATED.intersects(either));
+        assert!(
+            FileFlags::VENDORED
+                .with(FileFlags::PARSED)
+                .intersects(either)
+        );
+        assert!(!FileFlags::empty().intersects(either));
+        assert!(!FileFlags::BINARY.with(FileFlags::PARSED).intersects(either));
+        assert_eq!(either.bits(), 3);
+    }
 
     /// Every stored name reads back to its value, and the lists are the ones storage documents.
     #[test]

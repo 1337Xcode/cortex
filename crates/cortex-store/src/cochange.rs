@@ -163,7 +163,7 @@ impl Queries<'_> {
     ///
     /// SQLite errors and stored values that cannot be read back.
     pub fn cochange_files(self) -> Result<Vec<CountedFile>, StoreError> {
-        let skipped = FileFlags::GENERATED.with(FileFlags::VENDORED);
+        let skipped = FileFlags::GENERATED_OR_VENDORED;
         let mut statement = self
             .connection()
             .prepare_cached(schema::COCHANGE_FILES)

@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use super::Ask;
 use super::links::{self, Link};
-use super::listing::Listing;
+use super::listing::{ListedFile, Listing};
 use super::numbers::{self, FileNumbers};
 use super::reply::{Failure, json, respond};
 use crate::map::site::Site;
@@ -54,6 +54,9 @@ struct FileEntry {
     reads: u64,
     /// How many commits changed it.
     commits: u64,
+    /// Whether its commits are counted: false for a generated or vendored file, whose `commits`
+    /// is then 0 however many commits changed it.
+    commits_counted: bool,
 }
 
 /// One link in the body.
@@ -101,7 +104,7 @@ fn graph_of(queries: Queries<'_>, source: &Source, listing: &Listing) -> Result<
         .iter()
         .zip(numbers)
         .enumerate()
-        .map(|(id, (file, numbers))| entry(id, file.path.as_str(), file.lines, numbers))
+        .map(|(id, (file, numbers))| entry(id, file, numbers))
         .collect();
     Ok(Graph {
         version: VERSION,
@@ -110,12 +113,12 @@ fn graph_of(queries: Queries<'_>, source: &Source, listing: &Listing) -> Result<
     })
 }
 
-/// The entry of the file with id `id`, at `path` with `lines` lines and `numbers`.
-fn entry(id: usize, path: &str, lines: u64, numbers: FileNumbers) -> FileEntry {
+/// The entry of the file with id `id`, `file`, with `numbers`.
+fn entry(id: usize, file: &ListedFile, numbers: FileNumbers) -> FileEntry {
     FileEntry {
         id,
-        path: path.to_owned(),
-        lines,
+        path: file.path.as_str().to_owned(),
+        lines: file.lines,
         interest: numbers.interest,
         tokens: numbers.tokens,
         touched_ms: numbers.touched_ms,
@@ -123,6 +126,7 @@ fn entry(id: usize, path: &str, lines: u64, numbers: FileNumbers) -> FileEntry {
         suspect: numbers.suspect,
         reads: numbers.reads,
         commits: numbers.commits,
+        commits_counted: file.counts_commits,
     }
 }
 
