@@ -24,6 +24,11 @@ describe('parseSummary accepts', () => {
     expect(parseSummary(summary())).toEqual({ ok: true, value: summary() });
   });
 
+  it('the top folder, by the empty path, as the busiest', () => {
+    const top = summary({ busiest_folder: { path: '', tokens: 9 } });
+    expect(parseSummary(top)).toEqual({ ok: true, value: top });
+  });
+
   it('a cold repository with nothing to name', () => {
     const cold = summary({
       explored_files: 0,
@@ -63,6 +68,11 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
   [
     'a folder with a .. segment',
     summary({ busiest_folder: { path: 'a/../b', tokens: 1 } }),
+    'bad_shape',
+  ],
+  [
+    'a folder whose path is not a string',
+    summary({ busiest_folder: { path: null, tokens: 1 } }),
     'bad_shape',
   ],
   [

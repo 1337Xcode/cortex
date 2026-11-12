@@ -28,6 +28,7 @@ export interface StrongestPair {
 
 /** The folder whose files took the most tokens in the window. */
 export interface BusiestFolder {
+  /** The folder's path; empty for the repository's top folder. */
   readonly path: string;
   readonly tokens: number;
 }
@@ -74,7 +75,9 @@ function readFolder(record: JsonRecord): BusiestFolder | null {
   if (value === null) return null;
   const where = 'summary.busiest_folder';
   const folder = readRecord(value, where);
-  return { path: readPath(folder, 'path', where), tokens: readCount(folder, 'tokens', where) };
+  // The empty path is the repository's top folder, whose own files can take the most.
+  const path = folder['path'] === '' ? '' : readPath(folder, 'path', where);
+  return { path, tokens: readCount(folder, 'tokens', where) };
 }
 
 function readHistory(record: JsonRecord): HistoryLimits {

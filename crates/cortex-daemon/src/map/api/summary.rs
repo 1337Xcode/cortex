@@ -69,7 +69,7 @@ struct Pair {
 /// A folder and the tokens its files took.
 #[derive(Debug, Serialize)]
 struct Busiest {
-    /// The folder's path.
+    /// The folder's path; empty for the repository's top folder.
     path: String,
     /// The tokens its own files took in the window.
     tokens: u64,
@@ -151,14 +151,29 @@ fn busiest_folder(
         .saturating_mul(DAY_MS);
     // INVARIANT: deterministic (the clock enters the summary here and nowhere else)
     let since = source.now_ms().saturating_sub(window_ms);
+    let tokens = queries.file_tokens(since)?;
+    let by_file = tokens.iter().filter_map(|&(node, tokens)| {
+        let file = listing.id_of_node(node).and_then(|id| listing.get(id))?;
+        Some((file.path.as_str(), tokens))
+    });
+    Ok(busiest_of(by_file).map(|(path, tokens)| Busiest {
+        path: path.to_owned(),
+        tokens,
+    }))
+}
+
+/// The folder `path` is in: what comes before its last `/`, or the empty path of the repository's
+/// top folder for a file there.
+fn folder_of(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(folder, _)| folder)
+}
+
+/// Of the tokens each file took, by its path, the folder whose own files took the most, with
+/// their sum, the first by path on a tie; none when no file took any.
+fn busiest_of<'a>(by_file: impl IntoIterator<Item = (&'a str, u64)>) -> Option<(&'a str, u64)> {
     let mut folders: BTreeMap<&str, u64> = BTreeMap::new();
-    for (node, tokens) in queries.file_tokens(since)? {
-        let Some(file) = listing.id_of_node(node).and_then(|id| listing.get(id)) else {
-            continue;
-        };
-        if let Some((folder, _)) = file.path.as_str().rsplit_once('/') {
-            *folders.entry(folder).or_insert(0) += tokens;
-        }
+    for (path, tokens) in by_file {
+        *folders.entry(folder_of(path)).or_insert(0) += tokens;
     }
     let mut busiest: Option<(&str, u64)> = None;
     for (folder, tokens) in folders {
@@ -166,8 +181,37 @@ fn busiest_folder(
             busiest = Some((folder, tokens));
         }
     }
-    Ok(busiest.map(|(path, tokens)| Busiest {
-        path: path.to_owned(),
-        tokens,
-    }))
+    busiest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file at the root counts for the top folder, the empty path: `README.md`'s 500 tokens beat
+    /// `src`'s 300 + 100 = 400 and `src/api`'s 450, which a subfolder's files do not add to `src`.
+    #[test]
+    fn the_top_folder_can_be_the_busiest() {
+        let tokens = [
+            ("README.md", 500),
+            ("src/main.rs", 300),
+            ("src/lib.rs", 100),
+            ("src/api/routes.rs", 450),
+        ];
+        assert_eq!(busiest_of(tokens), Some(("", 500)));
+    }
+
+    /// Without the root file, `src/api`'s 450 beats `src`'s own 400; on a tie the first path wins;
+    /// with no tokens there is none.
+    #[test]
+    fn the_busiest_folder_counts_its_own_files() {
+        let tokens = [
+            ("src/main.rs", 300),
+            ("src/lib.rs", 100),
+            ("src/api/routes.rs", 450),
+        ];
+        assert_eq!(busiest_of(tokens), Some(("src/api", 450)));
+        assert_eq!(busiest_of([("b/x.rs", 7), ("a/y.rs", 7)]), Some(("a", 7)));
+        assert_eq!(busiest_of([("a/y.rs", 0)]), None);
+    }
 }

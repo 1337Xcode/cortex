@@ -40,6 +40,15 @@ describe('summarySentences', () => {
     ]);
   });
 
+  it('names the top folder in words when its own files took the most', () => {
+    const top = { ...LEARNED, busiest_folder: { path: '', tokens: 1200 } };
+    const text = summarySentences(top, PAIRED);
+    const busiest = text.ok ? text.sentences.find((sentence) => sentence.key === 'busiest') : null;
+    expect(busiest ? plain(busiest) : null).toBe(
+      "Most worked on in the last 7 days: the repository's top folder (1,200 tokens attributed).",
+    );
+  });
+
   it('gives each sentence a short form for the one-line strip', () => {
     const text = summarySentences(LEARNED, PAIRED);
     const short = (sentence: SummarySentence): string =>

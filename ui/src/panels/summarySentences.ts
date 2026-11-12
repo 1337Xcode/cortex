@@ -80,10 +80,11 @@ function busiestSentence(summary: MapSummary): SummarySentence | null {
   const window =
     summary.window_days === 1 ? 'the last day' : `the last ${summary.window_days} days`;
   const tokens = `${countOf(busiest.tokens, 'token')} attributed`;
+  const folder = busiest.path === '' ? "the repository's top folder" : `${busiest.path}/`;
   return {
     key: 'busiest',
-    parts: [`Most worked on in ${window}: ${busiest.path}/ (${tokens}).`],
-    short: [`Busiest folder: ${busiest.path}/.`],
+    parts: [`Most worked on in ${window}: ${folder} (${tokens}).`],
+    short: [`Busiest folder: ${folder}.`],
   };
 }
 
