@@ -1,0 +1,21 @@
+/* Page styles. Every value is a custom property written from src/theme/tokens.ts. */
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-size: var(--size-body);
+}
+
+main {
+  padding: var(--space-lg);
+}
+
+h1 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--size-title);
+}
+
+p {
+  margin: 0;
+}
