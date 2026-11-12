@@ -389,3 +389,52 @@ fn the_root_is_an_anchor_that_never_changes() -> TestResult {
     assert_eq!(writer.queries().facts_with_changed_anchors()?, []);
     Ok(())
 }
+
+/// Facts counted for each file by status: fact 1 (active) is anchored to `src/money.rs` and to
+/// its class `Money`, and counts once for the file; fact 2 (a candidate) to `Money`; fact 3 is
+/// made suspect, on the file; fact 4 and 7 (active) are on `src/tax.rs`; fact 5 on it is retired;
+/// fact 6 on it is superseded by 7. So `money.rs` has 1 active, 1 candidate and 1 suspect, and
+/// `tax.rs` 2 active, listed by file and then status.
+#[test]
+fn facts_are_counted_for_each_file_by_status() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    let money = transaction.replace_file(&index(
+        "src/money.rs",
+        vec![symbol(SymbolKind::Class, "Money", None, ("class", "body"))?],
+        Vec::new(),
+    )?)?;
+    let tax = transaction
+        .replace_file(&index("src/tax.rs", Vec::new(), Vec::new())?)?
+        .file_node;
+    let (money_file, class) = (money.file_node, money.symbol_nodes[0]);
+    let user = |text, nodes: &[NodeId], at| fact(text, FactSource::User, at, nodes);
+    transaction.add_fact(&user("Money is in cents.", &[money_file, class], 1))?;
+    transaction.add_fact(&fact("Money is signed.", FactSource::Agent, 2, &[class]))?;
+    let third = transaction.add_fact(&user("Money never rounds.", &[money_file], 3))?;
+    transaction.set_fact_status(third, FactStatus::Suspect, 3)?;
+    transaction.add_fact(&user("Tax rounds up.", &[tax], 4))?;
+    let fifth = transaction.add_fact(&user("Tax is flat.", &[tax], 5))?;
+    transaction.set_fact_status(fifth, FactStatus::Retired, 5)?;
+    let sixth = transaction.add_fact(&user("Tax is local.", &[tax], 6))?;
+    let seventh = transaction.add_fact(&user("Tax is national.", &[tax], 7))?;
+    assert!(transaction.supersede_fact(sixth, seventh)?);
+    transaction.commit()?;
+    let counted: Vec<(NodeId, FactStatus, u64)> = writer
+        .queries()
+        .fact_counts_by_file()?
+        .iter()
+        .map(|row| (row.file, row.status, row.count))
+        .collect();
+    assert_eq!(
+        counted,
+        [
+            (money_file, FactStatus::Active, 1),
+            (money_file, FactStatus::Candidate, 1),
+            (money_file, FactStatus::Suspect, 1),
+            (tax, FactStatus::Active, 2),
+        ]
+    );
+    Ok(())
+}

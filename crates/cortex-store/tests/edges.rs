@@ -143,3 +143,37 @@ fn a_link_goes_with_either_of_its_nodes() -> TestResult {
     assert_eq!(left, [c]);
     Ok(())
 }
+
+/// The edges of one type are read in the order of their ends and the others left out: `a` links
+/// to `b` and `c` as co-change and to `b` as co-access, `b` links to `a` as co-change.
+#[test]
+fn the_edges_of_one_type_are_read_by_their_ends() -> TestResult {
+    let scratch = Scratch::new()?;
+    let nodes = file_nodes(&scratch, &["a.py", "b.py", "c.py"])?;
+    let [a, b, c] = nodes[..] else {
+        return Err("three nodes".into());
+    };
+    let mut writer = scratch.writer(1_000)?;
+    let mut transaction = writer.transaction()?;
+    let one_way = |dst, weight, count, last_seq| EdgeRecord {
+        is_directed: true,
+        ..link(dst, weight, count, last_seq)
+    };
+    transaction.replace_edges(
+        a,
+        EdgeType::CoChange,
+        &[one_way(b, 0.5, 4, 0), one_way(c, 0.25, 2, 0)],
+    )?;
+    transaction.replace_edges(a, EdgeType::CoAccess, &[one_way(b, 1.5, 1, 7)])?;
+    transaction.replace_edges(b, EdgeType::CoChange, &[one_way(a, 0.75, 4, 0)])?;
+    transaction.commit()?;
+    let mut seen = Vec::new();
+    writer
+        .queries()
+        .each_edge_of_type(EdgeType::CoChange, |row| {
+            seen.push((row.src, row.edge.dst, row.edge.weight, row.edge.count));
+            Ok(())
+        })?;
+    assert_eq!(seen, [(a, b, 0.5, 4), (a, c, 0.25, 2), (b, a, 0.75, 4)]);
+    Ok(())
+}

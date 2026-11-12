@@ -20,7 +20,7 @@
 //! one cut short), or that would be the first graph, is built without co-change links.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -53,6 +53,9 @@ pub(crate) struct Snapshot {
     asks: Arc<Asks>,
     /// Whether a mining is being written.
     is_mining: AtomicBool,
+    /// How many times the store was noted as changed: what holds a copy of the store's files,
+    /// as the map's listing does, compares it with the number it was built at.
+    generation: AtomicU64,
     /// The work that follows the store's changes as the graph does, asked whenever it is.
     followers: Mutex<Vec<Arc<Asks>>>,
 }
@@ -127,6 +130,7 @@ impl Snapshot {
 
     /// Notes that the store changed, so that the graph is rebuilt and its followers asked.
     pub(crate) fn changed(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.asks.ask();
         let followers = self
             .followers
@@ -135,6 +139,12 @@ impl Snapshot {
         for follower in followers.iter() {
             follower.ask();
         }
+    }
+
+    /// How many times the store was noted as changed since the daemon started; a copy of the
+    /// store built at one number is out of date at any other.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
     }
 
     /// Has `asks` asked whenever the graph is: work that a change of the store may concern too.

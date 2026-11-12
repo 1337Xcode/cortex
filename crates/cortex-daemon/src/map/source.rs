@@ -1,0 +1,92 @@
+//! Where the map's data comes from: the repository's store, opened for reading on each request,
+//! the weights that bring stored scores up to now, the history worker's cache of commit subjects,
+//! and the clock the one time-windowed number reads.
+//!
+//! The map never writes: [`Source::open`] gives a [`Reader`], and the only other things here are
+//! numbers to weigh with and a read of text the daemon holds in memory.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use cortex_retrieve::GraphSettings;
+use cortex_store::{Reader, StoreError};
+
+use crate::graph::Snapshot;
+use crate::history::Jobs;
+
+/// What the map's endpoints read.
+#[derive(Debug)]
+pub(crate) struct Source {
+    /// The repository's `.cortex` folder.
+    folder: PathBuf,
+    /// How much of the database to memory map, as `mmap_bytes` says.
+    mmap_bytes: u64,
+    /// What brings a stored score or link weight forward to now.
+    settings: GraphSettings,
+    /// The history worker's jobs, whose cache holds the subjects of commits it has read.
+    texts: Arc<Jobs>,
+    /// The graph's snapshot, which counts the changes of the store.
+    snapshot: Arc<Snapshot>,
+    /// The time now in UTC milliseconds; the one place the clock enters an answer, so that a test
+    /// can fix it.
+    clock: fn() -> i64,
+}
+
+impl Source {
+    /// A source reading the store in `folder`, opened with `mmap_bytes`, weighing with
+    /// `settings`, reading commit subjects from `texts` and told of the store's changes by
+    /// `snapshot`; its clock is the system's.
+    pub(crate) fn new(
+        (folder, mmap_bytes): (PathBuf, u64),
+        settings: GraphSettings,
+        (texts, snapshot): (Arc<Jobs>, Arc<Snapshot>),
+    ) -> Self {
+        Self {
+            folder,
+            mmap_bytes,
+            settings,
+            texts,
+            snapshot,
+            clock: crate::host::now_ms,
+        }
+    }
+
+    /// This source with `clock` as its clock.
+    #[cfg(test)]
+    pub(crate) fn with_clock(self, clock: fn() -> i64) -> Self {
+        Self { clock, ..self }
+    }
+
+    /// A reader of the store, opened for this one request.
+    ///
+    /// # Errors
+    ///
+    /// The store is not there yet, or not at this build's schema, or cannot be opened.
+    pub(super) fn open(&self) -> Result<Reader, StoreError> {
+        // INVARIANT: single-writer (the map only ever opens the store to read it: a `Reader`
+        // has no way to write)
+        Reader::open(&self.folder, self.mmap_bytes)
+    }
+
+    /// How many times the daemon noted that the store changed: a copy of what the store holds is
+    /// out of date once this is not the number it was built at.
+    pub(super) fn generation(&self) -> u64 {
+        self.snapshot.generation()
+    }
+
+    /// What brings a stored score or link weight forward to now.
+    pub(super) fn settings(&self) -> &GraphSettings {
+        &self.settings
+    }
+
+    /// The time now in UTC milliseconds.
+    pub(super) fn now_ms(&self) -> i64 {
+        (self.clock)()
+    }
+
+    /// The subject of the commit `oid`, when the history worker's cache holds it; never read
+    /// from git here.
+    pub(super) fn commit_subject(&self, oid: &str) -> Option<String> {
+        self.texts.text(oid).map(|text| text.subject)
+    }
+}

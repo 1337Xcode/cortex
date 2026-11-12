@@ -7,6 +7,7 @@ use axum::response::Response;
 use cortex_core::ipc::CORTEX_VERSION;
 use serde::Serialize;
 
+use super::Ask;
 use crate::map::site::Site;
 
 /// The endpoint's answer.
@@ -19,8 +20,12 @@ struct Health {
 }
 
 /// The health of `site` as JSON; a 500 with an empty body when it cannot be written, which a
-/// struct of a string and a flag never makes happen.
-pub(super) fn answer(site: &Site) -> Response {
+/// struct of a string and a flag never makes happen, and 404 for a request that names more than
+/// the endpoint.
+pub(super) fn answer(site: &Site, ask: &Ask) -> Response {
+    if ask.tail.is_some() {
+        return site.empty(StatusCode::NOT_FOUND);
+    }
     let health = Health {
         version: CORTEX_VERSION,
         has_assets: site.has_assets(),

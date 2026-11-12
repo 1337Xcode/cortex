@@ -87,6 +87,42 @@ impl Queries<'_> {
             .collect()
     }
 
+    /// The symbols whose name holds `text`, ignoring the case of ASCII letters, each with its
+    /// name, the path of its file and the line it starts at: those named exactly `text` first,
+    /// then those whose name starts with it, then the rest, each by path, line and name, at most
+    /// `limit` of them. `text` is lower-cased by the caller.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn symbols_containing(
+        self,
+        text: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, RepoPath, u32)>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows: Vec<(String, String, i64)> = self
+            .connection()
+            .prepare_cached(schema::SYMBOLS_CONTAINING)
+            .and_then(|mut statement| {
+                statement
+                    .query_map((text, limit), |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })?
+                    .collect()
+            })
+            .map_err(sqlite("finding symbols by part of a name"))?;
+        rows.into_iter()
+            .map(|(name, path, line)| {
+                Ok((
+                    name,
+                    values::path(&path, "files.path", line)?,
+                    values::number(line, "symbols.start_line", line)?,
+                ))
+            })
+            .collect()
+    }
+
     /// The nodes of the first `limit` symbols named `name`, by node.
     ///
     /// # Errors

@@ -8,7 +8,7 @@ use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket};
 use std::path::Path;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::{Daemon, Printed, TestResult, isolate, printed};
 
@@ -191,4 +191,80 @@ fn own_network_address() -> Option<IpAddr> {
     socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
     let own = socket.local_addr().ok()?.ip();
     (!own.is_loopback() && !own.is_unspecified()).then_some(own)
+}
+
+/// How long the test waits for the daemon to have indexed the repository's files.
+const INDEXED_WITHIN: Duration = Duration::from_secs(60);
+
+/// The body of the map's endpoint `path` (under the token), sent with the right `Host`.
+fn api(port: u16, token: &str, path: &str) -> TestResult<Answered> {
+    send(
+        port,
+        &format!("GET /{token}/{path} HTTP/1.1\r\nHost: 127.0.0.1:{port}"),
+    )
+}
+
+/// Through a real daemon on a repository of two files, each endpoint answers over HTTP with the
+/// token: the graph lists both files sorted by path, the summary counts them, a search finds one by
+/// name, the first file's panel names it, an id past the last is 404 and a search with no text 400.
+#[test]
+fn the_map_api_answers_from_a_real_daemons_store() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let root = repo.path();
+    std::fs::write(root.join("main.py"), "def main():\n    return 0\n")?;
+    std::fs::write(root.join("util.py"), "def helper():\n    return 1\n")?;
+    let daemon = Daemon::start(root, home.path())?;
+    daemon.first_line()?;
+    let asked = cortex(root, home.path(), &["map", "--no-open"])?;
+    assert!(asked.is_success, "{}", asked.stderr);
+    let rest = asked
+        .stdout
+        .trim_end()
+        .strip_prefix("http://127.0.0.1:")
+        .ok_or("the address is not on 127.0.0.1")?
+        .trim_end_matches('/')
+        .to_owned();
+    let (port, token) = rest.split_once('/').ok_or("the address has no path")?;
+    let port: u16 = port.parse()?;
+    let until = Instant::now() + INDEXED_WITHIN;
+    let graph = loop {
+        let answered = api(port, token, "api/graph")?;
+        let body = String::from_utf8(answered.body)?;
+        if answered.status == 200 && body.contains("\"path\":\"util.py\"") {
+            break body;
+        }
+        assert!(Instant::now() < until, "the files were not indexed: {body}");
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert!(
+        graph.starts_with(r#"{"version":1,"files":[{"id":0,"path":"main.py""#),
+        "{graph}"
+    );
+    assert!(graph.contains(r#"{"id":1,"path":"util.py""#), "{graph}");
+    let text = |path: &str| -> TestResult<(u16, String)> {
+        let answered = api(port, token, path)?;
+        Ok((answered.status, String::from_utf8(answered.body)?))
+    };
+    let (status, summary) = text("api/summary")?;
+    assert_eq!(status, 200);
+    assert!(
+        summary.starts_with(r#"{"version":1,"files":2,"folders":0,"#),
+        "{summary}"
+    );
+    let (status, found) = text("api/search?q=main")?;
+    assert_eq!(status, 200);
+    assert!(
+        found.contains(r#"{"kind":"file","file":0,"name":"main.py","line":null}"#),
+        "{found}"
+    );
+    let (status, panel) = text("api/file/0")?;
+    assert_eq!(status, 200);
+    assert!(
+        panel.starts_with(r#"{"version":1,"id":0,"path":"main.py","#),
+        "{panel}"
+    );
+    assert_eq!(text("api/file/2")?, (404, String::new()));
+    assert_eq!(text("api/search")?, (400, String::new()));
+    Ok(())
 }

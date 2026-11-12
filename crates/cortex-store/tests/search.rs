@@ -180,3 +180,39 @@ fn symbols_are_found_by_name() -> TestResult {
     );
     Ok(())
 }
+
+/// Symbols whose name holds a text, ASCII letters in either case: `src/orders.py` defines `Order`
+/// (line 1), `order_book` (2) and `reorder` (3), `src/billing.py` defines `OrderTotal` (1) and
+/// `pay` (2). For `order`: the exact name `Order` first, then the names that start with it by
+/// path, `OrderTotal` in billing.py before `order_book` in orders.py, then `reorder`, which holds
+/// it; `pay` never. With a limit of 3 the last is cut. The `%` of a text is no wildcard.
+#[test]
+fn symbols_are_found_by_part_of_a_name() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let mut transaction = writer.transaction()?;
+    store(
+        &mut transaction,
+        "src/orders.py",
+        &["Order", "order_book", "reorder"],
+    )?;
+    store(&mut transaction, "src/billing.py", &["OrderTotal", "pay"])?;
+    transaction.commit()?;
+    let queries = writer.queries();
+    let found: Vec<(String, String, u32)> = queries
+        .symbols_containing("order", 10)?
+        .into_iter()
+        .map(|(name, path, line)| (name, path.as_str().to_owned(), line))
+        .collect();
+    let expected = [
+        ("Order", "src/orders.py", 1),
+        ("OrderTotal", "src/billing.py", 1),
+        ("order_book", "src/orders.py", 2),
+        ("reorder", "src/orders.py", 3),
+    ]
+    .map(|(name, path, line)| (name.to_owned(), path.to_owned(), line));
+    assert_eq!(found, expected);
+    assert_eq!(queries.symbols_containing("order", 3)?.len(), 3);
+    assert_eq!(queries.symbols_containing("%", 10)?, []);
+    Ok(())
+}

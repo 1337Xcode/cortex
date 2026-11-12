@@ -1137,6 +1137,72 @@ pub(crate) const LINKS_OF_FILE: &str = "WITH me AS (SELECT path FROM nodes \
     SELECT path, type, max(w) AS w, last_seq FROM linked WHERE path != (SELECT path FROM me) \
     GROUP BY path, type, last_seq ORDER BY type, w DESC, path, last_seq";
 
+/// For every file node an agent's hooks reported a read or an edit of: its reads and the time of
+/// the latest read or edit, by node. An edit the file watcher saw has a source in its meta and is
+/// the user's.
+pub(crate) const FILE_READS: &str = "SELECT node_id, coalesce(sum(kind = 'read'), 0), max(ts) \
+    FROM events WHERE node_id IS NOT NULL AND kind IN ('read', 'edit') \
+    AND json_extract(meta, '$.source') IS NULL GROUP BY node_id ORDER BY node_id";
+/// The tokens of the responses at or after ?1, each counted for the file node its session last
+/// read or edited at or before the response, summed by node; the responses are those of
+/// [`USAGE_OF_SESSION`] (a copy a fork made counts for the session that started first).
+pub(crate) const FILE_TOKENS: &str = "SELECT w.node_id, sum(w.tokens) FROM (\
+    SELECT (SELECT e.node_id FROM events AS e WHERE e.session_id = u.session_id \
+    AND e.kind IN ('read', 'edit') AND e.node_id IS NOT NULL \
+    AND json_extract(e.meta, '$.source') IS NULL AND e.ts <= u.ts \
+    ORDER BY e.ts DESC, e.seq DESC LIMIT 1) AS node_id, \
+    u.input + u.cache_write + u.cache_read + u.output AS tokens \
+    FROM usage AS u JOIN sessions AS s ON s.session_id = u.session_id \
+    WHERE u.ts >= ?1 AND NOT EXISTS (SELECT 1 FROM usage AS c \
+    JOIN sessions AS cs ON cs.session_id = c.session_id \
+    WHERE c.response = u.response AND c.session_id <> u.session_id \
+    AND (cs.started_at < s.started_at \
+    OR (cs.started_at = s.started_at AND c.session_id < u.session_id)))) AS w \
+    WHERE w.node_id IS NOT NULL GROUP BY w.node_id HAVING sum(w.tokens) > 0 \
+    ORDER BY w.node_id";
+/// Every edge of type ?1, in the order of its key; the columns are those of [`ALL_EDGES`].
+pub(crate) const EDGES_OF_TYPE: &str =
+    "SELECT src, dst, type, w, n, last_seq, directed FROM edges WHERE type = ?1 ORDER BY src, dst";
+/// Every work order that reached an agent, oldest first: prompts' retrievals neither kept back nor
+/// held out, with a text's hash; the columns are those of [`INJECTIONS_OF_SESSION`].
+pub(crate) const WORK_ORDERS_ALL: &str = "SELECT injection_id, task_id, session_id, hook, ts, \
+    items, tokens_est, confidence, gated_out, holdout, rendered_hash, used_count, label, features \
+    FROM injections WHERE hook = 'prompt' AND gated_out = 0 AND holdout = 0 \
+    AND rendered_hash IS NOT NULL AND features IS NOT NULL ORDER BY injection_id";
+/// The work orders (as [`WORK_ORDERS_ALL`] selects them) that named the file node ?1, the latest
+/// first, at most ?2 of them.
+pub(crate) const WORK_ORDERS_NAMING: &str = "SELECT injection_id, task_id, session_id, hook, ts, \
+    items, tokens_est, confidence, gated_out, holdout, rendered_hash, used_count, label, features \
+    FROM injections WHERE hook = 'prompt' AND gated_out = 0 AND holdout = 0 \
+    AND rendered_hash IS NOT NULL AND features IS NOT NULL \
+    AND EXISTS (SELECT 1 FROM json_each(items) WHERE json_extract(value, '$.node') = ?1) \
+    ORDER BY ts DESC, injection_id DESC LIMIT ?2";
+/// The warnings of the kinds the JSON array ?3 names that named the file node ?1, the latest
+/// first, at most ?2 of them; the columns are those of [`WARNINGS_OF_TASK`].
+pub(crate) const WARNINGS_NAMING: &str = "SELECT warning_id, task_id, ts, kind, src_node, \
+    dst_node, strength, resolved FROM warnings WHERE dst_node = ?1 \
+    AND kind IN (SELECT value FROM json_each(?3)) ORDER BY ts DESC, warning_id DESC LIMIT ?2";
+/// How many current facts of each of the statuses active, candidate and suspect are about each
+/// file, by file node and status: a fact is about a file when one of its anchors is the file or a
+/// symbol it defines, and counts once for the file however many such anchors it has.
+pub(crate) const FACT_COUNTS_BY_FILE: &str = "SELECT file.node_id, f.status, \
+    count(DISTINCT a.fact_id) FROM fact_anchors AS a \
+    JOIN facts AS f ON f.fact_id = a.fact_id \
+    JOIN nodes AS n ON n.node_id = a.node_id \
+    LEFT JOIN symbols AS s ON n.kind = 'symbol' AND s.symbol_id = n.ref_id \
+    JOIN nodes AS file ON file.kind = 'file' \
+    AND file.ref_id = (CASE n.kind WHEN 'file' THEN n.ref_id ELSE s.file_id END) \
+    WHERE f.superseded_by IS NULL AND f.status IN ('active', 'candidate', 'suspect') \
+    GROUP BY file.node_id, f.status ORDER BY file.node_id, f.status";
+/// The symbols whose lower-cased name holds the lower-cased text ?1 (ASCII letters only fold),
+/// with the path of their file and the line they start at: a name that is the text first, then
+/// one that starts with it, then the rest, each by path, line and name, at most ?2 of them.
+pub(crate) const SYMBOLS_CONTAINING: &str = "SELECT s.name, f.path, s.start_line \
+    FROM symbols AS s JOIN files AS f ON f.file_id = s.file_id \
+    WHERE instr(lower(s.name), ?1) > 0 \
+    ORDER BY CASE WHEN lower(s.name) = ?1 THEN 0 WHEN instr(lower(s.name), ?1) = 1 THEN 1 \
+    ELSE 2 END, f.path, s.start_line, s.name LIMIT ?2";
+
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;

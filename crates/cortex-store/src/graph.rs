@@ -5,7 +5,7 @@
 //! Each read streams its rows to the caller, so that a graph of millions of edges is never held
 //! twice, once as rows and once as what the caller builds from them.
 
-use cortex_core::{FileFlags, NodeKind};
+use cortex_core::{EdgeType, FileFlags, NodeKind};
 use rusqlite::Row;
 
 use crate::error::{StoreError, sqlite};
@@ -74,6 +74,31 @@ impl Queries<'_> {
         let mut rows = statement.query([]).map_err(sqlite("reading edges"))?;
         while let Some(row) = rows.next().map_err(sqlite("reading edges"))? {
             let raw = RawEdge::read(row).map_err(sqlite("reading edges"))?;
+            each(raw.check()?)?;
+        }
+        Ok(())
+    }
+
+    /// Hands `each` every edge of type `edge_type`, by source and target.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back, `each`'s first error included:
+    /// the read stops there.
+    pub fn each_edge_of_type(
+        self,
+        edge_type: EdgeType,
+        mut each: impl FnMut(EdgeRow) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let mut statement = self
+            .connection()
+            .prepare_cached(schema::EDGES_OF_TYPE)
+            .map_err(sqlite("reading edges of one type"))?;
+        let mut rows = statement
+            .query([edge_type.number()])
+            .map_err(sqlite("reading edges of one type"))?;
+        while let Some(row) = rows.next().map_err(sqlite("reading edges of one type"))? {
+            let raw = RawEdge::read(row).map_err(sqlite("reading edges of one type"))?;
             each(raw.check()?)?;
         }
         Ok(())

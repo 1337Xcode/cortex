@@ -16,9 +16,12 @@ All notable changes to this project are documented in this file. The format is b
   header. It holds at most 64 connections at once and closes one after 30 s with no byte either way;
   when the daemon stops, the port is closed and so are the open connections. `cortex map` prints or
   opens only an address of exactly that form. A binary built after the map's interface was built
-  embeds it; one built before serves a page saying it has no map. For now the map serves its page,
-  its files and a health check. The guard's rules are tested one by one, and a test runs the command
-  against a daemon and sends the map plain HTTP requests.
+  embeds it; one built before serves a page saying it has no map. The map serves its page, its
+  files, a health check and four read-only JSON endpoints read from the store: the files with their
+  numbers and strongest links (`api/graph`), the first screen's summary (`api/summary`), a search
+  of paths and symbols (`api/search?q=`) and one file's facts, history and what Cortex told agents
+  about it (`api/file/<id>`). The guard's rules are tested one by one, and tests run the command
+  against a daemon and send the map plain HTTP requests, the data endpoints included.
 - Evaluation tasks for the history features, and the runner support they need. A task that says
   `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
   deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that

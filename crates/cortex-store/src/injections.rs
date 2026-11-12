@@ -262,6 +262,47 @@ impl Queries<'_> {
         rows.into_iter().map(RawInjection::check).collect()
     }
 
+    /// Every work order that reached an agent, oldest first: a prompt's retrieval neither kept
+    /// back nor held out, with the hash of a text written.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn delivered_work_orders(self) -> Result<Vec<InjectionRow>, StoreError> {
+        let mut statement = self
+            .connection()
+            .prepare_cached(schema::WORK_ORDERS_ALL)
+            .map_err(sqlite("reading work orders"))?;
+        let rows = statement
+            .query_map([], read)
+            .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
+            .map_err(sqlite("reading work orders"))?;
+        rows.into_iter().map(RawInjection::check).collect()
+    }
+
+    /// The work orders (as [`Queries::delivered_work_orders`] gives them) that named the file at
+    /// node `file`, the latest first, at most `limit` of them.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn work_orders_naming(
+        self,
+        file: NodeId,
+        limit: usize,
+    ) -> Result<Vec<InjectionRow>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = self
+            .connection()
+            .prepare_cached(schema::WORK_ORDERS_NAMING)
+            .map_err(sqlite("reading work orders"))?;
+        let rows = statement
+            .query_map((file.get(), limit), read)
+            .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
+            .map_err(sqlite("reading work orders"))?;
+        rows.into_iter().map(RawInjection::check).collect()
+    }
+
     /// The injections `sql` selects for `key`.
     fn injections(self, sql: &str, key: &str) -> Result<Vec<InjectionRow>, StoreError> {
         let mut statement = self

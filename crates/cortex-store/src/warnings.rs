@@ -133,6 +133,38 @@ impl Queries<'_> {
         rows.into_iter().map(RawWarning::check).collect()
     }
 
+    /// The warnings that expect a follow-up and named the file at node `file`, as the companion,
+    /// the test or the caller it pointed to, the latest first, at most `limit` of them. The file's
+    /// own edits' origin notes are not among them: nothing is ever marked of those.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn warnings_naming(
+        self,
+        file: NodeId,
+        limit: usize,
+    ) -> Result<Vec<WarningRow>, StoreError> {
+        let kinds: Vec<&str> = WarningKind::ALL
+            .iter()
+            .filter(|kind| kind.expects_follow_up())
+            .map(|kind| kind.name())
+            .collect();
+        let kinds = serde_json::to_string(&kinds).map_err(|_| StoreError::NotText {
+            column: "warnings.kind",
+        })?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = self
+            .connection()
+            .prepare_cached(schema::WARNINGS_NAMING)
+            .map_err(sqlite("reading the warnings that named a file"))?;
+        let rows = statement
+            .query_map((file.get(), limit, kinds), read)
+            .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
+            .map_err(sqlite("reading the warnings that named a file"))?;
+        rows.into_iter().map(RawWarning::check).collect()
+    }
+
     /// The warnings of task `task_id`, in the order they were recorded.
     ///
     /// # Errors

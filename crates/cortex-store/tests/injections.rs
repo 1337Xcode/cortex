@@ -610,3 +610,75 @@ fn an_older_record_shows_nothing() -> TestResult {
     assert_eq!((file.shown, file.content), (Vec::new(), None));
     Ok(())
 }
+
+/// Every delivered work order is read back oldest first, and those that named one file latest
+/// first with a limit. Session s1's task: a work order at 10 naming a.py and b.py, one kept back at
+/// 20 naming a.py, one at 30 naming b.py and c.py, a primer at 5 naming a.py (no gate features, so
+/// no work order). So the delivered orders name [a, b] then [b, c]; the ones naming a.py are the
+/// one at 10 alone; those naming b.py are 30 then 10, and with a limit of 1, 30.
+#[test]
+fn work_orders_are_read_back_whole_and_by_the_file_they_named() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let [a, b, c] = nodes(&mut writer, &["a.py", "b.py", "c.py"])?[..] else {
+        return Err("three nodes".into());
+    };
+    let s1 = Identifier::new("s1")?;
+    let task = Ulid::parse("01JC0000000000000000000000")?;
+    session_with(&mut writer, &s1, &[task])?;
+    let named = |nodes: &[NodeId], hook, at_ms| InjectionRecord {
+        task_id: (hook == HookKind::Prompt).then_some(task),
+        session_id: s1.clone(),
+        hook,
+        at_ms,
+        files: nodes
+            .iter()
+            .map(|node| InjectedFile {
+                node: *node,
+                spans: vec![(1, 2)],
+                reason: Some(ReasonKind::Named),
+                shown: Vec::new(),
+                content: None,
+            })
+            .collect(),
+        tokens: 10,
+        confidence: None,
+        is_gated_out: false,
+        is_holdout: false,
+        text_hash: Some(ContentHash::of(b"a text")),
+        features: (hook == HookKind::Prompt).then(features),
+    };
+    let rows = [
+        named(&[a], HookKind::SessionStart, 5),
+        named(&[a, b], HookKind::Prompt, 10),
+        InjectionRecord {
+            is_gated_out: true,
+            ..named(&[a], HookKind::Prompt, 20)
+        },
+        named(&[b, c], HookKind::Prompt, 30),
+    ];
+    let mut transaction = writer.transaction()?;
+    for row in &rows {
+        transaction.record_injection(row)?;
+    }
+    transaction.commit()?;
+    let queries = writer.queries();
+    let orders: Vec<Vec<NodeId>> = queries
+        .delivered_work_orders()?
+        .iter()
+        .map(|row| row.record.files.iter().map(|file| file.node).collect())
+        .collect();
+    assert_eq!(orders, [vec![a, b], vec![b, c]]);
+    let times = |node, limit| -> TestResult<Vec<i64>> {
+        Ok(queries
+            .work_orders_naming(node, limit)?
+            .iter()
+            .map(|row| row.record.at_ms)
+            .collect())
+    };
+    assert_eq!(times(a, 10)?, [10]);
+    assert_eq!(times(b, 10)?, [30, 10]);
+    assert_eq!(times(b, 1)?, [30]);
+    assert_eq!(times(c, 10)?, [30]);
+    Ok(())
+}

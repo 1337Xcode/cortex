@@ -18,6 +18,7 @@ mod bounded;
 mod connections;
 mod guard;
 mod site;
+mod source;
 #[cfg(test)]
 mod table;
 mod token;
@@ -33,6 +34,7 @@ use tokio::task::JoinHandle;
 
 use self::connections::Capped;
 use self::site::Site;
+pub(crate) use self::source::Source;
 use self::token::Token;
 
 /// How long an ask for the address waits for the daemon to have read its configuration, which it
@@ -55,10 +57,20 @@ const IDLE_LIMIT: Duration = Duration::from_secs(30);
 /// The map server: unconfigured, configured, or serving.
 #[derive(Debug)]
 pub(crate) struct Map {
-    /// The port `ui.port` names, once the daemon has read its configuration.
-    port: watch::Sender<Option<u16>>,
+    /// The port `ui.port` names and what the map reads, once the daemon has read its
+    /// configuration.
+    configured: watch::Sender<Option<Configured>>,
     /// The map as served, once it is.
     serving: Mutex<Option<Serving>>,
+}
+
+/// What the daemon's configuration sets for the map: the port to serve on and what it reads.
+#[derive(Debug, Clone)]
+struct Configured {
+    /// The port `ui.port` names.
+    port: u16,
+    /// What the endpoints read.
+    source: Arc<Source>,
 }
 
 /// The map as served.
@@ -87,44 +99,49 @@ impl Default for Map {
     /// A map whose port is not known yet, not served.
     fn default() -> Self {
         Self {
-            port: watch::Sender::new(None),
+            configured: watch::Sender::new(None),
             serving: Mutex::new(None),
         }
     }
 }
 
 impl Map {
-    /// Sets the port to serve on, from `ui.port`, once the daemon has read its configuration.
-    pub(crate) fn configure(&self, port: u16) {
-        self.port.send_replace(Some(port));
+    /// Sets the port to serve on, from `ui.port`, and what the map reads, once the daemon has read
+    /// its configuration.
+    pub(crate) fn configure(&self, port: u16, source: Source) {
+        self.configured.send_replace(Some(Configured {
+            port,
+            source: Arc::new(source),
+        }));
     }
 
     /// The answer to an ask for the map's address: the address, the map served from now on if it
     /// was not yet; why it cannot be served; or, when the daemon has not read its configuration
     /// within [`CONFIGURED_WITHIN`], that it is still starting. Called inside the daemon's runtime.
     pub(crate) async fn answer(&self) -> ResponseBody {
-        let mut configured = self.port.subscribe();
+        let mut watching = self.configured.subscribe();
         let waited =
-            tokio::time::timeout(CONFIGURED_WITHIN, configured.wait_for(Option::is_some)).await;
-        let port = match waited {
-            Ok(Ok(port)) => *port,
+            tokio::time::timeout(CONFIGURED_WITHIN, watching.wait_for(Option::is_some)).await;
+        let configured = match waited {
+            Ok(Ok(configured)) => configured.clone(),
             Ok(Err(_)) | Err(_) => None,
         };
-        let Some(port) = port else {
+        let Some(configured) = configured else {
             return ResponseBody::Error {
                 message: "the daemon is still starting: try again in a moment".to_owned(),
             };
         };
-        self.serve(port)
+        self.serve(&configured)
     }
 
-    /// The map's address, served on `port` from now on if it was not yet.
-    fn serve(&self, port: u16) -> ResponseBody {
+    /// The map's address, served as `configured` says from now on if it was not yet.
+    fn serve(&self, configured: &Configured) -> ResponseBody {
         let mut serving = self.serving();
         if let Some(served) = serving.as_ref() {
             return served.answer();
         }
-        match start(port) {
+        let port = configured.port;
+        match start(port, &configured.source) {
             Ok(served) => {
                 let answer = served.answer();
                 *serving = Some(served);
@@ -173,9 +190,9 @@ enum Failed {
     Other(String),
 }
 
-/// Binds 127.0.0.1 at `port` (0 for a free one), makes the token and starts serving the map.
-/// Called inside the daemon's runtime.
-fn start(port: u16) -> Result<Serving, Failed> {
+/// Binds 127.0.0.1 at `port` (0 for a free one), makes the token and starts serving the map,
+/// whose endpoints read `source`. Called inside the daemon's runtime.
+fn start(port: u16, source: &Arc<Source>) -> Result<Serving, Failed> {
     // INVARIANT: local-only (the map listens on the loopback address alone, never on another
     // interface, whatever the configuration says)
     let bound = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).map_err(Failed::Bind)?;
@@ -188,7 +205,7 @@ fn start(port: u16) -> Result<Serving, Failed> {
         ))
     })?;
     let url = format!("http://127.0.0.1:{port}/{}/", token.as_str());
-    let site = Site::new(port, token, assets::ASSETS)
+    let site = Site::new(port, token, assets::ASSETS, Arc::clone(source))
         .map_err(|error| Failed::Other(format!("the map's headers could not be made: {error}")))?;
     let has_assets = site.has_assets();
     let router = Router::new()
@@ -225,6 +242,15 @@ mod tests {
     /// How long the test waits for a byte or a condition before it fails.
     const WAIT: Duration = Duration::from_secs(10);
 
+    /// A source over a folder that holds no store, which these tests never read.
+    fn source() -> Source {
+        Source::new(
+            (std::path::PathBuf::from("no-store-here"), 0),
+            cortex_retrieve::GraphSettings::default(),
+            (Arc::default(), Arc::default()),
+        )
+    }
+
     /// Asked on a free port, the map is served at an address whose health answers 200 on a
     /// connection kept open. Once stopped, that connection is closed and the port refuses new
     /// ones. The state's debug line never shows the address.
@@ -235,7 +261,7 @@ mod tests {
             .enable_all()
             .build()?;
         let map = Map::default();
-        map.configure(0);
+        map.configure(0, source());
         let ResponseBody::Map(MapAnswer::Serving { url, .. }) = runtime.block_on(map.answer())
         else {
             return Err("the map was not served".into());

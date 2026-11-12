@@ -295,3 +295,56 @@ fn the_open_warnings_about_a_file_are_read_latest_first() -> TestResult {
     assert_eq!(open, [ids[1], ids[0]]);
     Ok(())
 }
+
+/// The warnings that named a file, the latest first and within a limit, the origin notes left out:
+/// orders.py was named by a cochange warning at 2,000 (resolved), a call-site warning at 2,500
+/// (not marked yet), a test warning at 1,500 and an origin note at 9,000; schema.py by one
+/// cochange warning at 2,000. So orders.py was named at 2,500, 2,000 and 1,500, with the
+/// resolution of each as stored, two with a limit of 2, and schema.py once.
+#[test]
+fn the_warnings_that_named_a_file_come_latest_first() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    let task = Ulid::parse(FIRST)?;
+    let paths = ["src/orders.py", "src/schema.py"];
+    let [orders, schema] = store_with(&mut writer, &paths, &[task])?[..] else {
+        return Err("two nodes".into());
+    };
+    let warning = |kind, at_ms, source, target| WarningRecord {
+        task_id: task,
+        at_ms,
+        kind,
+        source,
+        target,
+        strength: 0.5,
+    };
+    let ids = record_all(
+        &mut writer,
+        &[
+            warning(WarningKind::CoChange, 2_000, schema, orders),
+            warning(WarningKind::CallSite, 2_500, schema, orders),
+            warning(WarningKind::Test, 1_500, schema, orders),
+            warning(WarningKind::Origin, 9_000, orders, orders),
+            warning(WarningKind::CoChange, 2_000, orders, schema),
+        ],
+    )?;
+    let first = *ids.first().ok_or("no rows")?;
+    let mut transaction = writer.transaction()?;
+    assert!(transaction.resolve_warning(first, true)?);
+    transaction.commit()?;
+    let queries = writer.queries();
+    let seen = |node, limit| -> TestResult<Vec<(i64, Option<bool>)>> {
+        Ok(queries
+            .warnings_naming(node, limit)?
+            .iter()
+            .map(|row| (row.record.at_ms, row.resolved))
+            .collect())
+    };
+    assert_eq!(
+        seen(orders, 10)?,
+        [(2_500, None), (2_000, Some(true)), (1_500, None)]
+    );
+    assert_eq!(seen(orders, 2)?, [(2_500, None), (2_000, Some(true))]);
+    assert_eq!(seen(schema, 10)?, [(2_000, None)]);
+    Ok(())
+}

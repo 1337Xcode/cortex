@@ -185,6 +185,19 @@ impl Jobs {
         self.lock().texts.put(oid, text);
     }
 
+    /// Holds `subject`, with no reason line, as the commit `oid`'s text, for the tests of what
+    /// reads the cache from outside the worker.
+    #[cfg(test)]
+    pub(crate) fn put_subject(&self, oid: &str, subject: &str) {
+        self.put_text(
+            oid,
+            CardText {
+                subject: subject.to_owned(),
+                reason: None,
+            },
+        );
+    }
+
     /// Keeps the store's counts of cards and cached blames for the status.
     pub(super) fn set_counts(&self, cards: u64, cached_blames: u64) {
         let mut state = self.lock();

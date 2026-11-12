@@ -45,6 +45,17 @@ pub struct FactRecord {
     pub anchors: Vec<FactAnchor>,
 }
 
+/// How many current facts of one status are about one file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FactsAboutFile {
+    /// The file's node.
+    pub file: NodeId,
+    /// The status those facts are in: active, candidate or suspect.
+    pub status: FactStatus,
+    /// How many there are.
+    pub count: u64,
+}
+
 /// A fact as the store holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactRow {
@@ -371,6 +382,35 @@ impl Queries<'_> {
     /// SQLite errors.
     pub fn facts_given_in(self, task: Ulid) -> Result<Vec<FactId>, StoreError> {
         self.fact_ids(schema::FACTS_GIVEN_IN_TASK, [task.to_string()])
+    }
+
+    /// How many current active, candidate and suspect facts are about each file, by file node and
+    /// then status: a fact is about a file when an anchor of it is the file or a symbol the file
+    /// defines, and it counts once for that file however many such anchors it has. A file no fact
+    /// is about is left out.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn fact_counts_by_file(self) -> Result<Vec<FactsAboutFile>, StoreError> {
+        let rows: Vec<(i64, String, i64)> = self
+            .connection()
+            .prepare_cached(schema::FACT_COUNTS_BY_FILE)
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                    .collect()
+            })
+            .map_err(sqlite("counting the facts about files"))?;
+        rows.into_iter()
+            .map(|(file, status, count)| {
+                Ok(FactsAboutFile {
+                    file: NodeId(file),
+                    status: values::kind(&status, FactStatus::from_name, "facts.status", file)?,
+                    count: values::number(count, "fact_anchors", file)?,
+                })
+            })
+            .collect()
     }
 
     /// The ids of the current facts anchored to any of `nodes`, each once, in id order.

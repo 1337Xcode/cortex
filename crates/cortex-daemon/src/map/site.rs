@@ -17,18 +17,22 @@ use axum::http::header::{
     ALLOW, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderName, LOCATION,
     ORIGIN, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
 };
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
+use cortex_store::StoreError;
 
-use super::api;
+use super::api::{self, Listing, ListingCache};
 use super::assets::{Asset, WITHOUT_MAP, find};
 use super::guard::{Asked, Seen, Verdict, admit};
+use super::source::Source;
 use super::token::Token;
 
 /// The content type of an HTML page.
 const HTML: &str = "text/html; charset=utf-8";
 
-/// The map as served: its port, its token, its embedded files and its page's security policy.
+/// The map as served: its port, its token, its embedded files, what its API reads and its page's
+/// security policy.
 #[derive(Debug)]
 pub(crate) struct Site {
     /// The port it listens on, on 127.0.0.1.
@@ -37,12 +41,17 @@ pub(crate) struct Site {
     token: Token,
     /// Its embedded files, sorted by path.
     assets: &'static [Asset],
+    /// What the API reads.
+    source: Arc<Source>,
+    /// The listing of files the API shares.
+    listing: ListingCache,
     /// The `Content-Security-Policy` its answers carry, which names its port.
     policy: HeaderValue,
 }
 
 impl Site {
-    /// The map served on 127.0.0.1 at `port` with `token`, serving the files of `assets`.
+    /// The map served on 127.0.0.1 at `port` with `token`, serving the files of `assets` and an API
+    /// that reads `source`.
     ///
     /// # Errors
     ///
@@ -51,6 +60,7 @@ impl Site {
         port: u16,
         token: Token,
         assets: &'static [Asset],
+        source: Arc<Source>,
     ) -> Result<Self, InvalidHeaderValue> {
         let policy = format!(
             "default-src 'self'; connect-src 'self' ws://127.0.0.1:{port} ws://localhost:{port}; \
@@ -60,6 +70,8 @@ impl Site {
             port,
             token,
             assets,
+            source,
+            listing: ListingCache::default(),
             policy: HeaderValue::from_str(&policy)?,
         })
     }
@@ -69,27 +81,47 @@ impl Site {
         !self.assets.is_empty()
     }
 
-    /// The answer to `request`.
-    pub(crate) fn answer<B>(&self, request: &axum::http::Request<B>) -> Response {
-        let headers = request.headers();
+    /// What the API reads.
+    pub(super) fn source(&self) -> &Source {
+        &self.source
+    }
+
+    /// The listing of the files the API shares, built again only after the store changed.
+    ///
+    /// # Errors
+    ///
+    /// The store cannot be opened or read.
+    pub(super) fn listing(&self) -> Result<Arc<Listing>, StoreError> {
+        self.listing.get(&self.source)
+    }
+
+    /// How many listings the site built. For tests.
+    #[cfg(test)]
+    pub(super) fn listings_built(&self) -> u64 {
+        self.listing.builds()
+    }
+
+    /// The answer to the request whose head is `parts`.
+    pub(crate) async fn answer(self: &Arc<Self>, parts: &Parts) -> Response {
+        let headers = &parts.headers;
         let asked = Asked {
-            method: request.method(),
+            method: &parts.method,
             host: seen(headers, &HOST),
             origin: seen(headers, &ORIGIN),
-            path: request.uri().path(),
+            path: parts.uri.path(),
         };
         match admit(&asked, self.port, &self.token) {
             Verdict::Refuse(status) => self.empty(status),
             Verdict::AddSlash => self.add_slash(),
-            Verdict::Serve(rest) => self.serve(rest),
+            Verdict::Serve(rest) => self.serve(rest, parts).await,
         }
     }
 
-    /// The answer to a request the guard let through for `rest`, the path after the token.
-    fn serve(&self, rest: &str) -> Response {
+    /// The answer to a request the guard let through for `rest`, the path after the token, whose
+    /// head is `parts`.
+    async fn serve(self: &Arc<Self>, rest: &str, parts: &Parts) -> Response {
         if let Some(endpoint) = rest.strip_prefix(api::PREFIX) {
-            return api::answer(self, endpoint)
-                .unwrap_or_else(|| self.empty(StatusCode::NOT_FOUND));
+            return api::answer(Arc::clone(self), endpoint, parts.uri.clone()).await;
         }
         if rest.is_empty() && self.assets.is_empty() {
             return self.reply(StatusCode::OK, HTML, Body::from(WITHOUT_MAP));
@@ -149,7 +181,8 @@ impl Site {
 
 /// Answers `request` for the map `site`: the handler every request reaches.
 pub(crate) async fn respond(State(site): State<Arc<Site>>, request: Request) -> Response {
-    site.answer(&request)
+    let (parts, _body) = request.into_parts();
+    site.answer(&parts).await
 }
 
 /// The header `name` of `headers` as the guard sees it.
@@ -191,9 +224,18 @@ mod tests {
     /// What an answer gave: its status, its content type and its body.
     type Given = (u16, Option<String>, Vec<u8>);
 
+    /// A source over a folder that holds no store: the API's data answers are not read here.
+    fn source() -> Arc<Source> {
+        Arc::new(Source::new(
+            (std::path::PathBuf::from("no-store-here"), 0),
+            cortex_retrieve::GraphSettings::default(),
+            (Arc::default(), Arc::default()),
+        ))
+    }
+
     /// The answer `site` gives a GET of `path` from its own origin, with any header in `extra`.
     fn get(
-        site: &Site,
+        site: &Arc<Site>,
         method: &Method,
         path: &str,
         extra: &[(&str, &str)],
@@ -205,14 +247,17 @@ mod tests {
         for (name, value) in extra {
             request = request.header(*name, *value);
         }
-        let response = site.answer(&request.body(())?);
+        let (head, ()) = request.body(())?.into_parts();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let response = runtime.block_on(site.answer(&head));
         let status = response.status().as_u16();
         let content_type = response
             .headers()
             .get(CONTENT_TYPE)
             .map(|value| value.to_str().map(str::to_owned))
             .transpose()?;
-        let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let (parts, body) = response.into_parts();
         let bytes = runtime
             .block_on(axum::body::to_bytes(body, 1 << 20))?
@@ -252,7 +297,7 @@ mod tests {
     fn embedded_files_are_served_byte_for_byte() -> TestResult {
         let token = Token::generate()?;
         let t = token.as_str().to_owned();
-        let site = Site::new(PORT, token, &TWO)?;
+        let site = Arc::new(Site::new(PORT, token, &TWO, source())?);
         let page = (
             200,
             Some("text/html; charset=utf-8".to_owned()),
@@ -278,7 +323,7 @@ mod tests {
             (format!("/{t}/index.html"), page),
             (format!("/{t}/assets/map.js?v=1"), script),
             (format!("/{t}/api/health"), health),
-            (format!("/{t}/api/graph"), missing.clone()),
+            (format!("/{t}/api/nothing"), missing.clone()),
             (format!("/{t}/assets/other.js"), missing.clone()),
             (format!("/{t}/assets/../index.html"), missing.clone()),
             (format!("/{t}"), (308, None, Vec::new())),
@@ -297,7 +342,7 @@ mod tests {
     fn a_build_without_the_map_says_so() -> TestResult {
         let token = Token::generate()?;
         let t = token.as_str().to_owned();
-        let site = Site::new(PORT, token, &[])?;
+        let site = Arc::new(Site::new(PORT, token, &[], source())?);
         let (response, page) = get(&site, &Method::GET, &format!("/{t}/"), &[])?;
         assert_eq!(
             page,
@@ -330,7 +375,7 @@ mod tests {
     fn refusals_are_empty_and_carry_the_headers() -> TestResult {
         let token = Token::generate()?;
         let health = format!("/{}/api/health", token.as_str());
-        let site = Site::new(PORT, token, &TWO)?;
+        let site = Arc::new(Site::new(PORT, token, &TWO, source())?);
         let (foreign, given) = get(
             &site,
             &Method::GET,

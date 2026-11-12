@@ -87,7 +87,7 @@ use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
 use self::linked::Linked;
-use self::map::Map;
+use self::map::{Map, Source};
 use self::meter::Meter;
 use self::miner::Miner;
 use self::pending::Pending;
@@ -239,7 +239,14 @@ fn index_and_serve(
         note(&format!("warning: {warning}"))?;
     }
     let config = loaded.config;
-    shared.map.configure(config.ui.port);
+    shared.map.configure(
+        config.ui.port,
+        Source::new(
+            (root.join(".cortex"), config.mmap_bytes),
+            GraphSettings::from(&config),
+            (Arc::clone(&shared.history), Arc::clone(&shared.snapshot)),
+        ),
+    );
     inbox.keep_positions_by(Timing::of(&config.coordination));
     // The configuration refuses a pattern that does not compile, so this fails only as it would.
     let commands = Commands::new(&config.test_extra_patterns)?;
