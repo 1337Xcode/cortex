@@ -636,6 +636,11 @@ pub(crate) const EPISODES: &str = "SELECT task_id, localize, change, verify, pit
      outcome, created_at FROM (SELECT task_id, localize, change, verify, pitfalls, outcome, \
      created_at FROM episodes ORDER BY task_id DESC LIMIT ?1) ORDER BY task_id";
 
+/// What the newest tasks whose records were written before a moment changed, with how each ended
+/// and when, newest first.
+pub(crate) const EPISODE_CHANGES_ENDED_BEFORE: &str = "SELECT task_id, change, outcome, \
+     created_at FROM episodes WHERE created_at < ?1 ORDER BY task_id DESC LIMIT ?2";
+
 /// Row counts for status.
 pub(crate) const COUNTS: &str = "SELECT (SELECT count(*) FROM files), \
      (SELECT count(*) FROM symbols), (SELECT count(*) FROM refs), \

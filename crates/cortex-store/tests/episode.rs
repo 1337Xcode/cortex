@@ -6,8 +6,9 @@ mod common;
 use common::{Scratch, TestResult, index};
 use cortex_core::{Agent, CommandKind, Identifier, TaskOutcome, Ulid};
 use cortex_store::{
-    ChangedFile, ChangedSymbol, EpisodeRecord, MAX_EPISODE_BYTES, NodeId, Pitfalls, RanCheck,
-    ReadAgain, ReadFile, SessionRecord, StoreError, TaskRecord, Writer,
+    ChangedFile, ChangedSymbol, EpisodeChange, EpisodeRecord, MAX_EPISODE_BYTES, NodeId,
+    PersistedFailure, Pitfalls, RanCheck, ReadAgain, ReadFile, SessionRecord, StoreError,
+    TaskRecord, Writer,
 };
 
 /// A name.
@@ -81,6 +82,7 @@ fn record(task_id: Ulid, node: NodeId, reads: u32) -> TestResult<EpisodeRecord> 
                 to_line: 20,
                 times: 4,
             }],
+            persisted: Vec::new(),
         },
         outcome: TaskOutcome::Success,
         created_at_ms: 2_000,
@@ -176,5 +178,74 @@ fn a_record_inside_its_bound_is_written() -> TestResult {
             .map(|held| held.localize.len()),
         Some(80)
     );
+    Ok(())
+}
+
+/// What the tasks ended before a moment changed comes newest first, at most as many as asked,
+/// with each one's outcome and time: four tasks started at 1,000, 2,000, 3,000 and 4,000 whose
+/// records were written at 1,500, 3,500, 2,500 and 5,000. Before 3,500 are the third and the first,
+/// the third first as it started later; the second, written at exactly 3,500, and the fourth are
+/// left out. A failure that persisted is read back as written, and a record holding none stores no
+/// key for it: its pitfalls are the 97 bytes they were before the key existed, counted by hand with
+/// the file's node 1: `{"fixed":["pytest"],` 20, `"undone":[1],` 13, `"read_again":` 13,
+/// `[{"node":1,"from_line":10,"to_line":20,"times":4}]` 50 and the closing brace 1.
+#[test]
+fn the_records_ended_before_a_moment_come_newest_first() -> TestResult {
+    let scratch = Scratch::new()?;
+    let (mut writer, first, node) = task(&scratch)?;
+    let mut transaction = writer.transaction()?;
+    let mut ids = vec![first];
+    for started_at_ms in [2_000, 3_000, 4_000] {
+        let task_id = Ulid::from_seed(u64::try_from(started_at_ms)?, b"task");
+        transaction.start_task(&task_record(task_id, "s1", started_at_ms)?)?;
+        ids.push(task_id);
+    }
+    for (task_id, created_at_ms) in ids.iter().zip([1_500, 3_500, 2_500, 5_000]) {
+        transaction.replace_episode(&EpisodeRecord {
+            created_at_ms,
+            ..record(*task_id, node, 1)?
+        })?;
+    }
+    transaction.commit()?;
+    let before = |at_ms, limit| -> TestResult<Vec<Ulid>> {
+        Ok(writer
+            .queries()
+            .episode_changes_ended_before(at_ms, limit)?
+            .iter()
+            .map(|held| held.task_id)
+            .collect())
+    };
+    let [_, second, third, _] = ids.as_slice() else {
+        return Err("four tasks".into());
+    };
+    let (second, third) = (*second, *third);
+    assert_eq!(before(3_500, 10)?, [third, first]);
+    assert_eq!(before(3_501, 10)?, [third, second, first]);
+    assert_eq!(before(3_500, 1)?, [third]);
+    assert_eq!(before(1_500, 10)?, Vec::<Ulid>::new());
+    let read = writer.queries().episode_changes_ended_before(3_500, 1)?;
+    let expected = record(third, node, 1)?;
+    assert_eq!(
+        read,
+        [EpisodeChange {
+            task_id: third,
+            change: expected.change,
+            outcome: TaskOutcome::Success,
+            created_at_ms: 2_500,
+        }]
+    );
+    let plain = record(first, node, 1)?;
+    assert_eq!(node.get(), 1);
+    assert_eq!(plain.parts()?[3].len(), 97);
+    let mut persisted = plain.clone();
+    persisted.pitfalls.persisted = vec![PersistedFailure {
+        runner: name("pytest")?,
+        edited: vec![node],
+        until: vec![node],
+    }];
+    let mut transaction = writer.transaction()?;
+    transaction.replace_episode(&persisted)?;
+    transaction.commit()?;
+    assert_eq!(writer.queries().episode_of_task(first)?, Some(persisted));
     Ok(())
 }

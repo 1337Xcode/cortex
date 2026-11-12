@@ -109,16 +109,17 @@ fn asked_with(
     mode: ScaleMode,
     settings: &RetrievalConfig,
 ) -> TestResult<cortex_retrieve::Retrieval> {
-    asked_while_changed(repo, prompt, (mode, settings), &[])
+    asked_while_changed(repo, prompt, (mode, settings), (&[], None))
 }
 
 /// What `prompt` in session `s1` gives in `repo`, in `mode`, with the `retrieval.*` `settings`,
-/// while the work tree holds the files `changed` changed and not committed.
+/// while the work tree holds the files `changed` changed and not committed, for a task that began
+/// at `experience_before_ms` when the experience hint is asked for.
 fn asked_while_changed(
     repo: &Repo,
     prompt: &str,
     (mode, settings): (ScaleMode, &RetrievalConfig),
-    changed: &[&str],
+    (changed, experience_before_ms): (&[&str], Option<i64>),
 ) -> TestResult<cortex_retrieve::Retrieval> {
     let reader = repo.reader()?;
     let graph = read_graph(reader.queries(), &GraphSettings::default())?;
@@ -143,6 +144,7 @@ fn asked_while_changed(
         root: repo.root.path(),
         why_lines: None,
         history_seed_weight: None,
+        experience_before_ms,
     };
     Ok(retrieve(reader.queries(), &graph, &request)?)
 }
@@ -174,6 +176,7 @@ fn located(
         root: repo.root.path(),
         why_lines: None,
         history_seed_weight: None,
+        experience_before_ms: None,
     };
     Ok(locate(reader.queries(), &graph, &request, limit)?)
 }
@@ -274,6 +277,7 @@ fn a_spreading_out_of_time_gives_nothing() -> TestResult {
             root: repo.root.path(),
             why_lines: None,
             history_seed_weight: None,
+            experience_before_ms: None,
         };
         let retrieval = retrieve(reader.queries(), &graph, &request)?;
         assert_eq!(
@@ -311,6 +315,7 @@ fn a_question_out_of_time_names_no_file() -> TestResult {
             root: repo.root.path(),
             why_lines: None,
             history_seed_weight: None,
+            experience_before_ms: None,
         };
         let in_time = locate(reader.queries(), &graph, &request, 5)?;
         assert!(!in_time.listed.is_empty(), "{mode:?}");
@@ -387,6 +392,7 @@ fn asked_by_model_at(
         root: repo.root.path(),
         why_lines: None,
         history_seed_weight: None,
+        experience_before_ms: None,
     };
     Ok(retrieve(reader.queries(), &graph, &request)?)
 }
@@ -412,6 +418,7 @@ fn located_by_model(repo: &Repo, question: &str, model: &ConfidenceModel) -> Tes
         root: repo.root.path(),
         why_lines: None,
         history_seed_weight: None,
+        experience_before_ms: None,
     };
     Ok(locate(reader.queries(), &graph, &request, 5)?)
 }
@@ -589,7 +596,7 @@ fn a_prompt_about_an_uncommitted_change_gets_its_work_order() -> TestResult {
         &repo,
         "change rate",
         (ScaleMode::Medium, &settings),
-        &["src/billing/tax.py"],
+        (&["src/billing/tax.py"], None),
     )?;
     let Outcome::WorkOrder(rule, rendered) = &retrieval.outcome else {
         return Err(format!("{:?}", retrieval.outcome).into());
@@ -640,6 +647,116 @@ fn a_file_changed_since_indexing_loses_its_lines() -> TestResult {
         "{}",
         rendered.text
     );
+    Ok(())
+}
+
+/// Days, in milliseconds.
+const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
+
+/// The prompt the experience hint is asked for with.
+const EXPERIENCED: &str = "fix create_order in the orders service";
+
+/// [`repository`] with earlier work like [`EXPERIENCED`]: a cluster whose words are the prompt's
+/// own and whose files are the service and the model, and task 1, which changed both and ended at
+/// day 100.
+fn experienced_repository() -> TestResult<Repo> {
+    let mut repo = repository()?;
+    let reader = repo.reader()?;
+    let node = |path: &str| -> TestResult<cortex_store::NodeId> {
+        Ok(reader
+            .queries()
+            .file_node_at(&RepoPath::new(path)?)?
+            .ok_or("a stored file")?)
+    };
+    let (service, model) = (node("src/orders/service.py")?, node("src/orders/model.py")?);
+    drop(reader);
+    let words = cortex_retrieve::PromptTerms::of(EXPERIENCED).words;
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    repo.clusters(&[(words.as_slice(), &[service, model], 1)])?;
+    repo.tasks(1)?;
+    let mut transaction = repo.writer.transaction()?;
+    transaction.replace_episode(&cortex_store::EpisodeRecord {
+        task_id: cortex_core::Ulid::from_seed(1, b"task"),
+        localize: Vec::new(),
+        change: [service, model]
+            .map(|node| cortex_store::ChangedFile {
+                node,
+                lines: 1,
+                symbols: Vec::new(),
+            })
+            .to_vec(),
+        verify: Vec::new(),
+        pitfalls: cortex_store::Pitfalls::default(),
+        outcome: cortex_core::TaskOutcome::Success,
+        created_at_ms: 100 * DAY_MS,
+    })?;
+    transaction.commit()?;
+    Ok(repo)
+}
+
+/// The work orders [`EXPERIENCED`] gets in `repo` not asking for the hint and asking for it at day
+/// 114, with the second's retrieval.
+fn without_and_with(
+    repo: &Repo,
+) -> TestResult<(cortex_retrieve::Rendered, cortex_retrieve::Retrieval)> {
+    let settings = RetrievalConfig::default();
+    let at = |experience| {
+        asked_while_changed(
+            repo,
+            EXPERIENCED,
+            (ScaleMode::Medium, &settings),
+            (&[], experience),
+        )
+    };
+    let Outcome::WorkOrder(_, without) = at(None)?.outcome else {
+        return Err("a work order not asked for the hint".into());
+    };
+    Ok((without, at(Some(114 * DAY_MS))?))
+}
+
+/// A work order asked for the experience hint carries it last, and is otherwise the work order
+/// asked without it, from [`experienced_repository`]: task 1 ended 14 days before the task asking
+/// began. The hint line is typed by hand; a work order not asked for it has none.
+#[test]
+fn a_work_order_carries_the_experience_hint_last() -> TestResult {
+    let repo = experienced_repository()?;
+    let (without, retrieval) = without_and_with(&repo)?;
+    let Outcome::WorkOrder(_, with) = retrieval.outcome else {
+        return Err("a work order asked for the hint".into());
+    };
+    assert!(!without.is_hinted);
+    assert!(with.is_hinted);
+    assert_eq!(retrieval.hint_failure, None);
+    assert_eq!(
+        with.text,
+        format!(
+            "{}[cortex] A similar task (2 weeks ago) changed src/orders/service.py and \
+             src/orders/model.py.\n",
+            without.text
+        )
+    );
+    Ok(())
+}
+
+/// A record the store cannot read back costs the hint, never the work order: with task 1's changes
+/// overwritten by text that is not JSON, the work order asked for the hint is the one not asked for
+/// it, and the retrieval says why the hint failed, naming the column and no content.
+#[test]
+fn a_corrupt_record_costs_the_hint_alone() -> TestResult {
+    let repo = experienced_repository()?;
+    let database = rusqlite::Connection::open(repo.root.path().join(".cortex").join("cortex.db"))?;
+    let changed = database.execute("UPDATE episodes SET change = 'not json'", [])?;
+    assert_eq!(changed, 1);
+    drop(database);
+    let (without, retrieval) = without_and_with(&repo)?;
+    let Outcome::WorkOrder(_, with) = retrieval.outcome else {
+        return Err("a work order asked for the hint".into());
+    };
+    assert!(!with.is_hinted);
+    assert_eq!(with.text, without.text);
+    let failure = retrieval.hint_failure.ok_or("the hint's failure")?;
+    assert!(failure.contains("episodes.change"), "{failure}");
+    assert!(!failure.contains("not json"), "{failure}");
     Ok(())
 }
 

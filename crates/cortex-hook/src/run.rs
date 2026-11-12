@@ -597,6 +597,7 @@ mod tests {
                 is_interrupted: false,
                 output_bytes: None,
                 counts: None,
+                failing: None,
             }),
             prompt_text: None,
             transcript_path: None,

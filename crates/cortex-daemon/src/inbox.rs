@@ -12,10 +12,12 @@ use std::time::Instant;
 
 use cortex_coord::Timing;
 use cortex_core::ipc::{GitReport, RecentError, ResponseBody, UpkeepReport};
-use cortex_core::{CheckCounts, CoordinationConfig, Event, HookKind, RepoPath, ToolKind};
+use cortex_core::{
+    CheckCounts, CoordinationConfig, Event, HookKind, RepoPath, ShortHash, ToolKind,
+};
 use cortex_git::mine::Mining;
 use cortex_index::Change;
-use cortex_learn::{Commands, read_line_failure};
+use cortex_learn::{Commands, failing_signature, read_line_failure};
 use cortex_store::CheckpointFailures;
 
 use crate::asked::{Ask, AskJob};
@@ -206,18 +208,22 @@ impl Inbox {
         self.commands.get_or_init(|| commands);
     }
 
-    /// The counts `output`, what `event`'s failed shell line printed, says: none when the inbox
-    /// reads no failures, or no parser of the line's checks finds a failure in it.
-    fn counts_of(&self, event: &Event, output: &str) -> Option<CheckCounts> {
-        let commands = self.commands.get()?;
-        let command = event.tool_target.as_ref()?.command.as_ref()?;
-        let read = read_line_failure(
-            commands,
-            command,
-            (event.worktree_top(), &event.cwd),
-            output,
-        )?;
-        read.failures.counts
+    /// The counts `output`, what `event`'s failed shell line printed, says, and the signature of
+    /// the failing tests it names (`failing_signature`): none when the inbox reads no failures, or
+    /// no parser of the line's checks finds a failure in it.
+    fn failure_of(&self, event: &Event, output: &str) -> (Option<CheckCounts>, Option<ShortHash>) {
+        let read = self.commands.get().and_then(|commands| {
+            let command = event.tool_target.as_ref()?.command.as_ref()?;
+            read_line_failure(
+                commands,
+                command,
+                (event.worktree_top(), &event.cwd),
+                output,
+            )
+        });
+        read.map_or((None, None), |read| {
+            (read.failures.counts, failing_signature(&read.failures))
+        })
     }
 
     /// Whether `event` is a tool's result that may have changed the repository's files: an edit's,
@@ -264,17 +270,21 @@ impl Inbox {
     /// the event first.
     pub(crate) fn push_event(&self, mut event: Event) -> bool {
         // INVARIANT: no-content-stored (the writer, which stores events, never gets a command's
-        // output, only the counts read from it; and a queue of events stays one of paths and
-        // counts)
+        // output, only the counts read from it and the hash of the failing tests' names; and a
+        // queue of events stays one of paths, counts and hashes)
         if let Some(output) = event
             .tool_target
             .as_mut()
             .and_then(|target| target.failed_output.take())
         {
-            let counts = self.counts_of(&event, output.as_str());
+            let (counts, failing) = self.failure_of(&event, output.as_str());
             if let Some(result) = event.tool_result.as_mut() {
                 result.counts = counts;
+                result.failing = failing;
             }
+        } else if let Some(result) = event.tool_result.as_mut() {
+            // Only the daemon's own reading of an output tells two failures apart.
+            result.failing = None;
         }
         let is_change = self.may_have_changed_files(&event);
         let mut state = self.lock();
@@ -829,6 +839,7 @@ mod tests {
                 is_interrupted: false,
                 output_bytes: None,
                 counts: None,
+                failing: None,
             }),
             ..event(HookKind::PostTool, Some(ToolKind::ApplyPatch), 4)?
         };
@@ -873,7 +884,8 @@ mod tests {
     }
 
     /// A failed command's event reaches the writer without its output, its command kept and the
-    /// counts its output printed read: pytest's `1 failed, 2 passed`.
+    /// counts its output printed read: pytest's `1 failed, 2 passed`, with the short hash of the
+    /// one failing test's name. A signature an event brings without an output is not kept.
     #[test]
     fn the_writer_gets_no_command_s_output() -> Result<(), Box<dyn std::error::Error>> {
         let inbox = Inbox::default();
@@ -892,6 +904,7 @@ mod tests {
             is_interrupted: false,
             output_bytes: Some(70),
             counts: None,
+            failing: None,
         });
         assert!(failed.failed_output().is_some());
         inbox.push_event(failed);
@@ -923,7 +936,37 @@ mod tests {
                 skipped: 0,
             })
         );
+        let failing = events
+            .first()
+            .and_then(|event| event.tool_result)
+            .and_then(|result| result.failing);
+        assert_eq!(failing, Some(ShortHash::of(b"test_ops.py::test_a")));
+        let mut brought = event(HookKind::PostTool, Some(ToolKind::Shell), 2)?;
+        brought.tool_result = Some(cortex_core::ToolResult {
+            failing: Some(ShortHash::of(b"x")),
+            ..failed_result()
+        });
+        inbox.push_event(brought);
+        let Work::Events(events) = inbox.wait(None) else {
+            return Err("no events".into());
+        };
+        assert_eq!(
+            events.first().and_then(|event| event.tool_result?.failing),
+            None
+        );
         Ok(())
+    }
+
+    /// A shell line's result that exited 1, with nothing read from its output.
+    fn failed_result() -> cortex_core::ToolResult {
+        cortex_core::ToolResult {
+            exit_code: Some(1),
+            is_success: false,
+            is_interrupted: false,
+            output_bytes: Some(70),
+            counts: None,
+            failing: None,
+        }
     }
 
     /// Events come out oldest first, before any change waiting with them.

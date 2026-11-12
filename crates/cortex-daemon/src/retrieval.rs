@@ -91,6 +91,8 @@ pub(crate) struct Service {
     why_lines: Option<WhyLinesSettings>,
     /// `history.seed_weight` while `history.seeds` is on; none while it is off.
     history_seed_weight: Option<f64>,
+    /// `history.experience`: whether a work order may carry the experience hint.
+    is_experience: bool,
     /// The contracts of the coordination notices queued lately, for their notices to be given
     /// in their words.
     contracts: Contracts,
@@ -184,6 +186,8 @@ pub(crate) struct Settings {
     pub(crate) why_lines: Option<WhyLinesSettings>,
     /// `history.seed_weight` while `history.seeds` is on; none while it is off.
     pub(crate) history_seed_weight: Option<f64>,
+    /// `history.experience`: whether a work order may carry the experience hint.
+    pub(crate) is_experience: bool,
 }
 
 /// What a work order's why-lines are read with: the running history worker, and the caps.
@@ -213,6 +217,7 @@ impl Service {
             is_keep_list: settings.is_keep_list,
             why_lines: settings.why_lines,
             history_seed_weight: settings.history_seed_weight,
+            is_experience: settings.is_experience,
             contracts: Contracts::default(),
             readers: Mutex::new(Vec::new()),
         }
@@ -221,13 +226,14 @@ impl Service {
     /// The work order `event`, a prompt, gets over `graph`, seeded with `uncommitted`, the file
     /// nodes of the uncommitted diff, and what to record of the retrieval; nothing for a prompt
     /// that asks for no code. A session's first prompt may also get a handoff, claimed in `handed`
-    /// so that it is given once. A store that cannot be read gives nothing, and the error is
-    /// logged.
+    /// so that it is given once, and the work order the experience hint, its task claimed in
+    /// `experienced` so that a task gets one. A store that cannot be read gives nothing, and the
+    /// error is logged.
     pub(crate) fn prompt(
         &self,
         event: &Event,
         (graph, uncommitted): (Option<&Arc<Graph<NodeId>>>, &[NodeId]),
-        (handed, failed): (&ClaimedOnce<HandoffId>, &Failed),
+        ((handed, experienced), failed): (Once<'_>, &Failed),
     ) -> Answer {
         // Taken by any prompt of the session, one that asks for no code included: what came after
         // the failure is no longer about it.
@@ -235,11 +241,12 @@ impl Service {
         let Some((graph, prompt)) = graph.zip(event.prompt_for_work()) else {
             return Answer::default();
         };
+        let (task_id, is_holdout) = prompt_task(event, self.holdout_share);
+        let experience = experience_claim(self.is_experience, (task_id, event.ts_ms), experienced);
         let answered = self.with_reader(|queries| {
             let Some(mode) = mode_of(queries)? else {
                 return Ok(Answer::default());
             };
-            let (task_id, is_holdout) = prompt_task(event, self.holdout_share);
             let check = queries.self_check()?;
             let in_use = model_in_use(queries)?;
             let request = Request {
@@ -261,8 +268,12 @@ impl Service {
                     max_tokens: why.max_tokens,
                 }),
                 history_seed_weight: self.history_seed_weight,
+                experience_before_ms: experience,
             };
             let retrieval = retrieve(queries, graph, &request)?;
+            if let Some(failure) = &retrieval.hint_failure {
+                tracing::warn!(error = %failure, "a work order's experience hint failed");
+            }
             let injection = retrieval.features.map(|features| InjectionRecord {
                 task_id: Some(task_id),
                 session_id: event.session_id.clone(),
@@ -299,7 +310,10 @@ impl Service {
                     (idle_ms, handed),
                 )?
             };
-            let mut claims = Vec::new();
+            let mut claims: Vec<Claim> = hint_given(experience, is_holdout, &retrieval.outcome)
+                .then_some(Claim::Experienced(task_id))
+                .into_iter()
+                .collect();
             let text = match handoff {
                 Some((handoff, handoff_text)) => {
                     // Each line given ends its line, as a work order's lines and notices do.
@@ -318,10 +332,12 @@ impl Service {
                 ..Answer::default()
             })
         });
-        answered.unwrap_or_else(|error| {
+        let answer = answered.unwrap_or_else(|error| {
             tracing::warn!(error = %format!("{error:#}"), "a prompt's retrieval failed");
             Answer::default()
-        })
+        });
+        settle(experienced, (task_id, experience), &answer.claims);
+        answer
     }
 
     /// The primer `event`, a session's start, gets over `graph`, and what to record of it. A
@@ -411,6 +427,7 @@ impl Service {
                 root: worktree.unwrap_or(&self.root),
                 why_lines: None,
                 history_seed_weight: self.history_seed_weight,
+                experience_before_ms: None,
             };
             let location = locate(queries, graph, &request, limit)?;
             Ok(location.rendered.map(|rendered| rendered.text))
@@ -438,6 +455,45 @@ impl Service {
             readers.push(reader);
         }
         found
+    }
+}
+
+/// What a prompt's answer may give a task once: the handoff given to a session's first prompt, and
+/// the experience hint.
+type Once<'a> = (&'a ClaimedOnce<HandoffId>, &'a ClaimedOnce<Ulid>);
+
+/// When task `task_id` began, `start_ms`, for its work order's experience hint, while `is_on`
+/// (`history.experience`) and the task was not given the hint yet: the task is claimed in
+/// `experienced`, to be settled once its answer is known ([`settle`]). None otherwise.
+fn experience_claim(
+    is_on: bool,
+    (task_id, start_ms): (Ulid, i64),
+    experienced: &ClaimedOnce<Ulid>,
+) -> Option<i64> {
+    (is_on && experienced.claim(task_id)).then_some(start_ms)
+}
+
+/// Whether a prompt's answer gives the experience hint, for its claim to be kept: this answer
+/// claimed it (`claimed`, as [`experience_claim`] gave it), the task is not held out (a held-out
+/// task is given no text), and `outcome` is a work order whose text holds the hint.
+fn hint_given(claimed: Option<i64>, is_holdout: bool, outcome: &Outcome) -> bool {
+    claimed.is_some()
+        && !is_holdout
+        && matches!(outcome, Outcome::WorkOrder(_, rendered) if rendered.is_hinted)
+}
+
+/// Settles the claim of task `task_id` in `experienced` that this answer made (`claimed`, as
+/// [`experience_claim`] gave it), whatever way the answer ended: kept when `claims`, what the
+/// answer claimed, holds the task's hint (given back later should the answer's text not reach the
+/// agent); given back otherwise, as no hint is in a text the agent is given, so that a later work
+/// order of the task may carry one. A claim another answer made is left as it is.
+fn settle(
+    experienced: &ClaimedOnce<Ulid>,
+    (task_id, claimed): (Ulid, Option<i64>),
+    claims: &[Claim],
+) {
+    if claimed.is_some() && !claims.contains(&Claim::Experienced(task_id)) {
+        experienced.release(&task_id);
     }
 }
 

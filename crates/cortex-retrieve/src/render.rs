@@ -5,8 +5,9 @@
 //! lines, the symbol they are for and why it is listed; "Also likely" the rest, by path and lines;
 //! "Current code" holds the shown spans' lines, numbered, each span followed by its why-lines,
 //! the reasons git history gives for those lines (`crate::why_lines`), when any were looked up;
-//! "Project facts" the facts about the listed files that are true now (`crate::facts`). A part
-//! with nothing in it is left out.
+//! "Project facts" the facts about the listed files that are true now (`crate::facts`); then the
+//! experience hint, one line about earlier work like the prompt's, when one was found
+//! (`crate::experience`). A part with nothing in it is left out.
 //! Before an item's lines are written its file is read and hashed: a file that is not the one the
 //! index read lends no lines, and its item is listed by path alone; an item whose file is gone
 //! (deleted, no longer a regular file, unreadable) is not listed. Control characters (but tabs)
@@ -20,10 +21,10 @@
 //! The text is held to its caps where it is built: at most the files, spans a file and lines a span
 //! the caller gives, the token cap the caller gives, never above the hard cap of 1,200 tokens,
 //! and 8,000 characters. Past a cap, why-lines are shed first, one at a time, the last of the
-//! last span shown first; then code, the last body shown first: it is cut to its first half, again and again down
-//! to [`MIN_SHOWN_LINES`], with a line saying which lines are not shown, and only then taken out;
-//! then the facts from the last; then the items from the last.
-//! A work order that cannot fit with one item is not rendered at all.
+//! last span shown first; then the experience hint; then code, the last body shown first: it is
+//! cut to its first half, again and again down to [`MIN_SHOWN_LINES`], with a line saying which
+//! lines are not shown, and only then taken out; then the facts from the last; then the items from
+//! the last. A work order that cannot fit with one item is not rendered at all.
 //!
 //! A span that starts inside a definition, a method in its class, is shown under that definition's
 //! first line, so the agent sees where the code lives without reading the file for it.
@@ -105,6 +106,9 @@ pub struct WorkOrder {
     pub items: Vec<Item>,
     /// The facts about them, the closest to the code shown first.
     pub facts: Vec<OrderFact>,
+    /// The experience hint, one line ending its line, written last while it fits; none for a work
+    /// order with no earlier work like its prompt to tell of.
+    pub hint: Option<String>,
 }
 
 /// How a work order is held in.
@@ -138,6 +142,8 @@ pub struct Rendered {
     pub shown: Vec<(usize, usize, LineRange)>,
     /// The facts written, in the order written.
     pub facts: Vec<cortex_store::FactId>,
+    /// Whether the experience hint was written.
+    pub is_hinted: bool,
 }
 
 /// `order` written for the repository at `root`, held to `limits`, with no why-line; `None` when
@@ -172,6 +178,7 @@ pub fn render_with(
             written: Vec::new(),
             shown: Vec::new(),
             facts: Vec::new(),
+            is_hinted: false,
         });
     }
     let files: Vec<OnDisk> = order
@@ -187,6 +194,7 @@ pub fn render_with(
         return None;
     }
     plan.facts = true_now(&order.facts, root, limits.max_file_bytes);
+    plan.is_hinted = order.hint.is_some();
     let reasons = plan.reasons(order, why);
     let max_tokens = limits.max_tokens.min(MAX_WORK_ORDER_TOKENS);
     loop {
@@ -211,6 +219,7 @@ pub fn render_with(
                     .iter()
                     .filter_map(|at| order.facts.get(*at).map(|fact| fact.id))
                     .collect(),
+                is_hinted: plan.is_hinted,
             });
         }
         if !plan.shed() {
@@ -231,6 +240,8 @@ struct Plan {
     /// The spans shown whose why-lines are written, as their item's position and their own, with
     /// how many of their lines are written (their first ones), in the order shown.
     why: Vec<((usize, usize), usize)>,
+    /// Whether the experience hint is written.
+    is_hinted: bool,
 }
 
 /// The why-lines of each span shown that has any, by its item's position and its own.
@@ -357,6 +368,7 @@ impl Plan {
             shown,
             facts: Vec::new(),
             why: Vec::new(),
+            is_hinted: false,
         }
     }
 
@@ -380,9 +392,9 @@ impl Plan {
     }
 
     /// Takes one thing out to make the text shorter: the last why-line of the last span that has
-    /// any written, else half of the last code shown, while it is more than [`MIN_SHOWN_LINES`] lines,
-    /// else that code, else the last fact, else the last item not shown, else the last item after
-    /// the first; `false` when there is nothing left to take.
+    /// any written, else the experience hint, else half of the last code shown, while it is more
+    /// than [`MIN_SHOWN_LINES`] lines, else that code, else the last fact, else the last item not
+    /// shown, else the last item after the first; `false` when there is nothing left to take.
     fn shed(&mut self) -> bool {
         // Why-lines go first: they explain code, and are worth nothing without it.
         if let Some((_, written)) = self.why.last_mut() {
@@ -390,6 +402,11 @@ impl Plan {
             if *written == 0 {
                 self.why.pop();
             }
+            return true;
+        }
+        // The hint goes before code: it is about earlier work, the code about this task.
+        if self.is_hinted {
+            self.is_hinted = false;
             return true;
         }
         if let Some(last) = self.shown.last_mut() {
@@ -473,6 +490,11 @@ impl Plan {
             }
         }
         write_facts(&mut text, &order.facts, &self.facts);
+        if self.is_hinted
+            && let Some(hint) = &order.hint
+        {
+            text.push_str(hint);
+        }
         text
     }
 }

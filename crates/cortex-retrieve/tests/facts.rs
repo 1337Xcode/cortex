@@ -161,6 +161,7 @@ fn order(facts: Vec<OrderFact>) -> TestResult<WorkOrder> {
             reason: Reason::Matches(vec!["f".to_owned()]),
         }],
         facts,
+        hint: None,
     })
 }
 

@@ -610,7 +610,8 @@ impl Server {
             .with_service(uncommitted, move |service, graph, uncommitted| {
                 let answer = match asked {
                     Asked::WorkOrder => {
-                        service.prompt(&event, (graph, uncommitted), (&claims.handed, &failed))
+                        let once = (&*claims.handed, &*claims.experienced);
+                        service.prompt(&event, (graph, uncommitted), (once, &failed))
                     }
                     Asked::Primer => service.primer(&event, graph, &claims.recapped),
                     Asked::Warnings if event.failed_output().is_some() => {

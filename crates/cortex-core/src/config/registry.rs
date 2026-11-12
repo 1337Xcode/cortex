@@ -187,6 +187,7 @@ mod tests {
         history.why = true\n\
         history.seeds = true\n\
         history.seed_weight = 0.75\n\
+        history.experience = true\n\
         history.blame_timeout_ms = 100\n\
         history.max_reasons = 5\n\
         history.max_tokens = 400\n\
@@ -261,6 +262,7 @@ mod tests {
             history: HistoryConfig {
                 is_why: true,
                 is_seeds: true,
+                is_experience: true,
                 seed_weight: 0.75,
                 blame_timeout_ms: 100,
                 max_reasons: 5,

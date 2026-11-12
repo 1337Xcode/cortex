@@ -3,6 +3,8 @@
 
 mod common;
 
+use std::collections::BTreeMap;
+
 use common::{Store, TestResult, asked_task, edit, read, succeeded, target, tool};
 use cortex_core::{
     CommandKind, Event, HookKind, Identifier, ShellCommand, TaskOutcome, ToolKind, ToolResult,
@@ -25,6 +27,7 @@ fn shell(session: &str, ts_ms: i64, line: &str, exit_code: i32) -> TestResult<Ev
         is_interrupted: false,
         output_bytes: Some(20),
         counts: None,
+        failing: None,
     });
     Ok(Event {
         cwd: root.clone(),
@@ -121,6 +124,7 @@ fn a_record_says_what_one_task_did() -> TestResult {
         is_interrupted: true,
         output_bytes: None,
         counts: None,
+        failing: None,
     });
     let state = asked_task(
         (&mut store, &mut recorder),
@@ -149,6 +153,7 @@ fn a_record_says_what_one_task_did() -> TestResult {
     let record = episode_of(
         store.writer.queries(),
         &state,
+        &BTreeMap::new(),
         (TaskOutcome::Success, 9_000),
     )?;
     assert_eq!(record.task_id, state.task_id());
@@ -199,6 +204,7 @@ fn a_stretch_read_over_and_over_is_a_pitfall() -> TestResult {
     let record = episode_of(
         store.writer.queries(),
         &state,
+        &BTreeMap::new(),
         (TaskOutcome::Unknown, 9_000),
     )?;
     let again: Vec<(NodeId, u32, u32, u32)> = record
@@ -247,6 +253,7 @@ fn a_record_of_a_large_task_is_trimmed_to_fit() -> TestResult {
     let record = episode_of(
         store.writer.queries(),
         &state,
+        &BTreeMap::new(),
         (TaskOutcome::Success, 9_000),
     )?;
     assert!(
@@ -300,6 +307,7 @@ fn a_record_holds_no_text_of_the_work() -> TestResult {
     let record = episode_of(
         store.writer.queries(),
         &state,
+        &BTreeMap::new(),
         (TaskOutcome::Success, 9_000),
     )?;
     let parts = record.parts()?.join(" ");

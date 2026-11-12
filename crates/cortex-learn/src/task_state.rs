@@ -16,7 +16,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::{
-    CheckCounts, CommandKind, EventKind, FileContent, Identifier, LineRange, RepoPath, Ulid,
+    CheckCounts, CommandKind, EventKind, FileContent, Identifier, LineRange, RepoPath, ShortHash,
+    Ulid,
 };
 use cortex_store::{EventRecord, NodeId, Queries, StoreError};
 
@@ -112,6 +113,13 @@ pub enum Step {
         /// What a handoff may keep of its command, when it failed a check, as seen while the daemon
         /// ran; none in a state rebuilt from rows.
         cleaned: Option<Cleaned>,
+        /// The signature of the failing tests its output named, when it failed a check and the
+        /// daemon read them while it ran; none in a state rebuilt from rows.
+        failing: Option<ShortHash>,
+        /// The short hash of its check's command as cleaned (`cortex_learn::clean_command`), when
+        /// the command could be kept whole, whatever its exit: two runs of one runner with other
+        /// arguments differ. Never stored; none in a state rebuilt from rows.
+        selection: Option<ShortHash>,
     },
 }
 
@@ -137,8 +145,25 @@ pub(crate) struct Unkept {
     pub(crate) counts: Option<CheckCounts>,
     /// What a handoff may keep of a failed check's command.
     pub(crate) cleaned: Option<Cleaned>,
+    /// The signature of the failing tests a failed check's output named.
+    pub(crate) failing: Option<ShortHash>,
+    /// The short hash of a check's command as cleaned.
+    pub(crate) selection: Option<ShortHash>,
     /// What an edited file held before the edit, when known.
     pub(crate) before: Option<FileContent>,
+}
+
+/// What the daemon read of a shell command while it ran, which its row does not keep.
+#[derive(Debug, Default)]
+struct Read {
+    /// The counts a failed check's output printed.
+    counts: Option<CheckCounts>,
+    /// What a handoff may keep of a failed check's command.
+    cleaned: Option<Cleaned>,
+    /// The signature of the failing tests a failed check's output named.
+    failing: Option<ShortHash>,
+    /// The short hash of a check's command as cleaned.
+    selection: Option<ShortHash>,
 }
 
 /// What one task did, as far as its rows show.
@@ -239,9 +264,17 @@ impl TaskState {
             restores,
             counts,
             cleaned,
+            failing,
+            selection,
             before,
         } = unkept;
-        let Some(mut step) = step_of(row, (hits, restores), (counts, cleaned)) else {
+        let read = Read {
+            counts,
+            cleaned,
+            failing,
+            selection,
+        };
+        let Some(mut step) = step_of(row, (hits, restores), read) else {
             return;
         };
         match &mut step {
@@ -414,8 +447,14 @@ fn keep_within(hits: &mut Vec<FileNode>, held_bytes: usize) -> usize {
 fn step_of(
     row: &EventRecord,
     (hits, restores): (Vec<RepoPath>, Vec<Restore>),
-    (counts, cleaned): (Option<CheckCounts>, Option<Cleaned>),
+    read: Read,
 ) -> Option<Step> {
+    let Read {
+        counts,
+        cleaned,
+        failing,
+        selection,
+    } = read;
     let at_ms = row.ts_ms;
     let has_failed = row.meta.is_success == Some(false);
     let file = || {
@@ -459,6 +498,8 @@ fn step_of(
             },
             counts,
             cleaned,
+            failing,
+            selection,
         },
         _ => return None,
     })

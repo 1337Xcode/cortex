@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 
 use cortex_core::{
     CommandKind, ContentHash, Event, EventKind, EventMeta, FileContent, HookKind, Identifier,
-    LineRange, MAX_RANGES, PromptExcerpt, RepoPath, SessionStatus, TaskOutcome, ToolKind, Ulid,
-    is_held_out, task_id_of_prompt,
+    LineRange, MAX_RANGES, PromptExcerpt, RepoPath, SessionStatus, ShortHash, TaskOutcome,
+    ToolKind, Ulid, is_held_out, task_id_of_prompt,
 };
 use cortex_store::{EventRecord, SessionRecord, StoreError, TaskRecord, WriteTx};
 
@@ -219,6 +219,8 @@ impl Recorder {
             restores: restores_of(told.ran),
             counts: event.tool_result.and_then(|result| result.counts),
             cleaned: cleaned_by(event, &self.commands),
+            failing: event.tool_result.and_then(|result| result.failing),
+            selection: selection_of(event, &self.commands),
             before: match &path {
                 Some(path) => self.before_of(transaction, (event, kind), path)?,
                 None => None,
@@ -552,6 +554,17 @@ fn cleaned_by(event: &Event, commands: &Commands) -> Option<Cleaned> {
     }
     let command = event.tool_target.as_ref()?.command.as_ref()?;
     clean_command(commands, command, event.worktree_top(), &event.cwd)
+}
+
+/// The short hash of `event`'s shell command as `commands` cleans it, whatever its exit: what tells
+/// two runs of one runner apart (`pytest -k a` from `pytest -k b`). None when the line ran no check
+/// whose command can be kept whole. Only the hash leaves this function, and it is never stored.
+fn selection_of(event: &Event, commands: &Commands) -> Option<ShortHash> {
+    let command = event.tool_target.as_ref()?.command.as_ref()?;
+    match clean_command(commands, command, event.worktree_top(), &event.cwd)? {
+        Cleaned::Command(cleaned) => Some(ShortHash::of(cleaned.as_bytes())),
+        Cleaned::TestPath { .. } | Cleaned::Runner(_) => None,
+    }
 }
 
 /// What `event`'s shell command tells of what it ran, as `commands` tells it: what its exit of 0

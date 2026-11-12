@@ -18,6 +18,8 @@ use cortex_store::{
     RanCheck, ReadAgain, ReadFile, StoreError,
 };
 
+use crate::approaches::{changed_back, persisted_failures};
+use crate::outcome::FileNow;
 use crate::places::Places;
 use crate::task_state::{FileNode, Step, TaskState};
 
@@ -37,7 +39,8 @@ const MAX_PITFALLS: usize = 32;
 const READS_BEFORE_A_PITFALL: u32 = 3;
 
 /// The record of the task `state` describes, which ended as `outcome` says, written at
-/// `created_at_ms`, read with `queries` for the symbols its changes covered.
+/// `created_at_ms`, read with `queries` for the symbols its changes covered, with `now` saying
+/// what each file it edited holds at its end, as for [`crate::judge`].
 ///
 /// # Errors
 ///
@@ -45,6 +48,7 @@ const READS_BEFORE_A_PITFALL: u32 = 3;
 pub fn episode_of(
     queries: Queries<'_>,
     state: &TaskState,
+    now: &BTreeMap<RepoPath, FileNow>,
     (outcome, created_at_ms): (TaskOutcome, i64),
 ) -> Result<EpisodeRecord, StoreError> {
     let mut places = Places::new(queries);
@@ -53,7 +57,7 @@ pub fn episode_of(
         localize: localize(state),
         change: change(&mut places, state)?,
         verify: verify(state),
-        pitfalls: pitfalls(state),
+        pitfalls: pitfalls(state, now),
         outcome,
         created_at_ms,
     };
@@ -146,16 +150,26 @@ fn verify(state: &TaskState) -> Vec<RanCheck> {
 }
 
 /// What went wrong on the task's way: a runner whose check failed and later passed, the files it
-/// changed and then put back itself, and the stretches it read more times than a reader needs to.
-fn pitfalls(state: &TaskState) -> Pitfalls {
+/// changed and then put back itself (with a git restore, then those `now` shows changed back), the
+/// stretches it read more times than a reader needs to, and the checks whose failure stayed the
+/// same until it changed another file.
+fn pitfalls(state: &TaskState, now: &BTreeMap<RepoPath, FileNow>) -> Pitfalls {
+    let mut undone = undone(state);
+    for node in changed_back(state, now) {
+        if !undone.contains(&node) {
+            undone.push(node);
+        }
+    }
     let mut pitfalls = Pitfalls {
         fixed: fixed(state),
-        undone: undone(state),
+        undone,
         read_again: read_again(state),
+        persisted: persisted_failures(state),
     };
     pitfalls.fixed.truncate(MAX_PITFALLS);
     pitfalls.undone.truncate(MAX_PITFALLS);
     pitfalls.read_again.truncate(MAX_PITFALLS);
+    pitfalls.persisted.truncate(MAX_PITFALLS);
     pitfalls
 }
 
@@ -183,27 +197,33 @@ fn fixed(state: &TaskState) -> Vec<Identifier> {
     fixed
 }
 
-/// The files the task changed and then put back itself with a git restore, in the order it changed
-/// them.
+/// The files the task changed and then put back itself with a git restore after its last change
+/// of them, in the order it first changed them: a file changed again after its restore ends the
+/// task changed, and is not put back.
 fn undone(state: &TaskState) -> Vec<NodeId> {
-    let mut undone = Vec::new();
-    for (at, step) in state.steps().iter().enumerate() {
+    let steps = state.steps();
+    let mut order: Vec<(&FileNode, usize)> = Vec::new();
+    for (at, step) in steps.iter().enumerate() {
         let Step::Edit { file, .. } = step else {
             continue;
         };
-        let Some(node) = file.node else { continue };
-        if undone.contains(&node) {
-            continue;
-        }
-        let put_back = state.steps().iter().skip(at + 1).any(|later| match later {
-            Step::Run { restores, .. } => restores.iter().any(|restore| restore.covers(&file.path)),
-            _ => false,
-        });
-        if put_back {
-            undone.push(node);
+        match order.iter_mut().find(|(seen, _)| seen.path == file.path) {
+            Some((_, last)) => *last = at,
+            None => order.push((file, at)),
         }
     }
-    undone
+    order
+        .into_iter()
+        .filter(|(file, last)| {
+            steps.iter().skip(last + 1).any(|later| match later {
+                Step::Run { restores, .. } => {
+                    restores.iter().any(|restore| restore.covers(&file.path))
+                }
+                _ => false,
+            })
+        })
+        .filter_map(|(file, _)| file.node)
+        .collect()
 }
 
 /// The stretches the task read more than [`READS_BEFORE_A_PITFALL`] times, in the order it first
@@ -282,6 +302,7 @@ fn trim(record: &mut EpisodeRecord) -> Result<(), StoreError> {
 fn drop_one(record: &mut EpisodeRecord) -> bool {
     record.pitfalls.read_again.pop().is_some()
         || record.pitfalls.fixed.pop().is_some()
+        || record.pitfalls.persisted.pop().is_some()
         || record.pitfalls.undone.pop().is_some()
         || record.verify.pop().is_some()
         || record.change.pop().is_some()

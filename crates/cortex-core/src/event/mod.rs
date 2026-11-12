@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 pub use self::check_counts::CheckCounts;
 pub use self::failed_output::{FailedOutput, FailedOutputError, MAX_FAILED_OUTPUT_BYTES};
 pub use self::kinds::{Agent, CompactTrigger, HookKind, StartSource, ToolKind};
-use crate::{ContentHash, Identifier, RepoPath, Ulid};
+use crate::{ContentHash, Identifier, RepoPath, ShortHash, Ulid};
 
 /// Most characters of a shell command an event carries: enough to tell which program ran and how,
 /// short enough that a long script costs nothing to carry.
@@ -252,6 +252,11 @@ pub struct ToolResult {
     /// output before the event went to its writer; never what the output said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counts: Option<CheckCounts>,
+    /// For a check that failed, the short hash of the failing tests its output named, as the
+    /// daemon read them before the event went to its writer: two runs naming the same tests share
+    /// it, and the names never leave the daemon's reading of the output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failing: Option<ShortHash>,
 }
 
 /// Lines `start_line` to `end_line` of a file, both included, counted from 1.

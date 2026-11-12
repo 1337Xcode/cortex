@@ -107,6 +107,7 @@ impl Tools for CodexTools {
             is_interrupted: false,
             output_bytes: None,
             counts: None,
+            failing: None,
         })
     }
 

@@ -139,6 +139,7 @@ impl Learner {
         let record = episode_of(
             transaction.queries(),
             state,
+            &now,
             (judgement.outcome, ended_at_ms),
         )?;
         transaction.replace_episode(&record)?;

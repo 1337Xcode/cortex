@@ -74,8 +74,8 @@ pub use coordination::{
     Coupling, NoticeRecord, NoticeRow, PositionRecord, PositionRow, SeenSession,
 };
 pub use episode::{
-    ChangedFile, ChangedSymbol, EpisodeRecord, MAX_EPISODE_BYTES, Pitfalls, RanCheck, ReadAgain,
-    ReadFile,
+    ChangedFile, ChangedSymbol, EpisodeChange, EpisodeRecord, MAX_EPISODE_BYTES, PersistedFailure,
+    Pitfalls, RanCheck, ReadAgain, ReadFile,
 };
 pub use error::StoreError;
 pub use fact_health::FactHealth;

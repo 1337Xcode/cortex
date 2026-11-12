@@ -18,6 +18,7 @@ use cortex_learn::ConfidenceModel;
 use cortex_store::{NodeId, Queries, StoreError};
 
 use crate::error::RetrieveError;
+use crate::experience::{ExperienceAsk, experience_hint};
 use crate::facts::{ListedFile, OrderFact, order_facts};
 use crate::features::{Found, GATED_FILES, features_of, is_history_alone};
 use crate::gate::{Confidence, Rule, Shut, Verdict, confidence_bar, decide};
@@ -71,6 +72,10 @@ pub struct Request<'a> {
     /// `history.seed_weight` while `history.seeds` is on: past changes the prompt names or
     /// resembles seed the search. None while it is off.
     pub history_seed_weight: Option<f64>,
+    /// While `history.experience` is on and the task was not given the experience hint yet, when
+    /// the task began, in UTC milliseconds: earlier work like the prompt's that ended before it may
+    /// give the work order its hint. None gives no hint.
+    pub experience_before_ms: Option<i64>,
 }
 
 /// Why a retrieval gives nothing.
@@ -111,6 +116,10 @@ pub struct Retrieval {
     /// The files the work order lists, the best first, each with the spans whose lines it writes;
     /// none when it is silent.
     pub listed: Vec<Listed>,
+    /// Why the experience hint could not be looked for, when the store failed it: the work order is
+    /// given without the hint, and the caller logs this. The store's words, which name an
+    /// operation and a column, never what a record holds.
+    pub hint_failure: Option<String>,
 }
 
 /// What the engine found for a question, without the gate.
@@ -143,6 +152,7 @@ pub fn retrieve(
         confidence: judged.and_then(|judged| judged.confidence),
         weighed: weighed.to_vec(),
         listed: Vec::new(),
+        hint_failure: None,
     };
     // INVARIANT: silent-when-unsure (tiny mode retrieves nothing, and a retrieval with no seed
     // spreads nothing: each says so instead of guessing)
@@ -175,10 +185,12 @@ pub fn retrieve(
     if listed.is_empty() {
         return Ok(silent(Silence::NothingToShow, Some(judged), &weighed));
     }
+    let (hint, hint_failure) = hint_of(queries, graph, (request, &reached));
     let order = WorkOrder {
         basis: basis_of(rule, &reached.scored, &support),
         items: listed.iter().map(|entry| entry.item.clone()).collect(),
         facts: facts_about(queries, graph, &listed)?,
+        hint,
     };
     let why = match &request.why_lines {
         Some(ask) => look_up(queries, &order.items, ask)?,
@@ -202,7 +214,32 @@ pub fn retrieve(
         confidence: judged.confidence,
         weighed,
         listed,
+        hint_failure,
     })
+}
+
+/// The experience hint `request` asks for, from what `reached` found over the store `queries` reads
+/// and its `graph`, and why it could not be looked for: a store that fails it costs the hint, never
+/// the work order. None and none while the request asks for no hint.
+fn hint_of(
+    queries: Queries<'_>,
+    graph: &Graph<NodeId>,
+    (request, reached): (&Request<'_>, &Reached),
+) -> (Option<String>, Option<String>) {
+    let Some(before_ms) = request.experience_before_ms else {
+        return (None, None);
+    };
+    let ask = ExperienceAsk {
+        before_ms,
+        similar: &reached.seeds.similar,
+        terms: &reached.terms,
+        root: request.root,
+        deadline: request.deadline,
+    };
+    match experience_hint(queries, graph, &ask) {
+        Ok(hint) => (hint, None),
+        Err(error) => (None, Some(error.to_string())),
+    }
 }
 
 /// The engine without the gate: the files `request` points at, at most `limit`, each with its
@@ -245,6 +282,7 @@ pub fn locate(
         },
         items: listed.iter().map(|entry| entry.item.clone()).collect(),
         facts: facts_about(queries, graph, &listed)?,
+        hint: None,
     };
     let limits = Limits {
         max_files: limit,
@@ -274,6 +312,8 @@ struct Judged {
 
 /// What a retrieval reached before the gate.
 struct Reached {
+    /// What the prompt points at.
+    terms: PromptTerms,
     /// What each source seeded.
     seeds: Seeds,
     /// Where activation went.
@@ -386,6 +426,7 @@ fn reached(
         .collect();
     let scored = named_first(scored, &named);
     Ok(Some(Reached {
+        terms,
         seeds,
         activation,
         scored,
@@ -599,6 +640,7 @@ mod tests {
             written: vec![(2, vec![1]), (0, vec![0, 1])],
             shown: vec![(0, 1, LineRange::new(4, 5)?)],
             facts: Vec::new(),
+            is_hinted: false,
         };
         let written = written_of(&listed, &rendered);
         let files: Vec<u32> = written.iter().map(|entry| entry.file).collect();

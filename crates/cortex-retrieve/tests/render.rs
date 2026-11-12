@@ -70,6 +70,7 @@ fn a_file_that_is_gone_is_not_listed() -> TestResult {
     let gone = item(("gone.py", B), &[(1, 1)], None, Reason::LikeEarlierWork)?;
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Agreement(vec!["the prompt's words", "the commit history"]),
         items: vec![
             gone.clone(),
@@ -95,6 +96,7 @@ Current code:
     assert_eq!(rendered.text, expected);
     let alone = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Agreement(vec!["the prompt's words", "the commit history"]),
         items: vec![gone],
     };
@@ -137,6 +139,7 @@ fn a_file_that_cannot_be_read_is_not_listed() -> TestResult {
     let basis = Basis::Agreement(vec!["the prompt's words", "the commit history"]);
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: basis.clone(),
         items,
     };
@@ -153,6 +156,7 @@ Current code:
     assert_eq!(rendered.text, expected);
     let alone = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis,
         items: not_there,
     };
@@ -206,6 +210,7 @@ fn an_answer_out_of_time_names_no_file() -> TestResult {
     let kinds = vec!["the prompt's words", "the commit history"];
     let out_of_time = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Located {
             kinds: kinds.clone(),
             verdict: Verdict::Silent(Shut::OutOfTime),
@@ -223,6 +228,7 @@ fn an_answer_out_of_time_names_no_file() -> TestResult {
     );
     let weak = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Located {
             kinds,
             verdict: Verdict::Silent(Shut::WeakMatch),
@@ -255,6 +261,7 @@ fn a_work_order_is_written_as_typed_here() -> TestResult {
     std::fs::write(repo.root.path().join("c.py"), "")?;
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Agreement(vec!["the prompt's words", "the commit history"]),
         items: vec![
             item(
@@ -312,6 +319,7 @@ fn a_changed_file_is_listed_by_path_alone() -> TestResult {
     std::fs::write(repo.root.path().join("a.py"), "def f():\n    return 3\n")?;
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Continuity,
         items: vec![
             item(("a.py", A), &[(1, 2)], Some("f"), Reason::EditedHere)?,
@@ -338,6 +346,7 @@ fn code_holding_a_reminder_tag_is_not_shown() -> TestResult {
     repo.file("b.py", B, &[], FileFlags::empty())?;
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Continuity,
         items: vec![
             item(("a.py", text), &[(1, 2)], Some("f"), Reason::EditedHere)?,
@@ -371,6 +380,7 @@ fn a_tag_the_cleaning_would_join_or_a_name_holds_is_not_given() -> TestResult {
     repo.file("c.py", B, &[], FileFlags::empty())?;
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Continuity,
         items: vec![
             item(("a.py", joined), &[(1, 1)], None, Reason::EditedHere)?,
@@ -414,6 +424,7 @@ fn hidden_and_control_characters_are_taken_out() -> TestResult {
     repo.file("a.py", text, &[], FileFlags::empty())?;
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Continuity,
         items: vec![item(("a.py", text), &[(1, 1)], None, Reason::ReadHere)?],
     };
@@ -442,6 +453,7 @@ fn a_method_is_shown_under_its_class() -> TestResult {
     }
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Continuity,
         items: vec![method],
     };
@@ -475,6 +487,7 @@ fn the_hard_cap_holds_above_the_caller_s_cap() -> TestResult {
     repo.file("a.py", &text, &[], FileFlags::empty())?;
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Continuity,
         items: vec![item(("a.py", &text), &[(1, 120)], None, Reason::ReadHere)?],
     };
@@ -516,6 +529,7 @@ fn an_item_that_cannot_be_shown_as_it_is_is_not_listed() -> TestResult {
     assert!(Identifier::new("f\u{202e}x").is_err());
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Continuity,
         items: vec![
             item(("b\u{200b}.py", B), &[(1, 1)], None, Reason::ReadHere)?,
@@ -546,6 +560,7 @@ fn a_work_order_with_nothing_it_can_show_is_not_given() -> TestResult {
     repo.file("b\u{200b}.py", B, &[], FileFlags::empty())?;
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Continuity,
         items: vec![item(
             ("b\u{200b}.py", B),
@@ -569,6 +584,7 @@ fn the_cap_sheds_code_then_items() -> TestResult {
     repo.file("b.py", B, &[], FileFlags::empty())?;
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Continuity,
         items: vec![
             item(("a.py", A), &[(1, 2)], Some("f"), Reason::EditedHere)?,
@@ -644,7 +660,7 @@ proptest! {
                 items.push(span);
             }
         }
-        let order = WorkOrder { basis: Basis::Continuity, items, facts: Vec::new() };
+        let order = WorkOrder { basis: Basis::Continuity, items, facts: Vec::new(), hint: None };
         let limits = Limits {
             max_tokens,
             max_files: 5,

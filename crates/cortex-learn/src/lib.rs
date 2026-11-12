@@ -18,6 +18,7 @@
 #![warn(clippy::pedantic)]
 
 mod activity;
+mod approaches;
 mod archetype;
 mod calibration;
 mod commands;
@@ -41,7 +42,8 @@ mod transitions;
 mod warnings;
 mod watcher_edits;
 
-pub use archetype::{MAX_CLUSTERED_TASKS, archetypes_of};
+pub use approaches::{MAX_PERSISTED_FILES, changed_back, persisted_failures};
+pub use archetype::{JOINS_A_CLUSTER, MAX_CLUSTERED_TASKS, archetypes_of};
 pub use calibration::{
     AUC_TOLERANCE, CALIBRATION_WINDOW, CHANCE_AUC, Calibrated, ConfidenceModel, Fitted,
     HELD_OUT_EVERY, KEPT_MODELS, L2_PENALTY, MIN_LABELLED, MODEL_INPUTS, ModelInUse,
@@ -59,8 +61,8 @@ pub use facts::{
     SUSPECT_RETIRES_AFTER_MS, assert_fact, review_facts,
 };
 pub use failures::{
-    Failures, Frame, LineFailure, MAX_FAILED_TESTS, MAX_FRAMES, MAX_NAME_CHARS, parse_failures,
-    read_line_failure,
+    Failures, Frame, LineFailure, MAX_FAILED_TESTS, MAX_FRAMES, MAX_NAME_CHARS, failing_signature,
+    parse_failures, read_line_failure,
 };
 pub use interest::{EarnedInterest, LANDMARK_FROM, add_interest, interest_of, tier_now};
 pub use labels::{LABELLED_FILES, count_next_file_use, label_injections};

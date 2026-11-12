@@ -345,6 +345,7 @@ fn index_and_serve(
                 .history
                 .is_seeds
                 .then_some(config.history.seed_weight),
+            is_experience: config.history.is_experience,
         })),
     );
     // The graph is built once the first index is done, before which a retrieval would find

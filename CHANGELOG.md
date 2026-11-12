@@ -8,6 +8,19 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- The experience hint, an experimental feature that is off by default (`history.experience`, the
+  `experience` feature): a work order may end with one line of recorded facts about an earlier
+  task or change like its prompt, once a task and within 80 tokens, shed after why-lines and
+  before code. A past task is like the prompt when at least half of the files it changed are
+  among those of the clusters of past tasks that match the prompt's words; a past change when
+  its card scores 0.6 or more, as history seeds score it. Only work that ended before the task
+  began is read. The line names the files the work changed and kept that are on disk now, and
+  for a task one approach that did not hold: a test run whose same failing tests stayed failing
+  until another file changed, else the files it put back. Task records now keep those two
+  facts whether the feature is on or not: two failed runs are told apart by a short hash of
+  the failing tests' names, taken only when the runner's counts vouch for the whole list, and
+  the names are never stored. A store that fails the search costs the hint, not the work
+  order. Tested on scripted stores; not run with a live agent yet.
 - An origin note after an edit, part of the experimental why-lines and off by default with them
   (`history.why`): when the lines an edit of one hunk replaced came from a normal commit that
   names an issue or touched a test, the edit is told once a task, as a warning line, which

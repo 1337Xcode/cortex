@@ -118,6 +118,7 @@ pub fn succeeded(exit_code: Option<i32>, output_bytes: Option<u64>) -> Option<To
         is_interrupted: false,
         output_bytes,
         counts: None,
+        failing: None,
     })
 }
 
@@ -130,6 +131,7 @@ pub fn failed() -> Option<ToolResult> {
         is_interrupted: false,
         output_bytes: None,
         counts: None,
+        failing: None,
     })
 }
 
@@ -148,6 +150,7 @@ pub fn shell(session: &str, ts_ms: i64, line: &str, exit_code: Option<i32>) -> T
         is_interrupted: exit_code.is_none(),
         output_bytes: Some(20),
         counts: None,
+        failing: None,
     });
     Ok(Event {
         cwd: root.clone(),
@@ -338,8 +341,12 @@ impl Store {
         events.push(event(HookKind::Stop, session, at_ms + 400)?);
         let mut ended = self.record(recorder, &events)?.into_iter();
         let state = ended.next().ok_or("no task ended")?;
-        let record =
-            cortex_learn::episode_of(self.writer.queries(), &state, (outcome, at_ms + 500))?;
+        let record = cortex_learn::episode_of(
+            self.writer.queries(),
+            &state,
+            &std::collections::BTreeMap::new(),
+            (outcome, at_ms + 500),
+        )?;
         let mut transaction = self.writer.transaction()?;
         transaction.replace_episode(&record)?;
         transaction.commit()?;

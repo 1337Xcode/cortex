@@ -66,6 +66,7 @@ fn order((first, last): (u32, u32)) -> TestResult<WorkOrder> {
             reason: Reason::EditedHere,
         }],
         facts: Vec::new(),
+        hint: None,
     })
 }
 

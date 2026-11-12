@@ -205,7 +205,11 @@ fn put_back(
 /// `now`: contents of the same hash, or no file either time, read after the task edited it at
 /// `edited_at_ms`. Contents the index does not read, a file neither is known for, and a content
 /// read no later than the edit all say nothing.
-fn holds_again(before: Option<&FileContent>, now: Option<&FileNow>, edited_at_ms: i64) -> bool {
+pub(crate) fn holds_again(
+    before: Option<&FileContent>,
+    now: Option<&FileNow>,
+    edited_at_ms: i64,
+) -> bool {
     let Some(now) = now.filter(|now| now.read_at_ms > edited_at_ms) else {
         return false;
     };

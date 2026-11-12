@@ -547,6 +547,7 @@ dependencies = [
  "criterion",
  "petgraph",
  "proptest",
+ "rusqlite",
  "tempfile",
  "thiserror 2.0.21",
 ]

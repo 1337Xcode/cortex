@@ -192,6 +192,7 @@ fn ok(exit_code: Option<i32>, output_bytes: Option<u64>) -> Option<ToolResult> {
         is_interrupted: false,
         output_bytes,
         counts: None,
+        failing: None,
     })
 }
 
@@ -203,6 +204,7 @@ fn failed(exit_code: Option<i32>, output_bytes: u64) -> Option<ToolResult> {
         is_interrupted: false,
         output_bytes: Some(output_bytes),
         counts: None,
+        failing: None,
     })
 }
 
@@ -1179,6 +1181,7 @@ fn exit_codes_and_shells_that_have_not_finished() -> TestResult {
             is_interrupted: true,
             output_bytes: Some(523),
             counts: None,
+            failing: None,
         })
     );
     Ok(())
@@ -1321,6 +1324,7 @@ fn odd_fields_read_as_absent() -> TestResult {
             is_interrupted: false,
             output_bytes: None,
             counts: None,
+            failing: None,
         })
     );
     let start = edited(

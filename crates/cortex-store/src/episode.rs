@@ -119,16 +119,50 @@ pub struct ReadAgain {
     pub times: u32,
 }
 
+/// A check whose same failing tests stayed failing over the task's changes until it changed
+/// another file, after which the check passed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedFailure {
+    /// The check's runner, by the name Cortex knows it by.
+    pub runner: Identifier,
+    /// The files the task had changed when the check last failed, in the order it first changed
+    /// them.
+    #[serde(with = "as_numbers")]
+    pub edited: Vec<NodeId>,
+    /// The files it changed after that, before the check passed, none of them among `edited`.
+    #[serde(with = "as_numbers")]
+    pub until: Vec<NodeId>,
+}
+
 /// What went wrong on the task's way.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pitfalls {
     /// The runners whose check failed and later passed.
     pub fixed: Vec<Identifier>,
-    /// The files the task changed and then put back itself.
+    /// The files the task changed and then put back itself: with a git restore, or by changing
+    /// them back until they held what they held before it.
     #[serde(with = "as_numbers")]
     pub undone: Vec<NodeId>,
     /// The stretches it read more times than a reader needs to.
     pub read_again: Vec<ReadAgain>,
+    /// The checks whose failure stayed the same until the task changed another file. Left out of
+    /// the stored JSON when there are none, so a record written before it existed reads the same.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub persisted: Vec<PersistedFailure>,
+}
+
+/// What one task changed, how it ended and when its record was written: the part of a record
+/// read to choose among many.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EpisodeChange {
+    /// The task.
+    pub task_id: cortex_core::Ulid,
+    /// What it changed.
+    pub change: Vec<ChangedFile>,
+    /// What became of it.
+    pub outcome: TaskOutcome,
+    /// When the record was written, in UTC milliseconds.
+    pub created_at_ms: i64,
 }
 
 /// One task's record.
@@ -230,18 +264,49 @@ impl Queries<'_> {
             })
             .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
             .map_err(sqlite("reading episodes"))?;
+        rows.into_iter().map(checked_row).collect()
+    }
+
+    /// What the newest `limit` tasks whose records were written strictly before `before_ms`, in
+    /// UTC milliseconds, changed, with how each ended and when, newest first: a task that ended at
+    /// that moment or later is left out, whatever it did. Only the record's changes are read back,
+    /// so a caller that wants the rest of a few of them asks [`Queries::episode_of_task`].
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored values that cannot be read back.
+    pub fn episode_changes_ended_before(
+        self,
+        before_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<EpisodeChange>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = self
+            .connection()
+            .prepare_cached(schema::EPISODE_CHANGES_ENDED_BEFORE)
+            .map_err(sqlite("reading episodes"))?;
+        let rows = statement
+            .query_map((before_ms, limit), |row| {
+                let parts: (String, String, String, i64) =
+                    (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
+                Ok(parts)
+            })
+            .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
+            .map_err(sqlite("reading episodes"))?;
         rows.into_iter()
-            .map(|(task_id, parts)| {
-                let task_id =
-                    cortex_core::Ulid::parse(&task_id).map_err(|_| StoreError::NotText {
-                        column: "episodes.task_id",
-                    })?;
-                let (localize, change, verify, pitfalls, outcome, created_at_ms) = parts;
-                checked(
-                    task_id,
-                    [localize, change, verify, pitfalls],
-                    (outcome, created_at_ms),
-                )
+            .map(|(task_id, change, outcome, created_at_ms)| {
+                Ok(EpisodeChange {
+                    task_id: cortex_core::Ulid::parse(&task_id).map_err(|_| {
+                        StoreError::NotText {
+                            column: "episodes.task_id",
+                        }
+                    })?,
+                    change: of_json(&change, "episodes.change")?,
+                    outcome: TaskOutcome::from_name(&outcome).ok_or(StoreError::NotText {
+                        column: "episodes.outcome",
+                    })?,
+                    created_at_ms,
+                })
             })
             .collect()
     }
@@ -273,8 +338,25 @@ fn json<T: Serialize>(value: &T, column: &'static str) -> Result<String, StoreEr
     serde_json::to_string(value).map_err(|_| StoreError::NotText { column })
 }
 
+/// The parts of one row as a query of several records reads them, with its task's id first.
+type Parts = (String, String, String, String, String, i64);
+
+/// The record one row of a query of several records holds, or the error that one of its values
+/// cannot be read back.
+fn checked_row((task_id, parts): (String, Parts)) -> Result<EpisodeRecord, StoreError> {
+    let task_id = cortex_core::Ulid::parse(&task_id).map_err(|_| StoreError::NotText {
+        column: "episodes.task_id",
+    })?;
+    let (localize, change, verify, pitfalls, outcome, created_at_ms) = parts;
+    checked(
+        task_id,
+        [localize, change, verify, pitfalls],
+        (outcome, created_at_ms),
+    )
+}
+
 /// The parts of one row, by the column order of the queries that read a record.
-fn read_parts(row: &Row<'_>) -> rusqlite::Result<(String, String, String, String, String, i64)> {
+fn read_parts(row: &Row<'_>) -> rusqlite::Result<Parts> {
     Ok((
         row.get(1)?,
         row.get(2)?,

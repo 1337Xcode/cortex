@@ -21,7 +21,12 @@ thiserror.workspace = true
 criterion.workspace = true
 petgraph.workspace = true
 proptest.workspace = true
+rusqlite.workspace = true
 tempfile.workspace = true
+
+[[bench]]
+name = "experience"
+harness = false
 
 [[bench]]
 name = "spread"

@@ -1,7 +1,8 @@
 //! The history settings: whether the code Cortex shows is given the reason it looks that way from
 //! git history, and how much of it; whether past changes a prompt names or resembles start a
-//! search, and how much they weigh; how long one look at git may take and which authors are bots.
-//! Both switches are off by default until their evaluation shows they help.
+//! search, and how much they weigh; whether a work order tells of earlier work like its prompt's;
+//! how long one look at git may take and which authors are bots. The three switches are off by
+//! default until their evaluation shows they help.
 //!
 //! Each key is read and checked here, as the rest of the configuration reads its own; a value the
 //! rules cannot use is refused.
@@ -56,6 +57,9 @@ pub struct HistoryConfig {
     /// `history.seed_weight`: what a file of a past change like the prompt weighs as a seed,
     /// times the change's score, from 0 to 1. Default [`DEFAULT_SEED_WEIGHT`].
     pub seed_weight: f64,
+    /// `history.experience`: give a work order one line of recorded facts about an earlier task
+    /// or change like its prompt. Default `false`.
+    pub is_experience: bool,
     /// `history.blame_timeout_ms`: how long one look at who last changed some lines may take, from
     /// 100 to 60000. Default [`DEFAULT_BLAME_TIMEOUT_MS`].
     pub blame_timeout_ms: u32,
@@ -77,6 +81,7 @@ impl Default for HistoryConfig {
             is_why: false,
             is_seeds: false,
             seed_weight: DEFAULT_SEED_WEIGHT,
+            is_experience: false,
             blame_timeout_ms: DEFAULT_BLAME_TIMEOUT_MS,
             max_reasons: DEFAULT_MAX_REASONS,
             max_tokens: DEFAULT_MAX_TOKENS,
@@ -123,6 +128,16 @@ pub(super) const KEYS: &[ConfigKey] = &[
             Ok(())
         },
         |config| toml::Value::Float(config.history.seed_weight),
+    ),
+    ConfigKey::new(
+        "history.experience",
+        "Give a work order one line of recorded facts about an earlier task or change like its \
+         prompt: the files it changed, and an approach of it that did not hold.",
+        |config, value| {
+            config.history.is_experience = value.as_bool().ok_or(SWITCH)?;
+            Ok(())
+        },
+        |config| toml::Value::Boolean(config.history.is_experience),
     ),
     ConfigKey::new(
         "history.blame_timeout_ms",
@@ -185,8 +200,9 @@ mod tests {
         .map(|loaded| loaded.config)
     }
 
-    /// With no file, the history keys hold the defaults the documentation gives: both switches
-    /// off, a seed weight of 0.4, two seconds, two reasons, 120 tokens and no bot patterns.
+    /// With no file, the history keys hold the defaults the documentation gives: the three
+    /// switches off, a seed weight of 0.4, two seconds, two reasons, 120 tokens and no bot
+    /// patterns.
     #[test]
     fn the_defaults_are_the_documented_ones() {
         assert_eq!(
@@ -195,6 +211,7 @@ mod tests {
                 is_why: false,
                 is_seeds: false,
                 seed_weight: 0.4,
+                is_experience: false,
                 blame_timeout_ms: 2000,
                 max_reasons: 2,
                 max_tokens: 120,

@@ -13,6 +13,7 @@
 
 pub use cortex_core::CheckCounts;
 pub use line::{LineFailure, read_line_failure};
+pub use signature::failing_signature;
 
 mod cargo_test;
 mod clean;
@@ -27,6 +28,7 @@ mod paths;
 mod pytest;
 mod python_traceback;
 mod rustc;
+mod signature;
 mod tsc;
 mod unittest;
 

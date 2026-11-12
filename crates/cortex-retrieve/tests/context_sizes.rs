@@ -311,6 +311,7 @@ fn fullest_work_order() -> TestResult<cortex_retrieve::Rendered> {
     }
     let order = WorkOrder {
         facts: Vec::new(),
+        hint: None,
         basis: Basis::Agreement(vec!["the prompt's words", "the commit history"]),
         items,
     };

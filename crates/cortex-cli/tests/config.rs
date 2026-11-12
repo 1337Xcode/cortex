@@ -80,6 +80,7 @@ fn each_value_shows_the_file_it_came_from() -> TestResult {
         "history.why = true (profile)",
         "history.seeds = true (profile)",
         "history.seed_weight = 0.4 (default)",
+        "history.experience = true (profile)",
         "history.blame_timeout_ms = 2000 (default)",
         "history.max_reasons = 2 (default)",
         "history.max_tokens = 120 (default)",
@@ -92,8 +93,8 @@ fn each_value_shows_the_file_it_came_from() -> TestResult {
         assert!(lines.contains(&expected), "{expected}\n{}", printed.stdout);
     }
     // 18 keys of the main settings, 11 retrieval, 5 warning, 12 coordination, 3 hint, 1
-    // compaction, 2 adoption and 7 history keys, and the profile.
-    assert_eq!(lines.len(), 60, "{}", printed.stdout);
+    // compaction, 2 adoption and 8 history keys, and the profile.
+    assert_eq!(lines.len(), 61, "{}", printed.stdout);
     let mut sorted = lines.clone();
     sorted.sort_unstable();
     assert_eq!(lines, sorted);
@@ -409,6 +410,7 @@ fn features_are_listed_and_switched() -> TestResult {
         "contracts: off (state experimental, key coordination.contracts)",
         "why_lines: off (state experimental, key history.why)",
         "history_seeds: off (state experimental, key history.seeds)",
+        "experience: off (state experimental, key history.experience)",
     ] {
         assert!(lines.contains(&expected), "{expected}\n{}", printed.stdout);
     }
@@ -416,7 +418,7 @@ fn features_are_listed_and_switched() -> TestResult {
         .iter()
         .filter(|line| **line == "  effect here: not measured here yet")
         .count();
-    assert_eq!(unmeasured, 9);
+    assert_eq!(unmeasured, 10);
     let printed = cortex(home.path(), &repo, &["features", "on", "narrow_tests"])?;
     assert!(printed.is_success, "{}", printed.stderr);
     assert_eq!(
@@ -453,7 +455,7 @@ fn features_are_listed_and_switched() -> TestResult {
         printed.stderr.contains(
             "unknown feature `teleport`; the features are work_orders, warnings, \
              runtime_grounding, narrow_tests, redundant_commands, keep_list, contracts, \
-             why_lines, history_seeds"
+             why_lines, history_seeds, experience"
         ),
         "{}",
         printed.stderr

@@ -15,6 +15,7 @@
 mod by_files;
 mod disk;
 mod error;
+mod experience;
 mod exploration;
 mod facts;
 mod failure_map;
@@ -58,6 +59,9 @@ mod working_set;
 
 pub use disk::{CheckedFile, Unchecked};
 pub use error::RetrieveError;
+pub use experience::{
+    ExperienceAsk, MAX_EPISODES_READ, MAX_EXPERIENCE_TOKENS, MAX_HINT_FILES, experience_hint,
+};
 pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
 pub use facts::{FactAt, ListedFile, MAX_ORDER_FACTS, OrderFact, order_facts};
 pub use failure_map::{FailureMap, MAX_FAILURE_MAP_TOKENS, MAX_MAPPED_FRAMES, failure_map};

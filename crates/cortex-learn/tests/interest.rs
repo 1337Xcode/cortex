@@ -44,6 +44,7 @@ fn shell(session: &str, ts_ms: i64, line: &str, exit_code: i32) -> TestResult<Ev
         is_interrupted: false,
         output_bytes: Some(20),
         counts: None,
+        failing: None,
     });
     tool(
         HookKind::PostTool,

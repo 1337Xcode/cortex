@@ -27,7 +27,7 @@ use cortex_store::{ArchetypeRecord, EpisodeRecord, NodeId, Queries, StoreError};
 
 /// How alike two tasks' changed files must be for the tasks to belong to one cluster: half of
 /// what they changed between them.
-const JOINS_A_CLUSTER: f64 = 0.5;
+pub const JOINS_A_CLUSTER: f64 = 0.5;
 
 /// Most task records one pass reads, the newest: months of one developer's work, and few enough
 /// that a pass where every task shares one file with every cluster still ends in well under a
