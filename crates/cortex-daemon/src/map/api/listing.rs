@@ -49,7 +49,7 @@ impl Listing {
     /// # Errors
     ///
     /// SQLite errors and stored values that cannot be read back.
-    pub(super) fn read(queries: Queries<'_>) -> Result<Self, StoreError> {
+    pub(in crate::map) fn read(queries: Queries<'_>) -> Result<Self, StoreError> {
         let rows = queries.file_rows()?;
         let mut nodes = queries.file_nodes()?.into_iter().peekable();
         let mut files = Vec::with_capacity(rows.len());
@@ -96,7 +96,7 @@ impl Listing {
     }
 
     /// The id of the file whose node is `node`, if the map lists one.
-    pub(super) fn id_of_node(&self, node: NodeId) -> Option<usize> {
+    pub(in crate::map) fn id_of_node(&self, node: NodeId) -> Option<usize> {
         self.by_node.get(&node).copied()
     }
 

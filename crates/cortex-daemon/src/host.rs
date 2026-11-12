@@ -794,10 +794,14 @@ fn record_batch(
         transaction.commit()
     });
     match recorded {
-        Ok(()) => Ok(Recorded {
-            ended,
-            transcripts: events.iter().filter_map(Transcript::named_by).collect(),
-        }),
+        Ok(()) => {
+            // Every path that records hook events comes here: the map's live view looks again.
+            inbox.note_recorded();
+            Ok(Recorded {
+                ended,
+                transcripts: events.iter().filter_map(Transcript::named_by).collect(),
+            })
+        }
         Err(error) => {
             recorder.forget_stored();
             Err(error)

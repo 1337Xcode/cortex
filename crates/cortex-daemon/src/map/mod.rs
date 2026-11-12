@@ -17,6 +17,7 @@ mod assets;
 mod bounded;
 mod connections;
 mod guard;
+mod live;
 mod settings;
 mod site;
 mod source;

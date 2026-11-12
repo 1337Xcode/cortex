@@ -25,6 +25,7 @@ use cortex_store::StoreError;
 use super::api::{self, Listing, ListingCache};
 use super::assets::{Asset, WITHOUT_MAP, find};
 use super::guard::{Asked, Seen, Verdict, admit};
+use super::live;
 use super::source::Source;
 use super::token::Token;
 
@@ -101,8 +102,9 @@ impl Site {
         self.listing.builds()
     }
 
-    /// The answer to the request whose head is `parts`.
-    pub(crate) async fn answer(self: &Arc<Self>, parts: &Parts) -> Response {
+    /// The answer to the request whose head is `parts`; a web socket's opening takes the upgrade
+    /// out of `parts`.
+    pub(crate) async fn answer(self: &Arc<Self>, parts: &mut Parts) -> Response {
         let headers = &parts.headers;
         let asked = Asked {
             method: &parts.method,
@@ -113,13 +115,22 @@ impl Site {
         match admit(&asked, self.port, &self.token) {
             Verdict::Refuse(status) => self.empty(status),
             Verdict::AddSlash => self.add_slash(),
-            Verdict::Serve(rest) => self.serve(rest, parts).await,
+            Verdict::Serve(rest) => {
+                // The path is copied so that a web socket's opening can take its upgrade out of
+                // `parts`.
+                let rest = rest.to_owned();
+                self.serve(&rest, parts).await
+            }
         }
     }
 
     /// The answer to a request the guard let through for `rest`, the path after the token, whose
     /// head is `parts`.
-    async fn serve(self: &Arc<Self>, rest: &str, parts: &Parts) -> Response {
+    async fn serve(self: &Arc<Self>, rest: &str, parts: &mut Parts) -> Response {
+        if rest == live::PATH {
+            let pacing = self.source.pacing();
+            return live::answer(Arc::clone(self), parts, pacing).await;
+        }
         if let Some(endpoint) = rest.strip_prefix(api::PREFIX) {
             return api::answer(Arc::clone(self), endpoint, parts.uri.clone()).await;
         }
@@ -181,8 +192,8 @@ impl Site {
 
 /// Answers `request` for the map `site`: the handler every request reaches.
 pub(crate) async fn respond(State(site): State<Arc<Site>>, request: Request) -> Response {
-    let (parts, _body) = request.into_parts();
-    site.answer(&parts).await
+    let (mut parts, _body) = request.into_parts();
+    site.answer(&mut parts).await
 }
 
 /// The header `name` of `headers` as the guard sees it.
@@ -256,11 +267,11 @@ mod tests {
         for (name, value) in extra {
             request = request.header(*name, *value);
         }
-        let (head, ()) = request.body(())?.into_parts();
+        let (mut head, ()) = request.body(())?.into_parts();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let response = runtime.block_on(site.answer(&head));
+        let response = runtime.block_on(site.answer(&mut head));
         let status = response.status().as_u16();
         let content_type = response
             .headers()

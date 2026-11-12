@@ -8,6 +8,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- The map's live view of agents: the daemon serves a web socket beside the map's other answers,
+  behind the same token and checks, that sends where each live agent session worked lately (its
+  ten newest files) when it opens and whenever that changes, at most four times a second. While
+  the map is open the daemon does not stop for being idle. Checked with scripted sessions in the
+  daemon's tests; not yet run with a live agent.
 - `cortex map`, which asks the daemon for the map's address, prints it and opens it in the browser
   (`--no-open` only prints it). The daemon serves the map on 127.0.0.1 alone, from the first ask
   until it stops, at `ui.port` (a new key; 0, the default, picks a free port). The address holds a

@@ -106,6 +106,29 @@ impl Source {
         self.settings_shown.editor_url(path)
     }
 
+    /// How the live view paces its frames.
+    pub(super) fn pacing(&self) -> super::live::Pacing {
+        self.settings_shown.pacing
+    }
+
+    /// The coordination holds the live view counts a session live by.
+    pub(super) fn timing(&self) -> &cortex_coord::Timing {
+        &self.settings_shown.timing
+    }
+
+    /// A number that moves whenever the store may hold new positions of sessions: each batch of
+    /// hook events recorded, and each change the graph is rebuilt for.
+    pub(super) fn activity(&self) -> u64 {
+        self.inbox
+            .batches_recorded()
+            .wrapping_add(self.snapshot.generation())
+    }
+
+    /// Notes that the map is in use, which puts off the daemon's idle stop as any request does.
+    pub(super) fn note_in_use(&self) {
+        self.inbox.note_request();
+    }
+
     /// The time now in UTC milliseconds.
     pub(super) fn now_ms(&self) -> i64 {
         (self.clock)()

@@ -89,12 +89,12 @@ fn get(fixture: &Fixture, path: &str) -> TestResult<Given> {
         .uri(format!("/{}/{path}", fixture.token))
         .header("host", format!("127.0.0.1:{PORT}"))
         .body(())?;
-    let (parts, ()) = request.into_parts();
+    let (mut parts, ()) = request.into_parts();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let response = fixture.site.answer(&parts).await;
+        let response = fixture.site.answer(&mut parts).await;
         let status = response.status().as_u16();
         let body = to_bytes(response.into_body(), 1 << 24).await?;
         Ok((status, String::from_utf8(body.to_vec())?))

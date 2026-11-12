@@ -1,12 +1,16 @@
 //! What the map shows of the repository's configuration: the limits of the history Cortex reads,
 //! said beside every number of commits so that a file whose commits all fell outside them does not
-//! read as never committed; and the address that opens a file in the person's editor.
+//! read as never committed; the address that opens a file in the person's editor; and how long a
+//! session counts as live, for the live view.
 
 use std::fmt::Write as _;
 use std::path::Path;
 
+use cortex_coord::Timing;
 use cortex_core::Config;
 use serde::Serialize;
+
+use super::live::{PACING, Pacing};
 
 /// The line an editor link opens a file at: the panel names a file, not a line in it.
 const FIRST_LINE: &str = "1";
@@ -41,6 +45,11 @@ pub(crate) struct MapSettings {
     /// How to open a file in the editor; none when `ui.editor_url` is empty or the root is not
     /// text.
     editor: Option<EditorLink>,
+    /// The coordination holds, whose `live_ms` says how long after its last event a session is
+    /// live.
+    pub(crate) timing: Timing,
+    /// How the live view paces its frames, pings and reads.
+    pub(crate) pacing: Pacing,
 }
 
 impl MapSettings {
@@ -60,6 +69,8 @@ impl MapSettings {
                 max_files_per_commit: config.git_max_files_per_commit,
             },
             editor,
+            timing: Timing::of(&config.coordination),
+            pacing: PACING,
         }
     }
 

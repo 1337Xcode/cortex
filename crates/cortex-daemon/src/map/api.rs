@@ -36,7 +36,7 @@ pub(crate) const PREFIX: &str = "api/";
 /// How long a request waits for an endpoint's work. The work goes on when the wait ends, as a
 /// read of the store cannot be called off; the connection cap bounds how many such reads there
 /// are, and the one that outlasts the wait finds its answer unwanted and drops it.
-const ANSWER_WITHIN: Duration = Duration::from_secs(10);
+pub(super) const ANSWER_WITHIN: Duration = Duration::from_secs(10);
 
 /// What an endpoint is asked.
 #[derive(Debug)]

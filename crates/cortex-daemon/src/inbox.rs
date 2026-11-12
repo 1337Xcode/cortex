@@ -121,6 +121,9 @@ struct State {
     is_indexed: bool,
     /// Whether huge mode's crawl has files waiting to be parsed.
     is_crawling: bool,
+    /// How many batches of hook events the writer has recorded since the daemon started: the map
+    /// reads where agents are again when it changes.
+    batches_recorded: u64,
 }
 
 /// What the writer is to do next.
@@ -436,6 +439,17 @@ impl Inbox {
     /// When the latest request arrived, if one did.
     pub(crate) fn last_request(&self) -> Option<Instant> {
         self.lock().last_request
+    }
+
+    /// Notes that the writer recorded a batch of hook events, which may have moved a session.
+    pub(crate) fn note_recorded(&self) {
+        let mut state = self.lock();
+        state.batches_recorded = state.batches_recorded.wrapping_add(1);
+    }
+
+    /// How many batches of hook events the writer has recorded since the daemon started.
+    pub(crate) fn batches_recorded(&self) -> u64 {
+        self.lock().batches_recorded
     }
 
     /// Tells the writer a person asked for upkeep, to run as soon as it is free.
