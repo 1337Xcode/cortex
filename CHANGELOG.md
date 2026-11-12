@@ -8,6 +8,13 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Evaluation runner support for tasks that need a repository's history. A task that says
+  `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
+  deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that
+  `git log` and `git blame` work offline and nothing newer than the pin can be found; other tasks
+  keep a copy of the files made a repository of one commit. `cortex-eval check --from` refuses a
+  history task whose testbed folder is not a git repository holding the pin, and each task's check
+  now runs with the run's own home folder. Tested on scripted repositories.
 - The experience hint, an experimental feature that is off by default (`history.experience`, the
   `experience` feature): a work order may end with one line of recorded facts about an earlier
   task or change like its prompt, once a task and within 80 tokens, shed after why-lines and

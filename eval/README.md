@@ -10,7 +10,7 @@ the agent's version and model, and where its credentials came from.
 | Path | Holds |
 | --- | --- |
 | `testbeds.toml` | Each testbed: a git repository at a pinned commit |
-| `tasks/<id>.toml` | One task: its testbed, its kind, the prompts of its warm-up sessions, the prompt of its measured session, the success check, the files a correct solution touches, the tools the agent may use, any project rules (`[[notes]]`: a rule's text, what it is about as `cortex note --at` takes it, and its kind), and optionally a regression (`regression = "<file name>"`) |
+| `tasks/<id>.toml` | One task: its testbed, its kind, the prompts of its warm-up sessions, the prompt of its measured session, the success check, the files a correct solution touches, the tools the agent may use, any project rules (`[[notes]]`: a rule's text, what it is about as `cortex note --at` takes it, and its kind), optionally a regression (`regression = "<file name>"`), and optionally `history = true` for a task that needs the repository's git history |
 | `checks/<id>.py` | Each task's success check, run from the repository's root after the sessions; exit code 0 is success |
 | `regressions/<file name>` | A unified diff a task names with `regression`: a small bug in the testbed's library code, so that the task starts from a broken state |
 | `results/<date>-<commit>/` | An evaluation's `runs.json` (each run's counts), `summary.json` and `summary.txt`, named for the day it ran and the commit it measured |
@@ -22,7 +22,7 @@ for precision.
 ## Running
 
 ```sh
-cargo run -p cortex-eval -- check
+cargo run -p cortex-eval -- check [--from <testbed>=<folder> ...]
 cargo run -p cortex-eval -- run --arm treated --cortex target/release/cortex \
   --base <a folder outside any repository> --out eval/results/<date>-<commit>
 cargo run -p cortex-eval -- report eval/results/<date>-<commit>
@@ -40,8 +40,21 @@ keeps the runs that could not complete from the summary written when the evaluat
 refuses when that summary is missing.
 
 Each run clones its testbed at the pinned commit, or copies a folder holding it
-(`--from serena=<folder>`, leaving `.git/` and `.cortex/` behind). A task with a `regression` has
-its diff applied to the copy with `git apply` and committed with the message "an earlier change"
+(`--from serena=<folder>`, leaving `.git/` and `.cortex/` behind). A task with `history = true`
+needs the repository's history, which a copy of files does not have, so its copy is made another
+way: the whole repository is cloned (from the url, or from the `--from` folder, which must then be
+a git repository holding the pinned commit, not only its files; a blobless clone is not used, since
+a blame would then fetch file contents over the network), the pinned commit is checked out, and
+everything past it is cut away. Every branch and tag is deleted, the remote is removed, the
+reflogs are emptied and unreachable objects are pruned, so that the pinned commit and its
+ancestors are the only history and no commit made after it can be found. The copy needs no
+network afterwards: `git log`, `git blame` and `git show` work in it. The copy has no `.venv` or
+`node_modules` either, since it holds only what git tracks, so the task's environment is made in
+it, by the agent or by the check. A task without the field keeps the copy of files described
+above. `cortex-eval check --from <testbed>=<folder>` (and `run` before it starts) refuses a task
+that needs history when its testbed's folder has no `.git` or lacks the pinned commit.
+
+A task with a `regression` has its diff applied to the copy with `git apply` and committed with the message "an earlier change"
 and a fixed author, so the break is history and the work tree is clean; a diff that does not apply
 fails that run. `cortex-eval check` refuses a regression that is not a plain file name or names no
 file in `regressions/`. In the suite's regression tasks the prompt describes the symptom and names
@@ -55,7 +68,9 @@ left them out. Each session is
 server but the repository's, edits accepted and the task's tools allowed, and `ANTHROPIC_API_KEY`
 left out of its environment so that Claude Code signs in with its own login. After each session
 the runner waits until Cortex has ended its tasks and labelled what it gave; after the last it runs
-the check, reads the measured session's injections from the repository's store, and runs
+the check, in the copy and with the run's own home folder as `HOME` and `USERPROFILE`, as the
+sessions have it, so that a check that starts a program reading or writing the user's own files
+(serena's tests do, with its configuration) touches the run's and never yours, reads the measured session's injections from the repository's store, and runs
 `cortex uninstall`.
 
 The serena tasks that have the agent run serena's tests name, in their prompts, how its environment

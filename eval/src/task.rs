@@ -44,6 +44,11 @@ pub(crate) struct Task {
     /// starts from a broken state its agent's own test run shows.
     #[serde(default)]
     pub(crate) regression: Option<String>,
+    /// Whether the task needs the repository's git history as it stood at the pinned commit: its
+    /// copy is then a clone cut at that commit, not a copy of the files made a repository of one
+    /// commit.
+    #[serde(default)]
+    pub(crate) history: bool,
 }
 
 /// A project rule, as `cortex note` takes it.
@@ -271,6 +276,18 @@ mod tests {
         let plain = Task::parse(TASK, file)?;
         plain.check_regression(folder.path())?;
         assert_eq!(plain.regression_in(folder.path()), None);
+        Ok(())
+    }
+
+    /// A task needs history only when it says so: the field is read as written, left out it is
+    /// false, and a value that is not a boolean is refused.
+    #[test]
+    fn a_task_says_whether_it_needs_history() -> anyhow::Result<()> {
+        let file = Path::new("fix-tax.toml");
+        assert!(!Task::parse(TASK, file)?.history);
+        assert!(Task::parse(&format!("{TASK}history = true\n"), file)?.history);
+        assert!(!Task::parse(&format!("{TASK}history = false\n"), file)?.history);
+        assert!(Task::parse(&format!("{TASK}history = \"yes\"\n"), file).is_err());
         Ok(())
     }
 

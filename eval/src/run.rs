@@ -128,7 +128,7 @@ pub(crate) fn run_task(
     let folder = run_folder(&settings.base, &task.id, run);
     let (repo, home) = (folder.join("repo"), folder.join("home"));
     std::fs::create_dir_all(&home).with_context(|| format!("making {}", home.display()))?;
-    testbed.prepare(from, &repo)?;
+    testbed.prepare(from, &repo, task.history)?;
     if let Some(patch) = task.regression_in(&settings.regressions) {
         apply_regression(&repo, &patch)?;
     }
@@ -151,7 +151,12 @@ pub(crate) fn run_task(
         shown = shown.add(checked);
         sessions.push(session);
     }
-    let is_success = check(task, &repo, &settings.checks, &folder.join("check.log"))?;
+    let is_success = check(
+        task,
+        (&repo, &home),
+        &settings.checks,
+        &folder.join("check.log"),
+    )?;
     let given = match sessions.last().and_then(|last| last.session_id.as_deref()) {
         Some(measured) => given(&repo, measured)?,
         None => Given::default(),
@@ -500,13 +505,15 @@ fn warnings_given(repo: &Path, sessions: &[Session]) -> anyhow::Result<Warnings>
     Ok(warnings_of(rows))
 }
 
-/// Whether `task`'s check passes in `repo`, its `{checks}` taken to the folder `checks`, its
-/// output written to `log`.
-///
-/// # Errors
-///
-/// The check's program cannot be started or outlasts its time.
-fn check(task: &Task, repo: &Path, checks: &Path, log: &Path) -> anyhow::Result<bool> {
+/// The command of `task`'s check, its `{checks}` taken to the folder `checks`, run in `repo` with
+/// `home` as the home folder, as the agent's sessions have it: a check that reads or writes the
+/// user's files, as serena's tests do its configuration, works in the run's own and never in the
+/// real ones.
+fn check_command(
+    task: &Task,
+    (repo, home): (&Path, &Path),
+    checks: &Path,
+) -> anyhow::Result<Command> {
     let words: Vec<String> = task
         .check
         .iter()
@@ -514,7 +521,27 @@ fn check(task: &Task, repo: &Path, checks: &Path, log: &Path) -> anyhow::Result<
         .collect();
     let (program, args) = words.split_first().context("a check with no program")?;
     let mut command = Command::new(program);
-    command.args(args).current_dir(repo);
+    command
+        .args(args)
+        .current_dir(repo)
+        .env("HOME", home)
+        .env("USERPROFILE", home);
+    Ok(command)
+}
+
+/// Whether `task`'s check passes in `repo`, with `home` as its home folder, its `{checks}` taken
+/// to the folder `checks`, its output written to `log`.
+///
+/// # Errors
+///
+/// The check's program cannot be started or outlasts its time.
+fn check(
+    task: &Task,
+    (repo, home): (&Path, &Path),
+    checks: &Path,
+    log: &Path,
+) -> anyhow::Result<bool> {
+    let command = check_command(task, (repo, home), checks)?;
     let status = run_logged(command, log, COMMAND_WITHIN)
         .with_context(|| format!("running the check of {}", task.id))?;
     Ok(status.success())
@@ -541,6 +568,8 @@ fn uninstall(
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+
     use super::*;
 
     /// Of the runs planned, the folders an earlier evaluation left are found, and only those: run 2
@@ -553,6 +582,36 @@ mod tests {
         let taken = taken_folders(base.path(), &["fix-tax"], 2);
         assert_eq!(taken, [base.path().join("fix-tax-2")]);
         assert!(taken_folders(base.path(), &["fix-tax"], 1).is_empty());
+        Ok(())
+    }
+
+    /// A check runs in the copy with the run's own home folder, so that what it reads and writes
+    /// under the home folder (serena's configuration and its lock) is the run's and not the
+    /// user's: its `{checks}` becomes the checks folder, and `HOME` and `USERPROFILE` the home.
+    #[test]
+    fn a_check_runs_with_the_runs_own_home() -> anyhow::Result<()> {
+        let text = "id = \"fix-tax\"\ntestbed = \"shop\"\nkind = \"fix\"\nprompt = \"Fix it.\"\n\
+                    check = [\"python\", \"{checks}/fix-tax.py\"]\ntouches = [\"a.py\"]\n\
+                    tools = [\"Read\"]\n";
+        let task = Task::parse(text, Path::new("fix-tax.toml"))?;
+        let command = check_command(
+            &task,
+            (Path::new("run/repo"), Path::new("run/home")),
+            Path::new("suite/checks"),
+        )?;
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, ["suite/checks/fix-tax.py"]);
+        assert_eq!(command.get_current_dir(), Some(Path::new("run/repo")));
+        for name in ["HOME", "USERPROFILE"] {
+            let value = command.get_envs().find(|(key, _)| *key == name);
+            assert_eq!(
+                value,
+                Some((OsStr::new(name), Some(OsStr::new("run/home"))))
+            );
+        }
         Ok(())
     }
 

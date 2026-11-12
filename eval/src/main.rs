@@ -50,7 +50,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Read every task and testbed and check them.
-    Check,
+    Check(CheckArgs),
     /// Run tasks with Claude Code and write what the runs took.
     Run(Box<RunArgs>),
     /// Rebuild a results folder's summary from its runs, keeping the runs that could not complete
@@ -79,6 +79,15 @@ enum Arm {
     Treated,
     /// Cortex installed and holding every task out.
     HeldOut,
+}
+
+/// The arguments of `cortex-eval check`.
+#[derive(Debug, clap::Args)]
+struct CheckArgs {
+    /// A testbed's folder, as `name=folder`, as `run --from` takes it: a task that needs history
+    /// is refused when its testbed's folder is not a git repository holding the testbed's commit.
+    #[arg(long = "from")]
+    from: Vec<String>,
 }
 
 /// The arguments of `cortex-eval run`.
@@ -122,8 +131,9 @@ struct RunArgs {
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
-        Command::Check => {
+        Command::Check(args) => {
             let (testbeds, tasks) = suite(Path::new(SUITE))?;
+            check_history_sources(tasks.values(), &testbeds, &parse_from(&args.from)?)?;
             say(&[format!(
                 "{} testbeds and {} tasks, each task's testbed listed",
                 testbeds.len(),
@@ -202,6 +212,47 @@ fn suite(folder: &Path) -> anyhow::Result<(Vec<Testbed>, BTreeMap<String, Task>)
     Ok((testbeds, tasks))
 }
 
+/// The testbed folders `pairs` give, each written `name=folder`, by testbed name.
+///
+/// # Errors
+///
+/// An entry that is not `name=folder`.
+fn parse_from(pairs: &[String]) -> anyhow::Result<BTreeMap<&str, &Path>> {
+    pairs
+        .iter()
+        .map(|pair| {
+            pair.split_once('=')
+                .map(|(name, folder)| (name, Path::new(folder)))
+                .with_context(|| format!("--from {pair} is not name=folder"))
+        })
+        .collect()
+}
+
+/// Refuses a task of `tasks` that needs history when `from` gives its testbed a folder that is not
+/// a git repository holding the testbed's commit: such a folder has files to copy and no history
+/// to keep. A task whose testbed has no folder in `from` is cloned, and is not refused here.
+///
+/// # Errors
+///
+/// The first folder that cannot give its task's testbed its history, naming the task.
+fn check_history_sources<'a>(
+    tasks: impl IntoIterator<Item = &'a Task>,
+    testbeds: &[Testbed],
+    from: &BTreeMap<&str, &Path>,
+) -> anyhow::Result<()> {
+    for task in tasks.into_iter().filter(|task| task.history) {
+        let folder = testbeds
+            .iter()
+            .find(|bed| bed.name == task.testbed)
+            .and_then(|bed| from.get(bed.name.as_str()).map(|folder| (bed, *folder)));
+        if let Some((bed, folder)) = folder {
+            bed.check_history_source(folder)
+                .with_context(|| format!("the task {} needs history", task.id))?;
+        }
+    }
+    Ok(())
+}
+
 /// Runs the tasks `args` names, or every task, writing each run's counts as it ends and the
 /// summary once all have.
 ///
@@ -219,15 +270,8 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
             .map(|id| tasks.get(id).with_context(|| format!("no task {id}")))
             .collect::<anyhow::Result<_>>()?
     };
-    let from: BTreeMap<&str, &Path> = args
-        .from
-        .iter()
-        .map(|pair| {
-            pair.split_once('=')
-                .map(|(name, folder)| (name, Path::new(folder)))
-                .with_context(|| format!("--from {pair} is not name=folder"))
-        })
-        .collect::<anyhow::Result<_>>()?;
+    let from = parse_from(&args.from)?;
+    check_history_sources(chosen.iter().copied(), &testbeds, &from)?;
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
@@ -315,6 +359,59 @@ fn say(lines: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A task as a file writes it, with `extra` after its keys.
+    fn task(extra: &str) -> anyhow::Result<Task> {
+        let text = format!(
+            "id = \"fix-tax\"\ntestbed = \"shop\"\nkind = \"fix\"\nprompt = \"Fix it.\"\n\
+             check = [\"python\", \"c.py\"]\ntouches = [\"a.py\"]\ntools = [\"Read\"]\n{extra}"
+        );
+        Task::parse(&text, Path::new("fix-tax.toml"))
+    }
+
+    /// `check` refuses a task that needs history when its testbed's folder is not a git repository,
+    /// naming the task and the folder, and does not refuse the same folder for a task that needs
+    /// none, a task whose testbed has no folder, or a folder of another testbed.
+    #[test]
+    fn a_history_task_is_refused_a_folder_without_git() -> anyhow::Result<()> {
+        let files = tempfile::tempdir()?;
+        std::fs::write(files.path().join("a.py"), "a = 1\n")?;
+        let beds = [Testbed {
+            name: "shop".to_owned(),
+            url: "https://example.invalid/shop".to_owned(),
+            commit: "abc".to_owned(),
+            description: String::new(),
+        }];
+        let (needs, needs_none) = (task("history = true\n")?, task("")?);
+        let given = BTreeMap::from([("shop", files.path())]);
+        let refused = check_history_sources([&needs], &beds, &given)
+            .err()
+            .map(|error| format!("{error:#}"))
+            .unwrap_or_default();
+        assert!(
+            refused.contains("the task fix-tax needs history"),
+            "{refused}"
+        );
+        assert!(refused.contains("has no .git"), "{refused}");
+        assert!(
+            refused.contains(&files.path().display().to_string()),
+            "{refused}"
+        );
+        check_history_sources([&needs_none], &beds, &given)?;
+        check_history_sources([&needs], &beds, &BTreeMap::new())?;
+        check_history_sources([&needs], &beds, &BTreeMap::from([("other", files.path())]))?;
+        Ok(())
+    }
+
+    /// `--from` entries are read as `name=folder`, and one that is not is refused.
+    #[test]
+    fn from_entries_are_read_as_name_and_folder() -> anyhow::Result<()> {
+        let pairs = ["serena=beds/serena".to_owned()];
+        let read = parse_from(&pairs)?;
+        assert_eq!(read.get("serena"), Some(&Path::new("beds/serena")));
+        assert!(parse_from(&["serena".to_owned()]).is_err());
+        Ok(())
+    }
 
     /// `--set` entries become dotted TOML lines; one with no `=`, an empty or broken key or an
     /// empty value is refused, naming the entry.
