@@ -21,6 +21,7 @@ mod holdout;
 mod price_file;
 mod pricing;
 mod receipts;
+mod report;
 mod response;
 mod tail;
 mod timestamp;
@@ -42,6 +43,7 @@ pub use receipts::{
     Activity, Arms, Estimate, MIN_TASKS_PER_ARM, Precision, SessionReceipt, Tally, TaskReceipt,
     receipt,
 };
+pub use report::{Holdout, Recorded, ReportError, Selection, recorded};
 pub use response::{Response, SYNTHETIC_MODEL, Service, Usage};
 pub use tail::{MAX_LINE_BYTES, MAX_RECENT_RESPONSES, Tail, Turn};
 pub use timestamp::{utc_millis, utc_text};

@@ -10,7 +10,9 @@ use cortex_meter::{
 };
 
 use super::cache::cache_lines;
-use super::{Holdout, Prices, Report};
+use cortex_meter::Holdout;
+
+use super::{Prices, Report};
 
 /// A hundredth of a cent, the smallest amount receipts show, in picodollars.
 const HUNDREDTH_OF_A_CENT_PICODOLLARS: u128 = 100_000_000;
@@ -363,7 +365,9 @@ mod tests {
         Unpriced,
     };
 
-    use super::super::{Holdout, Prices, Recorded, Report};
+    use cortex_meter::{Holdout, Recorded};
+
+    use super::super::{Prices, Report};
     use super::{amount, grouped, holdout_lines, lines, session_lines, usage, when};
 
     /// Digits grouped by hand.

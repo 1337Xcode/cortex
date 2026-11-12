@@ -7,17 +7,13 @@
 mod cache;
 mod text;
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context, bail};
-use cortex_core::{Identifier, Ulid, UserFolder, create_private_folder, unix_millis};
-use cortex_meter::{
-    Activity, Arms, Comparison, MIN_TASKS_PER_ARM, Precision, PriceTable, SessionReceipt, compare,
-    load_or_write, receipt, weighed,
-};
-use cortex_store::{Queries, Reader, SessionRow, StoreError};
+use cortex_core::{Identifier, UserFolder, create_private_folder, unix_millis};
+use cortex_meter::{PriceTable, Recorded, Selection, load_or_write};
+use cortex_store::{Reader, StoreError};
 use serde::Serialize;
 
 use crate::{output, repository};
@@ -69,33 +65,6 @@ enum Prices {
         /// Why.
         why: String,
     },
-}
-
-/// What the store holds: the arms of the held-out tasks, how precise the work orders given and the
-/// warnings were, and the receipts of the sessions asked for.
-#[derive(Debug, Serialize)]
-struct Recorded {
-    /// How many of the repository's tasks were held out and how many were not.
-    holdout: Holdout,
-    /// Of the repository's work orders that reached the agent, how many were labelled and used.
-    precision: Precision,
-    /// Of the files the repository's warnings named, how many were marked at their task's end, and
-    /// how many of those were then read or edited.
-    warnings: Precision,
-    /// Each session's receipt, by start.
-    sessions: Vec<SessionReceipt>,
-}
-
-/// The tasks held out from Cortex and the rest, which receipts compare once both are enough.
-#[derive(Debug, Clone, Serialize)]
-struct Holdout {
-    /// How many of the repository's tasks each arm holds, whenever they ran.
-    #[serde(flatten)]
-    arms: Arms,
-    /// How many each arm needs before they are compared.
-    needed_per_arm: u64,
-    /// The comparison, once each arm has enough tasks that ended.
-    comparison: Option<Comparison>,
 }
 
 /// Prints the receipts of the sessions `args` selects, as text or as JSON.
@@ -156,7 +125,7 @@ fn price_table() -> Result<(PathBuf, PriceTable), String> {
 ///
 /// # Errors
 ///
-/// A session that cannot be shown, or a store that cannot be read.
+/// A session id that is no name, a session that cannot be shown, or a store that cannot be read.
 fn recorded(
     root: &Path,
     args: &Args,
@@ -176,135 +145,17 @@ fn recorded(
                 .with_context(|| format!("reading the store in {}", folder.display()));
         }
     };
-    let queries = reader.queries();
-    let (held_out, treated) = queries
-        .holdout_arms()
-        .context("counting the held-out tasks")?;
-    let (labelled, used) = queries
-        .delivered_precision()
-        .context("counting the labelled work orders given")?;
-    let warned = queries
-        .warning_counts()
-        .context("counting the warnings given")?;
-    let arms = Arms { held_out, treated };
-    let comparison = if arms.is_enough() {
-        compared(queries)?
-    } else {
-        None
+    let selection = match &args.session {
+        Some(id) => Selection::Session(
+            Identifier::new(id).with_context(|| format!("reading the session id {id}"))?,
+        ),
+        None => {
+            Selection::StartedSince(unix_millis(SystemTime::now()) - i64::from(args.days) * DAY_MS)
+        }
     };
-    let sessions = sessions(queries, args)?
-        .into_iter()
-        .map(|session| Ok(receipt(&activity(queries, session)?, prices)))
-        .collect::<anyhow::Result<_>>()?;
-    Ok(Some(Recorded {
-        holdout: Holdout {
-            arms,
-            needed_per_arm: MIN_TASKS_PER_ARM,
-            comparison,
-        },
-        precision: Precision { labelled, used },
-        warnings: Precision {
-            labelled: warned.labelled,
-            used: warned.resolved,
-        },
-        sessions,
-    }))
-}
-
-/// The holdout comparison over every session the store holds, a subagent's work counted in its
-/// parent's, each task's usage placed as its receipt places it; none until each arm has enough tasks
-/// that ended.
-///
-/// # Errors
-///
-/// The store cannot be read.
-fn compared(queries: Queries<'_>) -> anyhow::Result<Option<Comparison>> {
-    let sessions = queries
-        .sessions_started_since(i64::MIN)
-        .context("reading the sessions to compare")?;
-    let receipts: Vec<SessionReceipt> = sessions
-        .into_iter()
-        .filter(|session| session.record.parent_session_id.is_none())
-        .map(|session| Ok(receipt(&activity(queries, session)?, None)))
-        .collect::<anyhow::Result<_>>()?;
-    let (treated, held_out) = weighed(&receipts);
-    Ok(compare(&treated, &held_out))
-}
-
-/// The sessions `args` selects: the one it names, or each that started in the days it gives. A
-/// subagent's work is its parent session's, so a subagent is never one of them.
-///
-/// # Errors
-///
-/// A session id that is no name, is not in the store or names a subagent, or a store that cannot
-/// be read.
-fn sessions(queries: Queries<'_>, args: &Args) -> anyhow::Result<Vec<SessionRow>> {
-    let Some(id) = &args.session else {
-        let since_ms = unix_millis(SystemTime::now()) - i64::from(args.days) * DAY_MS;
-        let started = queries
-            .sessions_started_since(since_ms)
-            .context("reading the sessions")?;
-        return Ok(started
-            .into_iter()
-            .filter(|session| session.record.parent_session_id.is_none())
-            .collect());
-    };
-    let id = Identifier::new(id).with_context(|| format!("reading the session id {id}"))?;
-    let session = queries.session(&id).context("reading the session")?;
-    let session = session.with_context(|| format!("no session {} in the store", id.as_str()))?;
-    if let Some(parent) = &session.record.parent_session_id {
-        bail!(
-            "session {} is a subagent of session {}, whose receipts count its work",
-            id.as_str(),
-            parent.as_str()
-        );
-    }
-    Ok(vec![session])
-}
-
-/// What `session` did: its tasks, its responses and its subagents', each task's tool calls, the
-/// calls it and its subagents made while it had no task, their compactions, and what Cortex gave
-/// it.
-///
-/// # Errors
-///
-/// The store cannot be read.
-fn activity(queries: Queries<'_>, session: SessionRow) -> anyhow::Result<Activity> {
-    let id = &session.record.session_id;
-    let reading = || format!("reading the activity of session {}", id.as_str());
-    let tasks = queries.tasks_of_session(id).with_context(reading)?;
-    let subagents = queries.sessions_started_by(id).with_context(reading)?;
-    let mut usage = queries.usage_of_session(id).with_context(reading)?;
-    let mut outside_tool_calls = queries.tool_calls_outside_tasks(id).with_context(reading)?;
-    let mut compactions_at_ms = BTreeMap::new();
-    let compacted = queries.compactions_of_session(id).with_context(reading)?;
-    compactions_at_ms.insert(id.clone(), compacted);
-    for subagent in &subagents {
-        let subagent = &subagent.record.session_id;
-        usage.extend(queries.usage_of_session(subagent).with_context(reading)?);
-        let calls = queries.tool_calls_outside_tasks(subagent);
-        outside_tool_calls = outside_tool_calls.saturating_add(calls.with_context(reading)?);
-        let compacted = queries.compactions_of_session(subagent);
-        compactions_at_ms.insert(subagent.clone(), compacted.with_context(reading)?);
-    }
-    let task_ids: Vec<Ulid> = tasks.iter().map(|task| task.record.task_id).collect();
-    let tool_calls = queries
-        .tool_calls_of_tasks(&task_ids)
-        .with_context(reading)?;
-    let injections = queries
-        .injections_of_session(id)
-        .with_context(reading)?
-        .into_iter()
-        .map(|row| row.record)
-        .collect();
-    Ok(Activity {
-        subagents: u64::try_from(subagents.len()).context("counting subagents")?,
-        session,
-        tasks,
-        usage,
-        tool_calls,
-        outside_tool_calls,
-        compactions_at_ms,
-        injections,
-    })
+    Ok(Some(cortex_meter::recorded(
+        reader.queries(),
+        &selection,
+        prices,
+    )?))
 }
