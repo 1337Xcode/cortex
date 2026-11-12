@@ -26,6 +26,39 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   sessions open while one runs and say "No agent session is running in this repository",
   collapsed, while none does. On a narrow screen the overview is a bottom sheet opened from the top
   bar.
+- The receipts, a section of the overview under "At a glance": what agents' work in the repository
+  cost and whether Cortex helped, in the words `cortex receipts` prints. The section is closed at
+  first and the page asks the daemon for `api/receipts` only when it is opened. It says, in order:
+  - The headline. Cortex holds some tasks out and compares them with the rest only once each side
+    has 30 tasks that ended. Before that the headline says "Not enough data yet" with the counts so
+    far ("29 of 30 held-out and 29 of 30 treated tasks so far"), and the section shows no
+    difference, share or saving anywhere. Once there are enough, it lists each measure as the CLI
+    does: the success rate and, with 30 successful tasks a side whose usage was read, the median
+    input tokens, uncached input tokens, turns and tool calls per successful task, each with its
+    value with Cortex and held out, the difference (with Cortex minus held out) and its 95%
+    bootstrap interval, and the sample sizes. A measure whose interval holds 0 says that it is not
+    a measured difference.
+  - How precise the work orders Cortex gave were (of those labelled, how many were used) and how
+    often the files warnings named were then read or edited, with the counts.
+  - A chart of tokens and turns per task: two small plots on the same tasks, input tokens above and
+    turns below, each on its own scale from 0, one mark per task, oldest on the left, for the
+    newest 60 tasks of the sessions shown whose agent's usage Cortex reads (it says how many it
+    leaves out). The task under the pointer, or the one picked with the arrow keys once the chart
+    has the focus, is explained below the plots in one sentence with its numbers, the line the CLI
+    prints for it.
+  - Each session of the last 7 days (the newest 100), five at a time, newest first: its agent and
+    state, when it started, its total, and the tokens Cortex injected (its primer's among them)
+    against the session's input tokens. A session whose agent's transcripts Cortex does not read
+    says its usage is not shown.
+  - The price table every cost is estimated from: the user's price file, the table Cortex ships
+    when there is none, or that no cost is estimated and why. Costs are always called estimates.
+
+  With no session in the window it says so and how to get receipts (`cortex init` installs the
+  hooks); a failed load says what failed and offers to try again. The page checks every field of
+  the answer and the sums that tie them together (a session's turns are its tasks' and the rest, a
+  comparison only with 30 tasks a side), and refuses an answer with more than 100 sessions, 2,000
+  tasks in a session or 5,000 cache losses in a session.
+
 - The graph. Shape says what a mark is and colour confirms it: folders are squares and files are
   hollow circles sized by their line count; a file with a suspect fact has a second ring (amber), a
   file an agent read or edited in the last 24 hours a filled centre (green), and a file no agent
@@ -198,6 +231,10 @@ area), on text below 12 px and on text not set in Geist; it also delays the font
 that the canvas waits for them. `e2e/steps.spec.ts` answers the questions the map is for with the
 keyboard alone, counts the keys and screens each takes, asserts both and prints them as a table.
 `e2e/colors.spec.ts` compares every colour token as Chromium paints it with the canvas's channels.
+`e2e/receipts.spec.ts` opens the receipts on a cold store, at 29 tasks a side and at 30 a side
+with a comparison, checks each headline word for word and that no share, saving or interval shows
+without a comparison, reads the chart's sentences with the keyboard, and checks that the receipts
+are asked for only when their section opens and that a failure says what failed.
 `e2e/live.spec.ts` answers the live view's socket from inside the test and pushes frames: the
 markers move and the camera does not, the live sessions list and fly, a refused frame is dropped,
 and a lost connection pauses and comes back.

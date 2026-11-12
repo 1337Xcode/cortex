@@ -1,5 +1,5 @@
-// The page's state: the graph snapshot, the summary and the selected file's detail with their
-// load states; whether the daemon is still reading the repository; the live sessions; the selected
+// The page's state: the graph snapshot, the summary, the receipts and the selected file's detail
+// with their load states; whether the daemon is still reading the repository; the live sessions; the selected
 // and hovered files; the strength below which learned links are hidden; and the view the map is
 // coloured by. A response that arrives after a newer request, or after the request was cancelled,
 // is dropped. A live frame replaces the live state and touches nothing else.
@@ -11,6 +11,7 @@ import type { ApiError, ApiResult } from '../api/guard';
 import type { Health, IndexState } from '../api/health';
 import type { LiveState } from '../api/live';
 import type { Fetcher } from '../api/request';
+import type { Receipts } from '../api/receipts';
 import type { MapSummary } from '../api/summary';
 import { DEFAULT_MIN_STRENGTH } from '../theme/tokens';
 import { DEFAULT_VIEW, VIEWS, type ViewName } from '../views/registry';
@@ -32,6 +33,13 @@ export type SummaryState =
   | { readonly status: 'loading' }
   | { readonly status: 'error'; readonly error: ApiError }
   | { readonly status: 'ready'; readonly summary: MapSummary };
+
+/** What the page knows about the receipts: nothing until the receipts panel first asks for them. */
+export type ReceiptsState =
+  | { readonly status: 'idle' }
+  | { readonly status: 'loading' }
+  | { readonly status: 'error'; readonly error: ApiError }
+  | { readonly status: 'ready'; readonly receipts: Receipts };
 
 /** What the page knows about the selected file's detail. */
 export type DetailState =
@@ -71,6 +79,7 @@ export type DetailFetcher = (id: number, signal: AbortSignal) => Promise<ApiResu
 export interface MapState {
   readonly load: LoadState;
   readonly summary: SummaryState;
+  readonly receipts: ReceiptsState;
   readonly detail: DetailState;
   /** The id of the selected file, or null; always a valid id of the ready snapshot. */
   readonly selectedFile: number | null;
@@ -98,6 +107,8 @@ export interface MapState {
   readonly cancelLoad: () => void;
   /** Starts a summary load, cancelling the one in flight. */
   readonly loadSummary: (fetcher: Fetcher<MapSummary>) => Promise<void>;
+  /** Starts a receipts load, cancelling the one in flight. */
+  readonly loadReceipts: (fetcher: Fetcher<Receipts>) => Promise<void>;
   /** Loads the selected file's detail; does nothing when no file is selected. */
   readonly loadDetail: (fetcher: DetailFetcher) => Promise<void>;
   /**
@@ -183,12 +194,14 @@ function detailOutcome(result: ApiResult<FileDetail>, id: number, load: LoadStat
 export function createMapStore(clockMs: () => number = Date.now) {
   const graphRequests = requestSlot();
   const summaryRequests = requestSlot();
+  const receiptsRequests = requestSlot();
   const detailRequests = requestSlot();
   const healthRequests = requestSlot();
 
   return createStore<MapState>()((set, get) => ({
     load: { status: 'loading' },
     summary: { status: 'loading' },
+    receipts: { status: 'idle' },
     detail: { status: 'idle' },
     selectedFile: null,
     flyTo: null,
@@ -216,6 +229,7 @@ export function createMapStore(clockMs: () => number = Date.now) {
     cancelLoad: () => {
       graphRequests.cancel();
       summaryRequests.cancel();
+      receiptsRequests.cancel();
       detailRequests.cancel();
       healthRequests.cancel();
     },
@@ -228,6 +242,18 @@ export function createMapStore(clockMs: () => number = Date.now) {
       set({
         summary: result.ok
           ? { status: 'ready', summary: result.value }
+          : { status: 'error', error: result.error },
+      });
+    },
+
+    loadReceipts: async (fetcher) => {
+      const request = receiptsRequests.begin();
+      set({ receipts: { status: 'loading' } });
+      const result = await fetcher(request.signal);
+      if (!request.isCurrent()) return;
+      set({
+        receipts: result.ok
+          ? { status: 'ready', receipts: result.value }
           : { status: 'error', error: result.error },
       });
     },

@@ -1,7 +1,8 @@
 // Nothing spilled, nothing crammed, one family: at 1440x900 and 390x844 in both themes, on the
 // ten-file repository with a file selected and every section open, on the cold repository and on
 // the overview of 100,000 files, with each view and its legend, with three live sessions and with
-// the live view paused, every element is walked and the check fails on
+// the live view paused, and with the receipts open in each of their three states, every element is
+// walked and the check fails on
 // - a box whose content is wider or taller than the box, unless the box is a declared scroll area
 //   (an open overlay, such as the search results, is checked on its own, apart from its anchor);
 // - visible text drawn below 12 px;
@@ -9,7 +10,14 @@
 // A last check delays the font files and sees that the canvas waits for them before it draws.
 import { expect, test, type Page } from '@playwright/test';
 import { TYPE } from '../src/theme/tokens';
-import { coldFixture, largeFixture, smallFixture, threeSessions, type Fixture } from './fixtures';
+import {
+  coldFixture,
+  largeFixture,
+  shortReceipts,
+  smallFixture,
+  threeSessions,
+  type Fixture,
+} from './fixtures';
 import { filePanel, nextFrames, openMap, searchAndPick } from './helpers';
 import { liveChannel, MAP_URL, serveFixture } from './serve';
 
@@ -143,6 +151,28 @@ for (const size of SIZES) {
       await expect(page.getByTestId('live-paused')).toBeVisible();
       expect(await findProblems(page, TYPE.small.sizePx), 'paused').toEqual([]);
       expect(record.errors).toEqual([]);
+    });
+
+    test(`${prefix}: the receipts in each state`, async ({ page }) => {
+      await page.setViewportSize(size);
+      const nowMs = Date.now();
+      const states: [string, Fixture][] = [
+        ['cold', coldFixture()],
+        ['29 a side', { ...smallFixture(nowMs), receipts: shortReceipts() }],
+        ['30 a side', smallFixture(nowMs)],
+      ];
+      for (const [name, fixture] of states) {
+        await page.unrouteAll();
+        const record = await openMap(page, fixture, scheme);
+        if (size.width < 720) await page.getByRole('button', { name: 'Overview' }).click();
+        await page.getByRole('button', { name: /^Receipts/ }).click();
+        const section = page.getByTestId('overview-receipts');
+        await expect(section.getByTestId('receipts-headline')).toBeVisible();
+        const more = section.getByRole('button', { name: /^Show \d+ more$/ });
+        if ((await more.count()) > 0) await more.click();
+        expect(await findProblems(page, TYPE.small.sizePx), name).toEqual([]);
+        expect(record.errors).toEqual([]);
+      }
     });
 
     test(`${prefix}: the cold repository`, async ({ page }) => {

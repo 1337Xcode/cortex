@@ -79,6 +79,18 @@ All notable changes to this project are documented in this file. The format is b
   files in fresh browsers, the first load was 826 to 922 ms over five runs with no session and 848
   to 895 ms with twenty sessions marked, and a pan and zoom held 59.9 and 59.5 frames per second at
   the 5th percentile. The built map grew from 425,294 to 434,433 bytes gzipped.
+- The map's receipts: a section of the overview, closed at first, that asks the daemon's
+  `api/receipts` only when opened and shows what `cortex receipts` reports, in the same words.
+  Until each side of the holdout has 30 tasks that ended, it says "Not enough data yet" with the
+  counts so far and shows no difference, share or saving. After that it lists each measure with its
+  value with Cortex and held out, the difference, its 95% bootstrap interval and the sample sizes,
+  and says when an interval holds 0. It also shows how precise the work orders and warnings were, a
+  chart of input tokens and turns per task (the newest 60 tasks; each explained in a sentence on
+  hover or with the arrow keys), each recent session's total and the tokens Cortex injected against
+  its input, and the price table every cost is estimated from. The page refuses an answer that
+  breaks the contract or whose sums do not add up. Checked in a browser against answers written for
+  the tests; not yet run against a daemon with recorded sessions. The built map grew from 434,433
+  to 440,921 bytes gzipped.
 - Evaluation tasks for the history features, and the runner support they need. A task that says
   `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
   deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that

@@ -1,8 +1,9 @@
 // Screenshots of every state of the map at 1440x900 and 390x844 in both themes, written to the
 // folder named by CORTEX_SHOTS_DIR for a person to look at: first open, the overview, a search, a
 // selected file with every section open, the legend, nothing found, the cold, empty, loading and
-// failed states, each view with its legend, three live sessions, the paused live view, and
-// 100,000 files with and without twenty sessions. Skipped when that variable is unset.
+// failed states, each view with its legend, three live sessions, the paused live view, the
+// receipts cold, at 29 tasks a side, at 30 a side and failed, and 100,000 files with and without
+// twenty sessions. Skipped when that variable is unset.
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -10,11 +11,12 @@ import {
   largeFixture,
   manySessions,
   READING_HEALTH,
+  shortReceipts,
   smallFixture,
   threeSessions,
   type Fixture,
 } from './fixtures';
-import { nextFrames, openMap } from './helpers';
+import { nextFrames, openMap, tabTo } from './helpers';
 import { liveChannel, MAP_URL, serveFixture } from './serve';
 
 const SHOTS_DIR = process.env['CORTEX_SHOTS_DIR'] ?? '';
@@ -143,6 +145,44 @@ for (const size of SIZES) {
       await expect(page.getByTestId('live-paused')).toBeVisible();
       await shoot(page, `${prefix}-18-live-paused`);
       expect(record.errors).toEqual([]);
+    });
+
+    test(`${prefix}: the receipts in each state`, async ({ page }) => {
+      await page.setViewportSize(size);
+      const nowMs = Date.now();
+      const states: [string, Fixture][] = [
+        ['cold', coldFixture()],
+        ['short', { ...smallFixture(nowMs), receipts: shortReceipts() }],
+        ['compared', smallFixture(nowMs)],
+      ];
+      for (const [name, fixture] of states) {
+        await page.unrouteAll();
+        const record = await openMap(page, fixture, scheme);
+        if (isNarrow) await page.getByRole('button', { name: 'Overview' }).click();
+        await page.getByRole('button', { name: /^Receipts/ }).click();
+        const section = page.getByTestId('overview-receipts');
+        await expect(section.getByTestId('receipts-headline')).toBeVisible();
+        await shoot(page, `${prefix}-21-receipts-${name}`);
+        // The chart, focused and explaining its first task; then the end of the section.
+        const chart = section.getByTestId('receipts-chart');
+        if ((await chart.count()) > 0) {
+          await tabTo(page, '.chart-input');
+          await page.keyboard.press('Home');
+          await chart.scrollIntoViewIfNeeded();
+          await shoot(page, `${prefix}-22-receipts-${name}-chart`);
+        }
+        await section.getByTestId('receipts-prices').scrollIntoViewIfNeeded();
+        await shoot(page, `${prefix}-23-receipts-${name}-end`);
+        expect(record.errors).toEqual([]);
+      }
+      await page.unrouteAll();
+      const record = await openMap(page, smallFixture(nowMs), scheme);
+      await page.route('**/api/receipts', (route) => route.fulfill({ status: 500, body: '' }));
+      if (isNarrow) await page.getByRole('button', { name: 'Overview' }).click();
+      await page.getByRole('button', { name: /^Receipts/ }).click();
+      await expect(page.getByTestId('receipts-error')).toBeVisible();
+      await shoot(page, `${prefix}-24-receipts-failed`);
+      expect(record.errors.filter((error) => !error.includes('500'))).toEqual([]);
     });
 
     test(`${prefix}: 100,000 files with twenty sessions, in Heat`, async ({ page }) => {

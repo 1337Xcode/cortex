@@ -112,6 +112,22 @@ export const LAYOUT = {
  */
 export const LIST = { rows: 5, historyPage: 10, most: 25 } as const;
 
+/**
+ * The receipts chart, in pixels: each plot's height, its marks (a dot of 8 px across with a 2 px
+ * ring in the panel's colour, larger while it is the task explained), how far the marks' centres
+ * keep from the plot's edges (the explained mark and its ring, 8 px, and 4 px clear of the focus
+ * ring), and how many of the newest tasks it draws (more than this crowd a panel's width; the
+ * sessions list below it holds the rest).
+ */
+export const CHART = {
+  plotHeight: 72,
+  dotRadius: 4,
+  dotRing: 2,
+  selectedRadius: 6,
+  insetPx: SPACE.md,
+  maxTasks: 60,
+} as const;
+
 /** The hue of the one accent: learned links, the selection and the focus ring. */
 export const ACCENT_HUE = 290;
 

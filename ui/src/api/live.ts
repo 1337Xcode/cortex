@@ -108,13 +108,15 @@ function parseLiveFiles(record: JsonRecord, where: string): LiveFile[] {
   return files;
 }
 
-function readSessionId(record: JsonRecord, where: string): string {
-  const id = readCappedString(record, 'id', MAX_SESSION_ID_CHARS, where);
-  if (!SESSION_ID.test(id)) return fail('bad_shape', `${where}.id: expected one line of text`);
+/** The field `key` as a session id (see `SESSION_ID`), or a refusal; receipts read one too. */
+export function readSessionId(record: JsonRecord, where: string, key = 'id'): string {
+  const id = readCappedString(record, key, MAX_SESSION_ID_CHARS, where);
+  if (!SESSION_ID.test(id)) return fail('bad_shape', `${where}.${key}: expected one line of text`);
   return id;
 }
 
-function readAgent(record: JsonRecord, where: string): string {
+/** The `agent` field as an agent's snake name, or a refusal; receipts read one too. */
+export function readAgent(record: JsonRecord, where: string): string {
   const agent = readCappedString(record, 'agent', MAX_AGENT_NAME_CHARS, where);
   if (!SNAKE_NAME.test(agent)) return fail('bad_shape', `${where}.agent: expected a snake name`);
   return agent;

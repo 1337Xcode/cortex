@@ -712,6 +712,159 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* The receipts: sentences that wrap, never spill, numbers in them as the text writes them. */
+  .receipts-headline {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .receipts-lead {
+    font-weight: var(--weight-medium);
+    overflow-wrap: anywhere;
+  }
+
+  .receipts-line {
+    overflow-wrap: anywhere;
+  }
+
+  .measure-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-xs) 0;
+  }
+
+  .measure-list li {
+    display: flex;
+    flex-direction: column;
+    padding-left: var(--space-sm);
+    border-left: var(--stroke-edge) solid var(--border);
+  }
+
+  .measure-name {
+    color: var(--muted-foreground);
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+  }
+
+  .measure-values {
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  .measure-note {
+    color: var(--muted-foreground);
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+  }
+
+  /* A part of the receipts below the precision lines: the chart, then the sessions. */
+  .receipts-part {
+    margin-top: var(--space-sm);
+  }
+
+  /*
+   * A session's receipt is not a button, so it takes back the padding the row list reaches into;
+   * its edge sets it apart from the next, as a measure's and a fact's do.
+   */
+  .receipt-row {
+    display: flex;
+    flex-direction: column;
+    margin: var(--space-xs) var(--space-sm);
+    padding-left: var(--space-sm);
+    border-left: var(--stroke-edge) solid var(--border);
+    overflow-wrap: anywhere;
+  }
+
+  .receipt-title {
+    font-weight: var(--weight-medium);
+  }
+
+  .receipt-meta {
+    color: var(--muted-foreground);
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+  }
+
+  /* Positioned, so the hidden range input is placed inside the chart and not past the panel. */
+  .receipts-chart {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    min-width: 0;
+  }
+
+  /* The plots stand for the range input under them: its focus ring is drawn around them. */
+  .chart-plots {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-width: 0;
+    border-radius: var(--size-radius-small);
+    touch-action: none;
+    cursor: crosshair;
+  }
+
+  .receipts-chart:has(.chart-input:focus-visible) .chart-plots {
+    outline: var(--stroke-focus) solid var(--ring);
+    outline-offset: var(--stroke-focus-offset);
+  }
+
+  .chart-plot {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .chart-caption,
+  .chart-axis {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    color: var(--muted-foreground);
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+  }
+
+  .chart-scale,
+  .chart-axis {
+    font-family: var(--font-family-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chart-svg {
+    display: block;
+    overflow: visible;
+  }
+
+  .chart-grid,
+  .chart-baseline {
+    stroke: var(--border);
+    stroke-width: var(--stroke-hairline);
+  }
+
+  .chart-cross {
+    stroke: var(--muted-foreground);
+    stroke-width: var(--stroke-hairline);
+  }
+
+  .chart-dot {
+    fill: var(--primary);
+    stroke: var(--card);
+    paint-order: stroke;
+  }
+
+  .chart-dot[data-selected='true'] {
+    fill: var(--foreground);
+  }
+
+  .chart-readout {
+    min-height: calc(var(--type-body-line) * 2);
+    overflow-wrap: anywhere;
+  }
+
   /* The controls at the bottom of the canvas, beside the overview panel. */
   .map-controls {
     position: absolute;

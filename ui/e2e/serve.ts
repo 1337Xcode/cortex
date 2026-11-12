@@ -118,6 +118,7 @@ function apiBody(
   if (path === 'api/graph') return bodies.graph;
   if (path === 'api/summary') return bodies.summary;
   if (path === 'api/health') return JSON.stringify(fixture.health);
+  if (path === 'api/receipts') return JSON.stringify(fixture.receipts);
   if (path === 'api/search') return JSON.stringify(searchFixture(fixture, search.get('q') ?? ''));
   const match = /^api\/file\/(\d+)$/.exec(path);
   if (match === null) return null;

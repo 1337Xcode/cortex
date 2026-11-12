@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { FileDetail } from '../api/file';
 import type { GraphSnapshot } from '../api/graph';
 import type { ApiResult } from '../api/guard';
+import type { Receipts } from '../api/receipts';
 import type { MapSummary } from '../api/summary';
 import { DEFAULT_MIN_STRENGTH } from '../theme/tokens';
 import { createMapStore } from './store';
@@ -224,6 +225,32 @@ describe('map store: summary and detail', () => {
     const error = { code: 'network', message: 'down' } as const;
     await store.getState().loadSummary(() => Promise.resolve({ ok: false, error }));
     expect(store.getState().summary).toEqual({ status: 'error', error });
+  });
+
+  it('asks for no receipts until told, then keeps them or their error, dropping a late answer', async () => {
+    const store = createMapStore();
+    expect(store.getState().receipts).toEqual({ status: 'idle' });
+    const receipts: Receipts = {
+      version: 1,
+      window_days: 7,
+      prices: { state: 'missing', why: 'no home folder' },
+      recorded: {
+        holdout: { held_out: 0, treated: 0, needed_per_arm: 30, comparison: null },
+        precision: { labelled: 0, used: 0 },
+        warnings: { labelled: 0, used: 0 },
+        sessions: [],
+      },
+    };
+    const slow = deferred<ApiResult<Receipts>>();
+    const first = store.getState().loadReceipts((signal) => slow.fetcher(signal));
+    expect(store.getState().receipts).toEqual({ status: 'loading' });
+    const error = { code: 'http_status', message: 'the daemon answered 500' } as const;
+    await store.getState().loadReceipts(() => Promise.resolve({ ok: false, error }));
+    slow.settle({ ok: true, value: receipts });
+    await first;
+    expect(store.getState().receipts).toEqual({ status: 'error', error });
+    await store.getState().loadReceipts(() => Promise.resolve({ ok: true, value: receipts }));
+    expect(store.getState().receipts).toEqual({ status: 'ready', receipts });
   });
 
   it('loads the selected file and stays idle without a selection', async () => {

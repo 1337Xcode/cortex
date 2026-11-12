@@ -1,8 +1,10 @@
 // Repositories the browser checks are served: a ten-file one with every kind of data (reads,
-// recent edits, a suspect fact, links of all three kinds, history, what Cortex told agents), a
-// cold one where nothing has been learned, and a generated one of 100,000 files. Each follows the
-// daemon's contract, so the page's real guards accept it. Each also has a health (finished
-// reading) and a live state (no session running) unless a test gives others.
+// recent edits, a suspect fact, links of all three kinds, history, what Cortex told agents, and
+// receipts with a holdout comparison), a cold one where nothing has been learned, and a generated
+// one of 100,000 files. Each follows the daemon's contract, so the page's real guards accept it.
+// Each also has a health (finished reading) and a live state (no session running) unless a test
+// gives others. The receipts come in three states: a cold store, 29 tasks a side (not enough to
+// compare) and 30 a side with the comparison.
 
 /** A JSON value as the fixtures write them. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -40,6 +42,8 @@ export interface Fixture {
   readonly health: Json;
   /** The live state sent when the page opens `api/live`. */
   readonly live: Json;
+  /** `api/receipts`. */
+  readonly receipts: Json;
 }
 
 /** The health of a daemon that has finished reading the repository. */
@@ -181,6 +185,7 @@ export function smallFixture(nowMs: number): Fixture {
     details: new Map([[4, book]]),
     health: READY_HEALTH,
     live: NO_SESSIONS,
+    receipts: comparedReceipts(),
   };
 }
 
@@ -215,6 +220,7 @@ export function coldFixture(): Fixture {
     details: new Map(),
     health: READY_HEALTH,
     live: NO_SESSIONS,
+    receipts: coldReceipts(),
   };
 }
 
@@ -310,6 +316,7 @@ export function largeFixture(count: number): Fixture {
     details: new Map(),
     health: READY_HEALTH,
     live: NO_SESSIONS,
+    receipts: shortReceipts(),
   };
 }
 
@@ -384,4 +391,308 @@ export function manySessions(count: number, fileCount: number, nowMs: number): J
     sessions.push(liveSession(id, agents[index % agents.length] ?? AGENTS.other, files, nowMs));
   }
   return { version: 1, sessions };
+}
+
+/** 2026-11-10 09:00 UTC: the receipts' sessions start from here, so their times read the same. */
+export const RECEIPTS_BASE_MS = Date.UTC(2026, 10, 10, 9, 0);
+
+const MINUTE_MS = 60_000;
+const DAY_MS = 24 * HOUR_MS;
+
+/** What each response costs in the receipt fixtures: $0.0025, $0.0005 of it on cache writes. */
+const PICODOLLARS_PER_TURN = 2_500_000_000;
+const CACHE_WRITE_PICODOLLARS_PER_TURN = 500_000_000;
+
+/** Input tokens by part: uncached, read from the cache, written to it. */
+type InputParts = readonly [number, number, number];
+
+/** One task of a receipt fixture. */
+interface ReceiptTask {
+  readonly seq: number;
+  readonly startMs: number;
+  readonly turns: number;
+  readonly input: InputParts;
+  readonly output: number;
+  readonly calls: number;
+  readonly injected: number;
+  readonly outcome: string | null;
+  readonly heldOut: boolean | null;
+}
+
+/** What a session did outside its tasks. */
+interface Outside {
+  readonly turns: number;
+  readonly input: InputParts;
+  readonly output: number;
+  readonly calls: number;
+}
+
+/** A tally of `turns` responses, every one priced, its input the sum of its three parts. */
+function receiptTally(turns: number, input: InputParts, output: number): Json {
+  const [uncached, reads, writes] = input;
+  return {
+    turns,
+    cumulative_input: uncached + reads + writes,
+    uncached_input: uncached,
+    cache_reads: reads,
+    cache_writes: writes,
+    output,
+    estimate: {
+      picodollars: PICODOLLARS_PER_TURN * turns,
+      cache_write_picodollars: CACHE_WRITE_PICODOLLARS_PER_TURN * turns,
+      priced_turns: turns,
+      unpriced_turns: {},
+    },
+  };
+}
+
+/** A task's receipt as the daemon writes it; a task with an outcome ended 20 minutes in. */
+function receiptTask(task: ReceiptTask): Json {
+  return {
+    task_id: `01JCRECE1PT00000000000${String(task.seq).padStart(4, '0')}`,
+    seq: task.seq,
+    started_at_ms: task.startMs,
+    ended_at_ms: task.outcome === null ? null : task.startMs + 20 * MINUTE_MS,
+    outcome: task.outcome,
+    held_out: task.heldOut,
+    tool_calls: task.calls,
+    injected_tokens: task.injected,
+    usage: receiptTally(task.turns, task.input, task.output),
+  };
+}
+
+/** A session's receipt: its tasks, what fell outside them, and the sums of both. */
+function receiptSession(
+  head: { id: string; agent: string; isMetered: boolean; startMs: number; status: string },
+  tasks: readonly ReceiptTask[],
+  outside: Outside,
+  primer: number,
+): Json {
+  const sum = (count: (task: ReceiptTask) => number): number =>
+    tasks.reduce((total, task) => total + count(task), 0);
+  const input: InputParts = [
+    sum((task) => task.input[0]) + outside.input[0],
+    sum((task) => task.input[1]) + outside.input[1],
+    sum((task) => task.input[2]) + outside.input[2],
+  ];
+  const turns = sum((task) => task.turns) + outside.turns;
+  return {
+    session_id: head.id,
+    agent: head.agent,
+    is_metered: head.isMetered,
+    started_at_ms: head.startMs,
+    ended_at_ms: head.status === 'live' ? null : head.startMs + 2 * HOUR_MS,
+    status: head.status,
+    subagents: 0,
+    tool_calls: sum((task) => task.calls) + outside.calls,
+    tasks: tasks.map(receiptTask),
+    outside_tasks: receiptTally(outside.turns, outside.input, outside.output),
+    outside_tool_calls: outside.calls,
+    total: receiptTally(turns, input, sum((task) => task.output) + outside.output),
+    compactions_left_out: 0,
+    cache_breaks: [],
+    primer_tokens: primer,
+    injected_tokens: primer + sum((task) => task.injected),
+  };
+}
+
+/** A task with no usage, of an agent whose transcripts Cortex does not read. */
+function unreadTask(
+  seq: number,
+  startMs: number,
+  fields: Pick<ReceiptTask, 'calls' | 'injected' | 'outcome' | 'heldOut'>,
+): ReceiptTask {
+  return { seq, startMs, turns: 0, input: [0, 0, 0], output: 0, ...fields };
+}
+
+/**
+ * Three sessions of the window, oldest first:
+ * - Claude Code (ended): task 101 (6 turns, 2,000 + 30,000 + 4,000 = 36,000 input tokens) and
+ *   task 102 (held out; 3 turns, 500 + 12,000 + 500 = 13,000), and 1 turn of 300 tokens outside
+ *   them: 49,300 input tokens in all; 400 (primer) + 350 = 750 tokens injected.
+ * - Codex (ended), whose usage Cortex does not read: tasks 103 and 104; 120 tokens injected.
+ * - Claude Code (running): task 105 (4 turns, 1,000 + 20,000 + 1,000 = 22,000) and task 106
+ *   (open; 2 turns, 400 + 9,000 + 600 = 10,000): 32,000 input tokens; 300 + 210 + 90 = 600 injected.
+ * The chart draws tasks 101, 102, 105 and 106.
+ */
+export function receiptSessions(): Json[] {
+  const base = RECEIPTS_BASE_MS;
+  const none: Outside = { turns: 0, input: [0, 0, 0], output: 0, calls: 0 };
+  const success = { outcome: 'success', heldOut: false };
+  return [
+    receiptSession(
+      { id: 'a1b2c3d4-0001', agent: 'claude', isMetered: true, startMs: base, status: 'ended' },
+      [
+        {
+          seq: 101,
+          startMs: base + 5 * MINUTE_MS,
+          turns: 6,
+          input: [2000, 30_000, 4000],
+          output: 1200,
+          calls: 9,
+          injected: 350,
+          ...success,
+        },
+        {
+          seq: 102,
+          startMs: base + 40 * MINUTE_MS,
+          turns: 3,
+          input: [500, 12_000, 500],
+          output: 400,
+          calls: 2,
+          injected: 0,
+          outcome: 'failure',
+          heldOut: true,
+        },
+      ],
+      { turns: 1, input: [300, 0, 0], output: 50, calls: 1 },
+      400,
+    ),
+    receiptSession(
+      {
+        id: 'e5f6a7b8-0002',
+        agent: 'codex',
+        isMetered: false,
+        startMs: base + DAY_MS,
+        status: 'ended',
+      },
+      [
+        unreadTask(103, base + DAY_MS + 10 * MINUTE_MS, {
+          calls: 5,
+          injected: 120,
+          outcome: 'unknown',
+          heldOut: false,
+        }),
+        unreadTask(104, base + DAY_MS + 30 * MINUTE_MS, {
+          calls: 3,
+          injected: 0,
+          outcome: 'success',
+          heldOut: true,
+        }),
+      ],
+      none,
+      0,
+    ),
+    receiptSession(
+      {
+        id: 'c9d0e1f2-0003',
+        agent: 'claude',
+        isMetered: true,
+        startMs: base + 2 * DAY_MS,
+        status: 'live',
+      },
+      [
+        {
+          seq: 105,
+          startMs: base + 2 * DAY_MS + 2 * MINUTE_MS,
+          turns: 4,
+          input: [1000, 20_000, 1000],
+          output: 600,
+          calls: 6,
+          injected: 210,
+          ...success,
+        },
+        {
+          seq: 106,
+          startMs: base + 2 * DAY_MS + 50 * MINUTE_MS,
+          turns: 2,
+          input: [400, 9000, 600],
+          output: 200,
+          calls: 1,
+          injected: 90,
+          outcome: null,
+          heldOut: null,
+        },
+      ],
+      none,
+      300,
+    ),
+  ];
+}
+
+/** A store with nothing recorded and no price table, as on a repository Cortex has just met. */
+export function coldReceipts(): Json {
+  return {
+    version: 1,
+    window_days: 7,
+    prices: { state: 'missing', why: 'there is no home folder to keep a price table in' },
+    recorded: {
+      holdout: { held_out: 0, treated: 0, needed_per_arm: 30, comparison: null },
+      precision: { labelled: 0, used: 0 },
+      warnings: { labelled: 0, used: 0 },
+      sessions: [],
+    },
+  };
+}
+
+/** 29 tasks a side, one short of a comparison, priced from the shipped table. */
+export function shortReceipts(): Json {
+  return {
+    version: 1,
+    window_days: 7,
+    prices: { state: 'shipped', updated: '2026-11-01' },
+    recorded: {
+      holdout: { held_out: 29, treated: 29, needed_per_arm: 30, comparison: null },
+      precision: { labelled: 9, used: 7 },
+      warnings: { labelled: 4, used: 1 },
+      sessions: receiptSessions(),
+    },
+  };
+}
+
+/** One measure compared, the difference with Cortex minus held out as the daemon takes it. */
+function compared(treated: number, heldOut: number, low: number, high: number): Json {
+  return { treated, held_out: heldOut, difference: treated - heldOut, low, high };
+}
+
+/**
+ * 30 tasks a side with the comparison, priced from the user's file: success 0.8 with Cortex (24 of
+ * 30) and 0.7 held out (21 of 30), and the four medians per successful task; every interval but
+ * the input tokens' holds 0.
+ */
+export function comparedReceipts(): Json {
+  return {
+    version: 1,
+    window_days: 7,
+    prices: { state: 'read', updated: '2026-11-01' },
+    recorded: {
+      holdout: { held_out: 30, treated: 30, needed_per_arm: 30, comparison: holdoutComparison() },
+      precision: { labelled: 73, used: 52 },
+      warnings: { labelled: 9, used: 5 },
+      sessions: receiptSessions(),
+    },
+  };
+}
+
+/** The comparison of `comparedReceipts`, on its own. */
+function holdoutComparison(): Json {
+  return {
+    tasks: [30, 30],
+    success_rate: compared(0.8, 0.7, -0.1, 0.3),
+    per_success_tasks: [30, 30],
+    per_success: [
+      compared(21_000, 34_000, -20_000, -5000),
+      compared(900, 1500, -1100, 100),
+      compared(4, 6, -3, 0),
+      compared(5.5, 7, -3, 0.5),
+    ],
+  };
+}
+
+/**
+ * 29 tasks a side carrying a comparison anyway, which the daemon never sends: the page must refuse
+ * the answer rather than show a comparison resting on too few tasks.
+ */
+export function shortReceiptsWithComparison(): Json {
+  return {
+    version: 1,
+    window_days: 7,
+    prices: { state: 'shipped', updated: '2026-11-01' },
+    recorded: {
+      holdout: { held_out: 29, treated: 29, needed_per_arm: 30, comparison: holdoutComparison() },
+      precision: { labelled: 9, used: 7 },
+      warnings: { labelled: 4, used: 1 },
+      sessions: receiptSessions(),
+    },
+  };
 }

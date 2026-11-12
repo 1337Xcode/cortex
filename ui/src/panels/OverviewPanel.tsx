@@ -1,9 +1,10 @@
 // The overview panel on the left: the agent sessions running now, the repository at a glance, the
-// files that change together, the busiest files and what needs attention, each a short list of
-// five with "Show N more" and every row a button that flies to its file. Each section collapses to
-// its title and count; the live sessions open while any runs, and the other four are open at
-// first, since each answers a question asked on first sight. On a narrow screen it is a bottom
-// sheet opened from the controls, with a Close button.
+// receipts, the files that change together, the busiest files and what needs attention, each a
+// short list of five with "Show N more" and every row a button that flies to its file. Each section
+// collapses to its title and count; the live sessions open while any runs, the receipts open when
+// asked (they are loaded then), and the other four are open at first, since each answers a question
+// asked on first sight. On a narrow screen it is a bottom sheet opened from the controls, with a
+// Close button.
 import { X } from 'lucide-react';
 import { useMemo, type ReactElement, type RefObject } from 'react';
 import type { GraphSnapshot } from '../api/graph';
@@ -15,6 +16,7 @@ import { distinctNames } from '../text/names';
 import { LINK_KIND_NAMES, NUMBER_NAMES, linkSentence } from '../text/vocabulary';
 import { FileRow } from './FileRow';
 import { LiveSessions } from './LiveSessions';
+import { ReceiptsSection } from './ReceiptsSection';
 import { busiestFiles, coupledPairs, filesNeedingAttention } from './overviewLists';
 import { RowList } from './RowList';
 import { Section } from './Section';
@@ -197,6 +199,7 @@ export function OverviewPanel({
       <div className="panel-body" data-scroll-area="true">
         <LiveSessions scene={scene} />
         <AtAGlance snapshot={snapshot} />
+        <ReceiptsSection />
         <ChangedTogether snapshot={snapshot} />
         <Busiest snapshot={snapshot} />
         <NeedsAttention snapshot={snapshot} />

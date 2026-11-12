@@ -199,6 +199,27 @@ question(
   (nowMs) => ({ ...smallFixture(nowMs), live: threeSessions(nowMs) }),
 );
 
+// The receipts section sits closed under "At a glance", the 19th stop of Tab (after the canvas, the
+// ten map controls, the search box, the strip's two files, the live sessions, "At a glance" and its
+// two files); Enter opens it on the same screen.
+question(
+  "What did agents' work cost, and did Cortex help?",
+  { keys: 20, screens: 1 },
+  async (page, steps) => {
+    await steps.tabTo(page.getByTestId('overview-receipts').locator('.section-toggle'));
+    await steps.press('Enter');
+    const section = page.getByTestId('overview-receipts');
+    await expect(section.getByTestId('receipts-measure').first()).toHaveText(
+      'Success rate0.80 with Cortex, 0.70 held outdifference +0.10 (-0.10 to +0.30)The interval holds 0: not a measured difference.',
+    );
+    // The first session listed is the newest: 600 tokens injected against 32,000 of input.
+    await expect(section.getByTestId('receipts-overhead').first()).toHaveText(
+      '600 tokens injected by Cortex (primer: 300 tokens), against 32,000 input tokens in total.',
+    );
+    return 'success 0.80 with Cortex, 0.70 held out, +0.10 (-0.10 to +0.30), 30 tasks a side; 600 tokens injected against 32,000 input';
+  },
+);
+
 /** Picks the view of `key` and opens the legend, which names the view and its scale. */
 async function openView(page: Page, steps: Steps, key: string, title: string): Promise<void> {
   await steps.press(key);
