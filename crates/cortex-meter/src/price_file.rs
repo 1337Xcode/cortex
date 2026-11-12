@@ -30,6 +30,24 @@ pub fn load_or_write(path: &Path) -> Result<PriceTable, PricingError> {
     if !path.exists() {
         publish_shipped(path)?;
     }
+    read_table(path)
+}
+
+/// The price table in the file at `path`, or none when no file is there; nothing is ever written.
+/// For a caller that only shows prices, such as the map, which must not create the user's file.
+///
+/// # Errors
+///
+/// As [`load_or_write`], but for writing.
+pub fn load(path: &Path) -> Result<Option<PriceTable>, PricingError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    read_table(path).map(Some)
+}
+
+/// The price table in the file at `path`, read whole up to [`MAX_PRICE_FILE_BYTES`].
+fn read_table(path: &Path) -> Result<PriceTable, PricingError> {
     let mut bytes = Vec::new();
     File::open(path)
         .and_then(|file| file.take(MAX_PRICE_FILE_BYTES + 1).read_to_end(&mut bytes))

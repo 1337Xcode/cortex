@@ -4,7 +4,7 @@
 
 use cortex_meter::{
     Billed, Cost, MAX_PRICE_FILE_BYTES, ModelPrices, PriceTable, PricingError, Rates,
-    SHIPPED_PRICES, Unpriced, load_or_write,
+    SHIPPED_PRICES, Unpriced, load, load_or_write,
 };
 
 /// Result type for these tests: any failure fails the test.
@@ -508,6 +508,19 @@ fn the_shipped_table_is_written_once_and_the_user_s_prices_win() -> TestResult {
         load_or_write(&latin),
         Err(PricingError::Syntax(_))
     ));
+    Ok(())
+}
+
+/// The read-only loader writes nothing: no file gives no table and leaves the folder empty, and a
+/// file that is there is read as the writing loader reads it.
+#[test]
+fn the_read_only_loader_never_writes() -> TestResult {
+    let folder = tempfile::tempdir()?;
+    let path = folder.path().join("pricing.toml");
+    assert_eq!(load(&path)?, None);
+    assert_eq!(std::fs::read_dir(folder.path())?.count(), 0);
+    std::fs::write(&path, SHIPPED_PRICES)?;
+    assert_eq!(load(&path)?, Some(PriceTable::parse(SHIPPED_PRICES)?));
     Ok(())
 }
 
