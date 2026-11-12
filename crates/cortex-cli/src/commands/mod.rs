@@ -13,6 +13,7 @@ mod facts;
 mod features;
 mod import;
 mod init;
+mod map;
 mod mcp;
 mod note;
 mod off;
@@ -65,6 +66,8 @@ pub(crate) enum Command {
     Claims(claims::Args),
     /// Ask the daemon to run upkeep now.
     Consolidate(consolidate::Args),
+    /// Open the repository's map in the browser: the daemon serves it on 127.0.0.1.
+    Map(map::Args),
     /// Write the active project rules to .cortex/shared/ for a team that commits it.
     Export(export::Args),
     /// Take a team's shared project rules from .cortex/shared/, each to confirm before it is used.
@@ -98,6 +101,7 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Facts(args) => facts::run(&args),
         Command::Claims(args) => claims::run(&args),
         Command::Consolidate(args) => consolidate::run(&args),
+        Command::Map(args) => map::run(&args),
         Command::Export(args) => export::run(&args),
         Command::Import(args) => import::run(&args),
         Command::Config(args) => config::run(&args),

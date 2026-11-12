@@ -93,8 +93,8 @@ fn each_value_shows_the_file_it_came_from() -> TestResult {
         assert!(lines.contains(&expected), "{expected}\n{}", printed.stdout);
     }
     // 18 keys of the main settings, 11 retrieval, 5 warning, 12 coordination, 3 hint, 1
-    // compaction, 2 adoption and 8 history keys, and the profile.
-    assert_eq!(lines.len(), 61, "{}", printed.stdout);
+    // compaction, 2 adoption, 8 history and 1 map key, and the profile.
+    assert_eq!(lines.len(), 62, "{}", printed.stdout);
     let mut sorted = lines.clone();
     sorted.sort_unstable();
     assert_eq!(lines, sorted);

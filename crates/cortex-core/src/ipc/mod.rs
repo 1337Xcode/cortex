@@ -8,6 +8,7 @@
 mod claims;
 mod facts;
 mod frame;
+mod map;
 mod message;
 mod version;
 
@@ -17,6 +18,7 @@ pub use self::frame::{
     FrameError, LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES, body_len, decode, encode, read_frame,
     write_frame,
 };
+pub use self::map::MapAnswer;
 pub use self::message::{
     GitReport, GitState, GraphReport, Hello, HistoryReport, HookLatency, LinkedWorktreeReport,
     Mismatch, RecentError, Request, RequestBody, Response, ResponseBody, Role, StatusReport,

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::claims::{ClaimsAnswer, ClaimsAsk};
 use super::facts::{FactsAnswer, FactsAsk, Note};
+use super::map::MapAnswer;
 use super::version::Protocol;
 use crate::Event;
 use crate::named::named_kind;
@@ -137,6 +138,9 @@ pub enum RequestBody {
     Claims(ClaimsAsk),
     /// Run upkeep as soon as the writer is free, answered at once (protocol 10.0 added it).
     Consolidate,
+    /// Answer with the address the map is served at, serving it from now on if it was not yet
+    /// (protocol 12.0 added it).
+    MapAddress,
     /// Report the daemon's state.
     Status,
     /// Stop gracefully. Frozen.
@@ -217,6 +221,8 @@ pub enum ResponseBody {
     Facts(FactsAnswer),
     /// The claims listed, or what became of a claim made or released (protocol 9.0 added it).
     Claims(ClaimsAnswer),
+    /// The map's address, or why it cannot be served (protocol 12.0 added it).
+    Map(MapAnswer),
     /// The request could not be served.
     Error {
         /// What went wrong, without file contents or prompt text.

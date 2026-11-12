@@ -22,8 +22,8 @@ pub struct Protocol {
 impl Protocol {
     /// The protocol this build speaks.
     pub const CURRENT: Self = Self {
-        major: 11,
-        minor: 3,
+        major: 12,
+        minor: 0,
     };
 
     /// Whether a process speaking this protocol can talk to one speaking `other`.

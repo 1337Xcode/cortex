@@ -8,6 +8,17 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- `cortex map`, which asks the daemon for the map's address, prints it and opens it in the browser
+  (`--no-open` only prints it). The daemon serves the map on 127.0.0.1 alone, from the first ask
+  until it stops, at `ui.port` (a new key; 0, the default, picks a free port). The address holds a
+  random 64-digit token, and the daemon answers only requests that carry it, name the map by
+  `127.0.0.1:<port>` or `localhost:<port>` and come from no other site's page; it sends no CORS
+  header. It holds at most 64 connections at once and closes one after 30 s with no byte either way;
+  when the daemon stops, the port is closed and so are the open connections. `cortex map` prints or
+  opens only an address of exactly that form. A binary built after the map's interface was built
+  embeds it; one built before serves a page saying it has no map. For now the map serves its page,
+  its files and a health check. The guard's rules are tested one by one, and a test runs the command
+  against a daemon and sends the map plain HTTP requests.
 - Evaluation tasks for the history features, and the runner support they need. A task that says
   `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
   deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that

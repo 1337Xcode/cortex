@@ -634,6 +634,51 @@ fn claims_requests_and_answers_read_back() -> TestResult {
     Ok(())
 }
 
+/// Asking for the map's address is written as typed here, and each answer reads back as it was
+/// written, its fields named as typed here.
+#[test]
+fn the_map_address_request_and_answers_read_back() -> TestResult {
+    let ask = Request {
+        request_id: 4,
+        body: RequestBody::MapAddress,
+    };
+    let frame = encode(&ask)?;
+    assert_eq!(
+        frame.get(LENGTH_PREFIX_BYTES..),
+        Some(r#"{"request_id":4,"body":{"type":"map_address"}}"#.as_bytes())
+    );
+    assert_eq!(decode::<Request>(&frame[LENGTH_PREFIX_BYTES..])?, ask);
+    let serving = Response {
+        request_id: 4,
+        body: ResponseBody::Map(MapAnswer::Serving {
+            url: "http://127.0.0.1:8123/ab/".to_owned(),
+            has_assets: false,
+        }),
+    };
+    let frame = encode(&serving)?;
+    assert_eq!(
+        frame.get(LENGTH_PREFIX_BYTES..),
+        Some(
+            concat!(
+                r#"{"request_id":4,"body":{"type":"map","answer":"serving","#,
+                r#""url":"http://127.0.0.1:8123/ab/","has_assets":false}}"#
+            )
+            .as_bytes()
+        )
+    );
+    assert_eq!(decode::<Response>(&frame[LENGTH_PREFIX_BYTES..])?, serving);
+    let failed = Response {
+        request_id: 5,
+        body: ResponseBody::Map(MapAnswer::BindFailed {
+            port: 8123,
+            cause: "in use".to_owned(),
+        }),
+    };
+    let frame = encode(&failed)?;
+    assert_eq!(decode::<Response>(&frame[LENGTH_PREFIX_BYTES..])?, failed);
+    Ok(())
+}
+
 /// Asking for upkeep is written as typed here, and a status carrying the last run reads back as
 /// it was; one from a daemon that does not report upkeep reads as none.
 #[test]

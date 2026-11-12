@@ -6,7 +6,7 @@
 //! the field it sets; no other code matches on a key's name to read or show it.
 
 use super::{
-    Config, adopt, compaction, coordination, hints, history, main_keys, retrieval, warnings,
+    Config, adopt, compaction, coordination, hints, history, main_keys, retrieval, ui, warnings,
 };
 
 /// How an entry reads a file's value into the settings: `Err` holds what the key accepts, in the
@@ -87,7 +87,7 @@ impl ConfigKey {
 }
 
 /// Every section's table of keys.
-const SECTIONS: [&[ConfigKey]; 8] = [
+const SECTIONS: [&[ConfigKey]; 9] = [
     main_keys::KEYS,
     retrieval::KEYS,
     warnings::KEYS,
@@ -96,6 +96,7 @@ const SECTIONS: [&[ConfigKey]; 8] = [
     compaction::KEYS,
     adopt::KEYS,
     history::KEYS,
+    ui::KEYS,
 ];
 
 /// Every key Cortex reads but `profile`, section by section.
@@ -129,7 +130,7 @@ mod tests {
         ConfigError, ConfigLayer, CoordinationConfig, LayerKind, ModeSetting, RetrievalConfig,
         TypeWeights, WarningsConfig, load,
     };
-    use crate::{AdoptConfig, CompactionConfig, HintsConfig, HistoryConfig, ScaleMode};
+    use crate::{AdoptConfig, CompactionConfig, HintsConfig, HistoryConfig, ScaleMode, UiConfig};
 
     /// Every key Cortex reads set to a value other than its default, one line each, with the
     /// settings that result written out by hand below.
@@ -191,7 +192,8 @@ mod tests {
         history.blame_timeout_ms = 100\n\
         history.max_reasons = 5\n\
         history.max_tokens = 400\n\
-        history.bot_patterns = [\"*[bot]\"]\n";
+        history.bot_patterns = [\"*[bot]\"]\n\
+        ui.port = 8123\n";
 
     /// The settings [`EVERY_KEY`] gives, every field away from its default.
     fn every_key_set() -> Config {
@@ -269,6 +271,7 @@ mod tests {
                 max_tokens: 400,
                 bot_patterns: vec!["*[bot]".to_owned()],
             },
+            ui: UiConfig { port: 8123 },
         }
     }
 

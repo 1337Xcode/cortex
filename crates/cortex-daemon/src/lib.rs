@@ -39,6 +39,7 @@ mod learning;
 mod linked;
 mod listener;
 mod log;
+mod map;
 mod meter;
 mod miner;
 mod noticed;
@@ -86,6 +87,7 @@ use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
 use self::linked::Linked;
+use self::map::Map;
 use self::meter::Meter;
 use self::miner::Miner;
 use self::pending::Pending;
@@ -183,6 +185,7 @@ fn listen_and_serve(
             Arc::clone(&shared.service),
             WelcomeLine::of(&root.join(".cortex")),
             Arc::clone(&shared.history),
+            Arc::clone(&shared.map),
         ),
     );
     runtime.spawn(Arc::new(server).serve(listener));
@@ -190,14 +193,16 @@ fn listen_and_serve(
     // However the work ended, before the writer opened included, the server takes no more events
     // in the moment it has left: nothing would record them.
     shared.inbox.close();
+    // The map stops with the daemon: its listener closes before the runtime's last second.
+    shared.map.stop();
     runtime.shutdown_timeout(STOP_GRACE);
     served
 }
 
 /// What the server and the writer share: the writer's inbox, the graph, the work tree's
 /// uncommitted diff and those of the linked working trees agents work in, the signature changes the
-/// writer's indexes found lately, the history worker's jobs, and what answers with text once the
-/// first index is done.
+/// writer's indexes found lately, the history worker's jobs, what answers with text once the
+/// first index is done, and the map server.
 #[derive(Debug, Default)]
 struct Shared {
     /// The writer's inbox.
@@ -215,6 +220,8 @@ struct Shared {
     history: Arc<Jobs>,
     /// What answers with text.
     service: Arc<OnceLock<Service>>,
+    /// The map server, which listens once it is first asked for.
+    map: Arc<Map>,
 }
 
 /// Takes the store's writer, indexes, watches and serves the inbox until asked to stop or idle,
@@ -232,6 +239,7 @@ fn index_and_serve(
         note(&format!("warning: {warning}"))?;
     }
     let config = loaded.config;
+    shared.map.configure(config.ui.port);
     inbox.keep_positions_by(Timing::of(&config.coordination));
     // The configuration refuses a pattern that does not compile, so this fails only as it would.
     let commands = Commands::new(&config.test_extra_patterns)?;

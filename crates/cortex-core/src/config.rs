@@ -29,6 +29,7 @@ mod registry;
 mod retrieval;
 mod set;
 mod switches;
+mod ui;
 mod warnings;
 
 use std::collections::BTreeMap;
@@ -46,6 +47,7 @@ pub use self::registry::{ConfigKey, config_key, config_keys};
 pub use self::retrieval::{MAX_WORK_ORDER_TOKENS, RetrievalConfig, TypeWeights};
 pub use self::set::{SetError, setting_value, with_setting};
 pub use self::switches::{SWITCH_KEYS, SwitchKey, switch_key};
+pub use self::ui::UiConfig;
 pub use self::warnings::WarningsConfig;
 use crate::ScaleMode;
 
@@ -197,6 +199,8 @@ pub struct Config {
     pub adopt: AdoptConfig,
     /// The `history.*` keys: what git history adds to the code shown and to the search.
     pub history: HistoryConfig,
+    /// The `ui.*` keys: where the map is served.
+    pub ui: UiConfig,
 }
 
 impl Default for Config {
@@ -228,6 +232,7 @@ impl Default for Config {
             compaction: CompactionConfig::default(),
             adopt: AdoptConfig::default(),
             history: HistoryConfig::default(),
+            ui: UiConfig::default(),
         }
     }
 }
@@ -559,6 +564,7 @@ mod tests {
                     max_tokens: 120,
                     bot_patterns: Vec::new(),
                 },
+                ui: UiConfig { port: 0 },
             }
         );
         assert_eq!(loaded.warnings, Vec::<String>::new());
@@ -660,6 +666,7 @@ mod tests {
                 compaction: CompactionConfig { is_keep_list: true },
                 adopt: AdoptConfig::default(),
                 history: HistoryConfig::default(),
+                ui: UiConfig::default(),
             }
         );
         Ok(())

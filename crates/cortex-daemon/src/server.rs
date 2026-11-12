@@ -35,6 +35,7 @@ use crate::host::now_ms;
 use crate::inbox::Inbox;
 use crate::latency::Latencies;
 use crate::linked::Linked;
+use crate::map::Map;
 use crate::retrieval::Service;
 use crate::runs::Runs;
 use crate::signatures::Signatures;
@@ -82,6 +83,8 @@ pub(crate) struct Server {
     probes_answered: AtomicU64,
     /// The line that tells the user Cortex set the repository up on its own, while it is held.
     welcome: WelcomeLine,
+    /// The map server, which listens once it is first asked for.
+    map: Arc<Map>,
 }
 
 /// How long before its hook stops reading a reply holding text must be sent: the moment the reply
@@ -217,7 +220,8 @@ impl Server {
     /// A server for a daemon started now, whose writer reads `inbox`, answering from the graph of
     /// `snapshot`, the uncommitted diff of `worktree` or of the event's working tree among
     /// `linked`, and the signature changes `signatures` holds, with `service`, telling the user
-    /// once what `welcome` holds, and reporting the history worker's `history` in the status.
+    /// once what `welcome` holds, reporting the history worker's `history` in the status, and
+    /// giving the address of `map`.
     pub(crate) fn new(
         inbox: Arc<Inbox>,
         (snapshot, worktree, linked, signatures): (
@@ -226,7 +230,12 @@ impl Server {
             Arc<Linked>,
             Arc<Signatures>,
         ),
-        (service, welcome, history): (Arc<OnceLock<Service>>, WelcomeLine, Arc<Jobs>),
+        (service, welcome, history, map): (
+            Arc<OnceLock<Service>>,
+            WelcomeLine,
+            Arc<Jobs>,
+            Arc<Map>,
+        ),
     ) -> Self {
         Self {
             started: Instant::now(),
@@ -243,6 +252,7 @@ impl Server {
             latencies: Mutex::new(Latencies::default()),
             probes_answered: AtomicU64::new(0),
             welcome,
+            map,
         }
     }
 
@@ -359,6 +369,7 @@ impl Server {
                 (ResponseBody::Ack, None)
             }
             RequestBody::Shutdown => (ResponseBody::Ack, None),
+            RequestBody::MapAddress => (self.map.answer().await, None),
             RequestBody::Hello(_) => {
                 // Kept before the refusal is written, so that a client that reads it finds the
                 // error in the status, as one that sees a broken connection close does.

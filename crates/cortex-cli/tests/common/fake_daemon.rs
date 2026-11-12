@@ -301,7 +301,7 @@ fn indexing() -> StatusReport {
 
 /// The kind of each request, for comparing: `hello`, `event`, `retrieve`, `primer`, `post_edit`,
 /// `read_hint`, `stop_reason`, `keep_list`, `where`, `why`, `note`, `facts`, `claims`,
-/// `consolidate`, `status` or `shutdown`.
+/// `consolidate`, `map_address`, `status` or `shutdown`.
 pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
     requests
         .iter()
@@ -320,6 +320,7 @@ pub fn kinds(requests: &[Request]) -> Vec<&'static str> {
             RequestBody::Facts(_) => "facts",
             RequestBody::Claims(_) => "claims",
             RequestBody::Consolidate => "consolidate",
+            RequestBody::MapAddress => "map_address",
             RequestBody::Status => "status",
             RequestBody::Shutdown => "shutdown",
         })
