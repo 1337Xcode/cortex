@@ -106,6 +106,11 @@ impl Source {
         self.settings_shown.editor_url(path)
     }
 
+    /// The user's price file, when the daemon knows the user's home folder.
+    pub(super) fn pricing_path(&self) -> Option<&std::path::Path> {
+        self.settings_shown.pricing.as_deref()
+    }
+
     /// How the live view paces its frames.
     pub(super) fn pacing(&self) -> super::live::Pacing {
         self.settings_shown.pacing

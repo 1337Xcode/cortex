@@ -4,7 +4,7 @@
 //! session counts as live, for the live view.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cortex_coord::Timing;
 use cortex_core::Config;
@@ -50,6 +50,8 @@ pub(crate) struct MapSettings {
     pub(crate) timing: Timing,
     /// How the live view paces its frames, pings and reads.
     pub(crate) pacing: Pacing,
+    /// The user's price file the receipts read, never write; none reads the shipped table.
+    pub(crate) pricing: Option<PathBuf>,
 }
 
 impl MapSettings {
@@ -71,6 +73,15 @@ impl MapSettings {
             editor,
             timing: Timing::of(&config.coordination),
             pacing: PACING,
+            pricing: None,
+        }
+    }
+
+    /// These settings with the user's price file at `path`, which the receipts read.
+    pub(crate) fn with_pricing(self, path: PathBuf) -> Self {
+        Self {
+            pricing: Some(path),
+            ..self
         }
     }
 

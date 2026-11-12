@@ -249,7 +249,7 @@ fn index_and_serve(
                 Arc::clone(&shared.snapshot),
                 Arc::clone(&shared.inbox),
             ),
-            MapSettings::of(&config, root),
+            MapSettings::of(&config, root).with_pricing(UserFolder::in_home(&home).pricing_path()),
         ),
     );
     inbox.keep_positions_by(Timing::of(&config.coordination));

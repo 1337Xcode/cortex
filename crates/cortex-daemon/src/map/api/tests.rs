@@ -181,6 +181,45 @@ fn the_summary_is_the_first_screen_as_counted_by_hand() -> TestResult {
     Ok(())
 }
 
+/// The receipts of the last 7 days: the window starts at 2,200 ms, so session `s2` (started at
+/// 2,900) is shown and `s1` (started at 100) is not. Both tasks were decided treated, none held
+/// out, so the arms are 0 and 2 against the 30 each needs, with no comparison. With no user price
+/// file the shipped table prices them, which the answer says. The rest is the meter's report of
+/// the same store, read the same way.
+#[test]
+fn the_receipts_are_the_last_week_of_the_report() -> TestResult {
+    let fixture = scripted()?;
+    let (status, body) = get(&fixture, "api/receipts")?;
+    assert_eq!(status, 200);
+    let answer: serde_json::Value = serde_json::from_str(&body)?;
+    assert_eq!(answer["version"], 1);
+    assert_eq!(answer["window_days"], 7);
+    assert_eq!(answer["prices"]["state"], "shipped");
+    let holdout = &answer["recorded"]["holdout"];
+    assert_eq!(holdout["held_out"], 0);
+    assert_eq!(holdout["treated"], 2);
+    assert_eq!(holdout["needed_per_arm"], 30);
+    assert_eq!(holdout["comparison"], serde_json::Value::Null);
+    let sessions = answer["recorded"]["sessions"]
+        .as_array()
+        .ok_or("no sessions")?;
+    let ids: Vec<&str> = sessions
+        .iter()
+        .filter_map(|session| session["session_id"].as_str())
+        .collect();
+    assert_eq!(ids, ["s2"]);
+    let reader = cortex_store::Reader::open(&fixture.root.path().join(".cortex"), 0)?;
+    let table = cortex_meter::PriceTable::parse(cortex_meter::SHIPPED_PRICES)?;
+    let report = cortex_meter::recorded(
+        reader.queries(),
+        &cortex_meter::Selection::StartedSince(2_200),
+        Some(&table),
+    )?;
+    assert_eq!(answer["recorded"], serde_json::to_value(&report)?);
+    assert_eq!(get(&fixture, "api/receipts/1")?.0, 404);
+    Ok(())
+}
+
 /// A search finds files by path and symbols by name, ASCII case ignored, exact names first, then
 /// names that start with the text, then the rest, each by path and line. For `order`: the file
 /// `orders.rs` (a name that starts with it) and the symbol `OrderBook` of the same path (line 40),

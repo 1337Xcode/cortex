@@ -13,6 +13,7 @@ mod history;
 mod links;
 mod listing;
 mod numbers;
+mod receipts;
 mod reply;
 mod search;
 mod summary;
@@ -51,10 +52,11 @@ pub(super) struct Ask {
 type Endpoint = fn(&Site, &Ask) -> Response;
 
 /// Every endpoint, by the name that follows [`PREFIX`].
-const ENDPOINTS: [(&str, Endpoint); 5] = [
+const ENDPOINTS: [(&str, Endpoint); 6] = [
     ("file", file::answer),
     ("graph", graph::answer),
     ("health", health::answer),
+    ("receipts", receipts::answer),
     ("search", search::answer),
     ("summary", summary::answer),
 ];
