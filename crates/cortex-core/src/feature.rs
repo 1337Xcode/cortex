@@ -130,6 +130,16 @@ pub const FEATURES: &[Feature] = &[
         measure: "turns, tokens and edits redone per task, with it on against off",
         reaches: |config| config.history.is_why && !is_tiny(config),
     },
+    Feature {
+        name: "history_seeds",
+        description: "Start the search for a prompt's code from the files of past changes it \
+                      names (#482, a commit id) or whose messages are like it.",
+        state: FeatureState::Experimental,
+        key: Some("history.seeds"),
+        measure: "precision of the work orders and turns and tokens per task, with it on \
+                  against off",
+        reaches: |config| config.history.is_seeds && !is_tiny(config),
+    },
 ];
 
 /// The feature named `name`.
@@ -207,11 +217,12 @@ mod tests {
             },
             history: crate::HistoryConfig {
                 is_why: true,
+                is_seeds: true,
                 ..crate::HistoryConfig::default()
             },
             ..Config::default()
         };
-        assert_eq!(on_with(&everything).len(), 8);
+        assert_eq!(on_with(&everything).len(), 9);
         let no_warnings = Config {
             warnings: crate::WarningsConfig {
                 max_per_edit: 0,
@@ -220,19 +231,20 @@ mod tests {
             ..everything.clone()
         };
         assert!(!on_with(&no_warnings).contains(&"warnings"));
-        assert_eq!(on_with(&no_warnings).len(), 7);
+        assert_eq!(on_with(&no_warnings).len(), 8);
         let tiny = Config {
             mode: ModeSetting::Pinned(ScaleMode::Tiny),
             ..everything.clone()
         };
         // Coordination notices go with any text, whatever the mode; why-lines go with the code a
-        // work order shows, which tiny mode gives none of.
+        // work order shows, and history seeds start a work order's search, which tiny mode gives
+        // none of.
         assert_eq!(on_with(&tiny), ["warnings", "contracts"]);
         let small = Config {
             mode: ModeSetting::Pinned(ScaleMode::Small),
             ..everything.clone()
         };
-        assert_eq!(on_with(&small).len(), 8);
+        assert_eq!(on_with(&small).len(), 9);
         let all_held_out = Config {
             holdout_share: 1.0,
             ..everything.clone()
@@ -242,7 +254,7 @@ mod tests {
             holdout_share: 0.99,
             ..everything
         };
-        assert_eq!(on_with(&most_held_out).len(), 8);
+        assert_eq!(on_with(&most_held_out).len(), 9);
     }
 
     /// The features, by name, in order; names are unique and found by name.
@@ -259,7 +271,8 @@ mod tests {
                 "redundant_commands",
                 "keep_list",
                 "contracts",
-                "why_lines"
+                "why_lines",
+                "history_seeds"
             ]
         );
         for name in names {

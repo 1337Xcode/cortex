@@ -142,6 +142,7 @@ fn asked_while_changed(
         deadline: None,
         root: repo.root.path(),
         why_lines: None,
+        history_seed_weight: None,
     };
     Ok(retrieve(reader.queries(), &graph, &request)?)
 }
@@ -172,6 +173,7 @@ fn located(
         deadline: None,
         root: repo.root.path(),
         why_lines: None,
+        history_seed_weight: None,
     };
     Ok(locate(reader.queries(), &graph, &request, limit)?)
 }
@@ -271,6 +273,7 @@ fn a_spreading_out_of_time_gives_nothing() -> TestResult {
             deadline: Some(std::time::Instant::now()),
             root: repo.root.path(),
             why_lines: None,
+            history_seed_weight: None,
         };
         let retrieval = retrieve(reader.queries(), &graph, &request)?;
         assert_eq!(
@@ -307,6 +310,7 @@ fn a_question_out_of_time_names_no_file() -> TestResult {
             deadline: None,
             root: repo.root.path(),
             why_lines: None,
+            history_seed_weight: None,
         };
         let in_time = locate(reader.queries(), &graph, &request, 5)?;
         assert!(!in_time.listed.is_empty(), "{mode:?}");
@@ -382,6 +386,7 @@ fn asked_by_model_at(
         deadline: None,
         root: repo.root.path(),
         why_lines: None,
+        history_seed_weight: None,
     };
     Ok(retrieve(reader.queries(), &graph, &request)?)
 }
@@ -406,6 +411,7 @@ fn located_by_model(repo: &Repo, question: &str, model: &ConfidenceModel) -> Tes
         deadline: None,
         root: repo.root.path(),
         why_lines: None,
+        history_seed_weight: None,
     };
     Ok(locate(reader.queries(), &graph, &request, 5)?)
 }

@@ -18,6 +18,16 @@ All notable changes to this project are documented in this file. The format is b
   blamed for an edit. The note asks for nothing: it is never an open warning and is not counted
   with the warnings. Tested on scripted stores, and through the real binary on a scripted
   repository; not run with a live agent yet.
+- History seeds, an experimental feature that is off by default (`history.seeds`, the
+  `history_seeds` feature, and `history.seed_weight`, 0.4): a change a prompt names (`#482`,
+  `!482`, or a commit id of seven hexadecimal digits or more) seeds the files it changed, and the
+  three past changes whose words are most like the prompt's, at a score of 0.6 or more, seed
+  theirs at `history.seed_weight` times the score, from the change cards the daemon keeps; each
+  change's weight is spread over its files. Numbers that read as counts, ranks or colours name
+  nothing. Seeded files are a kind of evidence of their own for the gate, which alone never
+  clears it, a kept confidence model included. The bar was chosen on a replay of two Python
+  projects' histories; tested on a scripted history, and its effect on work orders is not
+  measured. `profile = "everything"` now turns `history.seeds` on too.
 - Why-lines, an experimental feature that is off by default (`history.why`, the `why_lines`
   feature): under the code a work order shows, at most `history.max_reasons` lines (2) of
   `history.max_tokens` tokens (120) saying why those lines look as they do, from the commits

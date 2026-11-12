@@ -24,6 +24,7 @@ mod gate;
 mod graph;
 mod grounded_failure;
 mod hints;
+mod history_seeds;
 mod innermost;
 mod items;
 mod keep_list;
@@ -61,7 +62,7 @@ pub use exploration::{EXPLORATION_WEIGHT, MAX_EXPLORED, exploration};
 pub use facts::{FactAt, ListedFile, MAX_ORDER_FACTS, OrderFact, order_facts};
 pub use failure_map::{FailureMap, MAX_FAILURE_MAP_TOKENS, MAX_MAPPED_FRAMES, failure_map};
 pub use failure_seeds::{FAILURE_AGREED_WEIGHT, FAILURE_ALONE_WEIGHT, FailureMatch, failure_seeds};
-pub use features::{Found, GATED_FILES, MASSED_FILES, features_of};
+pub use features::{Found, GATED_FILES, MASSED_FILES, features_of, is_history_alone};
 pub use gate::{
     AGREEING_KINDS, Confidence, LEXICAL_BAR, MAX_RAISED_CONFIDENCE, Rule,
     SMALL_MODE_MIN_CONFIDENCE, STRONG_AGREEING_KINDS, STRONG_LEXICAL_BAR, Shut, Verdict,
@@ -72,6 +73,10 @@ pub use grounded_failure::{
     FailureQuery, GroundedFailure, GroundedFrame, MAX_GROUNDED_FRAMES, ground_failure,
 };
 pub use hints::{HINTED_ABOVE_LINES, HintQuery, MAX_HINT_TOKENS, MAX_HINTED_PARTS, read_hint};
+pub use history_seeds::{
+    HistoryAsk, HistoryMatch, MAX_SIMILAR_CHANGES, MIN_CHANGE_NUMBER, MIN_ID_DIGITS, Named,
+    REFERENCE_WEIGHT, SIMILAR_CHANGE_BAR, history_seeds, named_in, scored_changes,
+};
 pub use items::{LOOKED_AT_PER_LISTED, Listed, Listing, listed};
 pub use keep_list::{MAX_KEEP_LIST_CHARS, keep_list};
 pub use lexical::{FileMatch, LexicalMatch, MAX_HITS, lexical};

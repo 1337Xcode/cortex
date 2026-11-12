@@ -1,5 +1,6 @@
 //! Which independent kinds of evidence point at a file: the prompt's words, earlier work like the
-//! prompt's, and the links that join the file to the other files the seeds point at.
+//! prompt's, past changes the prompt names or resembles, and the links that join the file to the
+//! other files the seeds point at.
 //!
 //! A file is supported lexically when the prompt's words found it or one of its symbols, and by
 //! similar work when a cluster of earlier tasks like the prompt changed it. It is supported by a
@@ -11,6 +12,11 @@
 //! least 0.05: half of what one successful task that edited both gives, which a pair that was only
 //! looked at never reaches. A co-change link counts as the miner wrote it, either way round.
 //! Exploration's seeds are not evidence: they are where nothing points yet.
+//!
+//! A file a past change seeded is supported by history, and is no seed file for the links: the
+//! files of one change changed together, so a co-change link between two of them would only
+//! repeat what history says. History is thus one kind, and never agrees with itself: alone it
+//! never clears the gate's cold-start rule.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -39,6 +45,8 @@ pub enum Evidence {
     CoAccess,
     /// Earlier tasks like the prompt changed it.
     Similar,
+    /// A past change the prompt names or resembles changed it.
+    History,
 }
 
 /// The evidence behind the files of one retrieval: the files the seeds point at, and how strong a
@@ -51,7 +59,8 @@ pub struct Support<'a, Id> {
     seeds: &'a Seeds,
     /// The files the seeds of the prompt's words, the session and earlier work point at, by node:
     /// neither the dark neighbours exploration adds nor the files of the uncommitted diff, which
-    /// the work tree holds whatever the prompt is about, so that neither stands as evidence.
+    /// the work tree holds whatever the prompt is about, so that neither stands as evidence, nor
+    /// the files of past changes, whose links to one another history already counts.
     seed_files: BTreeSet<u32>,
     /// For each file a seed file's co-change links run to, by node: those seed files, each with
     /// the link's weight.
@@ -109,6 +118,9 @@ impl<'a, Id: Ord + Copy> Support<'a, Id> {
         }
         if self.seeds.similar.seeds.contains_key(&file) {
             found.insert(Evidence::Similar);
+        }
+        if self.seeds.history.seeds.contains_key(&file) {
+            found.insert(Evidence::History);
         }
         let kinds = [
             (EdgeType::Structural, Evidence::Structural),

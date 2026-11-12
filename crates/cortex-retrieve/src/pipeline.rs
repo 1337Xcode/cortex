@@ -19,7 +19,7 @@ use cortex_store::{NodeId, Queries, StoreError};
 
 use crate::error::RetrieveError;
 use crate::facts::{ListedFile, OrderFact, order_facts};
-use crate::features::{Found, GATED_FILES, features_of};
+use crate::features::{Found, GATED_FILES, features_of, is_history_alone};
 use crate::gate::{Confidence, Rule, Shut, Verdict, confidence_bar, decide};
 use crate::graph::Graph;
 use crate::items::{Listed, Listing, listed};
@@ -68,6 +68,9 @@ pub struct Request<'a> {
     /// What a work order's why-lines are read with, when `history.why` is on and the daemon reads
     /// history; none gives no why-line.
     pub why_lines: Option<WhyAsk<'a>>,
+    /// `history.seed_weight` while `history.seeds` is on: past changes the prompt names or
+    /// resembles seed the search. None while it is off.
+    pub history_seed_weight: Option<f64>,
 }
 
 /// Why a retrieval gives nothing.
@@ -315,7 +318,12 @@ impl Reached {
         let verdict = if self.is_out_of_time {
             Verdict::Silent(Shut::OutOfTime)
         } else {
-            decide(&features, request.raise, confidence)
+            decide(
+                &features,
+                is_history_alone(&found),
+                request.raise,
+                confidence,
+            )
         };
         let judged = Judged {
             features,
@@ -337,10 +345,12 @@ fn reached(
         queries,
         graph,
         &SeedQuery {
+            prompt: request.prompt,
             terms: &terms,
             session: request.session,
             uncommitted: request.uncommitted,
             failure: request.failure,
+            history_seed_weight: request.history_seed_weight,
         },
     )?;
     if seeds.vector.is_empty() {
@@ -491,6 +501,7 @@ fn evidence_name(evidence: Evidence) -> &'static str {
         Evidence::CoChange => "the commit history",
         Evidence::CoAccess => "earlier work on these files",
         Evidence::Similar => "similar earlier tasks",
+        Evidence::History => "past changes the prompt names or resembles",
     }
 }
 

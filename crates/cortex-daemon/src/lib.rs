@@ -317,30 +317,36 @@ fn index_and_serve(
     });
     // Installed once: the daemon serves one repository with one configuration. Installed before
     // the graph's first build, so that a daemon whose status shows a graph answers with text.
-    drop(service.set(Service::new(Settings {
-        root: root.to_path_buf(),
-        folder: folder.clone(),
-        mmap_bytes: config.mmap_bytes,
-        retrieval: config.retrieval,
-        max_file_bytes: config.max_file_bytes,
-        holdout_share: config.holdout_share,
-        edits: EditSettings {
-            grammars,
-            parse_timeout: Duration::from_millis(config.parse_timeout_ms),
-            warnings: config.warnings,
-            link_decay: config.link_decay,
-            is_strict_mode: config.is_strict_mode,
-        },
-        coordination: config.coordination,
-        failures: FailureSettings {
-            commands: failure_commands,
-            is_runtime_grounding: config.hints.is_runtime_grounding,
-            is_narrow_tests: config.hints.is_narrow_tests,
-            is_redundant_commands: config.hints.is_redundant_commands,
-        },
-        is_keep_list: config.compaction.is_keep_list,
-        why_lines,
-    })));
+    drop(
+        service.set(Service::new(Settings {
+            root: root.to_path_buf(),
+            folder: folder.clone(),
+            mmap_bytes: config.mmap_bytes,
+            retrieval: config.retrieval,
+            max_file_bytes: config.max_file_bytes,
+            holdout_share: config.holdout_share,
+            edits: EditSettings {
+                grammars,
+                parse_timeout: Duration::from_millis(config.parse_timeout_ms),
+                warnings: config.warnings,
+                link_decay: config.link_decay,
+                is_strict_mode: config.is_strict_mode,
+            },
+            coordination: config.coordination,
+            failures: FailureSettings {
+                commands: failure_commands,
+                is_runtime_grounding: config.hints.is_runtime_grounding,
+                is_narrow_tests: config.hints.is_narrow_tests,
+                is_redundant_commands: config.hints.is_redundant_commands,
+            },
+            is_keep_list: config.compaction.is_keep_list,
+            why_lines,
+            history_seed_weight: config
+                .history
+                .is_seeds
+                .then_some(config.history.seed_weight),
+        })),
+    );
     // The graph is built once the first index is done, before which a retrieval would find
     // nothing; told to stop when dropped.
     let rebuilder = rebuild(

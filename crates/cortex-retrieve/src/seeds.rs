@@ -2,12 +2,13 @@
 //!
 //! The sources are the prompt's words ([`lexical`]), what the session has been doing
 //! ([`session`]), what the work tree is changing and has not committed ([`uncommitted`]), earlier
-//! work like the prompt's ([`similar`]), the code the session's last failed check ran through
-//! ([`failure_seeds`], weighed by whether the others agree), and, around what those found, code
-//! agents have not worked on yet ([`exploration`]). Each weighs the nodes it finds on its own
-//! scale. Per node the sources' weights add, and the whole is divided by its sum, so the vector
-//! sums to 1. Where no source finds anything there is no vector: activation never starts from
-//! nothing.
+//! work like the prompt's ([`similar`]), the past changes the prompt names or resembles while
+//! `history.seeds` is on ([`history_seeds`]), the code the session's last failed check ran
+//! through ([`failure_seeds`], weighed by whether the others agree), and, around what those
+//! found, code agents have not worked on yet ([`exploration`]). Each weighs the nodes it finds on
+//! its own scale. Per node the sources' weights add, and the whole is divided by its sum, so the
+//! vector sums to 1. Where no source finds anything there is no vector: activation never starts
+//! from nothing.
 
 use std::collections::BTreeMap;
 
@@ -17,6 +18,7 @@ use cortex_store::{NodeId, Queries, StoreError};
 use crate::exploration::exploration;
 use crate::failure_seeds::{FailureMatch, failure_seeds};
 use crate::graph::Graph;
+use crate::history_seeds::{HistoryAsk, HistoryMatch, history_seeds};
 use crate::lexical::{LexicalMatch, lexical};
 use crate::prompt::PromptTerms;
 use crate::session::{SessionMatch, session};
@@ -26,6 +28,8 @@ use crate::uncommitted::{UncommittedMatch, uncommitted};
 /// What a retrieval seeds from.
 #[derive(Debug, Clone, Copy)]
 pub struct SeedQuery<'a> {
+    /// The prompt's text.
+    pub prompt: &'a str,
     /// What the prompt points at.
     pub terms: &'a PromptTerms,
     /// The session the prompt comes in; none for a question asked outside one, which seeds
@@ -36,6 +40,9 @@ pub struct SeedQuery<'a> {
     /// The nodes the session's last failed check ran through, as its failure map grounded them;
     /// empty when there is none.
     pub failure: &'a [NodeId],
+    /// `history.seed_weight` while `history.seeds` is on; none while it is off, which seeds
+    /// nothing from past changes.
+    pub history_seed_weight: Option<f64>,
 }
 
 /// What each source found, and the vector they make.
@@ -49,6 +56,8 @@ pub struct Seeds {
     pub uncommitted: UncommittedMatch,
     /// Earlier work like the prompt's.
     pub similar: SimilarMatch,
+    /// The past changes the prompt names or resembles.
+    pub history: HistoryMatch,
     /// The code the session's last failed check ran through.
     pub failure: FailureMatch,
     /// The dark neighbours of the strongest of the others.
@@ -74,11 +83,24 @@ pub fn seeds(
     };
     let uncommitted = uncommitted(graph, query.uncommitted);
     let similar = similar(queries, graph, query.terms)?;
+    let history = match query.history_seed_weight {
+        Some(seed_weight) => history_seeds(
+            queries,
+            graph,
+            &HistoryAsk {
+                prompt: query.prompt,
+                terms: query.terms,
+                seed_weight,
+            },
+        )?,
+        None => HistoryMatch::default(),
+    };
     let others = summed(&[
         &lexical.seeds,
         &session.seeds,
         &uncommitted.seeds,
         &similar.seeds,
+        &history.seeds,
     ]);
     let failure = failure_seeds(graph, query.failure, &others);
     let found = summed(&[&others, &failure.seeds]);
@@ -89,6 +111,7 @@ pub fn seeds(
         session,
         uncommitted,
         similar,
+        history,
         failure,
         exploration,
         vector,

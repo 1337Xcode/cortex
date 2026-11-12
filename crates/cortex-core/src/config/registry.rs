@@ -186,6 +186,7 @@ mod tests {
         adopt.exclude = [\"~/Downloads/**\"]\n\
         history.why = true\n\
         history.seeds = true\n\
+        history.seed_weight = 0.75\n\
         history.blame_timeout_ms = 100\n\
         history.max_reasons = 5\n\
         history.max_tokens = 400\n\
@@ -260,6 +261,7 @@ mod tests {
             history: HistoryConfig {
                 is_why: true,
                 is_seeds: true,
+                seed_weight: 0.75,
                 blame_timeout_ms: 100,
                 max_reasons: 5,
                 max_tokens: 400,

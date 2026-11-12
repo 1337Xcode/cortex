@@ -89,6 +89,8 @@ pub(crate) struct Service {
     /// What a work order's why-lines are read with; none while `history.why` is off or the history
     /// worker does not run.
     why_lines: Option<WhyLinesSettings>,
+    /// `history.seed_weight` while `history.seeds` is on; none while it is off.
+    history_seed_weight: Option<f64>,
     /// The contracts of the coordination notices queued lately, for their notices to be given
     /// in their words.
     contracts: Contracts,
@@ -180,6 +182,8 @@ pub(crate) struct Settings {
     pub(crate) is_keep_list: bool,
     /// What a work order's why-lines are read with; none while they are off.
     pub(crate) why_lines: Option<WhyLinesSettings>,
+    /// `history.seed_weight` while `history.seeds` is on; none while it is off.
+    pub(crate) history_seed_weight: Option<f64>,
 }
 
 /// What a work order's why-lines are read with: the running history worker, and the caps.
@@ -208,6 +212,7 @@ impl Service {
             failures: settings.failures,
             is_keep_list: settings.is_keep_list,
             why_lines: settings.why_lines,
+            history_seed_weight: settings.history_seed_weight,
             contracts: Contracts::default(),
             readers: Mutex::new(Vec::new()),
         }
@@ -255,6 +260,7 @@ impl Service {
                     max_reasons: why.max_reasons,
                     max_tokens: why.max_tokens,
                 }),
+                history_seed_weight: self.history_seed_weight,
             };
             let retrieval = retrieve(queries, graph, &request)?;
             let injection = retrieval.features.map(|features| InjectionRecord {
@@ -404,6 +410,7 @@ impl Service {
                 // INVARIANT: true-at-render. The lines shown are the asker's working tree's.
                 root: worktree.unwrap_or(&self.root),
                 why_lines: None,
+                history_seed_weight: self.history_seed_weight,
             };
             let location = locate(queries, graph, &request, limit)?;
             Ok(location.rendered.map(|rendered| rendered.text))

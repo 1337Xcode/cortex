@@ -552,6 +552,7 @@ mod tests {
                 history: HistoryConfig {
                     is_why: false,
                     is_seeds: false,
+                    seed_weight: 0.4,
                     blame_timeout_ms: 2000,
                     max_reasons: 2,
                     max_tokens: 120,

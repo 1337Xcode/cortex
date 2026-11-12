@@ -1,7 +1,7 @@
 //! The history settings: whether the code Cortex shows is given the reason it looks that way from
 //! git history, and how much of it; whether past changes a prompt names or resembles start a
-//! search; how long one look at git may take and which authors are bots. Both switches are off by
-//! default until their evaluation shows they help.
+//! search, and how much they weigh; how long one look at git may take and which authors are bots.
+//! Both switches are off by default until their evaluation shows they help.
 //!
 //! Each key is read and checked here, as the rest of the configuration reads its own; a value the
 //! rules cannot use is refused.
@@ -9,7 +9,7 @@
 use globset::GlobBuilder;
 
 use super::registry::strings;
-use super::{ConfigKey, SWITCH, count, string_list};
+use super::{ConfigKey, SHARE, SWITCH, count, share, string_list};
 
 /// The default for `history.blame_timeout_ms`: two seconds to find who last changed some lines.
 pub const DEFAULT_BLAME_TIMEOUT_MS: u32 = 2000;
@@ -37,11 +37,15 @@ const MIN_TOKENS_LIMIT: u32 = 20;
 /// The most `history.max_tokens` may be set to.
 const MAX_TOKENS_LIMIT: u32 = 400;
 
+/// The default for `history.seed_weight`: what a file of a past change like the prompt weighs
+/// as a seed, times the change's score, against the 1 of a file the prompt names.
+pub const DEFAULT_SEED_WEIGHT: f64 = 0.4;
+
 /// What `history.bot_patterns` accepts, in its refusal.
 const GLOBS: &str = "a list of glob patterns, such as \"*[bot]\"";
 
 /// The settings the history features read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HistoryConfig {
     /// `history.why`: attach the reason git history gives for how the code looks to the code
     /// shown. Default `false`.
@@ -49,6 +53,9 @@ pub struct HistoryConfig {
     /// `history.seeds`: use the past changes a prompt names or resembles as starting points of the
     /// search. Default `false`.
     pub is_seeds: bool,
+    /// `history.seed_weight`: what a file of a past change like the prompt weighs as a seed,
+    /// times the change's score, from 0 to 1. Default [`DEFAULT_SEED_WEIGHT`].
+    pub seed_weight: f64,
     /// `history.blame_timeout_ms`: how long one look at who last changed some lines may take, from
     /// 100 to 60000. Default [`DEFAULT_BLAME_TIMEOUT_MS`].
     pub blame_timeout_ms: u32,
@@ -69,6 +76,7 @@ impl Default for HistoryConfig {
         Self {
             is_why: false,
             is_seeds: false,
+            seed_weight: DEFAULT_SEED_WEIGHT,
             blame_timeout_ms: DEFAULT_BLAME_TIMEOUT_MS,
             max_reasons: DEFAULT_MAX_REASONS,
             max_tokens: DEFAULT_MAX_TOKENS,
@@ -105,6 +113,16 @@ pub(super) const KEYS: &[ConfigKey] = &[
             Ok(())
         },
         |config| toml::Value::Boolean(config.history.is_seeds),
+    ),
+    ConfigKey::new(
+        "history.seed_weight",
+        "What a file of a past change like the prompt weighs as a starting point of the search, \
+         times how like the prompt the change is, against 1 for a file the prompt names.",
+        |config, value| {
+            config.history.seed_weight = share(value).ok_or(SHARE)?;
+            Ok(())
+        },
+        |config| toml::Value::Float(config.history.seed_weight),
     ),
     ConfigKey::new(
         "history.blame_timeout_ms",
@@ -168,7 +186,7 @@ mod tests {
     }
 
     /// With no file, the history keys hold the defaults the documentation gives: both switches
-    /// off, two seconds, two reasons, 120 tokens and no bot patterns.
+    /// off, a seed weight of 0.4, two seconds, two reasons, 120 tokens and no bot patterns.
     #[test]
     fn the_defaults_are_the_documented_ones() {
         assert_eq!(
@@ -176,6 +194,7 @@ mod tests {
             HistoryConfig {
                 is_why: false,
                 is_seeds: false,
+                seed_weight: 0.4,
                 blame_timeout_ms: 2000,
                 max_reasons: 2,
                 max_tokens: 120,
@@ -223,6 +242,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The seed weight takes 0, 1 and what lies between, written with or without a fraction, and
+    /// refuses less than 0, more than 1 and a word.
+    #[test]
+    fn the_seed_weight_is_a_share() -> Result<(), ConfigError> {
+        for (written, expected) in [("0", 0.0), ("1", 1.0), ("0.25", 0.25), ("1.0", 1.0)] {
+            let weight = loaded(&format!("history.seed_weight = {written}"))?
+                .history
+                .seed_weight;
+            assert!((weight - expected).abs() < 1e-12, "{written}: {weight}");
+        }
+        for bad in ["-0.1", "1.01", "2", "\"0.4\""] {
+            assert_eq!(
+                loaded(&format!("history.seed_weight = {bad}")),
+                Err(ConfigError::Value {
+                    origin: "f".to_owned(),
+                    key: "history.seed_weight".to_owned(),
+                    expected: "a number from 0 to 1",
+                }),
+                "{bad}"
+            );
+        }
+        Ok(())
     }
 
     /// A pattern that is no glob (an unclosed bracket) refuses the whole list, and so does a list

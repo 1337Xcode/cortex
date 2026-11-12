@@ -159,6 +159,58 @@ impl Queries<'_> {
         values::number(count, "change_cards.count", count)
     }
 
+    /// The cards of the commits whose id starts with `prefix`, by commit, at most `limit`: none for
+    /// a prefix that is not lower-case hexadecimal or is empty, which no id starts with as stored.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors and stored cards that cannot be read back.
+    pub fn change_cards_starting(
+        self,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<ChangeCardRecord>, StoreError> {
+        let is_hex = prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if prefix.is_empty() || !is_hex || limit == 0 {
+            return Ok(Vec::new());
+        }
+        // Every id that starts with the prefix sorts at or after it and before the prefix followed
+        // by `g`, the character after `f`: a range the primary key reads directly.
+        let past = format!("{prefix}g");
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.read_cards(schema::CARDS_STARTING, (prefix, past, limit))
+    }
+
+    /// How many cards have words to match a prompt by: the rows of the full-text index of terms.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn commit_term_rows(self) -> Result<u64, StoreError> {
+        let count: i64 = self
+            .connection()
+            .query_row(schema::TERM_ROWS, [], |row| row.get(0))
+            .map_err(sqlite("counting the cards with terms"))?;
+        values::number(count, "commit_terms.count", count)
+    }
+
+    /// How many cards hold `word` among their terms; 0 for a word none holds.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn commit_term_cards(self, word: &str) -> Result<u64, StoreError> {
+        let count: i64 = self
+            .connection()
+            .query_row(schema::TERM_CARDS, [match_expression(&[word])], |row| {
+                row.get(0)
+            })
+            .map_err(sqlite("counting the cards a word is in"))?;
+        values::number(count, "commit_terms.count", count)
+    }
+
     /// The cards `sql` reads with `params`.
     fn read_cards(
         self,

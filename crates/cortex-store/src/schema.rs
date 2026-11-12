@@ -781,6 +781,20 @@ pub(crate) const CARDS_MATCHING: &str = concat!(
 /// How many cards are kept.
 pub(crate) const CARD_ROWS: &str = "SELECT count(*) FROM change_cards";
 
+/// The cards whose id is at or after ?1 and before ?2, by commit, at most ?3: those whose id
+/// starts with a prefix, ?2 being the prefix followed by `g`.
+pub(crate) const CARDS_STARTING: &str = concat!(
+    "SELECT ",
+    card_columns!(),
+    " FROM change_cards WHERE oid >= ?1 AND oid < ?2 ORDER BY oid LIMIT ?3"
+);
+
+/// How many cards have terms.
+pub(crate) const TERM_ROWS: &str = "SELECT count(*) FROM commit_terms";
+
+/// How many cards' terms match the full-text expression ?1.
+pub(crate) const TERM_CARDS: &str = "SELECT count(*) FROM commit_terms WHERE commit_terms MATCH ?1";
+
 /// The newest confidence model kept.
 pub(crate) const CALIBRATION_LATEST: &str = "SELECT version, coefficients, samples, auc, trained_at \
     FROM calibration ORDER BY version DESC LIMIT 1";

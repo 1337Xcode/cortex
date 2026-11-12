@@ -72,6 +72,17 @@ pub fn features_of<Id: Ord + Copy>(
     }
 }
 
+/// Whether past changes are the only evidence behind the best [`GATED_FILES`] files `found`
+/// reached: one of them has history behind it, and none any other kind.
+#[must_use]
+pub fn is_history_alone<Id: Ord + Copy>(found: &Found<'_, Id>) -> bool {
+    let mut kinds = BTreeSet::new();
+    for file in found.scored.iter().take(GATED_FILES) {
+        kinds.extend(found.support.of(file.file));
+    }
+    kinds == BTreeSet::from([Evidence::History])
+}
+
 /// The share of all the activation `activation` kept that the best [`MASSED_FILES`] of `scored`
 /// hold, from 0 to 1; 0 when nothing kept any.
 fn top_mass(activation: &Activation, scored: &[ScoredFile]) -> f64 {

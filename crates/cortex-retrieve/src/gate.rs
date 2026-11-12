@@ -94,14 +94,26 @@ pub fn confidence_bar(min_confidence: f64, mode: ScaleMode, raise: f64) -> f64 {
     (base + raise.max(0.0)).min(MAX_RAISED_CONFIDENCE).max(base)
 }
 
-/// Whether to hand over what `features` describe: by `confidence`, what the repository's
+/// Whether to hand over what `features` describe. When `is_history_alone`, past changes are the
+/// only evidence behind the files weighed, and nothing is handed over, whatever a model says: a
+/// model fitted before past changes seeded anything never learnt what that kind alone is worth.
+/// Otherwise by `confidence`, what the repository's
 /// confidence model says of them, when one is kept; otherwise by the cold-start rule, its lexical
 /// bars raised by `raise` (the self-check's). A raise only ever lifts the bars: one below zero
 /// counts as none. The continuity rule needs no lexical bar while there is no raise; once the
 /// self-check raises one, the prompt's best match must reach the raise there too, so work orders
 /// for continuing work that go unused are held back like the others.
 #[must_use]
-pub fn decide(features: &GateFeatures, raise: f64, confidence: Option<Confidence>) -> Verdict {
+pub fn decide(
+    features: &GateFeatures,
+    is_history_alone: bool,
+    raise: f64,
+    confidence: Option<Confidence>,
+) -> Verdict {
+    // INVARIANT: silent-when-unsure (history alone never clears the gate, a kept model's included)
+    if is_history_alone {
+        return Verdict::Silent(Shut::TooFewKinds);
+    }
     if let Some(confidence) = confidence {
         // INVARIANT: silent-when-unsure (a kept model alone decides: below its bar nothing is
         // injected, and the cold-start rule is no fallback)
@@ -220,7 +232,7 @@ mod tests {
         ];
         for (features, raise, expected) in cases {
             assert_eq!(
-                decide(&features, raise, None),
+                decide(&features, false, raise, None),
                 expected,
                 "{features:?} raised {raise}"
             );
@@ -250,11 +262,44 @@ mod tests {
         ];
         for (features, calibrated, expected) in cases {
             assert_eq!(
-                decide(&features, 0.2, calibrated),
+                decide(&features, false, 0.2, calibrated),
                 expected,
                 "{features:?} {calibrated:?}"
             );
         }
+    }
+
+    /// Past changes alone clear nothing, a kept model's verdict included: with history the only
+    /// evidence, a chance of 0.99 against a bar of 0.7 and features the cold-start rule would let
+    /// through both stay silent, too few kinds; the same without it inject.
+    #[test]
+    fn history_alone_is_refused_before_any_model() {
+        let agreed = GateFeatures {
+            top_lexical: 0.9,
+            agreeing_kinds: 2,
+            supporting_kinds: 2,
+            ..none()
+        };
+        let sure = Some(Confidence {
+            probability: 0.99,
+            bar: 0.7,
+        });
+        assert_eq!(
+            decide(&none(), true, 0.0, sure),
+            Verdict::Silent(Shut::TooFewKinds)
+        );
+        assert_eq!(
+            decide(&agreed, true, 0.0, None),
+            Verdict::Silent(Shut::TooFewKinds)
+        );
+        assert_eq!(
+            decide(&none(), false, 0.0, sure),
+            Verdict::Inject(Rule::Calibrated)
+        );
+        assert_eq!(
+            decide(&agreed, false, 0.0, None),
+            Verdict::Inject(Rule::Agreement)
+        );
     }
 
     /// The bar, case by case: 0.70 in medium and huge mode; 0.85 in small mode, or the setting when

@@ -570,3 +570,37 @@ fn files_of_the_same_content_are_blamed_apart() -> TestResult {
     assert_eq!(writer.queries().cached_blame_count()?, 1);
     Ok(())
 }
+
+/// Cards are found by the start of their id: of the cards of 40 `a`s, 40 `b`s and 40 `c`s (and a
+/// card of 40 `1`s), `aaaaaaa` finds only the first, `a`'s and `b`'s seven-digit starts find one
+/// each, a start no id has finds none, the limit cuts the list, and a start that is not lower-case
+/// hexadecimal, or is empty, finds none. The terms count the cards that hold a word: of the eight
+/// cards with terms, three hold `retry`, five `unrelated`, none `nothing`.
+#[test]
+fn cards_are_found_by_the_start_of_their_id_and_their_terms_counted() -> TestResult {
+    let scratch = Scratch::new()?;
+    let mut writer = scratch.writer(1)?;
+    store_bm25_cards(&mut writer)?;
+    let queries = writer.queries();
+    assert_eq!(digits(&queries.change_cards_starting("aaaaaaa", 5)?), "a");
+    assert_eq!(digits(&queries.change_cards_starting("bbbbbbb", 5)?), "b");
+    assert_eq!(digits(&queries.change_cards_starting("1111111", 5)?), "1");
+    assert_eq!(digits(&queries.change_cards_starting("abababa", 5)?), "");
+    assert_eq!(digits(&queries.change_cards_starting(&oid('c'), 5)?), "c");
+    for refused in ["AAAAAAA", "aaaaaag", "", "a%"] {
+        assert_eq!(queries.change_cards_starting(refused, 5)?, [], "{refused}");
+    }
+    let mut transaction = writer.transaction()?;
+    let mut twin = card('a', CardKind::Normal);
+    twin.oid = format!("{}b", "a".repeat(39));
+    transaction.put_change_card(&twin, &[])?;
+    transaction.commit()?;
+    let queries = writer.queries();
+    assert_eq!(queries.change_cards_starting("aaaaaaa", 5)?.len(), 2);
+    assert_eq!(queries.change_cards_starting("aaaaaaa", 1)?.len(), 1);
+    assert_eq!(queries.commit_term_rows()?, 8);
+    assert_eq!(queries.commit_term_cards("retry")?, 3);
+    assert_eq!(queries.commit_term_cards("unrelated")?, 5);
+    assert_eq!(queries.commit_term_cards("nothing")?, 0);
+    Ok(())
+}

@@ -209,10 +209,12 @@ fn every_source_adds_to_one_vector() -> TestResult {
     let terms = PromptTerms::of("quokka wombat numbat");
     let session = Identifier::new("s1")?;
     let query = SeedQuery {
+        prompt: "quokka wombat numbat",
         terms: &terms,
         session: Some(&session),
         uncommitted: &[u],
         failure: &[],
+        history_seed_weight: None,
     };
     let found = seeds(reader.queries(), &graph, &query)?;
     let index = |node: NodeId| graph.index_of(node).ok_or("a node of the graph");
@@ -255,10 +257,12 @@ fn the_last_failure_seeds_by_agreement() -> TestResult {
     let terms = PromptTerms::of("quokka wombat numbat");
     let session = Identifier::new("s1")?;
     let query = SeedQuery {
+        prompt: "quokka wombat numbat",
         terms: &terms,
         session: Some(&session),
         uncommitted: &[],
         failure: &[g, h, f, g],
+        history_seed_weight: None,
     };
     let found = seeds(reader.queries(), &graph, &query)?;
     let index = |node: NodeId| graph.index_of(node).ok_or("a node of the graph");
@@ -298,10 +302,12 @@ fn nothing_found_is_no_vector() -> TestResult {
     let terms = PromptTerms::of("quokka wombat numbat");
     let session = Identifier::new("s1")?;
     let query = SeedQuery {
+        prompt: "quokka wombat numbat",
         terms: &terms,
         session: Some(&session),
         uncommitted: &[],
         failure: &[],
+        history_seed_weight: None,
     };
     let found = seeds(reader.queries(), &graph, &query)?;
     assert!(found.vector.is_empty());
