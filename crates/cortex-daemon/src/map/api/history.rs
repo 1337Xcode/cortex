@@ -1,6 +1,7 @@
 //! Why a file is the way it is, as the daemon already holds it: the commits the stored blames of
 //! the file name, each with the subject the history worker read and the pull request and issues
-//! its card names.
+//! its card names; how many such commits there are, as the list names only the newest; and
+//! whether the history worker reads blames at all, as with it off no file ever has any.
 //!
 //! Nothing is worked out here. A blame is stored for the file's content as it stands, so a file
 //! changed since has none until the worker blames it again; a commit whose subject the worker's
@@ -21,6 +22,36 @@ pub(super) const MAX_HISTORY: usize = 10;
 /// The line range that covers every line a stored blame can have.
 const ALL_LINES: (u32, u32) = (1, u32::MAX);
 
+/// Whether the history worker reads blames, so that a file's history can fill in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Reader {
+    /// It runs: a file has a history once a prompt or upkeep asked for its blame.
+    On,
+    /// It does not run: `history.why` and `history.seeds` are both off.
+    Off,
+    /// It runs but git is refused in the repository, so it blames nothing.
+    Refused,
+}
+
+/// What the history worker is, as `source` reports it.
+pub(super) fn reader_of(source: &Source) -> Reader {
+    match source.history_report() {
+        None => Reader::Off,
+        Some(report) if report.refused.is_some() => Reader::Refused,
+        Some(_) => Reader::On,
+    }
+}
+
+/// The commits behind a file's lines that the panel can name.
+#[derive(Debug, Default)]
+pub(super) struct FileHistory {
+    /// The newest of them, newest first, at most [`MAX_HISTORY`].
+    pub(super) commits: Vec<Commit>,
+    /// How many there are in all.
+    pub(super) total: usize,
+}
+
 /// One commit that last changed some lines of the file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(super) struct Commit {
@@ -33,8 +64,8 @@ pub(super) struct Commit {
     date_s: i64,
 }
 
-/// The commits the stored blames of `file` name, newest first, at most [`MAX_HISTORY`], with the
-/// subjects `source` holds.
+/// The commits the stored blames of `file` name whose subjects `source` holds: how many, and the
+/// newest [`MAX_HISTORY`] of them, newest first.
 ///
 /// # Errors
 ///
@@ -43,12 +74,12 @@ pub(super) fn of_file(
     queries: Queries<'_>,
     source: &Source,
     file: &ListedFile,
-) -> Result<Vec<Commit>, StoreError> {
+) -> Result<FileHistory, StoreError> {
     let Some(row) = queries.file(&file.path)? else {
-        return Ok(Vec::new());
+        return Ok(FileHistory::default());
     };
     let Some(hash) = row.file.content_hash else {
-        return Ok(Vec::new());
+        return Ok(FileHistory::default());
     };
     let blames = queries.cached_blames((&file.path, &hash), ALL_LINES.0, ALL_LINES.1)?;
     let oids: BTreeSet<String> = blames
@@ -63,11 +94,13 @@ pub(super) fn of_file(
             .cmp(&a.committed_at_s)
             .then_with(|| a.oid.cmp(&b.oid))
     });
-    Ok(cards
+    let mut commits: Vec<Commit> = cards
         .iter()
         .filter_map(|card| commit_of(source, card))
-        .take(MAX_HISTORY)
-        .collect())
+        .collect();
+    let total = commits.len();
+    commits.truncate(MAX_HISTORY);
+    Ok(FileHistory { commits, total })
 }
 
 /// `card` as a commit, when the subject is held.

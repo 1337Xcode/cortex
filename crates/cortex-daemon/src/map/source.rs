@@ -148,6 +148,11 @@ impl Source {
         (self.clock)()
     }
 
+    /// What the history worker reports: none while it does not run.
+    pub(super) fn history_report(&self) -> Option<cortex_core::ipc::HistoryReport> {
+        self.texts.report()
+    }
+
     /// The subject of the commit `oid`, when the history worker's cache holds it; never read
     /// from git here.
     pub(super) fn commit_subject(&self, oid: &str) -> Option<String> {

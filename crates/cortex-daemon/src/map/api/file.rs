@@ -12,7 +12,7 @@ use cortex_store::{Queries, StoreError};
 use serde::Serialize;
 
 use super::Ask;
-use super::history::{self, Commit};
+use super::history::{self, Commit, FileHistory};
 use super::listing::ListedFile;
 use super::reply::{Failure, json, respond};
 use super::told::{self, Told};
@@ -45,8 +45,12 @@ struct Panel {
     editor_url: Option<String>,
     /// The facts about it, by id.
     facts: Vec<Fact>,
-    /// The commits behind its code, newest first.
+    /// The commits behind its code, newest first, at most ten.
     history: Vec<Commit>,
+    /// How many commits behind its code the panel could name, `history` being the newest.
+    history_total: usize,
+    /// Whether the history worker reads blames: `on`, `off` or `refused`.
+    history_reader: history::Reader,
     /// The times Cortex named it, latest first.
     told: Vec<Told>,
 }
@@ -98,13 +102,16 @@ fn panel_of(
     source: &Source,
     (id, file): (usize, &ListedFile),
 ) -> Result<Panel, StoreError> {
+    let FileHistory { commits, total } = history::of_file(queries, source, file)?;
     Ok(Panel {
         version: VERSION,
         id,
         path: file.path.as_str().to_owned(),
         editor_url: source.editor_url(file.path.as_str()),
         facts: facts_of(queries, file)?,
-        history: history::of_file(queries, source, file)?,
+        history: commits,
+        history_total: total,
+        history_reader: history::reader_of(source),
         told: told::of_file(queries, file.node)?,
     })
 }

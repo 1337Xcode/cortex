@@ -8,6 +8,7 @@
 //! weights bring interest and links of use forward by 0.5 for each task since they were written;
 //! the second of the two tasks is the latest.
 
+mod history;
 mod script;
 
 use std::sync::Arc;
@@ -416,9 +417,10 @@ fn with_editor(answer: (u16, String), path: &str) -> TestResult<(u16, String)> {
     Ok((status, body.replace(&written, r#""editor_url":"EDITOR""#)))
 }
 
-/// The orders file's panel: its editor link, then its facts, by number: 1 active, 2 a candidate, 3 suspect, as stored. History:
-/// the blame names commits 1 (a pull request, 482, and issue `#12`), 2 (neither) and a third
-/// whose subject the cache does not hold, which is left out; newest first, so 1 then 2. Told: two
+/// The orders file's panel: its editor link, then its facts, by number: 1 active, 2 a candidate,
+/// 3 suspect, as stored. History: the blame names commits 1 (a pull request, 482, and issue
+/// `#12`), 2 (neither) and a third whose subject the cache does not hold, which is left out;
+/// newest first, so 1 then 2, two in all; the worker never started, so its reader is off. Told: two
 /// work orders that named the file (at 1,500 and 1,600), whose task read and edited it, so used,
 /// and a warning at 2,310 whose task has not ended, so not known; latest first.
 #[test]
@@ -439,7 +441,7 @@ fn a_file_s_panel_is_its_facts_history_and_what_it_was_told() -> TestResult {
         r#"{"kind":"work_order","at_ms":1500,"used":true}"#,
     ];
     let expected = format!(
-        r#"{{"version":1,"id":2,"path":"src/orders.rs","editor_url":"EDITOR","facts":[{}],"history":[{}],"told":[{}]}}"#,
+        r#"{{"version":1,"id":2,"path":"src/orders.rs","editor_url":"EDITOR","facts":[{}],"history":[{}],"history_total":2,"history_reader":"off","told":[{}]}}"#,
         facts.join(","),
         history.join(","),
         told.join(",")
@@ -464,14 +466,14 @@ fn a_file_the_agent_did_not_follow_up_is_marked_unused() -> TestResult {
         r#"{"kind":"work_order","at_ms":1600,"used":false}"#,
     ];
     let expected = format!(
-        r#"{{"version":1,"id":3,"path":"src/orders_test.rs","editor_url":"EDITOR","facts":[],"history":[],"told":[{}]}}"#,
+        r#"{{"version":1,"id":3,"path":"src/orders_test.rs","editor_url":"EDITOR","facts":[],"history":[],"history_total":0,"history_reader":"off","told":[{}]}}"#,
         told.join(",")
     );
     assert_eq!(
         with_editor(get(&fixture, "api/file/3")?, "src/orders_test.rs")?,
         (200, expected)
     );
-    let bare = r#"{"version":1,"id":0,"path":"docs/guide.md","editor_url":"EDITOR","facts":[],"history":[],"told":[]}"#;
+    let bare = r#"{"version":1,"id":0,"path":"docs/guide.md","editor_url":"EDITOR","facts":[],"history":[],"history_total":0,"history_reader":"off","told":[]}"#;
     assert_eq!(
         with_editor(get(&fixture, "api/file/0")?, "docs/guide.md")?,
         (200, bare.to_owned())

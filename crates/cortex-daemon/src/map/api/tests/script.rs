@@ -424,7 +424,7 @@ fn store_told(writer: &mut Writer, nodes: &Nodes) -> TestResult {
 
 /// A card of the commit `oid`, committed at `committed_at_s`, from pull request `pull_request`
 /// naming `issues`.
-fn card(
+pub(super) fn card(
     oid: &str,
     committed_at_s: i64,
     pull_request: Option<u64>,

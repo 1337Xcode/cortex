@@ -185,6 +185,16 @@ impl Jobs {
         self.lock().texts.put(oid, text);
     }
 
+    /// Takes jobs as a started worker does, git refused for `refused` when there is a reason,
+    /// for the tests of what reads the worker's state from outside it.
+    #[cfg(test)]
+    pub(crate) fn start_for_tests(&self, refused: Option<&str>) {
+        self.turn_on();
+        if let Some(why) = refused {
+            self.refuse(why);
+        }
+    }
+
     /// Holds `subject`, with no reason line, as the commit `oid`'s text, for the tests of what
     /// reads the cache from outside the worker.
     #[cfg(test)]
