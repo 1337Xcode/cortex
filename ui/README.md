@@ -11,12 +11,17 @@ deck.gl, d3-hierarchy and Zustand.
 
 ## What is here
 
-| Path         | Holds                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------- |
-| `src/api/`   | The graph snapshot types, the guard that checks the daemon's JSON, and the fetch call |
-| `src/state/` | The Zustand store: load state (loading, error, empty, ready) and the selected file    |
-| `src/theme/` | Design tokens for the light and dark themes, and the code that applies them           |
-| `src/text/`  | Byte-order comparison of strings, matching the order the daemon sorts paths in        |
+| Path          | Holds                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------- |
+| `src/api/`    | The graph snapshot types, the guard that checks the daemon's JSON, and the fetch call |
+| `src/state/`  | The Zustand store: load state (loading, error, empty, ready) and the selected file    |
+| `src/layout/` | The deterministic radial layout and the level-of-detail helper, both pure functions   |
+| `src/theme/`  | Design tokens for the light and dark themes, and the code that applies them           |
+| `src/text/`   | Byte-order comparison of strings, matching the order the daemon sorts paths in        |
+
+The layout turns a sorted list of paths into positions. The same set of paths always gives the
+same bytes, and a change to a file's contents moves nothing. Only adding or removing files moves
+anything.
 
 ## Build and test
 
