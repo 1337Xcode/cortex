@@ -10,7 +10,7 @@ use anyhow::{Context, bail};
 
 use crate::architecture::Metadata;
 use crate::invariants::CompiledCode;
-use crate::{architecture, budgets, compiled, invariants, lints};
+use crate::{architecture, budgets, compiled, invariants, lints, map_budgets, ui};
 
 /// Top-level folders whose sources may carry invariant tags.
 const TAGGED_SOURCE_DIRS: &[&str] = &["crates", "ui", "xtask"];
@@ -63,6 +63,7 @@ pub(crate) fn verify(full: bool) -> anyhow::Result<()> {
     )?;
     run_cargo(&root, "cargo deny", &["deny", "check"])?;
     check_plugins(&root)?;
+    ui::check(&root)?;
     if full {
         // The tests marked ignored are the slow ones, minutes each; every other run skips them.
         run_cargo(
@@ -77,13 +78,33 @@ pub(crate) fn verify(full: bool) -> anyhow::Result<()> {
                 "--ignored",
             ],
         )?;
+        check_map_in_browsers(&root)?;
         budgets::check(&root)?;
     }
     Ok(())
 }
 
+/// Runs the map's browser checks and checks the budgets their measurement wrote.
+fn check_map_in_browsers(root: &Path) -> anyhow::Result<()> {
+    // Anchored at the root: npm runs in `ui/`, so a relative `CARGO_TARGET_DIR` would name
+    // another folder there.
+    let scale_file = root
+        .join(budgets::target_dir(root))
+        .join("map")
+        .join("scale.json");
+    // A measurement left by an earlier run must never stand in for this one.
+    match fs::remove_file(&scale_file) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(error).with_context(|| format!("removing {}", scale_file.display()));
+        }
+        _ => {}
+    }
+    ui::browser_checks(root, &scale_file)?;
+    map_budgets::check(&scale_file)
+}
+
 /// The repository root: the parent of this crate's folder.
-fn workspace_root() -> anyhow::Result<PathBuf> {
+pub(crate) fn workspace_root() -> anyhow::Result<PathBuf> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(Path::to_path_buf)

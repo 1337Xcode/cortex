@@ -14,7 +14,7 @@ use crate::steps;
 
 /// Where a budget holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Platforms {
+pub(crate) enum Platforms {
     /// Wherever the build runs.
     Every,
     /// On the machines hook latency is specified on, macOS and Linux. On Windows starting a
@@ -323,12 +323,12 @@ fn measured_p95(criterion: &Path, budget: &Budget) -> anyhow::Result<Duration> {
 }
 
 /// Whether a budget that holds on `platforms` is checked on the platform xtask runs on.
-fn is_checked_here(platforms: Platforms) -> bool {
+pub(crate) fn is_checked_here(platforms: Platforms) -> bool {
     platforms == Platforms::Every || !cfg!(windows)
 }
 
 /// Where cargo builds: `CARGO_TARGET_DIR` when set, else `target` in the workspace.
-fn target_dir(root: &Path) -> PathBuf {
+pub(crate) fn target_dir(root: &Path) -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from)
 }
 

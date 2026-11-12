@@ -11,14 +11,22 @@
    ```
 
 3. Install [Node.js](https://nodejs.org) 24 or later. The checks run the JavaScript plugins
-   Cortex writes for agents whose hooks are plugins (`node tests/plugins/record.mjs --check`).
-4. Run every check:
+   Cortex writes for agents whose hooks are plugins (`node tests/plugins/record.mjs --check`), and
+   the map's checks.
+4. Install the map's packages and build it (the daemon embeds `ui/dist`):
+
+   ```sh
+   cargo xtask ui
+   ```
+
+5. Run every check:
 
    ```sh
    cargo xtask verify
    ```
 
-   A green run ends with `xtask: all checks passed`. A change is ready when this passes.
+   A green run ends with `xtask: all checks passed`. A change is ready when this passes. Without
+   the map's packages the run says it skipped the map's checks.
 
 ## Layout
 

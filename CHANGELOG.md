@@ -22,6 +22,12 @@ All notable changes to this project are documented in this file. The format is b
   of paths and symbols (`api/search?q=`) and one file's facts, history and what Cortex told agents
   about it (`api/file/<id>`). The guard's rules are tested one by one, and tests run the command
   against a daemon and send the map plain HTTP requests, the data endpoints included.
+- `cargo xtask ui`, which installs the map's packages and builds the map for the daemon to embed;
+  run it before a release build. `cargo xtask verify` now also runs the map's type check, linters,
+  unit tests and build, and fails when the built map is over 1.5 MB gzipped; without the map's
+  packages it says that it skipped them. `cargo xtask verify --full` runs the map's browser checks
+  and checks its first load and frame rate at 100,000 files against their budgets (2 s, and 45
+  frames per second at the 5th percentile) on macOS and Linux, and prints them on Windows.
 - Evaluation tasks for the history features, and the runner support they need. A task that says
   `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
   deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that

@@ -119,11 +119,17 @@ tasks a side once more tasks get a correct work order and the warnings are cut.
 
 ```sh
 cargo install --locked cargo-deny
+cargo xtask ui
 cargo xtask verify
 ```
 
-`cargo xtask verify` runs every check a change must pass: formatting, the rules for how crates may
-depend on each other, the shared lint settings in every crate, the tags that mark where each
-product guarantee is enforced, clippy, the tests and the dependency licence and advisory checks.
-`cargo xtask verify --full` also runs the benchmarks and fails when one is over its budget.
+`cargo xtask ui` installs the map's packages with npm and builds the map into `ui/dist`, which the
+daemon's build embeds; run it before a release build, or the binary serves a page saying it has no
+map. `cargo xtask verify` runs every check a change must pass: formatting, the rules for how crates
+may depend on each other, the shared lint settings in every crate, the tags that mark where each
+product guarantee is enforced, clippy, the tests, the dependency licence and advisory checks, and,
+once `cargo xtask ui` has installed the map's packages, the map's type check, linters, unit tests,
+build and bundle size (at most 1.5 MB gzipped); without them it says that it skipped the map.
+`cargo xtask verify --full` also runs the map's browser checks and the benchmarks, and fails when
+one is over its budget.
 [CONTRIBUTING.md](CONTRIBUTING.md) explains the layout and how to send a change.

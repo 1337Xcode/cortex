@@ -96,13 +96,20 @@ npm --prefix ui run e2e     # browser checks against ui/dist (build first)
 npm --prefix ui run dev     # Vite dev server
 ```
 
+From the repository root, `cargo xtask ui` runs the install and the build, `cargo xtask verify`
+runs `check`, the build and the bundle's size limit (1.5 MB gzipped), and
+`cargo xtask verify --full` adds the browser checks.
+
 The browser checks use Playwright's Chromium and serve the built page and fixture data from
 inside the test, so they need no server and no network. Every response carries the daemon's
 security headers (its content security policy, `Referrer-Policy: no-referrer` and
 `X-Content-Type-Options: nosniff`), and a check fails on any console error, so a script, worker
-or request the policy refuses is caught. `e2e/scale.spec.ts` prints the first load
-time and the frame rate over a scripted pan and zoom on a generated repository of 100,000 files,
-with the platform it ran on. Setting `CORTEX_SHOTS_DIR` makes `e2e/shots.spec.ts` write
+or request the policy refuses is caught. `e2e/scale.spec.ts` prints the first load time in five
+fresh browsers and the frame rate over a scripted pan and zoom on a generated repository of
+100,000 files, with the platform it ran on; when `CORTEX_MAP_SCALE_FILE` names a file it writes
+them there, and `cargo xtask verify --full` checks them against the map's budgets (a first load
+within 2 s every time, 45 frames per second or more at the 5th percentile) on macOS and Linux and
+prints them on Windows. Setting `CORTEX_SHOTS_DIR` makes `e2e/shots.spec.ts` write
 screenshots of every state at 1440x900 and 390x844 in both themes into that folder.
 
 TypeScript is pinned to 6.0.3, the newest release whose JavaScript API the ESLint TypeScript
