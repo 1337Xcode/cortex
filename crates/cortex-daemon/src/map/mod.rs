@@ -17,6 +17,7 @@ mod assets;
 mod bounded;
 mod connections;
 mod guard;
+mod settings;
 mod site;
 mod source;
 #[cfg(test)]
@@ -33,6 +34,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use self::connections::Capped;
+pub(crate) use self::settings::MapSettings;
 use self::site::Site;
 pub(crate) use self::source::Source;
 use self::token::Token;
@@ -248,6 +250,7 @@ mod tests {
             (std::path::PathBuf::from("no-store-here"), 0),
             cortex_retrieve::GraphSettings::default(),
             (Arc::default(), Arc::default()),
+            MapSettings::of(&cortex_core::Config::default()),
         )
     }
 

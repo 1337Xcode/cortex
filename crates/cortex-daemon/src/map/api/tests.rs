@@ -14,9 +14,11 @@ use std::sync::Arc;
 
 use axum::body::to_bytes;
 use axum::http::Request;
+use cortex_core::Config;
 use cortex_retrieve::GraphSettings;
 
 use self::script::{cold, script};
+use super::super::MapSettings;
 use super::super::assets::Asset;
 use super::super::site::Site;
 use super::super::source::Source;
@@ -59,6 +61,7 @@ fn site_over(root: tempfile::TempDir, texts: Arc<Jobs>) -> TestResult<Fixture> {
         (root.path().join(".cortex"), 0),
         weights,
         (texts, Arc::clone(&snapshot)),
+        MapSettings::of(&Config::default()),
     )
     .with_clock(|| NOW_MS);
     let token = Token::generate()?;
@@ -157,7 +160,7 @@ fn a_cold_repository_shows_its_structure_alone() -> TestResult {
         file(1, "src/main.rs", 9)
     );
     assert_eq!(get(&fixture, "api/graph")?, (200, expected));
-    let summary = r#"{"version":1,"files":2,"folders":1,"explored_files":0,"learned":false,"strongest_pair":null,"busiest_folder":null,"window_days":7}"#;
+    let summary = r#"{"version":1,"files":2,"folders":1,"explored_files":0,"learned":false,"strongest_pair":null,"busiest_folder":null,"window_days":7,"history":{"max_commits":20000,"max_age_days":730,"max_files_per_commit":30}}"#;
     assert_eq!(get(&fixture, "api/summary")?, (200, summary.to_owned()));
     Ok(())
 }
@@ -168,11 +171,12 @@ fn a_cold_repository_shows_its_structure_alone() -> TestResult {
 /// links, by confidence before commits (1 and 2 changed together in more commits, 6, at 0.8),
 /// so the pair named is always one the graph draws; of the tokens since the window
 /// began at 2,200 ms, `src` took 100 + 200 = 300 (the app's response at 2,050 is before it) and
-/// `docs` took 400, so `docs` is the busiest.
+/// `docs` took 400, so `docs` is the busiest. The history the commits count is the default
+/// configuration's: the newest 20,000 commits within 730 days, of at most 30 files each.
 #[test]
 fn the_summary_is_the_first_screen_as_counted_by_hand() -> TestResult {
     let fixture = scripted()?;
-    let expected = r#"{"version":1,"files":5,"folders":2,"explored_files":3,"learned":true,"strongest_pair":{"from":2,"to":3,"commits":4},"busiest_folder":{"path":"docs","tokens":400},"window_days":7}"#;
+    let expected = r#"{"version":1,"files":5,"folders":2,"explored_files":3,"learned":true,"strongest_pair":{"from":2,"to":3,"commits":4},"busiest_folder":{"path":"docs","tokens":400},"window_days":7,"history":{"max_commits":20000,"max_age_days":730,"max_files_per_commit":30}}"#;
     assert_eq!(get(&fixture, "api/summary")?, (200, expected.to_owned()));
     Ok(())
 }

@@ -87,7 +87,7 @@ use self::host::Host;
 use self::inbox::Inbox;
 use self::instance::Instance;
 use self::linked::Linked;
-use self::map::{Map, Source};
+use self::map::{Map, MapSettings, Source};
 use self::meter::Meter;
 use self::miner::Miner;
 use self::pending::Pending;
@@ -245,6 +245,7 @@ fn index_and_serve(
             (root.join(".cortex"), config.mmap_bytes),
             GraphSettings::from(&config),
             (Arc::clone(&shared.history), Arc::clone(&shared.snapshot)),
+            MapSettings::of(&config),
         ),
     );
     inbox.keep_positions_by(Timing::of(&config.coordination));

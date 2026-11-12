@@ -1,7 +1,8 @@
 //! `api/summary`: the numbers of the map's first screen: how many files and folders are indexed,
 //! how many agents have read, whether anything has been learned at all, the pair of files most
 //! strongly changed together (ranked as the graph ranks its links, so the map always draws it), and
-//! the folder agents spent the most tokens in lately.
+//! the folder agents spent the most tokens in lately; and the limits of the history Cortex reads,
+//! which every number of commits on the map counts within.
 //!
 //! Files are those `api/graph` lists, and a file's id names it in both. The only time-dependent
 //! number, the busiest folder, reads the clock through [`Source::now_ms`] alone.
@@ -17,6 +18,7 @@ use super::Ask;
 use super::links;
 use super::listing::Listing;
 use super::reply::{Failure, json, respond};
+use crate::map::settings::HistoryLimits;
 use crate::map::site::Site;
 use crate::map::source::Source;
 
@@ -49,6 +51,8 @@ struct Summary {
     busiest_folder: Option<Busiest>,
     /// How many days back the busiest folder looks.
     window_days: u64,
+    /// The history the numbers of commits count.
+    history: HistoryLimits,
 }
 
 /// Two files that changed together.
@@ -117,6 +121,7 @@ fn summary_of(
         strongest_pair,
         busiest_folder: busiest_folder(queries, listing, source)?,
         window_days: WINDOW_DAYS,
+        history: source.history_limits(),
     })
 }
 

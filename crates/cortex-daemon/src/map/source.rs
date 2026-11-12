@@ -11,6 +11,7 @@ use std::sync::Arc;
 use cortex_retrieve::GraphSettings;
 use cortex_store::{Reader, StoreError};
 
+use super::settings::{HistoryLimits, MapSettings};
 use crate::graph::Snapshot;
 use crate::history::Jobs;
 
@@ -30,16 +31,19 @@ pub(crate) struct Source {
     /// The time now in UTC milliseconds; the one place the clock enters an answer, so that a test
     /// can fix it.
     clock: fn() -> i64,
+    /// What the answers carry of the configuration.
+    settings_shown: MapSettings,
 }
 
 impl Source {
     /// A source reading the store in `folder`, opened with `mmap_bytes`, weighing with
-    /// `settings`, reading commit subjects from `texts` and told of the store's changes by
-    /// `snapshot`; its clock is the system's.
+    /// `settings`, reading commit subjects from `texts`, told of the store's changes by
+    /// `snapshot` and showing `settings_shown` of the configuration; its clock is the system's.
     pub(crate) fn new(
         (folder, mmap_bytes): (PathBuf, u64),
         settings: GraphSettings,
         (texts, snapshot): (Arc<Jobs>, Arc<Snapshot>),
+        settings_shown: MapSettings,
     ) -> Self {
         Self {
             folder,
@@ -48,6 +52,7 @@ impl Source {
             texts,
             snapshot,
             clock: crate::host::now_ms,
+            settings_shown,
         }
     }
 
@@ -77,6 +82,11 @@ impl Source {
     /// What brings a stored score or link weight forward to now.
     pub(super) fn settings(&self) -> &GraphSettings {
         &self.settings
+    }
+
+    /// The history Cortex reads, as the configuration limits it.
+    pub(super) fn history_limits(&self) -> HistoryLimits {
+        self.settings_shown.history
     }
 
     /// The time now in UTC milliseconds.
