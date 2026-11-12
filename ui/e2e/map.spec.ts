@@ -67,22 +67,35 @@ test.describe('ten-file repository', () => {
     const overview = page.getByRole('complementary', { name: 'Overview' });
     // Co-change pairs by weight, as the summary ranks them: book+mod 0.9 (12 commits),
     // book+payment 0.8 (9), invoice+tax 0.7 (5), book+orders 0.55 (6), payment+orders 0.3 (3).
-    await expect(overview.getByTestId('overview-pairs').getByRole('listitem')).toHaveText([
-      'book.rs and mod.rs12 commits',
-      'book.rs and payment.rs9 commits',
-      'invoice.rs and tax.rs5 commits',
-      'book.rs and orders.rs6 commits',
-      'payment.rs and orders.rs3 commits',
-    ]);
+    // Rows are read as drawn: a row's icon only repeats its name, so its title is not text.
+    const pairs = overview.getByTestId('overview-pairs');
+    await expect(pairs.getByRole('listitem')).toHaveText(
+      [
+        'book.rs and mod.rs 12 commits',
+        'book.rs and payment.rs 9 commits',
+        'invoice.rs and tax.rs 5 commits',
+        'book.rs and orders.rs 6 commits',
+        'payment.rs and orders.rs 3 commits',
+      ],
+      { useInnerText: true },
+    );
+    // Both files of every pair are Rust, so every pair's row carries the Rust icon.
+    await expect(pairs.locator('[data-icon="rust"] svg')).toHaveCount(5);
     // Seven files have tokens; five show, then "Show 2 more".
     const busiest = overview.getByTestId('overview-busiest');
     await expect(busiest.getByRole('listitem')).toHaveCount(5);
-    await expect(busiest.getByRole('listitem').first()).toHaveText('payment.rs29,910 tokens');
+    await expect(busiest.getByRole('listitem').first()).toHaveText('payment.rs 29,910 tokens', {
+      useInnerText: true,
+    });
     await busiest.getByRole('button', { name: 'Show 2 more' }).click();
     await expect(busiest.getByRole('listitem')).toHaveCount(7);
-    await expect(overview.getByTestId('overview-attention').getByRole('listitem')).toHaveText([
-      'book.rs1 suspect fact',
-    ]);
+    // The seven with tokens: invoice, tax, lib, book, mod and payment in Rust, and ui/app.ts.
+    await expect(busiest.locator('[data-icon="rust"] svg')).toHaveCount(6);
+    await expect(busiest.locator('[data-icon="typescript"] svg')).toHaveCount(1);
+    await expect(overview.getByTestId('overview-attention').getByRole('listitem')).toHaveText(
+      ['book.rs 1 suspect fact'],
+      { useInnerText: true },
+    );
     // A row is a button that flies to its file and selects it.
     await overview
       .getByRole('button', { name: /^src\/orders\/book.rs has 1 suspect fact/ })
@@ -127,14 +140,20 @@ test.describe('ten-file repository', () => {
     await expect(toggle(/^What Cortex told agents/)).toHaveAttribute('aria-expanded', 'false');
     await expect(toggle(/^Linked files/)).toHaveText('Linked files4');
     await expect(panel.getByTestId('panel-links-co_change')).toHaveText(
-      'Changed togethermod.rs12 commitspayment.rs9 commitsorders.rs6 commits',
+      'Changed together mod.rs 12 commits payment.rs 9 commits orders.rs 6 commits',
+      { useInnerText: true },
     );
     await expect(panel.getByTestId('panel-links-used_together')).toHaveText(
       'Used togetherNone learned yet.',
     );
     await expect(panel.getByTestId('panel-links-work_order')).toHaveText(
-      'Named in a work orderapp.tsstrength 0.45',
+      'Named in a work order app.ts strength 0.45',
+      { useInnerText: true },
     );
+    await expect(panel.locator('.panel-title-row [data-icon="rust"] svg')).toBeVisible();
+    await expect(
+      panel.getByTestId('panel-links-work_order').locator('[data-icon="typescript"] svg'),
+    ).toBeVisible();
     await expect(panel.getByTestId('panel-facts').locator('li[data-status="suspect"]')).toHaveText(
       'SuspectconventionA cancelled order keeps its book entry.',
     );

@@ -1,6 +1,7 @@
 // ESLint rules for the map: strict typed rules, no `any`, no `as` casts, no non-null assertions
-// outside tests, the React hooks rules, no raw HTML injection, and no raw colour or size in a
-// component: colours, lengths and Tailwind's numbered utilities come from the tokens only.
+// outside tests, the React hooks rules, no raw HTML injection, no import of the icon package's
+// index, and no raw colour or size in a component: colours, lengths and Tailwind's numbered
+// utilities come from the tokens only.
 import js from '@eslint/js';
 import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
@@ -73,6 +74,16 @@ export default tseslint.config(
         {
           selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
           message: 'Render untrusted text as text, never as HTML.',
+        },
+      ],
+      // The icon package's index holds every one of its icons; each is imported by its own path.
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: ['@thesvg/react', '@thesvg/react/index'].map((name) => ({
+            name,
+            message: 'Import each icon by its own path (@thesvg/react/<name>), never the index.',
+          })),
         },
       ],
     },

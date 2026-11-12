@@ -63,6 +63,8 @@ export const SIZE = {
   /** A list row: one body line and its padding. */
   row: 28,
   icon: 16,
+  /** An icon beside the selected file's title, whose text is 21 px. */
+  iconTitle: 20,
   /** The key hint beside a button's name. */
   keyHint: 16,
   /** The selected file's panel. */

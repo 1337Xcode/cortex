@@ -4,7 +4,7 @@
 // the stylesheet by role, so a sample always matches its tokens.
 import type { ReactElement, ReactNode } from 'react';
 import type { LinkKind } from '../api/graph';
-import { CANVAS_SIZE, LINK_DASH_PX, SIZE, STROKE } from '../theme/tokens';
+import { CANVAS_SIZE, LINK_DASH_PX, SIZE, STROKE, type AgentFamily } from '../theme/tokens';
 import type { ToneMark, ToneRole } from '../views/view';
 
 /** The sample's box and the sizes of what is drawn in it, in its own pixels. */
@@ -127,8 +127,8 @@ export function BadgeSample(): ReactElement {
   );
 }
 
-/** A live marker: a diamond around a file. */
-export function DiamondSample(): ReactElement {
+/** A live marker: a diamond around a file, in the colour of the agent family `agent` when given. */
+export function DiamondSample({ agent }: { agent?: AgentFamily }): ReactElement {
   const { centreX: cx, centreY: cy, ringRadius: r } = SAMPLE;
   return (
     <Sample>
@@ -143,6 +143,7 @@ export function DiamondSample(): ReactElement {
       <polygon
         points={`${cx},${cy - r} ${cx + r},${cy} ${cx},${cy + r} ${cx - r},${cy}`}
         className="legend-marker"
+        data-agent={agent}
       />
     </Sample>
   );

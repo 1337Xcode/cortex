@@ -80,6 +80,7 @@ describe('the grid and the scales', () => {
       controlCompact: 24,
       row: 28,
       icon: 16,
+      iconTitle: 20,
       keyHint: 16,
       panel: 340,
       overview: 300,

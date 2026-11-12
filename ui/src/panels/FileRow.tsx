@@ -25,7 +25,7 @@ export function FileRow({
   measure: string | null;
   /** The whole row as a sentence: the tooltip and the button's accessible name. */
   sentence: string;
-  /** A mark drawn before the name, hidden from screen readers (the sentence says it). */
+  /** A mark or icon drawn before the name, hidden from screen readers (the sentence says it). */
   lead?: ReactNode;
 }): ReactElement {
   const selectFile = useMapStore((state) => state.selectFile);
@@ -41,8 +41,10 @@ export function FileRow({
             selectFile(file, { fly: true });
           }}
         >
-          {lead}
-          <ClippedLabel text={name} kind={nameKind} className="file-row-name" />
+          <span className="file-row-label">
+            {lead}
+            <ClippedLabel text={name} kind={nameKind} className="file-row-name" />
+          </span>
           {measure === null ? null : <span className="file-row-measure">{measure}</span>}
         </Button>
       </TooltipTrigger>

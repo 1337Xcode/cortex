@@ -112,14 +112,14 @@ question(
       .getByTestId('panel-links-co_change')
       .getByRole('listitem')
       .first();
-    await expect(first).toHaveText('mod.rs12 commits');
+    await expect(first).toHaveText('mod.rs 12 commits', { useInnerText: true });
     return 'mod.rs, in 12 commits';
   },
 );
 
 question('What are the hotspots?', { keys: 0, screens: 1 }, async (page) => {
   const first = page.getByTestId('overview-busiest').getByRole('listitem').first();
-  await expect(first).toHaveText('payment.rs29,910 tokens');
+  await expect(first).toHaveText('payment.rs 29,910 tokens', { useInnerText: true });
   return 'payment.rs, 29,910 tokens attributed';
 });
 
@@ -189,11 +189,14 @@ question(
   { keys: 0, screens: 1 },
   async (page) => {
     const rows = page.getByTestId('overview-live').getByRole('listitem');
-    await expect(rows).toHaveText([
-      'Claude Code 3f2a… editing book.rs',
-      'Codex 9b1c… reading invoice.rs',
-      'Cursor c0de… claimed orders.rs',
-    ]);
+    await expect(rows).toHaveText(
+      [
+        'Claude Code 3f2a… editing book.rs',
+        'Codex 9b1c… reading invoice.rs',
+        'Cursor c0de… claimed orders.rs',
+      ],
+      { useInnerText: true },
+    );
     return '3 sessions: Claude Code on book.rs, Codex on invoice.rs, Cursor on tests/orders.rs';
   },
   (nowMs) => ({ ...smallFixture(nowMs), live: threeSessions(nowMs) }),

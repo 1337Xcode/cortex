@@ -91,6 +91,15 @@ All notable changes to this project are documented in this file. The format is b
   breaks the contract or whose sums do not add up. Checked in a browser against answers written for
   the tests; not yet run against a daemon with recorded sessions. The built map grew from 434,433
   to 440,921 bytes gzipped.
+- Icons beside names on the map. An agent's mark (its product's, or its maker's) leads its live
+  session, its own entry in the legend (new: each agent working now, its diamond in its colour and
+  its sessions counted) and its sessions in the receipts; a file's language or format mark leads
+  its rows in the overview, the search results, the linked files and the selected file's title.
+  The icons come from `@thesvg/react` 4.0.7 (MIT; its licence ships with the map), pinned and imported one by one, 19 for agents
+  and 58 for files, drawn in the muted text colour. An agent or a kind of file whose mark has no
+  one-colour form gets no icon, and nothing stands in for it. Checked in a browser against the
+  tests' fixtures. The built map grew from 440,921 to 542,678 bytes gzipped, the
+  package's licence text included.
 - Evaluation tasks for the history features, and the runner support they need. A task that says
   `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
   deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that

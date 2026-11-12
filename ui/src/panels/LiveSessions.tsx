@@ -5,6 +5,8 @@
 import type { ReactElement } from 'react';
 import type { LiveSession } from '../api/live';
 import { ClippedText } from '../components/Clipped';
+import { agentIcon } from '../icons/agentIcons';
+import { IconSlot } from '../icons/IconSlot';
 import { agentFamily } from '../map/agents';
 import { namedLiveFiles } from '../map/mapTooltip';
 import type { Scene } from '../map/scene';
@@ -14,9 +16,17 @@ import { FileRow } from './FileRow';
 import { RowList } from './RowList';
 import { Section } from './Section';
 
-/** The diamond beside a session's row, in its agent's colour, as the marker on the map. */
+/**
+ * What leads a session's row: the diamond in its agent's colour, as the marker on the map, then
+ * the agent's icon (an empty box when it has none, so the rows' names line up).
+ */
 function AgentMark({ agent }: { agent: string }): ReactElement {
-  return <span className="agent-mark" data-agent={agentFamily(agent)} aria-hidden="true" />;
+  return (
+    <span className="agent-lead" aria-hidden="true">
+      <span className="agent-mark" data-agent={agentFamily(agent)} />
+      <IconSlot icon={agentIcon(agent)} />
+    </span>
+  );
 }
 
 /** One session's row: a button to its newest file the map holds, or plain text without one. */

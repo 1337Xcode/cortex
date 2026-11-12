@@ -1,7 +1,7 @@
 // The panel of the selected file. Opens on the right (a bottom sheet on narrow screens); takes
 // focus when the selection came from the keyboard; Escape or Close clears the selection and returns
 // focus to where it was before the panel opened. Its header holds the breadcrumb of the file's
-// folders, its name and path, and the link that opens it in an editor; its numbers come next, then sections that collapse to their title
+// folders, its name (after its file's icon) and path, and the link that opens it in an editor; its numbers come next, then sections that collapse to their title
 // and count: the linked files and the facts open (what usually changes with this file, and which
 // rules apply to it, the questions asked most), the history and what Cortex told agents closed
 // until asked.
@@ -10,6 +10,8 @@ import { useEffect, useLayoutEffect, useRef, type ReactElement } from 'react';
 import { fetchFileDetail } from '../api/file';
 import { ClippedText } from '../components/Clipped';
 import { Button } from '../components/ui/button';
+import { fileIcon } from '../icons/fileIcons';
+import { IconSlot } from '../icons/IconSlot';
 import type { Scene } from '../map/scene';
 import { useMapStore } from '../state/store';
 import { baseName } from '../text/format';
@@ -72,6 +74,7 @@ export function FilePanel({
   const path = file?.path ?? '';
   const own = detailFor(detail, id);
   const href = own.status === 'ready' ? editorHref(own.detail.editor_url) : null;
+  const icon = fileIcon(path);
 
   useLayoutEffect(() => {
     returnTo.current = document.activeElement;
@@ -106,9 +109,12 @@ export function FilePanel({
             <X aria-hidden="true" />
           </Button>
         </div>
-        <h2 id="panel-title" className="panel-title" ref={headingRef} tabIndex={-1}>
-          <ClippedText text={baseName(path)} kind="words" />
-        </h2>
+        <div className="panel-title-row">
+          {icon === null ? null : <IconSlot icon={icon} />}
+          <h2 id="panel-title" className="panel-title" ref={headingRef} tabIndex={-1}>
+            <ClippedText text={baseName(path)} kind="words" />
+          </h2>
+        </div>
         <ClippedText text={path} kind="path" className="panel-path" />
         <EditorLink href={href} />
       </header>

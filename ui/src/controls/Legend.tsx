@@ -1,12 +1,19 @@
 // The collapsible legend: the active view by name, what its scale means with its numbers, and each
 // of its tones with how many files show it; the marks every view draws (the suspect ring, the
-// recent centre, fact badges, live markers and their trails) with their counts; the folder
+// recent centre, fact badges, live markers and their trails) with their counts, and each agent
+// working now with its diamond's colour, its icon and its sessions; the folder
 // shapes; each link kind with how many links the threshold leaves drawn, and the slider that sets
 // it; and the way back to the sentence that says what the picture is. Collapsed by default.
 import { ChevronUp } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useState, type ReactElement } from 'react';
 import { LINK_KINDS } from '../api/graph';
+import { visibleText } from '../api/guard';
+import type { LiveSession } from '../api/live';
 import { Button } from '../components/ui/button';
+import type { BrandIcon } from '../icons/icon';
+import { agentIcon } from '../icons/agentIcons';
+import { IconSlot } from '../icons/IconSlot';
+import { agentFamily, agentsAtWork } from '../map/agents';
 import { fileMark, type FileMark } from '../map/fileEncoding';
 import { countLinksByKind } from '../map/linkEncoding';
 import type { Scene } from '../map/scene';
@@ -38,18 +45,30 @@ function countMarks(scene: Scene, nowMs: number): Readonly<Record<FileMark, numb
   return counts;
 }
 
-/** One legend entry: its sample, its name and meaning, and its count. */
+/**
+ * One legend entry: its sample, its name (after its icon, when it names an agent), its meaning and
+ * its count.
+ */
 function Entry(props: {
   testId: string;
   sample: ReactElement;
   name: string;
   meaning: string;
   count: number | null;
+  /** The icon before the name; absent for an entry that names no agent. */
+  icon?: BrandIcon | null;
 }): ReactElement {
   return (
     <li className="legend-entry" data-testid={props.testId}>
       {props.sample}
-      <span className="legend-name">{props.name}</span>
+      {props.icon === undefined ? (
+        <span className="legend-name">{props.name}</span>
+      ) : (
+        <span className="legend-name" data-icon="true">
+          <IconSlot icon={props.icon} />
+          <span>{props.name}</span>
+        </span>
+      )}
       <span className="legend-count">{props.count === null ? '' : formatCount(props.count)}</span>
       {props.meaning === '' ? null : <span className="legend-meaning">{props.meaning}</span>}
     </li>
@@ -123,9 +142,9 @@ function MarkEntries(props: {
   scene: Scene;
   nowMs: number;
   view: ViewPaint;
-  liveCount: number;
+  sessions: readonly LiveSession[];
 }): ReactElement {
-  const { scene, nowMs, view, liveCount } = props;
+  const { scene, nowMs, view, sessions } = props;
   const marks = useMemo(() => countMarks(scene, nowMs), [scene, nowMs]);
   const withFacts = useMemo(
     () => scene.snapshot.files.filter((file) => file.facts > 0).length,
@@ -160,8 +179,19 @@ function MarkEntries(props: {
         testId="legend-marker"
         sample={<DiamondSample />}
         {...OVERLAY_MARKS.marker}
-        count={liveCount}
+        count={sessions.length}
       />
+      {agentsAtWork(sessions).map((entry) => (
+        <Entry
+          key={entry.agent}
+          testId={`legend-agent-${entry.agent}`}
+          sample={<DiamondSample agent={agentFamily(entry.agent)} />}
+          name={visibleText(entry.title)}
+          meaning=""
+          count={entry.sessions}
+          icon={agentIcon(entry.agent)}
+        />
+      ))}
       <Entry testId="legend-trail" sample={<TrailSample />} {...OVERLAY_MARKS.trail} count={null} />
     </ul>
   );
@@ -212,12 +242,12 @@ function LinkEntries({ scene }: { scene: Scene }): ReactElement {
   );
 }
 
-/** What the legend explains: the map of `scene`, coloured by `view`, with `liveCount` sessions marked. */
+/** What the legend explains: the map of `scene`, coloured by `view`, with `sessions` marked. */
 interface LegendProps {
   readonly scene: Scene;
   readonly nowMs: number;
   readonly view: ViewPaint;
-  readonly liveCount: number;
+  readonly sessions: readonly LiveSession[];
 }
 
 function LegendBody(props: LegendProps): ReactElement {

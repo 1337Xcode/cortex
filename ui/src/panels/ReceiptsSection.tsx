@@ -9,6 +9,8 @@
 import { useEffect, type ReactElement } from 'react';
 import { fetchReceipts, type Receipts, type SessionReceipt } from '../api/receipts';
 import { Button } from '../components/ui/button';
+import { agentIcon } from '../icons/agentIcons';
+import { IconSlot } from '../icons/IconSlot';
 import { useMapStore } from '../state/store';
 import { countOf } from '../text/format';
 import {
@@ -66,7 +68,10 @@ function SessionRow({ session }: { session: SessionReceipt }): ReactElement {
   const compactions = compactionsSentence(session);
   return (
     <div className="receipt-row">
-      <p className="receipt-title">{sessionTitle(session)}</p>
+      <p className="receipt-title">
+        <IconSlot icon={agentIcon(session.agent)} />
+        <span>{sessionTitle(session)}</span>
+      </p>
       <p className="receipt-meta">{sessionStarted(session)}</p>
       <p>{sessionTotal(session)}</p>
       <p data-testid="receipts-overhead">{sessionOverhead(session)}</p>

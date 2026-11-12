@@ -110,13 +110,50 @@ test('the live section lists sessions five at a time, each flying to its newest 
   await expect(section.getByRole('button', { name: /^Live sessions/ })).toHaveText(
     'Live sessions7',
   );
-  await expect(section.getByRole('listitem')).toHaveText([
-    'Claude Code s0 reading invoice.rs',
-    'Codex s1 reading tax.rs',
-    'Cursor s2 reading lib.rs',
-    'Aider s3 reading book.rs',
-    'Claude Code s4 reading mod.rs',
-  ]);
+  await expect(section.getByRole('listitem')).toHaveText(
+    [
+      'Claude Code s0 reading invoice.rs',
+      'Codex s1 reading tax.rs',
+      'Cursor s2 reading lib.rs',
+      'Aider s3 reading book.rs',
+      'Claude Code s4 reading mod.rs',
+    ],
+    { useInnerText: true },
+  );
+  // Each row's agent icon: Aider has none, so its row keeps an empty box.
+  const icons = section.getByRole('listitem').locator('.icon-slot');
+  await expect(icons).toHaveCount(5);
+  const expected = ['claude-code', 'codex-openai', 'cursor', null, 'claude-code'];
+  for (const [index, icon] of expected.entries()) {
+    const slot = icons.nth(index);
+    if (icon === null) {
+      await expect(slot.locator('svg')).toHaveCount(0);
+      continue;
+    }
+    await expect(slot).toHaveAttribute('data-icon', icon);
+    await expect(slot.locator('svg')).toBeVisible();
+  }
+  // The legend names each agent at work once, with its sessions: s0 to s6 take the four agents
+  // in turn, so Claude Code, Codex and Cursor run two each and Aider one.
+  await page.getByRole('button', { name: 'Legend' }).click();
+  const legendAgents = page.locator('[data-testid^="legend-agent-"]');
+  await expect(legendAgents).toHaveText(['Claude Code 2', 'Codex 2', 'Cursor 2', 'Aider 1'], {
+    useInnerText: true,
+  });
+  // Each diamond in its agent's colour, each name after its agent's icon (Aider has none).
+  const families: readonly (readonly [string, string | null])[] = [
+    ['claude', 'claude-code'],
+    ['codex', 'codex-openai'],
+    ['cursor', 'cursor'],
+    ['other', null],
+  ];
+  for (const [index, [family, icon]] of families.entries()) {
+    const entry = legendAgents.nth(index);
+    await expect(entry.locator('.legend-marker')).toHaveAttribute('data-agent', family);
+    await expect(entry.locator('.icon-slot svg')).toHaveCount(icon === null ? 0 : 1);
+    if (icon !== null) await expect(entry.locator('.icon-slot')).toHaveAttribute('data-icon', icon);
+  }
+  await page.getByRole('button', { name: 'Legend' }).click();
   await section.getByRole('button', { name: 'Show 2 more' }).click();
   await expect(section.getByRole('listitem')).toHaveCount(7);
   await section.getByRole('button', { name: /^Codex session s1 is reading tax.rs/ }).focus();

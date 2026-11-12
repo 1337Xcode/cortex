@@ -10,6 +10,8 @@ import { useMemo, type ReactElement, type RefObject } from 'react';
 import type { GraphSnapshot } from '../api/graph';
 import type { Scene } from '../map/scene';
 import { Button } from '../components/ui/button';
+import { fileIcon, sharedFileIcon } from '../icons/fileIcons';
+import { IconSlot } from '../icons/IconSlot';
 import { useMapStore } from '../state/store';
 import { countOf, formatCount } from '../text/format';
 import { distinctNames } from '../text/names';
@@ -76,6 +78,7 @@ function ChangedTogether({ snapshot }: { snapshot: GraphSnapshot }): ReactElemen
                 nameKind="words"
                 measure={countOf(pair.link.commits, 'commit')}
                 sentence={linkSentence(pair.link, pair.from, pair.to)}
+                lead={<IconSlot icon={sharedFileIcon(pair.from.path, pair.to.path)} />}
               />
             );
           }}
@@ -120,6 +123,7 @@ function Busiest({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
                 file={file.id}
                 name={name}
                 measure={measure}
+                lead={<IconSlot icon={fileIcon(file.path)} />}
                 sentence={`${file.path}: ${isTokens ? `${formatCount(file.tokens)} tokens attributed` : `changed in ${countOf(file.commits, 'commit')}`}.`}
               />
             );
@@ -148,6 +152,7 @@ function NeedsAttention({ snapshot }: { snapshot: GraphSnapshot }): ReactElement
               file={file.id}
               name={name}
               measure={countOf(file.suspect, 'suspect fact')}
+              lead={<IconSlot icon={fileIcon(file.path)} />}
               sentence={`${file.path} has ${countOf(file.suspect, 'suspect fact')}: the code it describes may have changed.`}
             />
           )}

@@ -7,6 +7,9 @@
 //   (an open overlay, such as the search results, is checked on its own, apart from its anchor);
 // - visible text drawn below 12 px;
 // - visible text whose font family does not start with Geist, or a Geist font not yet loaded.
+// The walks run with the brand and language icons drawn beside names (each checked present first):
+// the overview's rows, the search results, the file panel's title and linked files, the live
+// sessions and the legend's agents.
 // A last check delays the font files and sees that the canvas waits for them before it draws.
 import { expect, test, type Page } from '@playwright/test';
 import { TYPE } from '../src/theme/tokens';
@@ -110,8 +113,20 @@ for (const size of SIZES) {
         expect(await findProblems(page, TYPE.small.sizePx), 'overview sheet').toEqual([]);
         await page.getByRole('button', { name: 'Close the overview' }).click();
       }
+      await page.keyboard.press('/');
+      await page.keyboard.type('rs');
+      const results = page.getByRole('list', { name: 'Search results' });
+      await expect(results.locator('[data-icon="rust"] svg').first()).toBeVisible();
+      expect(await findProblems(page, TYPE.small.sizePx), 'search results').toEqual([]);
+      await page.keyboard.press('Escape');
+      await page.getByRole('searchbox', { name: 'Search files and symbols' }).fill('');
+      await page.keyboard.press('Tab');
       await searchAndPick(page, 'book');
       await openSections(page);
+      await expect(
+        filePanel(page).locator('.panel-title-row [data-icon="rust"] svg'),
+      ).toBeVisible();
+      await expect(filePanel(page).locator('.row-list [data-icon="typescript"] svg')).toBeVisible();
       expect(await findProblems(page, TYPE.small.sizePx), 'selected').toEqual([]);
       await page.keyboard.press('Escape');
       // Escape returns focus to the search box; leave it, so L reaches the map.
@@ -130,9 +145,14 @@ for (const size of SIZES) {
       const record = await openMap(page, fixture, scheme);
       if (size.width < 720) await page.getByRole('button', { name: 'Overview' }).click();
       await expect(page.getByTestId('overview-live').getByRole('listitem')).toHaveCount(3);
+      await expect(page.getByTestId('overview-live').locator('.icon-slot svg')).toHaveCount(3);
+      await expect(
+        page.getByTestId('overview-pairs').locator('.icon-slot svg').first(),
+      ).toBeVisible();
       expect(await findProblems(page, TYPE.small.sizePx), 'live sessions').toEqual([]);
       if (size.width < 720) await page.getByRole('button', { name: 'Close the overview' }).click();
       await page.getByRole('button', { name: 'Legend' }).click();
+      await expect(page.locator('[data-testid^="legend-agent-"] .icon-slot svg')).toHaveCount(3);
       for (const [key, title] of [
         ['1', 'Default'],
         ['2', 'Fog'],

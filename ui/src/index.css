@@ -249,9 +249,10 @@
     color: var(--muted-foreground);
   }
 
+  /* A result: the file's icon, its name and kind on the first line, its path under the name. */
   .search-result {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     column-gap: var(--space-sm);
     width: 100%;
     padding: var(--space-xs) var(--space-sm);
@@ -279,7 +280,7 @@
   }
 
   .search-result-path {
-    grid-column: 1 / -1;
+    grid-column: 2 / -1;
     color: var(--muted-foreground);
     font-family: var(--font-family-mono);
     font-size: var(--type-small-size);
@@ -373,8 +374,28 @@
     flex: none;
   }
 
+  /* The file's icon beside its title, centred on the title's first line. */
+  .panel-title-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .panel-title-row .icon-slot {
+    width: var(--size-icon-title);
+    height: var(--type-title-line);
+    margin: var(--space-xs) 0;
+  }
+
+  .panel-title-row .icon-slot svg {
+    width: var(--size-icon-title);
+    height: var(--size-icon-title);
+  }
+
   /* Focused when a file is picked from the keyboard; its ring stays inside the header's padding. */
   .panel-title {
+    flex: 1 1 auto;
     min-width: 0;
     margin: var(--space-xs) 0 var(--space-xs);
     padding-right: var(--space-sm);
@@ -554,6 +575,15 @@
     outline-offset: calc(var(--stroke-focus) * -1);
   }
 
+  /* The row's mark or icon and its name, a little closer together than the name and its number. */
+  .file-row-label {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
   .file-row-name {
     flex: 1 1 auto;
     text-align: left;
@@ -569,6 +599,35 @@
 
   .show-more {
     align-self: flex-start;
+  }
+
+  /*
+   * An icon beside a name: one icon wide and one body line tall, the icon centred on that line, so
+   * it sits on the first line of text that wraps. It repeats the name, so it is drawn in the muted
+   * text colour, a step behind the name, and takes no pointer.
+   */
+  .icon-slot {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--size-icon);
+    height: var(--type-body-line);
+    color: var(--muted-foreground);
+    pointer-events: none;
+  }
+
+  .icon-slot svg {
+    width: var(--size-icon);
+    height: var(--size-icon);
+  }
+
+  /* A live session's diamond and its agent's icon, before the session's name. */
+  .agent-lead {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-sm);
   }
 
   /* A live session's mark beside its row: a small diamond in its agent's colour. */
@@ -600,7 +659,7 @@
   .live-row {
     display: flex;
     align-items: center;
-    gap: var(--space-md);
+    gap: var(--space-sm);
     min-height: var(--size-row);
     padding: 0 var(--space-sm);
   }
@@ -777,8 +836,16 @@
     overflow-wrap: anywhere;
   }
 
+  /* The session's agent's icon, then its name and state, which may wrap. */
   .receipt-title {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
     font-weight: var(--weight-medium);
+  }
+
+  .receipt-title > :last-child {
+    min-width: 0;
   }
 
   .receipt-meta {
@@ -1005,6 +1072,18 @@
     font-weight: var(--weight-medium);
   }
 
+  /* An agent's entry: its icon, then its name, which may wrap. */
+  .legend-name[data-icon='true'] {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .legend-name[data-icon='true'] > :last-child {
+    min-width: 0;
+  }
+
   .legend-count {
     color: var(--muted-foreground);
     font-family: var(--font-family-mono);
@@ -1090,6 +1169,23 @@
     fill: none;
     stroke: var(--agent-claude);
     stroke-width: var(--stroke-mark);
+  }
+
+  /* An agent's own entry draws its diamond in that agent's colour, as the canvas does. */
+  .legend-marker[data-agent='codex'] {
+    stroke: var(--agent-codex);
+  }
+
+  .legend-marker[data-agent='cursor'] {
+    stroke: var(--agent-cursor);
+  }
+
+  .legend-marker[data-agent='gemini'] {
+    stroke: var(--agent-gemini);
+  }
+
+  .legend-marker[data-agent='other'] {
+    stroke: var(--agent-other);
   }
 
   .legend-trail {

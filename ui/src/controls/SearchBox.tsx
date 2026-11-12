@@ -3,6 +3,8 @@
 import { useId, useRef, type KeyboardEvent, type ReactElement, type RefObject } from 'react';
 import { visibleText } from '../api/guard';
 import { ClippedLabel } from '../components/Clipped';
+import { fileIcon } from '../icons/fileIcons';
+import { IconSlot } from '../icons/IconSlot';
 import type { SearchResult } from '../api/search';
 import type { Scene } from '../map/scene';
 import { useSearch, type SearchState } from './useSearch';
@@ -42,6 +44,7 @@ function ResultButton(props: {
       }}
       onKeyDown={props.onKey}
     >
+      <IconSlot icon={fileIcon(path)} />
       <ClippedLabel text={visibleText(result.name)} kind="words" className="search-result-name" />
       <span className="search-result-kind">{result.kind === 'symbol' ? 'symbol' : 'file'}</span>
       <ClippedLabel text={where} kind="path" className="search-result-path" />

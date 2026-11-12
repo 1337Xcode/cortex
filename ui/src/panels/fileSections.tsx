@@ -9,6 +9,8 @@ import { visibleText } from '../api/guard';
 import { ClippedText } from '../components/Clipped';
 import { Button } from '../components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
+import { fileIcon } from '../icons/fileIcons';
+import { IconSlot } from '../icons/IconSlot';
 import type { Scene } from '../map/scene';
 import { useMapStore, type DetailState } from '../state/store';
 import { countOf, formatCount, formatDate } from '../text/format';
@@ -127,6 +129,7 @@ function linkRow(
       nameKind="words"
       measure={measure}
       sentence={linkSentence(graphLink, self, other)}
+      lead={<IconSlot icon={fileIcon(other.path)} />}
     />
   );
 }

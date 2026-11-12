@@ -206,12 +206,7 @@ export function MapView({
       <div className="map-controls" ref={controlsRef}>
         <Controls zoom={camera.zoom} onAction={act} />
         <ViewSwitch />
-        <Legend
-          scene={scene}
-          nowMs={receivedMs}
-          view={view}
-          liveCount={frame.live.sessions.length}
-        />
+        <Legend scene={scene} nowMs={receivedMs} view={view} sessions={frame.live.sessions} />
         {live.status === 'paused' ? <LivePaused /> : null}
       </div>
     </div>

@@ -122,6 +122,15 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   scheme is not a web, script, data or file address.
 - Long text (paths, names, commit subjects) is cut at a path or word boundary with an ellipsis and
   shown whole on hover and on keyboard focus; nothing scrolls sideways.
+- Icons beside names: an agent's mark (its product's, or its maker's when the product has none)
+  before each live session, before each session of the receipts and before each agent the legend
+  lists as working now, with its diamond in its colour and its sessions counted; a file's language
+  or format mark (by its whole name for a tool's own files, such as `Cargo.toml` or `Dockerfile`,
+  else by its extension) before its name in the overview's lists, the search results, the linked
+  files and the selected file's title. A row that names two files shows the mark both share, or
+  none. An agent or a kind of file with no mark drawn in one colour has no icon, and nothing stands
+  in for one; in a list its row keeps an empty space, so the names still line up. An icon only
+  repeats the name beside it, so screen readers skip it.
 - On first open, one sentence says what the picture is. Once dismissed it stays dismissed (the
   browser's local storage remembers it), and the legend opens it again.
 - Every state says what it means and what to do next: loading, a failure with its cause, nothing
@@ -172,6 +181,16 @@ atlas only once both fonts have loaded, so no label is drawn in a fallback font.
 copyright notice and licence are in `public/LICENSE-fonts.txt`, which the build copies into the
 page, so every Cortex binary carries it beside the fonts and the map serves it.
 
+The icons come from `@thesvg/react` (MIT), pinned to one version. Each is imported by its own path
+(an ESLint rule refuses the package's index, which holds every icon it has), so the page carries
+only the icons in the two tables of `src/icons/`: one for agents, one for files. Only an icon drawn
+in one colour is used, in the muted text colour, so the tokens set its colour and its contrast in
+both themes; a unit test renders every icon in the tables and checks it holds no colour of its own
+and is the icon its name says. Brand marks are the trademarks of their owners and are shown only to
+name their products. The package's published files carry no licence text, so the MIT licence of
+the repository it is published from, at the tag of the version used, is in
+`public/LICENSE-icons.txt`, which the build copies into the page beside the fonts' licence.
+
 The controls and panels use shadcn/ui components kept as source in `src/components/ui/`, on Radix
 primitives and Tailwind CSS. Tailwind's own scale is left out: the theme in `src/index.css` maps
 only the token names (`p-sm`, `h-control`, `text-small`, `bg-primary`) onto the custom properties
@@ -190,6 +209,7 @@ only the token names (`p-sm`, `h-control`, `text-small`, `bg-primary`) onto the 
 | `src/panels/`     | The summary strip, the overview panel and the file panel, with their sections and lists     |
 | `src/components/` | The shadcn/ui components (button, tooltip, collapsible) and text cut to its box             |
 | `src/fonts/`      | Loading the two bundled fonts, which the canvas waits for                                   |
+| `src/icons/`      | The agents' and files' icons: one table each, and the box an icon is drawn in               |
 | `src/intro/`      | The sentence shown on first open                                                            |
 | `src/theme/`      | Design tokens for both themes (every colour, size, opacity and timing) and their CSS        |
 | `src/text/`       | The map's words, cutting text at a boundary, measuring it, formatting numbers and dates     |
