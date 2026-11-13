@@ -90,7 +90,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "cortex-core"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "globset",
@@ -115,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-hook"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "CreateProcessW",
  "cortex-core",
@@ -127,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-index"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-meter"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-store"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
  "rusqlite",

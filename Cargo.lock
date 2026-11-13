@@ -443,7 +443,7 @@ checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "cortex-cli"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -468,14 +468,14 @@ dependencies = [
 
 [[package]]
 name = "cortex-coord"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
 ]
 
 [[package]]
 name = "cortex-core"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "globset",
@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-daemon"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-eval"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-git"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -547,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-hook"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "CreateProcessW",
  "cortex-core",
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-index"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -604,7 +604,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-learn"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-mcp"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
  "rmcp",
@@ -629,7 +629,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-meter"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
  "cortex-store",
@@ -643,7 +643,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-retrieve"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-coord",
  "cortex-core",
@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-store"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "cortex-core",
  "rusqlite",
@@ -675,7 +675,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-tests"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
 ]
@@ -4019,7 +4019,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "xtask"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "proc-macro2",

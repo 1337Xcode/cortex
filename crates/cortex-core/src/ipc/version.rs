@@ -210,8 +210,9 @@ mod tests {
         Ok(())
     }
 
-    /// The releases Cortex is numbered by: the beta it is built as now, then 0.1.0, a minor release
-    /// that bumps the last number, and a major one that bumps the middle number and resets the last.
+    /// The releases Cortex is numbered by: the 0.1.0-beta.1 earlier builds were, then 0.1.0, a minor
+    /// release that bumps the last number, and a major one that bumps the middle number and resets
+    /// the last.
     /// Each is newer than the one before, so a daemon of any of them is replaced by a client of the
     /// next, and an update moves only forwards.
     #[test]
@@ -261,19 +262,28 @@ mod tests {
         Ok(())
     }
 
-    /// This build (0.1.0-beta.1) is newer than 0.0.9, than 0.1.0-alpha.1, since `alpha` sorts
-    /// before `beta`, and than 0.1.0-beta, which has fewer identifiers; not than itself,
-    /// 0.1.0-beta.2, 0.1.0-rc.1, 0.1.0 or 9.0.0; and ranks nothing that is not a version.
+    /// This build (0.1.0) is newer than 0.0.9, and than every pre-release of itself, since a
+    /// pre-release sorts before its release: 0.1.0-alpha.1, 0.1.0-beta, the 0.1.0-beta.1 earlier
+    /// builds were, 0.1.0-beta.2 and 0.1.0-rc.1. It is not newer than itself, than the minor
+    /// release after it (0.1.1), the major one (0.2.0) or 9.0.0, and it ranks nothing that is not a
+    /// version.
     #[test]
     fn only_an_older_version_is_replaced() {
-        for older in ["0.0.9", "0.1.0-alpha.1", "0.1.0-beta"] {
+        for older in [
+            "0.0.9",
+            "0.1.0-alpha.1",
+            "0.1.0-beta",
+            "0.1.0-beta.1",
+            "0.1.0-beta.2",
+            "0.1.0-rc.1",
+        ] {
             assert!(is_older_than_this_build(older), "{older}");
         }
         for other in [
             CORTEX_VERSION,
-            "0.1.0-beta.2",
-            "0.1.0-rc.1",
             "0.1.0",
+            "0.1.1",
+            "0.2.0",
             "9.0.0",
             "",
             "two",
