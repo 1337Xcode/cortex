@@ -65,8 +65,12 @@ describe('parseFileDetail accepts', () => {
   });
 
   it('the latest dates and the longest subject and refs', () => {
+    // The longest refs: a pull request "#" and 20 digits, then 3 issue references of 100
+    // characters, each after a space: 21 + 3 x 101 = 324.
+    const refs = `#${'9'.repeat(20)}${` ${'r'.repeat(100)}`.repeat(3)}`;
+    expect(refs).toHaveLength(324);
     const latest = detail({
-      history: [{ subject: 's'.repeat(200), refs: 'r'.repeat(80), date_s: 8.64e12 }],
+      history: [{ subject: 's'.repeat(200), refs, date_s: 8.64e12 }],
       told: [{ kind: 'warning', at_ms: 8.64e15, used: null }],
     });
     expect(parseFileDetail(latest, 12).ok).toBe(true);
@@ -77,9 +81,20 @@ describe('parseFileDetail accepts', () => {
     expect(parseFileDetail(off, 12)).toEqual({ ok: true, value: off });
   });
 
-  it('an editor link of exactly 2,048 characters', () => {
-    const url = `vscode://file/${'a'.repeat(2048 - 'vscode://file/'.length)}`;
-    expect(parseFileDetail(detail({ editor_url: url }), 12).ok).toBe(true);
+  it('an editor link of exactly 12,488 characters: a 200-character template and a 4,096-byte path written as %XX', () => {
+    const url = `vscode://file/${'a'.repeat(12_488 - 'vscode://file/'.length)}`;
+    expect(parseFileDetail(detail({ editor_url: url }), 12)).toEqual({
+      ok: true,
+      value: detail({ editor_url: url }),
+    });
+  });
+
+  it('a longer editor link without its link, keeping the rest of the detail', () => {
+    const url = `vscode://file/${'a'.repeat(12_489 - 'vscode://file/'.length)}`;
+    expect(parseFileDetail(detail({ editor_url: url }), 12)).toEqual({
+      ok: true,
+      value: detail({ editor_url: null }),
+    });
   });
 
   it('a fact of exactly 240 characters', () => {
@@ -138,11 +153,6 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
   ['a string at the top', 'file', 'bad_shape'],
   ['a missing editor link', detail({ editor_url: undefined }), 'bad_shape'],
   ['an editor link that is not text', detail({ editor_url: 7 }), 'bad_shape'],
-  [
-    'an editor link of 2,049 characters',
-    detail({ editor_url: `vscode://file/${'a'.repeat(2049 - 'vscode://file/'.length)}` }),
-    'bad_range',
-  ],
   ['an unknown version', detail({ version: 3 }), 'bad_version'],
   ['another id than asked', detail({ id: 13 }), 'bad_range'],
   ['a path with a backslash', detail({ path: 'src\\orders.rs' }), 'bad_shape'],
@@ -185,7 +195,7 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
     'bad_range',
   ],
   ['a subject of 201 characters', history({ subject: 'x'.repeat(201) }), 'bad_range'],
-  ['refs of 81 characters', history({ refs: '#'.repeat(81) }), 'bad_range'],
+  ['refs of 325 characters', history({ refs: '#'.repeat(325) }), 'bad_range'],
   ['a history total below the commits listed', detail({ history_total: 2 }), 'bad_range'],
   ['a history total of 12 with 3 listed', detail({ history_total: 12 }), 'bad_range'],
   ['a missing history total', detail({ history_total: undefined }), 'bad_shape'],

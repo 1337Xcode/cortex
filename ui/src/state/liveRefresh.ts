@@ -5,8 +5,8 @@
 // selected file's detail, and the activity, warnings and health once their sections have loaded
 // them; the receipts are read once, when their section first opens. It waits a moment for a
 // burst of asks to settle, comes at most once every few seconds, and runs by itself only while the
-// map is small enough to read again quickly. A larger map stamps when its numbers were read and is
-// refreshed when the person asks.
+// map is small enough to read again quickly, or empty. A larger map stamps when its numbers were
+// read and is refreshed when the person asks.
 import type { StoreApi } from 'zustand/vanilla';
 import { REFRESH } from '../theme/tokens';
 import type { MapState, Refreshers } from './store';
@@ -27,9 +27,14 @@ export const WINDOW_TIMERS: RefreshTimers = {
   },
 };
 
-/** Whether the map of `state` refreshes by itself: it is ready and small enough. */
+/**
+ * Whether the map of `state` refreshes by itself: it is ready and small enough, or empty, so the
+ * files the daemon lists after its first reading appear without a reload.
+ */
 export function refreshesByItself(state: Pick<MapState, 'load'>): boolean {
-  return state.load.status === 'ready' && state.load.snapshot.files.length <= REFRESH.autoMaxFiles;
+  const { load } = state;
+  if (load.status === 'empty') return true;
+  return load.status === 'ready' && load.snapshot.files.length <= REFRESH.autoMaxFiles;
 }
 
 /**

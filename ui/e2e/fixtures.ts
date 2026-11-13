@@ -71,10 +71,10 @@ export const READING_HEALTH: Json = {
 
 /**
  * The health of a daemon that has run 2 hours 1 minute: two hooks' handling times, two errors
- * (the newest first), one batch not recorded, the miner done, the graph built, upkeep run and the
- * history worker off.
+ * (the newest first), one batch not recorded, the miner in `git` (done by default), the graph
+ * built, upkeep run and the history worker off.
  */
-export function workingHealth(nowMs: number): Json {
+export function workingHealth(nowMs: number, git = 'ready'): Json {
   return {
     version: '0.0.0',
     has_assets: true,
@@ -91,7 +91,7 @@ export function workingHealth(nowMs: number): Json {
       ],
       events_dropped: 0,
       failed_batches: 1,
-      git: 'ready',
+      git,
       git_detail: null,
       graph_nodes: 1200,
       graph_links: 5400,
@@ -705,12 +705,15 @@ function receiptSession(
     status: head.status,
     subagents: 0,
     tool_calls: sum((task) => task.calls) + outside.calls,
-    tasks: tasks.map(receiptTask),
+    // The daemon lists a session's newest tasks, at most 200, and counts them all.
+    tasks: tasks.slice(-200).map(receiptTask),
+    tasks_total: tasks.length,
     outside_tasks: receiptTally(outside.turns, outside.input, outside.output),
     outside_tool_calls: outside.calls,
     total: receiptTally(turns, input, sum((task) => task.output) + outside.output),
     compactions_left_out: 0,
     cache_breaks: [],
+    cache_breaks_total: 0,
     primer_tokens: primer,
     injected_tokens: primer + sum((task) => task.injected),
   };
@@ -828,6 +831,46 @@ export function receiptSessions(): Json[] {
       300,
     ),
   ];
+}
+
+/**
+ * One long Claude Code session of 250 tasks, numbers 1 to 250 a minute apart from the receipts'
+ * base, each of 1 turn of 1,100 input tokens (100 uncached, 1,000 read from the cache), 10 output
+ * tokens and 1 tool call. The daemon lists the newest 200 (51 to 250) and counts all 250 in the
+ * session's totals: 250 turns, 275,000 input tokens and 250 tool calls.
+ */
+export function longReceipts(): Json {
+  const base = RECEIPTS_BASE_MS;
+  const tasks: ReceiptTask[] = Array.from({ length: 250 }, (_, index) => ({
+    seq: index + 1,
+    startMs: base + (index + 1) * MINUTE_MS,
+    turns: 1,
+    input: [100, 1000, 0],
+    output: 10,
+    calls: 1,
+    injected: 0,
+    outcome: 'success',
+    heldOut: false,
+  }));
+  const none: Outside = { turns: 0, input: [0, 0, 0], output: 0, calls: 0 };
+  return {
+    version: 1,
+    window_days: 7,
+    prices: { state: 'shipped', updated: '2026-11-01' },
+    recorded: {
+      holdout: { held_out: 0, treated: 250, needed_per_arm: 30, comparison: null },
+      precision: { labelled: 0, used: 0 },
+      warnings: { labelled: 0, used: 0 },
+      sessions: [
+        receiptSession(
+          { id: 'a1b2c3d4-0250', agent: 'claude', isMetered: true, startMs: base, status: 'live' },
+          tasks,
+          none,
+          0,
+        ),
+      ],
+    },
+  };
 }
 
 /** A store with nothing recorded and no price table, as on a repository Cortex has just met. */

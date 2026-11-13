@@ -1,7 +1,7 @@
 // Tests for the shortcut table, the search box's state rules and the text formatting the chrome
 // uses.
 import { describe, expect, it } from 'vitest';
-import { sevenFileScene } from '../map/testScene';
+import { sevenFileSnapshot } from '../map/testScene';
 import {
   countOf,
   formatCount,
@@ -12,7 +12,7 @@ import {
   formatUtcMoment,
 } from '../text/format';
 import { SECTION_KEYS, sectionFor, shortcutFor, viewIndexFor, type KeyInput } from './shortcuts';
-import { checkResults, stateForText } from './useSearch';
+import { firstListedId, foundResults, isAnswerAhead, stateForText } from './useSearch';
 
 function key(name: string, change: Partial<KeyInput> = {}): KeyInput {
   return { key: name, ctrlKey: false, altKey: false, metaKey: false, isInField: false, ...change };
@@ -100,17 +100,40 @@ describe('search state', () => {
     expect(stateForText('x'.repeat(101))).toEqual({ status: 'too_long' });
   });
 
-  it('refuses an answer naming a file the map does not have', () => {
-    const scene = sevenFileScene();
-    const fine = [{ kind: 'file' as const, file: 6, name: 'only.rs', line: null }];
-    expect(checkResults(scene, 'only', fine)).toEqual({
-      status: 'ready',
-      query: 'only',
-      results: fine,
-    });
-    const unknown = [{ kind: 'file' as const, file: 7, name: 'ghost.rs', line: null }];
-    const state = checkResults(scene, 'g', unknown);
-    expect(state.status === 'error' ? state.error.code : state.status).toBe('bad_range');
+  it('finds each result by its path, never by an id the map holds another file at', () => {
+    const { files } = sevenFileSnapshot();
+    // c/only.rs is 6 on the map; the daemon names it 6, then 5 (its ids moved on), and names a
+    // file the map does not hold yet at 7.
+    const results = [
+      { kind: 'file' as const, file: 6, path: 'c/only.rs', name: 'only.rs', line: null },
+      { kind: 'symbol' as const, file: 5, path: 'c/only.rs', name: 'Only', line: 3 },
+      { kind: 'file' as const, file: 7, path: 'c/new.rs', name: 'new.rs', line: null },
+    ];
+    expect(foundResults(files, results).map(({ named }) => named)).toEqual([
+      { kind: 'listed', id: 6, path: 'c/only.rs' },
+      { kind: 'listed', id: 6, path: 'c/only.rs' },
+      { kind: 'pending', path: 'c/new.rs' },
+    ]);
+    expect(isAnswerAhead(files, results.slice(0, 1))).toBe(false);
+    expect(isAnswerAhead(files, results.slice(1, 2))).toBe(true);
+    expect(isAnswerAhead(files, results.slice(2))).toBe(true);
+  });
+
+  it('picks the first result the map holds, and none when it holds none', () => {
+    const { files } = sevenFileSnapshot();
+    const pending = {
+      kind: 'file' as const,
+      file: 7,
+      path: 'c/new.rs',
+      name: 'new.rs',
+      line: null,
+    };
+    const listed = { kind: 'file' as const, file: 1, path: 'a/one.rs', name: 'one.rs', line: null };
+    expect(firstListedId(foundResults(files, [pending, listed]))).toBe(1);
+    expect(firstListedId(foundResults(files, [pending]))).toBeNull();
+    // The id 1 is a/one.rs's; a result naming b/zed.rs there opens b/zed.rs (5), not a/one.rs.
+    const moved = { ...listed, path: 'b/zed.rs' };
+    expect(firstListedId(foundResults(files, [moved]))).toBe(5);
   });
 });
 

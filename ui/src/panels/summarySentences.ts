@@ -8,6 +8,7 @@ import type { GraphSnapshot } from '../api/graph';
 import type { ApiError } from '../api/guard';
 import type { MapSummary } from '../api/summary';
 import { countOf, formatCount, formatPercent } from '../text/format';
+import { TOKENS_COUNTED } from '../text/vocabulary';
 
 /** A piece of a sentence: plain text, or a file the page renders as a button that flies to it. */
 export type SentencePart = string | { readonly file: number; readonly path: string };
@@ -79,7 +80,7 @@ function busiestSentence(summary: MapSummary): SummarySentence | null {
   if (busiest === null) return null;
   const window =
     summary.window_days === 1 ? 'the last day' : `the last ${summary.window_days} days`;
-  const tokens = `${countOf(busiest.tokens, 'token')} attributed`;
+  const tokens = `${countOf(busiest.tokens, 'token')} attributed (${TOKENS_COUNTED})`;
   const folder = busiest.path === '' ? "the repository's top folder" : `${busiest.path}/`;
   // The daemon counts a folder's own files, not its subfolders', and the sentence says so.
   return {

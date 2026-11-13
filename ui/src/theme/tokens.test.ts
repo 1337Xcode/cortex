@@ -12,6 +12,7 @@ import {
   ACCENT_HUE,
   colorRoles,
   DARK_COLORS,
+  DEFAULT_MIN_STRENGTH,
   GOLDEN_RATIO,
   GRID_PX,
   LIGHT_COLORS,
@@ -22,6 +23,7 @@ import {
   SIZE,
   SPACE,
   STATUS_HUE,
+  STRENGTH_STEP,
   TYPE,
   type ThemeColors,
 } from './tokens';
@@ -40,6 +42,14 @@ function contrast(a: Oklch, b: Oklch): number {
   const [light, dark] = [luminance(rgbaOf(a)), luminance(rgbaOf(b))].sort((x, y) => y - x);
   return ((light ?? 0) + 0.05) / ((dark ?? 0) + 0.05);
 }
+
+describe('the strength slider', () => {
+  it('steps by 0.05, so 0 to 1 is 20 steps and the opening threshold 0.25 is one of them', () => {
+    expect(STRENGTH_STEP).toBe(0.05);
+    expect(Math.round(1 / STRENGTH_STEP)).toBeCloseTo(1 / STRENGTH_STEP, 9);
+    expect(DEFAULT_MIN_STRENGTH / STRENGTH_STEP).toBeCloseTo(5, 9);
+  });
+});
 
 describe('the grid and the scales', () => {
   it('spaces by 4, 8, 12, 20, 32 and 52 px, every step on the 4 px grid', () => {

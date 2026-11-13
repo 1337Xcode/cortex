@@ -183,7 +183,7 @@ describe('the Heat view', () => {
       'heat-none No tokens attributed 2',
     ]);
     expect(heatView.encode(scene, NOW_MS).scale).toBe(
-      'Tokens attributed (input and output, cache reads included), on a log scale from 900 to 29,910; 2 files with none.',
+      'Tokens attributed (input, output, cache writes and cache reads), on a log scale from 900 to 29,910; 2 files with none.',
     );
   });
 

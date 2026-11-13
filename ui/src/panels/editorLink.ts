@@ -1,6 +1,6 @@
 // The link that opens the selected file in the person's editor. The daemon builds and checks it;
 // the page shows it only when it still parses as a URL whose scheme is an editor's own, never a
-// web, script, data or file address, so a link that went wrong can never load or run anything.
+// web, script, data, blob or file address, so a link that went wrong can never load or run anything.
 //
 // The daemon fills the address's line with 1. A symbol opens at its own line only when the page can
 // tell, from the address alone, where that 1 is: right after the file's path, as `:1` (Visual Studio
@@ -51,8 +51,19 @@ export function editorHrefAt(url: string | null, path: string, line: number): Li
   return href === null ? { href: atFirst, isAtLine: false } : { href, isAtLine: true };
 }
 
-/** Schemes an editor link may never have. */
-const REFUSED_SCHEMES: readonly string[] = ['http', 'https', 'javascript', 'data', 'file'];
+/**
+ * Schemes an editor link may never have, the same seven the daemon refuses in `ui.editor_url`:
+ * they open web pages or local files in the browser, or run script.
+ */
+const REFUSED_SCHEMES: readonly string[] = [
+  'http',
+  'https',
+  'file',
+  'javascript',
+  'data',
+  'blob',
+  'vbscript',
+];
 
 /** The address to link to for `url`, or null when there is none or it may not be followed. */
 export function editorHref(url: string | null): string | null {

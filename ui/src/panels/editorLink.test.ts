@@ -68,6 +68,10 @@ describe('editorHref', () => {
     'java\tscript:alert(1)',
     'data:text/html,<b>x</b>',
     'file:///C:/repo/a.rs',
+    'blob:http://127.0.0.1:47613/0b7a',
+    'BLOB:x',
+    'vbscript:msgbox(1)',
+    'VBScript:msgbox(1)',
   ])('refuses %s', (url) => {
     expect(editorHref(url)).toBeNull();
   });

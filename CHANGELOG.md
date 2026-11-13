@@ -497,6 +497,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- The map no longer names or opens the wrong file when its snapshot is older than the daemon's:
+  search results and live sessions are found by their paths, a file the map does not hold yet is
+  listed by its path ("not on the map yet") and never marked or opened, and the map reads its data
+  again. A file's commit count of 0 reads "Not read yet" until the history miner has read the
+  repository; shares in the receipts are never written as 1.00 or 0.00 unless they are; a session
+  with more tasks than the receipts list counts them all; long commit references are cut and shown
+  whole on hover; and a map that was empty reads the repository again, without a reload, once an
+  agent session works on a file.
 - The lines `cortex init` adds to a `.gitignore` no longer count as uncommitted work: a
   prompt right after install is not taken to continue a change of the `.gitignore`.
 - A prompt's retrieval no longer walks every symbol node of the repository: the store's lookups of

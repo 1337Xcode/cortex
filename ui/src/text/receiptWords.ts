@@ -4,7 +4,8 @@
 // interval, unrounded into no claim), how precise the work orders and warnings were, what a task
 // and a session took, what Cortex injected, and the price table every cost is estimated from.
 // Numbers are formatted as the CLI formats them: grouped in threes, shares to two places, dollars
-// to a hundredth of a cent.
+// to a hundredth of a cent; except that a share, or a difference of shares, that is not an end is
+// never written as one ("over 0.99", not "1.00"), as everywhere else on the map.
 import type {
   Compared,
   Estimate,
@@ -18,7 +19,7 @@ import type {
 } from '../api/receipts';
 import { UNPRICED_REASONS } from '../api/receipts';
 import { visibleText } from '../api/guard';
-import { countOf, formatCount } from './format';
+import { countOf, formatCount, formatUnit } from './format';
 import type { SessionNames } from './sessionNames';
 
 /** A hundredth of a cent, the smallest amount receipts show, in picodollars. */
@@ -59,9 +60,25 @@ export function twoPlaces(value: number): string {
   return value < 0 ? `-${text}` : text;
 }
 
-/** A share as a decimal of two places. */
-function rate(value: number): string {
-  return twoPlaces(value);
+/**
+ * A share from 0 to 1 to two places as the CLI writes them, never rounded to a false end: "0" and
+ * "1" only for the ends themselves, "under 0.01" and "over 0.99" for a share that rounds to one.
+ */
+export function share(value: number): string {
+  return formatUnit(value, twoPlaces);
+}
+
+/**
+ * A difference of shares, from -1 to 1, with its sign, by the same rule: "+0.17", "-0.08", "0"
+ * for none; a difference that rounds to 0 or to 1 either way without being it is said as a bound
+ * on its side of 0 ("under +0.01", "over -0.01", "over +0.99", "under -0.99").
+ */
+export function signedShare(value: number): string {
+  if (value === 0) return '0';
+  const size = share(Math.abs(value));
+  if (size === 'under 0.01') return value > 0 ? 'under +0.01' : 'over -0.01';
+  if (size === 'over 0.99') return value > 0 ? 'over +0.99' : 'under -0.99';
+  return `${value > 0 ? '+' : '-'}${size}`;
 }
 
 /**
@@ -140,9 +157,11 @@ export function headline(holdout: Holdout): Headline {
   }
   const [endedWith, endedHeldOut] = comparison.tasks;
   const measures: MeasureLine[] = [
-    measureLine('Success rate', comparison.success_rate, rate),
+    measureLine('Success rate', comparison.success_rate, share, signedShare),
     ...(comparison.per_success ?? []).map((compared, index) =>
-      measureLine(MEDIAN_NAMES[index] ?? '', compared, quantity),
+      measureLine(MEDIAN_NAMES[index] ?? '', compared, quantity, (value) =>
+        signed(value, quantity),
+      ),
     ),
   ];
   const [succeededWith, succeededHeldOut] = comparison.per_success_tasks;
@@ -158,16 +177,20 @@ export function headline(holdout: Holdout): Headline {
   };
 }
 
-/** One measure as the panel lists it, its numbers written by `number`. */
+/**
+ * One measure as the panel lists it, each arm's value written by `number` and the difference and
+ * its interval by `difference`, which carries the sign.
+ */
 function measureLine(
   name: string,
   compared: Compared,
   number: (value: number) => string,
+  difference: (value: number) => string,
 ): MeasureLine {
   return {
     name,
     arms: `${number(compared.treated)} with Cortex, ${number(compared.held_out)} held out`,
-    difference: `difference ${signed(compared.difference, number)} (${signed(compared.low, number)} to ${signed(compared.high, number)})`,
+    difference: `difference ${difference(compared.difference)} (${difference(compared.low)} to ${difference(compared.high)})`,
     holdsZero: holdsZero(compared),
   };
 }
@@ -175,13 +198,13 @@ function measureLine(
 /** How precise the work orders given were. */
 export function precisionSentence(precision: Precision): string {
   if (precision.labelled === 0) return 'Injection precision: no work order given is labelled yet.';
-  return `Injection precision: ${twoPlaces(precision.used / precision.labelled)}, ${formatCount(precision.used)} of ${countOf(precision.labelled, 'work order')} given and labelled were used.`;
+  return `Injection precision: ${share(precision.used / precision.labelled)}, ${formatCount(precision.used)} of ${countOf(precision.labelled, 'work order')} given and labelled were used.`;
 }
 
 /** How often the files warnings named were then read or edited. */
 export function warningSentence(precision: Precision): string {
   if (precision.labelled === 0) return 'Warning precision: no warning is marked yet.';
-  return `Warning precision: ${twoPlaces(precision.used / precision.labelled)}, ${formatCount(precision.used)} of ${countOf(precision.labelled, 'file')} warnings named and marked were then read or edited.`;
+  return `Warning precision: ${share(precision.used / precision.labelled)}, ${formatCount(precision.used)} of ${countOf(precision.labelled, 'file')} warnings named and marked were then read or edited.`;
 }
 
 /** What every cost is estimated from, or why none is. */
@@ -263,10 +286,13 @@ export function sessionTitle(session: SessionReceipt, names: SessionNames): stri
   return `Session ${visibleText(names.nameOf(session.session_id))} (${session.agent}, ${session.status})`;
 }
 
-/** When a session started and what it held: its tasks, and its subagents when it started any. */
+/**
+ * When a session started and what it held: all its tasks (not only the newest the daemon lists),
+ * and its subagents when it started any.
+ */
 export function sessionStarted(session: SessionReceipt): string {
   const subagents = session.subagents > 0 ? `, ${countOf(session.subagents, 'subagent')}` : '';
-  return `Started ${when(session.started_at_ms)}, ${countOf(session.tasks.length, 'task')}${subagents}.`;
+  return `Started ${when(session.started_at_ms)}, ${countOf(session.tasks_total, 'task')}${subagents}.`;
 }
 
 /**

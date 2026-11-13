@@ -36,14 +36,17 @@ export function formatPercent(part: number, whole: number): string {
 /**
  * A number from 0 to 1 to two places, never rounded to a false 0 or 1: "0.62", "0" and "1" for
  * the ends themselves, "under 0.01" and "over 0.99" for a value that rounds to an end without
- * being it.
+ * being it. The places in between are written by `places` (by default `toFixed(2)`).
  */
-export function formatUnit(value: number): string {
+export function formatUnit(
+  value: number,
+  places: (value: number) => string = (inner) => inner.toFixed(2),
+): string {
   if (value <= 0) return '0';
   if (value >= 1) return '1';
   if (value < 0.005) return 'under 0.01';
   if (value >= 0.995) return 'over 0.99';
-  return value.toFixed(2);
+  return places(value);
 }
 
 /** A time of day in UTC as HH:MM:SS, from milliseconds since the epoch. */

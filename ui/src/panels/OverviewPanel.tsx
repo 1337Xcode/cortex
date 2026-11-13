@@ -26,6 +26,7 @@ import {
   LINK_KIND_NAMES,
   NUMBER_NAMES,
   PAIR_ORDER_SENTENCE,
+  TOKENS_COUNTED,
   linkMeasure,
   linkSentence,
 } from '../text/vocabulary';
@@ -173,7 +174,7 @@ function Busiest({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
       {hasRows ? (
         <p className="section-note">
           {isTokens
-            ? `By ${NUMBER_NAMES.tokens.toLowerCase()}.`
+            ? `By ${NUMBER_NAMES.tokens.toLowerCase()}: ${TOKENS_COUNTED}.`
             : 'By commits: agents have not worked on any file here yet.'}
         </p>
       ) : (

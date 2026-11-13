@@ -265,6 +265,15 @@
     background: var(--muted);
   }
 
+  /* A result whose file the map does not hold yet: text, not a button. */
+  .search-result[data-listed='false'] {
+    cursor: default;
+  }
+
+  .search-result[data-listed='false']:hover {
+    background: none;
+  }
+
   .search-result:focus-visible {
     outline-offset: calc(var(--stroke-focus) * -1);
   }
@@ -761,6 +770,22 @@
     font-family: var(--font-family-mono);
     font-size: var(--type-small-size);
     line-height: var(--type-small-line);
+  }
+
+  /* A commit's date, then its references, cut to the row and said whole on hover and focus. */
+  .history-meta {
+    display: flex;
+    column-gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .history-date {
+    flex: none;
+  }
+
+  /* The references take the rest of the row whatever they hold, so they are cut to its width. */
+  .history-refs {
+    flex: 1 1 0;
   }
 
   /* A told row is not a button, so it takes back the padding the row list reaches into. */

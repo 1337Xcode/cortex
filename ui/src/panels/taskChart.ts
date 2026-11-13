@@ -1,8 +1,10 @@
 // The receipts chart's data and geometry, as pure functions: which tasks it draws (those of the
-// sessions whose usage Cortex reads, by start, the newest `CHART.maxTasks`), where each task's mark
+// sessions whose usage Cortex reads, by start, the newest `CHART.maxTasks`), how many tasks there
+// are in all (each session's total, not only the newest the daemon lists), where each task's mark
 // sits in a plot of a given size, and which task the pointer is nearest. Two plots share the tasks
 // and their horizontal places, one per measure, each on its own scale from 0, so no plot has two
-// axes.
+// axes. The daemon lists each session's newest `MAX_TASKS_SHOWN` tasks, at least as many as the
+// chart draws, so the newest it draws of those listed are the newest of all.
 import type { SessionReceipt, TaskReceipt } from '../api/receipts';
 import { CHART } from '../theme/tokens';
 
@@ -16,7 +18,7 @@ export interface ChartTask {
 export interface ChartTasks {
   /** By start, then by number, oldest first. */
   readonly tasks: readonly ChartTask[];
-  /** Tasks of sessions whose usage is read, drawn or not. */
+  /** Tasks of sessions whose usage is read, drawn or not, listed or not. */
   readonly metered: number;
   /** Tasks of sessions whose usage Cortex does not read, which have no usage to draw. */
   readonly unmetered: number;
@@ -39,22 +41,20 @@ export function chartTasks(
   sessions: readonly SessionReceipt[],
   max: number = CHART.maxTasks,
 ): ChartTasks {
-  const metered: ChartTask[] = [];
+  const listed: ChartTask[] = [];
+  let metered = 0;
   let unmetered = 0;
   for (const session of sessions) {
     if (!session.is_metered) {
-      unmetered += session.tasks.length;
+      unmetered += session.tasks_total;
       continue;
     }
-    for (const task of session.tasks) metered.push({ task, session });
+    metered += session.tasks_total;
+    for (const task of session.tasks) listed.push({ task, session });
   }
   // INVARIANT: deterministic (by start, then by the task's number, which is unique)
-  metered.sort((a, b) => a.task.started_at_ms - b.task.started_at_ms || a.task.seq - b.task.seq);
-  return {
-    tasks: metered.slice(Math.max(0, metered.length - max)),
-    metered: metered.length,
-    unmetered,
-  };
+  listed.sort((a, b) => a.task.started_at_ms - b.task.started_at_ms || a.task.seq - b.task.seq);
+  return { tasks: listed.slice(Math.max(0, listed.length - max)), metered, unmetered };
 }
 
 /** The horizontal place of mark `index` of `count` in a plot `widthPx` wide, inset at both ends. */

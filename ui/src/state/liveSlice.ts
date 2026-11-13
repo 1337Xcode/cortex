@@ -1,13 +1,16 @@
 // The store's live part: the live sessions as the last frame said, and the quiet refresh. A live
 // frame replaces the live state and touches nothing else, except that a frame bringing a session's
 // new position counts one more `refreshSerial`, which asks for a quiet refresh (see
-// `liveRefresh.ts`); an answer that names a file by an id the snapshot on screen holds another file
-// at counts one too, once per snapshot. The refresh reads every loader again without a loading
-// state, keeping the selected and hovered files, found again by their paths.
+// `liveRefresh.ts`); an answer or a frame that names a file by an id the snapshot on screen holds
+// another file at counts one too, once per snapshot, and so does a frame naming a file while the
+// map is empty. The refresh reads every loader again without a loading state, keeping the selected
+// and hovered files, found again by their paths; on an empty map it reads the snapshot again too,
+// so files the daemon lists after its first reading appear without a reload.
 import type { Activity } from '../api/activity';
 import { fileIdOf, type GraphSnapshot } from '../api/graph';
 import type { Health } from '../api/health';
 import type { LiveState } from '../api/live';
+import { isFrameAhead } from '../map/liveFiles';
 import type { Fetcher } from '../api/request';
 import type { MapSummary } from '../api/summary';
 import type { Warnings } from '../api/warnings';
@@ -48,12 +51,14 @@ export interface LiveSlice {
    * Asks every loader again without a loading state: the snapshot (keeping the selected and
    * hovered files, found again by their paths, and the selected file's detail shown while it is
    * read again), the summary, the selected file's detail, and the activity, warnings and health
-   * when their sections have loaded them. The receipts are not read again.
+   * when they have been loaded. The receipts are not read again. Runs on a ready map and on an
+   * empty one, which becomes ready when the snapshot read again holds files.
    */
   readonly refresh: (refreshers: Refreshers) => Promise<void>;
   /**
-   * Says an answer named a file by an id the snapshot on screen holds another file at (or none):
-   * the snapshot is older than the daemon's ids. Asks for one quiet refresh per snapshot.
+   * Says an answer named a file by an id the snapshot on screen holds another file at (or none),
+   * or named a file while the map is empty: the snapshot is older than the daemon's. Asks for one
+   * quiet refresh per snapshot (or per empty answer).
    */
   readonly noteOutOfStep: () => void;
   /** Takes a live frame: the whole live state. */
@@ -104,12 +109,21 @@ export function positionsKey(state: LiveState): string {
     .join('\n');
 }
 
+/**
+ * Whether the frame `state` says the daemon lists files the snapshot of `load` is out of step
+ * with: a file at an id that snapshot holds another file at, or any file while the map is empty.
+ */
+function isAheadOf(load: LoadState, state: LiveState): boolean {
+  if (load.status === 'ready') return isFrameAhead(load.snapshot.files, state);
+  return load.status === 'empty' && state.sessions.some((session) => session.files.length > 0);
+}
+
 /** The live part of a store built with `context`. */
 export function liveSlice({ set, get, requests, clockMs }: SliceContext): LiveSlice {
   // The last frame's positions, kept through a pause: null until the first frame.
   let lastPositions: string | null = null;
-  // The snapshot an answer last found out of step, so each snapshot asks for one refresh only.
-  let outOfStepIn: GraphSnapshot | null = null;
+  // The load an answer last found out of step, so each snapshot asks for one refresh only.
+  let outOfStepIn: LoadState | null = null;
 
   return {
     live: { status: 'connecting' },
@@ -117,7 +131,7 @@ export function liveSlice({ set, get, requests, clockMs }: SliceContext): LiveSl
 
     refresh: async (refreshers) => {
       const before = get().load;
-      if (before.status !== 'ready') return;
+      if (before.status !== 'ready' && before.status !== 'empty') return;
       const request = requests.graph.begin();
       const loads: Promise<void>[] = [get().loadSummary(refreshers.summary, { isQuiet: true })];
       if (get().activity.status !== 'idle') {
@@ -150,8 +164,8 @@ export function liveSlice({ set, get, requests, clockMs }: SliceContext): LiveSl
 
     noteOutOfStep: () => {
       const { load } = get();
-      if (load.status !== 'ready' || outOfStepIn === load.snapshot) return;
-      outOfStepIn = load.snapshot;
+      if ((load.status !== 'ready' && load.status !== 'empty') || outOfStepIn === load) return;
+      outOfStepIn = load;
       set({ refreshSerial: get().refreshSerial + 1 });
     },
 
@@ -163,6 +177,7 @@ export function liveSlice({ set, get, requests, clockMs }: SliceContext): LiveSl
         live: { status: 'open', state },
         ...(isNew ? { refreshSerial: get().refreshSerial + 1 } : {}),
       });
+      if (isAheadOf(get().load, state)) get().noteOutOfStep();
     },
 
     pauseLive: () => {

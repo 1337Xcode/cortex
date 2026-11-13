@@ -27,6 +27,7 @@ import {
   LINK_KIND_NAMES,
   OVERLAY_MARKS,
 } from '../text/vocabulary';
+import { STRENGTH_STEP } from '../theme/tokens';
 import type { ViewPaint } from '../views/paint';
 import {
   BadgeSample,
@@ -88,7 +89,7 @@ function StrengthSlider(): ReactElement {
           type="range"
           min={0}
           max={1}
-          step={0.05}
+          step={STRENGTH_STEP}
           value={minStrength}
           onChange={(event) => {
             setMinStrength(Number(event.target.value));

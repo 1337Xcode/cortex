@@ -10,7 +10,7 @@ import { areBadgesShown, badgeSpot, encodeBadges } from './badges';
 import type { FrameStyle } from './frameStyle';
 import { encodeLive, markerRadiusPx, trailOpacity } from './liveEncoding';
 import { buildScene } from './scene';
-import { defaultPaint, sevenFileSnapshot } from './testScene';
+import { defaultPaint, SEVEN_PATHS, sevenFileSnapshot } from './testScene';
 import { computeVisibility } from './visibility';
 
 const scene = buildScene(
@@ -24,12 +24,24 @@ const scene = buildScene(
 );
 const shown = computeVisibility(scene.layout, levelOfDetail(scene.layout, 1), true);
 
-function session(id: string, agent: string, files: number[]): LiveSession {
+/**
+ * A session on `files`, newest first: each an id, named by its path on the seven-file tree (or a
+ * path that tree does not hold, past its seven), or an id and the path the frame gives with it.
+ */
+function session(
+  id: string,
+  agent: string,
+  files: readonly (number | readonly [number, string])[],
+): LiveSession {
   return {
     id,
     agent,
     title: agent,
-    files: files.map((file, index) => ({ file, mode: 'read', last_ms: 1000 - index })),
+    files: files.map((entry, index) => {
+      const [file, path] =
+        typeof entry === 'number' ? [entry, SEVEN_PATHS[entry] ?? `new/f${entry}.rs`] : entry;
+      return { file, path, mode: 'read', last_ms: 1000 - index };
+    }),
   };
 }
 
@@ -112,6 +124,29 @@ describe('encodeLive', () => {
     expect(live.sessions.map((entry) => entry.id)).toEqual(['a']);
     expect(live.files).toEqual([[4]]);
     expect(live.trails.ids).toHaveLength(0);
+  });
+
+  it('marks a file where the snapshot holds its path, never at the id the frame gave', () => {
+    // The daemon's ids moved on: its 4 is c/only.rs (6 here) and its 5 a file this snapshot does
+    // not hold yet, while b/zed.rs sits at 5 here. The marker goes on c/only.rs, and the file not
+    // held is left out rather than marked on b/zed.rs.
+    const live = encodeLive(
+      scene,
+      shown,
+      [
+        session('a', 'claude', [
+          [4, 'c/only.rs'],
+          [5, 'b/new.rs'],
+        ]),
+      ],
+      colors,
+    );
+    expect(live.files).toEqual([[6]]);
+    expect(Array.from(live.markers.positions)).toEqual([
+      scene.layout.fileX[6],
+      scene.layout.fileY[6],
+    ]);
+    expect(live.stops.ids).toHaveLength(0);
   });
 
   it('marks a file at its folder while files are drawn as discs, and skips a trail step inside it', () => {

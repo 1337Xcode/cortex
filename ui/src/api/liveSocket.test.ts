@@ -97,7 +97,7 @@ describe('connectLive', () => {
     );
     sockets[0]?.receive(FRAME);
     sockets[0]?.receive(
-      '{"version":1,"sessions":[{"id":"a","agent":"claude","title":"C","files":[{"file":1,"mode":"write","last_ms":1}]}]}',
+      '{"version":1,"sessions":[{"id":"a","agent":"claude","title":"C","files":[{"file":1,"path":"a.rs","mode":"write","last_ms":1}]}]}',
     );
     sockets[0]?.receive('not json');
     expect(states).toEqual([{ version: 1, sessions: [] }]);

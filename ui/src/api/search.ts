@@ -1,6 +1,7 @@
 // Search over paths, file names and symbols: the query rules, the URL, and the guard for the
 // daemon's answer. A response is accepted only for the exact text that was asked, so a late
-// answer to an older query can never be shown as the answer to the newer one.
+// answer to an older query can never be shown as the answer to the newer one. Each result names
+// its file by id and by path, so the page can tell a file its snapshot holds at another id.
 import {
   API_VERSION,
   checkMaxLength,
@@ -10,6 +11,7 @@ import {
   readCount,
   readEnum,
   readNullableCount,
+  readPath,
   readRecord,
   readString,
   readVersion,
@@ -33,8 +35,13 @@ export type SearchKind = (typeof SEARCH_KINDS)[number];
 /** One search result: a file (no line) or a symbol in a file (with its 1-based line). */
 export interface SearchResult {
   readonly kind: SearchKind;
-  /** The graph id of the file. */
+  /**
+   * The graph id of the file, or of the file the symbol is in. Ids move when files are added, so
+   * check it against `path`.
+   */
   readonly file: number;
+  /** That file's path, as the daemon's graph lists it. */
+  readonly path: string;
   readonly name: string;
   readonly line: number | null;
 }
@@ -71,7 +78,13 @@ function parseResult(value: unknown, index: number): SearchResult {
   if (kind === 'symbol' && (line === null || line < 1)) {
     return fail('bad_shape', `${where}.line: a symbol result needs a line from 1`);
   }
-  return { kind, file: readCount(record, 'file', where), name, line };
+  return {
+    kind,
+    file: readCount(record, 'file', where),
+    path: readPath(record, 'path', where),
+    name,
+    line,
+  };
 }
 
 function answerParser(asked: string): (value: unknown) => SearchAnswer {

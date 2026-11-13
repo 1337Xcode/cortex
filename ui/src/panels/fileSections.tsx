@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/toolti
 import { fileIcon } from '../icons/fileIcons';
 import { IconSlot } from '../icons/IconSlot';
 import type { Scene } from '../map/scene';
+import { useHistoryRead } from '../state/historyRead';
 import { useMapStore, type DetailState } from '../state/store';
 import type { SectionKeyName } from '../controls/shortcuts';
 import { formatCount, formatDate } from '../text/format';
@@ -20,11 +21,11 @@ import { HISTORY_TITLE, historyNote } from '../text/historyWords';
 import { namesOfFiles } from '../text/pathNames';
 import {
   LINK_KIND_NAMES,
-  NOT_COUNTED,
   NUMBER_NAMES,
   KEPT_LINKS_NOTE,
   TOKENS_ATTRIBUTED_MEANING,
   commitsMeaning,
+  commitsValue,
   keptLinksText,
   linkMeasure,
   linkSentence,
@@ -68,19 +69,21 @@ function ExplainedNumber({ value, meaning }: { value: string; meaning: string })
 /**
  * The file's counts as a definition list; each name says exactly what it counts, and the commits
  * and tokens, whose meaning is not plain from the name, explain themselves on hover and focus. A
- * generated or vendored file's commits are not counted, and it says so instead of a 0.
+ * generated or vendored file's commits are not counted, and it says so instead of a 0; so does a
+ * file's 0 while Cortex has not read the repository's history.
  */
 export function NumbersSection({ file }: { file: GraphFile }): ReactElement {
   const idPrefix = useId();
   const summary = useMapStore((state) => state.summary);
   const limits = summary.status === 'ready' ? summary.summary.history : null;
+  const history = useHistoryRead();
   const rows: NumberRow[] = [
     { name: NUMBER_NAMES.lines, value: formatCount(file.lines), meaning: null },
     { name: NUMBER_NAMES.reads, value: formatCount(file.reads), meaning: null },
     {
       name: NUMBER_NAMES.commits,
-      value: file.commits_counted ? formatCount(file.commits) : NOT_COUNTED,
-      meaning: commitsMeaning(file, limits),
+      value: commitsValue(file, history),
+      meaning: commitsMeaning(file, limits, history),
     },
     {
       name: NUMBER_NAMES.tokens,
@@ -268,8 +271,9 @@ export function HistorySection({ detail, id }: { detail: DetailState; id: number
 }
 
 /**
- * The commits behind the file's lines under the sentence that says how many there are. A
- * component of its own, so its dates are written only once the section is open.
+ * The commits behind the file's lines under the sentence that says how many there are, each with
+ * its date and its references, which are cut to the row's width and said whole on hover and focus.
+ * A component of its own, so its dates are written only once the section is open.
  */
 function HistoryList({ detail }: { detail: FileDetail }): ReactElement {
   return (
@@ -284,8 +288,10 @@ function HistoryList({ detail }: { detail: FileDetail }): ReactElement {
               className="history-subject"
             />
             <span className="history-meta">
-              {formatDate(entry.date_s * 1000)}
-              {entry.refs === '' ? '' : ` ${visibleText(entry.refs)}`}
+              <span className="history-date">{formatDate(entry.date_s * 1000)}</span>
+              {entry.refs === '' ? null : (
+                <ClippedText text={visibleText(entry.refs)} kind="words" className="history-refs" />
+              )}
             </span>
           </li>
         ))}

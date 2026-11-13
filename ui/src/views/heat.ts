@@ -8,6 +8,7 @@
 // ln lo)), at least 1. With lo 900 and hi 29,910: 2,600 tokens gives ceil(4 x 1.061 / 3.504) =
 // ceil(1.21) = 2.
 import { countOf, formatCount } from '../text/format';
+import { TOKENS_COUNTED } from '../text/vocabulary';
 import { noneClause, positiveRange, SCALE_STEPS, scaleTones } from './scaleTones';
 import { defineView } from './view';
 
@@ -38,7 +39,7 @@ export const heatView = defineView({
     const scale =
       range === null
         ? 'No tokens have been attributed to any file yet.'
-        : `Tokens attributed (input and output, cache reads included), on a log scale from ${formatCount(range.min)} to ${formatCount(range.max)}${noneClause(none)}`;
+        : `Tokens attributed (${TOKENS_COUNTED}), on a log scale from ${formatCount(range.min)} to ${formatCount(range.max)}${noneClause(none)}`;
     return { ...sorted, isTinted: true, folderRule: 'typical', scale };
   },
 });

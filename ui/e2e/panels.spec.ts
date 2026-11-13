@@ -185,6 +185,96 @@ test.describe('a file the map does not show yet', () => {
       .click();
     await expect(filePanel(page).locator('#panel-title')).toHaveText('book.rs');
   });
+
+  test('a search result is found by its path, and one the map does not hold yet is no button', async ({
+    page,
+  }) => {
+    const graphs: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().endsWith('/api/graph')) graphs.push(request.url());
+    });
+    record = await openMap(page, smallFixture(Date.now()));
+    // The daemon added src/orders/aaa.rs, so its ids moved on: its 4 is the new file (book.rs on
+    // screen), its 5 is book.rs (mod.rs on screen).
+    await page.route(/\/api\/search\?/, (route) => {
+      const query = new URL(route.request().url()).searchParams.get('q') ?? '';
+      return route.fulfill({
+        json: {
+          version: 1,
+          query,
+          results: [
+            { kind: 'file', file: 4, path: 'src/orders/aaa.rs', name: 'aaa.rs', line: null },
+            { kind: 'symbol', file: 5, path: 'src/orders/book.rs', name: 'OrderBook', line: 12 },
+          ],
+        },
+      });
+    });
+    await page.keyboard.press('/');
+    await page.keyboard.type('o');
+    const results = page.getByRole('list', { name: 'Search results' });
+    const pending = results.locator('.search-result').first();
+    await expect(pending).toHaveJSProperty('tagName', 'P');
+    await expect(pending).toContainText('file, not on the map yet');
+    await expect(pending).toContainText('src/orders/aaa.rs');
+    // The symbol's file is book.rs, found by its path at 4, never mod.rs at the daemon's 5.
+    await expect(results.getByRole('button')).toHaveCount(1);
+    await expect(results.getByRole('button')).toHaveAccessibleName(
+      'OrderBook, symbol, src/orders/book.rs:12',
+    );
+    // Enter picks the first result the map holds.
+    await page.keyboard.press('Enter');
+    await expect(filePanel(page).locator('#panel-title')).toHaveText('book.rs');
+    // The answer found the snapshot older than the daemon's ids, so the map reads it again.
+    await expect.poll(() => graphs.length, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+  });
+
+  test('a summary the map refuses asks for the map and the summary again', async ({ page }) => {
+    const nowMs = Date.now();
+    const graphs: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().endsWith('/api/graph')) graphs.push(request.url());
+    });
+    // The summary is newer than the graph: it names a pair the map does not link.
+    const fixture = smallFixture(nowMs);
+    const summary = fixture.summary;
+    if (summary === null || typeof summary !== 'object' || Array.isArray(summary)) {
+      throw new Error('the summary is an object');
+    }
+    const ahead = { ...summary, strongest_pair: { from: 0, to: 9, commits: 40 } };
+    record = await openMap(page, { ...fixture, summary: ahead });
+    await expect(page.locator('.summary-state')).toContainText('The summary could not be loaded');
+    await expect.poll(() => graphs.length, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+  });
+});
+
+test.describe('the commits behind a file', () => {
+  test('cuts long references to the row and says them whole on hover and focus', async ({
+    page,
+  }) => {
+    const nowMs = Date.now();
+    const fixture = smallFixture(nowMs);
+    // The longest references the daemon writes: a pull request of 20 digits and 3 issue
+    // references of 100 characters, 324 characters in all.
+    const refs = `#${'9'.repeat(20)}${` ${'r'.repeat(100)}`.repeat(3)}`;
+    const detail = fileDetail(9, 'ui/view.ts', {
+      history: [
+        { subject: 'Show the long view', refs, date_s: 1762300000 },
+        { subject: 'Name the view', refs: '#7', date_s: 1761000000 },
+      ],
+    });
+    record = await openMap(page, { ...fixture, details: new Map([[9, detail]]) });
+    await searchAndPick(page, 'view.ts');
+    const panel = filePanel(page);
+    await panel.getByRole('button', { name: /^Commits behind its lines/ }).click();
+    // The long references are cut at a word before the row's end, keeping the pull request; the
+    // short ones are whole.
+    const shown = panel.locator('.history-refs').first();
+    await expect(shown).toHaveText(/^#9{20}( r+)?…$/);
+    await expect(panel.locator('.history-refs').nth(1)).toHaveText('#7');
+    await shown.focus();
+    await expect(page.getByRole('tooltip')).toHaveText(refs);
+    await expect(panel).not.toContainText('Could not load this');
+  });
 });
 
 test.describe('warnings', () => {

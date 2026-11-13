@@ -187,13 +187,20 @@ describe('the commits behind a file’s lines', () => {
     );
   });
 
-  it('say the 10 listed are the newest of 12', () => {
+  it('say the 10 listed are the newest of 12, counting the commits whose subjects Cortex holds', () => {
     const ten = Array.from({ length: 10 }, () => ({ subject: 's', refs: '', date_s: 1 }));
     expect(historyNote({ history: ten, history_total: 12, history_reader: 'on' })).toBe(
-      'The 10 newest of 12 commits behind its current lines.',
+      'The 10 newest of the 12 commits behind its current lines whose subjects Cortex holds.',
     );
     expect(historyNote({ history: ten.slice(0, 2), history_total: 2, history_reader: 'on' })).toBe(
-      'The 2 commits behind its current lines, newest first.',
+      'The 2 commits behind its current lines whose subjects Cortex holds, newest first.',
+    );
+  });
+
+  it('say none is held yet, not that none is stored, while the worker runs', () => {
+    // The daemon may hold blames whose commit subjects it has not read: none of them is held.
+    expect(historyNote({ history: [], history_total: 0, history_reader: 'on' })).toBe(
+      "No commit behind this file's current lines is held yet. Cortex reads them when a prompt or its upkeep asks about the file, and lists the 10 newest.",
     );
   });
 });

@@ -1,7 +1,9 @@
 // Serves the built page and a fixture's API to a Playwright page without a server: every request
 // to the map's origin is answered from `dist/` or the fixture, under the same `/<token>/` prefix
 // the daemon uses, and the live view's WebSocket is answered by a stand-in that sends the
-// fixture's live state on connect and whatever frames a test pushes after. Any request to another
+// fixture's live state on connect and whatever frames a test pushes after, each live file named by
+// its path from the fixture's graph as the daemon names it (unless the test gives it a path of its
+// own, as a daemon whose ids moved on would). Any request to another
 // origin is aborted and recorded, so a test can assert that nothing left the page's origin. Every
 // response carries the daemon's security headers, so the page is checked under the same content
 // security policy it runs under for real. A POST is answered as the daemon's guard and its facts
@@ -10,7 +12,13 @@
 // This proves what the browser sends; that the real daemon takes it must be checked against one.
 import { join } from 'node:path';
 import type { Page, Route, WebSocketRoute } from '@playwright/test';
-import { fileDetail, type Fixture, type FixtureSymbol, type Json } from './fixtures';
+import {
+  fileDetail,
+  type Fixture,
+  type FixtureFile,
+  type FixtureSymbol,
+  type Json,
+} from './fixtures';
 
 /** The origin and token the page is served under. */
 export const MAP_ORIGIN = 'http://127.0.0.1:47613';
@@ -86,7 +94,7 @@ export function searchFixture(fixture: Fixture, text: string): Json {
   );
   const results = found
     .slice(0, 20)
-    .map(({ kind, file, name, line }) => ({ kind, file, name, line }));
+    .map(({ kind, file, path, name, line }) => ({ kind, file, path, name, line }));
   return { version: 1, query: text, results };
 }
 
@@ -261,10 +269,44 @@ export function liveChannel(page: Page): LiveChannel {
   return channel;
 }
 
-/** Answers the page's `api/live` socket with `first`, and returns the channel that drives it. */
-async function routeLive(page: Page, first: Json): Promise<LiveChannel> {
+/** Whether `value` is a JSON object. */
+function isObject(value: Json | undefined): value is { [key: string]: Json } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A live file as the daemon writes it: with its path from `files`, unless it has one already. */
+function livePathed(entry: Json, files: readonly FixtureFile[]): Json {
+  if (!isObject(entry) || 'path' in entry || typeof entry['file'] !== 'number') return entry;
+  const file = files[entry['file']];
+  return file === undefined ? entry : { ...entry, path: file.path };
+}
+
+/**
+ * `frame` as the daemon sends it, each session's files named by their paths in `files` too (a
+ * file the graph does not hold is left without one, which the page refuses); any other value is
+ * left as it is, so a test can send a frame the daemon never would.
+ */
+function withLivePaths(frame: Json, files: readonly FixtureFile[]): Json {
+  if (!isObject(frame) || !Array.isArray(frame['sessions'])) return frame;
+  const sessions = frame['sessions'].map((session) =>
+    isObject(session) && Array.isArray(session['files'])
+      ? { ...session, files: session['files'].map((entry) => livePathed(entry, files)) }
+      : session,
+  );
+  return { ...frame, sessions };
+}
+
+/**
+ * Answers the page's `api/live` socket with `first`, and returns the channel that drives it; each
+ * frame names its files by their paths in `files` too.
+ */
+async function routeLive(
+  page: Page,
+  first: Json,
+  files: readonly FixtureFile[],
+): Promise<LiveChannel> {
   const open = new Set<WebSocketRoute>();
-  let last = JSON.stringify(first);
+  let last = JSON.stringify(withLivePaths(first, files));
   let isRefusing = false;
   let opened = 0;
   await page.routeWebSocket(/\/api\/live$/, (socket) => {
@@ -279,7 +321,7 @@ async function routeLive(page: Page, first: Json): Promise<LiveChannel> {
   });
   return {
     push: (frame) => {
-      last = typeof frame === 'string' ? frame : JSON.stringify(frame);
+      last = typeof frame === 'string' ? frame : JSON.stringify(withLivePaths(frame, files));
       for (const socket of open) socket.send(last);
     },
     closeAll: () => {
@@ -295,7 +337,7 @@ async function routeLive(page: Page, first: Json): Promise<LiveChannel> {
 
 /** Routes every request of `page`; returns the list that collects requests to other origins. */
 export async function serveFixture(page: Page, fixture: Fixture): Promise<string[]> {
-  CHANNELS.set(page, await routeLive(page, fixture.live));
+  CHANNELS.set(page, await routeLive(page, fixture.live, fixture.graph.files));
   const foreign: string[] = [];
   const bodies = { graph: JSON.stringify(fixture.graph), summary: JSON.stringify(fixture.summary) };
   const details = new Map(fixture.details);

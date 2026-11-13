@@ -4,25 +4,27 @@
 // frame drew, so the sentence names exactly the mark the pointer is on.
 import type { PickingInfo } from '@deck.gl/core';
 import type { LiveSession } from '../api/live';
+import type { HistoryRead } from '../text/historyWords';
 import { liveSentence, type NamedLiveFile } from '../text/liveWords';
 import { namesOfFiles } from '../text/pathNames';
 import type { SessionNames } from '../text/sessionNames';
 import { badgeSentence, fileSentence, folderSentence, linkSentence } from '../text/vocabulary';
 import { fileMark } from './fileEncoding';
 import { LAYER_ID, type FrameBuffers } from './layers';
+import { listedLiveFiles } from './liveFiles';
 import type { Scene } from './scene';
 
 /**
- * The files of `session` the snapshot holds, newest first, each by the name the map gives it, with
- * what the session did to it.
+ * The files of `session` the snapshot holds, found by their paths, newest first, each by the name
+ * the map gives it, with what the session did to it.
  */
 export function namedLiveFiles(session: LiveSession, scene: Scene): NamedLiveFile[] {
   const { files } = scene.snapshot;
   const names = namesOfFiles(files);
-  return session.files.flatMap((entry) => {
-    const file = files[entry.file];
-    return file === undefined ? [] : [{ name: names.nameOf(file.path), mode: entry.mode }];
-  });
+  return listedLiveFiles(session, files).map((entry) => ({
+    name: names.nameOf(entry.path),
+    mode: entry.mode,
+  }));
 }
 
 /** The sentence of the hub row `index` of the layer `layerId`, or null. */
@@ -67,10 +69,14 @@ function markerPick(
     : liveSentence(session, namedLiveFiles(session, scene), names);
 }
 
-/** What the page read when it drew the frame: the moment, and the names of its sessions. */
+/**
+ * What the page read when it drew the frame: the moment, the names of its sessions, and whether
+ * Cortex has read the repository's history its commit counts come from.
+ */
 export interface Reading {
   readonly nowMs: number;
   readonly sessionNames: SessionNames;
+  readonly history: HistoryRead;
 }
 
 /** The explanation of what was picked, or null for empty canvas. */
@@ -87,7 +93,9 @@ export function explainPick(
   switch (layerId) {
     case LAYER_ID.files: {
       const file = files[frame.files.ids[info.index] ?? -1];
-      return file === undefined ? null : fileSentence(file, fileMark(file, nowMs, scene.hasReads));
+      return file === undefined
+        ? null
+        : fileSentence(file, fileMark(file, nowMs, scene.hasReads), reading.history);
     }
     case LAYER_ID.badges: {
       const file = files[frame.badges.ids[info.index] ?? -1];

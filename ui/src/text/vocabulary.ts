@@ -6,6 +6,7 @@ import type { GraphFile, GraphLink, LinkKind } from '../api/graph';
 import type { HistoryLimits } from '../api/summary';
 import type { FileMark } from '../map/fileEncoding';
 import { countOf, formatCount } from './format';
+import type { HistoryRead } from './historyWords';
 
 /** What the picture is, said once on first open and again from the legend. */
 export const INTRO_SENTENCE =
@@ -112,9 +113,11 @@ export const NUMBER_NAMES = {
   tokens: 'Tokens attributed',
 } as const;
 
+/** What the attributed tokens count, as a short clause: every token of the responses counted. */
+export const TOKENS_COUNTED = 'input, output, cache writes and cache reads';
+
 /** What the attributed tokens count. */
-export const TOKENS_ATTRIBUTED_MEANING =
-  'Tokens of agent turns whose last read or edit was this file: the input and output tokens of those responses, cache reads included.';
+export const TOKENS_ATTRIBUTED_MEANING = `Tokens of agent turns whose last read or edit was this file: every token of those responses, ${TOKENS_COUNTED}.`;
 
 /** Why a generated or vendored file shows no commit count. */
 export const COMMITS_NOT_COUNTED = 'Cortex does not count commits of generated or vendored files.';
@@ -123,17 +126,33 @@ export const COMMITS_NOT_COUNTED = 'Cortex does not count commits of generated o
 export const NOT_COUNTED = 'Not counted';
 
 /**
+ * A file's commit count as the panel shows it: the count, "Not counted" for a generated or vendored
+ * file, or, for a count of 0 while Cortex has not read the repository's history, what `history`
+ * shows instead ("Not read yet"), since that 0 says nothing.
+ */
+export function commitsValue(
+  file: Pick<GraphFile, 'commits' | 'commits_counted'>,
+  history: HistoryRead,
+): string {
+  if (!file.commits_counted) return NOT_COUNTED;
+  if (file.commits === 0 && history.kind === 'unread') return history.value;
+  return formatCount(file.commits);
+}
+
+/**
  * What a file's commit count counts: only the history Cortex reads, so a count of 0 says no commit
- * it read changed the file, never that the file was never committed. Without the limits (the
- * summary not loaded yet) it says so without them. A generated or vendored file's commits are not
- * counted at all, and it says that instead.
+ * it read changed the file, never that the file was never committed; and while Cortex has not read
+ * the history, a 0 says why instead. Without the limits (the summary not loaded yet) it says so
+ * without them. A generated or vendored file's commits are not counted at all, and it says that.
  */
 export function commitsMeaning(
   file: Pick<GraphFile, 'commits' | 'commits_counted'>,
   limits: HistoryLimits | null,
+  history: HistoryRead,
 ): string {
   if (!file.commits_counted) return COMMITS_NOT_COUNTED;
   const { commits } = file;
+  if (commits === 0 && history.kind === 'unread') return history.why;
   const read =
     limits === null
       ? 'Commits Cortex read that changed this file'
@@ -147,18 +166,25 @@ export function folderLabel(name: string, fileCount: number | null): string {
   return fileCount === null ? name : `${name} · ${countOf(fileCount, 'file')}`;
 }
 
-/** What a file's circle says, in one sentence with its path and numbers, for hover. */
-export function fileSentence(file: GraphFile, mark: FileMark): string {
+/** The commits part of a file's hover sentence. */
+function commitsClause(file: GraphFile, history: HistoryRead): string {
+  // Zero counts only the commits Cortex read, so it is never said as "never changed", and says
+  // nothing before Cortex has read the history; a generated or vendored file's commits are not
+  // counted at all.
+  if (!file.commits_counted) return 'its commits not counted (generated or vendored)';
+  if (file.commits > 0) return `changed in ${countOf(file.commits, 'commit')}`;
+  return history.kind === 'unread' ? history.clause : 'not changed in the commits Cortex read';
+}
+
+/**
+ * What a file's circle says, in one sentence with its path and numbers, for hover; `history` says
+ * whether Cortex has read the repository's history its commit count comes from.
+ */
+export function fileSentence(file: GraphFile, mark: FileMark, history: HistoryRead): string {
   const parts = [
     `${file.path}: ${countOf(file.lines, 'line')}`,
     `read ${countOf(file.reads, 'time')} by agents`,
-    // Zero counts only the commits Cortex read, so it is never said as "never changed"; a
-    // generated or vendored file's commits are not counted at all.
-    !file.commits_counted
-      ? 'its commits not counted (generated or vendored)'
-      : file.commits === 0
-        ? 'not changed in the commits Cortex read'
-        : `changed in ${countOf(file.commits, 'commit')}`,
+    commitsClause(file, history),
   ];
   const state = mark === 'plain' ? '' : ` ${MARK_NAMES[mark]}.`;
   return `${parts.join(', ')}.${state}`;

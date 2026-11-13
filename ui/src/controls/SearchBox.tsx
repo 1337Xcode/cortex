@@ -1,13 +1,17 @@
 // The search box at the top: a path, a file name or a symbol. `/` focuses it from anywhere; Enter
-// flies to the first result and selects it; the arrow keys walk the results; Escape closes them.
+// flies to the first result the map holds and selects it; the arrow keys walk the results; Escape
+// closes them. A result whose file the map does not hold yet is a row of text with its whole path
+// and "not on the map yet", never a button that would open another file.
 import { useId, useRef, type KeyboardEvent, type ReactElement, type RefObject } from 'react';
 import { visibleText } from '../api/guard';
 import { ClippedLabel } from '../components/Clipped';
 import { fileIcon } from '../icons/fileIcons';
 import { IconSlot } from '../icons/IconSlot';
 import type { SearchResult } from '../api/search';
+import { namedPath } from '../map/namedFile';
 import type { Scene } from '../map/scene';
-import { useSearch, type SearchState } from './useSearch';
+import { namedFileNote, namedFileSentence } from '../text/namedFileWords';
+import { useSearch, type FoundResult, type SearchState } from './useSearch';
 
 function stateLine(state: SearchState): string | null {
   switch (state.status) {
@@ -26,30 +30,71 @@ function stateLine(state: SearchState): string | null {
   }
 }
 
-function ResultButton(props: {
-  result: SearchResult;
-  path: string;
-  onChoose: (result: SearchResult) => void;
+/** What a result is, as its row names it. */
+function kindWord(result: SearchResult): string {
+  return result.kind === 'symbol' ? 'symbol' : 'file';
+}
+
+/**
+ * One result: a button that flies to its file when the map holds it, else a row of text naming
+ * the file by its whole path and saying it is not on the map yet.
+ */
+function ResultRow(props: {
+  found: FoundResult;
+  onChoose: (id: number) => void;
   onKey: (event: KeyboardEvent<HTMLButtonElement>) => void;
 }): ReactElement {
-  const { result, path } = props;
+  const { result, named } = props.found;
+  const path = namedPath(named) ?? result.path;
   const where = result.line === null ? path : `${path}:${result.line}`;
+  const note = namedFileNote(named);
+  const name = visibleText(result.name);
+  const body = (
+    <>
+      <IconSlot icon={fileIcon(path)} />
+      <ClippedLabel text={name} kind="words" className="search-result-name" />
+      <span className="search-result-kind">
+        {note === null ? kindWord(result) : `${kindWord(result)}, ${note}`}
+      </span>
+      <ClippedLabel text={where} kind="path" className="search-result-path" />
+    </>
+  );
+  if (named.kind !== 'listed') {
+    return (
+      <p className="search-result" data-listed="false">
+        <span aria-hidden="true" className="contents">
+          {body}
+        </span>
+        <span className="visually-hidden">
+          {`${name}, ${kindWord(result)}, ${where}. ${namedFileSentence(named) ?? ''}`}
+        </span>
+      </p>
+    );
+  }
+  const id = named.id;
   return (
     <button
       type="button"
       className="search-result"
-      aria-label={`${visibleText(result.name)}, ${result.kind === 'symbol' ? 'symbol' : 'file'}, ${where}`}
+      aria-label={`${name}, ${kindWord(result)}, ${where}`}
       onClick={() => {
-        props.onChoose(result);
+        props.onChoose(id);
       }}
       onKeyDown={props.onKey}
     >
-      <IconSlot icon={fileIcon(path)} />
-      <ClippedLabel text={visibleText(result.name)} kind="words" className="search-result-name" />
-      <span className="search-result-kind">{result.kind === 'symbol' ? 'symbol' : 'file'}</span>
-      <ClippedLabel text={where} kind="path" className="search-result-path" />
+      {body}
     </button>
   );
+}
+
+/** A result's key in the list: what it is, where, and its name. */
+function resultKey(result: SearchResult): string {
+  return `${result.kind}:${result.path}:${result.name}:${result.line ?? 0}`;
+}
+
+/** The index of `found`'s button among the results' buttons (the rows the map holds). */
+function buttonIndex(results: readonly FoundResult[], found: FoundResult): number {
+  return results.filter((entry) => entry.named.kind === 'listed').indexOf(found);
 }
 
 /** Moves focus among the result buttons, or back to the input above the first. */
@@ -82,7 +127,7 @@ export function SearchBox({
   const inputId = useId();
   const listId = useId();
   const line = stateLine(search.state);
-  const results = search.state.status === 'ready' ? search.state.results : [];
+  const results = search.found;
   const isShown = search.isListOpen && (results.length > 0 || line !== null);
 
   const onInputKey = (event: KeyboardEvent<HTMLInputElement>): void => {
@@ -152,13 +197,12 @@ export function SearchBox({
           </p>
         )}
         <ul className="search-results" ref={listRef} aria-label="Search results">
-          {results.map((result, index) => (
-            <li key={`${result.kind}:${result.file}:${result.name}:${result.line ?? 0}`}>
-              <ResultButton
-                result={result}
-                path={scene.snapshot.files[result.file]?.path ?? ''}
+          {results.map((found) => (
+            <li key={resultKey(found.result)}>
+              <ResultRow
+                found={found}
                 onChoose={search.choose}
-                onKey={onResultKey(index)}
+                onKey={onResultKey(buttonIndex(results, found))}
               />
             </li>
           ))}

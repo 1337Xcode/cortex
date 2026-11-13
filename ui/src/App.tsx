@@ -2,8 +2,10 @@
 // search box and the summary strip on top, the overview panel on the left and the selected file's
 // panel on the right. The canvas waits for the fonts as well, so no label is drawn in a fallback
 // font. Loading, a failure and an empty map each get a sentence that says what it means and what to
-// do next. While the map is empty the page asks whether Cortex is still reading the repository,
-// and once it has finished, asks for the map again.
+// do next. It asks the daemon's health once at the start too, which says whether Cortex has read
+// the repository's history that commit counts come from. While the map is empty the page asks
+// whether Cortex is still reading the repository, and once it has finished, asks for the map
+// again; a live frame naming a file, or any quiet refresh, asks for it again later too.
 import { useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react';
 import { fetchGraph, type GraphSnapshot } from './api/graph';
 import { fetchHealth } from './api/health';
@@ -260,19 +262,25 @@ function PageState({ load }: { load: Exclude<LoadState, { status: 'ready' }> }):
   );
 }
 
-/** Fetches the snapshot and the summary once on mount and shows the map or its state. */
+/**
+ * Fetches the snapshot, the summary and the daemon's health once on mount and shows the map or its
+ * state.
+ */
 export function App(): ReactElement {
   const load = useMapStore((state) => state.load);
   const loadGraph = useMapStore((state) => state.loadGraph);
   const loadSummary = useMapStore((state) => state.loadSummary);
+  const loadHealth = useMapStore((state) => state.loadHealth);
   const cancelLoad = useMapStore((state) => state.cancelLoad);
   const areFontsSettled = useFontsSettled();
 
   useEffect(() => {
     void loadGraph(fetchGraph);
     void loadSummary(fetchSummary);
+    // Quietly: the health section shows it as it arrives, without a loading state of its own.
+    void loadHealth(fetchHealth, { isQuiet: true });
     return cancelLoad;
-  }, [loadGraph, loadSummary, cancelLoad]);
+  }, [loadGraph, loadSummary, loadHealth, cancelLoad]);
   useRecheckWhileEmpty(load.status);
   useLiveView();
 

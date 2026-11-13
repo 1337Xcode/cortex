@@ -2,7 +2,9 @@
 // that fit whole, in full or short, with the files they name as buttons that fly to them (named
 // as the map names its files, whole on hover). It reports which sentences it shows in full; the
 // overview panel's "At a glance" holds the others, so each sentence is on the page once in full.
-// Its loading and error states say so in words.
+// Its loading and error states say so in words. A summary the snapshot on screen refuses (it names
+// a pair of files the map does not link) comes from a newer moment of the store than the snapshot,
+// so the strip asks the map to read its data again, as the activity and the warnings do.
 import {
   useEffect,
   useLayoutEffect,
@@ -103,6 +105,15 @@ export function summaryText(summary: SummaryState, snapshot: GraphSnapshot): Sum
   return summarySentences(summary.summary, snapshot);
 }
 
+/**
+ * Whether the summary arrived but the snapshot on screen refuses it (`text` is what it made of
+ * it): the two come from different moments of the store, and reading both again agrees them. A
+ * summary that failed to load is not out of step.
+ */
+export function isSummaryOutOfStep(summary: SummaryState, text: SummaryText | null): boolean {
+  return summary.status === 'ready' && text !== null && !text.ok;
+}
+
 /** The sentences that fit, on one line; `onFull` hears which of them it shows in full. */
 function StripSentences({
   sentences,
@@ -154,13 +165,18 @@ export function SummaryStrip({
   onFull: (keys: string) => void;
 }): ReactElement {
   const summary = useMapStore((state) => state.summary);
+  const noteOutOfStep = useMapStore((state) => state.noteOutOfStep);
   // One array per summary and snapshot, so the strip refits only when they change.
   const text = useMemo(() => summaryText(summary, snapshot), [summary, snapshot]);
   const names = namesOfFiles(snapshot.files);
   const isShown = text?.ok === true;
+  const isBehind = isSummaryOutOfStep(summary, text);
   useEffect(() => {
     if (!isShown) onFull('');
   }, [isShown, onFull]);
+  useEffect(() => {
+    if (isBehind) noteOutOfStep();
+  }, [isBehind, noteOutOfStep, snapshot]);
   return (
     <section className="summary" aria-label="Summary">
       {text === null ? (

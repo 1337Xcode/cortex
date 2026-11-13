@@ -589,6 +589,9 @@ export const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** The link strength threshold the map opens with, from 0 to 1. */
 export const DEFAULT_MIN_STRENGTH = 0.25;
 
+/** How far one step of the legend's strength slider moves the threshold. */
+export const STRENGTH_STEP = 0.05;
+
 /** How long the search box waits after the last key before asking, in milliseconds. */
 export const SEARCH_DEBOUNCE_MS = 120;
 

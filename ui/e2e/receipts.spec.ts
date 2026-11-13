@@ -7,6 +7,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   coldFixture,
+  longReceipts,
   shortReceipts,
   shortReceiptsWithComparison,
   smallFixture,
@@ -121,6 +122,26 @@ test('the chart explains each task in a sentence, read with the keyboard', async
   await expect(readout).toContainText('Task 101 (success)');
   // Each plot draws one mark a task.
   await expect(section.locator('.chart-svg').first().locator('circle')).toHaveCount(4);
+  expect(record.errors).toEqual([]);
+});
+
+test('a session of more tasks than the daemon lists counts them all and says the chart is cut', async ({
+  page,
+}) => {
+  const record = await openMap(page, { ...smallFixture(Date.now()), receipts: longReceipts() });
+  const section = await openReceipts(page);
+  // The daemon listed the newest 200 of 250 tasks; the session's line counts all 250.
+  await expect(section.locator('.receipt-meta').first()).toHaveText(
+    'Started 2026-11-10 09:00 UTC, 250 tasks.',
+  );
+  await expect(section.getByTestId('receipts-chart').locator('.section-note')).toHaveText(
+    'The newest 60 of 250 tasks, oldest on the left. Point at a mark or use the arrow keys to read one.',
+  );
+  // The newest task, 250, started 250 minutes after 09:00: 13:10.
+  await expect(section.getByTestId('receipts-readout')).toContainText(
+    'Task 250 (success), started 2026-11-10 13:10 UTC: 1 turn, 1,100 input tokens',
+  );
+  await expect(section.locator('.chart-svg').first().locator('circle')).toHaveCount(60);
   expect(record.errors).toEqual([]);
 });
 

@@ -1,7 +1,8 @@
 // Tests for the quiet refresh: a live frame that brings a session's new position counts once, a
 // burst of them becomes one quiet snapshot load after the settle time, refreshes keep their gap,
 // the selected and hovered files and the open detail survive a refresh that moves their ids, an
-// answer that finds the snapshot out of step asks once, and a large map waits to be asked.
+// answer or a frame that finds the snapshot out of step asks once, an empty map is read again when
+// a frame names a file, and a large map waits to be asked.
 import { describe, expect, it } from 'vitest';
 import type { FileDetail } from '../api/file';
 import type { GraphSnapshot } from '../api/graph';
@@ -21,8 +22,15 @@ function snapshotOf(count: number): GraphSnapshot {
   return { version: 1, files, links: [] };
 }
 
-/** A frame with one session whose newest position is `file` at `lastMs`. */
-function frame(file: number, lastMs: number): LiveState {
+/**
+ * A frame with one session whose newest position is `file` at `lastMs`, named by `path` (by
+ * default the path `snapshotOf` gives that id).
+ */
+function frame(
+  file: number,
+  lastMs: number,
+  path = `f${String(file).padStart(6, '0')}.rs`,
+): LiveState {
   return {
     version: 1,
     sessions: [
@@ -30,7 +38,7 @@ function frame(file: number, lastMs: number): LiveState {
         id: 's1',
         agent: 'claude',
         title: 'Claude Code',
-        files: [{ file, mode: 'read', last_ms: lastMs }],
+        files: [{ file, path, mode: 'read', last_ms: lastMs }],
       },
     ],
   };
@@ -259,5 +267,51 @@ describe('the quiet refresh', () => {
     store.getState().noteOutOfStep();
     expect(store.getState().refreshSerial).toBe(2);
     stop();
+  });
+
+  it('asks for one quiet refresh when a frame names a file at an id the snapshot holds another at', async () => {
+    const store = createMapStore(() => NOW_MS);
+    await store.getState().loadGraph(() => Promise.resolve({ ok: true, value: snapshotOf(3) }));
+    // The first frame brings no new position, but its file 1 is f000002.rs, which the snapshot
+    // holds at 2: the daemon's ids moved on.
+    store.getState().takeLive(frame(1, 10));
+    expect(store.getState().refreshSerial).toBe(0);
+    store.getState().takeLive(frame(1, 10, 'f000002.rs'));
+    expect(store.getState().refreshSerial).toBe(1);
+    store.getState().takeLive(frame(1, 10, 'f000002.rs'));
+    expect(store.getState().refreshSerial).toBe(1);
+  });
+
+  it('reads an empty map again when a frame names a file, and shows the files it then holds', async () => {
+    const store = createMapStore(() => NOW_MS);
+    const empty: GraphSnapshot = { version: 1, files: [], links: [] };
+    await store.getState().loadGraph(() => Promise.resolve({ ok: true, value: empty }));
+    expect(store.getState().load.status).toBe('empty');
+    const timers = fakeTimers();
+    const { refreshers, graphLoads } = counting(snapshotOf(2));
+    const stop = startLiveRefresh(store, refreshers, timers);
+    // A first frame names a file: the daemon lists files the empty map does not.
+    store.getState().takeLive(frame(0, 1));
+    expect(store.getState().refreshSerial).toBe(1);
+    const replaced = snapshotReplaced(store);
+    timers.advance(REFRESH.settleMs);
+    expect(graphLoads()).toBe(1);
+    await replaced;
+    const { load } = store.getState();
+    expect(load.status === 'ready' ? load.snapshot.files.map((file) => file.path) : load).toEqual([
+      'f000000.rs',
+      'f000001.rs',
+    ]);
+    stop();
+  });
+
+  it('keeps an empty map empty when the snapshot read again is still empty', async () => {
+    const store = createMapStore(() => NOW_MS);
+    const empty: GraphSnapshot = { version: 1, files: [], links: [] };
+    await store.getState().loadGraph(() => Promise.resolve({ ok: true, value: empty }));
+    const { refreshers, graphLoads } = counting(empty);
+    await store.getState().refresh(refreshers);
+    expect(graphLoads()).toBe(1);
+    expect(store.getState().load).toEqual({ status: 'empty' });
   });
 });

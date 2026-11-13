@@ -8,6 +8,7 @@ import { ClippedText } from '../components/Clipped';
 import { agentIcon } from '../icons/agentIcons';
 import { IconSlot } from '../icons/IconSlot';
 import { agentFamily } from '../map/agents';
+import { listedLiveFiles } from '../map/liveFiles';
 import { namedLiveFiles } from '../map/mapTooltip';
 import type { Scene } from '../map/scene';
 import { useSessionNames } from '../state/sessionNames';
@@ -32,7 +33,10 @@ function AgentMark({ agent }: { agent: string }): ReactElement {
   );
 }
 
-/** One session's row: a button to its newest file the map holds, or plain text without one. */
+/**
+ * One session's row: a button to its newest file the map holds at the path the frame gave, or
+ * plain text without one.
+ */
 function SessionRow({
   session,
   scene,
@@ -44,8 +48,7 @@ function SessionRow({
 }): ReactElement {
   const files = namedLiveFiles(session, scene);
   const sentence = liveSentence(session, files, names);
-  const newest = session.files.find((entry) => entry.file < scene.snapshot.files.length);
-  const newestPath = newest === undefined ? '' : (scene.snapshot.files[newest.file]?.path ?? '');
+  const [newest] = listedLiveFiles(session, scene.snapshot.files);
   if (newest === undefined) {
     return (
       <p className="live-row">
@@ -56,10 +59,10 @@ function SessionRow({
   }
   return (
     <FileRow
-      file={newest.file}
+      file={newest.id}
       name={{
         lead: sessionLead(session, newest.mode, names),
-        path: namesOfFiles(scene.snapshot.files).nameOf(newestPath),
+        path: namesOfFiles(scene.snapshot.files).nameOf(newest.path),
       }}
       measure={null}
       sentence={sentence}

@@ -1,7 +1,7 @@
 // Tests for the receipts chart's data and geometry, with places worked by hand: a plot 276 px wide
 // and 72 px tall, its marks inset 12 px, so they spread over 252 px across and 48 px up.
 import { describe, expect, it } from 'vitest';
-import type { SessionReceipt, TaskReceipt } from '../api/receipts';
+import { MAX_TASKS_SHOWN, type SessionReceipt, type TaskReceipt } from '../api/receipts';
 import { CHART } from '../theme/tokens';
 import { chartTasks, nearestIndex, xOf, yOf } from './taskChart';
 
@@ -27,7 +27,13 @@ function task(seq: number, startedMs: number): TaskReceipt {
   };
 }
 
-function session(id: string, isMetered: boolean, tasks: TaskReceipt[]): SessionReceipt {
+/** A session listing `tasks`, of `total` in all (all of them by default). */
+function session(
+  id: string,
+  isMetered: boolean,
+  tasks: TaskReceipt[],
+  total = tasks.length,
+): SessionReceipt {
   const nothing = task(0, 0).usage;
   return {
     session_id: id,
@@ -39,11 +45,13 @@ function session(id: string, isMetered: boolean, tasks: TaskReceipt[]): SessionR
     subagents: 0,
     tool_calls: 0,
     tasks,
+    tasks_total: total,
     outside_tasks: nothing,
     outside_tool_calls: 0,
     total: nothing,
     compactions_left_out: 0,
     cache_breaks: [],
+    cache_breaks_total: 0,
     primer_tokens: 0,
     injected_tokens: 0,
   };
@@ -66,6 +74,20 @@ describe('chartTasks', () => {
   it('keeps the newest when there are more than it draws', () => {
     expect(chartTasks(sessions, 2).tasks.map(({ task: entry }) => entry.seq)).toEqual([6, 4]);
     expect(CHART.maxTasks).toBeGreaterThan(0);
+  });
+
+  it('counts every task of a session the daemon cut to its newest, not only those listed', () => {
+    // Session a lists its 2 newest of 250 tasks, session b (not read) 2 of 230: 250 and 230.
+    const cut = [
+      session('a', true, [task(249, 100), task(250, 400)], 250),
+      session('b', false, [task(7, 200), task(8, 300)], 230),
+    ];
+    const drawn = chartTasks(cut);
+    expect([drawn.tasks.length, drawn.metered, drawn.unmetered]).toEqual([2, 250, 230]);
+  });
+
+  it('draws no more than the daemon lists of one session, so it draws the newest of all', () => {
+    expect(CHART.maxTasks).toBeLessThanOrEqual(MAX_TASKS_SHOWN);
   });
 });
 

@@ -8,15 +8,16 @@ function answer(overrides: Record<string, unknown> = {}): Record<string, unknown
     version: 1,
     query: 'order',
     results: [
-      { kind: 'file', file: 12, name: 'orders.rs', line: null },
-      { kind: 'symbol', file: 12, name: 'OrderBook', line: 40 },
+      { kind: 'file', file: 12, path: 'src/orders.rs', name: 'orders.rs', line: null },
+      { kind: 'symbol', file: 12, path: 'src/orders.rs', name: 'OrderBook', line: 40 },
     ],
     ...overrides,
   };
 }
 
+/** An answer of one result, with a path unless `result` sets its own (or `undefined` for none). */
 function withResult(result: Record<string, unknown>): Record<string, unknown> {
-  return answer({ results: [result] });
+  return answer({ results: [{ path: 'a.rs', ...result }] });
 }
 
 describe('query rules', () => {
@@ -47,6 +48,7 @@ describe('parseSearch accepts', () => {
 const TWENTY_ONE = Array.from({ length: 21 }, (_, i) => ({
   kind: 'file',
   file: i,
+  path: `f${i}.rs`,
   name: `f${i}.rs`,
   line: null,
 }));
@@ -72,6 +74,16 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
   ],
   ['a symbol at line 0', withResult({ kind: 'symbol', file: 1, name: 'A', line: 0 }), 'bad_shape'],
   ['a missing line', withResult({ kind: 'file', file: 1, name: 'a' }), 'bad_shape'],
+  [
+    'a missing path',
+    withResult({ kind: 'file', file: 1, path: undefined, name: 'a', line: null }),
+    'bad_shape',
+  ],
+  [
+    'a path out of the repository',
+    withResult({ kind: 'file', file: 1, path: '../a.rs', name: 'a', line: null }),
+    'bad_shape',
+  ],
 ];
 
 describe('parseSearch rejects', () => {

@@ -1,14 +1,16 @@
 // Encodes the live sessions: for each, a diamond (a shape no file or folder has) around its newest
 // file in its agent's colour, and a trail back through the files it worked on before, each step
 // fainter than the one after it. A file drawn inside a folder (zoomed out) is marked at that
-// folder. Sessions on the same spot draw nested diamonds, each a little larger. Files the snapshot
-// does not hold (the index changed since the map loaded) are left out. Live state never moves the
+// folder. Sessions on the same spot draw nested diamonds, each a little larger. A file is marked
+// only where the snapshot holds the path the frame gave; one it does not hold (the index changed
+// since the map loaded) is left out, never marked at another file's id. Live state never moves the
 // camera or the layout: it only adds these marks over what is drawn.
 import { MAX_LIVE_FILES, type LiveSession } from '../api/live';
 import { CANVAS_SIZE, OPACITY, type ThemeColors } from '../theme/tokens';
 import { rgbaOf } from '../theme/oklch';
 import { agentFamily } from './agents';
 import { writeRgba } from './frameStyle';
+import { listedLiveFiles } from './liveFiles';
 import type { HubBuffers } from './hubEncoding';
 import type { LineBuffers } from './linkEncoding';
 import type { Scene } from './scene';
@@ -111,12 +113,11 @@ function anchorsOf(
   visibility: Visibility,
   sessions: readonly LiveSession[],
 ): { drawn: LiveSession[]; files: number[][]; anchors: Anchor[][] } {
-  const fileCount = scene.snapshot.files.length;
   const drawn: LiveSession[] = [];
   const files: number[][] = [];
   const anchors: Anchor[][] = [];
   for (const session of sessions) {
-    const known = session.files.map((entry) => entry.file).filter((id) => id < fileCount);
+    const known = listedLiveFiles(session, scene.snapshot.files).map((entry) => entry.id);
     if (known.length === 0) continue;
     drawn.push(session);
     files.push(known);

@@ -31,10 +31,29 @@ test.afterEach(() => {
   expect(record.foreign, 'requests to other origins').toEqual([]);
 });
 
-/** A frame of one Claude Code session whose files, newest first, are `files`. */
+/** A frame of one Claude Code session whose files, newest first, are `files`, by their paths. */
 function claudeOn(files: readonly number[]): Json {
-  const pairs = files.map((file, index): [number, string] => [file, index === 0 ? 'edit' : 'read']);
-  return { version: 1, sessions: [liveSession('3f2a9c1e', AGENTS.claude, pairs, NOW_MS)] };
+  return claudeAt(files.map((file) => [file, FIXTURE.graph.files[file]?.path ?? '']));
+}
+
+/** A frame of one Claude Code session on `files`, newest first, each an id and its path. */
+function claudeAt(files: readonly (readonly [number, string])[]): Json {
+  return {
+    version: 1,
+    sessions: [
+      {
+        id: '3f2a9c1e',
+        agent: AGENTS.claude.name,
+        title: AGENTS.claude.title,
+        files: files.map(([file, path], index) => ({
+          file,
+          path,
+          mode: index === 0 ? 'edit' : 'read',
+          last_ms: NOW_MS - index * 60_000,
+        })),
+      },
+    ],
+  };
 }
 
 /** The 50-pixel square around file `id` where the fitted map draws it. */
@@ -85,6 +104,31 @@ test('frames move the marker from file to file and never move the camera', async
   // The marker left book.rs; only its trail's faint dot stays there.
   expect(await rose(page, book)).toBeLessThan(30);
   await expect(page.getByTestId('map-status')).toHaveText('No file is highlighted.');
+});
+
+test('a marker goes on the file whose path the frame names, never on the file at its id', async ({
+  page,
+}) => {
+  // The daemon's ids moved on: its 6 is book.rs, which this map holds at 4 (payment.rs is its 6).
+  record = await openMap(page, { ...FIXTURE, live: claudeAt([[6, 'src/orders/book.rs']]) });
+  const book = await around(page, 4);
+  const payment = await around(page, 6);
+  await expect.poll(() => rose(page, book)).toBeGreaterThan(30);
+  expect(await rose(page, payment)).toBe(0);
+  const section = page.getByTestId('overview-live');
+  await expect(section.getByRole('listitem')).toHaveText(['Claude Code 3f2a… editing book.rs'], {
+    useInnerText: true,
+  });
+  // A file the map does not hold yet, at an id it holds payment.rs at: no marker anywhere.
+  liveChannel(page).push(claudeAt([[6, 'src/orders/new.rs']]));
+  await expect.poll(() => rose(page, book)).toBe(0);
+  expect(await rose(page, payment)).toBe(0);
+  // The row is text, no button; its sentence is cut to the row and said whole to screen readers.
+  await expect(section.getByRole('listitem').locator('button')).toHaveCount(0);
+  await expect(section.locator('.live-row-text')).toHaveAttribute(
+    'aria-label',
+    'Claude Code session 3f2a… is working on files the map does not show yet.',
+  );
 });
 
 test('a marker explains its session under the pointer', async ({ page }) => {

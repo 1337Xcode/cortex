@@ -5,9 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ApiErrorCode } from './guard';
 import {
   fetchReceipts,
-  MAX_CACHE_BREAKS_PER_SESSION,
+  MAX_CACHE_BREAKS_SHOWN,
   MAX_RECEIPT_SESSIONS,
-  MAX_TASKS_PER_SESSION,
+  MAX_TASKS_SHOWN,
   parseReceipts,
 } from './receipts';
 
@@ -47,9 +47,45 @@ function task(seq: number, startedMs: number, turns: number, extra: Body = {}): 
 /**
  * One session of two tasks: 3 and 2 turns, 1 turn outside them, 6 in total; input 300 a task
  * (100 + 200 + 0) and 50 outside, 650 in total (250 + 400 + 0); 2 tool calls a task and 1
- * outside, 5 in total; 30 injected tokens a task and a 100-token primer, 160 in total.
+ * outside, 5 in total; 30 injected tokens a task and a 100-token primer, 160 in total. Its totals
+ * of tasks and cache breaks are those listed, unless `extra` sets them.
  */
 function session(extra: Body = {}): Body {
+  const body = sessionBody(extra);
+  const { tasks, cache_breaks: breaks } = body;
+  return {
+    tasks_total: Array.isArray(tasks) ? tasks.length : 0,
+    cache_breaks_total: Array.isArray(breaks) ? breaks.length : 0,
+    ...body,
+  };
+}
+
+/**
+ * A session of 250 tasks of which the daemon lists the newest 200 (numbers 51 to 250), each of 1
+ * turn, 2 tool calls and 30 injected tokens, and 260 cache breaks of which it lists 200. Every
+ * task counts in the totals: 250 turns and 1 outside them, 251; 500 tool calls and 1 outside,
+ * 501; 7,500 injected tokens and a 100-token primer, 7,600.
+ */
+function cutSession(extra: Body = {}): Body {
+  return session({
+    tasks: Array.from({ length: 200 }, (_, i) => task(51 + i, 1_100_000 + i * 1000, 1)),
+    tasks_total: 250,
+    total: tally(251, 25_050, 50_000, 0),
+    tool_calls: 501,
+    injected_tokens: 7600,
+    cache_breaks: Array.from({ length: 200 }, (_, i) => ({
+      session_id: 'sess-1',
+      turn: i + 1,
+      at_ms: 1_600_000 + i,
+      cause: null,
+    })),
+    cache_breaks_total: 260,
+    ...extra,
+  });
+}
+
+/** The fields of `session`, before its totals of tasks and cache breaks. */
+function sessionBody(extra: Body): Body {
   return {
     session_id: 'sess-1',
     agent: 'claude',
@@ -137,6 +173,11 @@ describe('parseReceipts accepts', () => {
       cache_breaks: [],
     });
     expect(parseReceipts(receipts({ sessions: [codex] })).ok).toBe(true);
+  });
+
+  it('a session cut to its newest 200 tasks and cache breaks, its totals counting every one', () => {
+    const cut = receipts({ sessions: [cutSession()] });
+    expect(parseReceipts(cut)).toEqual({ ok: true, value: cut });
   });
 
   it('an amount past 2^53 picodollars, which arrives whole but rounded', () => {
@@ -331,21 +372,56 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
     'bad_range',
   ],
   [
-    `more than ${MAX_TASKS_PER_SESSION} tasks in a session`,
+    `more than ${MAX_TASKS_SHOWN} tasks in a session`,
     receipts({
-      sessions: [session({ tasks: Array.from({ length: MAX_TASKS_PER_SESSION + 1 }, () => ({})) })],
+      sessions: [session({ tasks: Array.from({ length: MAX_TASKS_SHOWN + 1 }, () => ({})) })],
     }),
     'bad_range',
   ],
   [
-    `more than ${MAX_CACHE_BREAKS_PER_SESSION} cache breaks in a session`,
+    `more than ${MAX_CACHE_BREAKS_SHOWN} cache breaks in a session`,
     receipts({
       sessions: [
         session({
-          cache_breaks: Array.from({ length: MAX_CACHE_BREAKS_PER_SESSION + 1 }, () => ({})),
+          cache_breaks: Array.from({ length: MAX_CACHE_BREAKS_SHOWN + 1 }, () => ({})),
         }),
       ],
     }),
+    'bad_range',
+  ],
+  [
+    'a total of tasks below those listed',
+    receipts({ sessions: [session({ tasks_total: 1 })] }),
+    'bad_range',
+  ],
+  [
+    'a total of tasks above those listed while there is room for them',
+    receipts({ sessions: [session({ tasks_total: 3 })] }),
+    'bad_range',
+  ],
+  [
+    'a missing total of tasks',
+    receipts({ sessions: [session({ tasks_total: undefined })] }),
+    'bad_shape',
+  ],
+  [
+    'a total of cache breaks below those listed',
+    receipts({ sessions: [session({ cache_breaks_total: 0 })] }),
+    'bad_range',
+  ],
+  [
+    'a total of cache breaks above those listed while there is room for them',
+    receipts({ sessions: [session({ cache_breaks_total: 2 })] }),
+    'bad_range',
+  ],
+  [
+    'a cut session whose listed tasks take more turns than its total',
+    receipts({ sessions: [cutSession({ total: tally(200, 25_050, 50_000, 0) })] }),
+    'bad_range',
+  ],
+  [
+    'a cut session whose listed tasks make more tool calls than its total',
+    receipts({ sessions: [cutSession({ tool_calls: 400 })] }),
     'bad_range',
   ],
 ];

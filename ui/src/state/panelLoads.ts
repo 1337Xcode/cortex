@@ -1,7 +1,7 @@
 // The store's loads for the panels: the summary, the receipts (asked once, when their section
-// opens), the activity, the warnings and the daemon's health (asked when their sections open), the
-// selected file's detail, and what the health says of the daemon's first reading of the
-// repository. Each load cancels the one of its kind in flight, and an answer that arrives after a
+// opens), the activity and the warnings (asked when their sections open), the daemon's health
+// (asked when the page opens and when its section does), the selected file's detail, and what the
+// health says of the daemon's first reading of the repository. Each load cancels the one of its kind in flight, and an answer that arrives after a
 // newer request, or after a cancel, is dropped. A quiet load keeps what is shown until it answers.
 import type { Activity } from '../api/activity';
 import type { FileDetail } from '../api/file';
@@ -60,7 +60,10 @@ export interface PanelLoads {
   readonly receipts: ReceiptsState;
   readonly activity: PanelState<Activity>;
   readonly warnings: PanelState<Warnings>;
-  /** The daemon's health as the health section shows it; the empty map's question sets it too. */
+  /**
+   * The daemon's health as the health section shows it, asked when the page opens; it also says
+   * whether Cortex has read the repository's history. The empty map's question sets it too.
+   */
   readonly health: PanelState<Health>;
   readonly detail: DetailState;
   /** Whether the daemon is still reading the repository, asked while the map is empty. */

@@ -5,7 +5,7 @@ import type { ApiErrorCode } from './guard';
 import { parseLive } from './live';
 
 function file(id: number, mode: string, lastMs: number): Record<string, unknown> {
-  return { file: id, mode, last_ms: lastMs };
+  return { file: id, path: `src/f${id}.rs`, mode, last_ms: lastMs };
 }
 
 function session(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -78,7 +78,21 @@ const REFUSED: [string, unknown, ApiErrorCode][] = [
     frame([session({ files: [file(1, 'read', 9e15)] })]),
     'bad_range',
   ],
-  ['a missing time', frame([session({ files: [{ file: 1, mode: 'read' }] })]), 'bad_shape'],
+  [
+    'a missing time',
+    frame([session({ files: [{ file: 1, path: 'a.rs', mode: 'read' }] })]),
+    'bad_shape',
+  ],
+  [
+    'a missing path',
+    frame([session({ files: [{ file: 1, mode: 'read', last_ms: 1 }] })]),
+    'bad_shape',
+  ],
+  [
+    'a path out of the repository',
+    frame([session({ files: [{ file: 1, path: '/etc/passwd', mode: 'read', last_ms: 1 }] })]),
+    'bad_shape',
+  ],
 ];
 
 describe('parseLive refuses', () => {

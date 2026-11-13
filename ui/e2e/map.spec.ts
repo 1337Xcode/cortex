@@ -9,8 +9,15 @@ import { expect, test, type Page } from '@playwright/test';
 import { fitCamera, toScreen } from '../src/map/camera';
 import { buildScene } from '../src/map/scene';
 import { DARK_COLORS, SIZE } from '../src/theme/tokens';
-import { coldFixture, fileDetail, READING_HEALTH, smallFixture, threeSessions } from './fixtures';
-import { MAP_URL, serveFixture } from './serve';
+import {
+  coldFixture,
+  fileDetail,
+  READING_HEALTH,
+  smallFixture,
+  threeSessions,
+  workingHealth,
+} from './fixtures';
+import { liveChannel, MAP_URL, serveFixture } from './serve';
 import {
   chromeInsets,
   filePanel,
@@ -46,7 +53,7 @@ test.describe('ten-file repository', () => {
       'Strongest coupling: book.rs and mod.rs changed together in 12 commits.',
     );
     await expect(page.getByTestId('summary-busiest')).toHaveText(
-      'Most worked on in the last 7 days: src/orders/, whose own files took 52,310 tokens attributed.',
+      'Most worked on in the last 7 days: src/orders/, whose own files took 52,310 tokens attributed (input, output, cache writes and cache reads).',
     );
   });
 
@@ -131,7 +138,7 @@ test.describe('ten-file repository', () => {
     // The list holds only its terms and values; the tokens' meaning is described beside it.
     await expect(panel.locator('dl > :not(div), dl > div > :not(dt, dd)')).toHaveCount(0);
     await expect(panel.locator('dd', { hasText: '18,300' })).toHaveAccessibleDescription(
-      'Tokens of agent turns whose last read or edit was this file: the input and output tokens of those responses, cache reads included.',
+      'Tokens of agent turns whose last read or edit was this file: every token of those responses, input, output, cache writes and cache reads.',
     );
     // Linked files and facts are open; the commits behind its lines, what Cortex told agents and
     // its symbols are closed.
@@ -162,7 +169,7 @@ test.describe('ten-file repository', () => {
     );
     await toggle(/^Commits behind its lines/).click();
     await expect(panel.getByTestId('panel-history')).toContainText(
-      'The 2 commits behind its current lines, newest first.',
+      'The 2 commits behind its current lines whose subjects Cortex holds, newest first.',
     );
     await expect(panel.getByTestId('panel-history')).toContainText(
       'Keep cancelled orders in the book',
@@ -188,7 +195,7 @@ test.describe('ten-file repository', () => {
     // A section opened for one file stays open for the next.
     await expect(toggle(/^Commits behind its lines/)).toHaveAttribute('aria-expanded', 'true');
     await expect(panel.getByTestId('panel-history')).toHaveText(
-      "Commits behind its linesH0No commit is stored for this file's current lines yet. Cortex reads them when a prompt or its upkeep asks about the file, and lists the 10 newest.",
+      "Commits behind its linesH0No commit behind this file's current lines is held yet. Cortex reads them when a prompt or its upkeep asks about the file, and lists the 10 newest.",
     );
   });
 
@@ -367,6 +374,37 @@ test.describe('empty repository', () => {
     record = { errors, foreign };
   });
 
+  test('shows files added after the first reading ended empty, once a live frame names one', async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    const foreign = await serveFixture(page, empty);
+    await page.goto(MAP_URL);
+    await expect(page.getByRole('status')).toHaveText('This repository has no files to map.');
+    // Files are added and an agent edits one: the daemon lists them and its live frame names
+    // book.rs, which the empty map does not hold. The page reads the map again by itself.
+    const small = smallFixture(Date.now());
+    await page.route('**/api/graph', (route) => route.fulfill({ json: small.graph }));
+    await page.route('**/api/summary', (route) => route.fulfill({ json: small.summary }));
+    liveChannel(page).push({
+      version: 1,
+      sessions: [
+        {
+          id: '3f2a9c1e',
+          agent: 'claude',
+          title: 'Claude Code',
+          files: [{ file: 4, path: 'src/orders/book.rs', mode: 'edit', last_ms: Date.now() }],
+        },
+      ],
+    });
+    await expect(page.getByTestId('map-status')).toBeAttached({ timeout: 15_000 });
+    await expect(page.getByTestId('summary-indexed')).toHaveText('10 files in 5 folders.');
+    record = { errors, foreign };
+  });
+
   test('says plainly that there is nothing to map once Cortex has finished reading', async ({
     page,
   }) => {
@@ -391,7 +429,9 @@ test.describe('the editor link and a file no commit Cortex read changed', () => 
   }) => {
     const cold = coldFixture();
     const detail = fileDetail(1, 'src/cli.rs', { editor_url: 'javascript:alert(1)' });
-    record = await openMap(page, { ...cold, details: new Map([[1, detail]]) });
+    // The history miner has read the repository, so a 0 is an answer.
+    const health = workingHealth(Date.now());
+    record = await openMap(page, { ...cold, health, details: new Map([[1, detail]]) });
     await searchAndPick(page, 'cli.rs');
     const panel = filePanel(page);
     await expect(panel.getByTestId('panel-facts')).toContainText('No facts are recorded');
@@ -400,6 +440,22 @@ test.describe('the editor link and a file no commit Cortex read changed', () => 
     await expect(panel.locator('dd').nth(2)).toHaveAccessibleDescription(
       /^Commits Cortex read that changed this file: .*\. None of them changed it; older changes, and changes in larger commits, are not counted\.$/,
     );
+  });
+});
+
+test.describe('a file whose commits Cortex has not read yet', () => {
+  test('says so instead of 0, in the panel and on hover, until the history miner is ready', async ({
+    page,
+  }) => {
+    // The miner is still reading: src/cli.rs has 0 commits counted so far, which says nothing.
+    record = await openMap(page, { ...coldFixture(), health: workingHealth(Date.now(), 'mining') });
+    await searchAndPick(page, 'cli.rs');
+    const commits = filePanel(page).locator('dd').nth(2);
+    await expect(commits).toHaveText('Not read yet');
+    await expect(commits).toHaveAccessibleDescription(
+      "Cortex is still reading this repository's history.",
+    );
+    await expect(filePanel(page)).not.toContainText('None of them changed it');
   });
 });
 

@@ -10,7 +10,10 @@ import {
   pricesSentence,
   quantity,
   sessionOverhead,
+  sessionStarted,
   sessionTotal,
+  share,
+  signedShare,
   taskSentence,
   twoPlaces,
   usageWords,
@@ -69,11 +72,13 @@ function session(extra: Partial<SessionReceipt> = {}): SessionReceipt {
     subagents: 0,
     tool_calls: 4,
     tasks: [task()],
+    tasks_total: 1,
     outside_tasks: tally({ turns: 0, cumulative_input: 0, uncached_input: 0, cache_reads: 0 }),
     outside_tool_calls: 0,
     total: tally({ cumulative_input: 153_282, uncached_input: 152_082 }),
     compactions_left_out: 0,
     cache_breaks: [],
+    cache_breaks_total: 0,
     primer_tokens: 400,
     injected_tokens: 520,
     ...extra,
@@ -96,6 +101,33 @@ describe('numbers as the CLI writes them', () => {
       [-0.004, '-0.00'],
     ];
     for (const [value, text] of cases) expect(twoPlaces(value), String(value)).toBe(text);
+  });
+
+  it('never writes a share or a difference of shares that is not an end as 0 or 1', () => {
+    // 1 of 1,000 is 0.001 and 999 of 1,000 is 0.999: two places would round them to 0.00 and
+    // 1.00. In between, two places as the CLI writes them, an exact half to the even hundredth.
+    expect([0, 0.001, 0.004999, 0.005, 0.125, 0.994, 0.995, 0.999, 1].map(share)).toEqual([
+      '0',
+      'under 0.01',
+      'under 0.01',
+      '0.01',
+      '0.12',
+      '0.99',
+      'over 0.99',
+      'over 0.99',
+      '1',
+    ]);
+    expect([0, 0.003, -0.003, 0.17, -1 / 12, 0.998, -0.998, 1, -1].map(signedShare)).toEqual([
+      '0',
+      'under +0.01',
+      'over -0.01',
+      '+0.17',
+      '-0.08',
+      'over +0.99',
+      'under -0.99',
+      '+1',
+      '-1',
+    ]);
   });
 
   it('writes medians grouped in threes with a tenth when they have one, and a sign below 0', () => {
@@ -226,6 +258,19 @@ describe('the headline', () => {
 });
 
 describe('precision and prices', () => {
+  it('never words a precision that is not all or none as 1.00 or 0.00', () => {
+    // 999 of 1,000 is 0.999 and 1 of 1,000 is 0.001; 4 of 4 is all of them.
+    expect(precisionSentence({ labelled: 1000, used: 999 })).toBe(
+      'Injection precision: over 0.99, 999 of 1,000 work orders given and labelled were used.',
+    );
+    expect(warningSentence({ labelled: 1000, used: 1 })).toBe(
+      'Warning precision: under 0.01, 1 of 1,000 files warnings named and marked were then read or edited.',
+    );
+    expect(precisionSentence({ labelled: 4, used: 4 })).toBe(
+      'Injection precision: 1, 4 of 4 work orders given and labelled were used.',
+    );
+  });
+
   it('words precision as the CLI does: 52 of 73 is 0.71, 5 of 9 is 0.56', () => {
     expect(precisionSentence({ labelled: 73, used: 52 })).toBe(
       'Injection precision: 0.71, 52 of 73 work orders given and labelled were used.',
@@ -306,6 +351,15 @@ describe('tasks and sessions', () => {
     expect(sessionOverhead(codex)).toBe('0 tokens injected by Cortex.');
     expect(sessionTotal(codex)).toBe(
       "Total: 4 tool calls. Cortex does not read this agent's transcripts, so its usage is not shown.",
+    );
+  });
+
+  it('counts every task of a session, not only the newest the daemon lists', () => {
+    // The daemon lists the newest 200 of 250 tasks; the session's line says 250.
+    const long = session({ tasks: Array.from({ length: 200 }, () => task()), tasks_total: 250 });
+    expect(sessionStarted(long)).toBe('Started 2000-03-01 01:02 UTC, 250 tasks.');
+    expect(sessionStarted(session({ subagents: 2 }))).toBe(
+      'Started 2000-03-01 01:02 UTC, 1 task, 2 subagents.',
     );
   });
 });

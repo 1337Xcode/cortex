@@ -1,10 +1,11 @@
 // The receipts behind the map's receipts panel, the report `cortex receipts` prints: the price table
 // costs were estimated from, the tasks held out from Cortex and the rest with their comparison once
 // each arm has enough tasks that ended, how precise the work orders and warnings Cortex gave were,
-// and each recent session's receipt, task by task. Every field is checked here, and so is the
-// arithmetic that ties them together (a session's turns are its tasks' and the rest, a comparison
-// exists only with enough tasks a side), so a body that breaks the contract is refused whole and
-// nothing past this module checks a shape again.
+// and each recent session's receipt, task by task: its newest tasks and cache breaks, up to the
+// daemon's cap, and how many it has in all, its totals counting every task. Every field is checked
+// here, and so is the arithmetic that ties them together (a session's turns are its tasks' and the
+// rest, a comparison exists only with enough tasks a side), so a body that breaks the contract is
+// refused whole and nothing past this module checks a shape again.
 import {
   API_VERSION,
   checkMaxLength,
@@ -34,14 +35,13 @@ export const RECEIPTS_URL = 'api/receipts';
 export const MAX_RECEIPT_SESSIONS = 100;
 
 /**
- * The most tasks one session may hold: a task is one prompt, and 2,000 prompts is more than a
- * person typing one a minute for a day and a half. A session past it is refused, not cut, so no
- * total ever stands beside only part of its tasks.
+ * The most tasks of one session the daemon sends: its newest, oldest first. `tasks_total` says how
+ * many it has in all, and its totals count every one of them.
  */
-export const MAX_TASKS_PER_SESSION = 2000;
+export const MAX_TASKS_SHOWN = 200;
 
-/** The most cache breaks one session may list; a break needs a response of its own. */
-export const MAX_CACHE_BREAKS_PER_SESSION = 5000;
+/** The most cache breaks of one session the daemon sends: its newest, oldest first. */
+export const MAX_CACHE_BREAKS_SHOWN = 200;
 
 /** The longest reason a price table could not be read that the page shows, in characters. */
 export const MAX_PRICE_WHY_CHARS = 500;
@@ -174,13 +174,18 @@ export interface SessionReceipt {
   readonly status: SessionStatus;
   readonly subagents: number;
   readonly tool_calls: number;
-  /** In the order they started. */
+  /** Its newest tasks, at most `MAX_TASKS_SHOWN`, in the order they started. */
   readonly tasks: readonly TaskReceipt[];
+  /** How many tasks it has in all; more than `tasks` holds only when that is full. */
+  readonly tasks_total: number;
   readonly outside_tasks: Tally;
   readonly outside_tool_calls: number;
   readonly total: Tally;
   readonly compactions_left_out: number;
+  /** Its newest cache breaks, at most `MAX_CACHE_BREAKS_SHOWN`, oldest first. */
   readonly cache_breaks: readonly CacheBreak[];
+  /** How many cache breaks it has in all. */
+  readonly cache_breaks_total: number;
   /** Tokens of the primers that reached the agent. */
   readonly primer_tokens: number;
   /** Every token Cortex added that reached the agent, the primers' among them. */
@@ -463,26 +468,51 @@ function checkByStart<T>(list: readonly T[], startOf: (entry: T) => number, wher
 /** The tasks of a session, checked for count and order. */
 function parseTasks(record: JsonRecord, isPriced: boolean, where: string): TaskReceipt[] {
   const list = readArray(record, 'tasks', where);
-  checkMaxLength(list, MAX_TASKS_PER_SESSION, `${where}.tasks`);
+  checkMaxLength(list, MAX_TASKS_SHOWN, `${where}.tasks`);
   const tasks = list.map((entry, i) => parseTask(entry, isPriced, `${where}.tasks[${i}]`));
   checkByStart(tasks, (task) => task.started_at_ms, `${where}.tasks`);
   return tasks;
 }
 
-/** Refuses a session whose totals are not its parts added up. */
+/**
+ * The field `key` as how many entries a list cut to its newest `max` had in all: never fewer than
+ * the `listed`, and more only when the list is full.
+ */
+function readListTotal(
+  record: JsonRecord,
+  key: string,
+  listed: number,
+  max: number,
+  where: string,
+): number {
+  const total = readCount(record, key, where);
+  if (total < listed) return fail('bad_range', `${where}.${key}: fewer than are listed`);
+  if (total > listed && listed < max) {
+    return fail('bad_range', `${where}.${key}: more than are listed, with room for them`);
+  }
+  return total;
+}
+
+/**
+ * Refuses a session whose totals are not its parts added up. With every task listed they add up
+ * exactly; with only the newest listed, the listed tasks and the rest come to no more than them.
+ */
 function checkSessionSums(session: SessionReceipt, where: string): void {
   const sum = (count: (task: TaskReceipt) => number): number =>
     session.tasks.reduce((total, task) => total + count(task), 0);
-  if (sum((task) => task.usage.turns) + session.outside_tasks.turns !== session.total.turns) {
+  const isWhole = session.tasks.length === session.tasks_total;
+  const fits = (parts: number, total: number): boolean =>
+    isWhole ? parts === total : parts <= total;
+  if (!fits(sum((task) => task.usage.turns) + session.outside_tasks.turns, session.total.turns)) {
     fail('bad_range', `${where}.total.turns: not its tasks' and the rest added up`);
   }
-  if (sum((task) => task.tool_calls) + session.outside_tool_calls !== session.tool_calls) {
+  if (!fits(sum((task) => task.tool_calls) + session.outside_tool_calls, session.tool_calls)) {
     fail('bad_range', `${where}.tool_calls: not its tasks' and the rest added up`);
   }
   if (sum((task) => task.injected_tokens) + session.primer_tokens > session.injected_tokens) {
     fail('bad_range', `${where}.injected_tokens: fewer than its primers' and its tasks'`);
   }
-  if (!session.is_metered && (session.total.turns > 0 || session.cache_breaks.length > 0)) {
+  if (!session.is_metered && (session.total.turns > 0 || session.cache_breaks_total > 0)) {
     fail('bad_range', `${where}: usage of a session whose transcripts are not read`);
   }
 }
@@ -492,7 +522,8 @@ function parseSession(value: unknown, isPriced: boolean, index: number): Session
   const where = `receipts.recorded.sessions[${index}]`;
   const record = readRecord(value, where);
   const breaks = readArray(record, 'cache_breaks', where);
-  checkMaxLength(breaks, MAX_CACHE_BREAKS_PER_SESSION, `${where}.cache_breaks`);
+  checkMaxLength(breaks, MAX_CACHE_BREAKS_SHOWN, `${where}.cache_breaks`);
+  const tasks = parseTasks(record, isPriced, where);
   const session: SessionReceipt = {
     session_id: readSessionId(record, where, 'session_id'),
     agent: readAgent(record, where),
@@ -502,12 +533,20 @@ function parseSession(value: unknown, isPriced: boolean, index: number): Session
     status: readEnum(record, 'status', SESSION_STATUSES, where),
     subagents: readCount(record, 'subagents', where),
     tool_calls: readCount(record, 'tool_calls', where),
-    tasks: parseTasks(record, isPriced, where),
+    tasks,
+    tasks_total: readListTotal(record, 'tasks_total', tasks.length, MAX_TASKS_SHOWN, where),
     outside_tasks: parseTally(record['outside_tasks'], isPriced, `${where}.outside_tasks`),
     outside_tool_calls: readCount(record, 'outside_tool_calls', where),
     total: parseTally(record['total'], isPriced, `${where}.total`),
     compactions_left_out: readCount(record, 'compactions_left_out', where),
     cache_breaks: breaks.map((entry, i) => parseBreak(entry, `${where}.cache_breaks[${i}]`)),
+    cache_breaks_total: readListTotal(
+      record,
+      'cache_breaks_total',
+      breaks.length,
+      MAX_CACHE_BREAKS_SHOWN,
+      where,
+    ),
     primer_tokens: readCount(record, 'primer_tokens', where),
     injected_tokens: readCount(record, 'injected_tokens', where),
   };

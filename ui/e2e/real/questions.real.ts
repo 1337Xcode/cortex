@@ -113,7 +113,7 @@ test('What are the hotspots?', async ({ page }) => {
     { useInnerText: true },
   );
   await expect(page.getByTestId('summary-busiest')).toHaveText(
-    'Most worked on in the last 7 days: calc/, whose own files took 9,600 tokens attributed.',
+    'Most worked on in the last 7 days: calc/, whose own files took 9,600 tokens attributed (input, output, cache writes and cache reads).',
   );
   await openView(page, '3', 'Heat');
   expect(await legendEntry(page, 'heat-4')).toBe('7,500 tokens: 1');
@@ -232,7 +232,7 @@ test('Is Cortex worth it?', async ({ page }) => {
     'Injection precision: no work order given is labelled yet.',
   );
   await expect(receipts.getByTestId('receipts-warnings')).toHaveText(
-    'Warning precision: 1.00, 1 of 1 file warnings named and marked were then read or edited.',
+    'Warning precision: 1, 1 of 1 file warnings named and marked were then read or edited.',
   );
   await tabTo(page, '.chart-input');
   await page.keyboard.press('Home');

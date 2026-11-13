@@ -1,5 +1,5 @@
 // The live state the daemon pushes over `api/live`: every agent session running in the repository,
-// its agent, and the files it worked on most recently. Each frame is the whole state, never a
+// its agent, and the files it worked on most recently, each by its id and its path. Each frame is the whole state, never a
 // change to the last one, so a frame is checked here on its own and either replaces what the page
 // knows or is dropped. Everything past this module trusts the types.
 import { compareBytes } from '../text/byteOrder';
@@ -13,6 +13,7 @@ import {
   readCount,
   readEnum,
   readEpochMs,
+  readPath,
   readRecord,
   readVersion,
   runParse,
@@ -53,8 +54,10 @@ export type LiveMode = (typeof LIVE_MODES)[number];
 
 /** One file a session worked on. */
 export interface LiveFile {
-  /** The file's id in `api/graph`. */
+  /** The file's id in `api/graph`. Ids move when files are added, so check it against `path`. */
   readonly file: number;
+  /** The file's path, as the daemon's graph lists it. */
+  readonly path: string;
   readonly mode: LiveMode;
   /** When the session last read, edited or claimed it, in milliseconds since the epoch. */
   readonly last_ms: number;
@@ -91,6 +94,7 @@ function parseLiveFile(value: unknown, where: string): LiveFile {
   const record = readRecord(value, where);
   return {
     file: readCount(record, 'file', where),
+    path: readPath(record, 'path', where),
     mode: readEnum(record, 'mode', LIVE_MODES, where),
     last_ms: readEpochMs(record, 'last_ms', where),
   };

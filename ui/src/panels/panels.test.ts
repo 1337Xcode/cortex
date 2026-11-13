@@ -6,6 +6,7 @@ import type { MapSummary } from '../api/summary';
 import { sevenFileScene, sevenFileSnapshot, testLink } from '../map/testScene';
 import { strongestLinks } from './fileLinks';
 import { detailFor } from './fileSections';
+import { isSummaryOutOfStep, summaryText } from './SummaryStrip';
 import { summarySentences, type SummarySentence } from './summarySentences';
 
 const LEARNED: MapSummary = {
@@ -36,7 +37,7 @@ describe('summarySentences', () => {
     const text = summarySentences(LEARNED, PAIRED);
     expect(text.ok ? text.sentences.map(plain) : text.error).toEqual([
       'Strongest coupling: [a/one.rs] and [a/two.rs] changed together in 31 commits.',
-      'Most worked on in the last 7 days: src/orders/, whose own files took 52,310 tokens attributed.',
+      'Most worked on in the last 7 days: src/orders/, whose own files took 52,310 tokens attributed (input, output, cache writes and cache reads).',
       'Agents have read 312 of the 1,204 files (26%).',
       '1,204 files in 87 folders.',
     ]);
@@ -47,7 +48,7 @@ describe('summarySentences', () => {
     const text = summarySentences(top, PAIRED);
     const busiest = text.ok ? text.sentences.find((sentence) => sentence.key === 'busiest') : null;
     expect(busiest ? plain(busiest) : null).toBe(
-      "Most worked on in the last 7 days: the repository's top folder, whose own files took 1,200 tokens attributed.",
+      "Most worked on in the last 7 days: the repository's top folder, whose own files took 1,200 tokens attributed (input, output, cache writes and cache reads).",
     );
   });
 
@@ -119,6 +120,20 @@ describe('summarySentences', () => {
       const text = summarySentences(LEARNED, snapshot);
       expect(text.ok ? 'shown' : text.error.code).toBe('bad_range');
     }
+  });
+
+  it('asks for the data again when the snapshot refuses a summary that arrived, never when it failed', () => {
+    const ready = { status: 'ready' as const, summary: LEARNED };
+    // Refused: the snapshot does not link the summary's pair; the two are from different moments.
+    expect(isSummaryOutOfStep(ready, summaryText(ready, sevenFileSnapshot()))).toBe(true);
+    expect(isSummaryOutOfStep(ready, summaryText(ready, PAIRED))).toBe(false);
+    const failed = {
+      status: 'error' as const,
+      error: { code: 'network' as const, message: 'no answer' },
+    };
+    expect(isSummaryOutOfStep(failed, summaryText(failed, PAIRED))).toBe(false);
+    const loading = { status: 'loading' as const };
+    expect(isSummaryOutOfStep(loading, summaryText(loading, PAIRED))).toBe(false);
   });
 });
 

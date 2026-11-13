@@ -32,8 +32,13 @@ export const MAX_FACT_CHARS = 240;
 /** The longest commit subject the page accepts, in characters. */
 export const MAX_SUBJECT_CHARS = 200;
 
-/** The longest commit references (issue and pull request numbers) the page accepts, in characters. */
-export const MAX_REFS_CHARS = 80;
+/**
+ * The longest commit references (a pull request number and issue references) the page accepts, in
+ * characters: the daemon writes a pull request as `#` and up to 20 digits (the most a 64-bit count
+ * has), then up to 3 issue references of up to 100 characters each, each after a space, so
+ * 1 + 20 + 3 x (1 + 100) = 324.
+ */
+export const MAX_REFS_CHARS = 1 + 20 + 3 * (1 + 100);
 
 /** The most history entries the daemon returns. */
 export const MAX_HISTORY = 10;
@@ -41,8 +46,13 @@ export const MAX_HISTORY = 10;
 /** The most "told" entries the daemon returns. */
 export const MAX_TOLD = 20;
 
-/** The longest editor link the page accepts, in characters. */
-export const MAX_EDITOR_URL_CHARS = 2048;
+/**
+ * The longest editor link the page follows, in characters: the daemon's template is at most 200
+ * characters, and it writes the file's absolute path into it, at most 4,096 bytes on the platforms
+ * Cortex runs on, each byte as up to 3 characters (`%XX`), so 200 + 3 x 4,096 = 12,488. A template
+ * that names the path more than once can pass it; such a link is dropped, never the panel.
+ */
+export const MAX_EDITOR_URL_CHARS = 200 + 3 * 4096;
 
 /** The most symbols the daemon lists for a file: the first in it, in line order. */
 export const MAX_SYMBOLS = 500;
@@ -309,12 +319,19 @@ function detailParser(askedId: number): (value: unknown) => FileDetail {
       symbols_total: readTotal(record, 'symbols_total', symbols.length, MAX_SYMBOLS),
       selected,
       told,
-      editor_url:
-        record['editor_url'] === null
-          ? null
-          : readCappedString(record, 'editor_url', MAX_EDITOR_URL_CHARS, 'file'),
+      editor_url: readEditorUrl(record),
     };
   };
+}
+
+/**
+ * The detail's editor link: null when it is turned off, and null too when it is longer than
+ * `MAX_EDITOR_URL_CHARS`, so a link too long to follow costs the link alone, not the detail.
+ */
+function readEditorUrl(record: JsonRecord): string | null {
+  if (record['editor_url'] === null) return null;
+  const url = readString(record, 'editor_url', 'file');
+  return codePointLength(url) > MAX_EDITOR_URL_CHARS ? null : url;
 }
 
 /** Checks parsed JSON against the file contract for the id `askedId`. */
