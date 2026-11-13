@@ -210,7 +210,7 @@ fn the_summary_is_the_first_screen_as_counted_by_hand() -> TestResult {
 /// 2,900) is shown and `s1` (started at 100) is not. Both tasks were decided treated, none held
 /// out, so the arms are 0 and 2 against the 30 each needs, with no comparison. With no user price
 /// file the shipped table prices them, which the answer says. The rest is the meter's report of
-/// the same store, read the same way.
+/// the same store, read the same way, with each session's totals of tasks and cache breaks.
 #[test]
 fn the_receipts_are_the_last_week_of_the_report() -> TestResult {
     let fixture = scripted()?;
@@ -240,7 +240,13 @@ fn the_receipts_are_the_last_week_of_the_report() -> TestResult {
         &cortex_meter::Selection::StartedSince(2_200),
         Some(&table),
     )?;
-    assert_eq!(answer["recorded"], serde_json::to_value(&report)?);
+    // The map adds each session's totals: s2 has 1 task and no cache break, all shown.
+    let mut expected = serde_json::to_value(&report)?;
+    if let Some(session) = expected["sessions"][0].as_object_mut() {
+        session.insert("tasks_total".to_owned(), 1.into());
+        session.insert("cache_breaks_total".to_owned(), 0.into());
+    }
+    assert_eq!(answer["recorded"], expected);
     assert_eq!(get(&fixture, "api/receipts/1")?.0, 404);
     Ok(())
 }
