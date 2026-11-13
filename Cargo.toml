@@ -124,3 +124,16 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+[profile.release]
+# One code unit and link-time optimization across the whole program: this binary starts on every
+# hook call, so its start-up and its size are what the agent waits on.
+codegen-units = 1
+lto = "fat"
+# Nothing reads a backtrace: the daemon logs a panic's location, which the compiler bakes in, so
+# the symbol table costs size and buys nothing here.
+strip = "symbols"
+# Panics must unwind. The hook catches them to exit 0 and say nothing (fail-open), the index
+# catches one per file to skip that file, and the miner catches one to fall back to git itself.
+# With "abort" each of those becomes a dead process instead.
+panic = "unwind"

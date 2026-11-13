@@ -21,7 +21,9 @@ All notable changes to this project are documented in this file. The format is b
   behind the same token and checks, that sends where each live agent session worked lately (its
   ten newest files) when it opens and whenever that changes, at most four times a second. While
   the map is open the daemon does not stop for being idle. Checked with scripted sessions in the
-  daemon's tests; not yet run with a live agent.
+  daemon's tests, and with a live one: a headless Codex 0.166.0 session working in a small
+  repository moved its marker from file to file on the open map, with no reload, and the
+  marker left when the session stopped.
 - `cortex map`, which asks the daemon for the map's address, prints it and opens it in the browser
   (`--no-open` only prints it). The daemon serves the map on 127.0.0.1 alone, from the first ask
   until it stops, at `ui.port` (a new key; 0, the default, picks a free port). The address holds a
@@ -90,7 +92,8 @@ All notable changes to this project are documented in this file. The format is b
   hover or with the arrow keys), each recent session's total and the tokens Cortex injected against
   its input, and the price table every cost is estimated from. The page refuses an answer that
   breaks the contract or whose sums do not add up. Checked in a browser against answers written for
-  the tests; not yet run against a daemon with recorded sessions. The built map grew from 434,433
+  the tests, and against a running daemon: the figures it drew for a headless Codex 0.166.0
+  session matched that session's own reported usage, token for token. The built map grew from 434,433
   to 440,921 bytes gzipped.
 - Icons beside names on the map. An agent's mark (its product's, or its maker's) leads its live
   session, its own entry in the legend (new: each agent working now, its diamond in its colour and
@@ -459,6 +462,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
+- The released binary is built as one unit with link-time optimization and without its symbol
+  table, which takes it from 86.8 MB to 53.7 MB. Starting it is no slower: timed by alternating
+  runs between the two builds, the difference is under a millisecond either way. Panics still
+  unwind, because the hook catches one to exit 0 and say nothing, the index catches one to skip a
+  single file, and the history miner catches one to fall back to git itself.
 - `privacy.store_prompt_excerpt` and `adopt.exclude` are read only from the user's own
   `~/.cortex/config.toml`. A repository can carry a `.cortex/config.toml` in its commits, and a
   clone or an archive could have turned on keeping the first 200 characters of each prompt
