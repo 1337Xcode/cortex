@@ -327,9 +327,32 @@ impl<Id: Ord + Copy> Graph<Id> {
         let kinds: Vec<NodeKind> = sorted.iter().map(|node| node.kind).collect();
         let standings: Vec<Standing> = sorted.iter().map(|node| node.standing).collect();
         let mut files = vec![NO_FILE; ids.len()];
-        let mut by_kind: Vec<Vec<(u32, u32, f64)>> = vec![Vec::new(); EdgeType::ALL.len()];
         let containment = usize::from(EdgeType::Containment.number());
         let membership = weighing.type_weights.containment;
+        // Each kind's list is given its room before anything is pushed. A list that grows by
+        // doubling leaves the heap holding every size it passed through, which on a repository of
+        // millions of links is most of the daemon's memory. Counted in one pass, which is cheap
+        // beside the sorting each list is about to pay for.
+        let mut by_kind: Vec<Vec<(u32, u32, f64)>> = EdgeType::ALL
+            .iter()
+            .map(|kind| {
+                let number = usize::from(kind.number());
+                let stored = links
+                    .iter()
+                    .filter(|link| usize::from(link.kind.number()) == number)
+                    .count();
+                let made = if number == containment && membership > 0.0 {
+                    // Two for each symbol that has a file: to the file and back.
+                    2 * sorted
+                        .iter()
+                        .filter(|node| node.kind == NodeKind::Symbol && node.file.is_some())
+                        .count()
+                } else {
+                    0
+                };
+                Vec::with_capacity(stored.saturating_add(made))
+            })
+            .collect();
         for (at, node) in sorted.iter().enumerate() {
             let Ok(this) = u32::try_from(at) else {
                 continue;
