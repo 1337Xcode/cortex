@@ -15,7 +15,8 @@ All notable changes to this project are documented in this file. The format is b
 - `ui.editor_url`, a new key: the address the map's file panel opens a file in the editor with,
   `{path}` standing for the file's absolute path as a URL path and `{line}` for a line
   (`vscode://file{path}:{line}` by default; empty for none). A web, file or script scheme, an
-  address without `{path}` and one with a space are refused.
+  address without `{path}` and one with a space are refused. It and `ui.port` are read only from
+  your own `~/.cortex/config.toml`: a repository's file cannot choose what a click on the map opens.
 - The map's live view of agents: the daemon serves a web socket beside the map's other answers,
   behind the same token and checks, that sends where each live agent session worked lately (its
   ten newest files) when it opens and whenever that changes, at most four times a second. While

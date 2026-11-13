@@ -336,15 +336,24 @@ mod tests {
         }
     }
 
-    /// The keys only the user's own file may set are the one that keeps prompt text and the one
-    /// that names the folders the user wants left alone, and no other.
+    /// The keys only the user's own file may set are the one that keeps prompt text, the one that
+    /// names the folders the user wants left alone, and the map's port and editor address, and no
+    /// other.
     #[test]
-    fn only_two_keys_are_user_only() {
+    fn only_the_user_s_own_keys_are_user_only() {
         let user_only: Vec<&str> = config_keys()
             .filter(|key| key.is_user_only())
             .map(|key| key.name)
             .collect();
-        assert_eq!(user_only, ["privacy.store_prompt_excerpt", "adopt.exclude"]);
+        assert_eq!(
+            user_only,
+            [
+                "privacy.store_prompt_excerpt",
+                "adopt.exclude",
+                "ui.port",
+                "ui.editor_url"
+            ]
+        );
     }
 
     /// An unusable value leaves the settings as they were and says what the key accepts.

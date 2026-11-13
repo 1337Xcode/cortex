@@ -675,6 +675,31 @@ mod tests {
         Ok(())
     }
 
+    /// A cloned repository cannot choose the program the map's editor link opens, nor the port the
+    /// map listens on: its `ui.editor_url` (here a search handler pointed at a share) and `ui.port`
+    /// are ignored with a line each, and the defaults stand; the user's own file sets both.
+    #[test]
+    fn a_repository_cannot_choose_the_map_s_editor_or_port() -> Result<(), ConfigError> {
+        let repository_text =
+            "[ui]\nport = 4242\neditor_url = \"search-ms:query=x&crumb=location:{path}\"\n";
+        let alone = load(&[repository_layer("repo", repository_text)])?;
+        assert_eq!(alone.config.ui, crate::config::UiConfig::default());
+        assert_eq!(
+            alone.warnings,
+            [
+                "repo: `ui.editor_url` is read only from the user's file; this value is ignored",
+                "repo: `ui.port` is read only from the user's file; this value is ignored",
+            ]
+        );
+        let user = load(&[layer(
+            "user",
+            "[ui]\nport = 4242\neditor_url = \"zed://file{path}:{line}\"\n",
+        )])?;
+        assert_eq!(user.config.ui.port, 4242);
+        assert_eq!(user.config.ui.editor_url, "zed://file{path}:{line}");
+        Ok(())
+    }
+
     /// A key only the user's file may set is applied from the user's file. A repository's file
     /// setting it is skipped, whatever it holds: the settings stay as they were, the key's source is
     /// still the user's file or none, and one line names the file and the key.

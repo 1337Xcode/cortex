@@ -2,7 +2,9 @@
 //! the person's editor. The map listens on 127.0.0.1 only, whatever the port.
 //!
 //! Each key is read and checked here, as the rest of the configuration reads its own; a value the
-//! rules cannot use is refused.
+//! rules cannot use is refused. Both keys are the user's own: a repository's file comes with a
+//! clone, and must not choose the program a click on the map hands a file to, nor fix the port
+//! every web page could then find the map on.
 
 use super::registry::integer;
 use super::{ConfigKey, whole_number};
@@ -81,7 +83,7 @@ fn editor_url(text: &str) -> Option<String> {
 
 /// The map's keys, each read and checked here.
 pub(super) const KEYS: &[ConfigKey] = &[
-    ConfigKey::new(
+    ConfigKey::user_only(
         "ui.port",
         "The port on 127.0.0.1 the map is served on; 0 picks a free one.",
         |config, value| {
@@ -92,7 +94,7 @@ pub(super) const KEYS: &[ConfigKey] = &[
         },
         |config| integer(u64::from(config.ui.port)),
     ),
-    ConfigKey::new(
+    ConfigKey::user_only(
         "ui.editor_url",
         "The address that opens a file in your editor, {path} and {line} filled in; empty for none.",
         |config, value| {
