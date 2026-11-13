@@ -155,7 +155,7 @@ pub enum PricingError {
     #[error("{} is larger than a price table", .0.display())]
     TooLarge(PathBuf),
     /// The file could not be read, written or tidied up after.
-    #[error("{action} {}: {source}", path.display())]
+    #[error("{action} {}", path.display())]
     Io {
         /// Reading, writing or removing.
         action: &'static str,

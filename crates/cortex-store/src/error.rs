@@ -13,7 +13,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum StoreError {
     /// A file or folder of the store could not be created, opened or locked.
-    #[error("{operation} {}: {source}", .path.display())]
+    #[error("{operation} {}", .path.display())]
     Io {
         /// What the store was doing.
         operation: &'static str,
@@ -24,7 +24,7 @@ pub enum StoreError {
         source: io::Error,
     },
     /// SQLite reported an error.
-    #[error("{operation}: {source}")]
+    #[error("{operation}")]
     Sqlite {
         /// What the store was doing.
         operation: &'static str,
@@ -70,7 +70,7 @@ pub enum StoreError {
         expected: u32,
     },
     /// A migration failed; the database is left as it was before migrating.
-    #[error("migration {version} failed: {source}")]
+    #[error("migration {version} failed")]
     Migration {
         /// The migration's number.
         version: u32,

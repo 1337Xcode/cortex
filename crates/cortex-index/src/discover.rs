@@ -111,7 +111,7 @@ pub struct Discovery {
 #[derive(Debug, Error)]
 pub enum DiscoverError {
     /// The root is not a folder that can be read.
-    #[error("{} is not a readable folder: {source}", .root.display())]
+    #[error("{} is not a readable folder", .root.display())]
     Root {
         /// The root.
         root: PathBuf,

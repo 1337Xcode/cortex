@@ -15,7 +15,7 @@ pub const MAX_SETTINGS_BYTES: u64 = 1_048_576;
 #[derive(Debug, Error)]
 pub enum TextFileError {
     /// The file exists but could not be opened or read.
-    #[error("reading {path}: {source}")]
+    #[error("reading {path}")]
     Io {
         /// The file.
         path: String,

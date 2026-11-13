@@ -57,7 +57,7 @@ pub struct Holdout {
 #[derive(Debug, thiserror::Error)]
 pub enum ReportError {
     /// The store could not be read; the operation says what was being read.
-    #[error("{operation}: {source}")]
+    #[error("{operation}")]
     Store {
         /// What was being read.
         operation: &'static str,
