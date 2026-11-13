@@ -39,27 +39,46 @@ impl FileView {
     pub(crate) fn of<Id: Ord + Copy>(graph: &Graph<Id>) -> Result<Self, GraphError> {
         let nodes =
             u32::try_from(graph.len()).map_err(|_| GraphError::TooLarge { what: "nodes" })?;
-        let mut links: Vec<(u32, u32, f64)> = Vec::new();
-        for node in 0..nodes {
-            if graph.file_of(node).is_some_and(|file| file != node) {
-                continue;
-            }
-            for member in std::iter::once(node).chain(graph.symbols_of(node).iter().copied()) {
-                for kind in EdgeType::ALL {
-                    for (target, weight) in graph.links(member, *kind) {
-                        let lands_in = graph.file_of(target).unwrap_or(target);
-                        if lands_in != node {
-                            links.push((node, lands_in, weight));
-                        }
-                    }
-                }
-            }
-        }
+        // The walk is made twice: once to learn how many links it finds, so the list is allocated
+        // once at that size, and once to fill it. A walk over compressed rows is far cheaper than
+        // holding a second copy of a repository's links while the list doubles its way there.
+        let mut found = 0usize;
+        between_files(graph, nodes, |_, _, _| found += 1);
+        let mut links: Vec<(u32, u32, f64)> = Vec::with_capacity(found);
+        between_files(graph, nodes, |source, target, weight| {
+            links.push((source, target, weight));
+        });
         let rows = Rows::of(graph.len(), links)?;
         let out_weights = (0..nodes)
             .map(|node| rows.of_node(node).map(|(_, weight)| weight).sum())
             .collect();
         Ok(Self { rows, out_weights })
+    }
+}
+
+/// Hands `each` every link this view holds, as `(source, target, weight)`: for each file, and for
+/// each node belonging to no file, its own links and its symbols', taken to the file the target
+/// belongs to, with those landing back in the source left out. A symbol of a file is skipped,
+/// since its links are its file's here.
+fn between_files<Id: Ord + Copy>(
+    graph: &Graph<Id>,
+    nodes: u32,
+    mut each: impl FnMut(u32, u32, f64),
+) {
+    for node in 0..nodes {
+        if graph.file_of(node).is_some_and(|file| file != node) {
+            continue;
+        }
+        for member in std::iter::once(node).chain(graph.symbols_of(node).iter().copied()) {
+            for kind in EdgeType::ALL {
+                for (target, weight) in graph.links(member, *kind) {
+                    let lands_in = graph.file_of(target).unwrap_or(target);
+                    if lands_in != node {
+                        each(node, lands_in, weight);
+                    }
+                }
+            }
+        }
     }
 }
 
