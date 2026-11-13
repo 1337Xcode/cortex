@@ -55,7 +55,10 @@ struct Workspace {
 /// None: every failure prints nothing.
 pub(crate) fn run(_: &Args) -> anyhow::Result<()> {
     // A status line that fails prints nothing, a panic included: Claude Code shows whatever is
-    // printed, and an error message there helps nobody.
+    // printed, and an error message there helps nobody. The default panic hook would print the
+    // panic to stderr before it is caught, so this process's hook prints nothing; the command does
+    // nothing else, so no other panic needs saying.
+    std::panic::set_hook(Box::new(|_| {}));
     let line = std::panic::catch_unwind(|| line_of(std::io::stdin())).unwrap_or(None);
     if let Some(line) = line {
         // A closed stdout leaves nothing to tell.
