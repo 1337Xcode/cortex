@@ -597,3 +597,74 @@ fn a_prompt_is_weighed_with_what_the_self_check_found() -> TestResult {
     assert!((precision - 0.62).abs() < 1e-12, "{precision}");
     Ok(())
 }
+
+/// `cortex pause` stops what Cortex says in a repository and not what it learns: the prompt that
+/// got a work order gets nothing while the pause holds, and what the work order would have given
+/// is still recorded, as not delivered. `cortex resume` says it again, and says so when nothing
+/// was paused. A pause given minutes writes the moment it ends, so it lapses by itself.
+#[test]
+fn a_pause_stops_what_is_said_and_not_what_is_learned() -> TestResult {
+    let (repo, home, _daemon) = repository("0")?;
+    let (root, home) = (repo.path(), home.path());
+    let asked = |session: &str| -> TestResult<Option<String>> {
+        given(
+            "UserPromptSubmit",
+            captured(
+                "user-prompt-submit.json",
+                root,
+                &[("prompt", PROMPT), ("session_id", session)],
+            )?,
+            home,
+        )
+    };
+    let order = asked("p-before")?.ok_or("a work order before the pause")?;
+    assert!(order.starts_with("[cortex] Work order · "), "{order}");
+
+    let paused = common::init::cortex(&["pause"], root, home)?;
+    assert!(paused.is_success, "{}", paused.stderr);
+    assert!(
+        paused.stdout.contains("until it is lifted."),
+        "{}",
+        paused.stdout
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(".cortex").join(cortex_core::PAUSED_FILE))?.trim(),
+        "until lifted"
+    );
+    assert_eq!(asked("p-held")?, None, "a paused repository says nothing");
+    // The pause stops the saying, not the learning: the prompt is recorded, and what it would have
+    // given is kept with no text behind it.
+    let held = Identifier::new("p-held")?;
+    let reader = Reader::open(&root.join(".cortex"), 0)?;
+    let rows = reader.queries().injections_of_session(&held)?;
+    assert!(!rows.is_empty(), "the paused prompt left no record");
+    assert!(
+        rows.iter().all(|row| row.record.text_hash.is_none()),
+        "a paused prompt recorded text as delivered"
+    );
+
+    let back = common::init::cortex(&["resume"], root, home)?;
+    assert!(back.is_success, "{}", back.stderr);
+    assert!(back.stdout.contains("on again in"), "{}", back.stdout);
+    assert!(
+        !root.join(".cortex").join(cortex_core::PAUSED_FILE).exists(),
+        "the marker stayed"
+    );
+    assert!(
+        asked("p-after")?.is_some(),
+        "a resumed repository says it again"
+    );
+    let again = common::init::cortex(&["resume"], root, home)?;
+    assert!(again.stdout.contains("was not paused"), "{}", again.stdout);
+
+    let minutes = common::init::cortex(&["pause", "--minutes", "1"], root, home)?;
+    assert!(minutes.is_success, "{}", minutes.stderr);
+    assert!(
+        minutes.stdout.contains("for 1 minute"),
+        "{}",
+        minutes.stdout
+    );
+    let written = std::fs::read_to_string(root.join(".cortex").join(cortex_core::PAUSED_FILE))?;
+    assert!(written.trim().parse::<i64>()? > 0, "{written}");
+    Ok(())
+}

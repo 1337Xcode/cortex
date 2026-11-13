@@ -16,7 +16,7 @@ use cortex_core::ipc::{
     RecentError, RequestBody, ResponseBody, StatusReport, UpkeepReport, WorktreeReport,
     WorktreeState,
 };
-use cortex_core::{Config, FileFlags, ModeSetting, ScaleMode, UserFolder, unix_millis};
+use cortex_core::{Config, FileFlags, ModeSetting, Pause, ScaleMode, UserFolder, unix_millis};
 use cortex_daemon::settings;
 use cortex_git::mine::Mark;
 use cortex_hook::{Answer, ClientError};
@@ -53,6 +53,11 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     let loaded = settings::load(&root)?;
     for warning in &loaded.warnings {
         output::note(&format!("warning: {warning}"))?;
+    }
+    // Before anything else a pause is read: while one holds, every line below describes a Cortex
+    // that is learning and saying nothing, and a reader who missed that would read them wrongly.
+    if let Some(pause) = cortex_core::pause_of(&root) {
+        output::line(&paused_line(pause, unix_millis(SystemTime::now())))?;
     }
     let (lines, first_index_done) = daemon_lines(&root);
     for line in lines {
@@ -442,6 +447,27 @@ fn ago(at_ms: i64, now_ms: i64) -> String {
 /// ended. With no daemon to ask, the marker is all there is, and an absent one then does mean an
 /// index that stopped partway, whose files the next index reads again.
 ///
+/// The line a paused repository opens its status with, as of `now_ms`: what a pause stops, and
+/// when it ends. A pause whose moment has gone by says it has lapsed rather than that it holds,
+/// since the file is still there until the next `cortex resume` or `cortex pause`.
+fn paused_line(pause: Pause, now_ms: i64) -> String {
+    let ends = match pause {
+        Pause::UntilLifted => "until `cortex resume`".to_owned(),
+        Pause::Until(moment) if now_ms < moment => {
+            let minutes = (moment - now_ms).div_euclid(60_000);
+            match minutes {
+                0 => "for less than a minute".to_owned(),
+                1 => "for another minute".to_owned(),
+                minutes => format!("for another {minutes} minutes"),
+            }
+        }
+        Pause::Until(_) => {
+            return "paused: the pause has lapsed; the next prompt is answered again".to_owned();
+        }
+    };
+    format!("paused: nothing is said to agents {ends}; what they do is still recorded")
+}
+
 /// # Errors
 ///
 /// `is_writing` failed.
@@ -790,6 +816,37 @@ mod tests {
             self_check_line(&raised, true),
             "self-check: precision 0.52 over the latest 100 work orders given; the bar is raised 2 \
              of 4 steps, last when 300 work orders had been labelled"
+        );
+    }
+
+    /// The paused line says what a pause stops and when it ends. A pause until 600,000 ms read at
+    /// 1,000 has 599,000 ms left, which is 9 whole minutes; one with 61,000 ms left is another
+    /// minute; one with 30,000 is less than a minute; and one whose moment has gone by says it has
+    /// lapsed, since the file stays until someone writes over it.
+    #[test]
+    fn the_paused_line_says_what_is_stopped_and_until_when() {
+        assert_eq!(
+            paused_line(Pause::UntilLifted, 1_000),
+            "paused: nothing is said to agents until `cortex resume`; what they do is still \
+             recorded"
+        );
+        assert_eq!(
+            paused_line(Pause::Until(600_000), 1_000),
+            "paused: nothing is said to agents for another 9 minutes; what they do is still \
+             recorded"
+        );
+        assert_eq!(
+            paused_line(Pause::Until(62_000), 1_000),
+            "paused: nothing is said to agents for another minute; what they do is still recorded"
+        );
+        assert_eq!(
+            paused_line(Pause::Until(31_000), 1_000),
+            "paused: nothing is said to agents for less than a minute; what they do is still \
+             recorded"
+        );
+        assert_eq!(
+            paused_line(Pause::Until(1_000), 1_000),
+            "paused: the pause has lapsed; the next prompt is answered again"
         );
     }
 

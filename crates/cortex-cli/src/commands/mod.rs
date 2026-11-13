@@ -18,6 +18,7 @@ mod mcp;
 mod note;
 mod off;
 mod on;
+mod pause;
 mod receipts;
 mod savings;
 mod status;
@@ -49,6 +50,10 @@ pub(crate) enum Command {
     Off(off::Args),
     /// Turn Cortex on again in a repository `cortex off` turned it off in.
     On(on::Args),
+    /// Stop what Cortex says to agents in a repository, while it goes on learning there.
+    Pause(pause::Args),
+    /// Say it again in a repository `cortex pause` paused.
+    Resume(pause::ResumeArgs),
     /// Show what each task of recent sessions took: turns, tool calls, tokens and estimated cost.
     Receipts(receipts::Args),
     /// Print one line for Claude Code's status line: the tokens Cortex added to the session and
@@ -99,6 +104,8 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         Command::Uninstall(args) => uninstall::run(&args),
         Command::Off(args) => off::run(&args),
         Command::On(args) => on::run(&args),
+        Command::Pause(args) => pause::run(&args),
+        Command::Resume(args) => pause::resume(&args),
         Command::Receipts(args) => receipts::run(&args),
         Command::Statusline(args) => statusline::run(&args),
         Command::Where(args) => where_::run(&args),

@@ -17,7 +17,7 @@ use cortex_core::ipc::{
     CORTEX_VERSION, ClaimsAnswer, ClaimsAsk, FrameError, LENGTH_PREFIX_BYTES, Mismatch, Protocol,
     Request, RequestBody, Response, ResponseBody, StatusReport, Welcome, body_len, decode, encode,
 };
-use cortex_core::{Event, HookKind};
+use cortex_core::{Event, HookKind, pause_of};
 use cortex_retrieve::{Graph, Why};
 use cortex_store::NodeId;
 use interprocess::local_socket::tokio::{Listener, Stream};
@@ -36,7 +36,7 @@ use crate::inbox::Inbox;
 use crate::latency::Latencies;
 use crate::linked::Linked;
 use crate::map::Map;
-use crate::retrieval::Service;
+use crate::retrieval::{Answer, Service};
 use crate::runs::Runs;
 use crate::signatures::Signatures;
 use crate::troubles::Taken;
@@ -217,6 +217,23 @@ struct Undo {
 }
 
 impl Server {
+    /// Withholds `answer`'s text: nothing reaches the agent, what the text would have given is
+    /// recorded as not delivered, and what working it out claimed is given back, so the next
+    /// answer may claim it instead.
+    ///
+    /// Two things withhold an answer, and they mean the same to everything downstream: a hook that
+    /// stopped reading before the answer was ready, and a pause the repository holds.
+    fn withhold(&self, answer: &mut Answer) {
+        answer.text = None;
+        answer.given = std::mem::take(&mut answer.given)
+            .into_iter()
+            .filter_map(|given| recorded(given, true, false, true))
+            .collect();
+        for claim in answer.claims.drain(..) {
+            self.claims.release(&claim);
+        }
+    }
+
     /// A server for a daemon started now, whose writer reads `inbox`, answering from the graph of
     /// `snapshot`, the uncommitted diff of `worktree` or of the event's working tree among
     /// `linked`, and the signature changes `signatures` holds, with `service`, telling the user
@@ -610,6 +627,10 @@ impl Server {
             );
         }
         let stop = (is_stop && !is_probe).then(|| event.clone());
+        // Read before the event is given up, and read every time rather than kept: a pause the
+        // user has just lifted must not hold for one more prompt. The event is still recorded
+        // above, whether or not a pause holds, which is the whole point of a pause.
+        let paused = pause_of(&event.repo_root).filter(|pause| pause.holds_at(now_ms()));
         let agent = event.agent;
         let signatures = Arc::clone(&self.signatures);
         let claims = self.claims.clone();
@@ -665,22 +686,19 @@ impl Server {
         // INVARIANT: measured-claims. Text that cannot reach the hook before it stops reading
         // reaches no agent: it is not sent, and what it would have given is recorded as not
         // delivered.
-        if answer.text.is_some() && is_too_late_to_send(answer_by_ms, now_ms()) {
-            answer.text = None;
-            answer.given = answer
-                .given
-                .into_iter()
-                .filter_map(|given| recorded(given, true, false, true))
-                .collect();
+        let is_late = answer.text.is_some() && is_too_late_to_send(answer_by_ms, now_ms());
+        if is_late {
+            self.withhold(&mut answer);
             if !is_probe {
                 self.inbox.note_error(
                     "an answer was worked out after its hook stopped waiting",
                     now_ms(),
                 );
             }
-            for claim in answer.claims.drain(..) {
-                self.claims.release(&claim);
-            }
+        } else if answer.text.is_some() && paused.is_some() {
+            // A pause stops what Cortex says and not what it learns: the event is already
+            // recorded, and this drops only the text and what the text would have claimed.
+            self.withhold(&mut answer);
         }
         // A stop given a reason is held back until the reason reaches its hook.
         let (stop, held_stop) = if answer.text.is_none() {

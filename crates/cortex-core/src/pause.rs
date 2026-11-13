@@ -6,6 +6,9 @@
 //! store, so a command that wrote this there would need a request of its own. The file holds
 //! either the moment the pause ends or a word saying it holds until someone lifts it, so that a
 //! moment never has to stand for "no end".
+//!
+//! The file is read from the repository's main working tree, which is where one daemon serves
+//! every linked working tree of it, so one pause covers them all.
 
 use std::path::Path;
 
