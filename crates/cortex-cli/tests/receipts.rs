@@ -463,7 +463,7 @@ fn receipts_compare_the_arms_once_each_has_thirty_ended_tasks() -> TestResult {
         [
             "holdout comparison: 30 tasks ended with Cortex and 30 held out; each difference is \
              with Cortex minus held out, its 95% bootstrap interval in brackets",
-            "  success rate: 1.00 with Cortex, 1.00 held out, 0.00 (0.00 to 0.00)",
+            "  success rate: 1 with Cortex, 1 held out, 0 (0 to 0)",
         ]
     );
     for (line, (what, treated, held_out, difference)) in lines[at + 2..at + 6].iter().zip([

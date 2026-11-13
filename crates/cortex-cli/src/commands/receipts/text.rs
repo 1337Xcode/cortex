@@ -84,7 +84,7 @@ fn holdout_lines(holdout: &Holdout) -> Vec<String> {
     lines.push(compared_line(
         "success rate",
         &comparison.success_rate,
-        rate,
+        (share, signed_share),
     ));
     let [treated_succeeded, held_out_succeeded] = comparison.per_success_tasks;
     match &comparison.per_success {
@@ -95,7 +95,7 @@ fn holdout_lines(holdout: &Holdout) -> Vec<String> {
                 ("median turns per successful task", turns),
                 ("median tool calls per successful task", calls),
             ] {
-                lines.push(compared_line(what, compared, quantity));
+                lines.push(compared_line(what, compared, (quantity, signed_quantity)));
             }
             lines.push(format!(
                 "  medians from {} with Cortex and {} held out whose usage was read",
@@ -113,17 +113,12 @@ fn holdout_lines(holdout: &Holdout) -> Vec<String> {
     lines
 }
 
-/// One measure of the comparison as a line: each arm's value, the difference and its interval,
-/// each written by `number`.
-fn compared_line(what: &str, compared: &Compared, number: fn(f64) -> String) -> String {
-    let signed = |value: f64| {
-        let text = number(value);
-        if value > 0.0 {
-            format!("+{text}")
-        } else {
-            text
-        }
-    };
+/// How a measure is written: its value, and a difference or a bound of its interval, signed.
+type Writers = (fn(f64) -> String, fn(f64) -> String);
+
+/// One measure of the comparison as a line: each arm's value written by `number`, the difference
+/// and its interval by `signed`.
+fn compared_line(what: &str, compared: &Compared, (number, signed): Writers) -> String {
     format!(
         "  {what}: {} with Cortex, {} held out, {} ({} to {})",
         number(compared.treated),
@@ -134,9 +129,46 @@ fn compared_line(what: &str, compared: &Compared, number: fn(f64) -> String) -> 
     )
 }
 
-/// A share as a decimal of two places.
-fn rate(value: f64) -> String {
-    format!("{value:.2}")
+/// A share from 0 to 1 as a decimal of two places, never written as one of the ends when it is
+/// not: "0" and "1" for the ends themselves, "under 0.01" below 0.005 and "over 0.99" from 0.995,
+/// as the map writes it.
+fn share(value: f64) -> String {
+    if value <= 0.0 {
+        "0".to_owned()
+    } else if value >= 1.0 {
+        "1".to_owned()
+    } else if value < 0.005 {
+        "under 0.01".to_owned()
+    } else if value >= 0.995 {
+        "over 0.99".to_owned()
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+/// A difference of shares, from -1 to 1, with its sign, by the same rule: "+0.17", "-0.08", "0"
+/// for none, and a bound on its side of 0 for one that would round to 0 or 1 either way
+/// ("under +0.01", "over -0.01", "over +0.99", "under -0.99").
+fn signed_share(value: f64) -> String {
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+    let is_up = value > 0.0;
+    match share(value.abs()).as_str() {
+        "under 0.01" => if is_up { "under +0.01" } else { "over -0.01" }.to_owned(),
+        "over 0.99" => if is_up { "over +0.99" } else { "under -0.99" }.to_owned(),
+        size => format!("{}{size}", if is_up { "+" } else { "-" }),
+    }
+}
+
+/// A median or a difference of medians as [`quantity`] writes it, with a `+` when above 0.
+fn signed_quantity(value: f64) -> String {
+    let text = quantity(value);
+    if value > 0.0 {
+        format!("+{text}")
+    } else {
+        text
+    }
 }
 
 /// A median or a difference of medians, grouped in threes, with its tenths when it has any (a
@@ -155,8 +187,9 @@ pub(in crate::commands) fn quantity(value: f64) -> String {
 fn precision_line(precision: Precision) -> String {
     match precision.share() {
         None => "injection precision: no work order given is labelled yet".to_owned(),
-        Some(share) => format!(
-            "injection precision: {share:.2}, {} of {} given and labelled were used",
+        Some(precision_share) => format!(
+            "injection precision: {}, {} of {} given and labelled were used",
+            share(precision_share),
             grouped(precision.used),
             counted(precision.labelled, "work order", "work orders")
         ),
@@ -167,9 +200,10 @@ fn precision_line(precision: Precision) -> String {
 fn warning_line(precision: Precision) -> String {
     match precision.share() {
         None => "warning precision: no warning is marked yet".to_owned(),
-        Some(share) => format!(
-            "warning precision: {share:.2}, {} of {} warnings named and marked were then read or \
+        Some(precision_share) => format!(
+            "warning precision: {}, {} of {} warnings named and marked were then read or \
              edited",
+            share(precision_share),
             grouped(precision.used),
             counted(precision.labelled, "file", "files")
         ),
@@ -368,8 +402,40 @@ mod tests {
     use cortex_meter::{Holdout, Recorded};
 
     use super::super::{Prices, Report};
-    use super::{amount, grouped, holdout_lines, lines, session_lines, usage, when};
+    use super::{
+        amount, grouped, holdout_lines, lines, session_lines, share, signed_share, usage, when,
+    };
 
+    /// A share is never written as an end it is not: 0 and 1 themselves, 0.004 as under 0.01,
+    /// 0.996 as over 0.99, 0.5 as 0.50, 0.005 as 0.01; a difference keeps its side of 0 by the
+    /// same rule.
+    #[test]
+    fn a_share_is_never_rounded_to_an_end() {
+        let shares: Vec<String> = [0.0, 1.0, 0.004, 0.996, 0.5, 0.005]
+            .into_iter()
+            .map(share)
+            .collect();
+        assert_eq!(
+            shares,
+            ["0", "1", "under 0.01", "over 0.99", "0.50", "0.01"]
+        );
+        let differences: Vec<String> = [0.0, 0.004, -0.004, 0.996, -0.996, 0.17, -0.08]
+            .into_iter()
+            .map(signed_share)
+            .collect();
+        assert_eq!(
+            differences,
+            [
+                "0",
+                "under +0.01",
+                "over -0.01",
+                "over +0.99",
+                "under -0.99",
+                "+0.17",
+                "-0.08"
+            ]
+        );
+    }
     /// Digits grouped by hand.
     #[test]
     fn numbers_are_grouped_in_threes() {
