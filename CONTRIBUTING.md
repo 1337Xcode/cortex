@@ -33,6 +33,7 @@
 | Path | Holds |
 | --- | --- |
 | `crates/cortex-cli` | The `cortex` binary: every user command and the entry points agents call |
+| `crates/cortex-coord` | What the sessions of one repository are told about each other: where each one is working, which of them an edit concerns, and what each is warned about |
 | `crates/cortex-core` | Shared types: repository paths, ids, hashes, languages, stored names, record kinds and settings; finding and running another program, bounded in time and output |
 | `crates/cortex-daemon` | The daemon: one process per repository that keeps its index current, records what agents do, holds the graph and answers retrievals; the only writer of the database |
 | `crates/cortex-git` | Reading a repository's git history and work tree: the commits on the first-parent line, the files each one changed, and the uncommitted files |
@@ -44,7 +45,7 @@
 | `crates/cortex-retrieve` | Retrieval: seeds from a prompt and a session, spreading activation over the graph, the gate, and the work order and primer it renders |
 | `crates/cortex-store` | The SQLite database in `.cortex/`: migrations, the single writer and readers |
 | `eval` | The evaluation suite: tasks, testbeds, checks and the runner that has real agents work through them |
-| `fuzz` | Fuzz targets for the parsers that read input Cortex does not control: hook input and the daemon's frames |
+| `fuzz` | Fuzz targets for the parsers that read input Cortex does not control: an agent's hook input and transcript, the daemon's frames, and a repository's own source |
 | `xtask` | The repository checks behind `cargo xtask verify` |
 | `tests` | Cross-crate tests and the recorded agent hook payloads they read, in `fixtures/<agent>/<version>/` |
 
