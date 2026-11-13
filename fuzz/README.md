@@ -1,7 +1,8 @@
 # cortex-fuzz
 
-Fuzz targets for the two parsers that read input Cortex does not control: what an agent writes
-to the hook's stdin, and the frames that cross the daemon's socket. Each target must turn any
+Fuzz targets for the parsers that read input Cortex does not control: what an agent writes to
+the hook's stdin, the frames that cross the daemon's socket, a repository's own source, an
+agent's transcript, and the shared facts file a teammate commits. Each target must turn any
 bytes into a result or an error, never a panic, a hang, or an allocation past a cap.
 
 | Target | What it feeds |
@@ -10,6 +11,7 @@ bytes into a result or an error, never a panic, a hang, or an allocation past a 
 | `frame_decode` | The bytes to `read_frame` as a stream of requests and of answers, and to `decode` as one frame's body |
 | `extract_source` | Arbitrary bytes read as source, the first byte choosing which of the 21 languages, through the extractor that every file an agent touches goes through |
 | `transcript_line` | A line of an agent transcript to the usage meter, the first byte choosing the agent, carried through twice so what one line leaves for the next is read too |
+| `shared_facts` | The text of a shared facts file to the reader `cortex import` uses; a file it accepts is written back and read again, and must give the same facts |
 
 The crate is a workspace of its own, built on nightly by
 [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html), on Linux or macOS. From this
@@ -29,6 +31,10 @@ cargo +nightly fuzz run extract_source corpus/extract_source -- -max_total_time=
 
 ```bash
 cargo +nightly fuzz run transcript_line corpus/transcript_line -- -max_total_time=600
+```
+
+```bash
+cargo +nightly fuzz run shared_facts corpus/shared_facts -- -max_total_time=600
 ```
 
 The source extractor is slower than the other two by a wide margin, since every input is parsed by

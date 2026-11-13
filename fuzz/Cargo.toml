@@ -41,6 +41,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "shared_facts"
+path = "fuzz_targets/shared_facts.rs"
+test = false
+doc = false
+bench = false
+
 # A workspace of its own: the targets build on nightly with the fuzzer's instrumentation, apart
 # from the repository's workspace.
 [workspace]

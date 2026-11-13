@@ -45,7 +45,7 @@
 | `crates/cortex-retrieve` | Retrieval: seeds from a prompt and a session, spreading activation over the graph, the gate, and the work order and primer it renders |
 | `crates/cortex-store` | The SQLite database in `.cortex/`: migrations, the single writer and readers |
 | `eval` | The evaluation suite: tasks, testbeds, checks and the runner that has real agents work through them |
-| `fuzz` | Fuzz targets for the parsers that read input Cortex does not control: an agent's hook input and transcript, the daemon's frames, and a repository's own source |
+| `fuzz` | Fuzz targets for the parsers that read input Cortex does not control: an agent's hook input and transcript, the daemon's frames, a repository's own source, and a teammate's shared facts file |
 | `xtask` | The repository checks behind `cargo xtask verify` |
 | `tests` | Cross-crate tests and the recorded agent hook payloads they read, in `fixtures/<agent>/<version>/` |
 
