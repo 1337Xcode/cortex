@@ -15,10 +15,9 @@ use cortex_core::ipc::{FactsAnswer, FactsAsk, Note, NoteOutcome, RequestBody, Re
 use cortex_core::{FactSource, FactStatus, UserFolder};
 
 use crate::commands::facts::answer_of;
-use crate::shared_facts::{
-    FACTS_FILE, SHARED_FOLDER, SharedFact, read_facts_file, read_shared_facts,
-};
+use crate::shared_facts::read_shared_facts;
 use crate::{output, repository, upgrade};
+use cortex_core::{FACTS_FILE, SHARED_FOLDER, SharedFact, read_facts_file};
 
 /// How long the daemon has to answer each fact, a daemon started by this command included: it
 /// takes a fact request within 10 s and writes it within 5 s more.

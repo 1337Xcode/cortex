@@ -17,11 +17,12 @@ use cortex_core::{FactStatus, read_text_file};
 use crate::backup::replace_unchanged;
 use crate::commands::facts::answer_of;
 use crate::commands::init::own_folder;
-use crate::shared_facts::{
-    FACTS_FILE, MAX_FACTS_FILE_BYTES, MAX_SHARED_FACTS, SHARED_FOLDER, SharedFact, facts_file,
-    is_own_file, shareable,
-};
+use crate::shared_facts::is_own_file;
 use crate::{output, repository};
+use cortex_core::{
+    FACTS_FILE, MAX_FACTS_FILE_BYTES, MAX_SHARED_FACTS, SHARED_FOLDER, SharedFact, facts_file,
+    shareable,
+};
 
 /// The arguments of `cortex export`.
 #[derive(Debug, clap::Args)]

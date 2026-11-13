@@ -51,6 +51,7 @@ mod repo_id;
 mod root;
 mod scale_mode;
 mod set_up;
+mod shared_facts;
 mod task;
 mod text_file;
 mod tokens;
@@ -118,6 +119,10 @@ pub use repo_id::RepoId;
 pub use root::{canonical_root, is_never_a_root};
 pub use scale_mode::ScaleMode;
 pub use set_up::{forget_set_up, is_set_up_here, record_set_up};
+pub use shared_facts::{
+    AnchorRefused, FACTS_FILE, FACTS_VERSION, FactRefused, MAX_FACTS_FILE_BYTES, MAX_SHARED_FACTS,
+    SHARED_FOLDER, SharedFact, SharedFactsError, facts_file, read_facts_file, shareable,
+};
 pub use task::{is_held_out, task_id_of_prompt};
 pub use text_file::{MAX_SETTINGS_BYTES, TextFileError, read_text_file};
 pub use tokens::identifier_tokens;
