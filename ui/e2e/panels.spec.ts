@@ -451,7 +451,7 @@ test.describe('the file panel', () => {
       .click();
     const section = filePanel(page).getByTestId('panel-symbols');
     await expect(section).toContainText(
-      '4 symbols, in line order, as Cortex last indexed the file. Highlighted: 2 symbols holding lines the work orders that listed this file (the latest 20 at most) selected.',
+      "4 symbols, in line order, as Cortex last indexed the file. Cortex's last 20 work orders that listed this file picked lines inside 2 symbols, highlighted below.",
     );
     await expect(section.locator('.span-row')).toHaveText([
       'Lines 50 to 72, selected by 2 work orders.',

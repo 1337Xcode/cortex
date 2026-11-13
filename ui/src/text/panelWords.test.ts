@@ -305,10 +305,10 @@ describe("the file's symbols", () => {
         selected: [{ start_line: 40, end_line: 88, orders: 2 }],
       }),
     ).toBe(
-      'The first 2 of 640 symbols, in line order, as Cortex last indexed the file. Highlighted: 1 symbol holding lines the work orders that listed this file (the latest 20 at most) selected.',
+      "The first 2 of 640 symbols, in line order, as Cortex last indexed the file. Cortex's last 20 work orders that listed this file picked lines inside 1 symbol, highlighted below.",
     );
     expect(symbolsNote({ symbols: [order], symbols_total: 1, selected: [] })).toBe(
-      '1 symbol, in line order, as Cortex last indexed the file. None of the work orders that listed this file (the latest 20 at most) selected lines of it.',
+      "1 symbol, in line order, as Cortex last indexed the file. Cortex's last 20 work orders that listed this file picked no lines of it.",
     );
   });
 });

@@ -66,11 +66,11 @@ function SymbolLists({ detail }: { detail: FileDetail }): ReactElement {
       {opensAtFirst ? <p className="section-note">{AT_FIRST_LINE_NOTE}</p> : null}
       {detail.selected.length === 0 ? null : (
         <div className="panel-kind">
-          <h4>Lines work orders selected</h4>
+          <h4>Lines the work orders picked</h4>
           <RowList
             items={detail.selected}
             keyOf={(span) => `${span.start_line}:${span.end_line}`}
-            label="Lines work orders selected"
+            label="Lines the work orders picked"
             renderRow={(span) => <p className="span-row">{spanSentence(span)}</p>}
           />
         </div>

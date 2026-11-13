@@ -58,11 +58,11 @@ export function symbolsNote(
       ? `The first ${formatCount(detail.symbols.length)} of ${countOf(detail.symbols_total, 'symbol')}, in line order`
       : `${countOf(detail.symbols_total, 'symbol')}, in line order`;
   const chosen = detail.symbols.filter((symbol) => symbol.selected > 0).length;
-  const orders = `the work orders that listed this file (the latest ${formatCount(MAX_TOLD)} at most)`;
+  const orders = `Cortex's last ${formatCount(MAX_TOLD)} work orders that listed this file`;
   const highlight =
     detail.selected.length === 0
-      ? `None of ${orders} selected lines of it.`
-      : `Highlighted: ${countOf(chosen, 'symbol')} holding lines ${orders} selected.`;
+      ? `${orders} picked no lines of it.`
+      : `${orders} picked lines inside ${countOf(chosen, 'symbol')}, highlighted below.`;
   return `${listed}, as Cortex last indexed the file. ${highlight}`;
 }
 
