@@ -11,6 +11,7 @@
 mod health;
 mod history;
 mod script;
+mod symbols;
 
 use std::sync::Arc;
 
@@ -451,15 +452,21 @@ fn a_file_s_panel_is_its_facts_history_and_what_it_was_told() -> TestResult {
         r##"{"subject":"Charge in integer cents","refs":"#482 #12","date_s":1762300000}"##,
         r#"{"subject":"Round tax once","refs":"","date_s":1762000000}"#,
     ];
+    let symbols = [
+        r#"{"name":"place_order","kind":"function","start_line":10,"end_line":11,"is_nested":false,"selected":0}"#,
+        r#"{"name":"OrderBook","kind":"class","start_line":40,"end_line":41,"is_nested":false,"selected":0}"#,
+    ];
     let told = [
         r#"{"kind":"warning","at_ms":2310,"used":null}"#,
         r#"{"kind":"work_order","at_ms":1600,"used":true}"#,
         r#"{"kind":"work_order","at_ms":1500,"used":true}"#,
     ];
     let expected = format!(
-        r#"{{"version":1,"id":2,"path":"src/orders.rs","editor_url":"EDITOR","facts":[{}],"history":[{}],"history_total":2,"history_reader":"off","told":[{}]}}"#,
+        r#"{{"version":1,"id":2,"path":"src/orders.rs","editor_url":"EDITOR","facts":[{}],"history":[{}],"history_total":2,"history_reader":"off","symbols":[{}],"symbols_total":2,"selected":[{}],"told":[{}]}}"#,
         facts.join(","),
         history.join(","),
+        symbols.join(","),
+        r#"{"start_line":1,"end_line":2,"orders":2}"#,
         told.join(",")
     );
     assert_eq!(
@@ -482,14 +489,15 @@ fn a_file_the_agent_did_not_follow_up_is_marked_unused() -> TestResult {
         r#"{"kind":"work_order","at_ms":1600,"used":false}"#,
     ];
     let expected = format!(
-        r#"{{"version":1,"id":3,"path":"src/orders_test.rs","editor_url":"EDITOR","facts":[],"history":[],"history_total":0,"history_reader":"off","told":[{}]}}"#,
+        r#"{{"version":1,"id":3,"path":"src/orders_test.rs","editor_url":"EDITOR","facts":[],"history":[],"history_total":0,"history_reader":"off","symbols":[],"symbols_total":0,"selected":[{}],"told":[{}]}}"#,
+        r#"{"start_line":1,"end_line":2,"orders":2}"#,
         told.join(",")
     );
     assert_eq!(
         with_editor(get(&fixture, "api/file/3")?, "src/orders_test.rs")?,
         (200, expected)
     );
-    let bare = r#"{"version":1,"id":0,"path":"docs/guide.md","editor_url":"EDITOR","facts":[],"history":[],"history_total":0,"history_reader":"off","told":[]}"#;
+    let bare = r#"{"version":1,"id":0,"path":"docs/guide.md","editor_url":"EDITOR","facts":[],"history":[],"history_total":0,"history_reader":"off","symbols":[],"symbols_total":0,"selected":[],"told":[]}"#;
     assert_eq!(
         with_editor(get(&fixture, "api/file/0")?, "docs/guide.md")?,
         (200, bare.to_owned())

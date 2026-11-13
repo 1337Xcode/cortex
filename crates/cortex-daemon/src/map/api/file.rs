@@ -15,6 +15,7 @@ use super::Ask;
 use super::history::{self, Commit, FileHistory};
 use super::listing::ListedFile;
 use super::reply::{Failure, json, respond};
+use super::symbols::{self, FileSymbols, Selected, Symbol};
 use super::told::{self, Told};
 use crate::map::site::Site;
 use crate::map::source::Source;
@@ -51,6 +52,13 @@ struct Panel {
     history_total: usize,
     /// Whether the history worker reads blames: `on`, `off` or `refused`.
     history_reader: history::Reader,
+    /// The symbols it defines, in the order they appear, at most 500, each with how many of the
+    /// latest work orders that listed the file selected lines of it.
+    symbols: Vec<Symbol>,
+    /// How many symbols it defines.
+    symbols_total: usize,
+    /// The spans of it those work orders selected, by their lines.
+    selected: Vec<Selected>,
     /// The times Cortex named it, latest first.
     told: Vec<Told>,
 }
@@ -103,6 +111,11 @@ fn panel_of(
     (id, file): (usize, &ListedFile),
 ) -> Result<Panel, StoreError> {
     let FileHistory { commits, total } = history::of_file(queries, source, file)?;
+    let FileSymbols {
+        symbols,
+        total: symbols_total,
+        selected,
+    } = symbols::of_file(queries, file)?;
     Ok(Panel {
         version: VERSION,
         id,
@@ -112,6 +125,9 @@ fn panel_of(
         history: commits,
         history_total: total,
         history_reader: history::reader_of(source),
+        symbols,
+        symbols_total,
+        selected,
         told: told::of_file(queries, file.node)?,
     })
 }

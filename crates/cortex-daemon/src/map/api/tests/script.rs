@@ -47,7 +47,7 @@ struct Nodes {
 }
 
 /// A file of `lines` lines at `path` with `symbols`, its content hashed from its path.
-fn file(path: &str, lines: u64, symbols: Vec<SymbolRecord>) -> TestResult<FileIndex> {
+pub(super) fn file(path: &str, lines: u64, symbols: Vec<SymbolRecord>) -> TestResult<FileIndex> {
     Ok(FileIndex {
         file: FileRecord {
             path: RepoPath::new(path)?,
@@ -66,7 +66,7 @@ fn file(path: &str, lines: u64, symbols: Vec<SymbolRecord>) -> TestResult<FileIn
 }
 
 /// A function or type called `name` that starts on `line`.
-fn symbol(name: &str, kind: SymbolKind, line: u32) -> TestResult<SymbolRecord> {
+pub(super) fn symbol(name: &str, kind: SymbolKind, line: u32) -> TestResult<SymbolRecord> {
     Ok(SymbolRecord {
         parent: None,
         kind,
@@ -130,7 +130,7 @@ fn session(id: &str, started_at_ms: i64) -> TestResult<SessionRecord> {
 }
 
 /// The first task, of session `s1`.
-fn first_task() -> Ulid {
+pub(super) fn first_task() -> Ulid {
     Ulid::from_seed(1_000, b"first")
 }
 
@@ -344,7 +344,7 @@ fn store_facts(writer: &mut Writer, nodes: &Nodes) -> TestResult {
 
 /// A prompt's work order of `task`, of session `session_id`, at `at_ms` that named `files` and
 /// reached the agent.
-fn work_order(
+pub(super) fn work_order(
     (task, session_id): (Ulid, &str),
     at_ms: i64,
     files: &[NodeId],

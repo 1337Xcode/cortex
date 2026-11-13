@@ -19,6 +19,7 @@ mod receipts;
 mod reply;
 mod search;
 mod summary;
+mod symbols;
 #[cfg(test)]
 mod tests;
 mod told;
