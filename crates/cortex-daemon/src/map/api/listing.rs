@@ -135,6 +135,11 @@ impl Listing {
         self.files.get(id)
     }
 
+    /// The path of the file with id `id`, if there is one.
+    pub(in crate::map) fn path_of(&self, id: usize) -> Option<&str> {
+        self.files.get(id).map(|file| file.path.as_str())
+    }
+
     /// The id of the file whose node is `node`, if the map lists one.
     pub(in crate::map) fn id_of_node(&self, node: NodeId) -> Option<usize> {
         self.by_node.get(&node).copied()

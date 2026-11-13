@@ -56,6 +56,8 @@ struct LiveSession {
 struct LiveFile {
     /// The file's id in `api/graph`.
     file: usize,
+    /// Its path, so that a page reading an older graph can check the id.
+    path: String,
     /// `read`, `edit` or `claim`.
     mode: &'static str,
     /// When the session last did it, in UTC milliseconds.
@@ -121,8 +123,11 @@ fn files_of(rows: Option<&Vec<PositionRow>>, listing: &Listing) -> Vec<LiveFile>
         .into_iter()
         .flatten()
         .filter_map(|row| {
-            listing.id_of_node(row.record.node).map(|file| LiveFile {
+            let file = listing.id_of_node(row.record.node)?;
+            let path = listing.path_of(file)?.to_owned();
+            Some(LiveFile {
                 file,
+                path,
                 mode: row.record.mode.name(),
                 last_ms: row.record.last_ms,
             })
@@ -253,8 +258,8 @@ mod tests {
         drop(writer);
         let expected = concat!(
             r#"{"version":1,"sessions":["#,
-            r#"{"id":"s0","agent":"codex","title":"Codex","files":[{"file":2,"mode":"claim","last_ms":9990000}]},"#,
-            r#"{"id":"s1","agent":"claude","title":"Claude Code","files":[{"file":1,"mode":"edit","last_ms":9940000},{"file":0,"mode":"read","last_ms":9700000}]}"#,
+            r#"{"id":"s0","agent":"codex","title":"Codex","files":[{"file":2,"path":"c.rs","mode":"claim","last_ms":9990000}]},"#,
+            r#"{"id":"s1","agent":"claude","title":"Claude Code","files":[{"file":1,"path":"b.rs","mode":"edit","last_ms":9940000},{"file":0,"path":"a.rs","mode":"read","last_ms":9700000}]}"#,
             "]}"
         );
         assert_eq!(frame_json(root.path())?, expected);
@@ -286,7 +291,7 @@ mod tests {
             .rev()
             .map(|id| {
                 format!(
-                    r#"{{"file":{id},"mode":"read","last_ms":{}}}"#,
+                    r#"{{"file":{id},"path":"f{id:02}.rs","mode":"read","last_ms":{}}}"#,
                     NOW_MS - 12_000 + id * 1_000
                 )
             })
@@ -320,7 +325,7 @@ mod tests {
         let sessions: Vec<String> = (1..65_i64)
             .map(|index| {
                 format!(
-                    r#"{{"id":"s{index:02}","agent":"claude","title":"Claude Code","files":[{{"file":0,"mode":"read","last_ms":{}}}]}}"#,
+                    r#"{{"id":"s{index:02}","agent":"claude","title":"Claude Code","files":[{{"file":0,"path":"a.rs","mode":"read","last_ms":{}}}]}}"#,
                     heard_ms(index)
                 )
             })

@@ -272,7 +272,7 @@ fn the_map_api_answers_from_a_real_daemons_store() -> TestResult {
     let (status, found) = text("api/search?q=main")?;
     assert_eq!(status, 200);
     assert!(
-        found.contains(r#"{"kind":"file","file":0,"name":"main.py","line":null}"#),
+        found.contains(r#"{"kind":"file","file":0,"path":"main.py","name":"main.py","line":null}"#),
         "{found}"
     );
     let (status, panel) = text("api/file/0")?;

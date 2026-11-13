@@ -186,11 +186,14 @@ fn next_text(stream: &mut TcpStream) -> TestResult<String> {
 }
 
 /// A frame of Claude Code session `s1` reading the files with ids `files`, newest first, each
-/// with when it was read.
+/// with when it was read; the tests add `a.rs` and `b.rs`, ids 0 and 1.
 fn frame(files: &[(usize, i64)]) -> String {
     let files: Vec<String> = files
         .iter()
-        .map(|(file, at)| format!(r#"{{"file":{file},"mode":"read","last_ms":{at}}}"#))
+        .map(|&(file, at)| {
+            let path = if file == 0 { "a.rs" } else { "b.rs" };
+            format!(r#"{{"file":{file},"path":"{path}","mode":"read","last_ms":{at}}}"#)
+        })
         .collect();
     format!(
         r#"{{"version":1,"sessions":[{{"id":"s1","agent":"claude","title":"Claude Code","files":[{}]}}]}}"#,

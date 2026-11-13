@@ -54,6 +54,8 @@ struct Hit {
     kind: &'static str,
     /// The id of the file, or of the file the symbol is in.
     file: usize,
+    /// That file's path, so that a page reading an older graph can check the id.
+    path: String,
     /// The file's name, or the symbol's.
     name: String,
     /// The line a symbol starts at; none for a file.
@@ -64,8 +66,6 @@ struct Hit {
 struct Ranked {
     /// How well the name matches: 0 exactly, 1 as a start, 2 as a part.
     rank: u8,
-    /// The path of the file, or of the file the symbol is in.
-    path: String,
     /// What is found.
     result: Hit,
 }
@@ -120,10 +120,10 @@ fn search(queries: Queries<'_>, listing: &Listing, text: &str) -> Result<Vec<Hit
         let name = path.rsplit('/').next().unwrap_or(path);
         ranked.push(Ranked {
             rank: rank_of(name, &needle),
-            path: path.to_owned(),
             result: Hit {
                 kind: "file",
                 file: id,
+                path: path.to_owned(),
                 name: name.to_owned(),
                 line: None,
             },
@@ -135,10 +135,10 @@ fn search(queries: Queries<'_>, listing: &Listing, text: &str) -> Result<Vec<Hit
         };
         ranked.push(Ranked {
             rank: rank_of(&name, &needle),
-            path: path.as_str().to_owned(),
             result: Hit {
                 kind: "symbol",
                 file,
+                path: path.as_str().to_owned(),
                 name,
                 line: Some(line),
             },
@@ -156,7 +156,7 @@ fn search(queries: Queries<'_>, listing: &Listing, text: &str) -> Result<Vec<Hit
 fn key(ranked: &Ranked) -> (u8, &str, u32, u8, &str) {
     (
         ranked.rank,
-        &ranked.path,
+        &ranked.result.path,
         ranked.result.line.unwrap_or(0),
         u8::from(ranked.result.kind == "symbol"),
         &ranked.result.name,

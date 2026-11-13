@@ -495,12 +495,12 @@ fn the_warnings_are_listed_newest_first_with_what_became_of_them() -> TestResult
 #[test]
 fn a_search_ranks_exact_names_then_starts_then_the_rest() -> TestResult {
     let fixture = scripted()?;
-    let order = r#"{"version":1,"query":"order","results":[{"kind":"file","file":2,"name":"orders.rs","line":null},{"kind":"symbol","file":2,"name":"OrderBook","line":40},{"kind":"file","file":3,"name":"orders_test.rs","line":null},{"kind":"symbol","file":2,"name":"place_order","line":10}]}"#;
+    let order = r#"{"version":1,"query":"order","results":[{"kind":"file","file":2,"path":"src/orders.rs","name":"orders.rs","line":null},{"kind":"symbol","file":2,"path":"src/orders.rs","name":"OrderBook","line":40},{"kind":"file","file":3,"path":"src/orders_test.rs","name":"orders_test.rs","line":null},{"kind":"symbol","file":2,"path":"src/orders.rs","name":"place_order","line":10}]}"#;
     assert_eq!(
         get(&fixture, "api/search?q=order")?,
         (200, order.to_owned())
     );
-    let exact = r#"{"version":1,"query":"ORDERBOOK","results":[{"kind":"symbol","file":2,"name":"OrderBook","line":40}]}"#;
+    let exact = r#"{"version":1,"query":"ORDERBOOK","results":[{"kind":"symbol","file":2,"path":"src/orders.rs","name":"OrderBook","line":40}]}"#;
     assert_eq!(
         get(&fixture, "api/search?q=ORDERBOOK&other=1")?,
         (200, exact.to_owned())
