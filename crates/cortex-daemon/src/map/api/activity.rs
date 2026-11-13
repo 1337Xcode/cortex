@@ -15,7 +15,7 @@ use cortex_store::{EventRow, Queries, StoreError};
 use serde::Serialize;
 
 use super::Ask;
-use super::listing::Listing;
+use super::listing::{Listing, Named, named};
 use super::reply::{Failure, json, respond};
 use crate::map::site::Site;
 
@@ -51,6 +51,9 @@ struct Happened {
     /// The file it was about, by its id in `api/graph`; none when it was about no file the map
     /// lists.
     file: Option<usize>,
+    /// That file's path as the store holds it, so that a page reading an older graph can check the
+    /// id; none when the event was about no file.
+    path: Option<String>,
 }
 
 /// The activity of the store `site` reads, as JSON.
@@ -85,21 +88,26 @@ fn activity_of(queries: Queries<'_>, listing: &Listing) -> Result<Activity, Stor
         .into_iter()
         .map(|seen| (seen.session_id, seen.agent))
         .collect();
-    let events = rows
-        .into_iter()
-        .filter_map(|row| {
-            let session = row.record.session_id?;
-            let agent = agents.get(&session).copied();
-            Some(Happened {
-                at_ms: row.record.ts_ms,
-                kind: row.record.kind.name(),
-                agent: agent.map(cortex_core::Agent::name),
-                title: agent.map(cortex_core::Agent::title),
-                file: row.record.node_id.and_then(|node| listing.id_of_node(node)),
-                session: session.as_str().to_owned(),
-            })
-        })
-        .collect();
+    let mut events = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Some(session) = row.record.session_id else {
+            continue;
+        };
+        let agent = agents.get(&session).copied();
+        let file = match row.record.node_id {
+            Some(node) => named(queries, listing, node)?,
+            None => Named::default(),
+        };
+        events.push(Happened {
+            at_ms: row.record.ts_ms,
+            kind: row.record.kind.name(),
+            agent: agent.map(cortex_core::Agent::name),
+            title: agent.map(cortex_core::Agent::title),
+            file: file.id,
+            path: file.path,
+            session: session.as_str().to_owned(),
+        });
+    }
     Ok(Activity {
         version: VERSION,
         events,

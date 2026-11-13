@@ -130,6 +130,25 @@ fn the_health_shows_the_daemon_s_status() -> TestResult {
     Ok(())
 }
 
+/// A miner's detail of 1,500 characters with a line break in it is given as its first 1,000, the
+/// break a space: "a\nb" then 1,496 x's becomes "a b" and 997 x's.
+#[test]
+fn the_miner_s_detail_is_one_bounded_line() -> TestResult {
+    let mut long = report();
+    long.git = Some(GitReport {
+        state: GitState::Failed,
+        detail: Some(format!("a\nb{}", "x".repeat(1_497))),
+    });
+    let status: Arc<dyn Status> = Arc::new(Fixed(long));
+    let daemon = &health(Some(&status))?["daemon"];
+    assert_eq!(daemon["git"], "failed");
+    assert_eq!(
+        daemon["git_detail"].as_str(),
+        Some(format!("a b{}", "x".repeat(997)).as_str())
+    );
+    Ok(())
+}
+
 /// With no server, or once the server is gone, the daemon part is null and the rest still answers.
 #[test]
 fn the_health_says_nothing_of_a_daemon_it_cannot_ask() -> TestResult {

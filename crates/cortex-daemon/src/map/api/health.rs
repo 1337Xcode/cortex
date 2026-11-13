@@ -10,6 +10,7 @@ use axum::body::Body;
 use axum::http::StatusCode;
 use axum::response::Response;
 use cortex_core::ipc::{CORTEX_VERSION, HookLatency, RecentError, StatusReport};
+use cortex_core::one_line;
 use serde::Serialize;
 
 use super::Ask;
@@ -18,6 +19,10 @@ use crate::map::site::Site;
 
 /// The most errors the body names: the newest, as `cortex status` keeps a few.
 const MAX_ERRORS: usize = 10;
+
+/// The longest miner detail the body gives, in characters, as for the daemon's error messages: a
+/// reason naming a long path stays readable, and the page's parser has a bound to hold to.
+const MAX_DETAIL_CHARS: usize = 1_000;
 
 /// The endpoint's answer.
 #[derive(Debug, Serialize)]
@@ -48,7 +53,8 @@ struct Daemon {
     failed_batches: u64,
     /// Where the co-change miner is: `waiting`, `no_repository`, `mining`, `ready` or `failed`.
     git: &'static str,
-    /// More about the miner's state in words, when there is more.
+    /// More about the miner's state in words, when there is more: one line of at most
+    /// [`MAX_DETAIL_CHARS`] characters.
     git_detail: Option<String>,
     /// The graph retrieval spreads over, as last built: its nodes; none before its first build.
     graph_nodes: Option<u64>,
@@ -99,7 +105,7 @@ fn daemon_of(report: StatusReport) -> Daemon {
         events_dropped: report.events_dropped,
         failed_batches: report.failed_batches,
         git: git.state.name(),
-        git_detail: git.detail,
+        git_detail: git.detail.map(|detail| one_line(&detail, MAX_DETAIL_CHARS)),
         graph_nodes: report.graph.as_ref().map(|graph| graph.nodes),
         graph_links: report.graph.as_ref().map(|graph| graph.links),
         upkeep_at_ms: report.upkeep.map(|upkeep| upkeep.at_ms),

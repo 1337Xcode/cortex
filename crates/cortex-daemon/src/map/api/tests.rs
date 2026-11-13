@@ -363,21 +363,67 @@ fn a_fact_s_word_the_store_failed_is_a_server_error() -> TestResult {
 #[test]
 fn the_activity_is_the_agents_events_newest_first() -> TestResult {
     let fixture = scripted()?;
-    let event = |at: i64, kind: &str, session: &str, file: usize| {
+    let event = |at: i64, kind: &str, session: &str, (file, path): (usize, &str)| {
         format!(
-            r#"{{"at_ms":{at},"kind":"{kind}","session":"{session}","agent":"claude","title":"Claude Code","file":{file}}}"#
+            r#"{{"at_ms":{at},"kind":"{kind}","session":"{session}","agent":"claude","title":"Claude Code","file":{file},"path":"{path}"}}"#
         )
     };
+    let (guide, app, orders) = (
+        (0, "docs/guide.md"),
+        (1, "src/app.rs"),
+        (2, "src/orders.rs"),
+    );
     let events = [
-        event(3_000, "read", "s2", 0),
-        event(2_300, "edit", "s1", 2),
-        event(2_200, "read", "s1", 2),
-        event(2_100, "read", "s1", 1),
-        event(2_000, "read", "s1", 1),
+        event(3_000, "read", "s2", guide),
+        event(2_300, "edit", "s1", orders),
+        event(2_200, "read", "s1", orders),
+        event(2_100, "read", "s1", app),
+        event(2_000, "read", "s1", app),
     ];
     let expected = format!(r#"{{"version":1,"events":[{}]}}"#, events.join(","));
     assert_eq!(get(&fixture, "api/activity")?, (200, expected));
     assert_eq!(get(&fixture, "api/activity/1")?.0, 404);
+    Ok(())
+}
+
+/// A file added since the map listed its files has no id yet, but its path is given; once the
+/// daemon notes the change and the files are listed again, `src/a0.rs` sorts before the app, takes
+/// id 1, and the app's events name it by id 2 with its own path, which is how a page reading the
+/// older graph can tell that id 1 now names another file.
+#[test]
+fn an_event_s_path_tells_a_file_the_listing_has_not_caught_up_with() -> TestResult {
+    let fixture = scripted()?;
+    assert_eq!(get(&fixture, "api/graph")?.0, 200);
+    let mut store = writer(fixture.root.path())?;
+    let added = add_file(&mut store, "src/a0.rs", 1)?;
+    let mut transaction = store.transaction()?;
+    transaction.append_event(&script::event(
+        ("s2", script::second_task()),
+        4_000,
+        (cortex_core::EventKind::Read, added, "src/a0.rs"),
+        None,
+    )?)?;
+    transaction.commit()?;
+    drop(store);
+    let newest = |body: &str| -> TestResult<(serde_json::Value, serde_json::Value)> {
+        let value: serde_json::Value = serde_json::from_str(body)?;
+        let events = value["events"].as_array().ok_or("no events")?;
+        let first = events.first().ok_or("no first event")?;
+        let app = events.iter().find(|event| event["path"] == "src/app.rs");
+        Ok((first.clone(), app.ok_or("no app event")?.clone()))
+    };
+    let (status, body) = get(&fixture, "api/activity")?;
+    assert_eq!(status, 200);
+    let (first, app) = newest(&body)?;
+    assert_eq!(first["file"], serde_json::Value::Null);
+    assert_eq!(first["path"], "src/a0.rs");
+    assert_eq!(app["file"], 1);
+    fixture.snapshot.changed();
+    let (_, body) = get(&fixture, "api/activity")?;
+    let (first, app) = newest(&body)?;
+    assert_eq!(first["file"], 1);
+    assert_eq!(first["path"], "src/a0.rs");
+    assert_eq!(app["file"], 2);
     Ok(())
 }
 
@@ -390,8 +436,8 @@ fn the_warnings_are_listed_newest_first_with_what_became_of_them() -> TestResult
     let fixture = scripted()?;
     let expected = concat!(
         r#"{"version":1,"warnings":["#,
-        r#"{"at_ms":2320,"kind":"test","source":2,"target":3,"strength":0.5,"state":"not_followed"},"#,
-        r#"{"at_ms":2310,"kind":"cochange","source":1,"target":2,"strength":0.5,"state":"open"}"#,
+        r#"{"at_ms":2320,"kind":"test","source":2,"target":3,"source_path":"src/orders.rs","target_path":"src/orders_test.rs","strength":0.5,"state":"not_followed"},"#,
+        r#"{"at_ms":2310,"kind":"cochange","source":1,"target":2,"source_path":"src/app.rs","target_path":"src/orders.rs","strength":0.5,"state":"open"}"#,
         "]}"
     );
     assert_eq!(get(&fixture, "api/warnings")?, (200, expected.to_owned()));

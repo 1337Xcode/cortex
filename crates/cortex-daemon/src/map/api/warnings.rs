@@ -9,11 +9,11 @@
 use axum::http::StatusCode;
 use axum::response::Response;
 use cortex_core::WarningKind;
-use cortex_store::{NodeId, Queries, StoreError};
+use cortex_store::{Queries, StoreError};
 use serde::Serialize;
 
 use super::Ask;
-use super::listing::Listing;
+use super::listing::{Listing, named};
 use super::reply::{Failure, json, respond};
 use crate::map::site::Site;
 
@@ -44,6 +44,11 @@ struct Given {
     source: Option<usize>,
     /// The file the warning named, by its id; none when the map no longer lists it.
     target: Option<usize>,
+    /// The edited file's path as the store holds it, so that a page reading an older graph can
+    /// check the id; none when the store no longer holds it.
+    source_path: Option<String>,
+    /// The named file's path, likewise.
+    target_path: Option<String>,
     /// How strong its evidence was, from 0 to 1.
     strength: f64,
     /// `open` until its task ends, then `followed` or `not_followed`.
@@ -70,11 +75,15 @@ fn warnings_of(queries: Queries<'_>, listing: &Listing) -> Result<Warnings, Stor
         if row.record.kind == WarningKind::Origin {
             continue;
         }
+        let source = named(queries, listing, row.record.source)?;
+        let target = named(queries, listing, row.record.target)?;
         warnings.push(Given {
             at_ms: row.record.at_ms,
             kind: row.record.kind.name(),
-            source: file_of(queries, listing, row.record.source)?,
-            target: file_of(queries, listing, row.record.target)?,
+            source: source.id,
+            target: target.id,
+            source_path: source.path,
+            target_path: target.path,
             strength: row.record.strength,
             state: match row.resolved {
                 None => "open",
@@ -87,19 +96,4 @@ fn warnings_of(queries: Queries<'_>, listing: &Listing) -> Result<Warnings, Stor
         version: VERSION,
         warnings,
     })
-}
-
-/// The id of the file `node` is, or holds when it is a symbol; none when the map lists no such
-/// file.
-fn file_of(
-    queries: Queries<'_>,
-    listing: &Listing,
-    node: NodeId,
-) -> Result<Option<usize>, StoreError> {
-    if let Some(id) = listing.id_of_node(node) {
-        return Ok(Some(id));
-    }
-    Ok(queries
-        .node_file(node)?
-        .and_then(|(_, path)| listing.id_of_path(&path)))
 }

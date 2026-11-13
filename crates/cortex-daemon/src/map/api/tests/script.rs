@@ -135,13 +135,13 @@ pub(super) fn first_task() -> Ulid {
 }
 
 /// The second task, of session `s2`.
-fn second_task() -> Ulid {
+pub(super) fn second_task() -> Ulid {
     Ulid::from_seed(3_000, b"second")
 }
 
 /// An event of `kind` at `ts_ms` about the file at `node` and `path`, which session `session_id`
 /// reported in `task`, as the watcher when `source` says so.
-fn event(
+pub(super) fn event(
     (session_id, task): (&str, Ulid),
     ts_ms: i64,
     (kind, node, path): (EventKind, NodeId, &str),

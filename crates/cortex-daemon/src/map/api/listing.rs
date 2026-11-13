@@ -39,6 +39,37 @@ pub(in crate::map) struct Listing {
     by_row: HashMap<FileId, usize>,
 }
 
+/// The file a node is, as an answer names it: its id in `api/graph`, which holds only while the
+/// files do, and its path as the store holds it, so that a page reading an older graph can tell
+/// that the id now names another file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct Named {
+    /// Its id, when the map lists it.
+    pub(super) id: Option<usize>,
+    /// Its path, when the node is a file the store holds.
+    pub(super) path: Option<String>,
+}
+
+/// The file `node` is, as `listing` lists it and the store read through `queries` holds it.
+///
+/// # Errors
+///
+/// SQLite errors and a stored path that cannot be read back.
+pub(super) fn named(
+    queries: Queries<'_>,
+    listing: &Listing,
+    node: NodeId,
+) -> Result<Named, StoreError> {
+    let path = queries.node_file(node)?.map(|(_, path)| path);
+    let id = listing
+        .id_of_node(node)
+        .or_else(|| path.as_ref().and_then(|path| listing.id_of_path(path)));
+    Ok(Named {
+        id,
+        path: path.map(|path| path.as_str().to_owned()),
+    })
+}
+
 /// Whether the map lists a file at `path`: its text holds no control character, which the API's
 /// paths never do.
 fn is_listed(path: &RepoPath) -> bool {
