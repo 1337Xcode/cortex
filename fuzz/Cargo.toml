@@ -11,6 +11,7 @@ cargo-fuzz = true
 [dependencies]
 cortex-core = { path = "../crates/cortex-core" }
 cortex-hook = { path = "../crates/cortex-hook" }
+cortex-index = { path = "../crates/cortex-index" }
 libfuzzer-sys = "0.4.13"
 
 [[bin]]
@@ -23,6 +24,12 @@ bench = false
 [[bin]]
 name = "frame_decode"
 path = "fuzz_targets/frame_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "extract_source"
+path = "fuzz_targets/extract_source.rs"
 test = false
 doc = false
 bench = false
