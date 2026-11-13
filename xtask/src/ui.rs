@@ -6,7 +6,7 @@
 //! `cargo xtask verify` runs the map's type check, linters and unit tests, builds it and checks the
 //! bundle's size when `ui/node_modules` is there, and says plainly that it skipped them when it is
 //! not. `cargo xtask verify --full` adds the browser checks, which measure the map at 100,000 files
-//! (see `map_budgets`).
+//! (see `map_budgets`), and the map's acceptance flow against a real daemon (`ui/e2e/real/`).
 
 use std::path::Path;
 use std::process::Command;
@@ -19,6 +19,9 @@ const BUNDLE_LIMIT_BYTES: u64 = 1_500_000;
 
 /// The environment variable that tells the browser measurement where to write its numbers.
 const SCALE_FILE_VARIABLE: &str = "CORTEX_MAP_SCALE_FILE";
+
+/// The environment variable that names the `cortex` binary the daemon checks run.
+const BINARY_VARIABLE: &str = "CORTEX_BIN";
 
 /// npm's launcher: a command script on Windows, which `Command` runs with its arguments escaped.
 const NPM: &str = if cfg!(windows) { "npm.cmd" } else { "npm" };
@@ -103,6 +106,24 @@ pub(crate) fn browser_checks(root: &Path, scale_file: &Path) -> anyhow::Result<(
         "ui: browser checks",
         &["--prefix", "ui", "run", "e2e"],
         Some((SCALE_FILE_VARIABLE, scale_file)),
+    )
+}
+
+/// The map's acceptance flow against a real daemon, the `cortex` at `binary`: a scripted
+/// repository and agent session, then each of the map's questions answered from a browser.
+///
+/// # Errors
+///
+/// The packages are not installed, or a check fails.
+pub(crate) fn daemon_checks(root: &Path, binary: &Path) -> anyhow::Result<()> {
+    if !is_installed(root) {
+        bail!("the map's daemon checks need ui/node_modules: run `cargo xtask ui` first");
+    }
+    run_npm(
+        root,
+        "ui: checks against a real daemon",
+        &["--prefix", "ui", "run", "e2e:real"],
+        Some((BINARY_VARIABLE, binary)),
     )
 }
 

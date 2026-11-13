@@ -79,6 +79,7 @@ pub(crate) fn verify(full: bool) -> anyhow::Result<()> {
             ],
         )?;
         check_map_in_browsers(&root)?;
+        check_map_against_a_daemon(&root)?;
         budgets::check(&root)?;
     }
     Ok(())
@@ -101,6 +102,21 @@ fn check_map_in_browsers(root: &Path) -> anyhow::Result<()> {
     }
     ui::browser_checks(root, &scale_file)?;
     map_budgets::check(&scale_file)
+}
+
+/// Runs the map's acceptance flow against a real daemon: builds `cortex` after the map's build,
+/// so that the binary embeds the map this run built, then drives it from a browser.
+fn check_map_against_a_daemon(root: &Path) -> anyhow::Result<()> {
+    run_cargo(
+        root,
+        "the binary for the map's daemon checks",
+        &["build", "--locked", "-p", "cortex-cli", "--bin", "cortex"],
+    )?;
+    let binary = root
+        .join(budgets::target_dir(root))
+        .join("debug")
+        .join(format!("cortex{}", std::env::consts::EXE_SUFFIX));
+    ui::daemon_checks(root, &binary)
 }
 
 /// The repository root: the parent of this crate's folder.

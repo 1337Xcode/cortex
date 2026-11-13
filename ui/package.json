@@ -16,7 +16,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "check": "tsc --noEmit && tsc --noEmit -p e2e && eslint . && prettier --check . && vitest run",
-    "e2e": "playwright test --config e2e/playwright.config.ts"
+    "e2e": "playwright test --config e2e/playwright.config.ts",
+    "e2e:real": "playwright test --config e2e/real/playwright.config.ts"
   },
   "dependencies": {
     "@deck.gl/core": "9.4.1",
