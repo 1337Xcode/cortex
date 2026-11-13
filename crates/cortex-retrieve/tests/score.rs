@@ -62,7 +62,7 @@ fn defaults() -> Weighing {
 
 /// The graph of `nodes` and `links`, weighed by the settings' defaults with nothing faded.
 fn graph(nodes: &[NodeInput<i64>], links: &[LinkInput<i64>]) -> TestResult<Graph<i64>> {
-    Ok(Graph::build(nodes, links, &defaults())?)
+    Ok(Graph::build(nodes.to_vec(), links.to_vec(), &defaults())?)
 }
 
 /// Seeds of the prompt's words at the nodes `lexical`, the session at `edited`, and exploration at
@@ -344,7 +344,7 @@ fn the_floors_are_held_in_the_graph_s_weights() -> TestResult {
     let mut weighing = defaults();
     weighing.type_weights.structural = 0.6;
     weighing.type_weights.coaccess = 0.4;
-    let graph = Graph::build(&nodes, &links, &weighing)?;
+    let graph = Graph::build(nodes.to_vec(), links.to_vec(), &weighing)?;
     let n = |id| at(&graph, id);
     let seeds = seeds_at(&[n(1)?], &[n(2)?, n(3)?, n(4)?, n(5)?], &[]);
     assert_eq!(evidence(&graph, &seeds, 2)?, [Evidence::Structural]);
@@ -366,7 +366,7 @@ fn a_co_access_link_counts_as_it_has_faded() -> TestResult {
     ];
     let mut weighing = defaults();
     weighing.latest_seq = 10;
-    let graph = Graph::build(&nodes, &links, &weighing)?;
+    let graph = Graph::build(nodes.to_vec(), links.to_vec(), &weighing)?;
     let n = |id| at(&graph, id);
     let seeds = seeds_at(&[n(1)?], &[n(2)?, n(3)?], &[]);
     assert_eq!(evidence(&graph, &seeds, 2)?, [Evidence::CoAccess]);

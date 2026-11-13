@@ -49,7 +49,7 @@ fn graph_of(count: i64, rows: &[(i64, i64, u8, f64)]) -> Graph<i64> {
         clippy::expect_used,
         reason = "a test graph of a few thousand nodes always builds"
     )]
-    Graph::build(&nodes, &links, &weighing()).expect("a test graph builds")
+    Graph::build(nodes, links, &weighing()).expect("a test graph builds")
 }
 
 /// Exact personalized PageRank from `seeds` over `graph`, by power iteration on a petgraph copy

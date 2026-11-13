@@ -378,8 +378,8 @@ fn linked() -> TestResult<Graph<i64>> {
         link_decay: 0.995,
     };
     Ok(Graph::build(
-        &[file(1), file(2), file(3)],
-        &links,
+        vec![file(1), file(2), file(3)],
+        links.to_vec(),
         &weighing,
     )?)
 }

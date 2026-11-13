@@ -82,7 +82,7 @@ pub fn read_graph(
         latest_seq,
         link_decay: settings.link_decay,
     };
-    Ok(Graph::build(&nodes, &links, &weighing)?)
+    Ok(Graph::build(nodes, links, &weighing)?)
 }
 
 /// What `row` says of its node as of task `latest_seq`, interest kept by `interest_decay` for each

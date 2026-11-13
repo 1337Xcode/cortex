@@ -99,7 +99,7 @@ fn graph(nodes: u32) -> Graph<u32> {
     };
     // A benchmark without its graph has nothing to measure.
     #[allow(clippy::expect_used)]
-    Graph::build(&inputs, &links, &weighing).expect("a graph within 32-bit numbers")
+    Graph::build(inputs, links, &weighing).expect("a graph within 32-bit numbers")
 }
 
 /// The seeds of a spread over a graph of `nodes` nodes: [`SEEDS`] symbols evenly apart, each an

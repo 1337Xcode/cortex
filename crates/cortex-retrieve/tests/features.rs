@@ -47,7 +47,7 @@ fn graph() -> TestResult<Graph<i64>> {
         latest_seq: 0,
         link_decay: 0.995,
     };
-    Ok(Graph::build(&nodes, &links, &weighing)?)
+    Ok(Graph::build(nodes.to_vec(), links.to_vec(), &weighing)?)
 }
 
 /// A scored file `file` holding `activation` of the activation, scoring as much.

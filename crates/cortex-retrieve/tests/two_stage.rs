@@ -52,7 +52,7 @@ fn graph_of(files: &[i64], symbols: &[(i64, i64)], refs: &[(i64, i64)]) -> Graph
         clippy::expect_used,
         reason = "a test graph of a few dozen nodes always builds"
     )]
-    Graph::build(&nodes, &links, &weighing()).expect("a test graph builds")
+    Graph::build(nodes, links, &weighing()).expect("a test graph builds")
 }
 
 /// The index of node `id` in `graph`.

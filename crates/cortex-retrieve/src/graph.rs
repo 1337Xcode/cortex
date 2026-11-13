@@ -338,11 +338,15 @@ impl<Id: Ord + Copy> Graph<Id> {
     /// [`GraphError::TooLarge`] for more nodes, or more links of one kind, than 32-bit numbers
     /// count.
     pub fn build(
-        nodes: &[NodeInput<Id>],
-        links: &[LinkInput<Id>],
+        nodes: Vec<NodeInput<Id>>,
+        links: Vec<LinkInput<Id>>,
         weighing: &Weighing,
     ) -> Result<Self, GraphError> {
-        let mut sorted: Vec<NodeInput<Id>> = nodes.to_vec();
+        // Both lists are taken rather than borrowed, and on a repository of millions of nodes that
+        // is most of what a build holds: the nodes are sorted where they lie instead of into a
+        // copy of them, and the links are given up as they are read into the lists per kind, which
+        // hold the same links at 16 bytes rather than 40.
+        let mut sorted = nodes;
         // INVARIANT: deterministic (a node given twice keeps the same kind and file whatever
         // order the rows came in)
         sorted.sort_by_key(|node| (node.id, node.kind, node.file));
@@ -390,11 +394,17 @@ impl<Id: Ord + Copy> Graph<Id> {
                 _ => {}
             }
         }
+        // Everything the sorted nodes were needed for has been taken out of them, and the heaviest
+        // part of the build is still to come, so the list goes now rather than at the end of the
+        // function. On a repository of millions of nodes it is the largest thing here.
+        drop(sorted);
+        // Consumes the links, so the list is given back at the end of this loop rather than held
+        // for as long as the build runs.
         for link in links {
             let (Some(src), Some(dst)) = (index(link.src), index(link.dst)) else {
                 continue;
             };
-            let weight = weighing.of(link);
+            let weight = weighing.of(&link);
             if src == dst || weight <= 0.0 {
                 continue;
             }
@@ -605,7 +615,7 @@ mod tests {
     fn the_graph_says_how_much_memory_it_holds() -> Result<(), GraphError> {
         // An empty graph still holds the sentinel that says where the last node's links end:
         // one 4-byte offset for each kind of link, and one for its symbols.
-        let empty: Graph<i64> = Graph::build(&[], &[], &weighing())?;
+        let empty: Graph<i64> = Graph::build(Vec::new(), Vec::new(), &weighing())?;
         assert_eq!(
             empty.size_bytes(),
             (1 + EdgeType::ALL.len()) * size_of::<u32>()
@@ -613,7 +623,7 @@ mod tests {
 
         let two = [node(1, NodeKind::File, None), node(2, NodeKind::File, None)];
         let one_link = [link(1, 2, EdgeType::Structural, 1.0)];
-        let small = Graph::build(&two, &one_link, &weighing())?;
+        let small = Graph::build(two.to_vec(), one_link.to_vec(), &weighing())?;
         // Two ids of 8 bytes, and one link each way with a 4-byte target: the floor, whatever
         // else the layout adds.
         let floor = 2 * size_of::<i64>() + 2 * size_of::<u32>();
@@ -629,7 +639,7 @@ mod tests {
             node(3, NodeKind::File, None),
             node(4, NodeKind::File, None),
         ];
-        let bigger = Graph::build(&four, &one_link, &weighing())?;
+        let bigger = Graph::build(four.to_vec(), one_link.to_vec(), &weighing())?;
         assert!(
             bigger.size_bytes() > small.size_bytes(),
             "four nodes ({}) should cost more than two ({})",
@@ -810,7 +820,7 @@ mod tests {
     /// two memberships, both ways).
     #[test]
     fn links_are_weighed_as_worked_out() -> Result<(), GraphError> {
-        let graph = Graph::build(&nodes(), &links(), &weighing())?;
+        let graph = Graph::build(nodes(), links(), &weighing())?;
         assert_eq!(graph.len(), 5);
         assert!(agree(&of(&graph, 2, EdgeType::Structural), &[(3, 0.8)]));
         assert!(agree(&of(&graph, 2, EdgeType::CoChange), &[(3, 0.3)]));
@@ -865,13 +875,13 @@ mod tests {
     fn a_kind_weighed_zero_is_left_out() -> Result<(), GraphError> {
         let mut no_cochange = weighing();
         no_cochange.type_weights.cochange = 0.0;
-        let graph = Graph::build(&nodes(), &links(), &no_cochange)?;
+        let graph = Graph::build(nodes(), links(), &no_cochange)?;
         assert_eq!(of(&graph, 2, EdgeType::CoChange), []);
         let a = graph.index_of(2).unwrap_or(u32::MAX);
         assert!((graph.out_weight(a) - 1.396_01).abs() < 1e-6);
         let mut no_containment = weighing();
         no_containment.type_weights.containment = 0.0;
-        let graph = Graph::build(&nodes(), &links(), &no_containment)?;
+        let graph = Graph::build(nodes(), links(), &no_containment)?;
         assert_eq!(of(&graph, 1, EdgeType::Containment), []);
         assert_eq!(graph.out_weight(graph.index_of(1).unwrap_or(u32::MAX)), 0.0);
         assert!(agree(&of(&graph, 4, EdgeType::Structural), &[(5, 0.6)]));
@@ -899,7 +909,7 @@ mod tests {
         ];
         let mut faded = weighing();
         faded.latest_seq = 200;
-        let graph = Graph::build(&nodes(), &rows, &faded)?;
+        let graph = Graph::build(nodes(), rows.to_vec(), &faded)?;
         assert!(agree(&of(&graph, 2, EdgeType::Structural), &[(3, 0.8)]));
         assert!(agree(&of(&graph, 3, EdgeType::Structural), &[(2, 0.8)]));
         let a = graph.index_of(2).unwrap_or(u32::MAX);
@@ -931,8 +941,11 @@ mod tests {
         ];
         let mut reversed = twice;
         reversed.reverse();
-        let graph = Graph::build(&twice, &[], &weighing())?;
-        assert_eq!(graph, Graph::build(&reversed, &[], &weighing())?);
+        let graph = Graph::build(twice.to_vec(), Vec::new(), &weighing())?;
+        assert_eq!(
+            graph,
+            Graph::build(reversed.to_vec(), Vec::new(), &weighing())?
+        );
         assert_eq!(graph.len(), 3);
         let node_of = |id| graph.index_of(id).unwrap_or(u32::MAX);
         assert_eq!(graph.kind(node_of(2)), Some(NodeKind::File));
@@ -969,8 +982,8 @@ mod tests {
             turned.rotate_left(turns);
             let mut reversed = nodes.clone();
             reversed.reverse();
-            let graph = Graph::build(&nodes, &links, &weighing());
-            prop_assert_eq!(graph, Graph::build(&reversed, &turned, &weighing()));
+            let graph = Graph::build(nodes.clone(), links.clone(), &weighing());
+            prop_assert_eq!(graph, Graph::build(reversed, turned, &weighing()));
         }
     }
 }
