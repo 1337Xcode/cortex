@@ -156,6 +156,16 @@ fn the_whole_graph_reads_back() -> TestResult {
     ];
     expected.sort_by_key(|row| (row.src, row.edge.dst, row.edge_type));
     assert_eq!(edges, expected);
+    // The counts the store reports are exactly what those two reads hand over, which is what lets
+    // a reader take its room once rather than grow into it row by row.
+    let counts = queries.counts()?;
+    assert_eq!(
+        (nodes.len(), edges.len()),
+        (
+            usize::try_from(counts.nodes)?,
+            usize::try_from(counts.edges)?
+        )
+    );
     assert_eq!(queries.latest_task_seq()?, 0);
     let mut transaction = writer.transaction()?;
     transaction.record_session(&SessionRecord {
