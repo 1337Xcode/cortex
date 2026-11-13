@@ -42,6 +42,7 @@ mod notice_subject;
 mod object_id;
 mod one_line;
 mod path;
+mod pause;
 mod plain;
 mod private;
 mod program;
@@ -106,6 +107,7 @@ pub use notice_subject::NoticeSubject;
 pub use object_id::is_object_id;
 pub use one_line::{is_hidden, one_line};
 pub use path::{PathError, RepoPath};
+pub use pause::{PAUSED_FILE, Pause, pause_of};
 pub use plain::{is_plain, is_taken_out};
 pub use private::{
     append_private_file, create_new_private_file, create_private_folder, open_private_file,

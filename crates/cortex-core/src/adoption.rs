@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use crate::canonical_root;
 
 /// The folder that marks a repository set up for Cortex.
-const MARKER: &str = ".cortex";
+pub(crate) const MARKER: &str = ".cortex";
 
 /// What a working tree's top holds: git's folder, or in a linked working tree a file naming it.
 const DOT_GIT: &str = ".git";
