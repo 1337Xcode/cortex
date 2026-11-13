@@ -8,7 +8,7 @@ mod common;
 
 use std::process::Command;
 
-use common::init::run;
+use common::init::{run, snapshot};
 use common::{StopsDaemon, TestResult};
 use serde_json::{Value, json};
 
@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 fn init_sets_up_codex_in_the_user_s_hooks_file() -> TestResult {
     let repo = tempfile::tempdir()?;
     let home = tempfile::tempdir()?;
+    let before = snapshot(&[repo.path(), home.path()])?;
     let _daemon = StopsDaemon::of(repo.path(), home.path());
     let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
     command
@@ -90,6 +91,9 @@ fn init_sets_up_codex_in_the_user_s_hooks_file() -> TestResult {
     let undone = run(&mut command, home.path(), &[])?;
     assert!(undone.is_success, "{}", undone.stderr);
     assert!(!file.exists());
+    // Every byte back once the user's scope is uninstalled too, the folder init made for Codex's
+    // file included.
+    assert_eq!(snapshot(&[repo.path(), home.path()])?, before);
     Ok(())
 }
 
@@ -150,6 +154,7 @@ fn init_sets_up_each_agent_with_nested_hooks() -> TestResult {
         let repo = tempfile::tempdir()?;
         let home = tempfile::tempdir()?;
         common::init::git(repo.path(), &["init", "-q"], home.path())?;
+        let before = snapshot(&[repo.path(), home.path()])?;
         let _daemon = StopsDaemon::of(repo.path(), home.path());
         let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
         command
@@ -195,13 +200,19 @@ fn init_sets_up_each_agent_with_nested_hooks() -> TestResult {
                 "{agent}: {ignores}"
             );
         }
+        // The premise of the comparison below: init did change what is on disk, so that the two
+        // folders matching again after uninstall says something.
+        assert_ne!(snapshot(&[repo.path(), home.path()])?, before, "{agent}");
         let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
         command
             .args(["uninstall", "--scope", scope, "--root"])
             .arg(repo.path());
         let undone = run(&mut command, home.path(), &["git"])?;
         assert!(undone.is_success, "{agent}: {}", undone.stderr);
-        assert!(!file.exists(), "{agent}");
+        // Every byte back, not only the hooks file gone: the folder init made for it and the line
+        // it gave git to leave out are Cortex's too, and a repository uninstall leaves holding
+        // either is not as the user had it.
+        assert_eq!(snapshot(&[repo.path(), home.path()])?, before, "{agent}");
     }
     Ok(())
 }
