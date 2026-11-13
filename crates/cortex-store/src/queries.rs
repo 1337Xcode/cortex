@@ -678,6 +678,26 @@ impl<'c> Queries<'c> {
         raw.into_iter().map(RawEdge::check).collect()
     }
 
+    /// How many nodes and edges the graph holds, in that order, for a reader about to take room
+    /// for them. SQLite keeps no row count, so each one is a scan of its table: this asks for the
+    /// two a reader needs rather than all six of [`Self::counts`].
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn graph_counts(self) -> Result<(u64, u64), StoreError> {
+        let (nodes, edges): (i64, i64) = self
+            .connection
+            .query_row(schema::GRAPH_COUNTS, [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(sqlite("counting the graph's rows"))?;
+        Ok((
+            values::number::<u64>(nodes, "count", 0)?,
+            values::number::<u64>(edges, "count", 0)?,
+        ))
+    }
+
     /// How many rows the index holds.
     ///
     /// # Errors

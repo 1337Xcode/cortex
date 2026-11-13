@@ -53,9 +53,9 @@ pub fn read_graph(
     // that many, so each list takes its room once. Growing into it instead would, on a repository
     // of millions of nodes, hold the old list and the new one at the same time at the moment it
     // doubles, which is the largest single allocation a build makes.
-    let counts = queries.counts()?;
+    let (node_count, edge_count) = queries.graph_counts()?;
     let mut nodes: Vec<NodeInput<NodeId>> =
-        Vec::with_capacity(usize::try_from(counts.nodes).unwrap_or_default());
+        Vec::with_capacity(usize::try_from(node_count).unwrap_or_default());
     queries.each_graph_node(|row| {
         nodes.push(NodeInput {
             id: row.node,
@@ -66,7 +66,7 @@ pub fn read_graph(
         Ok(())
     })?;
     let mut links: Vec<LinkInput<NodeId>> =
-        Vec::with_capacity(usize::try_from(counts.edges).unwrap_or_default());
+        Vec::with_capacity(usize::try_from(edge_count).unwrap_or_default());
     queries.each_edge(|row| {
         links.push(LinkInput {
             src: row.src,

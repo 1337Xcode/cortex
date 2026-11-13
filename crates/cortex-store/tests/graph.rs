@@ -157,15 +157,15 @@ fn the_whole_graph_reads_back() -> TestResult {
     expected.sort_by_key(|row| (row.src, row.edge.dst, row.edge_type));
     assert_eq!(edges, expected);
     // The counts the store reports are exactly what those two reads hand over, which is what lets
-    // a reader take its room once rather than grow into it row by row.
-    let counts = queries.counts()?;
+    // a reader take its room once rather than grow into it row by row. The narrow query a reader
+    // uses and the wide one the status command uses must agree, or one of them is wrong.
+    let (graph_nodes, graph_edges) = queries.graph_counts()?;
     assert_eq!(
         (nodes.len(), edges.len()),
-        (
-            usize::try_from(counts.nodes)?,
-            usize::try_from(counts.edges)?
-        )
+        (usize::try_from(graph_nodes)?, usize::try_from(graph_edges)?)
     );
+    let counts = queries.counts()?;
+    assert_eq!((graph_nodes, graph_edges), (counts.nodes, counts.edges));
     assert_eq!(queries.latest_task_seq()?, 0);
     let mut transaction = writer.transaction()?;
     transaction.record_session(&SessionRecord {

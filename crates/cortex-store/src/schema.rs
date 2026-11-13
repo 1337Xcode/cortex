@@ -645,6 +645,12 @@ pub(crate) const EPISODES: &str = "SELECT task_id, localize, change, verify, pit
 pub(crate) const EPISODE_CHANGES_ENDED_BEFORE: &str = "SELECT task_id, change, outcome, \
      created_at FROM episodes WHERE created_at < ?1 ORDER BY task_id DESC LIMIT ?2";
 
+/// How many nodes and edges the graph holds, for a reader that is about to take room for them.
+/// Separate from [`COUNTS`] because each count is a scan of its table, and a reader needs two of
+/// the six.
+pub(crate) const GRAPH_COUNTS: &str =
+    "SELECT (SELECT count(*) FROM nodes), (SELECT count(*) FROM edges)";
+
 /// Row counts for status.
 pub(crate) const COUNTS: &str = "SELECT (SELECT count(*) FROM files), \
      (SELECT count(*) FROM symbols), (SELECT count(*) FROM refs), \
