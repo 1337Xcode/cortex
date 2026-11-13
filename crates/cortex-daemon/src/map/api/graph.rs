@@ -2,8 +2,10 @@
 //! and the strongest links between files.
 //!
 //! Files come sorted by path in byte order with their index as `id`; links name files by that id.
-//! Everything comes from one read transaction, so the numbers agree with each other and the
-//! writer is held up for nothing.
+//! The numbers come from one read transaction, so they agree with each other and the writer is
+//! held up for nothing; the files themselves (ids, paths, lines) come from the listing, built again
+//! only after the daemon notes the store changed, so during the first index they are those of the
+//! index as it stood when the listing was built.
 
 use axum::response::Response;
 use cortex_store::{Queries, StoreError};
