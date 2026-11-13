@@ -6,7 +6,7 @@ bytes into a result or an error, never a panic, a hang, or an allocation past a 
 
 | Target | What it feeds |
 | --- | --- |
-| `hook_stdin` | The bytes to the Claude Code adapter's `normalize`, as each event Cortex registers, with a working folder that is always in a repository, so no path in the input reaches the file system |
+| `hook_stdin` | The bytes to the Claude Code adapter's `normalize`, as each event Cortex registers, with a working folder that is always in a repository and again in a linked working tree, so no path in the input reaches the file system |
 | `frame_decode` | The bytes to `read_frame` as a stream of requests and of answers, and to `decode` as one frame's body |
 
 The crate is a workspace of its own, built on nightly by
