@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# Turns on the heap profiler and the example that uses it. Nothing in the product reads it, and no
+# build of the product sets it.
+[features]
+profiling = ["dep:dhat"]
+
 [dependencies]
 cortex-coord = { path = "../cortex-coord" }
 cortex-core = { path = "../cortex-core" }
@@ -15,6 +20,7 @@ cortex-index = { path = "../cortex-index" }
 cortex-learn = { path = "../cortex-learn" }
 cortex-meter = { path = "../cortex-meter" }
 cortex-store = { path = "../cortex-store" }
+dhat = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
@@ -31,6 +37,10 @@ harness = false
 [[bench]]
 name = "spread"
 harness = false
+
+[[example]]
+name = "graph_heap"
+required-features = ["profiling"]
 
 [lints]
 workspace = true

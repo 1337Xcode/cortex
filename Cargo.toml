@@ -37,6 +37,9 @@ clap = { version = "4.6.7", features = ["derive"] }
 # call, so Cortex never calls it.
 CreateProcessW = "=0.1.8"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+# A heap profiler, behind the `profiling` feature of one crate and reached only by an example that
+# requires that feature, so no build of the product carries it.
+dhat = "0.3.3"
 # Default features off: they bring networking, credentials, worktree changes and more that Cortex
 # does not use. `blob-diff` finds renamed files by their contents; `sha1` is the object id hash.
 gix = { version = "0.90.0", default-features = false, features = ["blob-diff", "sha1"] }
@@ -137,3 +140,10 @@ strip = "symbols"
 # catches one per file to skip that file, and the miner catches one to fall back to git itself.
 # With "abort" each of those becomes a dead process instead.
 panic = "unwind"
+
+# What a profiling run is built with: release speed, since a profile of a debug build is a profile
+# of the wrong program, but with the symbols a profiler needs to say where an allocation was made.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
