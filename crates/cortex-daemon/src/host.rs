@@ -95,7 +95,7 @@ impl<'a> Host<'a> {
         // Upkeep carries on where an earlier daemon left it; a store that cannot say where starts
         // it at its first step, which redoes nothing a pass would not.
         let upkeep = Upkeep::resumed(writer.queries()).unwrap_or_else(|error| {
-            tracing::warn!(error = %error, "upkeep's place could not be read: it starts over");
+            tracing::warn!(error = %cortex_core::with_causes(&error), "upkeep's place could not be read: it starts over");
             Upkeep::default()
         });
         Self {
@@ -501,7 +501,9 @@ impl<'a> Host<'a> {
                 retired = reviewed.retired.len(),
                 "facts reviewed"
             ),
-            Err(error) => tracing::warn!(error = %error, "facts could not be reviewed"),
+            Err(error) => {
+                tracing::warn!(error = %cortex_core::with_causes(&error), "facts could not be reviewed");
+            }
         }
     }
 
@@ -515,7 +517,7 @@ impl<'a> Host<'a> {
             .with_pause(|writer, pause| mine::write(writer, &job.mining, now_ms(), Some(pause)));
         drop(writing);
         if let Err(error) = &stored {
-            tracing::warn!(error = %error, "a mining could not be stored");
+            tracing::warn!(error = %cortex_core::with_causes(&error), "a mining could not be stored");
         }
         job.answer(stored.map_err(|error| error.to_string()));
     }
@@ -760,8 +762,11 @@ fn store_history(writer: &mut Writer, inbox: &Inbox, job: HistoryWriteJob) {
 /// the reason and logged. The store's errors name what it was doing and the file, row or setting
 /// involved, and carry no stored text but paths.
 pub(crate) fn count_failed(inbox: &Inbox, what: &str, error: &StoreError) {
-    tracing::warn!(what, error = %error, "a batch could not be recorded");
-    inbox.count_failed_batch(&format!("recording {what} failed: {error}"), now_ms());
+    // With its causes: a store error says what it was doing, and what it failed because of is
+    // its source, which is the half that says why.
+    let said = cortex_core::with_causes(error);
+    tracing::warn!(what, error = %said, "a batch could not be recorded");
+    inbox.count_failed_batch(&format!("recording {what} failed: {said}"), now_ms());
 }
 
 /// Records `events` with `recorder` in one transaction of `writer`, with the positions they give

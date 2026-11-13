@@ -18,6 +18,7 @@
 mod activity;
 mod adoption;
 mod agent_shell;
+mod causes;
 mod child;
 mod config;
 mod coordination;
@@ -66,6 +67,7 @@ pub use adoption::{
     working_tree_top,
 };
 pub use agent_shell::{AGENT_SHELL_MARKERS, is_agent_shell};
+pub use causes::with_causes;
 pub use child::{Captured, capture, time_fed};
 pub use config::{
     AdoptConfig, CompactionConfig, Config, ConfigError, ConfigKey, ConfigLayer, CoordinationConfig,
