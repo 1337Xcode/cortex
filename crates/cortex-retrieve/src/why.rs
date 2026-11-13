@@ -258,9 +258,7 @@ fn sessions(queries: Queries<'_>, file: NodeId, at: &WhyAt<'_>) -> Result<Part, 
                     PositionMode::Read => "read it",
                     PositionMode::Claim => "claimed it",
                 };
-                // A session id holds no control or hidden character, and 8 characters are too few
-                // to hold an agent's reminder tag: the part shown is plain text.
-                let short: String = position.session.as_str().chars().take(8).collect();
+                let short = cortex_core::shown_session(position.session.as_str());
                 let when = ago(at.now_ms - position.last_ms);
                 format!("  - {agent} session {short} {did} {when}")
             })

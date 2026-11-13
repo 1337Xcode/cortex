@@ -45,6 +45,19 @@ pub enum IdentifierError {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Identifier(String);
 
+/// How much of a session id a person is shown: enough to tell the sessions of one repository
+/// apart at a glance, and short enough to sit inside a line of prose.
+pub const SHOWN_SESSION_CHARS: usize = 8;
+
+/// The start of session id `session`, as much of it as a person is shown.
+///
+/// A session id holds no control or hidden character, and this many characters are too few to
+/// hold an agent's reminder tag, so what this returns is plain text wherever it is put.
+#[must_use]
+pub fn shown_session(session: &str) -> String {
+    session.chars().take(SHOWN_SESSION_CHARS).collect()
+}
+
 impl Identifier {
     /// Checks `text` and keeps it as a name.
     ///

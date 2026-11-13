@@ -93,7 +93,7 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
         } => output::line(&format!(
             "claimed {} for the {agent} session {}",
             counted(u64::from(files), ("file", "files")),
-            short(&session)
+            cortex_core::shown_session(&session)
         )),
         ClaimsAnswer::Released { count: 0 } => output::line("no claims to release"),
         ClaimsAnswer::Released { count } => {
@@ -108,12 +108,7 @@ fn line_of(claim: &ClaimLine, now_ms: i64) -> String {
         "{}  {} session {}, claimed {}",
         claim.path,
         claim.agent,
-        short(&claim.session),
+        cortex_core::shown_session(&claim.session),
         cortex_coord::ago(now_ms - claim.since_ms)
     )
-}
-
-/// The first 8 characters of a session id, enough to tell sessions apart.
-fn short(session: &str) -> String {
-    session.chars().take(8).collect()
 }
