@@ -54,10 +54,11 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     for warning in &loaded.warnings {
         output::note(&format!("warning: {warning}"))?;
     }
-    for line in daemon_lines(&root) {
+    let (lines, first_index_done) = daemon_lines(&root);
+    for line in lines {
         output::line(&line)?;
     }
-    for line in index_lines(&root, &loaded.config)? {
+    for line in index_lines(&root, &loaded.config, first_index_done)? {
         output::line(&line)?;
     }
     // Adoption is said once the user has used it: on, or with refusals still remembered.
@@ -77,7 +78,11 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
 /// # Errors
 ///
 /// The store cannot be read.
-pub(crate) fn index_lines(root: &Path, config: &Config) -> anyhow::Result<Vec<String>> {
+pub(crate) fn index_lines(
+    root: &Path,
+    config: &Config,
+    first_index_done: Option<bool>,
+) -> anyhow::Result<Vec<String>> {
     let folder = root.join(".cortex");
     let reader = match Reader::open(&folder, 0) {
         Ok(reader) => reader,
@@ -100,14 +105,17 @@ pub(crate) fn index_lines(root: &Path, config: &Config) -> anyhow::Result<Vec<St
                 .with_context(|| format!("reading the store in {}", folder.display()));
         }
     };
-    status_lines(&folder, reader.queries(), config)
+    status_lines(&folder, reader.queries(), config, first_index_done)
 }
 
 /// The lines saying whether the daemon of the repository at `root` runs and, from its own answer,
 /// what waits for it, how long it takes to handle each hook, and its latest errors.
-fn daemon_lines(root: &Path) -> Vec<String> {
+fn daemon_lines(root: &Path) -> (Vec<String>, Option<bool>) {
     let Some(user) = UserFolder::of_current_user() else {
-        return vec!["daemon: unknown, no home folder to find it from".to_owned()];
+        return (
+            vec!["daemon: unknown, no home folder to find it from".to_owned()],
+            None,
+        );
     };
     let deadline = Instant::now() + ANSWER_WITHIN;
     let asked = upgrade::ask_current(root, &user, &RequestBody::Status, deadline);
@@ -121,8 +129,9 @@ fn daemon_lines(root: &Path) -> Vec<String> {
             body: ResponseBody::Status(report),
             ..
         }) => {
+            let first_index_done = report.is_indexed;
             lines.extend(report_lines(&report, unix_millis(SystemTime::now())));
-            return lines;
+            return (lines, Some(first_index_done));
         }
         Ok(_) => "daemon: running, but it did not answer with its status".to_owned(),
         Err(ClientError::NotRunning) => "daemon: not running".to_owned(),
@@ -134,7 +143,7 @@ fn daemon_lines(root: &Path) -> Vec<String> {
         Err(other) => format!("daemon: unreachable ({other})"),
     };
     lines.push(line);
-    lines
+    (lines, None)
 }
 
 /// What a running daemon reported, as lines: itself, its queue, its miner, its history worker
@@ -422,19 +431,47 @@ fn ago(at_ms: i64, now_ms: i64) -> String {
     }
 }
 
+/// What the index line says: `first_index_done` is the daemon's own word, none when no daemon
+/// answered; `has_marker` is whether the store records a finished index; `is_writing` is asked
+/// only when neither of the first two settles it.
+///
+/// The daemon's word comes first because the marker is not a good sign of readiness while a
+/// daemon runs: it is cleared before each index writes and set again when that index finishes,
+/// and in huge mode the background crawl indexes a batch of files every couple of seconds, so for
+/// most of a crawl the marker is absent though the index has been usable since the first pass
+/// ended. With no daemon to ask, the marker is all there is, and an absent one then does mean an
+/// index that stopped partway, whose files the next index reads again.
+///
+/// # Errors
+///
+/// `is_writing` failed.
+fn index_state(
+    first_index_done: Option<bool>,
+    has_marker: bool,
+    is_writing: impl FnOnce() -> anyhow::Result<bool>,
+) -> anyhow::Result<&'static str> {
+    if first_index_done == Some(true) || has_marker {
+        return Ok("ready");
+    }
+    Ok(if is_writing()? {
+        "not ready, an index is under way"
+    } else {
+        "not ready, the last index did not finish; the next one reads every file again"
+    })
+}
+
 /// The status of the store in `folder` that `queries` reads, with the `config` in effect.
 fn status_lines(
     folder: &Path,
     queries: Queries<'_>,
     config: &Config,
+    first_index_done: Option<bool>,
 ) -> anyhow::Result<Vec<String>> {
-    let index = if queries.meta(MetaKey::CortexVersion)?.is_some() {
-        "ready"
-    } else if is_writer_running(folder)? {
-        "not ready, an index is under way"
-    } else {
-        "not ready, the last index did not finish; the next one reads every file again"
-    };
+    let index = index_state(
+        first_index_done,
+        queries.meta(MetaKey::CortexVersion)?.is_some(),
+        || Ok(is_writer_running(folder)?),
+    )?;
     let stored_mode = queries.meta(MetaKey::ScaleMode)?;
     let mode_now = match config.mode {
         ModeSetting::Pinned(pinned) => Some(pinned),
@@ -754,6 +791,51 @@ mod tests {
             "self-check: precision 0.52 over the latest 100 work orders given; the bar is raised 2 \
              of 4 steps, last when 300 work orders had been labelled"
         );
+    }
+
+    /// The index line. A daemon that says its first index is done makes the line "ready" whatever
+    /// the store's marker says, which is what a huge repository needs: its background crawl
+    /// indexes a batch of files every couple of seconds, clearing the marker before each batch
+    /// and setting it after, so a status asked during the crawl mostly finds no marker. Without a
+    /// daemon's word, the marker decides, and an absent one means an index under way if a writer
+    /// holds the store and an index that stopped partway if none does.
+    #[test]
+    fn the_index_line_takes_the_daemon_s_word_before_the_store_s_marker() -> anyhow::Result<()> {
+        // Settled without it, so asking whether a writer runs is itself the failure: this
+        // answer makes the call fail, and the `?` below carries that out of the test.
+        fn unasked() -> anyhow::Result<bool> {
+            Err(anyhow::anyhow!(
+                "whether a writer runs was asked when the answer was already settled"
+            ))
+        }
+        fn writing() -> anyhow::Result<bool> {
+            Ok(true)
+        }
+        fn idle() -> anyhow::Result<bool> {
+            Ok(false)
+        }
+        assert_eq!(index_state(Some(true), false, unasked)?, "ready");
+        assert_eq!(index_state(Some(true), true, unasked)?, "ready");
+        assert_eq!(index_state(None, true, unasked)?, "ready");
+        assert_eq!(index_state(Some(false), true, unasked)?, "ready");
+
+        assert_eq!(
+            index_state(Some(false), false, writing)?,
+            "not ready, an index is under way"
+        );
+        assert_eq!(
+            index_state(None, false, writing)?,
+            "not ready, an index is under way"
+        );
+        assert_eq!(
+            index_state(None, false, idle)?,
+            "not ready, the last index did not finish; the next one reads every file again"
+        );
+        assert_eq!(
+            index_state(Some(false), false, idle)?,
+            "not ready, the last index did not finish; the next one reads every file again"
+        );
+        Ok(())
     }
 
     /// A report of a daemon of process 7, Cortex 1.2.3, up 61.5 s, with nothing waiting or lost.

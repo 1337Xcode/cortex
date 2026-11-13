@@ -72,7 +72,10 @@ pub(super) fn started_and_indexed(root: &Path) -> anyhow::Result<()> {
     // The status's first three lines say what the index holds (or its one line, why there is
     // none); the rest (learning, the gate, warnings) says nothing yet on a repository just set
     // up, and `cortex status` shows it.
-    for line in index_lines(root, &config)?.into_iter().take(3) {
+    // `waited` returned, so the daemon has said its first index is done; in huge mode the
+    // crawl that follows would otherwise leave the store's marker absent and the line would
+    // read "not ready" on a repository that is set up and working.
+    for line in index_lines(root, &config, Some(true))?.into_iter().take(3) {
         output::line(&line)?;
     }
     Ok(())
