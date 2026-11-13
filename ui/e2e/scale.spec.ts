@@ -6,6 +6,9 @@
 // `cargo xtask verify --full`, which checks them against the map's budgets (2 s, 45 fps).
 // Chromium runs on the machine's GPU through ANGLE (Direct3D 11 on Windows, Metal on macOS, its
 // default elsewhere), since its default headless software renderer measures the CPU, not the map.
+// On Linux, headless Chromium drew only in software (SwiftShader or llvmpipe, in WSL), while a
+// window on the display drew with the GPU, so there the GPU measurement opens a window when a
+// display is set; without one it is drawn in software and the budget check refuses it.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { arch, cpus, platform, release } from 'node:os';
 import { dirname } from 'node:path';
@@ -18,15 +21,22 @@ const FILE_COUNT = 100_000;
 /** Fresh browsers whose first load is measured; the budget holds for the slowest. */
 const FRESH_LOADS = 5;
 
-/** Chromium's flags for drawing with the GPU on this platform. */
-function gpuArgs(): string[] {
+/** How a browser is launched for one measurement. */
+type Launch = NonNullable<Parameters<typeof chromium.launch>[0]>;
+
+/** Chromium's launch for drawing with the GPU on this platform. */
+function gpuLaunch(): Launch {
   const angle: Partial<Record<NodeJS.Platform, string>> = { win32: 'd3d11', darwin: 'metal' };
   const backend = angle[platform()];
-  return [
-    ...(backend === undefined ? [] : [`--use-angle=${backend}`]),
-    '--enable-gpu',
-    '--ignore-gpu-blocklist',
-  ];
+  const hasDisplay = Boolean(process.env['DISPLAY'] || process.env['WAYLAND_DISPLAY']);
+  return {
+    args: [
+      ...(backend === undefined ? [] : [`--use-angle=${backend}`]),
+      '--enable-gpu',
+      '--ignore-gpu-blocklist',
+    ],
+    headless: !(platform() === 'linux' && hasDisplay),
+  };
 }
 
 /** Starts recording frame times in the page. */
@@ -131,11 +141,11 @@ interface Measured {
 /** Opens the map in a fresh browser; with `isPanned`, also pans and zooms over it and among files. */
 async function measure(
   label: string,
-  args: string[],
+  launch: Launch,
   fixture: Fixture,
   isPanned: boolean,
 ): Promise<Measured> {
-  const browser = await chromium.launch({ args });
+  const browser = await chromium.launch(launch);
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors: string[] = [];
   page.on('console', (message) => {
@@ -200,14 +210,14 @@ test('100,000 files: first load and frame rate over a pan and zoom', async () =>
   const fixture = largeFixture(FILE_COUNT);
   const runs: Measured[] = [];
   for (let run = 1; run <= FRESH_LOADS; run += 1) {
-    runs.push(await measure(`GPU ${run}`, gpuArgs(), fixture, run === FRESH_LOADS));
+    runs.push(await measure(`GPU ${run}`, gpuLaunch(), fixture, run === FRESH_LOADS));
   }
   writeRecord(platformLine, runs);
   const live: Fixture = { ...fixture, live: manySessions(LIVE_SESSIONS, FILE_COUNT, Date.now()) };
   for (let run = 1; run <= FRESH_LOADS; run += 1) {
     const label = `GPU ${run}, ${LIVE_SESSIONS} sessions`;
-    const measured = await measure(label, gpuArgs(), live, run === FRESH_LOADS);
+    const measured = await measure(label, gpuLaunch(), live, run === FRESH_LOADS);
     expect(measured.firstLoadMs).toBeGreaterThan(0);
   }
-  await measure('software (headless default)', [], fixture, true);
+  await measure('software (headless default)', {}, fixture, true);
 });
