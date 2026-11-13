@@ -932,17 +932,32 @@ mod tests {
             (
                 "git.max_commits = 0",
                 "git.max_commits",
-                "a whole number above 0",
+                "a whole number from 1 to 10000000",
+            ),
+            (
+                "git.max_commits = 10000001",
+                "git.max_commits",
+                "a whole number from 1 to 10000000",
             ),
             (
                 "git.max_age_days = 1.5",
                 "git.max_age_days",
-                "a whole number above 0",
+                "a whole number from 1 to 36500",
+            ),
+            (
+                "git.max_age_days = 9223372036854775807",
+                "git.max_age_days",
+                "a whole number from 1 to 36500",
             ),
             (
                 "git.max_files_per_commit = -1",
                 "git.max_files_per_commit",
-                "a whole number above 0",
+                "a whole number from 1 to 100000",
+            ),
+            (
+                "git.max_files_per_commit = 100001",
+                "git.max_files_per_commit",
+                "a whole number from 1 to 100000",
             ),
             (
                 "git.half_life_commits = \"500\"",

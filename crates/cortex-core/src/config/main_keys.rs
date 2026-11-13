@@ -3,6 +3,30 @@
 //! history, test commands and strict mode.
 
 use super::registry::{integer, strings};
+
+/// The most commits `git.max_commits` may name: far past any repository's history a miner could
+/// read in its minutes, and a number every reader of the map holds exactly.
+const MAX_GIT_COMMITS: u64 = 10_000_000;
+
+/// The most days `git.max_age_days` may name: a hundred years, older than any git history.
+const MAX_GIT_AGE_DAYS: u64 = 36_500;
+
+/// The most files `git.max_files_per_commit` may name: past any commit worth reading for co-change.
+const MAX_GIT_FILES_PER_COMMIT: u64 = 100_000;
+
+/// What `git.max_commits` accepts, in its refusal.
+const GIT_COMMITS: &str = "a whole number from 1 to 10000000";
+
+/// What `git.max_age_days` accepts, in its refusal.
+const GIT_AGE_DAYS: &str = "a whole number from 1 to 36500";
+
+/// What `git.max_files_per_commit` accepts, in its refusal.
+const GIT_FILES_PER_COMMIT: &str = "a whole number from 1 to 100000";
+
+/// The value as a whole number from 1 to `max`.
+fn at_most(value: &toml::Value, max: u64) -> Option<u64> {
+    positive_integer(value).filter(|number| *number <= max)
+}
 use super::{
     ABOVE_ZERO, ConfigKey, FACTOR, MAX_MMAP_BYTES, ModeSetting, SHARE, SWITCH, factor, is_regex,
     mode_setting, positive_integer, share, string_list, whole_number,
@@ -136,7 +160,7 @@ pub(super) const KEYS: &[ConfigKey] = &[
         "git.max_commits",
         "The most commits of history the co-change miner reads.",
         |config, value| {
-            config.git_max_commits = positive_integer(value).ok_or(ABOVE_ZERO)?;
+            config.git_max_commits = at_most(value, MAX_GIT_COMMITS).ok_or(GIT_COMMITS)?;
             Ok(())
         },
         |config| integer(config.git_max_commits),
@@ -145,7 +169,7 @@ pub(super) const KEYS: &[ConfigKey] = &[
         "git.max_age_days",
         "The oldest history the co-change miner reads, in days.",
         |config, value| {
-            config.git_max_age_days = positive_integer(value).ok_or(ABOVE_ZERO)?;
+            config.git_max_age_days = at_most(value, MAX_GIT_AGE_DAYS).ok_or(GIT_AGE_DAYS)?;
             Ok(())
         },
         |config| integer(config.git_max_age_days),
@@ -154,7 +178,8 @@ pub(super) const KEYS: &[ConfigKey] = &[
         "git.max_files_per_commit",
         "Commits touching more files than this are skipped by the co-change miner.",
         |config, value| {
-            config.git_max_files_per_commit = positive_integer(value).ok_or(ABOVE_ZERO)?;
+            config.git_max_files_per_commit =
+                at_most(value, MAX_GIT_FILES_PER_COMMIT).ok_or(GIT_FILES_PER_COMMIT)?;
             Ok(())
         },
         |config| integer(config.git_max_files_per_commit),
