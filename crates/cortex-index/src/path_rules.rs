@@ -33,10 +33,10 @@ impl NamePattern {
 }
 
 /// Names that may hold secrets, matched without regard to case against the file's name and every
-/// folder above it. Such a file is recorded by path and never opened. Besides environment files,
-/// keys, certificates and credentials files: every SSH key type's default name, the dotfiles that
-/// hold login tokens for downloads, package registries and databases, and certificate bundles under
-/// both their extensions.
+/// folder above it, because a folder of such a name holds such files. Such a file is recorded by
+/// path and never opened. Besides environment files, keys, certificates and credentials files:
+/// every SSH key type's default name, the dotfiles that hold login tokens for downloads, package
+/// registries and databases, and certificate bundles under both their extensions.
 const SECRET_NAMES: &[NamePattern] = &[
     NamePattern::Prefix(".env"),
     NamePattern::Suffix(".pem"),
@@ -93,11 +93,27 @@ const TEST_FOLDERS: &[&str] = &["test", "tests", "__tests__"];
 /// Whether the file at `path` may hold secrets, by its name or the name of a folder above it.
 #[must_use]
 pub fn is_secret(path: &RepoPath) -> bool {
-    path.as_str().split('/').any(|part| {
+    let text = path.as_str();
+    let in_any_part = text.split('/').any(|part| {
         let part = part.to_lowercase();
         SECRET_NAMES.iter().any(|pattern| pattern.matches(&part))
-    })
+    });
+    if in_any_part {
+        return true;
+    }
+    let name = text
+        .rsplit_once('/')
+        .map_or(text, |(_, name)| name)
+        .to_lowercase();
+    SECRET_FILE_NAMES
+        .iter()
+        .any(|pattern| pattern.matches(&name))
 }
+
+/// Names that may hold secrets as a file's own name alone. An environment file is as often
+/// written `production.env` as `.env.production`, and either holds the same kind of thing. A
+/// folder named `dev.env` is a folder: what is inside it is judged on its own name.
+const SECRET_FILE_NAMES: &[NamePattern] = &[NamePattern::Suffix(".env")];
 
 /// The generated and vendored flags `path` earns by its folders and name.
 #[must_use]
@@ -181,6 +197,10 @@ mod tests {
             "config/credentials/aws.json",
             ".env.d/app.conf",
             "keys/prod.key/readme.md",
+            // An environment file is as often written this way round, and holds the same thing.
+            "production.env",
+            "config/local.ENV",
+            "app.env",
         ] {
             assert!(is_secret(&RepoPath::new(name)?), "{name}");
         }
