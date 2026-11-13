@@ -345,8 +345,8 @@ fn git_line(report: Option<&GitReport>) -> String {
     }
 }
 
-/// What the daemon's graph holds, as a line, with how many of its rebuilds failed when any did,
-/// or that it has built none yet.
+/// What the daemon's graph holds, as a line, with how many of its rebuilds failed when any did
+/// and whether a rebuild is due, or that it has built none yet.
 fn graph_line(report: Option<&GraphReport>) -> String {
     let failed = match report.map_or(0, |report| report.failed_builds) {
         0 => String::new(),
@@ -364,8 +364,13 @@ fn graph_line(report: Option<&GraphReport>) -> String {
         1 => "once".to_owned(),
         builds => format!("{builds} times"),
     };
+    let due = if report.is_stale {
+        "; a rebuild is due"
+    } else {
+        ""
+    };
     format!(
-        "graph: {}, {}, {cochange} co-change links; built {builds}, the latest in {} ms{failed}",
+        "graph: {}, {}, {cochange} co-change links; built {builds}, the latest in {} ms{failed}{due}",
         counted(report.nodes, ("node", "nodes")),
         counted(report.links, ("link", "links")),
         report.build_ms
@@ -1132,8 +1137,9 @@ mod tests {
     }
 
     /// The graph's line, as typed out here: its size, one of a kind in the singular, whether it
-    /// holds co-change links, its builds, one said as once, and the failed ones when any failed;
-    /// none before the first build, with the failures when the first builds failed.
+    /// holds co-change links, its builds, one said as once, the failed ones when any failed, and
+    /// that a rebuild is due when the store changed since; none before the first build, with the
+    /// failures when the first builds failed (a rebuild is due then too, and goes unsaid).
     #[test]
     fn the_graph_is_reported_in_one_line() {
         let report = GraphReport {
@@ -1143,6 +1149,7 @@ mod tests {
             builds: 3,
             build_ms: 45,
             failed_builds: 0,
+            is_stale: false,
         };
         assert_eq!(
             graph_line(Some(&report)),
@@ -1157,6 +1164,15 @@ mod tests {
             "graph: 1200 nodes, 3400 links, with co-change links; built 3 times, the latest in 45 \
              ms; 2 builds failed"
         );
+        let stale = GraphReport {
+            is_stale: true,
+            ..report.clone()
+        };
+        assert_eq!(
+            graph_line(Some(&stale)),
+            "graph: 1200 nodes, 3400 links, with co-change links; built 3 times, the latest in 45 \
+             ms; a rebuild is due"
+        );
         let never = GraphReport {
             nodes: 0,
             links: 0,
@@ -1164,6 +1180,7 @@ mod tests {
             builds: 0,
             build_ms: 0,
             failed_builds: 1,
+            is_stale: true,
         };
         assert_eq!(
             graph_line(Some(&never)),
@@ -1176,6 +1193,7 @@ mod tests {
             builds: 1,
             build_ms: 45,
             failed_builds: 0,
+            is_stale: false,
         };
         assert_eq!(
             graph_line(Some(&first)),

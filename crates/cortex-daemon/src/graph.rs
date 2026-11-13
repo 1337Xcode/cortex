@@ -80,6 +80,8 @@ struct Built {
     has_cochange: bool,
     /// How long the rebuild took, in milliseconds.
     took_ms: u64,
+    /// The snapshot's generation when the read began: a change noted since makes it stale.
+    generation: u64,
 }
 
 /// What the host holds while it writes a mining: the snapshot knows the write is under way, and
@@ -125,6 +127,7 @@ impl Snapshot {
             builds: held.builds,
             build_ms: built.map_or(0, |built| built.took_ms),
             failed_builds: held.failed,
+            is_stale: built.is_none_or(|built| built.generation != self.generation()),
         })
     }
 
@@ -179,9 +182,10 @@ impl Snapshot {
         self.is_mining.load(Ordering::SeqCst)
     }
 
-    /// Takes in `read`, a graph read from the store, unless a mining is being written and the graph
-    /// standing came from before it: a read that finds the mark out then holds part of the write.
-    fn take(&self, (graph, has_cochange): Read, took: Duration) {
+    /// Takes in `read`, a graph read from the store in a read begun at `generation`, unless a
+    /// mining is being written and the graph standing came from before it: a read that finds the
+    /// mark out then holds part of the write.
+    fn take(&self, (graph, has_cochange): Read, (took, generation): (Duration, u64)) {
         let is_mining = self.is_mining.load(Ordering::SeqCst);
         let took_ms = u64::try_from(took.as_millis()).unwrap_or(u64::MAX);
         let (nodes, links) = (graph.len(), graph.link_count());
@@ -197,6 +201,7 @@ impl Snapshot {
                 graph: Arc::new(graph),
                 has_cochange,
                 took_ms,
+                generation,
             });
         }
         tracing::info!(nodes, links, has_cochange, took_ms, "graph rebuilt");
@@ -225,8 +230,10 @@ pub(crate) fn rebuild(
         (
             move || {
                 let started = Instant::now();
+                // Read before the store is: a change noted while it reads makes the graph stale.
+                let generation = taking.generation();
                 let graph = read()?;
-                taking.take(graph, started.elapsed());
+                taking.take(graph, (started.elapsed(), generation));
                 Ok(())
             },
             move |why: &str| failing.fail(why),
@@ -380,6 +387,28 @@ mod tests {
         Ok(())
     }
 
+    /// A graph is stale once a change is noted after its read began, and current again once a read
+    /// begun after the change is taken: taken at the generation its read began at, a graph read
+    /// before a change stays stale, as when the change is noted while it reads. Taken by hand, with
+    /// no rebuilding thread, so that the order is the test's.
+    #[test]
+    fn a_graph_read_before_a_change_is_stale() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let _writer = two_files(root.path())?;
+        let mut read = reads_of(root.path());
+        let snapshot = Snapshot::default();
+        let begun = snapshot.generation();
+        snapshot.take(read()?, (Duration::ZERO, begun));
+        assert_eq!(snapshot.report().map(|report| report.is_stale), Some(false));
+        snapshot.changed();
+        assert_eq!(snapshot.report().map(|report| report.is_stale), Some(true));
+        snapshot.take(read()?, (Duration::ZERO, begun));
+        assert_eq!(snapshot.report().map(|report| report.is_stale), Some(true));
+        snapshot.take(read()?, (Duration::ZERO, snapshot.generation()));
+        assert_eq!(snapshot.report().map(|report| report.is_stale), Some(false));
+        Ok(())
+    }
+
     /// The graph is built once the thread starts, and again after a change: a third file, with no
     /// symbol, in the folder the others are in, adds its own node and nothing else.
     #[test]
@@ -429,7 +458,12 @@ mod tests {
         change_taken(&snapshot)?;
         // Once taken, the change is read at once: a rebuild period is time enough to let it go.
         std::thread::sleep(PACING.every);
-        assert_eq!(snapshot.report(), Some(complete.clone()));
+        // The graph stands, and says the store has changed since it was read.
+        let standing = GraphReport {
+            is_stale: true,
+            ..complete.clone()
+        };
+        assert_eq!(snapshot.report(), Some(standing));
         drop(writing);
         let after = report_when(&snapshot, |report| report.builds > complete.builds)?;
         assert!(!after.has_cochange);

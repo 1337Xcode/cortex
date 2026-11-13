@@ -137,6 +137,7 @@ fn first_task(root: &Path, home: &Path) -> TestResult<(Option<String>, Injection
         &tests_run(root, "post-tool-use-bash-test-passing.json")?,
         home,
     )?;
+    let builds_before = graph_of(root, home)?.map_or(0, |graph| graph.builds);
     given(&captured("stop.json", root)?, home)?;
     let first = tasks(root, S1)?.first().ok_or("no task")?.record.task_id;
     wait_for(|| {
@@ -145,6 +146,13 @@ fn first_task(root: &Path, home: &Path) -> TestResult<(Option<String>, Injection
                 .episode_of_task(first)?
                 .is_some_and(|episode| episode.outcome == TaskOutcome::Success))
         })
+    })?;
+    // The task's learning changes the graph, which the daemon rebuilds a moment later; a prompt
+    // that came between would spread over the graph from before. Wait for a graph built since the
+    // stop and not behind the store, so that every later prompt sees the same one.
+    wait_for(|| {
+        Ok(graph_of(root, home)?
+            .is_some_and(|graph| graph.builds > builds_before && !graph.is_stale))
     })?;
     Ok((prompted, injection))
 }

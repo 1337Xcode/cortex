@@ -240,6 +240,7 @@ fn a_status_from_any_version_reads() -> TestResult {
             builds: 2,
             build_ms: 4,
             failed_builds: 1,
+            is_stale: false,
         })
     );
     assert_eq!(

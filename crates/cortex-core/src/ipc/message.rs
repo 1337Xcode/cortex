@@ -376,6 +376,11 @@ pub struct GraphReport {
     /// How many rebuilds failed since the daemon started; each was tried again.
     #[serde(default)]
     pub failed_builds: u64,
+    /// Whether the store changed since the graph was read from it, so that a rebuild is due:
+    /// until it is done, retrieval spreads over the graph as it was (protocol 12.1 added it; an
+    /// earlier daemon's reads as not).
+    #[serde(default)]
+    pub is_stale: bool,
 }
 
 /// What a daemon read of one linked working tree's uncommitted changes (`git worktree add`), which

@@ -69,6 +69,7 @@ fn report() -> StatusReport {
             builds: 2,
             build_ms: 30,
             failed_builds: 0,
+            is_stale: false,
         }),
         worktree: None,
         linked_worktrees: Vec::new(),
