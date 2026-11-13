@@ -166,6 +166,10 @@ impl Rows {
     /// The rows of `links` over `nodes` nodes: each `(source, target, weight)`, sorted and with
     /// links between the same two nodes added up, the heaviest of them kept beside the sum.
     ///
+    /// Every source must be one of the `nodes`, as both callers see to. A link whose source is
+    /// past the last node is left out, and the room taken would then be a little more than the
+    /// room used, which is what [`Self::size_bytes`] reports.
+    ///
     /// # Errors
     ///
     /// [`GraphError::TooLarge`] for more links than a 32-bit offset reaches.
@@ -674,6 +678,45 @@ mod tests {
             ),
             (3, 3, 3),
             "three links kept, so room for three"
+        );
+        Ok(())
+    }
+
+    /// Repeats of one pair are added up in full precision and narrowed once at the end, not
+    /// narrowed at each step. Three weights on one pair, added in the order the sort gives them:
+    ///
+    /// ```text
+    /// 0.10416736132693127 + 0.8703157248659545 + 0.8888556935274802 = 1.863338779720366
+    /// ```
+    ///
+    /// which as a 32-bit float is the bit pattern 1,072,595,427. Narrowing each weight and each
+    /// running total instead gives 1,072,595,426, one place lower. The bit patterns are asserted
+    /// rather than the numbers, since the two differ by one place and any tolerance would hide it.
+    /// The heaviest of the three stands as the peak, narrowed once.
+    #[test]
+    fn repeats_of_a_pair_are_added_up_before_they_are_narrowed() -> Result<(), GraphError> {
+        let rows = Rows::of(
+            1,
+            vec![
+                (0, 1, 0.104_167_361_326_931_27),
+                (0, 1, 0.870_315_724_865_954_5),
+                (0, 1, 0.888_855_693_527_480_2),
+            ],
+        )?;
+
+        assert_eq!(
+            rows.weights
+                .iter()
+                .map(|weight| weight.to_bits())
+                .collect::<Vec<_>>(),
+            vec![1_072_595_427_u32]
+        );
+        assert_eq!(
+            rows.peaks
+                .iter()
+                .map(|peak| peak.to_bits())
+                .collect::<Vec<_>>(),
+            vec![1_063_488_524_u32]
         );
         Ok(())
     }
