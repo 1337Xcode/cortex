@@ -210,6 +210,36 @@ mod tests {
         Ok(())
     }
 
+    /// The releases Cortex is numbered by: the beta it is built as now, then 0.1.0, a minor release
+    /// that bumps the last number, and a major one that bumps the middle number and resets the last.
+    /// Each is newer than the one before, so a daemon of any of them is replaced by a client of the
+    /// next, and an update moves only forwards.
+    #[test]
+    fn the_release_numbers_order_as_released() -> Result<(), VersionError> {
+        let releases = [
+            "0.1.0-beta.1",
+            "0.1.0",
+            "0.1.1",
+            "0.1.2",
+            "0.2.0",
+            "0.2.1",
+            "0.3.0",
+        ]
+        .iter()
+        .map(|text| CortexVersion::parse(text))
+        .collect::<Result<Vec<_>, _>>()?;
+        for pair in releases.windows(2) {
+            if let [earlier, later] = pair {
+                assert!(later.is_newer_than(earlier), "{later:?} after {earlier:?}");
+                assert!(
+                    !earlier.is_newer_than(later),
+                    "{earlier:?} before {later:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// This build's own version reads.
     #[test]
     fn this_build_s_version_reads() {
