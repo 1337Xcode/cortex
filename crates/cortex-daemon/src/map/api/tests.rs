@@ -356,6 +356,22 @@ fn a_fact_s_word_the_store_failed_is_a_server_error() -> TestResult {
     Ok(())
 }
 
+/// With every read permit held (as reads that outlasted their wait still hold theirs), a request
+/// is told 503 at once and starts no read; once one permit is given back, it is served.
+#[test]
+fn a_request_finding_every_read_under_way_is_turned_away() -> TestResult {
+    let fixture = scripted()?;
+    let mut held: Vec<_> = (0..crate::map::site::MAX_READS)
+        .map(|_| fixture.site.begin_read())
+        .collect::<Option<_>>()
+        .ok_or("a permit was missing")?;
+    assert!(fixture.site.begin_read().is_none());
+    assert_eq!(get(&fixture, "api/summary")?, (503, String::new()));
+    held.pop();
+    assert_eq!(get(&fixture, "api/summary")?.0, 200);
+    Ok(())
+}
+
 /// The activity feed: the agents' events, newest first as stored. Session `s2` read the guide
 /// (id 0) at 3,000; session `s1` edited the orders file (id 2) at 2,300, read it at 2,200 and read
 /// the app (id 1) at 2,100 and 2,000. The watcher's edit of `src/util.rs` at 2,400 is no agent's

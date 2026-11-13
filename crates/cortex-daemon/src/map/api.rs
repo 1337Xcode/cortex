@@ -40,8 +40,9 @@ pub(super) use self::listing::{Listing, ListingCache};
 pub(crate) const PREFIX: &str = "api/";
 
 /// How long a request waits for an endpoint's work. The work goes on when the wait ends, as a
-/// read of the store cannot be called off; the connection cap bounds how many such reads there
-/// are, and the one that outlasts the wait finds its answer unwanted and drops it.
+/// read of the store cannot be called off; it holds one of the site's read permits until it ends,
+/// which bounds how many such reads there are, and the one that outlasts the wait finds its answer
+/// unwanted and drops it.
 pub(super) const ANSWER_WITHIN: Duration = Duration::from_secs(10);
 
 /// What an endpoint is asked.
@@ -69,8 +70,8 @@ const ENDPOINTS: [(&str, Endpoint); 8] = [
 ];
 
 /// The answer to a request for `endpoint`, the path after [`PREFIX`], with the address `uri`: the
-/// endpoint's own, 404 for a name no endpoint has, 500 when its work failed to finish and 503
-/// when it took longer than [`ANSWER_WITHIN`].
+/// endpoint's own, 404 for a name no endpoint has, 500 when its work failed to finish, and 503
+/// when it took longer than [`ANSWER_WITHIN`] or the site's reads are all under way.
 pub(crate) async fn answer(site: Arc<Site>, endpoint: &str, uri: Uri) -> Response {
     let (name, tail) = match endpoint.split_once('/') {
         Some((name, tail)) => (name, Some(tail.to_owned())),
@@ -81,9 +82,17 @@ pub(crate) async fn answer(site: Arc<Site>, endpoint: &str, uri: Uri) -> Respons
     };
     let ask = Ask { tail, uri };
     let on_site = Arc::clone(&site);
-    // INVARIANT: budgeted (a request waits for an endpoint at most ANSWER_WITHIN, and the
-    // connection cap bounds how many endpoints work at once)
-    let working = tokio::task::spawn_blocking(move || run(&on_site, &ask));
+    // INVARIANT: budgeted (a request waits for an endpoint at most ANSWER_WITHIN, and the site's
+    // read permits, each held until its read ends, bound how many endpoints work at once)
+    let Some(permit) = site.begin_read() else {
+        tracing::warn!(endpoint = name, "a map endpoint found every read under way");
+        return site.empty(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    let working = tokio::task::spawn_blocking(move || {
+        let answered = run(&on_site, &ask);
+        drop(permit);
+        answered
+    });
     match tokio::time::timeout(ANSWER_WITHIN, working).await {
         Ok(Ok(response)) => response,
         Ok(Err(error)) => {

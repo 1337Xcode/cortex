@@ -11,6 +11,8 @@
 
 use std::sync::Arc;
 
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::header::InvalidHeaderValue;
@@ -49,7 +51,15 @@ pub(crate) struct Site {
     listing: ListingCache,
     /// The `Content-Security-Policy` its answers carry, which names its port.
     policy: HeaderValue,
+    /// The reads of the store under way, at most [`MAX_READS`]: a read cannot be called off, so a
+    /// permit is held until the read ends, however long its request waited.
+    reads: Arc<Semaphore>,
 }
+
+/// The most reads of the store the map runs at once, for its endpoints and live views together: a
+/// browser asks a site for about six things at once, and a slow store must not take more of the
+/// daemon's blocking threads than this however often the page asks again.
+pub(super) const MAX_READS: usize = 8;
 
 impl Site {
     /// The map served on 127.0.0.1 at `port` with `token`, serving the files of `assets` and an API
@@ -75,7 +85,14 @@ impl Site {
             source,
             listing: ListingCache::default(),
             policy: HeaderValue::from_str(&policy)?,
+            reads: Arc::new(Semaphore::new(MAX_READS)),
         })
+    }
+
+    /// A permit to read the store, to be held until the read ends; none while [`MAX_READS`] reads
+    /// are under way.
+    pub(super) fn begin_read(&self) -> Option<OwnedSemaphorePermit> {
+        Arc::clone(&self.reads).try_acquire_owned().ok()
     }
 
     /// Whether the site serves any embedded file.

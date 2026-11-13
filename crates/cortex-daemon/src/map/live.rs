@@ -158,10 +158,16 @@ async fn read_beside(site: &Arc<Site>, socket: &mut WebSocket) -> Read {
 }
 
 /// The live state of `site` as JSON, read on a thread of the blocking pool; none when the store
-/// cannot be read now or the read outlasts [`ANSWER_WITHIN`] (the cause logged).
+/// cannot be read now, the site's reads are all under way, or the read outlasts [`ANSWER_WITHIN`]
+/// (the cause logged).
 async fn read_frame(site: &Arc<Site>) -> Option<String> {
+    let Some(permit) = site.begin_read() else {
+        tracing::warn!("the map's live state found every read under way");
+        return None;
+    };
     let site = Arc::clone(site);
     let read = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let _held = permit;
         let listing = site.listing().map_err(|error| error.to_string())?;
         let source = site.source();
         let reader = source.open().map_err(|error| error.to_string())?;
@@ -172,8 +178,8 @@ async fn read_frame(site: &Arc<Site>) -> Option<String> {
             .map_err(|error| error.to_string())?;
         serde_json::to_string(&frame).map_err(|error| error.to_string())
     });
-    // INVARIANT: budgeted (a live socket waits for a read of the store at most ANSWER_WITHIN, has
-    // one read at a time, and the connection cap bounds the sockets)
+    // INVARIANT: budgeted (a live socket waits for a read of the store at most ANSWER_WITHIN, and
+    // the site's read permits, each held until its read ends, bound the reads of every socket)
     match tokio::time::timeout(ANSWER_WITHIN, read).await {
         Ok(Ok(Ok(frame))) => Some(frame),
         Ok(Ok(Err(error))) => {
