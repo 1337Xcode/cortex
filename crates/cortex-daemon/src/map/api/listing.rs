@@ -46,7 +46,7 @@ pub(in crate::map) struct Listing {
 pub(super) struct Named {
     /// Its id, when the map lists it.
     pub(super) id: Option<usize>,
-    /// Its path, when the node is a file the store holds.
+    /// Its path, when the node is a file the store holds whose path the map would list.
     pub(super) path: Option<String>,
 }
 
@@ -60,7 +60,12 @@ pub(super) fn named(
     listing: &Listing,
     node: NodeId,
 ) -> Result<Named, StoreError> {
-    let path = queries.node_file(node)?.map(|(_, path)| path);
+    // A path the map would not list (one holding a control character) is not given either, so that
+    // no answer carries a path the page refuses.
+    let path = queries
+        .node_file(node)?
+        .map(|(_, path)| path)
+        .filter(is_listed);
     let id = listing
         .id_of_node(node)
         .or_else(|| path.as_ref().and_then(|path| listing.id_of_path(path)));

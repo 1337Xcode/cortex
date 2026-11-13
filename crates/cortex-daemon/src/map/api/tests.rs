@@ -427,6 +427,33 @@ fn an_event_s_path_tells_a_file_the_listing_has_not_caught_up_with() -> TestResu
     Ok(())
 }
 
+/// A file whose path holds a control character is not on the map, and an event about it names
+/// neither an id nor its path, which the page would refuse: `src/bell\u{7}.rs`, read at 4,000.
+#[test]
+fn an_event_about_a_file_the_map_does_not_list_names_no_path() -> TestResult {
+    let fixture = scripted()?;
+    let mut store = writer(fixture.root.path())?;
+    let bell = add_file(&mut store, "src/bell\u{7}.rs", 1)?;
+    let mut transaction = store.transaction()?;
+    transaction.append_event(&script::event(
+        ("s2", script::second_task()),
+        4_000,
+        (cortex_core::EventKind::Read, bell, "src/bell\u{7}.rs"),
+        None,
+    )?)?;
+    transaction.commit()?;
+    drop(store);
+    fixture.snapshot.changed();
+    let (status, body) = get(&fixture, "api/activity")?;
+    assert_eq!(status, 200);
+    let value: serde_json::Value = serde_json::from_str(&body)?;
+    let first = &value["events"][0];
+    assert_eq!(first["at_ms"], 4_000);
+    assert_eq!(first["file"], serde_json::Value::Null);
+    assert_eq!(first["path"], serde_json::Value::Null);
+    Ok(())
+}
+
 /// The warnings, newest first: at 2,320 an edit of the orders file (id 2) was warned of its test
 /// (id 3), which was not then read or edited; at 2,310 an edit of the app (id 1) was warned of the
 /// orders file, which usually changes with it, and its task has not ended, so it is open. Both
