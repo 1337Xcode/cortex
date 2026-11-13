@@ -127,8 +127,14 @@ impl Weighing {
     }
 }
 
-/// The bytes a vector has taken: its capacity, not its length, since the memory is held either
-/// way.
+/// The bytes a vector holds, as `size_of_val` of a slice gives them: its length times the size of
+/// what is in it.
+///
+/// That is also what it has taken, which is the figure a memory budget is about, because every
+/// vector the graph keeps is allocated once at the size it ends up holding: the node arrays and
+/// the out-weights are collected from iterators that say their length, the symbols are filled to
+/// the count that reserved them, and each kind's rows are reserved at the number of links they
+/// keep rather than the number they were given.
 pub(crate) fn size_of_vec<T>(vector: &[T]) -> usize {
     std::mem::size_of_val(vector)
 }
@@ -148,7 +154,8 @@ pub(crate) struct Rows {
 }
 
 impl Rows {
-    /// The bytes these rows hold, counting what each array has taken, not what it uses.
+    /// The bytes these rows hold, which is what they have taken: each array is reserved at the
+    /// number of links the rows keep.
     pub(crate) fn size_bytes(&self) -> usize {
         size_of_vec(&self.offsets)
             + size_of_vec(&self.targets)
@@ -170,40 +177,61 @@ impl Rows {
                 .cmp(&(right.0, right.1))
                 .then(left.2.total_cmp(&right.2))
         });
+        // How many links the rows will keep, so each array is allocated once at that size and
+        // holds no room it never uses: a link between the same two nodes as the one before it is
+        // added into that one rather than kept beside it.
+        let kept = usize::from(!links.is_empty())
+            + links
+                .iter()
+                .zip(links.iter().skip(1))
+                .filter(|(earlier, later)| (earlier.0, earlier.1) != (later.0, later.1))
+                .count();
         let mut rows = Self {
             offsets: Vec::with_capacity(nodes + 1),
-            targets: Vec::with_capacity(links.len()),
-            weights: Vec::with_capacity(links.len()),
-            peaks: Vec::with_capacity(links.len()),
+            targets: Vec::with_capacity(kept),
+            weights: Vec::with_capacity(kept),
+            peaks: Vec::with_capacity(kept),
         };
-        let mut merged: Vec<(u32, u32, f64, f64)> = Vec::with_capacity(links.len());
-        for (source, target, weight) in links {
-            match merged.last_mut() {
-                Some(last) if (last.0, last.1) == (source, target) => {
-                    last.2 += weight;
-                    last.3 = last.3.max(weight);
-                }
-                _ => merged.push((source, target, weight, weight)),
-            }
-        }
         let offset = |length: usize| {
             u32::try_from(length).map_err(|_| GraphError::TooLarge { what: "links" })
         };
         let mut at = 0;
         for node in 0..nodes {
             rows.offsets.push(offset(rows.targets.len())?);
-            while let Some(&(source, target, weight, peak)) = merged.get(at) {
+            // The pair being added up: its target, the weights so far, and the heaviest of them.
+            // Held in full precision and narrowed once, when the pair ends.
+            let mut adding: Option<(u32, f64, f64)> = None;
+            while let Some(&(source, target, weight)) = links.get(at) {
                 if usize::try_from(source).unwrap_or(usize::MAX) != node {
                     break;
                 }
-                rows.targets.push(target);
-                rows.weights.push(narrowed(weight));
-                rows.peaks.push(narrowed(peak));
                 at += 1;
+                match adding {
+                    Some((held, ref mut sum, ref mut peak)) if held == target => {
+                        *sum += weight;
+                        *peak = peak.max(weight);
+                    }
+                    Some((held, sum, peak)) => {
+                        rows.keep(held, sum, peak);
+                        adding = Some((target, weight, weight));
+                    }
+                    None => adding = Some((target, weight, weight)),
+                }
+            }
+            if let Some((held, sum, peak)) = adding {
+                rows.keep(held, sum, peak);
             }
         }
         rows.offsets.push(offset(rows.targets.len())?);
         Ok(rows)
+    }
+
+    /// Keeps one link: its target, the weights of every link between the same two nodes added up,
+    /// and the heaviest of them.
+    fn keep(&mut self, target: u32, weight: f64, peak: f64) {
+        self.targets.push(target);
+        self.weights.push(narrowed(weight));
+        self.peaks.push(narrowed(peak));
     }
 
     /// Node `node`'s links: each target and weight.
@@ -612,6 +640,40 @@ mod tests {
             small.size_bytes() > before,
             "the view by files should add to {before}, not leave it at {}",
             small.size_bytes()
+        );
+        Ok(())
+    }
+
+    /// Four links over three nodes, worked out by hand:
+    ///
+    /// ```text
+    /// 0 -> 1, 0.50
+    /// 0 -> 1, 0.25
+    /// 0 -> 2, 1.00
+    /// 1 -> 0, 0.50
+    /// ```
+    ///
+    /// Sorted by source, target and weight, the two links from 0 to 1 sit together and are added
+    /// up: weight 0.75, heaviest part 0.50. So the rows keep three links, not four. Node 0 points
+    /// at 1 and at 2, node 1 points at 0, node 2 points at nothing, which makes the offsets
+    /// 0, 2, 3, 3. The rows take room for the three they keep and not for the four they were
+    /// given, since the room is held for as long as the graph is.
+    #[test]
+    fn rows_hold_what_they_keep_and_no_more() -> Result<(), GraphError> {
+        let rows = Rows::of(3, vec![(0, 1, 0.5), (0, 1, 0.25), (0, 2, 1.0), (1, 0, 0.5)])?;
+
+        assert_eq!(rows.offsets, vec![0, 2, 3, 3]);
+        assert_eq!(rows.targets, vec![1, 2, 0]);
+        assert_eq!(rows.weights, vec![0.75, 1.0, 0.5]);
+        assert_eq!(rows.peaks, vec![0.5, 1.0, 0.5]);
+        assert_eq!(
+            (
+                rows.targets.capacity(),
+                rows.weights.capacity(),
+                rows.peaks.capacity()
+            ),
+            (3, 3, 3),
+            "three links kept, so room for three"
         );
         Ok(())
     }
