@@ -1,10 +1,12 @@
 // The activity: what agents did lately, newest first, five rows then "Show N more". Each row is a
-// sentence ("Claude Code 3f2a… edited book.rs") led by the agent's icon and the file's, over how
-// long ago it was; its exact time in UTC is said on hover and focus (and to screen readers). A row
+// sentence ("Claude Code 3f2a… edited book.rs", the file named as the map names it) led by the
+// agent's icon and the file's, over how long ago it was; its exact time in UTC and the file's whole
+// path are said on hover and focus (and to screen readers). A row
 // about a file the snapshot on screen lists, at the path the daemon gave, is a button that flies
 // to it; a file it does not hold yet is named by its path, and the map is asked to read its data
-// again. Open while an agent session runs, as the live sessions are, unless the person chose;
-// asked for when it first opens, and read again quietly with the rest of the map.
+// again. Open while an agent session runs, as the live sessions are, unless the person chose, and
+// on its letter; asked for when it first opens, and read again quietly with the rest of the map.
+// How to read its times is its footnote.
 import { useCallback, useEffect, type ReactElement } from 'react';
 import { fetchActivity, MAX_EVENTS, type ActivityEvent } from '../api/activity';
 import { agentIcon } from '../icons/agentIcons';
@@ -16,10 +18,10 @@ import { useMapStore } from '../state/store';
 import { activityTimesNote, eventLine, eventSentence, shortAgo } from '../text/activityWords';
 import { formatCount } from '../text/format';
 import { namedFileNote, namedFileSentence, shownName } from '../text/namedFileWords';
-import { distinctNames } from '../text/names';
+import { namesOfFiles } from '../text/pathNames';
 import { LoadedBody } from './LoadedBody';
 import { RowList } from './RowList';
-import { Section } from './Section';
+import { Footnote, Section } from './Section';
 import { StackRow } from './StackRow';
 
 /** One event: a button to its file when the snapshot on screen lists it, plain text otherwise. */
@@ -37,7 +39,7 @@ function EventRow({
   const path = namedPath(named);
   const note = namedFileNote(named);
   const noteSentence = namedFileSentence(named);
-  const sentence = eventSentence(event, name, readMs);
+  const sentence = eventSentence(event, path, readMs);
   return (
     <StackRow
       file={listedId(named)}
@@ -79,12 +81,9 @@ function ActivityList({
     index,
     named: nameFile(files, event.file, event.path),
   }));
-  const listed = items.flatMap(({ named }) => (named.kind === 'listed' ? [named.path] : []));
-  const distinct = distinctNames(listed);
-  const names = new Map(listed.map((path, i) => [path, distinct[i] ?? path]));
+  const names = namesOfFiles(files);
   return (
     <>
-      <p className="section-note">{activityTimesNote(readMs)}</p>
       <RowList
         items={items}
         keyOf={({ index }) => index}
@@ -93,10 +92,9 @@ function ActivityList({
           <EventRow event={event} named={named} name={shownName(named, names)} readMs={readMs} />
         )}
       />
-      <p className="section-note">
-        Agents&apos; events among the {formatCount(MAX_EVENTS)} newest Cortex recorded; edits seen
-        outside any agent are left out.
-      </p>
+      <Footnote
+        text={`${activityTimesNote(readMs)} Agents' events among the ${formatCount(MAX_EVENTS)} newest Cortex recorded; edits seen outside any agent are left out.`}
+      />
     </>
   );
 }
@@ -117,6 +115,7 @@ export function ActivitySection({ scene }: { scene: Scene }): ReactElement {
       isOpenAtFirst={isRunning}
       // Opens while a session runs and closes after, until the person opens or closes it.
       openWhile={isRunning}
+      shortcut="activity"
       testId="overview-activity"
     >
       <LoadedBody state={activity} load={load} what="the activity" testId="activity-error">

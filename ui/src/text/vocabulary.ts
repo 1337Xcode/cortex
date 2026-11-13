@@ -1,6 +1,7 @@
 // The map's words: one name per concept, used by the legend, the panels, the summary and the
 // explanations shown on hover and focus, so the same thing is always called the same. Sentences
-// that carry a number say what the number counts.
+// that carry a number say what the number counts, and the sentences shown on hover name files by
+// their whole paths, so a name shared by several files is never ambiguous there.
 import type { GraphFile, GraphLink, LinkKind } from '../api/graph';
 import type { HistoryLimits } from '../api/summary';
 import type { FileMark } from '../map/fileEncoding';
@@ -141,20 +142,15 @@ export function commitsMeaning(
   return `${read}. None of them changed it; older changes, and changes in larger commits, are not counted.`;
 }
 
-/** A file's name: the last segment of its path. */
-function nameOf(path: string): string {
-  return path.slice(path.lastIndexOf('/') + 1);
-}
-
 /** A folder's label on the canvas: its name and, drawn whole, its file count ("orders · 25 files"). */
 export function folderLabel(name: string, fileCount: number | null): string {
   return fileCount === null ? name : `${name} · ${countOf(fileCount, 'file')}`;
 }
 
-/** What a file's circle says, in one sentence with its numbers, for hover. */
+/** What a file's circle says, in one sentence with its path and numbers, for hover. */
 export function fileSentence(file: GraphFile, mark: FileMark): string {
   const parts = [
-    `${nameOf(file.path)}: ${countOf(file.lines, 'line')}`,
+    `${file.path}: ${countOf(file.lines, 'line')}`,
     `read ${countOf(file.reads, 'time')} by agents`,
     // Zero counts only the commits Cortex read, so it is never said as "never changed"; a
     // generated or vendored file's commits are not counted at all.
@@ -168,9 +164,9 @@ export function fileSentence(file: GraphFile, mark: FileMark): string {
   return `${parts.join(', ')}.${state}`;
 }
 
-/** What a file's fact badge says, for hover: how many facts, and how many of them are suspect. */
+/** What a file's fact badge says, for hover: its path, its facts and how many of them are suspect. */
 export function badgeSentence(file: GraphFile): string {
-  const facts = `${nameOf(file.path)} has ${countOf(file.facts, 'fact')}`;
+  const facts = `${file.path} has ${countOf(file.facts, 'fact')}`;
   if (file.suspect === 0) return `${facts}.`;
   if (file.facts === 1) return `${facts}, and it is suspect.`;
   return `${facts}, ${formatCount(file.suspect)} of them suspect.`;
@@ -203,7 +199,7 @@ export function linkMeasure(link: Pick<GraphLink, 'kind' | 'count'>): string {
  * kinds are made from.
  */
 export function linkSentence(link: GraphLink, from: GraphFile, to: GraphFile): string {
-  const [a, b] = [nameOf(from.path), nameOf(to.path)];
+  const [a, b] = [from.path, to.path];
   switch (link.kind) {
     case 'co_change':
       return from.commits_counted

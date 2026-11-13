@@ -11,7 +11,7 @@ import {
   formatSpan,
   formatUtcMoment,
 } from '../text/format';
-import { shortcutFor, viewIndexFor, type KeyInput } from './shortcuts';
+import { SECTION_KEYS, sectionFor, shortcutFor, viewIndexFor, type KeyInput } from './shortcuts';
 import { checkResults, stateForText } from './useSearch';
 
 function key(name: string, change: Partial<KeyInput> = {}): KeyInput {
@@ -44,6 +44,37 @@ describe('shortcutFor', () => {
     expect(shortcutFor(key('z', { ctrlKey: true }))).toBeNull();
     expect(shortcutFor(key('+', { metaKey: true }))).toBeNull();
     expect(shortcutFor(key('q'))).toBeNull();
+  });
+});
+
+describe('sectionFor', () => {
+  it('opens each section by its letter, in either case', () => {
+    expect(['a', 'W', 'r', 'f', 'h', 'T', 's'].map((name) => sectionFor(key(name)))).toEqual([
+      'activity',
+      'warnings',
+      'receipts',
+      'facts',
+      'history',
+      'told',
+      'symbols',
+    ]);
+  });
+
+  it('leaves other keys, keys typed into a field and keys held with a modifier alone', () => {
+    expect(sectionFor(key('q'))).toBeNull();
+    expect(sectionFor(key('h', { isInField: true }))).toBeNull();
+    expect(sectionFor(key('h', { ctrlKey: true }))).toBeNull();
+    expect(sectionFor(key('t', { metaKey: true }))).toBeNull();
+  });
+
+  it('shares no letter with another section or with the map', () => {
+    const letters = Object.values(SECTION_KEYS);
+    expect(new Set(letters).size).toBe(letters.length);
+    for (const letter of letters) {
+      expect(shortcutFor(key(letter))).toBeNull();
+      expect(shortcutFor(key(letter.toUpperCase()))).toBeNull();
+      expect(viewIndexFor(key(letter), 9)).toBeNull();
+    }
   });
 });
 

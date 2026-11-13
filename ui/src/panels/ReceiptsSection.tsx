@@ -164,6 +164,7 @@ export function ReceiptsSection(): ReactElement {
       title="Receipts"
       count={receipts.status === 'ready' ? receipts.receipts.recorded.sessions.length : null}
       isOpenAtFirst={false}
+      shortcut="receipts"
       testId="overview-receipts"
     >
       <ReceiptsBody />

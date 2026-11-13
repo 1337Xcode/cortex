@@ -192,6 +192,7 @@ export function FactsSection({ detail, id }: { detail: DetailState; id: number }
       detail={detail}
       id={id}
       isOpenAtFirst
+      shortcut="facts"
       countOf={(d) => d.facts.length}
       empty="No facts are recorded for this file."
       footer={

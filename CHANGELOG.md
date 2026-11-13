@@ -483,6 +483,16 @@ All notable changes to this project are documented in this file. The format is b
   `why`, `note`, `claims`, `consolidate`, `facts` and `import` at once, where they waited before
   for a daemon to start; `cortex init` and `cortex uninstall --purge` now refuse a file system's
   root too.
+- The map names a file by the shortest end of its path that no other file ends with
+  (`cortex-store/README.md` where a repository has several `README.md` files), in every sentence
+  and row, with the whole path on hover. Its overview lists what the repository is, the files
+  changed together, the busiest files and the live sessions first, holds only the summary
+  sentences the strip on top does not show in full, and moves how to read each list to one line at
+  its end. On a ten-file test repository with three sessions running, at 1440 by 900 pixels, it
+  shows what the repository is, what is busiest and what agents are doing before any scrolling, and
+  a browser check keeps it so. The keys `A`, `W` and `R`
+  open the activity, the warnings and the receipts, and `F`, `H`, `T` and `S` a file's facts,
+  commits, what Cortex told agents and symbols.
 
 ### Fixed
 

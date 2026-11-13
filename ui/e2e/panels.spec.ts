@@ -48,12 +48,17 @@ test.describe('activity', () => {
     });
     await expect(rows.nth(2)).toContainText('Claude Code 3f2a… ran a shell command');
     await expect(rows.nth(3)).toContainText('Codex 9b1c… read invoice.rs');
-    await expect(section).toContainText("by this computer's clock");
+    // How to read the times is the section's last line, whole on keyboard focus.
+    await section.locator('.section-footnote .clip').focus();
+    await expect(page.getByRole('tooltip')).toContainText("by this computer's clock");
     await section.getByRole('button', { name: 'Show 2 more' }).click();
     await expect(rows).toHaveCount(7);
     await expect(rows.last()).toContainText('Claude Code 3f2a… was given a prompt');
-    // The row's whole sentence, with its exact time in UTC, is its name; it flies to book.rs.
-    const first = section.getByRole('button', { name: /edited book\.rs, 2 min ago, at .* UTC\.$/ });
+    // The row's whole sentence, with the file's path and the exact time in UTC, is its name; it
+    // flies to book.rs.
+    const first = section.getByRole('button', {
+      name: /edited src\/orders\/book\.rs, 2 min ago, at .* UTC\.$/,
+    });
     await first.click();
     await expect(filePanel(page).locator('#panel-title')).toHaveText('book.rs');
   });
@@ -175,7 +180,9 @@ test.describe('a file the map does not show yet', () => {
     await expect(warning.locator('.stack-meta')).toContainText('not on the map yet');
     await expect(warning).toHaveJSProperty('tagName', 'P');
     // The book.rs event, its id out of step, is found again by its path and flies to book.rs.
-    await section.getByRole('button', { name: /^Claude Code 3f2a… read book\.rs,/ }).click();
+    await section
+      .getByRole('button', { name: /^Claude Code 3f2a… read src\/orders\/book\.rs,/ })
+      .click();
     await expect(filePanel(page).locator('#panel-title')).toHaveText('book.rs');
   });
 });
@@ -187,7 +194,9 @@ test.describe('warnings', () => {
     record = await openMap(page, smallFixture(Date.now()));
     await openSection(page, 'Warnings');
     const section = page.getByTestId('overview-warnings');
-    await expect(section).toContainText(
+    // How many are open and resolved is the section's last line, whole on keyboard focus.
+    await section.locator('.section-footnote .clip').focus();
+    await expect(page.getByRole('tooltip')).toHaveText(
       '2 warnings open and 3 resolved, among the 100 newest Cortex gave; open first.',
     );
     await expect(section.locator('.stack-what')).toHaveText([
@@ -201,7 +210,11 @@ test.describe('warnings', () => {
     await expect(section.locator('.stack-meta').nth(2)).toHaveText(/^Followed · strength 0\.80 · /);
     // The warning whose named file is gone is no button; the others fly to the named file.
     await expect(section.locator('p.stack-row')).toHaveCount(1);
-    await section.getByRole('button', { name: /^book\.rs usually changes with mod\.rs\./ }).click();
+    await section
+      .getByRole('button', {
+        name: /^src\/orders\/book\.rs usually changes with src\/orders\/mod\.rs\./,
+      })
+      .click();
     await expect(filePanel(page).locator('#panel-title')).toHaveText('mod.rs');
   });
 });

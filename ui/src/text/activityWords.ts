@@ -65,13 +65,12 @@ export function shortAgo(atMs: number, readMs: number): string {
   return `${Math.floor(span / DAY_MS)} d ago`;
 }
 
-/** The whole event in one sentence, both times: "… edited book.rs, 2 min ago, at 2026-… UTC." */
-export function eventSentence(
-  event: ActivityEvent,
-  fileName: string | null,
-  readMs: number,
-): string {
-  return `${eventLine(event, fileName)}, ${shortAgo(event.at_ms, readMs)}, at ${formatUtcMoment(event.at_ms)}.`;
+/**
+ * The whole event in one sentence, both times, with the file's whole path: "… edited
+ * src/orders/book.rs, 2 min ago, at 2026-… UTC."
+ */
+export function eventSentence(event: ActivityEvent, path: string | null, readMs: number): string {
+  return `${eventLine(event, path)}, ${shortAgo(event.at_ms, readMs)}, at ${formatUtcMoment(event.at_ms)}.`;
 }
 
 /** The note that says how the times are read. */

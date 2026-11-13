@@ -160,27 +160,29 @@ question(
   },
 );
 
-// The panel's header and numbers hold three stops before its sections: "Open in editor" and the
-// commits and tokens numbers, which explain what they count on focus. Then the linked files'
-// toggle and its four rows, the facts' toggle and the facts' three buttons (Retire on fact 3,
-// Confirm again and Retire on the suspect fact 8): the commits behind the file's lines are the
-// 13th stop, so 6 keys to open the panel, 13 Tabs and Enter.
-question('Why is book.rs the way it is?', { keys: 20, screens: 2 }, async (page, steps) => {
+/** Presses a section's letter, which opens the section and moves the focus to its title. */
+async function openSection(page: Page, steps: Steps, key: string, title: RegExp): Promise<void> {
+  await steps.press(key);
+  await expect(page.getByRole('button', { name: title })).toBeFocused();
+  await expect(page.getByRole('button', { name: title })).toHaveAttribute('aria-expanded', 'true');
+}
+
+// 6 keys open book.rs's panel; `h` opens the commits behind its lines wherever the focus is.
+question('Why is book.rs the way it is?', { keys: 7, screens: 2 }, async (page, steps) => {
   await openFile(page, steps, 'book');
-  await steps.tabTo(filePanel(page).getByRole('button', { name: /^Commits behind its lines/ }));
-  await steps.press('Enter');
+  await openSection(page, steps, 'h', /^Commits behind its lines/);
   const subject = filePanel(page).getByTestId('panel-history').locator('.history-subject').first();
   await expect(subject).toHaveText('Keep cancelled orders in the book');
   return (await subject.textContent()) ?? '';
 });
 
+// 6 keys open book.rs's panel; `t` opens what Cortex told agents about it.
 question(
   'What did Cortex tell agents about book.rs, and did it help?',
-  { keys: 21, screens: 2 },
+  { keys: 7, screens: 2 },
   async (page, steps) => {
     await openFile(page, steps, 'book');
-    await steps.tabTo(filePanel(page).getByRole('button', { name: /^What Cortex told agents/ }));
-    await steps.press('Enter');
+    await openSection(page, steps, 't', /^What Cortex told agents/);
     const first = filePanel(page).getByTestId('panel-told').getByRole('listitem').first();
     await expect(first).toContainText('then read or edited');
     return (await first.textContent()) ?? '';
@@ -205,15 +207,12 @@ question(
   (nowMs) => ({ ...smallFixture(nowMs), live: threeSessions(nowMs) }),
 );
 
-// The receipts section sits closed under "At a glance", the 20th stop of Tab (after the canvas, the
-// ten map controls, the search box, the strip's two files, the live sessions, the activity, "At a
-// glance" and its two files); Enter opens it on the same screen.
+// The receipts sit closed near the end of the overview; `r` opens them on the same screen.
 question(
   "What did agents' work cost, and did Cortex help?",
-  { keys: 21, screens: 1 },
+  { keys: 1, screens: 1 },
   async (page, steps) => {
-    await steps.tabTo(page.getByTestId('overview-receipts').locator('.section-toggle'));
-    await steps.press('Enter');
+    await openSection(page, steps, 'r', /^Receipts/);
     const section = page.getByTestId('overview-receipts');
     await expect(section.getByTestId('receipts-measure').first()).toHaveText(
       'Success rate0.80 with Cortex, 0.70 held outdifference +0.10 (-0.10 to +0.30)The interval holds 0: not a measured difference.',
@@ -240,15 +239,13 @@ question(
   (nowMs) => ({ ...smallFixture(nowMs), live: threeSessions(nowMs) }),
 );
 
-// With no session running the activity sits closed under the live sessions, the 16th stop of Tab
-// (after the canvas, the ten map controls, the search box, the strip's two files and the live
-// sessions); Enter opens it on the same screen.
+// With no session running the activity sits closed under the live sessions; `a` opens it on the
+// same screen.
 question(
   'What did agents do lately? (no session running)',
-  { keys: 17, screens: 1 },
+  { keys: 1, screens: 1 },
   async (page, steps) => {
-    await steps.tabTo(page.getByTestId('overview-activity').locator('.section-toggle'));
-    await steps.press('Enter');
+    await openSection(page, steps, 'a', /^Activity/);
     const first = page.getByTestId('overview-activity').getByRole('listitem').first();
     await expect(first).toHaveText('Claude Code 3f2a… edited book.rs 2 min ago', {
       useInnerText: true,
@@ -257,15 +254,12 @@ question(
   },
 );
 
-// The warnings sit closed near the end of the overview, the 36th stop of Tab: after the receipts
-// (the 20th), the changed-together toggle and its five pairs, the busiest files' toggle, five rows
-// and "Show 2 more", and the needs-attention toggle and its one file. Enter opens them.
+// The warnings sit closed near the end of the overview; `w` opens them on the same screen.
 question(
   'Which warnings did Cortex give, and were they followed?',
-  { keys: 37, screens: 1 },
+  { keys: 1, screens: 1 },
   async (page, steps) => {
-    await steps.tabTo(page.getByTestId('overview-warnings').locator('.section-toggle'), 80);
-    await steps.press('Enter');
+    await openSection(page, steps, 'w', /^Warnings/);
     const section = page.getByTestId('overview-warnings');
     await expect(section.locator('.stack-what').first()).toHaveText(
       'book.rs usually changes with mod.rs',
@@ -275,14 +269,14 @@ question(
   },
 );
 
-// 9 keys open payment.rs's panel; then its commits and tokens numbers (it has no editor link), the
-// linked files' toggle and five rows (two changed together, two used together, one work order) and
-// the facts' toggle: Confirm is the 10th stop, and Enter sends it.
+// 9 keys open payment.rs's panel; `f` moves the focus to its facts, whose one fact's Confirm is
+// the next stop of Tab, and Enter sends it.
 question(
   'Confirm the candidate fact on payment.rs',
-  { keys: 20, screens: 2 },
+  { keys: 12, screens: 2 },
   async (page, steps) => {
     await openFile(page, steps, 'payment');
+    await openSection(page, steps, 'f', /^Facts/);
     await steps.tabTo(filePanel(page).getByRole('button', { name: 'Confirm fact 11' }));
     await steps.press('Enter');
     const said = filePanel(page).getByTestId('fact-said');

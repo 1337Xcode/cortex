@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import type { GraphLink } from '../api/graph';
 import type { MapSummary } from '../api/summary';
 import { sevenFileScene, sevenFileSnapshot, testLink } from '../map/testScene';
-import { distinctNames } from '../text/names';
 import { strongestLinks } from './fileLinks';
 import { detailFor } from './fileSections';
 import { summarySentences, type SummarySentence } from './summarySentences';
@@ -192,24 +191,5 @@ describe('detailFor', () => {
       error,
     });
     expect(detailFor({ status: 'idle' }, 6)).toEqual({ status: 'idle' });
-  });
-});
-
-describe('distinctNames', () => {
-  it('keeps base names that are unique, even when a path repeats', () => {
-    expect(distinctNames(['src/a.rs', 'src/b.rs', 'src/a.rs'])).toEqual(['a.rs', 'b.rs', 'a.rs']);
-  });
-
-  it('adds the folder to names that collide, and the whole folder path when folders collide too', () => {
-    expect(distinctNames(['src/orders/mod.rs', 'src/billing/mod.rs', 'lib.rs'])).toEqual([
-      'mod.rs in orders',
-      'mod.rs in billing',
-      'lib.rs',
-    ]);
-    expect(distinctNames(['a/x/mod.rs', 'b/x/mod.rs', 'mod.rs'])).toEqual([
-      'mod.rs in a/x',
-      'mod.rs in b/x',
-      'mod.rs in the root',
-    ]);
   });
 });

@@ -1,11 +1,14 @@
 // The warnings Cortex gave agents after their edits, open first, then resolved, five rows then
 // "Show N more". Each row says what the warning said in words by its kind ("book.rs usually
-// changes with mod.rs"), then what became of it, its strength and its date; its whole sentence
-// (what the strength measures for that kind, what its state means) is its accessible name and
-// shows on hover and focus. A row whose named file the snapshot on screen lists, at the path the
+// changes with mod.rs", its files named as the map names them), then what became of it, its
+// strength and its date; its whole sentence (with the files' whole paths, what the strength
+// measures for that kind, what its state means) is its accessible name and shows on hover and
+// focus. How many are open and resolved is its footnote. A row whose named file the snapshot on
+// screen lists, at the path the
 // daemon gave, is a button that flies to it; a file it does not hold yet is named by its path, and
 // the map is asked to read its data again.
-// Closed at first, asked for when it opens, and read again quietly with the rest of the map.
+// Closed at first, opened on its letter, asked for when it opens, and read again quietly with the
+// rest of the map.
 import { useCallback, useEffect, type ReactElement } from 'react';
 import { fetchWarnings, MAX_WARNINGS, type GivenWarning } from '../api/warnings';
 import { fileIcon } from '../icons/fileIcons';
@@ -15,11 +18,11 @@ import type { Scene } from '../map/scene';
 import { useMapStore } from '../state/store';
 import { countOf, formatCount } from '../text/format';
 import { namedFileNote, namedFileSentence, shownName } from '../text/namedFileWords';
-import { distinctNames } from '../text/names';
+import { namesOfFiles, type PathNames } from '../text/pathNames';
 import { openFirst, warningLine, warningMeta, warningSentence } from '../text/warningWords';
 import { LoadedBody } from './LoadedBody';
 import { RowList } from './RowList';
-import { Section } from './Section';
+import { Footnote, Section } from './Section';
 import { StackRow } from './StackRow';
 
 /** A warning with its two files as the snapshot on screen holds them. */
@@ -42,13 +45,7 @@ function fileNotes(named: NamedWarning): {
 }
 
 /** One warning's row: a button that flies to the named file, or plain text without one. */
-function WarningRow({
-  named,
-  names,
-}: {
-  named: NamedWarning;
-  names: ReadonlyMap<string, string>;
-}): ReactElement {
+function WarningRow({ named, names }: { named: NamedWarning; names: PathNames }): ReactElement {
   const { warning, source, target } = named;
   const [sourceName, targetName] = [shownName(source, names), shownName(target, names)];
   const targetPath = namedPath(target);
@@ -59,7 +56,9 @@ function WarningRow({
       lead={<IconSlot icon={targetPath === null ? null : fileIcon(targetPath)} />}
       what={warningLine(warning.kind, sourceName, targetName)}
       meta={[...warningMeta(warning), ...notes.parts]}
-      sentence={[warningSentence(warning, sourceName, targetName), ...notes.sentences].join(' ')}
+      sentence={[warningSentence(warning, namedPath(source), targetPath), ...notes.sentences].join(
+        ' ',
+      )}
       state={warning.state}
     />
   );
@@ -98,23 +97,18 @@ function WarningList({
     source: nameFile(files, warning.source, warning.source_path),
     target: nameFile(files, warning.target, warning.target_path),
   }));
-  const listed = items.flatMap(({ source, target }) =>
-    [source, target].flatMap((file) => (file.kind === 'listed' ? [file.path] : [])),
-  );
-  const distinct = distinctNames(listed);
-  const names = new Map(listed.map((path, i) => [path, distinct[i] ?? path]));
+  const names = namesOfFiles(files);
   const open = items.filter(({ warning }) => warning.state === 'open').length;
   return (
     <>
-      <p className="section-note">
-        {countOf(open, 'warning')} open and {formatCount(items.length - open)} resolved, among the{' '}
-        {formatCount(MAX_WARNINGS)} newest Cortex gave; open first.
-      </p>
       <RowList
         items={items}
         keyOf={({ index }) => index}
         label="Warnings, open first"
         renderRow={(named) => <WarningRow named={named} names={names} />}
+      />
+      <Footnote
+        text={`${countOf(open, 'warning')} open and ${formatCount(items.length - open)} resolved, among the ${formatCount(MAX_WARNINGS)} newest Cortex gave; open first.`}
       />
     </>
   );
@@ -132,6 +126,7 @@ export function WarningsSection({ scene }: { scene: Scene }): ReactElement {
       title="Warnings"
       count={warnings.status === 'ready' ? warnings.value.warnings.length : null}
       isOpenAtFirst={false}
+      shortcut="warnings"
       testId="overview-warnings"
     >
       <LoadedBody state={warnings} load={load} what="the warnings" testId="warnings-error">

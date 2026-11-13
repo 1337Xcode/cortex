@@ -4,7 +4,7 @@
 // font. Loading, a failure and an empty map each get a sentence that says what it means and what to
 // do next. While the map is empty the page asks whether Cortex is still reading the repository,
 // and once it has finished, asks for the map again.
-import { useEffect, useMemo, useRef, type ReactElement, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react';
 import { fetchGraph, type GraphSnapshot } from './api/graph';
 import { fetchHealth } from './api/health';
 import { BROWSER_LIVE_ENVIRONMENT, connectLive, liveSocketUrl } from './api/liveSocket';
@@ -212,6 +212,8 @@ function ReadyMap({
     [isNarrow, selected, isOverviewShown],
   );
   const insets = useChromeInsets(chrome);
+  // The summary sentences the strip shows in full; the overview shows the rest.
+  const [inStrip, setInStrip] = useState('');
   useSlashToSearch(searchRef);
   useIntroOnFirstOpen();
   const restoreFocus = (returnTo: Element | null): void => {
@@ -232,10 +234,10 @@ function ReadyMap({
           <SearchBox scene={scene} inputRef={searchRef} />
           {isNarrow ? <OverviewButton /> : null}
         </div>
-        <SummaryStrip snapshot={snapshot} />
+        <SummaryStrip snapshot={snapshot} onFull={setInStrip} />
       </header>
       {isOverviewShown ? (
-        <OverviewPanel scene={scene} isSheet={isNarrow} panelRef={overviewRef} />
+        <OverviewPanel scene={scene} isSheet={isNarrow} inStrip={inStrip} panelRef={overviewRef} />
       ) : null}
       {selected === null ? null : <FilePanel scene={scene} id={selected} onClosed={restoreFocus} />}
       <Intro />

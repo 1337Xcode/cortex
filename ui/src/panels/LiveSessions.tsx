@@ -11,7 +11,8 @@ import { agentFamily } from '../map/agents';
 import { namedLiveFiles } from '../map/mapTooltip';
 import type { Scene } from '../map/scene';
 import { useMapStore } from '../state/store';
-import { liveSentence, sessionLine } from '../text/liveWords';
+import { liveSentence, sessionLead } from '../text/liveWords';
+import { namesOfFiles } from '../text/pathNames';
 import { FileRow } from './FileRow';
 import { RowList } from './RowList';
 import { Section } from './Section';
@@ -34,6 +35,7 @@ function SessionRow({ session, scene }: { session: LiveSession; scene: Scene }):
   const files = namedLiveFiles(session, scene);
   const sentence = liveSentence(session, files);
   const newest = session.files.find((entry) => entry.file < scene.snapshot.files.length);
+  const newestPath = newest === undefined ? '' : (scene.snapshot.files[newest.file]?.path ?? '');
   if (newest === undefined) {
     return (
       <p className="live-row">
@@ -45,8 +47,10 @@ function SessionRow({ session, scene }: { session: LiveSession; scene: Scene }):
   return (
     <FileRow
       file={newest.file}
-      name={sessionLine(session, newest.mode, scene.fileName[newest.file] ?? '')}
-      nameKind="words"
+      name={{
+        lead: sessionLead(session, newest.mode),
+        path: namesOfFiles(scene.snapshot.files).nameOf(newestPath),
+      }}
       measure={null}
       sentence={sentence}
       lead={<AgentMark agent={session.agent} />}

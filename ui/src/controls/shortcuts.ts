@@ -65,6 +65,47 @@ export function viewIndexFor(input: KeyInput, count: number): number | null {
   return index < count ? index : null;
 }
 
+/** A panel section a letter opens and moves the focus to, wherever the focus is. */
+export type SectionKeyName =
+  'activity' | 'warnings' | 'receipts' | 'facts' | 'history' | 'told' | 'symbols';
+
+/**
+ * The letter of each section a person opens often but that sits closed or far down its panel: in
+ * the overview the activity, the warnings and the receipts; in a file's panel its facts, the
+ * commits behind its lines, what Cortex told agents and its symbols. One letter each, none shared
+ * with the map's own keys above.
+ */
+export const SECTION_KEYS: Readonly<Record<SectionKeyName, string>> = {
+  activity: 'a',
+  warnings: 'w',
+  receipts: 'r',
+  facts: 'f',
+  history: 'h',
+  told: 't',
+  symbols: 's',
+};
+
+/** Every section a letter opens, in the order of `SECTION_KEYS`. */
+const SECTION_NAMES: readonly SectionKeyName[] = [
+  'activity',
+  'warnings',
+  'receipts',
+  'facts',
+  'history',
+  'told',
+  'symbols',
+];
+
+/**
+ * The section a key opens, or null: a key held with Ctrl, Alt or Meta, or typed into a field, is
+ * never one. Upper and lower case open the same section.
+ */
+export function sectionFor(input: KeyInput): SectionKeyName | null {
+  if (input.ctrlKey || input.altKey || input.metaKey || input.isInField) return null;
+  const letter = input.key.toLowerCase();
+  return SECTION_NAMES.find((name) => SECTION_KEYS[name] === letter) ?? null;
+}
+
 /** Whether an event target is a control that uses typed or arrow keys itself. */
 export function isKeyField(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

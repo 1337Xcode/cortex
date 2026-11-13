@@ -1,7 +1,7 @@
 // Tests for the live sessions' words, every expected sentence written out.
 import { describe, expect, it } from 'vitest';
 import type { LiveSession } from '../api/live';
-import { joinNames, liveSentence, sessionLine, sessionName, shortSessionId } from './liveWords';
+import { joinNames, liveSentence, sessionLead, sessionName, shortSessionId } from './liveWords';
 
 const CLAUDE: LiveSession = { id: '3f2a9c1e', agent: 'claude', title: 'Claude Code', files: [] };
 
@@ -13,7 +13,7 @@ describe('session names', () => {
       'ab',
     ]);
     expect(sessionName(CLAUDE)).toBe('Claude Code 3f2a…');
-    expect(sessionLine(CLAUDE, 'edit', 'book.rs')).toBe('Claude Code 3f2a… editing book.rs');
+    expect(sessionLead(CLAUDE, 'edit')).toBe('Claude Code 3f2a… editing');
   });
 
   it('shows a hidden formatting character in the title as the replacement character', () => {
@@ -33,9 +33,9 @@ describe('session names', () => {
 describe('liveSentence', () => {
   it('says what the session does now and what it read before', () => {
     const files = [
-      { path: 'src/orders/book.rs', mode: 'edit' as const },
-      { path: 'src/orders/mod.rs', mode: 'read' as const },
-      { path: 'src/orders/payment.rs', mode: 'read' as const },
+      { name: 'book.rs', mode: 'edit' as const },
+      { name: 'mod.rs', mode: 'read' as const },
+      { name: 'payment.rs', mode: 'read' as const },
     ];
     expect(liveSentence(CLAUDE, files)).toBe(
       'Claude Code session 3f2a… is editing book.rs; before that it read mod.rs and payment.rs.',
@@ -44,25 +44,25 @@ describe('liveSentence', () => {
 
   it('groups earlier files by what was done, names three and counts the rest', () => {
     const files = [
-      { path: 'a.rs', mode: 'claim' as const },
-      { path: 'b.rs', mode: 'read' as const },
-      { path: 'c.rs', mode: 'edit' as const },
-      { path: 'd.rs', mode: 'read' as const },
-      { path: 'e.rs', mode: 'read' as const },
-      { path: 'f.rs', mode: 'read' as const },
+      { name: 'a.rs', mode: 'claim' as const },
+      { name: 'b.rs', mode: 'read' as const },
+      { name: 'c.rs', mode: 'edit' as const },
+      { name: 'd.rs', mode: 'read' as const },
+      { name: 'e.rs', mode: 'read' as const },
+      { name: 'f.rs', mode: 'read' as const },
     ];
     expect(liveSentence(CLAUDE, files)).toBe(
       'Claude Code session 3f2a… has claimed a.rs; before that it read b.rs and d.rs, and edited c.rs, plus 2 more files.',
     );
   });
 
-  it('tells files of one name apart, and says so when the map holds none of its files', () => {
+  it('names each file as the map names it, and says so when the map holds none of its files', () => {
     const files = [
-      { path: 'orders/mod.rs', mode: 'read' as const },
-      { path: 'billing/mod.rs', mode: 'read' as const },
+      { name: 'orders/mod.rs', mode: 'read' as const },
+      { name: 'billing/mod.rs', mode: 'read' as const },
     ];
     expect(liveSentence(CLAUDE, files)).toBe(
-      'Claude Code session 3f2a… is reading mod.rs in orders; before that it read mod.rs in billing.',
+      'Claude Code session 3f2a… is reading orders/mod.rs; before that it read billing/mod.rs.',
     );
     expect(liveSentence(CLAUDE, [])).toBe(
       'Claude Code session 3f2a… is working on files the map does not show yet.',

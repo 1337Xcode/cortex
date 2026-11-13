@@ -5,7 +5,6 @@ import type { LiveMode, LiveSession } from '../api/live';
 import { visibleText } from '../api/guard';
 import { LIVE } from '../theme/tokens';
 import { countOf } from './format';
-import { distinctNames } from './names';
 
 /** What a session is doing with its newest file. */
 const DOING: Readonly<Record<LiveMode, string>> = {
@@ -40,9 +39,9 @@ export function sessionName(session: LiveSession): string {
   return `${visibleText(session.title)} ${shortSessionId(session.id)}`;
 }
 
-/** A session's row: its name, what it is doing and the file ("Claude Code 3f2a… editing book.rs"). */
-export function sessionLine(session: LiveSession, mode: LiveMode, fileName: string): string {
-  return `${sessionName(session)} ${ROW_DOING[mode]} ${fileName}`;
+/** What leads a session's row before its file: its name and what it is doing ("… editing"). */
+export function sessionLead(session: LiveSession, mode: LiveMode): string {
+  return `${sessionName(session)} ${ROW_DOING[mode]}`;
 }
 
 /** Names joined as a reader says them: "a", "a and b", "a, b and c". */
@@ -51,20 +50,19 @@ export function joinNames(names: readonly string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names.at(-1) ?? ''}`;
 }
 
-/** A file a session worked on, as the sentence names it. */
+/** A file a session worked on: the name the map gives it, and what the session did to it. */
 export interface NamedLiveFile {
-  readonly path: string;
+  readonly name: string;
   readonly mode: LiveMode;
 }
 
 /** "read mod.rs and payment.rs, and edited tax.rs": earlier files grouped by what was done. */
-function earlierPhrase(files: readonly NamedLiveFile[], names: readonly string[]): string {
+function earlierPhrase(files: readonly NamedLiveFile[]): string {
   const groups: { mode: LiveMode; names: string[] }[] = [];
-  for (const [index, file] of files.entries()) {
-    const name = names[index] ?? file.path;
+  for (const file of files) {
     const group = groups.find((entry) => entry.mode === file.mode);
-    if (group === undefined) groups.push({ mode: file.mode, names: [name] });
-    else group.names.push(name);
+    if (group === undefined) groups.push({ mode: file.mode, names: [file.name] });
+    else group.names.push(file.name);
   }
   return groups.map((group) => `${DID[group.mode]} ${joinNames(group.names)}`).join(', and ');
 }
@@ -77,11 +75,10 @@ export function liveSentence(session: LiveSession, files: readonly NamedLiveFile
   const who = `${visibleText(session.title)} session ${shortSessionId(session.id)}`;
   const [newest, ...earlier] = files;
   if (newest === undefined) return `${who} is working on files the map does not show yet.`;
-  const names = distinctNames(files.map((file) => file.path));
-  const now = `${who} ${DOING[newest.mode]} ${names[0] ?? newest.path}`;
+  const now = `${who} ${DOING[newest.mode]} ${newest.name}`;
   if (earlier.length === 0) return `${now}.`;
   const named = earlier.slice(0, LIVE.namedBefore);
   const more = earlier.length - named.length;
   const tail = more > 0 ? `, plus ${countOf(more, 'more file')}` : '';
-  return `${now}; before that it ${earlierPhrase(named, names.slice(1))}${tail}.`;
+  return `${now}; before that it ${earlierPhrase(named)}${tail}.`;
 }

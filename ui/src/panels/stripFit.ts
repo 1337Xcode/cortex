@@ -1,7 +1,8 @@
 // Which summary sentences the one-line strip shows: in order of use, each in full or in its short
 // form, as many as fit whole. Nothing is cut mid-word: a later sentence that does not fit is left
-// to the overview panel, which always shows them all. When not even the first sentence fits in its
-// short form, the strip shows that short form cut at a word boundary (whole on hover and focus).
+// to the overview panel. When not even the first sentence fits in its short form, the strip shows
+// that short form cut at a word boundary (whole on hover and focus). The overview shows every
+// sentence the strip does not show in full, so each is on the page once, whole.
 import type { SentencePart, SummarySentence } from './summarySentences';
 
 /** A sentence the strip shows, in the form that fitted. */
@@ -44,4 +45,18 @@ export function fitStrip(
     remaining -= widthOf(form) + gap;
   }
   return { kind: 'sentences', sentences: shown };
+}
+
+/**
+ * The keys of the sentences `line` shows in full form, in order, joined by spaces: none for a cut
+ * line, and a sentence shown in its short form is not one of them.
+ */
+export function fullKeys(line: StripLine, sentences: readonly SummarySentence[]): string {
+  if (line.kind === 'cut') return '';
+  const isFull = (shown: StripSentence): boolean =>
+    sentences.some((sentence) => sentence.key === shown.key && sentence.parts === shown.parts);
+  return line.sentences
+    .filter(isFull)
+    .map((shown) => shown.key)
+    .join(' ');
 }

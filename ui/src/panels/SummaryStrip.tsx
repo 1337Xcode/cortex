@@ -1,8 +1,10 @@
 // The strip of plain sentences at the top of the map, kept to one line: the most useful sentences
-// that fit whole, in full or short, with the files they name as buttons that fly to them. Every
-// sentence is also in the overview panel's "At a glance", so nothing the strip leaves out is lost.
+// that fit whole, in full or short, with the files they name as buttons that fly to them (named
+// as the map names its files, whole on hover). It reports which sentences it shows in full; the
+// overview panel's "At a glance" holds the others, so each sentence is on the page once in full.
 // Its loading and error states say so in words.
 import {
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -16,9 +18,9 @@ import { Button } from '../components/ui/button';
 import { useFontsSettled } from '../fonts/fonts';
 import { useMapStore, type SummaryState } from '../state/store';
 import { fontMeasurer } from '../text/measure';
-import { distinctNames } from '../text/names';
+import { namesOfFiles, type PathNames } from '../text/pathNames';
 import { SPACE } from '../theme/tokens';
-import { fitStrip, type StripLine } from './stripFit';
+import { fitStrip, fullKeys, type StripLine } from './stripFit';
 import {
   summarySentences,
   type SentencePart,
@@ -26,25 +28,20 @@ import {
   type SummaryText,
 } from './summarySentences';
 
-/** The names a sentence shows for the files it names, told apart from each other. */
-function namesOf(parts: readonly SentencePart[]): string[] {
-  return distinctNames(parts.flatMap((part) => (typeof part === 'string' ? [] : [part.path])));
+/** A sentence's text as the page shows it, the files by the names `names` gives them. */
+export function sentenceText(parts: readonly SentencePart[], names: PathNames): string {
+  return parts.map((part) => (typeof part === 'string' ? part : names.nameOf(part.path))).join('');
 }
 
-/** A sentence's text as the page shows it, file names in place of the files. */
-export function sentenceText(parts: readonly SentencePart[]): string {
-  const names = namesOf(parts);
-  let fileIndex = 0;
-  return parts
-    .map((part) => (typeof part === 'string' ? part : (names[fileIndex++] ?? part.path)))
-    .join('');
-}
-
-/** A sentence, its files as buttons that fly to them. */
-export function SentenceView({ parts }: { parts: readonly SentencePart[] }): ReactElement {
+/** A sentence, its files as buttons that fly to them, each with its whole path on hover. */
+export function SentenceView({
+  parts,
+  names,
+}: {
+  parts: readonly SentencePart[];
+  names: PathNames;
+}): ReactElement {
   const selectFile = useMapStore((state) => state.selectFile);
-  const names = namesOf(parts);
-  let fileIndex = 0;
   return (
     <>
       {parts.map((part, index) =>
@@ -61,7 +58,7 @@ export function SentenceView({ parts }: { parts: readonly SentencePart[] }): Rea
               selectFile(part.file, { fly: true });
             }}
           >
-            {names[fileIndex++] ?? part.path}
+            {names.nameOf(part.path)}
           </Button>
         ),
       )}
@@ -73,6 +70,7 @@ export function SentenceView({ parts }: { parts: readonly SentencePart[] }): Rea
 function useStripLine(
   ref: RefObject<HTMLElement | null>,
   sentences: readonly SummarySentence[],
+  names: PathNames,
 ): StripLine | null {
   const [line, setLine] = useState<StripLine | null>(null);
   const isSettled = useFontsSettled();
@@ -82,7 +80,10 @@ function useStripLine(
     const fit = (): void => {
       const font = getComputedStyle(element).font;
       const measure = fontMeasurer();
-      const text = { textOf: sentenceText, measure: (value: string) => measure(value, font) };
+      const text = {
+        textOf: (parts: readonly SentencePart[]) => sentenceText(parts, names),
+        measure: (value: string) => measure(value, font),
+      };
       setLine(fitStrip(sentences, element.clientWidth, SPACE.lg, text));
     };
     fit();
@@ -91,7 +92,7 @@ function useStripLine(
     return () => {
       observer.disconnect();
     };
-  }, [ref, sentences, isSettled]);
+  }, [ref, sentences, names, isSettled]);
   return line;
 }
 
@@ -102,10 +103,24 @@ export function summaryText(summary: SummaryState, snapshot: GraphSnapshot): Sum
   return summarySentences(summary.summary, snapshot);
 }
 
-/** The sentences that fit, on one line. */
-function StripSentences({ sentences }: { sentences: readonly SummarySentence[] }): ReactElement {
+/** The sentences that fit, on one line; `onFull` hears which of them it shows in full. */
+function StripSentences({
+  sentences,
+  names,
+  onFull,
+}: {
+  sentences: readonly SummarySentence[];
+  names: PathNames;
+  onFull: (keys: string) => void;
+}): ReactElement {
   const ref = useRef<HTMLDivElement>(null);
-  const line = useStripLine(ref, sentences);
+  const line = useStripLine(ref, sentences, names);
+  const full = line === null ? '' : fullKeys(line, sentences);
+  // Before the first paint, so the overview never shows a sentence twice.
+  useLayoutEffect(() => {
+    onFull(full);
+  }, [full, onFull]);
+  const fullSet = new Set(full.split(' '));
   return (
     <div className="summary-line" ref={ref}>
       {line === null ? null : line.kind === 'cut' ? (
@@ -113,8 +128,12 @@ function StripSentences({ sentences }: { sentences: readonly SummarySentence[] }
       ) : (
         <ul className="summary-sentences">
           {line.sentences.map((sentence) => (
-            <li key={sentence.key} data-strip={sentence.key}>
-              <SentenceView parts={sentence.parts} />
+            <li
+              key={sentence.key}
+              data-strip={sentence.key}
+              data-testid={fullSet.has(sentence.key) ? `summary-${sentence.key}` : undefined}
+            >
+              <SentenceView parts={sentence.parts} names={names} />
             </li>
           ))}
         </ul>
@@ -123,17 +142,31 @@ function StripSentences({ sentences }: { sentences: readonly SummarySentence[] }
   );
 }
 
-/** The summary strip for the loaded snapshot. */
-export function SummaryStrip({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
+/**
+ * The summary strip for the loaded snapshot; `onFull` hears the keys of the sentences it shows in
+ * full ('' while it shows none, loads or failed).
+ */
+export function SummaryStrip({
+  snapshot,
+  onFull,
+}: {
+  snapshot: GraphSnapshot;
+  onFull: (keys: string) => void;
+}): ReactElement {
   const summary = useMapStore((state) => state.summary);
   // One array per summary and snapshot, so the strip refits only when they change.
   const text = useMemo(() => summaryText(summary, snapshot), [summary, snapshot]);
+  const names = namesOfFiles(snapshot.files);
+  const isShown = text?.ok === true;
+  useEffect(() => {
+    if (!isShown) onFull('');
+  }, [isShown, onFull]);
   return (
     <section className="summary" aria-label="Summary">
       {text === null ? (
         <p className="summary-state">Loading the summary.</p>
       ) : text.ok ? (
-        <StripSentences sentences={text.sentences} />
+        <StripSentences sentences={text.sentences} names={names} onFull={onFull} />
       ) : (
         <p className="summary-state" role="alert">
           <ClippedText

@@ -97,6 +97,7 @@ export function SymbolsSection({ detail, id }: { detail: DetailState; id: number
       detail={detail}
       id={id}
       isOpenAtFirst={false}
+      shortcut="symbols"
       countOf={(d) =>
         d.symbols.length < d.symbols_total
           ? `first ${formatCount(d.symbols.length)} of ${formatCount(d.symbols_total)}`

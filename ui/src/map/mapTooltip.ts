@@ -5,17 +5,22 @@
 import type { PickingInfo } from '@deck.gl/core';
 import type { LiveSession } from '../api/live';
 import { liveSentence, type NamedLiveFile } from '../text/liveWords';
+import { namesOfFiles } from '../text/pathNames';
 import { badgeSentence, fileSentence, folderSentence, linkSentence } from '../text/vocabulary';
 import { fileMark } from './fileEncoding';
 import { LAYER_ID, type FrameBuffers } from './layers';
 import type { Scene } from './scene';
 
-/** The files of `session` the snapshot holds, newest first, with what the session did to each. */
+/**
+ * The files of `session` the snapshot holds, newest first, each by the name the map gives it, with
+ * what the session did to it.
+ */
 export function namedLiveFiles(session: LiveSession, scene: Scene): NamedLiveFile[] {
   const { files } = scene.snapshot;
+  const names = namesOfFiles(files);
   return session.files.flatMap((entry) => {
     const file = files[entry.file];
-    return file === undefined ? [] : [{ path: file.path, mode: entry.mode }];
+    return file === undefined ? [] : [{ name: names.nameOf(file.path), mode: entry.mode }];
   });
 }
 

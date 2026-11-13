@@ -16,22 +16,30 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   the last week, how many files agents have read, how many files and folders are indexed). Nothing
   is cut inside a word. A repository Cortex has learned nothing about says so, and the map shows
   its structure alone.
-- The overview panel on the left, in the order of how often a person asks its questions: the agent
-  sessions running in the repository now; the activity; every summary sentence, with when the map
-  read its numbers; the receipts; the strongest pairs of files changed together (by the link's
-  strength times the logarithm of one plus its commits, as Cortex ranks a file's partners and the
-  summary its strongest pair, so a pair that often changed together comes before one of two
-  commits, which the section says; each row shows its commits and says "changed with mod.rs in 12
-  of 21 commits" on hover); the busiest files (by the tokens attributed to them, or by commits
-  before agents worked on any); the files that need attention (a suspect fact); the warnings; and
-  the daemon's health. Each list shows five rows and then "Show N more", and each file row is a
-  button that flies to its file and selects it. Each section collapses to its title and count: the
-  full count, or "top 25 of 2,194" when a list keeps only its strongest (a list of links says under
-  its title that it counts only the links the map keeps: each file's 8 strongest of each kind). The live sessions and the activity open while a session runs and are
-  collapsed while none does (the live sessions then say "No agent session is running in this
-  repository"); once the person opens or closes the activity it keeps their choice. The receipts,
-  the warnings and the health are closed at first and asked for when opened. On a narrow screen the overview is a bottom sheet
-  opened from the top bar.
+- The overview panel on the left, in the order of how often a person asks its questions: "At a
+  glance", which holds the summary sentences the strip does not show in full (so each sentence is
+  on the page once, whole, and the section is left out when the strip shows them all); the
+  strongest pairs of files changed together (by the link's strength times the logarithm of one
+  plus its commits, as Cortex ranks a file's partners and the summary its strongest pair, so a pair
+  that often changed together comes before one of two commits; each row shows its commits and says
+  "src/orders/book.rs changed with src/orders/mod.rs in 12 of 21 commits" on hover); the busiest
+  files (by the tokens attributed to them, or by commits before agents worked on any); the agent
+  sessions running in the repository now; the activity; the files that need attention (a suspect
+  fact); the warnings; the receipts; and the daemon's health; then when the map read its numbers.
+  On the ten-file repository of the browser checks, with three sessions running, the first screen
+  at 1440 by 900 pixels shows what the repository is, what is busiest and what agents are doing now
+  without scrolling, and `e2e/map.spec.ts` checks it. Each list shows five rows and then "Show N more", and
+  each file row is a button that flies to its file and selects it. Each section collapses to its
+  title and count: the full count, or "top 25 of 2,194" when a list keeps only its strongest. How
+  to read a list (how its rows are ranked, which links it counts: each file's 8 strongest of each
+  kind) is one line at its end, cut to the panel and whole on hover and keyboard focus, so the rows
+  come first. The lists are open when they have rows and closed, saying why, when they have none.
+  The live sessions and the activity open while a session runs and are collapsed while none does
+  (the live sessions then say "No agent session is running in this repository"); once the person
+  opens or closes the activity it keeps their choice. The warnings, the receipts and the health
+  are closed at first and asked for when opened; the activity, the warnings and the receipts also
+  open on a letter (see Keyboard). On a narrow screen the overview is a bottom sheet opened from
+  the top bar.
 - The activity: what agents' hooks reported lately, newest first, among the 100 newest events Cortex
   recorded (edits seen outside any agent left out), each a sentence led by the agent's icon and the
   file's ("Claude Code 3f2a… edited book.rs") with how long ago it was ("2 min ago"). "Ago" counts
@@ -147,16 +155,21 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
 - Labels where they can be read: folder names wherever they fit, file names once zoomed in, and
   always the hovered or selected file (even in a dense ring) and its linked files. Labels never
   overlap each other or the page's controls.
-- Every mark and link says what it is under the pointer, with its number ("payment.rs: 220 lines,
-  read 9 times by agents, changed in 13 commits"; "book.rs changed with mod.rs in 12 of 21
-  commits"; "book.rs and app.ts were used together by agents in 3 tasks"; "named together in 2
-  work orders"): each kind of link by the count its strength was made from, and the legend says
+- Every mark and link says what it is under the pointer, with its file's whole path and its number
+  ("src/orders/payment.rs: 220 lines, read 9 times by agents, changed in 13 commits";
+  "src/orders/book.rs changed with src/orders/mod.rs in 12 of 21 commits"; "src/orders/book.rs and
+  ui/app.ts were used together by agents in 3 tasks"; "named together in 2 work orders"): each kind
+  of link by the count its strength was made from, and the legend says
   what strength means for each kind. A generated or vendored file, whose commits Cortex does not
   count, says so instead of a 0. Hovering a file also highlights it and its linked files and dims everything else;
   clicking selects it and opens its panel. Clicking a folder zooms in until it opens. Screen readers
   hear the selection as it changes, not every file the pointer passes.
-- Names that would read the same say where they are: two files called `mod.rs` among the links
-  show as "mod.rs in orders" and "mod.rs in billing".
+- Wherever a sentence or a row names a file, it names it by the shortest end of its path, in whole
+  folders, that no other file of the map ends with: a repository with a dozen `README.md` files
+  shows `cortex-store/README.md` and `ui/README.md`, while a file whose name no other file shares
+  keeps its bare name. A path every end of which also ends a longer path (the top-level
+  `README.md` beside `docs/README.md`) is named from the root, `./README.md`. The whole path shows
+  on hover, and a file the map does not hold is named by its whole path.
 - The panel of the selected file: the breadcrumb of its folders, each a button that frames that
   folder whole and open (the keyboard's way into a folder drawn collapsed); its name and path; its
   lines, agent reads, commits and the tokens attributed to it (the tokens of agent turns whose last
@@ -188,7 +201,9 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   the file in the editor the daemon names; the page shows the link only when its scheme is not a
   web, script, data or file address.
 - Long text (paths, names, commit subjects) is cut at a path or word boundary with an ellipsis and
-  shown whole on hover and on keyboard focus; nothing scrolls sideways.
+  shown whole on hover and on keyboard focus; nothing scrolls sideways. A row that names two files
+  ("a and b") cuts each from its start so both files' names stay in view, and a live session's row
+  keeps its words and cuts the file's path the same way.
 - Icons beside names: an agent's mark (its product's, or its maker's when the product has none)
   before each live session, before each session of the receipts and before each agent the legend
   lists as working now, with its diamond in its colour and its sessions counted; a file's language
@@ -224,8 +239,13 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
 | Arrow keys                          | Pan, unless a search result has the focus                          |
 | Escape                              | Close the search results, or close the side panel and return focus |
 | Enter on a folder of the breadcrumb | Open that folder, filling the view, and keep the file selected     |
+| `A`, `W`, `R`                       | Open the activity, the warnings or the receipts, and move there    |
+| `F`, `H`, `T`, `S`                  | Open the file's facts, commits, what Cortex told agents or symbols |
 
-Every control is a native button or input and shows a focus ring. Motion lasts 150 ms and is off
+A section's letter shows beside its title on a wide screen. It opens the section from anywhere on
+the page outside a text field, moves the focus to its title and scrolls it to the top of its
+panel; the file's letters work while a file's panel is open. Every control is a native button or
+input and shows a focus ring. Motion lasts 150 ms and is off
 when the system asks for reduced motion. Light and dark themes follow the system setting.
 
 ## Design system
@@ -268,7 +288,7 @@ only the token names (`p-sm`, `h-control`, `text-small`, `bg-primary`) onto the 
 | Path              | Holds                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------- |
 | `src/api/`        | One client per endpoint, and the live view's socket, each with a guard against the contract |
-| `src/state/`      | The Zustand store: load states, the selected and hovered file, the link strength threshold  |
+| `src/state/`      | The Zustand store in three parts: the snapshot and selection, the panels' loads, live state |
 | `src/layout/`     | The deterministic radial layout and the level-of-detail helper, both pure functions         |
 | `src/map/`        | The deck.gl canvas: encoders from the layout's typed arrays, label placement, the camera    |
 | `src/views/`      | The views, one file each and one registry line: each sorts files into tones with a legend   |

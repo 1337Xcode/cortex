@@ -496,8 +496,16 @@
     outline-offset: calc(var(--stroke-focus) * -1);
   }
 
-  .section-title {
+  /* The title and its letter, side by side; the count and the chevron sit at the end. */
+  .section-name {
+    display: flex;
     flex: 1 1 auto;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .section-title {
     min-width: 0;
     font-weight: var(--weight-strong);
   }
@@ -541,6 +549,15 @@
     color: var(--muted-foreground);
     font-size: var(--type-small-size);
     line-height: var(--type-small-line);
+  }
+
+  /* The overview's last line: when its numbers were read, under its sections. */
+  .overview-footer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-sm);
+    border-top: var(--stroke-hairline) solid var(--border);
   }
 
   /* A kind of link: padded like its section, so its rows can reach into the padding too. */
@@ -1496,7 +1513,8 @@
   }
 
   .app[data-narrow='true'] .controls .key-hint,
-  .app[data-narrow='true'] .view-switch .key-hint {
+  .app[data-narrow='true'] .view-switch .key-hint,
+  .app[data-narrow='true'] .section-key {
     display: none;
   }
 

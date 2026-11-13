@@ -24,17 +24,17 @@ function link(kind: GraphLink['kind'], weight: number, count: number): GraphLink
 }
 
 describe('link sentences', () => {
-  it("say each kind's own count, never one strength for three measures", () => {
+  it("say each kind's own count, with both files' whole paths, never one strength for three measures", () => {
     expect(linkSentence(link('co_change', 0.9, 12), BOOK, MOD)).toBe(
-      'book.rs changed with mod.rs in 12 of 21 commits.',
+      'src/orders/book.rs changed with src/orders/mod.rs in 12 of 21 commits.',
     );
     // A used-together link of 0.006 made of 3 tasks, and a work-order link of 1.00 made of 1 work
     // order: their counts, not "strength 0.01 of 1" and "strength 1.00 of 1".
     expect(linkSentence(link('used_together', 0.006, 3), BOOK, MOD)).toBe(
-      'book.rs and mod.rs were used together by agents in 3 tasks.',
+      'src/orders/book.rs and src/orders/mod.rs were used together by agents in 3 tasks.',
     );
     expect(linkSentence(link('work_order', 1, 1), BOOK, MOD)).toBe(
-      'book.rs and mod.rs were named together in 1 work order.',
+      'src/orders/book.rs and src/orders/mod.rs were named together in 1 work order.',
     );
     expect(
       [link('co_change', 0.9, 12), link('used_together', 0.5, 1), link('work_order', 0.4, 2)].map(
@@ -67,7 +67,7 @@ describe('commits of a generated or vendored file', () => {
       'Commits Cortex read that changed this file: the last 5,000 commits within 365 days, leaving out commits that changed more than 30 files. None of them changed it; older changes, and changes in larger commits, are not counted.',
     );
     expect(fileSentence(quiet, 'plain')).toBe(
-      'a.rs: 100 lines, read 0 times by agents, not changed in the commits Cortex read.',
+      'src/a.rs: 100 lines, read 0 times by agents, not changed in the commits Cortex read.',
     );
   });
 });

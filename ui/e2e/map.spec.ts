@@ -1,14 +1,15 @@
 // The map in a browser, driven with the keyboard: the one-line summary strip and the overview
 // panel, search to a file and its selection, the side panel's sections, Escape, Fit and Center,
-// the legend, the first-open sentence, and the dimming of everything outside the hovered or
-// selected file's neighbourhood. Every check reads what the page shows: text, focus, or pixels of
-// the canvas. Hover is checked in pixels and in its explanation; the status line announces the
-// selection, never the pointer.
-import { expect, test } from '@playwright/test';
+// the legend, the first-open sentence, the dimming of everything outside the hovered or selected
+// file's neighbourhood, and the first screen at 1440x900 answering what the repository is, what is
+// busiest and what agents do now without scrolling. Every check reads what the page shows: text,
+// focus, boxes, or pixels of the canvas. Hover is checked in pixels and in its explanation; the
+// status line announces the selection, never the pointer.
+import { expect, test, type Page } from '@playwright/test';
 import { fitCamera, toScreen } from '../src/map/camera';
 import { buildScene } from '../src/map/scene';
 import { DARK_COLORS, SIZE } from '../src/theme/tokens';
-import { coldFixture, fileDetail, READING_HEALTH, smallFixture } from './fixtures';
+import { coldFixture, fileDetail, READING_HEALTH, smallFixture, threeSessions } from './fixtures';
 import { MAP_URL, serveFixture } from './serve';
 import {
   chromeInsets,
@@ -173,18 +174,21 @@ test.describe('ten-file repository', () => {
     ]);
 
     await panel
-      .getByRole('button', { name: /^book.rs changed with mod.rs in 12 of 21 commits/ })
+      .getByRole('button', {
+        name: 'src/orders/book.rs changed with src/orders/mod.rs in 12 of 21 commits.',
+      })
       .focus();
     await page.keyboard.press('Enter');
     await expect(page.locator('#panel-title')).toHaveText('mod.rs');
     await expect(page.locator('#panel-title')).toBeFocused();
     await expect(panel.getByTestId('panel-facts')).toHaveText(
-      'Facts0No facts are recorded for this file.',
+      // The facts' title, its letter and its count, then why it is empty.
+      'FactsF0No facts are recorded for this file.',
     );
     // A section opened for one file stays open for the next.
     await expect(toggle(/^Commits behind its lines/)).toHaveAttribute('aria-expanded', 'true');
     await expect(panel.getByTestId('panel-history')).toHaveText(
-      "Commits behind its lines0No commit is stored for this file's current lines yet. Cortex reads them when a prompt or its upkeep asks about the file, and lists the 10 newest.",
+      "Commits behind its linesH0No commit is stored for this file's current lines yet. Cortex reads them when a prompt or its upkeep asks about the file, and lists the 10 newest.",
     );
   });
 
@@ -314,9 +318,9 @@ test.describe('ten-file repository', () => {
     await expect
       .poll(async () => (await inkIn(page, libBox, ink)).count)
       .toBeLessThan(before.count / 4);
-    // payment.rs: 220 lines, 9 reads, 13 commits, edited 2 hours ago.
+    // src/orders/payment.rs: 220 lines, 9 reads, 13 commits, edited 2 hours ago.
     await expect(page.getByRole('tooltip')).toHaveText(
-      'payment.rs: 220 lines, read 9 times by agents, changed in 13 commits. Read or edited in the last 24 hours.',
+      'src/orders/payment.rs: 220 lines, read 9 times by agents, changed in 13 commits. Read or edited in the last 24 hours.',
     );
     // Hover is not announced; only a selection is.
     await expect(page.getByTestId('map-status')).toHaveText('No file is highlighted.');
@@ -410,5 +414,45 @@ test.describe('cold repository', () => {
     const visible = { x: 0, y: top, width: VIEWPORT.width, height: VIEWPORT.height - top };
     const ink = await inkIn(page, visible, { background: DARK_COLORS.background, threshold: 60 });
     expect(ink.count).toBeGreaterThan(200);
+  });
+});
+
+test.describe('the first screen', () => {
+  /** Whether `locator`'s whole box lies inside `outer`. */
+  async function isInside(
+    locator: ReturnType<Page['locator']>,
+    outer: { x: number; y: number; width: number; height: number },
+  ): Promise<boolean> {
+    const box = await locator.boundingBox();
+    if (box === null) return false;
+    return (
+      box.x >= outer.x &&
+      box.y >= outer.y &&
+      box.x + box.width <= outer.x + outer.width &&
+      box.y + box.height <= outer.y + outer.height
+    );
+  }
+
+  test('says what the repository is, what is busiest and what agents do now, without scrolling', async ({
+    page,
+  }) => {
+    record = await openMap(page, { ...smallFixture(Date.now()), live: threeSessions(Date.now()) });
+    const body = page.locator('.overview-panel .panel-body');
+    await expect(body).toHaveJSProperty('scrollTop', 0);
+    const panelBox = await body.boundingBox();
+    if (panelBox === null) throw new Error('the overview has no box');
+    const screen = { x: 0, y: 0, ...VIEWPORT };
+    // What it is: the files and folders indexed, in the strip or the overview.
+    expect(await isInside(page.getByTestId('summary-indexed'), screen)).toBe(true);
+    // What is busiest: the busiest file and the strongest pair, whole.
+    const firstRow = (testId: string) => page.getByTestId(testId).getByRole('listitem').first();
+    await expect(firstRow('overview-busiest')).toHaveText(/^payment\.rs/, { useInnerText: true });
+    expect(await isInside(firstRow('overview-busiest'), panelBox)).toBe(true);
+    expect(await isInside(firstRow('overview-pairs'), panelBox)).toBe(true);
+    // What agents do now: all three live sessions, and the newest event of the activity.
+    const sessions = page.getByTestId('overview-live').getByRole('listitem');
+    await expect(sessions).toHaveCount(3);
+    expect(await isInside(sessions.nth(2), panelBox)).toBe(true);
+    expect(await isInside(firstRow('overview-activity'), panelBox)).toBe(true);
   });
 });

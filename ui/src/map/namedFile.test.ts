@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { fileIdOf } from '../api/graph';
 import { namedFileNote, namedFileSentence, shownName } from '../text/namedFileWords';
+import { namesOfFiles } from '../text/pathNames';
 import { isOutOfStep, listedId, nameFile, namedPath } from './namedFile';
 
 // The snapshot on screen, sorted by path as the guard keeps it.
@@ -71,9 +72,9 @@ describe('a file an answer named', () => {
 });
 
 describe('the words for a named file', () => {
-  const names = new Map([['src/book.rs', 'book.rs']]);
+  const names = namesOfFiles(FILES);
 
-  it('name a listed file by its told-apart name, any other by its whole path, an unknown not at all', () => {
+  it('name a listed file by the name the map gives it, any other by its whole path, an unknown not at all', () => {
     expect(
       [
         nameFile(FILES, 1, 'src/book.rs'),

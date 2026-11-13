@@ -1,8 +1,9 @@
 // The file panel's numbers and sections, each with its own empty state: the file's counts, its
 // strongest links by kind (each with the count its strength was made from, and how many the map
 // keeps), the newest commits behind its current lines with how many there are, and what Cortex told
-// agents about it with whether they then used it. Every section collapses to its title and count.
-// The facts and the symbols have files of their own.
+// agents about it with whether they then used it. Every section collapses to its title and count,
+// and the facts, the commits, what Cortex told agents and the symbols open on their letters. The
+// facts and the symbols have files of their own.
 import { useId, type ReactElement, type ReactNode } from 'react';
 import { MAX_TOLD, type FileDetail, type ToldKind } from '../api/file';
 import { LINK_KINDS, type GraphFile, type LinkKind } from '../api/graph';
@@ -13,9 +14,10 @@ import { fileIcon } from '../icons/fileIcons';
 import { IconSlot } from '../icons/IconSlot';
 import type { Scene } from '../map/scene';
 import { useMapStore, type DetailState } from '../state/store';
+import type { SectionKeyName } from '../controls/shortcuts';
 import { formatCount, formatDate } from '../text/format';
 import { HISTORY_TITLE, historyNote } from '../text/historyWords';
-import { distinctNames } from '../text/names';
+import { namesOfFiles } from '../text/pathNames';
 import {
   LINK_KIND_NAMES,
   NOT_COUNTED,
@@ -32,7 +34,7 @@ import { strongestLinks, type PanelLink } from './fileLinks';
 import { FileRow } from './FileRow';
 import { listCount } from './overviewLists';
 import { RowList } from './RowList';
-import { Section } from './Section';
+import { Footnote, Section } from './Section';
 
 const TOLD_NAMES: Readonly<Record<ToldKind, string>> = {
   work_order: 'Work order',
@@ -136,7 +138,6 @@ function linkRow(
     <FileRow
       file={link.other}
       name={name}
-      nameKind="words"
       measure={linkMeasure(graphLink)}
       sentence={linkSentence(graphLink, self, other)}
       lead={<IconSlot icon={fileIcon(other.path)} />}
@@ -150,17 +151,14 @@ function linkRow(
  */
 export function LinksSection({ scene, id }: { scene: Scene; id: number }): ReactElement {
   const { shown: grouped, totals } = strongestLinks(scene, id, LIST.most);
-  // Names are told apart across every list the panel shows at once.
   const shown = LINK_KINDS.flatMap((kind) => grouped[kind].map((link) => link.path));
-  const distinct = distinctNames(shown);
-  const names = new Map(shown.map((path, i) => [path, distinct[i] ?? path]));
+  const names = namesOfFiles(scene.snapshot.files);
   const count = listCount({
     rows: shown,
     total: LINK_KINDS.reduce((sum, kind) => sum + totals[kind], 0),
   });
   return (
     <Section title="Linked files" count={count} isOpenAtFirst testId="panel-links">
-      {shown.length === 0 ? null : <p className="section-note">{KEPT_LINKS_NOTE}</p>}
       {LINK_KINDS.map((kind) => (
         <div key={kind} className="panel-kind" data-testid={`panel-links-${kind}`}>
           <h4>
@@ -176,13 +174,12 @@ export function LinksSection({ scene, id }: { scene: Scene; id: number }): React
               items={grouped[kind]}
               keyOf={(link) => link.other}
               label={`${LINK_KIND_NAMES[kind]}, strongest first`}
-              renderRow={(link) =>
-                linkRow(scene, id, kind, link, names.get(link.path) ?? link.path)
-              }
+              renderRow={(link) => linkRow(scene, id, kind, link, names.nameOf(link.path))}
             />
           )}
         </div>
       ))}
+      {shown.length === 0 ? null : <Footnote text={KEPT_LINKS_NOTE} />}
     </Section>
   );
 }
@@ -208,6 +205,8 @@ export function DetailSection(props: {
   detail: DetailState;
   id: number;
   isOpenAtFirst: boolean;
+  /** The section's letter, when it has one. */
+  shortcut?: SectionKeyName;
   countOf: (detail: FileDetail) => number | string;
   empty: string | ((detail: FileDetail) => string);
   footer?: ReactNode;
@@ -226,6 +225,7 @@ export function DetailSection(props: {
       title={props.title}
       count={count}
       isOpenAtFirst={props.isOpenAtFirst}
+      {...(props.shortcut === undefined ? {} : { shortcut: props.shortcut })}
       testId={props.testId}
     >
       {detail.status === 'error' ? (
@@ -248,7 +248,7 @@ export function DetailSection(props: {
 /**
  * The newest commits behind the file's current lines, newest first, under the sentence that says
  * how many there are; with none, why (the history worker off, refused, or not asked yet). Closed
- * at first.
+ * at first, opened on its letter.
  */
 export function HistorySection({ detail, id }: { detail: DetailState; id: number }): ReactElement {
   return (
@@ -258,6 +258,7 @@ export function HistorySection({ detail, id }: { detail: DetailState; id: number
       detail={detail}
       id={id}
       isOpenAtFirst={false}
+      shortcut="history"
       countOf={(d) => d.history_total}
       empty={historyNote}
     >
@@ -300,7 +301,8 @@ function usedText(used: boolean | null): string {
 
 /**
  * The times Cortex named the file to an agent, newest first, and whether the agent used it. The
- * daemon reads the latest `MAX_TOLD`; with that many, the count says they are the latest.
+ * daemon reads the latest `MAX_TOLD`; with that many, the count says they are the latest. Closed at
+ * first, opened on its letter.
  */
 export function ToldSection({ detail, id }: { detail: DetailState; id: number }): ReactElement {
   return (
@@ -310,6 +312,7 @@ export function ToldSection({ detail, id }: { detail: DetailState; id: number })
       detail={detail}
       id={id}
       isOpenAtFirst={false}
+      shortcut="told"
       countOf={(d) =>
         d.told.length === MAX_TOLD ? `latest ${formatCount(MAX_TOLD)}` : d.told.length
       }

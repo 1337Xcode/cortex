@@ -1,7 +1,7 @@
 // The strip's fitting rule with a measure of one pixel per character and a gap of one, so every
 // expected line is worked out by hand in the comments.
 import { describe, expect, it } from 'vitest';
-import { fitStrip, type StripText } from './stripFit';
+import { fitStrip, fullKeys, type StripText } from './stripFit';
 import type { SentencePart, SummarySentence } from './summarySentences';
 
 const SENTENCES: SummarySentence[] = [
@@ -39,5 +39,19 @@ describe('fitStrip', () => {
 
   it("cuts the first sentence's short form when nothing fits whole", () => {
     expect(shown(3)).toBe('AAAA');
+  });
+});
+
+describe('fullKeys', () => {
+  it('names the sentences shown in full, not those shown short', () => {
+    // At 19: "AAAAAAAAAA" (10) and "BBBBBB" (6 + 1, 17); "CCC" (3 + 1) would make 21.
+    expect(fullKeys(fitStrip(SENTENCES, 19, 1, TEXT), SENTENCES)).toBe('pair busiest');
+    // At 16: "AAAAAAAAAA" (10), "BB" short (2 + 1, 13) and "CCC" short (3 + 1, 17) does not fit.
+    expect(fullKeys(fitStrip(SENTENCES, 16, 1, TEXT), SENTENCES)).toBe('pair');
+  });
+
+  it('names none when the line is cut', () => {
+    // At 3 not even "AAAA", the first short form, fits.
+    expect(fullKeys(fitStrip(SENTENCES, 3, 1, TEXT), SENTENCES)).toBe('');
   });
 });
