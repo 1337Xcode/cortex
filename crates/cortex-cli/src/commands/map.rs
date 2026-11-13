@@ -4,13 +4,14 @@
 //! The address holds the map's access token: whoever has it can read the map, so it is printed
 //! only to the user who asked, and the map listens on 127.0.0.1 alone.
 
-use std::path::PathBuf;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use cortex_core::UserFolder;
 use cortex_core::ipc::{MapAnswer, RequestBody, ResponseBody};
+use cortex_core::{RepoId, UserFolder, create_private_folder, open_private_file};
 
 use crate::upgrade::LOOK_EVERY;
 use crate::{output, repository, upgrade};
@@ -76,7 +77,8 @@ pub(crate) fn run(args: &Args) -> anyhow::Result<()> {
     if args.no_open {
         return Ok(());
     }
-    if let Err(error) = open(&url) {
+    let page = user.run_files(&RepoId::of(&root)).map_page_path();
+    if let Err(error) = write_opening_page(&page, &url).and_then(|()| open(&page)) {
         output::note(&format!(
             "the browser was not opened ({error:#}); open the address above yourself"
         ))?;
@@ -110,17 +112,46 @@ fn is_map_address(url: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Opens `url` in the user's browser with the system's own opener, given the address as one
-/// argument, never through a shell.
+/// The page that sends the browser on to `url`, a map address [`is_map_address`] accepted, which
+/// holds no character an HTML attribute or text would need escaped. It sends no `Referer` on.
+fn opening_page(url: &str) -> String {
+    format!(
+        "<!doctype html>\n<meta charset=\"utf-8\">\n<meta name=\"referrer\" content=\"no-referrer\">\n\
+         <meta http-equiv=\"refresh\" content=\"0;url={url}\">\n<title>Cortex map</title>\n\
+         <a href=\"{url}\">Open the map</a>\n"
+    )
+}
+
+/// Writes the page that sends the browser on to `url` at `path`, in the user's run folder,
+/// readable by the user alone: the opener is then given the page's path, and the address with its
+/// token is on no command line, where on Linux every user of the machine could read it (and a
+/// browser the opener starts keeps it in its own for its whole life).
+///
+/// # Errors
+///
+/// The folder or the page cannot be created or written.
+fn write_opening_page(path: &Path, url: &str) -> anyhow::Result<()> {
+    if let Some(folder) = path.parent() {
+        create_private_folder(folder).with_context(|| format!("creating {}", folder.display()))?;
+    }
+    let mut file =
+        open_private_file(path).with_context(|| format!("opening {}", path.display()))?;
+    file.set_len(0)
+        .and_then(|()| file.write_all(opening_page(url).as_bytes()))
+        .with_context(|| format!("writing {}", path.display()))
+}
+
+/// Opens the page at `page` in the user's browser with the system's own opener, given its path as
+/// one argument, never through a shell.
 ///
 /// # Errors
 ///
 /// The opener cannot be found or started, or, but on Windows, ends with a failure. Explorer's exit
-/// status says nothing: it ends with 1 when it opened the address.
-fn open(url: &str) -> anyhow::Result<()> {
+/// status says nothing: it ends with 1 when it opened the page.
+fn open(page: &Path) -> anyhow::Result<()> {
     let mut opener = opener()?;
     let mut child = opener
-        .arg(url)
+        .arg(page)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -199,5 +230,37 @@ mod tests {
         ] {
             assert!(!is_map_address(&refused), "{refused}");
         }
+    }
+
+    /// The page sends the browser on to the address and holds it in full, in a refresh and a link,
+    /// sending no `Referer`; written again, it holds the newer address alone (a longer page before
+    /// is cut, not left trailing), and on Unix only the user may read it.
+    #[test]
+    fn the_opening_page_holds_the_address_for_the_user_alone()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let token = "0123456789abcdef".repeat(4);
+        let url = format!("http://127.0.0.1:8123/{token}/");
+        let folder = tempfile::tempdir()?;
+        let page = folder.path().join("run").join("id.map.html");
+        write_opening_page(&page, &format!("{url}{}", "x".repeat(400)))?;
+        write_opening_page(&page, &url)?;
+        let text = std::fs::read_to_string(&page)?;
+        assert_eq!(text, opening_page(&url));
+        assert!(text.contains(&format!("content=\"0;url={url}\"")), "{text}");
+        assert!(text.contains(&format!("<a href=\"{url}\">")), "{text}");
+        assert!(
+            text.contains("<meta name=\"referrer\" content=\"no-referrer\">"),
+            "{text}"
+        );
+        assert!(!text.contains("xxxx"), "{text}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&page)?.permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        Ok(())
     }
 }

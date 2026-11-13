@@ -159,6 +159,14 @@ impl RunFiles {
     pub fn start_path(&self) -> PathBuf {
         self.folder.join(format!("{}.start", self.repo_id))
     }
+
+    /// The page `cortex map` hands the browser, which sends it on to the map's address:
+    /// `<id>.map.html` in the run folder, readable by the user alone, so that the address and its
+    /// token never sit on a command line other users of the machine can read.
+    #[must_use]
+    pub fn map_page_path(&self) -> PathBuf {
+        self.folder.join(format!("{}.map.html", self.repo_id))
+    }
 }
 
 #[cfg(test)]
@@ -192,6 +200,7 @@ mod tests {
         assert_eq!(files.lock_path(), run.join(format!("{id}.lock")));
         assert_eq!(files.pid_path(), run.join(format!("{id}.pid")));
         assert_eq!(files.start_path(), run.join(format!("{id}.start")));
+        assert_eq!(files.map_page_path(), run.join(format!("{id}.map.html")));
         assert_eq!(files.pipe_name(), format!("cortex-{id}"));
         let endpoint = if cfg!(windows) {
             Endpoint::Pipe(format!("cortex-{id}"))
