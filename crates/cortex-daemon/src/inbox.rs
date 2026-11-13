@@ -11,7 +11,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
 use cortex_coord::Timing;
-use cortex_core::ipc::{GitReport, RecentError, ResponseBody, UpkeepReport};
+use cortex_core::ipc::{GitReport, RecentError, UpkeepReport};
 use cortex_core::{
     CheckCounts, CoordinationConfig, Event, HookKind, RepoPath, ShortHash, ToolKind,
 };
@@ -515,7 +515,7 @@ impl Inbox {
 
     /// Puts in a request for the writer, and returns where the writer will answer it; none when
     /// the inbox is closed or [`MAX_ASKS_WAITING`] requests wait already.
-    pub(crate) fn push_ask(&self, request: Ask) -> Option<Receiver<Result<ResponseBody, String>>> {
+    pub(crate) fn push_ask(&self, request: Ask) -> Option<Receiver<crate::asked::Answered>> {
         let mut state = self.lock();
         if state.is_closed || state.asked.len() >= MAX_ASKS_WAITING {
             return None;

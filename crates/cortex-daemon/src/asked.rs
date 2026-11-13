@@ -60,8 +60,22 @@ pub(crate) struct AskJob {
     /// When the asker stops waiting for the writer to start: a job taken later is dropped
     /// unwritten.
     start_by: Instant,
-    /// Where the writer answers: the response, or why there is none in words the asker reads.
-    answered: SyncSender<Result<ResponseBody, String>>,
+    /// Where the writer answers: the response, or why there is none.
+    answered: SyncSender<Answered>,
+}
+
+/// The writer's answer to a request it took: the response, or why there is none.
+pub(crate) type Answered = Result<ResponseBody, NotDone>;
+
+/// Why a request the writer took was not carried out, as the asker is told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NotDone {
+    /// It was refused: it named something wrongly, in words the asker reads.
+    Refused(String),
+    /// The store failed it and wrote nothing. The error goes to the writer, which logs it and
+    /// keeps it among the daemon's errors; it is not told to the asker, as its words can name the
+    /// database's path.
+    Failed,
 }
 
 /// Why a request was refused.
@@ -83,7 +97,7 @@ impl From<StoreError> for Refused {
 impl AskJob {
     /// A job for `request`, to be started within [`ASK_START_WITHIN`], and where its answer
     /// arrives.
-    pub(crate) fn new(request: Ask) -> (Self, Receiver<Result<ResponseBody, String>>) {
+    pub(crate) fn new(request: Ask) -> (Self, Receiver<Answered>) {
         let (answered, answer) = mpsc::sync_channel(1);
         let job = Self {
             request,
@@ -91,6 +105,13 @@ impl AskJob {
             answered,
         };
         (job, answer)
+    }
+
+    /// Answers the job as one the store failed, writing nothing, for the tests of what an asker
+    /// does with that answer.
+    #[cfg(test)]
+    pub(crate) fn fail_for_tests(self) {
+        drop(self.answered.send(Err(NotDone::Failed)));
     }
 
     /// Carries out the job at `now_ms` with `writer`, in a transaction of its own, and answers it
@@ -125,11 +146,11 @@ impl AskJob {
                 Ok(())
             }
             Err(Refused::Named(message)) => {
-                drop(self.answered.send(Err(message)));
+                drop(self.answered.send(Err(NotDone::Refused(message))));
                 Ok(())
             }
             Err(Refused::Store(error)) => {
-                drop(self.answered.send(Err(error.to_string())));
+                drop(self.answered.send(Err(NotDone::Failed)));
                 Err(error)
             }
         }
@@ -197,7 +218,9 @@ mod tests {
         unread.carry_out(&mut writer, (6, &AtWork::default(), &timing))?;
         assert_eq!(
             answer.try_recv()?,
-            Err("src/money.py cannot anchor a fact: Cortex does not read it".to_owned())
+            Err(NotDone::Refused(
+                "src/money.py cannot anchor a fact: Cortex does not read it".to_owned()
+            ))
         );
         let (in_time, answer) = AskJob::new(Ask::Facts(FactsAsk::List { all: true }));
         in_time.carry_out(&mut writer, (7, &AtWork::default(), &timing))?;

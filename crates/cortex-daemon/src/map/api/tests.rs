@@ -327,6 +327,35 @@ fn a_fact_s_word_from_the_page_is_written_by_the_daemon_s_writer() -> TestResult
     Ok(())
 }
 
+/// A word the store failed to write is a 500 saying so, without the store's own words, which can
+/// name the database's path.
+#[test]
+fn a_fact_s_word_the_store_failed_is_a_server_error() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let texts = script(root.path())?;
+    let inbox = Arc::new(Inbox::default());
+    let fixture = site_told(root, texts, Arc::clone(&inbox))?;
+    let taking = Arc::clone(&inbox);
+    let worker = std::thread::spawn(move || {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while std::time::Instant::now() < until {
+            if let Work::Ask(job) = taking.wait(Some(until)) {
+                job.fail_for_tests();
+                return true;
+            }
+        }
+        false
+    });
+    let (status, body) = post(&fixture, "api/facts/2/confirm")?;
+    assert!(worker.join().map_err(|_| "the writer thread panicked")?);
+    assert_eq!(status, 500);
+    assert_eq!(
+        body,
+        r#"{"version":1,"error":"the store failed to write it, which changed nothing: the daemon's status lists the error"}"#
+    );
+    Ok(())
+}
+
 /// The activity feed: the agents' events, newest first as stored. Session `s2` read the guide
 /// (id 0) at 3,000; session `s1` edited the orders file (id 2) at 2,300, read it at 2,200 and read
 /// the app (id 1) at 2,100 and 2,000. The watcher's edit of `src/util.rs` at 2,400 is no agent's

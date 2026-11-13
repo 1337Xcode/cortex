@@ -25,7 +25,7 @@ use interprocess::local_socket::traits::tokio::Listener as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
 
-use crate::asked::{ASK_START_WITHIN, ASK_WRITE_WITHIN, Ask};
+use crate::asked::{ASK_START_WITHIN, ASK_WRITE_WITHIN, Ask, NotDone};
 use crate::claim::{Claim, Claims};
 use crate::failed::Failed;
 use crate::given::{Given, recorded};
@@ -859,7 +859,10 @@ impl Server {
         let waited = tokio::task::spawn_blocking(move || answer.recv_timeout(within)).await;
         match waited {
             Ok(Ok(Ok(answer))) => answer,
-            Ok(Ok(Err(message))) => ResponseBody::Error { message },
+            Ok(Ok(Err(NotDone::Refused(message)))) => ResponseBody::Error { message },
+            Ok(Ok(Err(NotDone::Failed))) => error(
+                "the store failed to write it, which changed nothing: `cortex status` lists the error",
+            ),
             Ok(Err(mpsc::RecvTimeoutError::Disconnected)) => error(
                 "the daemon was busy and did not take the request, which changed nothing: try again",
             ),

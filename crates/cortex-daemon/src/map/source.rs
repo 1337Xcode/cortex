@@ -154,7 +154,7 @@ impl Source {
     pub(super) fn ask_writer(
         &self,
         ask: crate::asked::Ask,
-    ) -> Option<std::sync::mpsc::Receiver<Result<cortex_core::ipc::ResponseBody, String>>> {
+    ) -> Option<std::sync::mpsc::Receiver<crate::asked::Answered>> {
         self.inbox.push_ask(ask)
     }
 

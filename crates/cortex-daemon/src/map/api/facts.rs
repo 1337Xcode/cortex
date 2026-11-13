@@ -21,7 +21,7 @@ use axum::response::Response;
 use cortex_core::ipc::{FactsAnswer, FactsAsk, ResponseBody};
 use serde::Serialize;
 
-use crate::asked::{ASK_START_WITHIN, ASK_WRITE_WITHIN, Ask};
+use crate::asked::{ASK_START_WITHIN, ASK_WRITE_WITHIN, Ask, NotDone as Undone};
 use crate::map::site::Site;
 
 /// The version of the body's shape; nothing has consumed another.
@@ -72,9 +72,14 @@ pub(crate) async fn write(site: Arc<Site>, rest: &str) -> Response {
     match waited {
         Ok(Ok(Ok(ResponseBody::Facts(FactsAnswer::Confirmed { id })))) => done(&site, id, "active"),
         Ok(Ok(Ok(ResponseBody::Facts(FactsAnswer::Retired { id })))) => done(&site, id, "retired"),
-        Ok(Ok(Ok(ResponseBody::Error { message }) | Err(message))) => {
+        Ok(Ok(Ok(ResponseBody::Error { message }) | Err(Undone::Refused(message)))) => {
             not_done(&site, StatusCode::CONFLICT, &message)
         }
+        Ok(Ok(Err(Undone::Failed))) => not_done(
+            &site,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the store failed to write it, which changed nothing: the daemon's status lists the error",
+        ),
         Ok(Ok(Ok(_))) => not_done(
             &site,
             StatusCode::INTERNAL_SERVER_ERROR,
