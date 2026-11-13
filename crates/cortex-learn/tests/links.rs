@@ -8,7 +8,10 @@ use std::collections::BTreeMap;
 
 use common::{Given, GivenSpans, Store, TestResult, answered_task, edit, given_task, read};
 use cortex_core::{EdgeType, TaskOutcome};
-use cortex_learn::{Commands, EarnedLinks, Linking, Recorder, TaskState, add_links, links_of};
+use cortex_learn::{
+    Commands, EarnedLinks, Linking, MAX_LINK_WEIGHT, Recorder, TaskState, add_links, link_share,
+    links_of,
+};
 use cortex_store::NodeId;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
@@ -388,4 +391,16 @@ fn a_node_given_counts_once_an_edited_node_names_it() -> TestResult {
         assert_eq!(rounded(&earned), expected, "{fared:?}");
     }
     Ok(())
+}
+
+/// A weight said as a share of the most a link can weigh: none at 0, all at the most, a fifth at
+/// 1 of the 5 a link may reach, and anything outside that range brought back inside it, since a
+/// weight read from a store an older build wrote need not be in it.
+#[test]
+fn a_weight_reads_as_a_share_of_the_most() {
+    let shares: Vec<f64> = [0.0, MAX_LINK_WEIGHT, 1.0, MAX_LINK_WEIGHT * 2.0, -1.0]
+        .into_iter()
+        .map(link_share)
+        .collect();
+    assert_eq!(shares, [0.0, 1.0, 0.2, 1.0, 0.0]);
 }

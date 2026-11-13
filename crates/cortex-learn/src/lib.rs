@@ -66,7 +66,7 @@ pub use failures::{
 };
 pub use interest::{EarnedInterest, LANDMARK_FROM, add_interest, interest_of, tier_now};
 pub use labels::{LABELLED_FILES, count_next_file_use, label_injections};
-pub use links::{EarnedLinks, Linking, MAX_LINK_WEIGHT, add_links, links_of};
+pub use links::{EarnedLinks, Linking, MAX_LINK_WEIGHT, add_links, link_share, links_of};
 pub use outcome::{FileNow, Judgement, judge, reverted_after};
 pub use record::Recorder;
 pub use self_check::{

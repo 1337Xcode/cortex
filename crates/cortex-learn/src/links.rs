@@ -51,6 +51,16 @@ const MAX_WORKING_SET: usize = 40;
 /// The most a link can weigh, however many tasks draw it.
 pub const MAX_LINK_WEIGHT: f64 = 5.0;
 
+/// `weight` as a share of the most a link can weigh, from 0 to 1.
+///
+/// Weights are held between 0 and [`MAX_LINK_WEIGHT`] when they are written, so the clamp only
+/// guards against a weight read from a store an older build wrote, and against the rounding of a
+/// weight that has been faded.
+#[must_use]
+pub fn link_share(weight: f64) -> f64 {
+    (weight / MAX_LINK_WEIGHT).clamp(0.0, 1.0)
+}
+
 /// What a task's work does to the links between the nodes it used, by pair, the smaller node
 /// first. A pair's number is what to add to its weight, which can be negative.
 pub type EarnedLinks = BTreeMap<(NodeId, NodeId), f64>;

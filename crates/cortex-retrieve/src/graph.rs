@@ -20,7 +20,7 @@
 //! and each kind's count of links are 32-bit, so a graph past that is refused rather than cut.
 
 use cortex_core::{EdgeType, InterestTier, NodeKind, TypeWeights};
-use cortex_learn::{MAX_LINK_WEIGHT, decayed};
+use cortex_learn::{decayed, link_share};
 
 use crate::by_files::{ByFiles, FileView};
 
@@ -113,7 +113,7 @@ impl Weighing {
             EdgeType::CoAccess => {
                 let effective =
                     decayed(link.weight, link.last_seq, self.latest_seq, self.link_decay);
-                (weights.coaccess, effective / MAX_LINK_WEIGHT)
+                (weights.coaccess, link_share(effective))
             }
             EdgeType::About => (weights.about, link.weight),
             EdgeType::Containment => (weights.containment, link.weight),

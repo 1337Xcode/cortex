@@ -21,7 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cortex_core::EdgeType;
-use cortex_learn::MAX_LINK_WEIGHT;
+use cortex_learn::link_share;
 
 use crate::graph::{Graph, narrowed};
 use crate::seeds::Seeds;
@@ -105,7 +105,7 @@ impl<'a, Id: Ord + Copy> Support<'a, Id> {
             seed_files,
             changed_with_seeds,
             structural_floor: floor(STRUCTURAL_FLOOR * type_weights.structural),
-            coaccess_floor: floor(COACCESS_FLOOR / MAX_LINK_WEIGHT * type_weights.coaccess),
+            coaccess_floor: floor(link_share(COACCESS_FLOOR) * type_weights.coaccess),
         }
     }
 

@@ -17,7 +17,7 @@ use std::path::Path;
 
 use cortex_coord::{Position, PositionMode, Timing, ago, is_live};
 use cortex_core::{EdgeType, Identifier, WarningKind, estimate_tokens, is_plain};
-use cortex_learn::{MAX_LINK_WEIGHT, decayed};
+use cortex_learn::{decayed, link_share};
 use cortex_store::{FileLink, NodeId, Queries, StoreError, WarningRecord};
 
 use crate::facts::{ListedFile, fact_line, order_facts, true_now};
@@ -189,7 +189,7 @@ fn strength(link: &FileLink, (latest_seq, link_decay): (u64, f64)) -> Option<f64
         EdgeType::Structural => (link.weight >= STRUCTURAL_FLOOR).then_some(link.weight),
         EdgeType::CoAccess => {
             let faded = decayed(link.weight, link.last_seq, latest_seq, link_decay);
-            (faded >= COACCESS_FLOOR).then(|| (faded / MAX_LINK_WEIGHT).clamp(0.0, 1.0))
+            (faded >= COACCESS_FLOOR).then(|| link_share(faded))
         }
         _ => Some(link.weight),
     }

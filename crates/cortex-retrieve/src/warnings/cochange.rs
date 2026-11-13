@@ -2,7 +2,7 @@
 //! agents' past work, and that the task has neither read nor edited.
 
 use cortex_core::{WarningKind, WarningsConfig};
-use cortex_learn::MAX_LINK_WEIGHT;
+use cortex_learn::link_share;
 
 use super::{EditFacts, NamedFile, TaskSoFar, Warning};
 use cortex_core::is_plain;
@@ -62,7 +62,7 @@ pub(super) fn warnings(
                  touched yet.",
                 edited.path, linked.file.path, linked.tasks
             );
-            let strength = (linked.weight / MAX_LINK_WEIGHT).min(1.0);
+            let strength = link_share(linked.weight);
             warning(edited.node, &linked.file, strength, line)
         });
     let mut warnings: Vec<Warning> = Vec::new();
