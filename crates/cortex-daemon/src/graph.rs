@@ -189,6 +189,7 @@ impl Snapshot {
         let is_mining = self.is_mining.load(Ordering::SeqCst);
         let took_ms = u64::try_from(took.as_millis()).unwrap_or(u64::MAX);
         let (nodes, links) = (graph.len(), graph.link_count());
+        let bytes = graph.size_bytes();
         {
             let mut held = self.held();
             if !has_cochange && is_mining && held.graph.is_some() {
@@ -204,7 +205,7 @@ impl Snapshot {
                 generation,
             });
         }
-        tracing::info!(nodes, links, has_cochange, took_ms, "graph rebuilt");
+        tracing::info!(nodes, links, bytes, has_cochange, took_ms, "graph rebuilt");
     }
 
     /// Counts a rebuild that failed; the thread asks for another.

@@ -26,6 +26,11 @@ pub(crate) struct FileView {
 }
 
 impl FileView {
+    /// The bytes this view holds: its rows and the weight of each node.
+    pub(crate) fn size_bytes(&self) -> usize {
+        self.rows.size_bytes() + crate::graph::size_of_vec(&self.out_weights)
+    }
+
     /// The view of `graph` by files.
     ///
     /// # Errors
@@ -83,6 +88,14 @@ impl Network for FileView {
 pub(crate) struct ByFiles(OnceLock<Result<FileView, GraphError>>);
 
 impl ByFiles {
+    /// The bytes the view holds, or none when nothing has asked for it yet.
+    pub(crate) fn size_bytes(&self) -> usize {
+        match self.0.get() {
+            Some(Ok(view)) => view.size_bytes(),
+            _ => 0,
+        }
+    }
+
     /// The view of `graph`, which this one keeps, built now if it was not yet.
     ///
     /// # Errors

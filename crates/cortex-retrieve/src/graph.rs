@@ -127,6 +127,12 @@ impl Weighing {
     }
 }
 
+/// The bytes a vector has taken: its capacity, not its length, since the memory is held either
+/// way.
+pub(crate) fn size_of_vec<T>(vector: &[T]) -> usize {
+    std::mem::size_of_val(vector)
+}
+
 /// One kind's links, as compressed sparse rows: node `n`'s links are the targets and weights from
 /// `offsets[n]` up to `offsets[n + 1]`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -142,6 +148,14 @@ pub(crate) struct Rows {
 }
 
 impl Rows {
+    /// The bytes these rows hold, counting what each array has taken, not what it uses.
+    pub(crate) fn size_bytes(&self) -> usize {
+        size_of_vec(&self.offsets)
+            + size_of_vec(&self.targets)
+            + size_of_vec(&self.weights)
+            + size_of_vec(&self.peaks)
+    }
+
     /// The rows of `links` over `nodes` nodes: each `(source, target, weight)`, sorted and with
     /// links between the same two nodes added up, the heaviest of them kept beside the sum.
     ///
@@ -262,6 +276,24 @@ pub struct Graph<Id> {
     type_weights: TypeWeights,
     /// Its view by files, once built.
     by_files: ByFiles,
+}
+
+impl<Id> Graph<Id> {
+    /// The bytes this graph holds: its node arrays, the links of every kind, and the view by
+    /// files once something has asked for it. What the structures have taken, not the allocator's
+    /// own overhead, so it reads a little under the process's resident memory.
+    #[must_use]
+    pub fn size_bytes(&self) -> usize {
+        size_of_vec(&self.ids)
+            + size_of_vec(&self.kinds)
+            + size_of_vec(&self.files)
+            + size_of_vec(&self.standings)
+            + size_of_vec(&self.symbol_offsets)
+            + size_of_vec(&self.symbols)
+            + size_of_vec(&self.out_weights)
+            + self.rows.iter().map(Rows::size_bytes).sum::<usize>()
+            + self.by_files.size_bytes()
+    }
 }
 
 impl<Id: Ord + Copy> Graph<Id> {
@@ -533,6 +565,57 @@ mod tests {
     use super::*;
 
     /// The settings' weights, the latest task 12, a link keeping 0.995 of its weight per task.
+    /// What the graph says it holds. The exact byte count follows the compiler's layout, so the
+    /// test holds it to what must be true of any layout: an empty graph holds nothing, a graph
+    /// holds at least its node ids and its links' targets, more nodes cost more, and the view by
+    /// files costs nothing until something asks for it and then costs more than nothing.
+    #[test]
+    fn the_graph_says_how_much_memory_it_holds() -> Result<(), GraphError> {
+        // An empty graph still holds the sentinel that says where the last node's links end:
+        // one 4-byte offset for each kind of link, and one for its symbols.
+        let empty: Graph<i64> = Graph::build(&[], &[], &weighing())?;
+        assert_eq!(
+            empty.size_bytes(),
+            (1 + EdgeType::ALL.len()) * size_of::<u32>()
+        );
+
+        let two = [node(1, NodeKind::File, None), node(2, NodeKind::File, None)];
+        let one_link = [link(1, 2, EdgeType::Structural, 1.0)];
+        let small = Graph::build(&two, &one_link, &weighing())?;
+        // Two ids of 8 bytes, and one link each way with a 4-byte target: the floor, whatever
+        // else the layout adds.
+        let floor = 2 * size_of::<i64>() + 2 * size_of::<u32>();
+        assert!(
+            small.size_bytes() > floor,
+            "{} is not past the floor of {floor}",
+            small.size_bytes()
+        );
+
+        let four = [
+            node(1, NodeKind::File, None),
+            node(2, NodeKind::File, None),
+            node(3, NodeKind::File, None),
+            node(4, NodeKind::File, None),
+        ];
+        let bigger = Graph::build(&four, &one_link, &weighing())?;
+        assert!(
+            bigger.size_bytes() > small.size_bytes(),
+            "four nodes ({}) should cost more than two ({})",
+            bigger.size_bytes(),
+            small.size_bytes()
+        );
+
+        // The view by files is built on first use and counted only then.
+        let before = small.size_bytes();
+        small.by_files()?;
+        assert!(
+            small.size_bytes() > before,
+            "the view by files should add to {before}, not leave it at {}",
+            small.size_bytes()
+        );
+        Ok(())
+    }
+
     fn weighing() -> Weighing {
         Weighing {
             type_weights: TypeWeights::default(),
