@@ -282,6 +282,51 @@ fn events_survive_a_kill_in_steady_state() -> TestResult {
     Ok(())
 }
 
+/// A store a person can no longer read: the database file damaged under the daemon, as a disk
+/// fault or a file recovered badly would leave it. Cortex says it cannot read the store and exits,
+/// and a daemon started on it does not stay up pretending otherwise. What it must never do is
+/// panic, hang, or report a working index over a file it cannot read.
+///
+/// The damage is written over the middle of the file, past the header SQLite checks first, so that
+/// the file still opens and the damage is met while reading pages.
+#[test]
+fn a_damaged_store_is_said_to_be_damaged() -> TestResult {
+    let _busy = alone();
+    let home = tempfile::tempdir()?;
+    let repo = tempfile::tempdir()?;
+    package(repo.path(), 3, 4)?;
+    let root = canonical_root(repo.path())?;
+    let mut daemon = Daemon::start(&root, home.path())?;
+    let line = daemon.first_line()?;
+    assert!(line.starts_with("cortex: daemon ready"), "{line}");
+    let mut sender = Sender::new(&root, home.path());
+    sender.send_while(|| Ok(true), Duration::from_millis(500))?;
+    daemon.child.kill()?;
+    daemon.child.wait()?;
+
+    let database = root.join(".cortex").join("cortex.db");
+    let mut bytes = std::fs::read(&database)?;
+    assert!(bytes.len() > 8192, "the store is {} bytes", bytes.len());
+    // Past the first page, so the file opens and the damage is met while pages are read.
+    let from = bytes.len() / 2;
+    for byte in &mut bytes[from..] {
+        *byte = b'X';
+    }
+    std::fs::write(&database, &bytes)?;
+
+    let said = common::init::cortex(&["status"], &root, home.path())?;
+    let printed = format!("{}{}", said.stdout, said.stderr);
+    assert!(
+        !said.is_success || printed.contains("store"),
+        "status on a damaged store said: {printed}"
+    );
+    assert!(
+        !printed.contains("index: ready"),
+        "a damaged store was called ready: {printed}"
+    );
+    Ok(())
+}
+
 /// How many responses the long transcript holds: 24 MiB of the shortest lines a response can be
 /// written on, about 190 bytes each.
 const LONG_TRANSCRIPT_RESPONSES: usize = 130_000;
