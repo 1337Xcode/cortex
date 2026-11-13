@@ -100,6 +100,29 @@ All notable changes to this project are documented in this file. The format is b
   one-colour form gets no icon, and nothing stands in for it. Checked in a browser against the
   tests' fixtures. The built map grew from 440,921 to 542,678 bytes gzipped, the
   package's licence text included.
+- The map's last panels, and words that say exactly what each number counts. The overview gains the
+  agents' latest activity (open while a session runs, each event a sentence with how long ago it
+  was by this computer's clock and its exact time in UTC on hover), the warnings Cortex gave after
+  edits (open first, each in words with its strength and whether it was followed) and the
+  daemon's health (uptime, each hook's handling times as the daemon's own handling, its newest
+  errors, the co-change miner, the graph, upkeep and the history worker). A file's facts can be
+  confirmed or retired from its panel, retiring after a question, through the daemon's writer; its
+  symbols are listed with the lines recent work orders selected, each opening the editor at its
+  line when the editor address shows where the line goes. While agents work, the page reads the
+  map's numbers again two seconds after a session moves, at most every ten seconds, for maps of
+  up to 20,000 files, keeping the selected file open by its path when files are added; larger
+  maps say when their numbers were read. A file the daemon names by an id the map on screen holds
+  another file at is named by its path and never linked to the wrong file. Lists cut to their
+  strongest say "top 25 of 2,194", and lists of links that they count only the links the map
+  keeps; a warning's strength is never rounded to a false 0 or 1; a share that is not zero is
+  never shown as 0%; a generated or vendored file says its commits are not counted; each kind of
+  link is told by its own count (commits, tasks or work orders); tokens attributed say cache reads
+  are included; the Coupling view says it counts the links the map keeps; the commits behind a
+  file's lines say how many there are and that none are read while the history worker is off; an
+  answer to a fact's word the page cannot read says the word may have been written. Checked in a
+  browser against answers written for the tests, and confirming and retiring a fact also in
+  Chromium against a running daemon. The built map grew from 542,725 to 552,429 bytes
+  gzipped.
 - Evaluation tasks for the history features, and the runner support they need. A task that says
   `history = true` is run in a clone of its testbed cut at the pinned commit (every branch and tag
   deleted, the remote removed, the reflogs emptied and unreachable objects pruned), so that

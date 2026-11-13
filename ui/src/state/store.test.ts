@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { FileDetail } from '../api/file';
 import type { GraphSnapshot } from '../api/graph';
 import type { ApiResult } from '../api/guard';
+import type { Health } from '../api/health';
 import type { Receipts } from '../api/receipts';
 import type { MapSummary } from '../api/summary';
 import { DEFAULT_MIN_STRENGTH } from '../theme/tokens';
@@ -21,6 +22,7 @@ function snapshotOf(count: number): GraphSnapshot {
     suspect: 0,
     reads: 0,
     commits: 0,
+    commits_counted: true,
   }));
   return { version: 1, files, links: [] };
 }
@@ -30,7 +32,20 @@ function ready(count: number): ApiResult<GraphSnapshot> {
 }
 
 function detailFor(id: number, path = `f${String(id).padStart(3, '0')}.rs`): FileDetail {
-  return { version: 1, id, path, facts: [], history: [], told: [], editor_url: null };
+  return {
+    version: 1,
+    id,
+    path,
+    facts: [],
+    history: [],
+    history_total: 0,
+    history_reader: 'on',
+    symbols: [],
+    symbols_total: 0,
+    selected: [],
+    told: [],
+    editor_url: null,
+  };
 }
 
 /** The fixed clock of the tests' stores. */
@@ -275,6 +290,12 @@ describe('map store: summary and detail', () => {
       .loadDetail((id) => Promise.resolve({ ok: true, value: detailFor(id, 'other.rs') }));
     const detail = store.getState().detail;
     expect(detail.status === 'error' ? detail.error.code : detail.status).toBe('bad_range');
+    // The daemon's ids moved on: one quiet refresh is asked for, once for this snapshot.
+    expect(store.getState().refreshSerial).toBe(1);
+    await store
+      .getState()
+      .loadDetail((id) => Promise.resolve({ ok: true, value: detailFor(id, 'other.rs') }));
+    expect(store.getState().refreshSerial).toBe(1);
   });
 
   it('drops a detail that arrives after the selection moved on', async () => {
@@ -321,11 +342,36 @@ describe('map store: views, live state and the first reading', () => {
   it('keeps what the health says of the first reading, or its error', async () => {
     const store = createMapStore(() => NOW_MS);
     expect(store.getState().index).toEqual({ status: 'unknown' });
-    const health = { version: '0.4.0', has_assets: true, index: 'reading' as const };
+    const health: Health = {
+      version: '0.4.0',
+      has_assets: true,
+      index: 'reading',
+      daemon: { status: 'absent' },
+    };
     await store.getState().loadHealth(() => Promise.resolve({ ok: true, value: health }));
     expect(store.getState().index).toEqual({ status: 'reading' });
     const error = { code: 'network' as const, message: 'down' };
     await store.getState().loadHealth(() => Promise.resolve({ ok: false, error }));
     expect(store.getState().index).toEqual({ status: 'error', error });
+  });
+
+  it('keeps a known first reading when an answer cannot be read, and fails an unknown one', async () => {
+    const store = createMapStore(() => NOW_MS);
+    const refused = { code: 'bad_range' as const, message: 'health.version: too long' };
+    await store.getState().loadHealth(() => Promise.resolve({ ok: false, error: refused }));
+    expect(store.getState().index).toEqual({ status: 'error', error: refused });
+    const reading: Health = {
+      version: '0.4.0',
+      has_assets: true,
+      index: 'reading',
+      daemon: { status: 'unreadable', error: refused },
+    };
+    // A report the page cannot read is the health section's to show; the empty map still reads.
+    await store.getState().loadHealth(() => Promise.resolve({ ok: true, value: reading }));
+    expect(store.getState().index).toEqual({ status: 'reading' });
+    await store.getState().loadHealth(() => Promise.resolve({ ok: false, error: refused }));
+    expect(store.getState().index).toEqual({ status: 'reading' });
+    const health = store.getState().health;
+    expect(health.status === 'error' ? health.error : health.status).toEqual(refused);
   });
 });

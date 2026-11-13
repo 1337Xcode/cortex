@@ -38,7 +38,7 @@ export const heatView = defineView({
     const scale =
       range === null
         ? 'No tokens have been attributed to any file yet.'
-        : `Tokens attributed, on a log scale from ${formatCount(range.min)} to ${formatCount(range.max)}${noneClause(none)}`;
+        : `Tokens attributed (input and output, cache reads included), on a log scale from ${formatCount(range.min)} to ${formatCount(range.max)}${noneClause(none)}`;
     return { ...sorted, isTinted: true, folderRule: 'typical', scale };
   },
 });

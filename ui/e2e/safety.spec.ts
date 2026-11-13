@@ -17,12 +17,14 @@ test("the map draws under the daemon's security headers with no error", async ({
   await expect(page.getByTestId('summary-indexed')).toHaveText('10 files in 5 folders.');
   // A file's panel loads its detail: one more request under the policy.
   await searchAndPick(page, 'book');
-  await page.getByRole('button', { name: /^History/ }).click();
+  await page.getByRole('button', { name: /^Commits behind its lines/ }).click();
   await expect(page.getByTestId('panel-history')).toContainText('Keep cancelled orders');
   // The icons are drawn inline from the page's own script: agents' in the live sessions and the
   // legend, files' in the overview and the panel.
   await page.getByRole('button', { name: 'Legend' }).click();
-  await expect(page.locator('.overview-panel [data-icon="claude-code"] svg')).toBeVisible();
+  await expect(
+    page.getByTestId('overview-live').locator('[data-icon="claude-code"] svg'),
+  ).toBeVisible();
   await expect(page.locator('.legend [data-icon="codex-openai"] svg')).toBeVisible();
   await expect(page.locator('.file-panel [data-icon="rust"] svg').first()).toBeVisible();
   expect(record.errors, 'console errors').toEqual([]);
@@ -39,7 +41,7 @@ test('a render that throws shows the failed state, not a blank page', async ({ p
   });
   const record = await openMap(page, smallFixture(Date.now()));
   await searchAndPick(page, 'book');
-  await page.getByRole('button', { name: /^History/ }).click();
+  await page.getByRole('button', { name: /^Commits behind its lines/ }).click();
   await expect(page.getByRole('alert')).toHaveText(
     'The map stopped with an error (render): the year cannot be read',
   );

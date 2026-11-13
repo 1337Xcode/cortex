@@ -16,6 +16,7 @@ function file(id: number, path: string): Record<string, unknown> {
     suspect: 0,
     reads: 3,
     commits: 2,
+    commits_counted: true,
   };
 }
 
@@ -24,10 +25,10 @@ function snapshot(overrides: Record<string, unknown> = {}): Record<string, unkno
     version: 1,
     files: [file(0, 'a.rs'), file(1, 'b.rs'), file(2, 'c.rs')],
     links: [
-      { from: 0, to: 1, kind: 'co_change', weight: 0.8, commits: 6 },
-      { from: 0, to: 2, kind: 'co_change', weight: 0.2, commits: 0 },
-      { from: 1, to: 2, kind: 'used_together', weight: 1, commits: 0 },
-      { from: 0, to: 2, kind: 'work_order', weight: 0, commits: 0 },
+      { from: 0, to: 1, kind: 'co_change', weight: 0.8, commits: 6, count: 6 },
+      { from: 0, to: 2, kind: 'co_change', weight: 0.2, commits: 0, count: 0 },
+      { from: 1, to: 2, kind: 'used_together', weight: 1, commits: 0, count: 0 },
+      { from: 0, to: 2, kind: 'work_order', weight: 0, commits: 0, count: 0 },
     ],
     ...overrides,
   };
@@ -64,6 +65,25 @@ describe('parseGraph accepts', () => {
         'used_together',
         'work_order',
       ]);
+  });
+
+  it('a generated file whose commits are not counted, and the count each kind of link is made of', () => {
+    // Cargo.lock's commits are not counted, so it says 0; a used-together link made of 3 tasks and
+    // a work-order link of 2 work orders keep their counts, the co-change link its commits.
+    const result = parseGraph(
+      snapshot({
+        files: [{ ...file(0, 'Cargo.lock'), commits: 0, commits_counted: false }, file(1, 'b.rs')],
+        links: [
+          { from: 0, to: 1, kind: 'co_change', weight: 0.5, commits: 4, count: 4 },
+          { from: 0, to: 1, kind: 'used_together', weight: 0.3, commits: 0, count: 3 },
+          { from: 0, to: 1, kind: 'work_order', weight: 1, commits: 0, count: 2 },
+        ],
+      }),
+    );
+    expect(result.ok ? result.value.files[0]?.commits_counted : result.error).toBe(false);
+    expect(result.ok ? result.value.links.map((link) => link.count) : result.error).toEqual([
+      4, 3, 2,
+    ]);
   });
 
   it('nested paths and names that only start with a dot', () => {
@@ -119,7 +139,28 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
   ],
   [
     'commits on a link that is not co_change',
-    snapshot({ links: [{ from: 0, to: 1, kind: 'used_together', weight: 1, commits: 3 }] }),
+    snapshot({
+      links: [{ from: 0, to: 1, kind: 'used_together', weight: 1, commits: 3, count: 3 }],
+    }),
+    'bad_range',
+  ],
+  [
+    'a link with a missing count',
+    snapshot({ links: [{ from: 0, to: 1, kind: 'work_order', weight: 1, commits: 0 }] }),
+    'bad_shape',
+  ],
+  [
+    'a co_change link whose count is not its commits',
+    snapshot({
+      links: [{ from: 0, to: 1, kind: 'co_change', weight: 1, commits: 4, count: 5 }],
+    }),
+    'bad_range',
+  ],
+  ['commits_counted as a number', withFile(0, { commits_counted: 1 }), 'bad_shape'],
+  ['a missing commits_counted', withFile(0, { commits_counted: undefined }), 'bad_shape'],
+  [
+    'commits on a file whose commits are not counted',
+    withFile(0, { commits_counted: false, commits: 71 }),
     'bad_range',
   ],
   [
@@ -134,50 +175,50 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
   ],
   [
     'a link to an id past the end',
-    snapshot({ links: [{ from: 0, to: 3, kind: 'co_change', weight: 1, commits: 0 }] }),
+    snapshot({ links: [{ from: 0, to: 3, kind: 'co_change', weight: 1, commits: 0, count: 0 }] }),
     'bad_range',
   ],
   [
     'a link with from equal to to',
-    snapshot({ links: [{ from: 1, to: 1, kind: 'co_change', weight: 1, commits: 0 }] }),
+    snapshot({ links: [{ from: 1, to: 1, kind: 'co_change', weight: 1, commits: 0, count: 0 }] }),
     'bad_range',
   ],
   [
     'a link with from above to',
-    snapshot({ links: [{ from: 2, to: 1, kind: 'co_change', weight: 1, commits: 0 }] }),
+    snapshot({ links: [{ from: 2, to: 1, kind: 'co_change', weight: 1, commits: 0, count: 0 }] }),
     'bad_range',
   ],
   [
     'a link with a missing from',
-    snapshot({ links: [{ to: 1, kind: 'co_change', weight: 1, commits: 0 }] }),
+    snapshot({ links: [{ to: 1, kind: 'co_change', weight: 1, commits: 0, count: 0 }] }),
     'bad_shape',
   ],
   [
     'an unknown kind',
-    snapshot({ links: [{ from: 0, to: 1, kind: 'imports', weight: 1, commits: 0 }] }),
+    snapshot({ links: [{ from: 0, to: 1, kind: 'imports', weight: 1, commits: 0, count: 0 }] }),
     'bad_kind',
   ],
   [
     'a kind that is not a string',
-    snapshot({ links: [{ from: 0, to: 1, kind: 3, weight: 1, commits: 0 }] }),
+    snapshot({ links: [{ from: 0, to: 1, kind: 3, weight: 1, commits: 0, count: 0 }] }),
     'bad_shape',
   ],
   [
     'a weight above 1',
-    snapshot({ links: [{ from: 0, to: 1, kind: 'co_change', weight: 2, commits: 0 }] }),
+    snapshot({ links: [{ from: 0, to: 1, kind: 'co_change', weight: 2, commits: 0, count: 0 }] }),
     'bad_shape',
   ],
   [
     'a missing weight',
-    snapshot({ links: [{ from: 0, to: 1, kind: 'co_change', commits: 0 }] }),
+    snapshot({ links: [{ from: 0, to: 1, kind: 'co_change', commits: 0, count: 0 }] }),
     'bad_shape',
   ],
   [
     'links out of kind order',
     snapshot({
       links: [
-        { from: 0, to: 1, kind: 'work_order', weight: 1, commits: 0 },
-        { from: 0, to: 2, kind: 'co_change', weight: 1, commits: 0 },
+        { from: 0, to: 1, kind: 'work_order', weight: 1, commits: 0, count: 0 },
+        { from: 0, to: 2, kind: 'co_change', weight: 1, commits: 0, count: 0 },
       ],
     }),
     'bad_order',
@@ -186,8 +227,8 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
     'links out of from order within a kind',
     snapshot({
       links: [
-        { from: 1, to: 2, kind: 'co_change', weight: 1, commits: 0 },
-        { from: 0, to: 2, kind: 'co_change', weight: 1, commits: 0 },
+        { from: 1, to: 2, kind: 'co_change', weight: 1, commits: 0, count: 0 },
+        { from: 0, to: 2, kind: 'co_change', weight: 1, commits: 0, count: 0 },
       ],
     }),
     'bad_order',
@@ -196,8 +237,8 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
     'a repeated link',
     snapshot({
       links: [
-        { from: 0, to: 1, kind: 'co_change', weight: 1, commits: 0 },
-        { from: 0, to: 1, kind: 'co_change', weight: 1, commits: 0 },
+        { from: 0, to: 1, kind: 'co_change', weight: 1, commits: 0, count: 0 },
+        { from: 0, to: 1, kind: 'co_change', weight: 1, commits: 0, count: 0 },
       ],
     }),
     'bad_order',
@@ -213,7 +254,7 @@ describe('parseGraph rejects', () => {
 
   it('with a message that names the field', () => {
     const result = parseGraph(
-      snapshot({ links: [{ from: 0, to: 1, kind: 'imports', weight: 1, commits: 0 }] }),
+      snapshot({ links: [{ from: 0, to: 1, kind: 'imports', weight: 1, commits: 0, count: 0 }] }),
     );
     expect(result).toEqual({
       ok: false,

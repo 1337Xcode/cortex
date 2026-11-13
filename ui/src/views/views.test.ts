@@ -18,7 +18,7 @@ import { encodeFiles } from '../map/fileEncoding';
 import type { FrameStyle } from '../map/frameStyle';
 import { encodeFileDiscs } from '../map/hubEncoding';
 import { buildScene } from '../map/scene';
-import { sevenFileSnapshot, testLink } from '../map/testScene';
+import { sevenFileSnapshot, testFile, testLink } from '../map/testScene';
 import { computeVisibility } from '../map/visibility';
 import { DARK_COLORS, LIGHT_COLORS, type ThemeColors } from '../theme/tokens';
 import { couplingStep, couplingView } from './coupling';
@@ -183,7 +183,7 @@ describe('the Heat view', () => {
       'heat-none No tokens attributed 2',
     ]);
     expect(heatView.encode(scene, NOW_MS).scale).toBe(
-      'Tokens attributed, on a log scale from 900 to 29,910; 2 files with none.',
+      'Tokens attributed (input and output, cache reads included), on a log scale from 900 to 29,910; 2 files with none.',
     );
   });
 
@@ -221,7 +221,32 @@ describe('the Coupling view', () => {
       'coupling-none No learned links 1',
     ]);
     expect(couplingView.encode(scene, NOW_MS).scale).toBe(
-      'Learned links per file, of any kind and strength, from 1 to 4; 1 file with none.',
+      "Links the map keeps per file (each file's 8 strongest of each kind, and those its neighbours keep to it), from 1 to 4; 1 file with none.",
+    );
+  });
+
+  it('counts the links the map keeps, never the learned links it left out', () => {
+    // The daemon learned a/one.rs-a/two.rs too, but kept only README.md-b/mid.rs: the graph holds
+    // one link, so README.md and b/mid.rs have 1 each, the other five none, and the sentence
+    // names the kept set.
+    const kept = buildScene(sevenFileSnapshot([testLink(0, 4, 'co_change', 0.5)]));
+    const encoding = couplingView.encode(kept, NOW_MS);
+    expect(encoding.tones.map((tone) => `${tone.key} ${tone.count}`)).toEqual([
+      'coupling-4 2',
+      'coupling-none 5',
+    ]);
+    expect(encoding.scale).toMatch(/^Links the map keeps per file \(each file's 8 strongest/);
+    expect(encoding.scale).not.toContain('Learned links');
+  });
+
+  it('writes its counts with thousands separators', () => {
+    // A hub file linked to 1,234 others has 1,234 links; each of them has 1.
+    const paths = Array.from({ length: 1235 }, (_, id) => `f${String(id).padStart(4, '0')}.rs`);
+    const files = paths.map((path, id) => testFile(id, path));
+    const links = Array.from({ length: 1234 }, (_, at) => testLink(0, at + 1, 'co_change', 0.5));
+    const big = buildScene({ version: 1, files, links });
+    expect(couplingView.encode(big, NOW_MS).scale).toBe(
+      "Links the map keeps per file (each file's 8 strongest of each kind, and those its neighbours keep to it), from 1 to 1,234.",
     );
   });
 
@@ -242,7 +267,23 @@ describe('the Recent view', () => {
       'recent-dim Not in the last 24 hours 5',
     ]);
     expect(recentView.encode(scene, NOW_MS).scale).toBe(
-      '2 files of 7 read or edited by an agent in the 24 hours before the map loaded.',
+      '2 files of 7 read or edited by an agent in the 24 hours before the map last read its data.',
+    );
+  });
+
+  it('writes the file count with thousands separators, as Fog does', () => {
+    // 1,234 files, the first touched an hour ago and read once: Recent lights 1, Fog lights 1 and
+    // leaves 1,233 in fog.
+    const paths = Array.from({ length: 1234 }, (_, id) => `f${String(id).padStart(4, '0')}.rs`);
+    const files = paths.map((path, id) =>
+      testFile(id, path, id === 0 ? { touched_ms: NOW_MS - HOUR_MS, reads: 1 } : {}),
+    );
+    const big = buildScene({ version: 1, files, links: [] });
+    expect(recentView.encode(big, NOW_MS).scale).toBe(
+      '1 file of 1,234 read or edited by an agent in the 24 hours before the map last read its data.',
+    );
+    expect(fogView.encode(big, NOW_MS).scale).toBe(
+      'Agents have read 1 file of 1,234; the other 1,233 are in fog.',
     );
   });
 

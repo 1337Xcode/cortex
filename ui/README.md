@@ -16,18 +16,61 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   the last week, how many files agents have read, how many files and folders are indexed). Nothing
   is cut inside a word. A repository Cortex has learned nothing about says so, and the map shows
   its structure alone.
-- The overview panel on the left: the agent sessions running in the repository now, every summary
-  sentence, the strongest pairs of files changed together (by the link's strength times the
-  logarithm of one plus its commits, as Cortex ranks a file's partners and the summary its
-  strongest pair, so a pair that often changed together comes before one of two commits; each
-  row shows its commits and
-  says "changed with mod.rs in 12 of 21 commits" on hover), the busiest files (by the tokens
-  attributed to them, or by commits before agents worked on any) and the files that need attention
-  (a suspect fact). Each list shows five rows and then "Show N more", and each row is a button that
-  flies to its file and selects it. Each section collapses to its title and count. The live
-  sessions open while one runs and say "No agent session is running in this repository",
-  collapsed, while none does. On a narrow screen the overview is a bottom sheet opened from the top
-  bar.
+- The overview panel on the left, in the order of how often a person asks its questions: the agent
+  sessions running in the repository now; the activity; every summary sentence, with when the map
+  read its numbers; the receipts; the strongest pairs of files changed together (by the link's
+  strength times the logarithm of one plus its commits, as Cortex ranks a file's partners and the
+  summary its strongest pair, so a pair that often changed together comes before one of two
+  commits, which the section says; each row shows its commits and says "changed with mod.rs in 12
+  of 21 commits" on hover); the busiest files (by the tokens attributed to them, or by commits
+  before agents worked on any); the files that need attention (a suspect fact); the warnings; and
+  the daemon's health. Each list shows five rows and then "Show N more", and each file row is a
+  button that flies to its file and selects it. Each section collapses to its title and count: the
+  full count, or "top 25 of 2,194" when a list keeps only its strongest (a list of links says under
+  its title that it counts only the links the map keeps: each file's 8 strongest of each kind). The live sessions and the activity open while a session runs and are
+  collapsed while none does (the live sessions then say "No agent session is running in this
+  repository"); once the person opens or closes the activity it keeps their choice. The receipts,
+  the warnings and the health are closed at first and asked for when opened. On a narrow screen the overview is a bottom sheet
+  opened from the top bar.
+- The activity: what agents' hooks reported lately, newest first, among the 100 newest events Cortex
+  recorded (edits seen outside any agent left out), each a sentence led by the agent's icon and the
+  file's ("Claude Code 3f2a… edited book.rs") with how long ago it was ("2 min ago"). "Ago" counts
+  back from when the page read the list, by this computer's clock, and the section says so; each
+  row gives its exact time in UTC, the reporting hook's own clock, on hover and to screen readers.
+  The daemon names a file by its id and its path, and ids move when files are added, so a row is a
+  button that flies to its file (and says its time on keyboard focus too) only where the map on
+  screen holds that path; a file it does not hold yet is named by its whole path, as text, with
+  "not on the map yet" ("not on the map" for one the map does not list at all), and the page reads
+  the map again. Each row is two lines that wrap, never cut. A failure says what failed and offers to
+  try again.
+- The warnings Cortex gave agents after their edits, open first and then resolved, among the 100
+  newest: each says what it said by its kind ("book.rs usually changes with mod.rs", "orders.rs is
+  a test of book.rs", "app.ts calls a symbol of book.rs whose signature changed"), then whether it is
+  open, followed (the named file was read or edited after it) or not followed, its strength and its
+  date; its whole sentence, with what the strength measures for that kind, is said on hover and
+  focus. A strength is never rounded to a false 0 or 1 ("under 0.01"); a test or call-site warning
+  that named several files keeps the strongest of them, and says so. A row whose named file the map
+  on screen holds, at the path the daemon gave, flies to it; any other file is named by its path, as
+  the activity does.
+- The daemon's health, the last section, closed at first (a person needs it when something looks
+  wrong, and a header chip would take room the search box and the strip need on a narrow screen):
+  the version and whether the first reading is done, how long the daemon has run and what it
+  dropped or failed to record, each hook's handling times (median, 95th and 99th percentile) in a
+  small table that says they are the daemon's own handling of each request, not the hook process's
+  whole run, its newest errors in its own words, the history miner's state, the graph's size,
+  upkeep's last run and whether the history worker is on, off or refused; with when it was read and
+  a button to read it again. Its count is the errors the daemon kept. A report the page cannot read
+  says so with its cause, and the rest of the answer still counts: the empty map still says whether
+  Cortex is reading the repository.
+- While agents work, a live frame that brings a session's new position asks for a quiet refresh: two
+  seconds later, and at most once every ten seconds, the page reads the map, the summary, the
+  selected file's panel and the activity, warnings and health once their sections have loaded them
+  (the receipts are read once), without a loading state. The selected and hovered files are found
+  again by their paths, so the file panel stays open on its file, its sections shown while they are
+  read again, when a file added before it moves its place. An answer that names a file the map on
+  screen holds elsewhere, or not yet, asks for the same refresh, once per map. A map of more than
+  20,000 files does not refresh by itself; it says when its numbers were read and offers "Read
+  again".
 - The receipts, a section of the overview under "At a glance": what agents' work in the repository
   cost and whether Cortex helped, in the words `cortex receipts` prints. The section is closed at
   first and the page asks the daemon for `api/receipts` only when it is opened. It says, in order:
@@ -74,9 +117,11 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   question at a time; shapes keep their meaning in every view and only colours change. Default is
   the look above. Fog lights the files agents have read and leaves the rest dim and thin, so a
   repository no agent has worked in is all fog, on purpose. Heat steps the tokens attributed to
-  each file through four shades of the accent on a log scale from the fewest to the most any file
-  has. Coupling steps how many learned links each file has, of any kind and strength, the same
-  way. Recent lights the files an agent read or edited in the 24 hours before the map loaded. In
+  each file (input and output tokens, cache reads included) through four shades of the accent on a
+  log scale from the fewest to the most any file has. Coupling steps how many links the map keeps
+  for each file, of any kind and strength (each file's 8 strongest of each kind, and those its
+  neighbours keep to it, not every link Cortex learned), the same way. Recent lights the files an
+  agent read or edited in the 24 hours before the map last read its data. In
   these four views a lit file is also filled with a share of its colour, and a folder drawn whole
   takes the colour of its strongest file. The legend names the active view, says what its scale
   means with its numbers, and counts the files in each step.
@@ -104,7 +149,10 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
   overlap each other or the page's controls.
 - Every mark and link says what it is under the pointer, with its number ("payment.rs: 220 lines,
   read 9 times by agents, changed in 13 commits"; "book.rs changed with mod.rs in 12 of 21
-  commits"). Hovering a file also highlights it and its linked files and dims everything else;
+  commits"; "book.rs and app.ts were used together by agents in 3 tasks"; "named together in 2
+  work orders"): each kind of link by the count its strength was made from, and the legend says
+  what strength means for each kind. A generated or vendored file, whose commits Cortex does not
+  count, says so instead of a 0. Hovering a file also highlights it and its linked files and dims everything else;
   clicking selects it and opens its panel. Clicking a folder zooms in until it opens. Screen readers
   hear the selection as it changes, not every file the pointer passes.
 - Names that would read the same say where they are: two files called `mod.rs` among the links
@@ -112,16 +160,33 @@ deck.gl, d3-hierarchy and Zustand, with shadcn/ui components on Radix and Tailwi
 - The panel of the selected file: the breadcrumb of its folders, each a button that frames that
   folder whole and open (the keyboard's way into a folder drawn collapsed); its name and path; its
   lines, agent reads, commits and the tokens attributed to it (the tokens of agent turns whose last
-  read or edit was this file), in tabular figures. Then sections that collapse to their title and
-  count. Its strongest links of each kind and the facts anchored to it are open, as they answer the
-  questions asked most (what usually changes with this file, and which rules apply to it). The
-  commits its stored history names, in pages of ten ("11 to 20 of 34"), and each time Cortex named
-  it to an agent, with whether the agent then read or edited it, open when asked. Its commits and
-  tokens say what they count on hover and keyboard focus: the commits are only those of the history
-  Cortex reads (its most recent commits, within an age, leaving out commits that changed too many
-  files, each limit as the daemon reports it), so 0 never reads as "never committed". "Open in
-  editor" opens the file in the editor the daemon names; the page shows the link only when its
-  scheme is not a web, script, data or file address.
+  read or edit was this file, cache reads included), in tabular figures. Then sections that collapse
+  to their title and count. Its strongest links of each kind (strongest first as Cortex ranks them,
+  each with its commits, tasks or work orders; "top 8 of the 12 the map keeps" when it has more) and the facts
+  anchored to it are open, as they answer the questions asked most (what usually changes with this
+  file, and which rules apply to it). Each fact offers the person's word on it as a native button:
+  a candidate "Confirm", an active fact "Retire", a suspect fact "Confirm again" and "Retire".
+  Retiring asks first, in the row, with "Keep it" focused (Escape keeps the fact); while the word
+  is on its way its button says "Confirming…" or "Retiring…" and the others wait; then the section
+  says what came of it in words (the daemon's own words when it refused; an answer the page cannot
+  read, or none at all, says the word may have been written and to reload to see), and after a word
+  that was or may have been written the page reads the panel and the map again. The word goes to
+  the daemon as a POST with no body, in `fetch`'s default mode; the daemon serves the page with the
+  `same-origin` referrer policy, under which a same-origin POST carries the page's own `Origin`,
+  and its writer carries the word out. The commits behind
+  its current lines (the ten newest, "the 10 newest of 34", or, with the history worker off, that
+  Cortex reads them only when `history.why` or `history.seeds` is on and how to turn it on), each
+  time Cortex named it to an agent (the latest 20), with whether the agent then read or edited it,
+  and its symbols, open when asked. The symbols are the first 500 the index holds for the file, in
+  line order, nested ones indented; those holding lines the latest work orders that listed the file
+  selected are highlighted with how many orders chose them, above the selected spans themselves.
+  With an editor link each symbol opens the file at its line, or at line 1 when the editor address
+  does not show where its line goes, which the section then says. Its commits and tokens say what
+  they count on hover and keyboard focus: the commits are only those of the history Cortex reads
+  (its most recent commits, within an age, leaving out commits that changed too many files, each
+  limit as the daemon reports it), so 0 never reads as "never committed". "Open in editor" opens
+  the file in the editor the daemon names; the page shows the link only when its scheme is not a
+  web, script, data or file address.
 - Long text (paths, names, commit subjects) is cut at a path or word boundary with an ellipsis and
   shown whole on hover and on keyboard focus; nothing scrolls sideways.
 - Icons beside names: an agent's mark (its product's, or its maker's when the product has none)
@@ -239,7 +304,7 @@ runs `check`, the build and the bundle's size limit (1.5 MB gzipped), and
 
 The browser checks use Playwright's Chromium and serve the built page and fixture data from
 inside the test, so they need no server and no network. Every response carries the daemon's
-security headers (its content security policy, `Referrer-Policy: no-referrer` and
+security headers (its content security policy, `Referrer-Policy: same-origin` and
 `X-Content-Type-Options: nosniff`), and a check fails on any console error, so a script, worker
 or request the policy refuses is caught. `e2e/scale.spec.ts` prints the first load time in five
 fresh browsers and the frame rate over a scripted pan and zoom on a generated repository of
@@ -259,7 +324,13 @@ without a comparison, reads the chart's sentences with the keyboard, and checks 
 are asked for only when their section opens and that a failure says what failed.
 `e2e/live.spec.ts` answers the live view's socket from inside the test and pushes frames: the
 markers move and the camera does not, the live sessions list and fly, a refused frame is dropped,
-and a lost connection pauses and comes back.
+and a lost connection pauses and comes back. `e2e/panels.spec.ts` checks the activity, the
+warnings, the health (a report it cannot read too), a file's symbols, the history worker off, a
+generated file's commits, files named by an id the map on screen holds another file at, and the
+quiet refresh (the file panel staying on its file when a file added before it moves its place), and
+confirms and retires facts: the test's stand-in daemon refuses a POST without
+the map's own `Origin` header as Chromium sent it, and the check reads that header; that the real
+daemon takes the POST is checked against a running daemon.
 Setting `CORTEX_SHOTS_DIR` makes `e2e/shots.spec.ts` write screenshots of every state at 1440x900
 and 390x844 in both themes into that folder.
 

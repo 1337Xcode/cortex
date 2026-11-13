@@ -22,7 +22,9 @@ import { useChromeInsets } from './map/useChromeInsets';
 import { FilePanel } from './panels/FilePanel';
 import { OverviewPanel } from './panels/OverviewPanel';
 import { SummaryStrip } from './panels/SummaryStrip';
-import { useMapStore, type IndexKnowledge, type LoadState } from './state/store';
+import { startLiveRefresh, WINDOW_TIMERS } from './state/liveRefresh';
+import { PAGE_REFRESHERS } from './state/pageRefreshers';
+import { mapStore, useMapStore, type IndexKnowledge, type LoadState } from './state/store';
 import { useIsNarrow } from './theme/media';
 import { EMPTY_RECHECK_MS } from './theme/tokens';
 
@@ -132,7 +134,10 @@ function useRecheckWhileEmpty(status: LoadState['status']): void {
   }, [status, index, loadGraph]);
 }
 
-/** Keeps the live view's socket open while the page is, reporting every frame to the store. */
+/**
+ * Keeps the live view's socket open while the page is, reporting every frame to the store, and
+ * reads the map's numbers again quietly when frames bring sessions' new positions.
+ */
 function useLiveView(): void {
   const takeLive = useMapStore((state) => state.takeLive);
   const pauseLive = useMapStore((state) => state.pauseLive);
@@ -145,6 +150,7 @@ function useLiveView(): void {
       ),
     [takeLive, pauseLive],
   );
+  useEffect(() => startLiveRefresh(mapStore, PAGE_REFRESHERS, WINDOW_TIMERS), []);
 }
 
 /**

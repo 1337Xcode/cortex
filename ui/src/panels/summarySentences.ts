@@ -81,9 +81,10 @@ function busiestSentence(summary: MapSummary): SummarySentence | null {
     summary.window_days === 1 ? 'the last day' : `the last ${summary.window_days} days`;
   const tokens = `${countOf(busiest.tokens, 'token')} attributed`;
   const folder = busiest.path === '' ? "the repository's top folder" : `${busiest.path}/`;
+  // The daemon counts a folder's own files, not its subfolders', and the sentence says so.
   return {
     key: 'busiest',
-    parts: [`Most worked on in ${window}: ${folder} (${tokens}).`],
+    parts: [`Most worked on in ${window}: ${folder}, whose own files took ${tokens}.`],
     short: [`Busiest folder: ${folder}.`],
   };
 }

@@ -2,8 +2,9 @@
 // folder named by CORTEX_SHOTS_DIR for a person to look at: first open, the overview, a search, a
 // selected file with every section open, the legend, nothing found, the cold, empty, loading and
 // failed states, each view with its legend, three live sessions, the paused live view, the
-// receipts cold, at 29 tasks a side, at 30 a side and failed, and 100,000 files with and without
-// twenty sessions. Skipped when that variable is unset.
+// receipts cold, at 29 tasks a side, at 30 a side and failed, the activity, the warnings, the
+// daemon's health, a fact's retire step and its answer, a file's symbols and the commits behind its
+// lines, and 100,000 files with and without twenty sessions. Skipped when that variable is unset.
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -14,6 +15,7 @@ import {
   shortReceipts,
   smallFixture,
   threeSessions,
+  workingHealth,
   type Fixture,
 } from './fixtures';
 import { nextFrames, openMap, tabTo } from './helpers';
@@ -183,6 +185,50 @@ for (const size of SIZES) {
       await expect(page.getByTestId('receipts-error')).toBeVisible();
       await shoot(page, `${prefix}-24-receipts-failed`);
       expect(record.errors.filter((error) => !error.includes('500'))).toEqual([]);
+    });
+
+    test(`${prefix}: activity, warnings, health, facts and symbols`, async ({ page }) => {
+      await page.setViewportSize(size);
+      const nowMs = Date.now();
+      const fixture: Fixture = {
+        ...smallFixture(nowMs),
+        live: threeSessions(nowMs),
+        health: workingHealth(nowMs),
+      };
+      const record = await openMap(page, fixture, scheme);
+      const overview = async (): Promise<void> => {
+        if (isNarrow) await page.getByRole('button', { name: 'Overview' }).click();
+      };
+      const closeOverview = async (): Promise<void> => {
+        if (isNarrow) await page.getByRole('button', { name: 'Close the overview' }).click();
+      };
+      await overview();
+      await expect(page.getByTestId('overview-activity').getByRole('listitem')).toHaveCount(5);
+      await shoot(page, `${prefix}-25-activity`);
+      await page.getByRole('button', { name: /^Warnings/ }).click();
+      await page.getByTestId('overview-warnings').scrollIntoViewIfNeeded();
+      await shoot(page, `${prefix}-26-warnings`);
+      await page.getByRole('button', { name: /^Health/ }).click();
+      await page.getByTestId('health-hooks').scrollIntoViewIfNeeded();
+      await shoot(page, `${prefix}-27-health`);
+      await page.getByTestId('overview-health').locator('.show-more').scrollIntoViewIfNeeded();
+      await shoot(page, `${prefix}-28-health-end`);
+      await closeOverview();
+      await searchFor(page, 'book');
+      await page.keyboard.press('Enter');
+      const panel = page.locator('.file-panel');
+      await panel.getByRole('button', { name: 'Retire fact 3' }).click();
+      await shoot(page, `${prefix}-29-fact-retire-step`);
+      await panel.getByRole('button', { name: 'Retire it' }).click();
+      await expect(panel.getByTestId('fact-said')).not.toBeEmpty();
+      await shoot(page, `${prefix}-30-fact-retired`);
+      await panel.getByRole('button', { name: /^Symbols/ }).click();
+      await panel.getByTestId('panel-symbols').scrollIntoViewIfNeeded();
+      await shoot(page, `${prefix}-31-symbols`);
+      await panel.getByRole('button', { name: /^Commits behind its lines/ }).click();
+      await panel.getByTestId('panel-history').scrollIntoViewIfNeeded();
+      await shoot(page, `${prefix}-32-history`);
+      expect(record.errors).toEqual([]);
     });
 
     test(`${prefix}: 100,000 files with twenty sessions, in Heat`, async ({ page }) => {

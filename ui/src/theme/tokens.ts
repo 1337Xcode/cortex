@@ -109,10 +109,10 @@ export const LAYOUT = {
 } as const;
 
 /**
- * How many rows a list shows before "Show N more", how many a page of history holds, and the most
- * rows an overview list keeps (its strongest; a long tail is for search, not a list).
+ * How many rows a list shows before "Show N more", and the most rows an overview list keeps (its
+ * strongest; a long tail is for search, not a list).
  */
-export const LIST = { rows: 5, historyPage: 10, most: 25 } as const;
+export const LIST = { rows: 5, most: 25 } as const;
 
 /**
  * The receipts chart, in pixels: each plot's height, its marks (a dot of 8 px across with a 2 px
@@ -594,6 +594,14 @@ export const SEARCH_DEBOUNCE_MS = 120;
 
 /** While the map has no files, the page asks the daemon again this often, in milliseconds. */
 export const EMPTY_RECHECK_MS = 5000;
+
+/**
+ * The quiet refresh a session's new position asks for: it waits `settleMs` after the first new
+ * position, so a burst of reads becomes one refresh, and comes at most once every `minGapMs`. It
+ * runs by itself only for a map of at most `autoMaxFiles` files, whose snapshot is quick to read
+ * and lay out again; a larger map says when its numbers were read and refreshes when asked.
+ */
+export const REFRESH = { settleMs: 2000, minGapMs: 10_000, autoMaxFiles: 20_000 } as const;
 
 /**
  * The live view: a lost connection is tried again after `reconnectFirstMs`, doubling each time up

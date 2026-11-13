@@ -122,7 +122,8 @@ export function readAgent(record: JsonRecord, where: string): string {
   return agent;
 }
 
-function readTitle(record: JsonRecord, where: string): string {
+/** The `title` field as an agent's display name, one line, or a refusal; the activity reads one too. */
+export function readTitle(record: JsonRecord, where: string): string {
   const title = readCappedString(record, 'title', MAX_AGENT_TITLE_CHARS, where);
   // eslint-disable-next-line no-control-regex -- control characters are exactly what is refused
   if (codePointLength(title) === 0 || /[\u0000-\u001f\u007f]/.test(title)) {

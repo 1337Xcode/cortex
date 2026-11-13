@@ -1,18 +1,23 @@
-// The page's state: the graph snapshot, the summary, the receipts and the selected file's detail
-// with their load states; whether the daemon is still reading the repository; the live sessions; the selected
-// and hovered files; the strength below which learned links are hidden; and the view the map is
-// coloured by. A response that arrives after a newer request, or after the request was cancelled,
-// is dropped. A live frame replaces the live state and touches nothing else.
+// The page's state: the graph snapshot, the summary, the receipts, the activity, the warnings, the
+// daemon's health and the selected file's detail with their load states; whether the daemon is
+// still reading the repository; the live sessions; the selected and hovered files; the strength
+// below which learned links are hidden; and the view the map is coloured by. A response that
+// arrives after a newer request, or after the request was cancelled, is dropped. A live frame
+// replaces the live state and touches nothing else, except that a frame bringing a session's new
+// position counts one more `refreshSerial`, which asks for a quiet refresh (see `liveRefresh.ts`);
+// an answer that names a file by an id the snapshot on screen holds another file at counts one too.
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
+import type { Activity } from '../api/activity';
 import type { FileDetail } from '../api/file';
-import type { GraphSnapshot } from '../api/graph';
+import { fileIdOf, type GraphSnapshot } from '../api/graph';
 import type { ApiError, ApiResult } from '../api/guard';
 import type { Health, IndexState } from '../api/health';
 import type { LiveState } from '../api/live';
 import type { Fetcher } from '../api/request';
 import type { Receipts } from '../api/receipts';
 import type { MapSummary } from '../api/summary';
+import type { Warnings } from '../api/warnings';
 import { DEFAULT_MIN_STRENGTH } from '../theme/tokens';
 import { DEFAULT_VIEW, VIEWS, type ViewName } from '../views/registry';
 
@@ -40,6 +45,32 @@ export type ReceiptsState =
   | { readonly status: 'loading' }
   | { readonly status: 'error'; readonly error: ApiError }
   | { readonly status: 'ready'; readonly receipts: Receipts };
+
+/**
+ * What the page knows about a section's data that is asked for only when its section opens (the
+ * activity, the warnings, the daemon's health): nothing at first, then loading, failed, or ready
+ * with the value and when it arrived, by this computer's clock.
+ */
+export type PanelState<T> =
+  | { readonly status: 'idle' }
+  | { readonly status: 'loading' }
+  | { readonly status: 'error'; readonly error: ApiError }
+  | { readonly status: 'ready'; readonly value: T; readonly receivedMs: number };
+
+/** Whether a load shows its loading state (a first load) or keeps what is shown until it answers. */
+export interface LoadOptions {
+  readonly isQuiet: boolean;
+}
+
+/** The loaders a quiet refresh asks again: every one the page has. */
+export interface Refreshers {
+  readonly graph: Fetcher<GraphSnapshot>;
+  readonly summary: Fetcher<MapSummary>;
+  readonly detail: DetailFetcher;
+  readonly activity: Fetcher<Activity>;
+  readonly warnings: Fetcher<Warnings>;
+  readonly health: Fetcher<Health>;
+}
 
 /** What the page knows about the selected file's detail. */
 export type DetailState =
@@ -80,7 +111,17 @@ export interface MapState {
   readonly load: LoadState;
   readonly summary: SummaryState;
   readonly receipts: ReceiptsState;
+  readonly activity: PanelState<Activity>;
+  readonly warnings: PanelState<Warnings>;
+  /** The daemon's health as the health section shows it; the empty map's question sets it too. */
+  readonly health: PanelState<Health>;
   readonly detail: DetailState;
+  /**
+   * How many times since the page opened something asked for a quiet refresh: a live frame whose
+   * sessions' newest positions differ from the last frame's, or the first answer that found the
+   * snapshot on screen out of step with the daemon's ids (see `noteOutOfStep`).
+   */
+  readonly refreshSerial: number;
   /** The id of the selected file, or null; always a valid id of the ready snapshot. */
   readonly selectedFile: number | null;
   /** The last request to move the camera (from search, the lists, the breadcrumb). */
@@ -99,18 +140,34 @@ export interface MapState {
    * Starts a snapshot load, cancelling the one in flight; clears selection and hover. A quiet load
    * (asking again while the map is empty) keeps the current state until the answer arrives.
    */
-  readonly loadGraph: (
-    fetcher: Fetcher<GraphSnapshot>,
-    options?: { readonly isQuiet: boolean },
-  ) => Promise<void>;
+  readonly loadGraph: (fetcher: Fetcher<GraphSnapshot>, options?: LoadOptions) => Promise<void>;
   /** Cancels the snapshot load in flight and ignores its response. */
   readonly cancelLoad: () => void;
-  /** Starts a summary load, cancelling the one in flight. */
-  readonly loadSummary: (fetcher: Fetcher<MapSummary>) => Promise<void>;
+  /** Starts a summary load, cancelling the one in flight; a quiet one keeps the summary shown. */
+  readonly loadSummary: (fetcher: Fetcher<MapSummary>, options?: LoadOptions) => Promise<void>;
   /** Starts a receipts load, cancelling the one in flight. */
   readonly loadReceipts: (fetcher: Fetcher<Receipts>) => Promise<void>;
-  /** Loads the selected file's detail; does nothing when no file is selected. */
-  readonly loadDetail: (fetcher: DetailFetcher) => Promise<void>;
+  /** Starts an activity load, cancelling the one in flight; a quiet one keeps the list shown. */
+  readonly loadActivity: (fetcher: Fetcher<Activity>, options?: LoadOptions) => Promise<void>;
+  /** Starts a warnings load, cancelling the one in flight; a quiet one keeps the list shown. */
+  readonly loadWarnings: (fetcher: Fetcher<Warnings>, options?: LoadOptions) => Promise<void>;
+  /**
+   * Loads the selected file's detail; does nothing when no file is selected. A quiet load keeps
+   * the detail shown until the new one arrives.
+   */
+  readonly loadDetail: (fetcher: DetailFetcher, options?: LoadOptions) => Promise<void>;
+  /**
+   * Asks every loader again without a loading state: the snapshot (keeping the selected and
+   * hovered files, found again by their paths, and the selected file's detail shown while it is
+   * read again), the summary, the selected file's detail, and the activity, warnings and health
+   * when their sections have loaded them. The receipts are not read again.
+   */
+  readonly refresh: (refreshers: Refreshers) => Promise<void>;
+  /**
+   * Says an answer named a file by an id the snapshot on screen holds another file at (or none):
+   * the snapshot is older than the daemon's ids. Asks for one quiet refresh per snapshot.
+   */
+  readonly noteOutOfStep: () => void;
   /**
    * Selects a file by id; an id that is not in the snapshot clears the selection. With `fly`, also
    * asks the camera to move to the file.
@@ -131,8 +188,11 @@ export interface MapState {
   readonly hoverFile: (id: number | null) => void;
   /** Sets the link strength threshold, clamped to 0 to 1; a value that is not a number is ignored. */
   readonly setMinStrength: (value: number) => void;
-  /** Asks the daemon whether it is still reading the repository, cancelling the question in flight. */
-  readonly loadHealth: (fetcher: Fetcher<Health>) => Promise<void>;
+  /**
+   * Asks the daemon's health, cancelling the question in flight: whether it is still reading the
+   * repository, and how it is doing. A quiet question keeps the health shown until it answers.
+   */
+  readonly loadHealth: (fetcher: Fetcher<Health>, options?: LoadOptions) => Promise<void>;
   /** Takes a live frame: the whole live state. */
   readonly takeLive: (state: LiveState) => void;
   /** Marks the live view paused: its connection is lost and another is on its way. */
@@ -180,6 +240,68 @@ function isFolderOf(load: LoadState, path: string): boolean {
   return load.snapshot.files.some((file) => file.path.startsWith(prefix));
 }
 
+/**
+ * `id` of the snapshot `before` as the same file of `after`: its id there, found by its path (ids
+ * move when files are added or removed), or null when `after` no longer holds it.
+ */
+function sameFile(before: LoadState, after: GraphSnapshot, id: number | null): number | null {
+  if (id === null || before.status !== 'ready') return null;
+  const path = before.snapshot.files[id]?.path;
+  return path === undefined ? null : fileIdOf(after.files, path);
+}
+
+/**
+ * The detail state of file `from`, kept for the same file at its new id `to`: the detail names no
+ * other file by id, so only its own id moves. Another file's state, or none, is left as it is.
+ */
+function movedDetail(detail: DetailState, from: number, to: number): DetailState {
+  switch (detail.status) {
+    case 'idle':
+      return detail;
+    case 'ready':
+      return detail.detail.id === from
+        ? { status: 'ready', detail: { ...detail.detail, id: to } }
+        : detail;
+    case 'loading':
+    case 'error':
+      return detail.id === from ? { ...detail, id: to } : detail;
+  }
+}
+
+/** The failures that say the daemon gave no answer, as against an answer the page could not read. */
+const UNANSWERED: ReadonlySet<ApiError['code']> = new Set(['network', 'http_status', 'not_found']);
+
+/**
+ * What a failed health question leaves the index as. No answer says Cortex did not say; an answer
+ * the page could not read leaves a state already known as it was (the health section shows the
+ * error), and an unknown one becomes the error.
+ */
+function indexAfterFailure(index: IndexKnowledge, error: ApiError): IndexKnowledge {
+  const isKnown = index.status === 'reading' || index.status === 'ready';
+  return isKnown && !UNANSWERED.has(error.code) ? index : { status: 'error', error };
+}
+
+/**
+ * Each session's newest position in `state` as one key ("id file at", sessions in their order): two
+ * frames with the same key brought no new position.
+ */
+export function positionsKey(state: LiveState): string {
+  return state.sessions
+    .map((session) => {
+      const newest = session.files[0];
+      return newest === undefined ? '' : `${session.id} ${newest.file} ${newest.last_ms}`;
+    })
+    .filter((key) => key !== '')
+    .join('\n');
+}
+
+/** The panel state `result` leaves, at `receivedMs`. */
+function panelOutcome<T>(result: ApiResult<T>, receivedMs: number): PanelState<T> {
+  return result.ok
+    ? { status: 'ready', value: result.value, receivedMs }
+    : { status: 'error', error: result.error };
+}
+
 function detailOutcome(result: ApiResult<FileDetail>, id: number, load: LoadState): DetailState {
   if (!result.ok) return { status: 'error', id, error: result.error };
   const path = load.status === 'ready' ? load.snapshot.files[id]?.path : undefined;
@@ -197,12 +319,39 @@ export function createMapStore(clockMs: () => number = Date.now) {
   const receiptsRequests = requestSlot();
   const detailRequests = requestSlot();
   const healthRequests = requestSlot();
+  const activityRequests = requestSlot();
+  const warningsRequests = requestSlot();
+  // The last frame's positions, kept through a pause: null until the first frame.
+  let lastPositions: string | null = null;
+  // The snapshot an answer last found out of step, so each snapshot asks for one refresh only.
+  let outOfStepIn: GraphSnapshot | null = null;
+
+  /**
+   * Loads one section's data with `fetcher` and hands each state to `put`: loading first unless
+   * quiet, then the answer, unless a newer load or a cancel made it stale.
+   */
+  async function loadPanel<T>(
+    slot: RequestSlot,
+    fetcher: Fetcher<T>,
+    options: LoadOptions | undefined,
+    put: (state: PanelState<T>) => void,
+  ): Promise<void> {
+    const request = slot.begin();
+    if (options?.isQuiet !== true) put({ status: 'loading' });
+    const result = await fetcher(request.signal);
+    if (!request.isCurrent()) return;
+    put(panelOutcome(result, clockMs()));
+  }
 
   return createStore<MapState>()((set, get) => ({
     load: { status: 'loading' },
     summary: { status: 'loading' },
     receipts: { status: 'idle' },
+    activity: { status: 'idle' },
+    warnings: { status: 'idle' },
+    health: { status: 'idle' },
     detail: { status: 'idle' },
+    refreshSerial: 0,
     selectedFile: null,
     flyTo: null,
     hoveredFile: null,
@@ -232,11 +381,13 @@ export function createMapStore(clockMs: () => number = Date.now) {
       receiptsRequests.cancel();
       detailRequests.cancel();
       healthRequests.cancel();
+      activityRequests.cancel();
+      warningsRequests.cancel();
     },
 
-    loadSummary: async (fetcher) => {
+    loadSummary: async (fetcher, options) => {
       const request = summaryRequests.begin();
-      set({ summary: { status: 'loading' } });
+      if (options?.isQuiet !== true) set({ summary: { status: 'loading' } });
       const result = await fetcher(request.signal);
       if (!request.isCurrent()) return;
       set({
@@ -244,6 +395,56 @@ export function createMapStore(clockMs: () => number = Date.now) {
           ? { status: 'ready', summary: result.value }
           : { status: 'error', error: result.error },
       });
+    },
+
+    loadActivity: (fetcher, options) =>
+      loadPanel(activityRequests, fetcher, options, (activity) => {
+        set({ activity });
+      }),
+
+    loadWarnings: (fetcher, options) =>
+      loadPanel(warningsRequests, fetcher, options, (warnings) => {
+        set({ warnings });
+      }),
+
+    refresh: async (refreshers) => {
+      const before = get().load;
+      if (before.status !== 'ready') return;
+      const request = graphRequests.begin();
+      const loads: Promise<void>[] = [get().loadSummary(refreshers.summary, { isQuiet: true })];
+      if (get().activity.status !== 'idle') {
+        loads.push(get().loadActivity(refreshers.activity, { isQuiet: true }));
+      }
+      if (get().warnings.status !== 'idle') {
+        loads.push(get().loadWarnings(refreshers.warnings, { isQuiet: true }));
+      }
+      if (get().health.status !== 'idle') {
+        loads.push(get().loadHealth(refreshers.health, { isQuiet: true }));
+      }
+      const result = await refreshers.graph(request.signal);
+      if (request.isCurrent() && result.ok && result.value.files.length > 0) {
+        const { selectedFile, hoveredFile, detail } = get();
+        const selected = sameFile(before, result.value, selectedFile);
+        set({
+          load: { status: 'ready', snapshot: result.value, receivedMs: clockMs() },
+          selectedFile: selected,
+          hoveredFile: sameFile(before, result.value, hoveredFile),
+          detail:
+            selected === null || selectedFile === null
+              ? { status: 'idle' }
+              : movedDetail(detail, selectedFile, selected),
+        });
+        if (selected !== null) loads.push(get().loadDetail(refreshers.detail, { isQuiet: true }));
+      }
+      // A refresh that failed keeps the snapshot shown: the map stays as it was, its time stamped.
+      await Promise.all(loads);
+    },
+
+    noteOutOfStep: () => {
+      const { load } = get();
+      if (load.status !== 'ready' || outOfStepIn === load.snapshot) return;
+      outOfStepIn = load.snapshot;
+      set({ refreshSerial: get().refreshSerial + 1 });
     },
 
     loadReceipts: async (fetcher) => {
@@ -258,7 +459,7 @@ export function createMapStore(clockMs: () => number = Date.now) {
       });
     },
 
-    loadDetail: async (fetcher) => {
+    loadDetail: async (fetcher, options) => {
       const id = get().selectedFile;
       if (id === null) {
         detailRequests.cancel();
@@ -266,10 +467,15 @@ export function createMapStore(clockMs: () => number = Date.now) {
         return;
       }
       const request = detailRequests.begin();
-      set({ detail: { status: 'loading', id } });
+      const shown = get().detail;
+      const isShown = shown.status === 'ready' && shown.detail.id === id;
+      if (options?.isQuiet !== true || !isShown) set({ detail: { status: 'loading', id } });
       const result = await fetcher(id, request.signal);
       if (!request.isCurrent() || get().selectedFile !== id) return;
-      set({ detail: detailOutcome(result, id, get().load) });
+      const outcome = detailOutcome(result, id, get().load);
+      set({ detail: outcome });
+      // The daemon holds another file at this id than the snapshot on screen: its ids moved on.
+      if (result.ok && outcome.status === 'error') get().noteOutOfStep();
     },
 
     selectFile: (id, options) => {
@@ -306,19 +512,29 @@ export function createMapStore(clockMs: () => number = Date.now) {
       set({ minStrength: Math.min(1, Math.max(0, value)) });
     },
 
-    loadHealth: async (fetcher) => {
+    loadHealth: async (fetcher, options) => {
       const request = healthRequests.begin();
+      if (options?.isQuiet !== true && get().health.status !== 'ready') {
+        set({ health: { status: 'loading' } });
+      }
       const result = await fetcher(request.signal);
       if (!request.isCurrent()) return;
       set({
         index: result.ok
           ? { status: result.value.index }
-          : { status: 'error', error: result.error },
+          : indexAfterFailure(get().index, result.error),
+        health: panelOutcome(result, clockMs()),
       });
     },
 
     takeLive: (state) => {
-      set({ live: { status: 'open', state } });
+      const positions = positionsKey(state);
+      const isNew = lastPositions !== null && positions !== lastPositions;
+      lastPositions = positions;
+      set({
+        live: { status: 'open', state },
+        ...(isNew ? { refreshSerial: get().refreshSerial + 1 } : {}),
+      });
     },
 
     pauseLive: () => {

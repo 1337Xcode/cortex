@@ -1,6 +1,7 @@
 // Tests for the text the panels show: the summary strip's sentences and the side panel's
 // strongest links, with every expected sentence written out.
 import { describe, expect, it } from 'vitest';
+import type { GraphLink } from '../api/graph';
 import type { MapSummary } from '../api/summary';
 import { sevenFileScene, sevenFileSnapshot, testLink } from '../map/testScene';
 import { distinctNames } from '../text/names';
@@ -21,7 +22,9 @@ const LEARNED: MapSummary = {
 };
 
 /** The seven-file snapshot holding the summary's strongest pair, a/one.rs and a/two.rs. */
-const PAIRED = sevenFileSnapshot([{ from: 1, to: 2, kind: 'co_change', weight: 0.8, commits: 31 }]);
+const PAIRED = sevenFileSnapshot([
+  { from: 1, to: 2, kind: 'co_change', weight: 0.8, commits: 31, count: 31 },
+]);
 
 function plain(sentence: SummarySentence): string {
   return sentence.parts
@@ -34,7 +37,7 @@ describe('summarySentences', () => {
     const text = summarySentences(LEARNED, PAIRED);
     expect(text.ok ? text.sentences.map(plain) : text.error).toEqual([
       'Strongest coupling: [a/one.rs] and [a/two.rs] changed together in 31 commits.',
-      'Most worked on in the last 7 days: src/orders/ (52,310 tokens attributed).',
+      'Most worked on in the last 7 days: src/orders/, whose own files took 52,310 tokens attributed.',
       'Agents have read 312 of the 1,204 files (26%).',
       '1,204 files in 87 folders.',
     ]);
@@ -45,8 +48,20 @@ describe('summarySentences', () => {
     const text = summarySentences(top, PAIRED);
     const busiest = text.ok ? text.sentences.find((sentence) => sentence.key === 'busiest') : null;
     expect(busiest ? plain(busiest) : null).toBe(
-      "Most worked on in the last 7 days: the repository's top folder (1,200 tokens attributed).",
+      "Most worked on in the last 7 days: the repository's top folder, whose own files took 1,200 tokens attributed.",
     );
+  });
+
+  it('never rounds a share of read files to 0% or 100%', () => {
+    // 2 of 1,595 is 0.13%, which rounds to 0; 1,594 of 1,595 is 99.94%, which rounds to 100.
+    const share = (read: number): string => {
+      const text = summarySentences({ ...LEARNED, files: 1595, explored_files: read }, PAIRED);
+      const explored = text.ok ? text.sentences.find((s) => s.key === 'explored') : undefined;
+      return explored === undefined ? '' : plain(explored);
+    };
+    expect(share(2)).toBe('Agents have read 2 of the 1,595 files (under 1%).');
+    expect(share(1594)).toBe('Agents have read 1,594 of the 1,595 files (over 99%).');
+    expect(share(1595)).toBe('Agents have read 1,595 of the 1,595 files (100%).');
   });
 
   it('gives each sentence a short form for the one-line strip', () => {
@@ -99,7 +114,7 @@ describe('summarySentences', () => {
     // Both files exist, but the map links them only as used together, or with 30 commits, not 31.
     const usedTogether = sevenFileSnapshot([testLink(1, 2, 'used_together', 0.8)]);
     const otherCount = sevenFileSnapshot([
-      { from: 1, to: 2, kind: 'co_change', weight: 0.8, commits: 30 },
+      { from: 1, to: 2, kind: 'co_change', weight: 0.8, commits: 30, count: 30 },
     ]);
     for (const snapshot of [sevenFileSnapshot(), usedTogether, otherCount]) {
       const text = summarySentences(LEARNED, snapshot);
@@ -109,7 +124,7 @@ describe('summarySentences', () => {
 });
 
 describe('strongestLinks', () => {
-  it('lists each kind strongest first, ties by path, at most the asked number', () => {
+  it('lists each kind strongest first, ties by path, at most the asked number, with each total', () => {
     const scene = sevenFileScene([
       testLink(0, 1, 'co_change', 0.5),
       testLink(0, 2, 'co_change', 0.9),
@@ -117,9 +132,33 @@ describe('strongestLinks', () => {
       testLink(0, 4, 'work_order', 0.3),
     ]);
     const links = strongestLinks(scene, 0, 2);
-    expect(links.co_change.map((link) => link.path)).toEqual(['a/two.rs', 'a/one.rs']);
-    expect(links.used_together).toEqual([]);
-    expect(links.work_order).toEqual([{ other: 4, path: 'b/mid.rs', weight: 0.3, commits: 0 }]);
+    expect(links.shown.co_change.map((link) => link.path)).toEqual(['a/two.rs', 'a/one.rs']);
+    expect(links.shown.used_together).toEqual([]);
+    expect(links.shown.work_order).toEqual([
+      { other: 4, path: 'b/mid.rs', weight: 0.3, commits: 0, count: 1 },
+    ]);
+    expect(links.totals).toEqual({ co_change: 3, used_together: 0, work_order: 1 });
+  });
+
+  it('ranks a partner that changed with the file in 60 commits before partners of 2 commits', () => {
+    // README.md (0) shares 60 of its commits with a/one.rs (1) at strength 0.75 and 2 of 2 with
+    // each of the other five at 1.0. Ranks: 0.75 ln 61 = 3.083 against 1.0 ln 3 = 1.099, so
+    // a/one.rs comes first, as the daemon ranks a file's partners.
+    const co = (to: number, weight: number, commits: number): GraphLink => ({
+      from: 0,
+      to,
+      kind: 'co_change',
+      weight,
+      commits,
+      count: commits,
+    });
+    const scene = sevenFileScene([co(1, 0.75, 60), co(2, 1, 2), co(3, 1, 2), co(4, 1, 2)]);
+    expect(strongestLinks(scene, 0, 25).shown.co_change.map((link) => link.path)).toEqual([
+      'a/one.rs',
+      'a/two.rs',
+      'b/deep/leaf.rs',
+      'b/mid.rs',
+    ]);
   });
 });
 
@@ -130,6 +169,11 @@ describe('detailFor', () => {
     path: 'b/mid.rs',
     facts: [],
     history: [],
+    history_total: 0,
+    history_reader: 'on' as const,
+    symbols: [],
+    symbols_total: 0,
+    selected: [],
     told: [],
     editor_url: null,
   };

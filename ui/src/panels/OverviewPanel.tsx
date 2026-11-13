@@ -1,10 +1,13 @@
-// The overview panel on the left: the agent sessions running now, the repository at a glance, the
-// receipts, the files that change together, the busiest files and what needs attention, each a
-// short list of five with "Show N more" and every row a button that flies to its file. Each section
-// collapses to its title and count; the live sessions open while any runs, the receipts open when
-// asked (they are loaded then), and the other four are open at first, since each answers a question
-// asked on first sight. On a narrow screen it is a bottom sheet opened from the controls, with a
-// Close button.
+// The overview panel on the left, in the order of how often a person asks its questions: the agent
+// sessions running now and what agents did lately, the repository at a glance (with when its
+// numbers were read), the receipts, the files that change together, the busiest files and what
+// needs attention, then the warnings Cortex gave and the daemon's health. Each list shows five rows
+// with "Show N more", every file row a button that flies to its file, and each section collapses to
+// its title and count (the full count, or "top 25 of 2,194" when the list is cut). The live
+// sessions and the activity open while a session runs; the receipts, the warnings and the health,
+// asked for when opened, start closed; the other four are open at first, since each answers a
+// question asked on first sight. On a narrow screen it is a bottom sheet opened from the controls,
+// with a Close button.
 import { X } from 'lucide-react';
 import { useMemo, type ReactElement, type RefObject } from 'react';
 import type { GraphSnapshot } from '../api/graph';
@@ -12,17 +15,59 @@ import type { Scene } from '../map/scene';
 import { Button } from '../components/ui/button';
 import { fileIcon, sharedFileIcon } from '../icons/fileIcons';
 import { IconSlot } from '../icons/IconSlot';
+import { refreshesByItself } from '../state/liveRefresh';
+import { PAGE_REFRESHERS } from '../state/pageRefreshers';
 import { useMapStore } from '../state/store';
-import { countOf, formatCount } from '../text/format';
+import { countOf, formatCount, formatUtcTime } from '../text/format';
 import { distinctNames } from '../text/names';
-import { LINK_KIND_NAMES, NUMBER_NAMES, linkSentence } from '../text/vocabulary';
+import {
+  KEPT_LINKS_NOTE,
+  LINK_KIND_NAMES,
+  NUMBER_NAMES,
+  PAIR_ORDER_SENTENCE,
+  linkMeasure,
+  linkSentence,
+} from '../text/vocabulary';
+import { ActivitySection } from './ActivitySection';
 import { FileRow } from './FileRow';
+import { HealthSection } from './HealthSection';
 import { LiveSessions } from './LiveSessions';
 import { ReceiptsSection } from './ReceiptsSection';
-import { busiestFiles, coupledPairs, filesNeedingAttention } from './overviewLists';
+import { busiestFiles, coupledPairs, filesNeedingAttention, listCount } from './overviewLists';
 import { RowList } from './RowList';
 import { Section } from './Section';
 import { SentenceView, summaryText } from './SummaryStrip';
+import { WarningsSection } from './WarningsSection';
+
+/**
+ * When the map's numbers were read, and, for a map too large to refresh by itself while agents
+ * work, the button that reads them again.
+ */
+function ReadAt(): ReactElement | null {
+  const load = useMapStore((state) => state.load);
+  const refresh = useMapStore((state) => state.refresh);
+  if (load.status !== 'ready') return null;
+  const isAuto = refreshesByItself({ load });
+  return (
+    <>
+      <p className="section-note" data-testid="overview-read-at">
+        {`Numbers read at ${formatUtcTime(load.receivedMs)} UTC by this computer's clock${isAuto ? ', and read again while agents work.' : '.'}`}
+      </p>
+      {isAuto ? null : (
+        <Button
+          variant="ghost"
+          size="compact"
+          className="show-more -ml-sm text-muted-foreground hover:text-foreground"
+          onClick={() => {
+            void refresh(PAGE_REFRESHERS);
+          }}
+        >
+          Read again
+        </Button>
+      )}
+    </>
+  );
+}
 
 /** Every summary sentence in full, each named for the checks by its key. */
 function AtAGlance({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
@@ -46,17 +91,19 @@ function AtAGlance({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
           ))}
         </ul>
       )}
+      <ReadAt />
     </Section>
   );
 }
 
-/** The pairs of files changed together most often. */
+/** The strongest pairs of files changed together, ranked as the daemon ranks them. */
 function ChangedTogether({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
-  const pairs = useMemo(() => coupledPairs(snapshot), [snapshot]);
+  const top = useMemo(() => coupledPairs(snapshot), [snapshot]);
+  const pairs = top.rows;
   return (
     <Section
       title={LINK_KIND_NAMES.co_change}
-      count={pairs.length}
+      count={listCount(top)}
       isOpenAtFirst
       testId="overview-pairs"
     >
@@ -65,6 +112,11 @@ function ChangedTogether({ snapshot }: { snapshot: GraphSnapshot }): ReactElemen
           No files have changed together yet. Cortex learns this from the repository's commits.
         </p>
       ) : (
+        <p className="section-note">
+          {PAIR_ORDER_SENTENCE} {KEPT_LINKS_NOTE}
+        </p>
+      )}
+      {pairs.length === 0 ? null : (
         <RowList
           items={pairs}
           keyOf={(pair) => `${pair.link.from}:${pair.link.to}`}
@@ -76,7 +128,7 @@ function ChangedTogether({ snapshot }: { snapshot: GraphSnapshot }): ReactElemen
                 file={pair.from.id}
                 name={`${a ?? ''} and ${b ?? ''}`}
                 nameKind="words"
-                measure={countOf(pair.link.commits, 'commit')}
+                measure={linkMeasure(pair.link)}
                 sentence={linkSentence(pair.link, pair.from, pair.to)}
                 lead={<IconSlot icon={sharedFileIcon(pair.from.path, pair.to.path)} />}
               />
@@ -92,15 +144,16 @@ function ChangedTogether({ snapshot }: { snapshot: GraphSnapshot }): ReactElemen
 function Busiest({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
   const busiest = useMemo(() => busiestFiles(snapshot), [snapshot]);
   const isTokens = busiest.measure === 'tokens';
-  const names = distinctNames(busiest.files.map((file) => file.path));
+  const files = busiest.files.rows;
+  const names = distinctNames(files.map((file) => file.path));
   return (
     <Section
       title="Busiest files"
-      count={busiest.files.length}
+      count={listCount(busiest.files)}
       isOpenAtFirst
       testId="overview-busiest"
     >
-      {busiest.files.length === 0 ? (
+      {files.length === 0 ? (
         <p className="panel-empty">No file has been changed or worked on yet.</p>
       ) : (
         <p className="section-note">
@@ -109,9 +162,9 @@ function Busiest({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
             : 'By commits: agents have not worked on any file here yet.'}
         </p>
       )}
-      {busiest.files.length === 0 ? null : (
+      {files.length === 0 ? null : (
         <RowList
-          items={busiest.files.map((file, index) => ({ file, name: names[index] ?? file.path }))}
+          items={files.map((file, index) => ({ file, name: names[index] ?? file.path }))}
           keyOf={({ file }) => file.id}
           label="Busiest files"
           renderRow={({ file, name }) => {
@@ -136,10 +189,16 @@ function Busiest({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
 
 /** The files with a suspect fact. */
 function NeedsAttention({ snapshot }: { snapshot: GraphSnapshot }): ReactElement {
-  const files = useMemo(() => filesNeedingAttention(snapshot), [snapshot]);
+  const top = useMemo(() => filesNeedingAttention(snapshot), [snapshot]);
+  const files = top.rows;
   const names = distinctNames(files.map((file) => file.path));
   return (
-    <Section title="Needs attention" count={files.length} isOpenAtFirst testId="overview-attention">
+    <Section
+      title="Needs attention"
+      count={listCount(top)}
+      isOpenAtFirst
+      testId="overview-attention"
+    >
       {files.length === 0 ? (
         <p className="panel-empty">Nothing needs attention: no fact is suspect.</p>
       ) : (
@@ -203,11 +262,14 @@ export function OverviewPanel({
       )}
       <div className="panel-body" data-scroll-area="true">
         <LiveSessions scene={scene} />
+        <ActivitySection scene={scene} />
         <AtAGlance snapshot={snapshot} />
         <ReceiptsSection />
         <ChangedTogether snapshot={snapshot} />
         <Busiest snapshot={snapshot} />
         <NeedsAttention snapshot={snapshot} />
+        <WarningsSection scene={scene} />
+        <HealthSection />
       </div>
     </aside>
   );

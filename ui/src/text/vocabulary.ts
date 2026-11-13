@@ -8,7 +8,7 @@ import { countOf, formatCount } from './format';
 
 /** What the picture is, said once on first open and again from the legend. */
 export const INTRO_SENTENCE =
-  'Folders are squares, files are circles on their rings; lines join files that change together.';
+  'Folders are squares, files are circles on their rings; lines join files that changed in the same commits, that agents used in one task, or that Cortex named in one work order.';
 
 /** Each kind of learned link, as the legend and the panels name it. */
 export const LINK_KIND_NAMES: Readonly<Record<LinkKind, string>> = {
@@ -17,12 +17,36 @@ export const LINK_KIND_NAMES: Readonly<Record<LinkKind, string>> = {
   work_order: 'Named in a work order',
 };
 
-/** One line on what each kind of link means, for the legend. */
+/**
+ * One line on what each kind of link means and what its strength measures, for the legend: the
+ * three kinds share the strength slider, but each makes its strength from a different count.
+ */
 export const LINK_KIND_MEANINGS: Readonly<Record<LinkKind, string>> = {
-  co_change: 'Solid: the two files changed in the same commits.',
-  used_together: 'Dashed: agents used both files in one task.',
-  work_order: 'Dotted: Cortex named both files in one work order.',
+  co_change:
+    "Solid: the two files changed in the same commits. Strength: the larger share of either file's commits that changed both, recent commits counting more.",
+  used_together:
+    'Dashed: agents used both files in one task. Strength: what those tasks added to the link, fading as later tasks pass, as a share of the most a link can hold.',
+  work_order:
+    'Dotted: Cortex named both files in one work order. Strength: the work orders that named both, as a share of the pair named most often.',
 };
+
+/**
+ * How many links of each kind the map keeps for one file: the daemon sends a link when it is among
+ * the 8 strongest of either of its files, so a file can show more when its neighbours keep links to it.
+ */
+export const KEPT_LINKS_PER_FILE = 8;
+
+/** What the link counts of the panels count: only the links the map keeps. */
+export const KEPT_LINKS_NOTE = `Counted among the links the map keeps: each file's ${KEPT_LINKS_PER_FILE} strongest of each kind.`;
+
+/** A cut list of one file's links of a kind: "top 8 of the 12 the map keeps". */
+export function keptLinksText(shown: number, kept: number): string {
+  return `top ${formatCount(shown)} of the ${formatCount(kept)} the map keeps`;
+}
+
+/** How the strongest co-change pairs are ordered, wherever a list of them is explained. */
+export const PAIR_ORDER_SENTENCE =
+  'Strongest first, by strength times ln(1 + commits), as Cortex ranks partners: a pair that often changed together leads a pair of two commits.';
 
 /** Each mark a file's circle can carry, as the legend names it. */
 export const MARK_NAMES: Readonly<Record<FileMark, string>> = {
@@ -89,14 +113,26 @@ export const NUMBER_NAMES = {
 
 /** What the attributed tokens count. */
 export const TOKENS_ATTRIBUTED_MEANING =
-  'Tokens of agent turns whose last read or edit was this file.';
+  'Tokens of agent turns whose last read or edit was this file: the input and output tokens of those responses, cache reads included.';
+
+/** Why a generated or vendored file shows no commit count. */
+export const COMMITS_NOT_COUNTED = 'Cortex does not count commits of generated or vendored files.';
+
+/** What the panel shows in place of the commits of a file whose commits are not counted. */
+export const NOT_COUNTED = 'Not counted';
 
 /**
  * What a file's commit count counts: only the history Cortex reads, so a count of 0 says no commit
  * it read changed the file, never that the file was never committed. Without the limits (the
- * summary not loaded yet) it says so without them.
+ * summary not loaded yet) it says so without them. A generated or vendored file's commits are not
+ * counted at all, and it says that instead.
  */
-export function commitsMeaning(commits: number, limits: HistoryLimits | null): string {
+export function commitsMeaning(
+  file: Pick<GraphFile, 'commits' | 'commits_counted'>,
+  limits: HistoryLimits | null,
+): string {
+  if (!file.commits_counted) return COMMITS_NOT_COUNTED;
+  const { commits } = file;
   const read =
     limits === null
       ? 'Commits Cortex read that changed this file'
@@ -120,10 +156,13 @@ export function fileSentence(file: GraphFile, mark: FileMark): string {
   const parts = [
     `${nameOf(file.path)}: ${countOf(file.lines, 'line')}`,
     `read ${countOf(file.reads, 'time')} by agents`,
-    // Zero counts only the commits Cortex read, so it is never said as "never changed".
-    file.commits === 0
-      ? 'not changed in the commits Cortex read'
-      : `changed in ${countOf(file.commits, 'commit')}`,
+    // Zero counts only the commits Cortex read, so it is never said as "never changed"; a
+    // generated or vendored file's commits are not counted at all.
+    !file.commits_counted
+      ? 'its commits not counted (generated or vendored)'
+      : file.commits === 0
+        ? 'not changed in the commits Cortex read'
+        : `changed in ${countOf(file.commits, 'commit')}`,
   ];
   const state = mark === 'plain' ? '' : ` ${MARK_NAMES[mark]}.`;
   return `${parts.join(', ')}.${state}`;
@@ -143,17 +182,36 @@ export function folderSentence(path: string, fileCount: number): string {
 }
 
 /**
- * What a link says, in one sentence with its number, seen from file `from`: "changed with
- * service.py in 12 of 40 commits" counts the commits both files share against all of `from`'s.
+ * A link's count with its unit, by kind, as a row shows it: "12 commits", "3 tasks", "2 work
+ * orders". Each kind's own count, never one "strength" for three different measures.
+ */
+export function linkMeasure(link: Pick<GraphLink, 'kind' | 'count'>): string {
+  switch (link.kind) {
+    case 'co_change':
+      return countOf(link.count, 'commit');
+    case 'used_together':
+      return countOf(link.count, 'task');
+    case 'work_order':
+      return countOf(link.count, 'work order');
+  }
+}
+
+/**
+ * What a link says, in one sentence with its count, seen from file `from`: "changed with
+ * service.py in 12 of 40 commits" counts the commits both files share against all of `from`'s;
+ * "used together by agents in 3 tasks" and "named together in 2 work orders" count what the other
+ * kinds are made from.
  */
 export function linkSentence(link: GraphLink, from: GraphFile, to: GraphFile): string {
   const [a, b] = [nameOf(from.path), nameOf(to.path)];
   switch (link.kind) {
     case 'co_change':
-      return `${a} changed with ${b} in ${formatCount(link.commits)} of ${countOf(from.commits, 'commit')}.`;
+      return from.commits_counted
+        ? `${a} changed with ${b} in ${formatCount(link.count)} of ${countOf(from.commits, 'commit')}.`
+        : `${a} changed with ${b} in ${countOf(link.count, 'commit')}.`;
     case 'used_together':
-      return `${a} and ${b} were used together by agents, strength ${link.weight.toFixed(2)} of 1.`;
+      return `${a} and ${b} were used together by agents in ${linkMeasure(link)}.`;
     case 'work_order':
-      return `${a} and ${b} were named in the same work orders, strength ${link.weight.toFixed(2)} of 1.`;
+      return `${a} and ${b} were named together in ${linkMeasure(link)}.`;
   }
 }

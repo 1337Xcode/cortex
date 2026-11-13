@@ -26,9 +26,13 @@ export function zoomPercent(zoom: number): number {
   return Math.round(2 ** zoom * 100);
 }
 
-/** The zoom as the controls show it: whole percent, with one decimal below 10%. */
+/**
+ * The zoom as the controls show it: whole percent, with one decimal below 10%, and "<0.1%" for a
+ * zoom that one decimal would round to 0, which the scale never is.
+ */
 export function formatZoom(zoom: number): string {
   const percent = 2 ** zoom * 100;
+  if (percent < 0.05) return '<0.1%';
   return percent < 10 ? `${percent.toFixed(1)}%` : `${Math.round(percent)}%`;
 }
 

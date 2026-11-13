@@ -153,18 +153,21 @@ question(
     await openFile(page, steps, 'book');
     const facts = filePanel(page).getByTestId('panel-facts').getByRole('listitem');
     await expect(facts).toHaveText([
-      'ActiveinvariantOrder totals are kept in integer cents.',
-      'SuspectconventionA cancelled order keeps its book entry.',
+      'ActiveinvariantOrder totals are kept in integer cents.Retire',
+      'SuspectconventionA cancelled order keeps its book entry.Confirm againRetire',
     ]);
     return '2 facts, 1 suspect';
   },
 );
 
 // The panel's header and numbers hold three stops before its sections: "Open in editor" and the
-// commits and tokens numbers, which explain what they count on focus.
-question('Why is book.rs the way it is?', { keys: 17, screens: 2 }, async (page, steps) => {
+// commits and tokens numbers, which explain what they count on focus. Then the linked files'
+// toggle and its four rows, the facts' toggle and the facts' three buttons (Retire on fact 3,
+// Confirm again and Retire on the suspect fact 8): the commits behind the file's lines are the
+// 13th stop, so 6 keys to open the panel, 13 Tabs and Enter.
+question('Why is book.rs the way it is?', { keys: 20, screens: 2 }, async (page, steps) => {
   await openFile(page, steps, 'book');
-  await steps.tabTo(filePanel(page).getByRole('button', { name: /^History/ }));
+  await steps.tabTo(filePanel(page).getByRole('button', { name: /^Commits behind its lines/ }));
   await steps.press('Enter');
   const subject = filePanel(page).getByTestId('panel-history').locator('.history-subject').first();
   await expect(subject).toHaveText('Keep cancelled orders in the book');
@@ -173,7 +176,7 @@ question('Why is book.rs the way it is?', { keys: 17, screens: 2 }, async (page,
 
 question(
   'What did Cortex tell agents about book.rs, and did it help?',
-  { keys: 18, screens: 2 },
+  { keys: 21, screens: 2 },
   async (page, steps) => {
     await openFile(page, steps, 'book');
     await steps.tabTo(filePanel(page).getByRole('button', { name: /^What Cortex told agents/ }));
@@ -202,12 +205,12 @@ question(
   (nowMs) => ({ ...smallFixture(nowMs), live: threeSessions(nowMs) }),
 );
 
-// The receipts section sits closed under "At a glance", the 19th stop of Tab (after the canvas, the
-// ten map controls, the search box, the strip's two files, the live sessions, "At a glance" and its
-// two files); Enter opens it on the same screen.
+// The receipts section sits closed under "At a glance", the 20th stop of Tab (after the canvas, the
+// ten map controls, the search box, the strip's two files, the live sessions, the activity, "At a
+// glance" and its two files); Enter opens it on the same screen.
 question(
   "What did agents' work cost, and did Cortex help?",
-  { keys: 20, screens: 1 },
+  { keys: 21, screens: 1 },
   async (page, steps) => {
     await steps.tabTo(page.getByTestId('overview-receipts').locator('.section-toggle'));
     await steps.press('Enter');
@@ -220,6 +223,73 @@ question(
       '600 tokens injected by Cortex (primer: 300 tokens), against 32,000 input tokens in total.',
     );
     return 'success 0.80 with Cortex, 0.70 held out, +0.10 (-0.10 to +0.30), 30 tasks a side; 600 tokens injected against 32,000 input';
+  },
+);
+
+question(
+  'What did agents do lately? (a session running)',
+  { keys: 0, screens: 1 },
+  async (page) => {
+    // While a session runs the activity is open, its newest event first.
+    const first = page.getByTestId('overview-activity').getByRole('listitem').first();
+    await expect(first).toHaveText('Claude Code 3f2a… edited book.rs 2 min ago', {
+      useInnerText: true,
+    });
+    return 'Claude Code 3f2a… edited book.rs, 2 min ago';
+  },
+  (nowMs) => ({ ...smallFixture(nowMs), live: threeSessions(nowMs) }),
+);
+
+// With no session running the activity sits closed under the live sessions, the 16th stop of Tab
+// (after the canvas, the ten map controls, the search box, the strip's two files and the live
+// sessions); Enter opens it on the same screen.
+question(
+  'What did agents do lately? (no session running)',
+  { keys: 17, screens: 1 },
+  async (page, steps) => {
+    await steps.tabTo(page.getByTestId('overview-activity').locator('.section-toggle'));
+    await steps.press('Enter');
+    const first = page.getByTestId('overview-activity').getByRole('listitem').first();
+    await expect(first).toHaveText('Claude Code 3f2a… edited book.rs 2 min ago', {
+      useInnerText: true,
+    });
+    return 'Claude Code 3f2a… edited book.rs, 2 min ago';
+  },
+);
+
+// The warnings sit closed near the end of the overview, the 36th stop of Tab: after the receipts
+// (the 20th), the changed-together toggle and its five pairs, the busiest files' toggle, five rows
+// and "Show 2 more", and the needs-attention toggle and its one file. Enter opens them.
+question(
+  'Which warnings did Cortex give, and were they followed?',
+  { keys: 37, screens: 1 },
+  async (page, steps) => {
+    await steps.tabTo(page.getByTestId('overview-warnings').locator('.section-toggle'), 80);
+    await steps.press('Enter');
+    const section = page.getByTestId('overview-warnings');
+    await expect(section.locator('.stack-what').first()).toHaveText(
+      'book.rs usually changes with mod.rs',
+    );
+    await expect(section.locator('.stack-meta').first()).toHaveText(/^Open · strength 0\.62 · /);
+    return 'book.rs usually changes with mod.rs: open, strength 0.62; 2 open, 3 resolved';
+  },
+);
+
+// 9 keys open payment.rs's panel; then its commits and tokens numbers (it has no editor link), the
+// linked files' toggle and five rows (two changed together, two used together, one work order) and
+// the facts' toggle: Confirm is the 10th stop, and Enter sends it.
+question(
+  'Confirm the candidate fact on payment.rs',
+  { keys: 20, screens: 2 },
+  async (page, steps) => {
+    await openFile(page, steps, 'payment');
+    await steps.tabTo(filePanel(page).getByRole('button', { name: 'Confirm fact 11' }));
+    await steps.press('Enter');
+    const said = filePanel(page).getByTestId('fact-said');
+    await expect(said).toHaveText(
+      "Fact 11 confirmed: it is active now, and Cortex may give it to agents when its evidence passes Cortex's checks.",
+    );
+    return (await said.textContent()) ?? '';
   },
 );
 

@@ -4,7 +4,9 @@
 // one of 100,000 files. Each follows the daemon's contract, so the page's real guards accept it.
 // Each also has a health (finished reading) and a live state (no session running) unless a test
 // gives others. The receipts come in three states: a cold store, 29 tasks a side (not enough to
-// compare) and 30 a side with the comparison.
+// compare) and 30 a side with the comparison. The ten-file one also has agents' activity, open and
+// resolved warnings, a candidate fact on payment.rs and the symbols of book.rs with the lines work
+// orders selected; the others have neither activity nor warnings.
 
 /** A JSON value as the fixtures write them. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -22,6 +24,7 @@ export interface FixtureFile {
   suspect: number;
   reads: number;
   commits: number;
+  commits_counted: boolean;
 }
 
 /** A symbol the fixture's search finds. */
@@ -44,13 +47,90 @@ export interface Fixture {
   readonly live: Json;
   /** `api/receipts`. */
   readonly receipts: Json;
+  /** `api/activity`. */
+  readonly activity: Json;
+  /** `api/warnings`. */
+  readonly warnings: Json;
 }
 
-/** The health of a daemon that has finished reading the repository. */
-export const READY_HEALTH: Json = { version: '0.0.0', has_assets: true, index: 'ready' };
+/** The health of a daemon that has finished reading the repository and cannot say more. */
+export const READY_HEALTH: Json = {
+  version: '0.0.0',
+  has_assets: true,
+  index: 'ready',
+  daemon: null,
+};
 
 /** The health of a daemon still reading the repository for the first time. */
-export const READING_HEALTH: Json = { version: '0.0.0', has_assets: true, index: 'reading' };
+export const READING_HEALTH: Json = {
+  version: '0.0.0',
+  has_assets: true,
+  index: 'reading',
+  daemon: null,
+};
+
+/**
+ * The health of a daemon that has run 2 hours 1 minute: two hooks' handling times, two errors
+ * (the newest first), one batch not recorded, the miner done, the graph built, upkeep run and the
+ * history worker off.
+ */
+export function workingHealth(nowMs: number): Json {
+  return {
+    version: '0.0.0',
+    has_assets: true,
+    index: 'ready',
+    daemon: {
+      uptime_ms: 7_260_000,
+      hooks: [
+        { hook: 'pre_tool', requests: 412, p50_us: 850, p95_us: 2400, p99_us: 9100 },
+        { hook: 'prompt', requests: 37, p50_us: 14_200, p95_us: 31_000, p99_us: 48_500 },
+      ],
+      errors: [
+        { at_ms: nowMs - 5 * MINUTE_MS, count: 3, message: 'the watcher lost an event' },
+        { at_ms: nowMs - 2 * HOUR_MS, count: 1, message: 'a hook payload was not JSON' },
+      ],
+      events_dropped: 0,
+      failed_batches: 1,
+      git: 'ready',
+      git_detail: null,
+      graph_nodes: 1200,
+      graph_links: 5400,
+      upkeep_at_ms: nowMs - HOUR_MS,
+      history: 'off',
+    },
+  };
+}
+
+/** No event and no warning, as a store no agent has worked in holds. */
+export const NO_ACTIVITY: Json = { version: 1, events: [] };
+export const NO_WARNINGS: Json = { version: 1, warnings: [] };
+
+/**
+ * One file's `api/file` body: no fact, commit, symbol or told entry, the history worker on and no
+ * editor link, changed by `fields`; `history_total` and `symbols_total` follow the lists given.
+ */
+export function fileDetail(id: number, path: string, fields: { [key: string]: Json } = {}): Json {
+  const detail: { [key: string]: Json } = {
+    version: 1,
+    id,
+    path,
+    facts: [],
+    history: [],
+    history_reader: 'on',
+    symbols: [],
+    selected: [],
+    told: [],
+    editor_url: null,
+    ...fields,
+  };
+  const length = (key: string): number => {
+    const list = detail[key];
+    return Array.isArray(list) ? list.length : 0;
+  };
+  if (!('history_total' in fields)) detail['history_total'] = length('history');
+  if (!('symbols_total' in fields)) detail['symbols_total'] = length('symbols');
+  return detail;
+}
 
 /** The live state with no session running. */
 export const NO_SESSIONS: Json = { version: 1, sessions: [] };
@@ -58,7 +138,8 @@ export const NO_SESSIONS: Json = { version: 1, sessions: [] };
 /** The history limits every fixture's summary states. */
 const HISTORY_LIMITS: Json = { max_commits: 5000, max_age_days: 365, max_files_per_commit: 30 };
 
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 
 function file(id: number, path: string, fields: Partial<FixtureFile>): FixtureFile {
   return {
@@ -72,6 +153,7 @@ function file(id: number, path: string, fields: Partial<FixtureFile>): FixtureFi
     suspect: 0,
     reads: 0,
     commits: 0,
+    commits_counted: true,
     ...fields,
   };
 }
@@ -104,6 +186,7 @@ export function smallFixture(nowMs: number): Fixture {
       reads: 9,
       tokens: 29910,
       commits: 13,
+      facts: 1,
       touched_ms: nowMs - 2 * HOUR_MS,
     }),
     file(7, 'tests/orders.rs', { lines: 150, commits: 8 }),
@@ -116,12 +199,15 @@ export function smallFixture(nowMs: number): Fixture {
     }),
     file(9, 'ui/view.ts', { lines: 90, commits: 2, touched_ms: nowMs - 72 * HOUR_MS }),
   ];
-  const link = (from: number, to: number, kind: string, weight: number, commits = 0): Json => ({
+  // `count` is what each link's weight is made from: a co-change link's commits, the tasks that
+  // used both files, the work orders that named both.
+  const link = (from: number, to: number, kind: string, weight: number, count: number): Json => ({
     from,
     to,
     kind,
     weight,
-    commits,
+    commits: kind === 'co_change' ? count : 0,
+    count,
   });
   const links = [
     link(1, 2, 'co_change', 0.7, 5),
@@ -129,17 +215,24 @@ export function smallFixture(nowMs: number): Fixture {
     link(4, 6, 'co_change', 0.8, 9),
     link(4, 7, 'co_change', 0.55, 6),
     link(6, 7, 'co_change', 0.3, 3),
-    link(1, 6, 'used_together', 0.6),
-    link(5, 6, 'used_together', 0.4),
-    link(8, 9, 'used_together', 0.5),
-    link(0, 3, 'work_order', 0.1),
-    link(2, 6, 'work_order', 0.35),
-    link(4, 8, 'work_order', 0.45),
+    link(1, 6, 'used_together', 0.6, 4),
+    link(5, 6, 'used_together', 0.4, 2),
+    link(8, 9, 'used_together', 0.5, 3),
+    link(0, 3, 'work_order', 0.1, 1),
+    link(2, 6, 'work_order', 0.35, 2),
+    link(4, 8, 'work_order', 0.45, 3),
   ];
-  const book = {
-    version: 1,
-    id: 4,
-    path: 'src/orders/book.rs',
+  const payment = fileDetail(6, 'src/orders/payment.rs', {
+    facts: [
+      {
+        id: 11,
+        kind: 'convention',
+        status: 'candidate',
+        text: 'A payment is charged once per order.',
+      },
+    ],
+  });
+  const book = fileDetail(4, 'src/orders/book.rs', {
     facts: [
       {
         id: 3,
@@ -158,12 +251,41 @@ export function smallFixture(nowMs: number): Fixture {
       { subject: 'Keep cancelled orders in the book', refs: '#512', date_s: 1762300000 },
       { subject: 'Charge in integer cents', refs: '#482', date_s: 1761000000 },
     ],
+    history_total: 2,
+    symbols: [
+      {
+        name: 'OrderBook',
+        kind: 'class',
+        start_line: 40,
+        end_line: 120,
+        is_nested: false,
+        selected: 2,
+      },
+      { name: 'add', kind: 'method', start_line: 52, end_line: 70, is_nested: true, selected: 2 },
+      {
+        name: 'cancel',
+        kind: 'method',
+        start_line: 88,
+        end_line: 104,
+        is_nested: true,
+        selected: 0,
+      },
+      {
+        name: 'total_cents',
+        kind: 'function',
+        start_line: 140,
+        end_line: 152,
+        is_nested: false,
+        selected: 0,
+      },
+    ],
+    selected: [{ start_line: 50, end_line: 72, orders: 2 }],
     told: [
       { kind: 'work_order', at_ms: nowMs - HOUR_MS, used: true },
       { kind: 'warning', at_ms: nowMs - 30 * HOUR_MS, used: null },
     ],
     editor_url: 'vscode://file/C:/repo/src/orders/book.rs:1',
-  };
+  });
   return {
     graph: { version: 1, files, links },
     summary: {
@@ -182,10 +304,103 @@ export function smallFixture(nowMs: number): Fixture {
       { file: 1, name: 'Invoice', line: 12 },
       { file: 6, name: 'charge_order', line: 88 },
     ],
-    details: new Map([[4, book]]),
+    details: new Map([
+      [4, book],
+      [6, payment],
+    ]),
     health: READY_HEALTH,
     live: NO_SESSIONS,
     receipts: comparedReceipts(),
+    activity: smallActivity(nowMs),
+    warnings: smallWarnings(nowMs),
+  };
+}
+
+/** A file as an answer names it: its id in the daemon's graph and its path, or neither. */
+export type Named = readonly [number | null, string | null];
+
+/** The ten-file repository's files the activity and warnings name, by id and path. */
+const BOOK: Named = [4, 'src/orders/book.rs'];
+const MOD: Named = [5, 'src/orders/mod.rs'];
+const INVOICE: Named = [1, 'src/billing/invoice.rs'];
+const TAX: Named = [2, 'src/billing/tax.rs'];
+const LIB: Named = [3, 'src/lib.rs'];
+const PAYMENT: Named = [6, 'src/orders/payment.rs'];
+const ORDERS_TEST: Named = [7, 'tests/orders.rs'];
+const NONE: Named = [null, null];
+
+/** One event of the activity, `agoMs` before `nowMs`, about `file` (or none). */
+export function happened(
+  nowMs: number,
+  agoMs: number,
+  kind: string,
+  who: { readonly session: string; readonly agent: string | null; readonly title: string | null },
+  file: Named,
+): Json {
+  return { at_ms: nowMs - agoMs, kind, ...who, file: file[0], path: file[1] };
+}
+
+/** Claude Code's session 3f2a… and Codex's 9b1c…, as the live fixtures name them. */
+export const CLAUDE = { session: '3f2a9c1e', agent: 'claude', title: 'Claude Code' };
+const CODEX = { session: '9b1c40aa', agent: 'codex', title: 'Codex' };
+
+/**
+ * Seven events, newest first: Claude Code edited book.rs 2 minutes ago, read mod.rs 4 minutes ago,
+ * ran a shell command 6 minutes ago; Codex read invoice.rs 9 minutes ago and was given a prompt 10
+ * minutes ago; Claude Code read book.rs 12 minutes ago and was given a prompt 13 minutes ago.
+ */
+export function smallActivity(nowMs: number): Json {
+  return {
+    version: 1,
+    events: [
+      happened(nowMs, 2 * MINUTE_MS, 'edit', CLAUDE, BOOK),
+      happened(nowMs, 4 * MINUTE_MS, 'read', CLAUDE, MOD),
+      happened(nowMs, 6 * MINUTE_MS, 'shell', CLAUDE, NONE),
+      happened(nowMs, 9 * MINUTE_MS, 'read', CODEX, INVOICE),
+      happened(nowMs, 10 * MINUTE_MS, 'prompt', CODEX, NONE),
+      happened(nowMs, 12 * MINUTE_MS, 'read', CLAUDE, BOOK),
+      happened(nowMs, 13 * MINUTE_MS, 'prompt', CLAUDE, NONE),
+    ],
+  };
+}
+
+/**
+ * Five warnings, newest first: book.rs usually changes with mod.rs (open, 0.62); tests/orders.rs is
+ * a test of book.rs (open, 0.90); payment.rs usually changes with book.rs (followed, 0.80);
+ * tax.rs calls a symbol of invoice.rs whose signature changed (not followed, 0.60); and a test of
+ * lib.rs the map no longer lists (not followed, 0.70).
+ */
+export function smallWarnings(nowMs: number): Json {
+  return {
+    version: 1,
+    warnings: [
+      givenWarning(nowMs - HOUR_MS, 'cochange', [BOOK, MOD], 0.62, 'open'),
+      givenWarning(nowMs - 2 * HOUR_MS, 'test', [BOOK, ORDERS_TEST], 0.9, 'open'),
+      givenWarning(nowMs - 26 * HOUR_MS, 'cochange', [PAYMENT, BOOK], 0.8, 'followed'),
+      givenWarning(nowMs - 30 * HOUR_MS, 'call_site', [INVOICE, TAX], 0.6, 'not_followed'),
+      givenWarning(nowMs - 50 * HOUR_MS, 'test', [LIB, NONE], 0.7, 'not_followed'),
+    ],
+  };
+}
+
+/** One warning as `api/warnings` lists it, about `files[0]` and naming `files[1]`. */
+export function givenWarning(
+  atMs: number,
+  kind: string,
+  files: readonly [Named, Named],
+  strength: number,
+  state: string,
+): Json {
+  const [source, target] = files;
+  return {
+    at_ms: atMs,
+    kind,
+    source: source[0],
+    target: target[0],
+    source_path: source[1],
+    target_path: target[1],
+    strength,
+    state,
   };
 }
 
@@ -221,6 +436,8 @@ export function coldFixture(): Fixture {
     health: READY_HEALTH,
     live: NO_SESSIONS,
     receipts: coldReceipts(),
+    activity: NO_ACTIVITY,
+    warnings: NO_WARNINGS,
   };
 }
 
@@ -245,7 +462,9 @@ function generatedLinks(count: number, random: () => number): Json[] {
       const to = Math.min(count - 1, from + 1 + Math.floor(random() * 40));
       const weight = Math.round(random() * 100) / 100;
       const commits = kind === 'co_change' ? 1 + Math.floor(random() * 20) : 0;
-      links.push({ from, to, kind, weight, commits });
+      // A co-change link is made of its commits; one task or work order for the other kinds, so
+      // the generator draws no more numbers than it did before links had counts.
+      links.push({ from, to, kind, weight, commits, count: kind === 'co_change' ? commits : 1 });
     }
   }
   return links;
@@ -317,6 +536,8 @@ export function largeFixture(count: number): Fixture {
     health: READY_HEALTH,
     live: NO_SESSIONS,
     receipts: shortReceipts(),
+    activity: NO_ACTIVITY,
+    warnings: NO_WARNINGS,
   };
 }
 
@@ -396,7 +617,6 @@ export function manySessions(count: number, fileCount: number, nowMs: number): J
 /** 2026-11-10 09:00 UTC: the receipts' sessions start from here, so their times read the same. */
 export const RECEIPTS_BASE_MS = Date.UTC(2026, 10, 10, 9, 0);
 
-const MINUTE_MS = 60_000;
 const DAY_MS = 24 * HOUR_MS;
 
 /** What each response costs in the receipt fixtures: $0.0025, $0.0005 of it on cache writes. */

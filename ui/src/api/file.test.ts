@@ -4,8 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchFileDetail, fileUrl, parseFileDetail } from './file';
 import type { ApiErrorCode } from './guard';
 
+/**
+ * A detail with every kind of entry; `history_total` and `symbols_total` follow the lists given
+ * unless an override sets them.
+ */
 function detail(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
+  const merged: Record<string, unknown> = {
     version: 1,
     id: 12,
     path: 'src/orders.rs',
@@ -18,6 +22,23 @@ function detail(overrides: Record<string, unknown> = {}): Record<string, unknown
       { subject: 'Split the order book', refs: '', date_s: 1762300000 },
       { subject: 'Add orders', refs: '#12', date_s: 1700000000 },
     ],
+    history_reader: 'on',
+    symbols: [
+      { name: 'Order', kind: 'class', start_line: 3, end_line: 40, is_nested: false, selected: 2 },
+      { name: 'total', kind: 'method', start_line: 12, end_line: 18, is_nested: true, selected: 2 },
+      {
+        name: 'cancel',
+        kind: 'method',
+        start_line: 12,
+        end_line: 30,
+        is_nested: true,
+        selected: 0,
+      },
+    ],
+    selected: [
+      { start_line: 10, end_line: 20, orders: 2 },
+      { start_line: 10, end_line: 24, orders: 1 },
+    ],
     told: [
       { kind: 'work_order', at_ms: 1762900000000, used: true },
       { kind: 'warning', at_ms: 1762800000000, used: null },
@@ -25,6 +46,13 @@ function detail(overrides: Record<string, unknown> = {}): Record<string, unknown
     editor_url: 'vscode://file/C:/repo/src/orders.rs:1',
     ...overrides,
   };
+  const length = (key: string): number => {
+    const list = merged[key];
+    return Array.isArray(list) ? list.length : 0;
+  };
+  if (!('history_total' in overrides)) merged['history_total'] = length('history');
+  if (!('symbols_total' in overrides)) merged['symbols_total'] = length('symbols');
+  return merged;
 }
 
 describe('parseFileDetail accepts', () => {
@@ -58,6 +86,30 @@ describe('parseFileDetail accepts', () => {
     const facts = [{ id: 1, kind: 'note', status: 'candidate', text: 'x'.repeat(240) }];
     expect(parseFileDetail(detail({ facts }), 12).ok).toBe(true);
   });
+
+  it('the 10 newest of 12 commits, and the first 500 of 640 symbols', () => {
+    const history = Array.from({ length: 10 }, () => ({ subject: 's', refs: '', date_s: 1 }));
+    const symbols = Array.from({ length: 500 }, (_, at) => ({
+      name: `f${at}`,
+      kind: 'function',
+      start_line: at + 1,
+      end_line: at + 1,
+      is_nested: false,
+      selected: 0,
+    }));
+    const capped = detail({ history, history_total: 12, symbols, symbols_total: 640 });
+    const result = parseFileDetail(capped, 12);
+    expect(
+      result.ok ? [result.value.history_total, result.value.symbols_total] : result.error,
+    ).toEqual([12, 640]);
+  });
+
+  it('each state of the history worker', () => {
+    for (const reader of ['on', 'off', 'refused']) {
+      const result = parseFileDetail(detail({ history: [], history_reader: reader }), 12);
+      expect(result.ok ? result.value.history_reader : result.error).toBe(reader);
+    }
+  });
 });
 
 const fact = (change: Record<string, unknown>): Record<string, unknown> =>
@@ -66,6 +118,21 @@ const told = (change: Record<string, unknown>): Record<string, unknown> =>
   detail({ told: [{ kind: 'work_order', at_ms: 1, used: false, ...change }] });
 const history = (change: Record<string, unknown>): Record<string, unknown> =>
   detail({ history: [{ subject: 's', refs: '', date_s: 1, ...change }] });
+const symbol = (change: Record<string, unknown>): Record<string, unknown> =>
+  detail({
+    symbols: [
+      { name: 'f', kind: 'function', start_line: 1, end_line: 9, is_nested: false, selected: 0 },
+      {
+        name: 'g',
+        kind: 'function',
+        start_line: 10,
+        end_line: 12,
+        is_nested: false,
+        selected: 0,
+        ...change,
+      },
+    ],
+  });
 
 const REJECTED: [string, unknown, ApiErrorCode][] = [
   ['a string at the top', 'file', 'bad_shape'],
@@ -119,6 +186,51 @@ const REJECTED: [string, unknown, ApiErrorCode][] = [
   ],
   ['a subject of 201 characters', history({ subject: 'x'.repeat(201) }), 'bad_range'],
   ['refs of 81 characters', history({ refs: '#'.repeat(81) }), 'bad_range'],
+  ['a history total below the commits listed', detail({ history_total: 2 }), 'bad_range'],
+  ['a history total of 12 with 3 listed', detail({ history_total: 12 }), 'bad_range'],
+  ['a missing history total', detail({ history_total: undefined }), 'bad_shape'],
+  ['an unknown history worker state', detail({ history_reader: 'paused' }), 'bad_kind'],
+  ['a symbols total of 4 with 3 listed', detail({ symbols_total: 4 }), 'bad_range'],
+  ['an unknown symbol kind', symbol({ kind: 'macro' }), 'bad_kind'],
+  ['an empty symbol name', symbol({ name: '' }), 'bad_shape'],
+  ['a symbol at line 0', symbol({ start_line: 0 }), 'bad_range'],
+  ['a symbol ending before it starts', symbol({ start_line: 9, end_line: 8 }), 'bad_range'],
+  ['a symbol selected by 21 work orders', symbol({ selected: 21 }), 'bad_range'],
+  ['is_nested that is not a boolean', symbol({ is_nested: 'no' }), 'bad_shape'],
+  [
+    'symbols out of line order',
+    detail({ symbols: [...(detail().symbols as unknown[])].reverse() }),
+    'bad_order',
+  ],
+  [
+    'a selected span repeated',
+    detail({
+      selected: [
+        { start_line: 10, end_line: 20, orders: 1 },
+        { start_line: 10, end_line: 20, orders: 1 },
+      ],
+    }),
+    'bad_order',
+  ],
+  [
+    'a selected span no work order selected',
+    detail({ selected: [{ start_line: 1, end_line: 2, orders: 0 }] }),
+    'bad_range',
+  ],
+  [
+    'more than 500 symbols',
+    detail({
+      symbols: Array.from({ length: 501 }, (_, at) => ({
+        name: 'f',
+        kind: 'function',
+        start_line: at + 1,
+        end_line: at + 1,
+        is_nested: false,
+        selected: 0,
+      })),
+    }),
+    'bad_range',
+  ],
 ];
 
 describe('parseFileDetail rejects', () => {

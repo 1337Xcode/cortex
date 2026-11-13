@@ -1,7 +1,8 @@
 // The Recent view: what changed lately. Files an agent read or edited in the 24 hours before the
-// map loaded are lit green; the rest are dimmed. A folder drawn whole is lit when any of its files is.
+// map last read its data (when it loaded, or its latest quiet refresh while agents work) are lit
+// green; the rest are dimmed. A folder drawn whole is lit when any of its files is.
 import { RECENT_WINDOW_MS } from '../theme/tokens';
-import { countOf } from '../text/format';
+import { countOf, formatCount } from '../text/format';
 import { defineView, sortIntoTones, type ToneSpec } from './view';
 
 const LIT: ToneSpec = {
@@ -39,8 +40,8 @@ export const recentView = defineView({
     const lit = sorted.tones[0]?.count ?? 0;
     const scale =
       lit === 0
-        ? 'No file was read or edited by an agent in the 24 hours before the map loaded.'
-        : `${countOf(lit, 'file')} of ${files.length} read or edited by an agent in the 24 hours before the map loaded.`;
+        ? 'No file was read or edited by an agent in the 24 hours before the map last read its data.'
+        : `${countOf(lit, 'file')} of ${formatCount(files.length)} read or edited by an agent in the 24 hours before the map last read its data.`;
     return { ...sorted, isTinted: true, folderRule: 'strongest', scale };
   },
 });

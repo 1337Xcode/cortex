@@ -2,7 +2,15 @@
 // uses.
 import { describe, expect, it } from 'vitest';
 import { sevenFileScene } from '../map/testScene';
-import { countOf, formatCount, formatDate, formatPercent } from '../text/format';
+import {
+  countOf,
+  formatCount,
+  formatDate,
+  formatMicros,
+  formatPercent,
+  formatSpan,
+  formatUtcMoment,
+} from '../text/format';
 import { shortcutFor, viewIndexFor, type KeyInput } from './shortcuts';
 import { checkResults, stateForText } from './useSearch';
 
@@ -85,6 +93,35 @@ describe('format', () => {
     ]);
     expect([formatPercent(312, 1204), formatPercent(0, 0)]).toEqual(['26%', '0%']);
     expect(formatDate(1762300000 * 1000)).toBe('2025-11-04');
+  });
+
+  it('never rounds a share that is neither none nor all to 0% or 100%', () => {
+    // 2 of 1,595 is 0.125%; 1,594 of 1,595 is 99.94%; 5 of 1,000 is 0.5%, which is not below 1%.
+    expect([
+      formatPercent(2, 1595),
+      formatPercent(0, 10),
+      formatPercent(1594, 1595),
+      formatPercent(10, 10),
+      formatPercent(5, 1000),
+      formatPercent(11, 1000),
+    ]).toEqual(['under 1%', '0%', 'over 99%', '100%', 'under 1%', '1%']);
+  });
+
+  it('writes spans of time in their largest whole unit, and UTC times', () => {
+    expect([999, 45_000, 150_000, 3 * 3_600_000 + 5, 4 * 86_400_000].map(formatSpan)).toEqual([
+      'under a second',
+      '45 seconds',
+      '2 minutes',
+      '3 hours',
+      '4 days',
+    ]);
+    // 1762300000000 ms is 2025-11-04 23:46:40 UTC.
+    expect(formatUtcMoment(1762300000000)).toBe('2025-11-04 23:46:40 UTC');
+    expect([formatMicros(850), formatMicros(2400), formatMicros(1_234_567)]).toEqual([
+      '850 µs',
+      '2.4 ms',
+      '1,234.6 ms',
+    ]);
   });
 
   it('writes a date for every time a date can hold and says so past it, never throwing', () => {

@@ -30,6 +30,7 @@ export function testFile(id: number, path: string, fields: Partial<GraphFile> = 
     suspect: 0,
     reads: 0,
     commits: 0,
+    commits_counted: true,
     ...fields,
   };
 }
@@ -53,12 +54,12 @@ export function defaultPaint(scene: Scene, nowMs = 0): ViewPaint {
   return paintView(defaultView, scene, nowMs);
 }
 
-/** A link with no commits, for kinds other than co-change. */
+/** A link made from one commit, task or work order, as its kind counts them. */
 export function testLink(
   from: number,
   to: number,
   kind: GraphLink['kind'],
   weight: number,
 ): GraphLink {
-  return { from, to, kind, weight, commits: kind === 'co_change' ? 1 : 0 };
+  return { from, to, kind, weight, commits: kind === 'co_change' ? 1 : 0, count: 1 };
 }

@@ -1,8 +1,9 @@
 // Nothing spilled, nothing crammed, one family: at 1440x900 and 390x844 in both themes, on the
 // ten-file repository with a file selected and every section open, on the cold repository and on
 // the overview of 100,000 files, with each view and its legend, with three live sessions and with
-// the live view paused, and with the receipts open in each of their three states, every element is
-// walked and the check fails on
+// the live view paused, with the receipts open in each of their three states, and with the
+// activity, the warnings and the daemon's health open and a fact's retire step asked, every element
+// is walked and the check fails on
 // - a box whose content is wider or taller than the box, unless the box is a declared scroll area
 //   (an open overlay, such as the search results, is checked on its own, apart from its anchor);
 // - visible text drawn below 12 px;
@@ -19,6 +20,7 @@ import {
   shortReceipts,
   smallFixture,
   threeSessions,
+  workingHealth,
   type Fixture,
 } from './fixtures';
 import { filePanel, nextFrames, openMap, searchAndPick } from './helpers';
@@ -193,6 +195,35 @@ for (const size of SIZES) {
         expect(await findProblems(page, TYPE.small.sizePx), name).toEqual([]);
         expect(record.errors).toEqual([]);
       }
+    });
+
+    test(`${prefix}: the activity, the warnings and the health open, and a fact's retire step`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(size);
+      const nowMs = Date.now();
+      const fixture: Fixture = {
+        ...smallFixture(nowMs),
+        live: threeSessions(nowMs),
+        health: workingHealth(nowMs),
+      };
+      const record = await openMap(page, fixture, scheme);
+      if (size.width < 720) await page.getByRole('button', { name: 'Overview' }).click();
+      const activity = page.getByTestId('overview-activity');
+      await expect(activity.getByRole('listitem')).toHaveCount(5);
+      await activity.getByRole('button', { name: 'Show 2 more' }).click();
+      await page.getByRole('button', { name: /^Warnings/ }).click();
+      await expect(page.getByTestId('overview-warnings').locator('.stack-row')).toHaveCount(5);
+      await page.getByRole('button', { name: /^Health/ }).click();
+      await expect(page.getByTestId('health-hooks')).toBeVisible();
+      expect(await findProblems(page, TYPE.small.sizePx), 'overview sections').toEqual([]);
+      if (size.width < 720) await page.getByRole('button', { name: 'Close the overview' }).click();
+      await searchAndPick(page, 'book');
+      await openSections(page);
+      await filePanel(page).getByRole('button', { name: 'Retire fact 3' }).click();
+      await expect(filePanel(page).getByRole('button', { name: 'Keep it' })).toBeFocused();
+      expect(await findProblems(page, TYPE.small.sizePx), 'retire step').toEqual([]);
+      expect(record.errors).toEqual([]);
     });
 
     test(`${prefix}: the cold repository`, async ({ page }) => {

@@ -1,13 +1,15 @@
 // One file's detail for the side panel: the facts anchored to it, the stored history of its
-// blamed commits, the times Cortex named it to an agent with whether the agent then used it, and
-// the link that opens it in the person's editor. Links come from the graph snapshot and are not
-// repeated here.
+// blamed commits (the newest ten, how many there are, and whether the history worker runs), the
+// symbols it defines with the spans the latest work orders selected, the times Cortex named it to
+// an agent with whether the agent then used it, and the link that opens it in the person's editor.
+// Links come from the graph snapshot and are not repeated here.
 import {
   API_VERSION,
   checkMaxLength,
   codePointLength,
   fail,
   readArray,
+  readBoolean,
   readCappedString,
   readCount,
   readEpochMs,
@@ -41,6 +43,51 @@ export const MAX_TOLD = 20;
 
 /** The longest editor link the page accepts, in characters. */
 export const MAX_EDITOR_URL_CHARS = 2048;
+
+/** The most symbols the daemon lists for a file: the first in it, in line order. */
+export const MAX_SYMBOLS = 500;
+
+/** Whether the history worker reads blames: it runs, it is off, or git is refused to it. */
+export const HISTORY_READERS = ['on', 'off', 'refused'] as const;
+
+/** One of `HISTORY_READERS`. */
+export type HistoryReader = (typeof HISTORY_READERS)[number];
+
+/** What a symbol is, as the index names it. */
+export const SYMBOL_KINDS = [
+  'function',
+  'method',
+  'class',
+  'interface',
+  'type',
+  'constant',
+  'module',
+  'test',
+] as const;
+
+/** One of `SYMBOL_KINDS`. */
+export type SymbolKind = (typeof SYMBOL_KINDS)[number];
+
+/** A symbol the file defines, with how many of the latest work orders selected lines of it. */
+export interface FileSymbol {
+  readonly name: string;
+  readonly kind: SymbolKind;
+  /** The 1-based line where it starts, as of the index's last read of the file. */
+  readonly start_line: number;
+  readonly end_line: number;
+  /** Whether another symbol of the file holds it. */
+  readonly is_nested: boolean;
+  /** How many of the work orders read (the latest `MAX_TOLD` that listed the file) selected it. */
+  readonly selected: number;
+}
+
+/** A span of the file that work orders selected, by its lines. */
+export interface SelectedSpan {
+  readonly start_line: number;
+  readonly end_line: number;
+  /** How many of the work orders read selected it, from 1. */
+  readonly orders: number;
+}
 
 /** A fact's state: confirmed, waiting for confirmation, or no longer matching the code. */
 export const FACT_STATUSES = ['active', 'candidate', 'suspect'] as const;
@@ -84,7 +131,17 @@ export interface FileDetail {
   readonly id: number;
   readonly path: string;
   readonly facts: readonly FileFact[];
+  /** The newest commits behind the file's current lines, newest first, at most `MAX_HISTORY`. */
   readonly history: readonly FileHistoryEntry[];
+  /** How many such commits the panel could name; `history` is the newest of them. */
+  readonly history_total: number;
+  readonly history_reader: HistoryReader;
+  /** The first `MAX_SYMBOLS` symbols the file defines, in line order. */
+  readonly symbols: readonly FileSymbol[];
+  /** How many symbols the file defines. */
+  readonly symbols_total: number;
+  /** The spans the latest work orders that listed the file selected, by their lines. */
+  readonly selected: readonly SelectedSpan[];
   readonly told: readonly ToldEntry[];
   /** The daemon's link to open the file in an editor (`vscode://file/...`), or null when turned off. */
   readonly editor_url: string | null;
@@ -129,6 +186,59 @@ function parseTold(value: unknown, index: number): ToldEntry {
   };
 }
 
+/** The field as a line number, from 1. */
+function readLine(record: JsonRecord, key: string, where: string): number {
+  const line = readCount(record, key, where);
+  if (line < 1) return fail('bad_range', `${where}.${key}: lines count from 1`);
+  return line;
+}
+
+/** A span's start and end lines, the end not before the start. */
+function readSpan(record: JsonRecord, where: string): { start_line: number; end_line: number } {
+  const start = readLine(record, 'start_line', where);
+  const end = readLine(record, 'end_line', where);
+  if (end < start) return fail('bad_range', `${where}.end_line: before its start`);
+  return { start_line: start, end_line: end };
+}
+
+/** The field as a number of work orders read: at most `MAX_TOLD`, and from `least`. */
+function readOrders(record: JsonRecord, key: string, least: number, where: string): number {
+  const orders = readCount(record, key, where);
+  if (orders < least || orders > MAX_TOLD) {
+    return fail('bad_range', `${where}.${key}: from ${least} to ${MAX_TOLD} work orders`);
+  }
+  return orders;
+}
+
+function parseSymbol(value: unknown, index: number): FileSymbol {
+  const where = `symbols[${index}]`;
+  const record = readRecord(value, where);
+  const name = readString(record, 'name', where);
+  if (name.length === 0) return fail('bad_shape', `${where}.name: expected a name`);
+  return {
+    name,
+    kind: readEnum(record, 'kind', SYMBOL_KINDS, where),
+    ...readSpan(record, where),
+    is_nested: readBoolean(record, 'is_nested', where),
+    selected: readOrders(record, 'selected', 0, where),
+  };
+}
+
+function parseSelected(value: unknown, index: number): SelectedSpan {
+  const where = `selected[${index}]`;
+  const record = readRecord(value, where);
+  return { ...readSpan(record, where), orders: readOrders(record, 'orders', 1, where) };
+}
+
+/** The count of `key`, which a capped list of `listed` entries is the first `cap` of. */
+function readTotal(record: JsonRecord, key: string, listed: number, cap: number): number {
+  const total = readCount(record, key, 'file');
+  if (listed !== Math.min(total, cap)) {
+    return fail('bad_range', `file.${key}: ${total} in all, but ${listed} listed`);
+  }
+  return total;
+}
+
 /** Parses each entry and refuses the list unless `isInOrder` holds for every neighbouring pair. */
 function parseOrdered<T>(
   record: JsonRecord,
@@ -169,14 +279,35 @@ function detailParser(askedId: number): (value: unknown) => FileDetail {
       (a, b) => a.at_ms >= b.at_ms,
       'newest first',
     );
+    const symbols = parseOrdered(
+      record,
+      'symbols',
+      parseSymbol,
+      (a, b) => a.start_line <= b.start_line,
+      'symbols in line order',
+    );
+    const selected = parseOrdered(
+      record,
+      'selected',
+      parseSelected,
+      (a, b) =>
+        a.start_line < b.start_line || (a.start_line === b.start_line && a.end_line < b.end_line),
+      'selected spans by their lines, each once',
+    );
     checkMaxLength(history, MAX_HISTORY, 'file.history');
     checkMaxLength(told, MAX_TOLD, 'file.told');
+    checkMaxLength(symbols, MAX_SYMBOLS, 'file.symbols');
     return {
       version: API_VERSION,
       id,
       path: readPath(record, 'path', 'file'),
       facts,
       history,
+      history_total: readTotal(record, 'history_total', history.length, MAX_HISTORY),
+      history_reader: readEnum(record, 'history_reader', HISTORY_READERS, 'file'),
+      symbols,
+      symbols_total: readTotal(record, 'symbols_total', symbols.length, MAX_SYMBOLS),
+      selected,
       told,
       editor_url:
         record['editor_url'] === null

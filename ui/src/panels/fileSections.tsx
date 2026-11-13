@@ -1,48 +1,48 @@
 // The file panel's numbers and sections, each with its own empty state: the file's counts, its
-// strongest links by kind, the facts anchored to it (suspect ones marked), the stored history of
-// its commits in pages of ten, and what Cortex told agents about it with whether they then used it.
-// Every section collapses to its title and count.
-import { useId, useState, type ReactElement, type ReactNode } from 'react';
-import type { FactStatus, FileDetail, FileHistoryEntry, ToldKind } from '../api/file';
+// strongest links by kind (each with the count its strength was made from, and how many the map
+// keeps), the newest commits behind its current lines with how many there are, and what Cortex told
+// agents about it with whether they then used it. Every section collapses to its title and count.
+// The facts and the symbols have files of their own.
+import { useId, type ReactElement, type ReactNode } from 'react';
+import { MAX_TOLD, type FileDetail, type ToldKind } from '../api/file';
 import { LINK_KINDS, type GraphFile, type LinkKind } from '../api/graph';
 import { visibleText } from '../api/guard';
 import { ClippedText } from '../components/Clipped';
-import { Button } from '../components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import { fileIcon } from '../icons/fileIcons';
 import { IconSlot } from '../icons/IconSlot';
 import type { Scene } from '../map/scene';
 import { useMapStore, type DetailState } from '../state/store';
-import { countOf, formatCount, formatDate } from '../text/format';
+import { formatCount, formatDate } from '../text/format';
+import { HISTORY_TITLE, historyNote } from '../text/historyWords';
 import { distinctNames } from '../text/names';
 import {
   LINK_KIND_NAMES,
+  NOT_COUNTED,
   NUMBER_NAMES,
+  KEPT_LINKS_NOTE,
   TOKENS_ATTRIBUTED_MEANING,
   commitsMeaning,
+  keptLinksText,
+  linkMeasure,
   linkSentence,
 } from '../text/vocabulary';
 import { LIST } from '../theme/tokens';
 import { strongestLinks, type PanelLink } from './fileLinks';
 import { FileRow } from './FileRow';
+import { listCount } from './overviewLists';
 import { RowList } from './RowList';
 import { Section } from './Section';
-
-const STATUS_NAMES: Readonly<Record<FactStatus, string>> = {
-  active: 'Active',
-  candidate: 'Candidate',
-  suspect: 'Suspect',
-};
 
 const TOLD_NAMES: Readonly<Record<ToldKind, string>> = {
   work_order: 'Work order',
   warning: 'Warning',
 };
 
-/** One of the file's numbers: its name, its value, and what it counts when that needs saying. */
+/** One of the file's numbers: its name, its value as shown, and what it counts when that needs saying. */
 interface NumberRow {
   readonly name: string;
-  readonly value: number;
+  readonly value: string;
   readonly meaning: string | null;
 }
 
@@ -50,12 +50,12 @@ interface NumberRow {
  * A number that needs explaining: it takes keyboard focus and says what it counts in a tooltip on
  * hover and focus; its `dd` is described by the same sentence for screen readers.
  */
-function ExplainedNumber({ value, meaning }: { value: number; meaning: string }): ReactElement {
+function ExplainedNumber({ value, meaning }: { value: string; meaning: string }): ReactElement {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span className="number-explained" tabIndex={0}>
-          {formatCount(value)}
+          {value}
         </span>
       </TooltipTrigger>
       <TooltipContent>{meaning}</TooltipContent>
@@ -65,21 +65,26 @@ function ExplainedNumber({ value, meaning }: { value: number; meaning: string })
 
 /**
  * The file's counts as a definition list; each name says exactly what it counts, and the commits
- * and tokens, whose meaning is not plain from the name, explain themselves on hover and focus.
+ * and tokens, whose meaning is not plain from the name, explain themselves on hover and focus. A
+ * generated or vendored file's commits are not counted, and it says so instead of a 0.
  */
 export function NumbersSection({ file }: { file: GraphFile }): ReactElement {
   const idPrefix = useId();
   const summary = useMapStore((state) => state.summary);
   const limits = summary.status === 'ready' ? summary.summary.history : null;
   const rows: NumberRow[] = [
-    { name: NUMBER_NAMES.lines, value: file.lines, meaning: null },
-    { name: NUMBER_NAMES.reads, value: file.reads, meaning: null },
+    { name: NUMBER_NAMES.lines, value: formatCount(file.lines), meaning: null },
+    { name: NUMBER_NAMES.reads, value: formatCount(file.reads), meaning: null },
     {
       name: NUMBER_NAMES.commits,
-      value: file.commits,
-      meaning: commitsMeaning(file.commits, limits),
+      value: file.commits_counted ? formatCount(file.commits) : NOT_COUNTED,
+      meaning: commitsMeaning(file, limits),
     },
-    { name: NUMBER_NAMES.tokens, value: file.tokens, meaning: TOKENS_ATTRIBUTED_MEANING },
+    {
+      name: NUMBER_NAMES.tokens,
+      value: formatCount(file.tokens),
+      meaning: TOKENS_ATTRIBUTED_MEANING,
+    },
   ];
   return (
     <>
@@ -89,7 +94,7 @@ export function NumbersSection({ file }: { file: GraphFile }): ReactElement {
             <dt>{row.name}</dt>
             <dd aria-describedby={row.meaning === null ? undefined : `${idPrefix}-${index}`}>
               {row.meaning === null ? (
-                formatCount(row.value)
+                row.value
               ) : (
                 <ExplainedNumber value={row.value} meaning={row.meaning} />
               )}
@@ -119,41 +124,58 @@ function linkRow(
   const self = scene.snapshot.files[id];
   const other = scene.snapshot.files[link.other];
   if (self === undefined || other === undefined) return null;
-  const measure =
-    kind === 'co_change' ? countOf(link.commits, 'commit') : `strength ${link.weight.toFixed(2)}`;
-  const graphLink = { from: id, to: link.other, kind, weight: link.weight, commits: link.commits };
+  const graphLink = {
+    from: id,
+    to: link.other,
+    kind,
+    weight: link.weight,
+    commits: link.commits,
+    count: link.count,
+  };
   return (
     <FileRow
       file={link.other}
       name={name}
       nameKind="words"
-      measure={measure}
+      measure={linkMeasure(graphLink)}
       sentence={linkSentence(graphLink, self, other)}
       lead={<IconSlot icon={fileIcon(other.path)} />}
     />
   );
 }
 
-/** The file's strongest links of each kind; open at first. */
+/**
+ * The file's strongest links of each kind, strongest first as the daemon ranks them; open at
+ * first. The count says how many the map keeps, and how many are shown when that is fewer.
+ */
 export function LinksSection({ scene, id }: { scene: Scene; id: number }): ReactElement {
-  const grouped = strongestLinks(scene, id, LIST.most);
+  const { shown: grouped, totals } = strongestLinks(scene, id, LIST.most);
   // Names are told apart across every list the panel shows at once.
   const shown = LINK_KINDS.flatMap((kind) => grouped[kind].map((link) => link.path));
   const distinct = distinctNames(shown);
   const names = new Map(shown.map((path, i) => [path, distinct[i] ?? path]));
-  const total = LINK_KINDS.reduce((sum, kind) => sum + grouped[kind].length, 0);
+  const count = listCount({
+    rows: shown,
+    total: LINK_KINDS.reduce((sum, kind) => sum + totals[kind], 0),
+  });
   return (
-    <Section title="Linked files" count={total} isOpenAtFirst testId="panel-links">
+    <Section title="Linked files" count={count} isOpenAtFirst testId="panel-links">
+      {shown.length === 0 ? null : <p className="section-note">{KEPT_LINKS_NOTE}</p>}
       {LINK_KINDS.map((kind) => (
         <div key={kind} className="panel-kind" data-testid={`panel-links-${kind}`}>
-          <h4>{LINK_KIND_NAMES[kind]}</h4>
+          <h4>
+            {LINK_KIND_NAMES[kind]}
+            {grouped[kind].length < totals[kind]
+              ? ` (${keptLinksText(grouped[kind].length, totals[kind])})`
+              : ''}
+          </h4>
           {grouped[kind].length === 0 ? (
             <p className="panel-empty">None learned yet.</p>
           ) : (
             <RowList
               items={grouped[kind]}
               keyOf={(link) => link.other}
-              label={LINK_KIND_NAMES[kind]}
+              label={`${LINK_KIND_NAMES[kind]}, strongest first`}
               renderRow={(link) =>
                 linkRow(scene, id, kind, link, names.get(link.path) ?? link.path)
               }
@@ -176,19 +198,29 @@ export function detailFor(detail: DetailState, id: number): DetailState {
   return isOther ? { status: 'loading', id } : detail;
 }
 
-/** One section fed by the file's detail, with its title, count, test id and empty text. */
-function DetailSection(props: {
+/**
+ * One section fed by the file's detail, with its title, count, test id and empty text, and a
+ * footer shown in every state (the facts say there what came of the person's word).
+ */
+export function DetailSection(props: {
   title: string;
   testId: string;
   detail: DetailState;
   id: number;
   isOpenAtFirst: boolean;
-  countOf: (detail: FileDetail) => number;
-  empty: string;
+  countOf: (detail: FileDetail) => number | string;
+  empty: string | ((detail: FileDetail) => string);
+  footer?: ReactNode;
   children: (detail: FileDetail) => ReactElement;
 }): ReactElement {
   const detail = detailFor(props.detail, props.id);
   const count = detail.status === 'ready' ? props.countOf(detail.detail) : null;
+  const empty =
+    detail.status !== 'ready'
+      ? ''
+      : typeof props.empty === 'string'
+        ? props.empty
+        : props.empty(detail.detail);
   return (
     <Section
       title={props.title}
@@ -204,58 +236,47 @@ function DetailSection(props: {
       ) : detail.status !== 'ready' ? (
         <p className="panel-empty">Loading.</p>
       ) : count === 0 ? (
-        <p className="panel-empty">{props.empty}</p>
+        <p className="panel-empty">{empty}</p>
       ) : (
         props.children(detail.detail)
       )}
+      {props.footer}
     </Section>
   );
 }
 
-/** The facts anchored to the file; suspect ones are marked in words and colour. Open at first. */
-export function FactsSection({ detail, id }: { detail: DetailState; id: number }): ReactElement {
+/**
+ * The newest commits behind the file's current lines, newest first, under the sentence that says
+ * how many there are; with none, why (the history worker off, refused, or not asked yet). Closed
+ * at first.
+ */
+export function HistorySection({ detail, id }: { detail: DetailState; id: number }): ReactElement {
   return (
     <DetailSection
-      title="Facts"
-      testId="panel-facts"
+      title={HISTORY_TITLE}
+      testId="panel-history"
       detail={detail}
       id={id}
-      isOpenAtFirst
-      countOf={(d) => d.facts.length}
-      empty="No facts are recorded for this file."
+      isOpenAtFirst={false}
+      countOf={(d) => d.history_total}
+      empty={historyNote}
     >
-      {(d) => (
-        <ul className="fact-list">
-          {d.facts.map((fact) => (
-            <li key={fact.id} data-status={fact.status}>
-              <span className="fact-status">{STATUS_NAMES[fact.status]}</span>
-              <span className="fact-kind">{visibleText(fact.kind)}</span>
-              <p className="fact-text">{visibleText(fact.text)}</p>
-            </li>
-          ))}
-        </ul>
-      )}
+      {(d) => <HistoryList detail={d} />}
     </DetailSection>
   );
 }
 
-/** "11 to 20 of 34": the rows a history page shows. */
-export function pageRange(page: number, total: number): string {
-  const first = page * LIST.historyPage + 1;
-  const last = Math.min(total, (page + 1) * LIST.historyPage);
-  return `${formatCount(first)} to ${formatCount(last)} of ${formatCount(total)}`;
-}
-
-/** The history in pages of ten, newest first, with buttons to the newer and older pages. */
-function HistoryPages({ history }: { history: readonly FileHistoryEntry[] }): ReactElement {
-  const [page, setPage] = useState(0);
-  const pages = Math.ceil(history.length / LIST.historyPage);
-  const rows = history.slice(page * LIST.historyPage, (page + 1) * LIST.historyPage);
+/**
+ * The commits behind the file's lines under the sentence that says how many there are. A
+ * component of its own, so its dates are written only once the section is open.
+ */
+function HistoryList({ detail }: { detail: FileDetail }): ReactElement {
   return (
     <>
+      <p className="section-note">{historyNote(detail)}</p>
       <ul className="history-list">
-        {rows.map((entry, index) => (
-          <li key={page * LIST.historyPage + index}>
+        {detail.history.map((entry, index) => (
+          <li key={index}>
             <ClippedText
               text={visibleText(entry.subject)}
               kind="words"
@@ -268,49 +289,7 @@ function HistoryPages({ history }: { history: readonly FileHistoryEntry[] }): Re
           </li>
         ))}
       </ul>
-      {pages > 1 ? (
-        <nav className="pager" aria-label="History pages">
-          <Button
-            size="compact"
-            disabled={page === 0}
-            onClick={() => {
-              setPage(page - 1);
-            }}
-          >
-            Newer
-          </Button>
-          <span className="pager-range" aria-live="polite">
-            {pageRange(page, history.length)}
-          </span>
-          <Button
-            size="compact"
-            disabled={page >= pages - 1}
-            onClick={() => {
-              setPage(page + 1);
-            }}
-          >
-            Older
-          </Button>
-        </nav>
-      ) : null}
     </>
-  );
-}
-
-/** The stored commit subjects that touched the file, newest first. Closed at first. */
-export function HistorySection({ detail, id }: { detail: DetailState; id: number }): ReactElement {
-  return (
-    <DetailSection
-      title="History"
-      testId="panel-history"
-      detail={detail}
-      id={id}
-      isOpenAtFirst={false}
-      countOf={(d) => d.history.length}
-      empty="No commit history read for this file yet; Cortex fills it in as it reads the repository's history."
-    >
-      {(d) => <HistoryPages history={d.history} />}
-    </DetailSection>
   );
 }
 
@@ -319,7 +298,10 @@ function usedText(used: boolean | null): string {
   return used ? 'then read or edited' : 'not used';
 }
 
-/** The times Cortex named the file to an agent, newest first, and whether the agent used it. */
+/**
+ * The times Cortex named the file to an agent, newest first, and whether the agent used it. The
+ * daemon reads the latest `MAX_TOLD`; with that many, the count says they are the latest.
+ */
 export function ToldSection({ detail, id }: { detail: DetailState; id: number }): ReactElement {
   return (
     <DetailSection
@@ -328,7 +310,9 @@ export function ToldSection({ detail, id }: { detail: DetailState; id: number })
       detail={detail}
       id={id}
       isOpenAtFirst={false}
-      countOf={(d) => d.told.length}
+      countOf={(d) =>
+        d.told.length === MAX_TOLD ? `latest ${formatCount(MAX_TOLD)}` : d.told.length
+      }
       empty="Cortex has not named this file to an agent yet."
     >
       {(d) => (

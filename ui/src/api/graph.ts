@@ -7,6 +7,7 @@ import {
   fail,
   quote,
   readArray,
+  readBoolean,
   readCount,
   readEpochMs,
   readPath,
@@ -43,8 +44,13 @@ export interface GraphFile {
   readonly suspect: number;
   /** Times agents read the file. */
   readonly reads: number;
-  /** Commits in the mined history that changed the file. */
+  /** Commits in the mined history that changed the file; 0, and no count, when not `commits_counted`. */
   readonly commits: number;
+  /**
+   * Whether Cortex counts the file's commits: false for a generated or vendored file, which the
+   * history miner leaves out, so its `commits` says nothing about how often it changed.
+   */
+  readonly commits_counted: boolean;
 }
 
 /** A learned link between two files, `from` always below `to`. */
@@ -55,6 +61,12 @@ export interface GraphLink {
   readonly weight: number;
   /** Commits that changed both files, for `co_change`; always 0 for the other kinds. */
   readonly commits: number;
+  /**
+   * What the weight was made from, by kind: the commits that changed both files (`co_change`, the
+   * same as `commits`), the tasks that used both (`used_together`), or the delivered work orders
+   * that named both (`work_order`).
+   */
+  readonly count: number;
 }
 
 /** The whole graph: files sorted by path (id equals index) and links sorted by kind, from, to. */
@@ -83,8 +95,21 @@ function parseFile(value: unknown, index: number): GraphFile {
     facts: readCount(record, 'facts', where),
     suspect: readCount(record, 'suspect', where),
     reads: readCount(record, 'reads', where),
-    commits: readCount(record, 'commits', where),
+    ...readCommits(record, where),
   };
+}
+
+/** A file's commits and whether they are counted; an uncounted file's commits must be 0. */
+function readCommits(
+  record: JsonRecord,
+  where: string,
+): Pick<GraphFile, 'commits' | 'commits_counted'> {
+  const commits = readCount(record, 'commits', where);
+  const isCounted = readBoolean(record, 'commits_counted', where);
+  if (!isCounted && commits !== 0) {
+    return fail('bad_range', `${where}.commits: a file whose commits are not counted has 0`);
+  }
+  return { commits, commits_counted: isCounted };
 }
 
 function parseFiles(record: JsonRecord): GraphFile[] {
@@ -123,7 +148,11 @@ function parseLink(value: unknown, index: number, fileCount: number): GraphLink 
   if (kind !== 'co_change' && commits !== 0) {
     return fail('bad_range', `${where}.commits: only a co_change link counts commits`);
   }
-  return { from, to, kind, weight: readUnit(record, 'weight', where), commits };
+  const count = readCount(record, 'count', where);
+  if (kind === 'co_change' && count !== commits) {
+    return fail('bad_range', `${where}.count: a co_change link counts its commits`);
+  }
+  return { from, to, kind, weight: readUnit(record, 'weight', where), commits, count };
 }
 
 function isLinkBefore(a: GraphLink, b: GraphLink): boolean {
@@ -152,6 +181,26 @@ function parseSnapshot(value: unknown): GraphSnapshot {
   const files = parseFiles(record);
   const links = parseLinks(record, files.length);
   return { version: API_VERSION, files, links };
+}
+
+/**
+ * The id of the file at `path` in `files`, which the guard keeps sorted by path in byte order, or
+ * null when no file sits there. A binary search: ids move when a file is added or removed, paths
+ * do not, so a file is found again in a newer snapshot by its path.
+ */
+export function fileIdOf(files: readonly Pick<GraphFile, 'path'>[], path: string): number | null {
+  let low = 0;
+  let high = files.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    const file = files[middle];
+    if (file === undefined) return null;
+    const order = compareBytes(file.path, path);
+    if (order === 0) return middle;
+    if (order < 0) low = middle + 1;
+    else high = middle - 1;
+  }
+  return null;
 }
 
 /** Checks parsed JSON against the snapshot contract and returns the typed snapshot or the error. */

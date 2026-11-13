@@ -1,10 +1,11 @@
 // The panel of the selected file. Opens on the right (a bottom sheet on narrow screens); takes
 // focus when the selection came from the keyboard; Escape or Close clears the selection and returns
 // focus to where it was before the panel opened. Its header holds the breadcrumb of the file's
-// folders, its name (after its file's icon) and path, and the link that opens it in an editor; its numbers come next, then sections that collapse to their title
-// and count: the linked files and the facts open (what usually changes with this file, and which
-// rules apply to it, the questions asked most), the history and what Cortex told agents closed
-// until asked.
+// folders, its name (after its file's icon) and path, and the link that opens it in an editor;
+// its numbers come next, then sections that collapse to their title and count: the linked files
+// and the facts open (what usually changes with this file, and which rules apply to it, the
+// questions asked most), the commits behind its lines, what Cortex told agents and its symbols
+// closed until asked.
 import { SquareArrowOutUpRight, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, type ReactElement } from 'react';
 import { fetchFileDetail } from '../api/file';
@@ -17,14 +18,15 @@ import { useMapStore } from '../state/store';
 import { baseName } from '../text/format';
 import { Breadcrumb } from './Breadcrumb';
 import { editorHref } from './editorLink';
+import { FactsSection } from './FactsSection';
 import {
   detailFor,
-  FactsSection,
   HistorySection,
   LinksSection,
   NumbersSection,
   ToldSection,
 } from './fileSections';
+import { SymbolsSection } from './SymbolsSection';
 
 /** Clears the selection and returns focus on Escape, unless something nearer used the key. */
 function useEscapeToClose(close: () => void): void {
@@ -81,7 +83,7 @@ export function FilePanel({
   }, []);
   useEffect(() => {
     void loadDetail(fetchFileDetail);
-  }, [id, loadDetail]);
+  }, [path, loadDetail]);
   useEffect(() => {
     if (flyTo?.target === 'file' && flyTo.file === id) headingRef.current?.focus();
   }, [flyTo, id]);
@@ -121,9 +123,10 @@ export function FilePanel({
       <div className="panel-body" data-scroll-area="true">
         {file === undefined ? null : <NumbersSection file={file} />}
         <LinksSection scene={scene} id={id} />
-        <FactsSection detail={detail} id={id} />
+        <FactsSection key={path} detail={detail} id={id} />
         <HistorySection detail={detail} id={id} />
         <ToldSection detail={detail} id={id} />
+        <SymbolsSection detail={detail} id={id} />
       </div>
     </aside>
   );

@@ -229,6 +229,11 @@ export function readPath(record: JsonRecord, key: string, where: string): string
   return value;
 }
 
+/** The field as a repository path, or null when the field is null (a missing field is refused). */
+export function readNullablePath(record: JsonRecord, key: string, where: string): string | null {
+  return record[key] === null ? null : readPath(record, key, where);
+}
+
 /** Refuses a list longer than `max` with `bad_range`. */
 export function checkMaxLength(list: readonly unknown[], max: number, where: string): void {
   if (list.length > max) fail('bad_range', `${where}: ${list.length} entries, at most ${max}`);

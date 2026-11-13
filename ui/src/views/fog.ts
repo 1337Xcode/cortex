@@ -2,7 +2,7 @@
 // read are in fog, dim and thin. A folder drawn whole is lit when any of its files is, so a dim one
 // is a folder no agent has looked into. A repository
 // no agent has worked in is all fog, and the legend says so: the cold map is meant to look like this.
-import { countOf } from '../text/format';
+import { countOf, formatCount } from '../text/format';
 import { defineView, sortIntoTones, type ToneSpec } from './view';
 
 const LIT: ToneSpec = {
@@ -42,7 +42,7 @@ export const fogView = defineView({
     const scale =
       read === 0
         ? 'No agent has read a file here yet, so the whole map is in fog.'
-        : `Agents have read ${countOf(read, 'file')} of ${files.length}; the other ${files.length - read} are in fog.`;
+        : `Agents have read ${countOf(read, 'file')} of ${formatCount(files.length)}; the other ${formatCount(files.length - read)} are in fog.`;
     return { ...sorted, isTinted: true, folderRule: 'strongest', scale };
   },
 });

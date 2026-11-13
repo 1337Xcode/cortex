@@ -32,6 +32,11 @@ describe('camera', () => {
     ]).toEqual(['1.4%', '10.0%', '286%']);
   });
 
+  it('never shows a zoom as 0.0%', () => {
+    // The furthest zoom, 2^-14 = 0.0061%, would round to 0.0%; 0.05% is the least that shows 0.1%.
+    expect([formatZoom(-14), formatZoom(Math.log2(0.0005))]).toEqual(['<0.1%', '0.1%']);
+  });
+
   it('stops at the zoom limits', () => {
     expect(stepZoom({ x: 0, y: 0, zoom: 5 }, 1).zoom).toBe(5);
     expect(stepZoom({ x: 0, y: 0, zoom: -14 }, -1).zoom).toBe(-14);

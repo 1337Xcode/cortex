@@ -756,19 +756,186 @@
     align-items: center;
   }
 
-  .pager {
+  /* A fact's words, under its text: native buttons side by side, wrapping on a narrow panel. */
+  .fact-words {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-basis: 100%;
+    flex-wrap: wrap;
     gap: var(--space-sm);
-    padding-top: var(--space-sm);
+    padding-top: var(--space-xs);
   }
 
-  .pager-range {
+  /* The retire step: its question, then its two buttons. */
+  .fact-ask {
+    display: flex;
+    flex-basis: 100%;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding-top: var(--space-xs);
+  }
+
+  .fact-ask-text {
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+    overflow-wrap: anywhere;
+  }
+
+  /* What came of the last word: one sentence, in the body's colour, wrapping. */
+  .fact-said {
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+    overflow-wrap: anywhere;
+  }
+
+  .fact-said:focus-visible {
+    outline-offset: 0;
+  }
+
+  /* A symbol, or a span work orders selected: its name over its kind and lines. */
+  .symbol-row,
+  .span-row {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: var(--space-xs) var(--space-sm);
+    border-left: var(--stroke-edge) solid transparent;
+    border-radius: var(--size-radius-small);
+    color: var(--foreground);
+    text-decoration: none;
+  }
+
+  .span-row {
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+    overflow-wrap: anywhere;
+    border-left-color: var(--primary);
+  }
+
+  a.symbol-row:hover {
+    background: var(--muted);
+  }
+
+  a.symbol-row:focus-visible {
+    outline-offset: calc(var(--stroke-focus) * -1);
+  }
+
+  .symbol-row[data-nested='true'] {
+    padding-left: var(--space-lg);
+  }
+
+  /* A symbol work orders selected lines of: the accent edge, and its name in full weight. */
+  .symbol-row[data-selected='true'] {
+    border-left-color: var(--primary);
+  }
+
+  .symbol-row[data-selected='true'] .symbol-name {
+    font-weight: var(--weight-medium);
+  }
+
+  .symbol-meta,
+  .stack-meta {
     color: var(--muted-foreground);
     font-family: var(--font-family-mono);
     font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+    overflow-wrap: anywhere;
+  }
+
+  /*
+   * A row of two lines (an event, a warning): its icons, then what happened over its details, both
+   * wrapping. A native button when it flies to a file.
+   */
+  /* Positioned, so its hidden sentence stays inside the scrolling list and never spills out. */
+  .stack-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    width: 100%;
+    padding: var(--space-xs) var(--space-sm);
+    text-align: left;
+    border-radius: var(--size-radius-small);
+  }
+
+  button.stack-row {
+    cursor: pointer;
+  }
+
+  button.stack-row:hover {
+    background: var(--muted);
+  }
+
+  button.stack-row:focus-visible {
+    outline-offset: calc(var(--stroke-focus) * -1);
+  }
+
+  .stack-text {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .stack-what {
+    overflow-wrap: anywhere;
+  }
+
+  /* A detail ("strength 0.62", a date) stays whole: the line breaks between details only. */
+  .stack-meta-part {
+    white-space: nowrap;
+  }
+
+  /* A warning still open reads a step heavier than one resolved. */
+  .stack-row[data-state='open'] .stack-what {
+    font-weight: var(--weight-medium);
+  }
+
+  /* The hooks' handling times: a small table in tabular figures, its numbers to the right. */
+  .health-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+  }
+
+  .health-table caption {
+    caption-side: top;
+    text-align: left;
+    padding-bottom: var(--space-xs);
+  }
+
+  .health-table th,
+  .health-table td {
+    padding: var(--space-xs) 0;
+    border-top: var(--stroke-hairline) solid var(--border);
+    font-weight: var(--weight-regular);
+    text-align: right;
+  }
+
+  .health-table th:first-child {
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  .health-table thead th {
+    color: var(--muted-foreground);
+    border-top: 0;
+  }
+
+  .health-table td {
+    padding-left: var(--space-sm);
+    font-family: var(--font-family-mono);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .health-errors {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
+    overflow-wrap: anywhere;
   }
 
   /* The receipts: sentences that wrap, never spill, numbers in them as the text writes them. */
