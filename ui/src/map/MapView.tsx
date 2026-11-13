@@ -10,6 +10,7 @@ import type { LiveSession } from '../api/live';
 import { Controls } from '../controls/Controls';
 import { Legend } from '../controls/Legend';
 import { ViewSwitch } from '../controls/ViewSwitch';
+import { useSessionNames } from '../state/sessionNames';
 import { useMapStore, type LiveStatus } from '../state/store';
 import { paintView } from '../views/paint';
 import { viewNamed } from '../views/registry';
@@ -139,6 +140,7 @@ export function MapView({
   const viewName = useMapStore((state) => state.view);
   const live = useMapStore((state) => state.live);
   const sessions = drawnSessions(live);
+  const sessionNames = useSessionNames();
   const view = useMemo(
     () => paintView(viewNamed(viewName), scene, receivedMs),
     [viewName, scene, receivedMs],
@@ -168,6 +170,7 @@ export function MapView({
     chrome,
     view,
     sessions,
+    sessionNames,
   });
   const layers = useMemo(() => buildLayers(frame, colors), [frame, colors]);
 
@@ -193,7 +196,7 @@ export function MapView({
           layers={layers}
           onHover={(info) => {
             hoverFile(pickedFile(info, frame));
-            const text = explainPick(info, frame, scene, receivedMs);
+            const text = explainPick(info, frame, scene, { nowMs: receivedMs, sessionNames });
             setPointed(text === null ? null : { x: info.x, y: info.y, text });
           }}
           pickingRadius={CANVAS_SIZE.pickRadiusPx}

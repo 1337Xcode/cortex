@@ -605,7 +605,8 @@ export const REFRESH = { settleMs: 2000, minGapMs: 10_000, autoMaxFiles: 20_000 
 
 /**
  * The live view: a lost connection is tried again after `reconnectFirstMs`, doubling each time up
- * to `reconnectMaxMs`; a session id is shown by its first `shortIdChars` characters; a marker's
+ * to `reconnectMaxMs`; a session id is shown by its first `shortIdChars` characters, or more when
+ * another session's id starts the same (see `text/sessionNames.ts`); a marker's
  * explanation names at most `namedBefore` of the files the session worked on before its newest.
  */
 export const LIVE = {

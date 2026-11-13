@@ -10,9 +10,11 @@ import { IconSlot } from '../icons/IconSlot';
 import { agentFamily } from '../map/agents';
 import { namedLiveFiles } from '../map/mapTooltip';
 import type { Scene } from '../map/scene';
+import { useSessionNames } from '../state/sessionNames';
 import { useMapStore } from '../state/store';
 import { liveSentence, sessionLead } from '../text/liveWords';
 import { namesOfFiles } from '../text/pathNames';
+import type { SessionNames } from '../text/sessionNames';
 import { FileRow } from './FileRow';
 import { RowList } from './RowList';
 import { Section } from './Section';
@@ -31,9 +33,17 @@ function AgentMark({ agent }: { agent: string }): ReactElement {
 }
 
 /** One session's row: a button to its newest file the map holds, or plain text without one. */
-function SessionRow({ session, scene }: { session: LiveSession; scene: Scene }): ReactElement {
+function SessionRow({
+  session,
+  scene,
+  names,
+}: {
+  session: LiveSession;
+  scene: Scene;
+  names: SessionNames;
+}): ReactElement {
   const files = namedLiveFiles(session, scene);
-  const sentence = liveSentence(session, files);
+  const sentence = liveSentence(session, files, names);
   const newest = session.files.find((entry) => entry.file < scene.snapshot.files.length);
   const newestPath = newest === undefined ? '' : (scene.snapshot.files[newest.file]?.path ?? '');
   if (newest === undefined) {
@@ -48,7 +58,7 @@ function SessionRow({ session, scene }: { session: LiveSession; scene: Scene }):
     <FileRow
       file={newest.file}
       name={{
-        lead: sessionLead(session, newest.mode),
+        lead: sessionLead(session, newest.mode, names),
         path: namesOfFiles(scene.snapshot.files).nameOf(newestPath),
       }}
       measure={null}
@@ -68,6 +78,7 @@ function emptyText(status: 'connecting' | 'paused' | 'open'): string {
 /** The live sessions section of the overview. */
 export function LiveSessions({ scene }: { scene: Scene }): ReactElement {
   const live = useMapStore((state) => state.live);
+  const names = useSessionNames();
   const sessions = live.status === 'open' ? live.state.sessions : [];
   const hasSessions = sessions.length > 0;
   return (
@@ -84,7 +95,7 @@ export function LiveSessions({ scene }: { scene: Scene }): ReactElement {
           items={sessions}
           keyOf={(session) => session.id}
           label="Agent sessions running now"
-          renderRow={(session) => <SessionRow session={session} scene={scene} />}
+          renderRow={(session) => <SessionRow session={session} scene={scene} names={names} />}
         />
       ) : (
         <p className="panel-empty">{emptyText(live.status)}</p>

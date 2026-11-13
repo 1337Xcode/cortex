@@ -11,6 +11,7 @@ import { fetchReceipts, type Receipts, type SessionReceipt } from '../api/receip
 import { Button } from '../components/ui/button';
 import { agentIcon } from '../icons/agentIcons';
 import { IconSlot } from '../icons/IconSlot';
+import { useSessionNames } from '../state/sessionNames';
 import { useMapStore } from '../state/store';
 import { countOf } from '../text/format';
 import {
@@ -26,6 +27,7 @@ import {
   sessionTotal,
   warningSentence,
 } from '../text/receiptWords';
+import type { SessionNames } from '../text/sessionNames';
 import { ReceiptsChart } from './ReceiptsChart';
 import { RowList } from './RowList';
 import { Section } from './Section';
@@ -64,13 +66,19 @@ function Headline({ receipts }: { receipts: Receipts }): ReactElement {
 }
 
 /** One session's receipt: its name, when it started, its total, and what Cortex injected. */
-function SessionRow({ session }: { session: SessionReceipt }): ReactElement {
+function SessionRow({
+  session,
+  names,
+}: {
+  session: SessionReceipt;
+  names: SessionNames;
+}): ReactElement {
   const compactions = compactionsSentence(session);
   return (
     <div className="receipt-row">
       <p className="receipt-title">
         <IconSlot icon={agentIcon(session.agent)} />
-        <span>{sessionTitle(session)}</span>
+        <span title={session.session_id}>{sessionTitle(session, names)}</span>
       </p>
       <p className="receipt-meta">{sessionStarted(session)}</p>
       <p>{sessionTotal(session)}</p>
@@ -83,6 +91,7 @@ function SessionRow({ session }: { session: SessionReceipt }): ReactElement {
 /** The receipts once loaded. */
 function ReceiptsReady({ receipts }: { receipts: Receipts }): ReactElement {
   const { recorded, window_days: days } = receipts;
+  const names = useSessionNames();
   const newestFirst = [...recorded.sessions].reverse();
   return (
     <>
@@ -109,7 +118,7 @@ function ReceiptsReady({ receipts }: { receipts: Receipts }): ReactElement {
               items={newestFirst}
               keyOf={(session) => session.session_id}
               label={`Sessions of the last ${countOf(days, 'day')}, newest first`}
-              renderRow={(session) => <SessionRow session={session} />}
+              renderRow={(session) => <SessionRow session={session} names={names} />}
             />
           </div>
         </>

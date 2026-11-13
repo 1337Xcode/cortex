@@ -6,6 +6,7 @@ import type { PickingInfo } from '@deck.gl/core';
 import type { LiveSession } from '../api/live';
 import { liveSentence, type NamedLiveFile } from '../text/liveWords';
 import { namesOfFiles } from '../text/pathNames';
+import type { SessionNames } from '../text/sessionNames';
 import { badgeSentence, fileSentence, folderSentence, linkSentence } from '../text/vocabulary';
 import { fileMark } from './fileEncoding';
 import { LAYER_ID, type FrameBuffers } from './layers';
@@ -54,9 +55,22 @@ function linkPick(frame: FrameBuffers, scene: Scene, index: number): string | nu
 }
 
 /** The sentence of marker row `index`, or null. */
-function markerPick(frame: FrameBuffers, scene: Scene, index: number): string | null {
+function markerPick(
+  frame: FrameBuffers,
+  scene: Scene,
+  index: number,
+  names: SessionNames,
+): string | null {
   const session = frame.live.sessions[frame.live.markers.ids[index] ?? -1];
-  return session === undefined ? null : liveSentence(session, namedLiveFiles(session, scene));
+  return session === undefined
+    ? null
+    : liveSentence(session, namedLiveFiles(session, scene), names);
+}
+
+/** What the page read when it drew the frame: the moment, and the names of its sessions. */
+export interface Reading {
+  readonly nowMs: number;
+  readonly sessionNames: SessionNames;
 }
 
 /** The explanation of what was picked, or null for empty canvas. */
@@ -64,9 +78,10 @@ export function explainPick(
   info: PickingInfo,
   frame: FrameBuffers,
   scene: Scene,
-  nowMs: number,
+  reading: Reading,
 ): string | null {
   if (info.index < 0) return null;
+  const { nowMs } = reading;
   const { files } = scene.snapshot;
   const layerId = info.layer?.id;
   switch (layerId) {
@@ -81,7 +96,7 @@ export function explainPick(
     case LAYER_ID.links:
       return linkPick(frame, scene, info.index);
     case LAYER_ID.markers:
-      return markerPick(frame, scene, info.index);
+      return markerPick(frame, scene, info.index, reading.sessionNames);
     case LAYER_ID.hubs:
     case LAYER_ID.collapsed:
     case LAYER_ID.fileDiscs:

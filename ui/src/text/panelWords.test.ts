@@ -17,6 +17,7 @@ import {
   runSentence,
 } from './healthWords';
 import { HISTORY_TITLE, historyNote } from './historyWords';
+import { sessionNames } from './sessionNames';
 import { spanSentence, symbolSentence, symbolsNote } from './symbolWords';
 import { openFirst, strengthText, warningMeta, warningSentence } from './warningWords';
 
@@ -32,17 +33,22 @@ const EDIT: ActivityEvent = {
   path: 'src/orders/book.rs',
 };
 
+/** The names of a page that knows only of `EDIT`'s session. */
+const NAMES = sessionNames([EDIT.session]);
+
 describe('the activity', () => {
   it('says each event as a sentence, short id and all', () => {
-    expect(eventLine(EDIT, 'book.rs')).toBe('Claude Code 3f2a… edited book.rs');
-    expect(eventLine({ ...EDIT, kind: 'read' }, 'mod.rs')).toBe('Claude Code 3f2a… read mod.rs');
-    expect(eventLine({ ...EDIT, kind: 'shell' }, 'tax.rs')).toBe(
+    expect(eventLine(EDIT, 'book.rs', NAMES)).toBe('Claude Code 3f2a… edited book.rs');
+    expect(eventLine({ ...EDIT, kind: 'read' }, 'mod.rs', NAMES)).toBe(
+      'Claude Code 3f2a… read mod.rs',
+    );
+    expect(eventLine({ ...EDIT, kind: 'shell' }, 'tax.rs', NAMES)).toBe(
       'Claude Code 3f2a… ran a shell command, about tax.rs',
     );
-    expect(eventLine({ ...EDIT, kind: 'prompt', file: null, agent: null }, null)).toBe(
+    expect(eventLine({ ...EDIT, kind: 'prompt', file: null, agent: null }, null, NAMES)).toBe(
       'Session 3f2a… was given a prompt',
     );
-    expect(eventLine({ ...EDIT, file: 900 }, null)).toBe(
+    expect(eventLine({ ...EDIT, file: 900 }, null, NAMES)).toBe(
       'Claude Code 3f2a… edited a file the map does not list',
     );
   });
@@ -54,7 +60,7 @@ describe('the activity', () => {
       [0, 999, 59_000, 3 * 3_600_000, 2 * 86_400_000].map((d) => shortAgo(AT_MS, AT_MS + d)),
     ).toEqual(['just now', 'just now', '59 s ago', '3 h ago', '2 d ago']);
     expect(shortAgo(AT_MS + 5000, AT_MS)).toBe('later');
-    expect(eventSentence(EDIT, 'book.rs', AT_MS + 150_000)).toBe(
+    expect(eventSentence(EDIT, 'book.rs', AT_MS + 150_000, NAMES)).toBe(
       'Claude Code 3f2a… edited book.rs, 2 min ago, at 2025-11-11 22:26:40 UTC.',
     );
   });

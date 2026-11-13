@@ -19,7 +19,7 @@ import type {
 import { UNPRICED_REASONS } from '../api/receipts';
 import { visibleText } from '../api/guard';
 import { countOf, formatCount } from './format';
-import { shortSessionId } from './liveWords';
+import type { SessionNames } from './sessionNames';
 
 /** A hundredth of a cent, the smallest amount receipts show, in picodollars. */
 const HUNDREDTH_OF_A_CENT_PICODOLLARS = 100_000_000n;
@@ -259,8 +259,8 @@ export function taskSentence(task: TaskReceipt, isMetered: boolean): string {
 }
 
 /** A session's name and state, as its row's first line ("Session 3f2a… (claude, ended)"). */
-export function sessionTitle(session: SessionReceipt): string {
-  return `Session ${visibleText(shortSessionId(session.session_id))} (${session.agent}, ${session.status})`;
+export function sessionTitle(session: SessionReceipt, names: SessionNames): string {
+  return `Session ${visibleText(names.nameOf(session.session_id))} (${session.agent}, ${session.status})`;
 }
 
 /** When a session started and what it held: its tasks, and its subagents when it started any. */

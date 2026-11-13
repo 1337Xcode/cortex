@@ -14,11 +14,13 @@ import { fileIcon } from '../icons/fileIcons';
 import { IconSlot } from '../icons/IconSlot';
 import { isOutOfStep, listedId, nameFile, namedPath, type NamedFile } from '../map/namedFile';
 import type { Scene } from '../map/scene';
+import { useSessionNames } from '../state/sessionNames';
 import { useMapStore } from '../state/store';
 import { activityTimesNote, eventLine, eventSentence, shortAgo } from '../text/activityWords';
 import { formatCount } from '../text/format';
 import { namedFileNote, namedFileSentence, shownName } from '../text/namedFileWords';
 import { namesOfFiles } from '../text/pathNames';
+import type { SessionNames } from '../text/sessionNames';
 import { LoadedBody } from './LoadedBody';
 import { RowList } from './RowList';
 import { Footnote, Section } from './Section';
@@ -30,16 +32,18 @@ function EventRow({
   named,
   name,
   readMs,
+  sessionNames,
 }: {
   event: ActivityEvent;
   named: NamedFile;
   name: string | null;
   readMs: number;
+  sessionNames: SessionNames;
 }): ReactElement {
   const path = namedPath(named);
   const note = namedFileNote(named);
   const noteSentence = namedFileSentence(named);
-  const sentence = eventSentence(event, path, readMs);
+  const sentence = eventSentence(event, path, readMs, sessionNames);
   return (
     <StackRow
       file={listedId(named)}
@@ -49,7 +53,7 @@ function EventRow({
           <IconSlot icon={path === null ? null : fileIcon(path)} />
         </>
       }
-      what={eventLine(event, name)}
+      what={eventLine(event, name, sessionNames)}
       meta={note === null ? [shortAgo(event.at_ms, readMs)] : [shortAgo(event.at_ms, readMs), note]}
       sentence={noteSentence === null ? sentence : `${sentence} ${noteSentence}`}
     />
@@ -68,6 +72,7 @@ function ActivityList({
 }): ReactElement {
   const { files } = scene.snapshot;
   const noteOutOfStep = useMapStore((state) => state.noteOutOfStep);
+  const sessionNames = useSessionNames();
   const isBehind = events.some((event) => isOutOfStep(files, event.file, event.path));
   useEffect(() => {
     if (isBehind) noteOutOfStep();
@@ -89,7 +94,13 @@ function ActivityList({
         keyOf={({ index }) => index}
         label="What agents did, newest first"
         renderRow={({ event, named }) => (
-          <EventRow event={event} named={named} name={shownName(named, names)} readMs={readMs} />
+          <EventRow
+            event={event}
+            named={named}
+            name={shownName(named, names)}
+            readMs={readMs}
+            sessionNames={sessionNames}
+          />
         )}
       />
       <Footnote

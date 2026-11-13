@@ -5,6 +5,7 @@ import type { LiveMode, LiveSession } from '../api/live';
 import { visibleText } from '../api/guard';
 import { LIVE } from '../theme/tokens';
 import { countOf } from './format';
+import type { SessionNames } from './sessionNames';
 
 /** What a session is doing with its newest file. */
 const DOING: Readonly<Record<LiveMode, string>> = {
@@ -27,21 +28,14 @@ const ROW_DOING: Readonly<Record<LiveMode, string>> = {
   claim: 'claimed',
 };
 
-/** A session id cut to its first few characters, with an ellipsis when it was longer. */
-export function shortSessionId(id: string): string {
-  const characters = Array.from(id);
-  if (characters.length <= LIVE.shortIdChars) return id;
-  return `${characters.slice(0, LIVE.shortIdChars).join('')}…`;
-}
-
-/** A session's name: its agent's title and its short id ("Claude Code 3f2a…"). */
-export function sessionName(session: LiveSession): string {
-  return `${visibleText(session.title)} ${shortSessionId(session.id)}`;
+/** A session's name: its agent's title and the name the page gives its id ("Claude Code 3f2a…"). */
+export function sessionName(session: LiveSession, names: SessionNames): string {
+  return `${visibleText(session.title)} ${names.nameOf(session.id)}`;
 }
 
 /** What leads a session's row before its file: its name and what it is doing ("… editing"). */
-export function sessionLead(session: LiveSession, mode: LiveMode): string {
-  return `${sessionName(session)} ${ROW_DOING[mode]}`;
+export function sessionLead(session: LiveSession, mode: LiveMode, names: SessionNames): string {
+  return `${sessionName(session, names)} ${ROW_DOING[mode]}`;
 }
 
 /** Names joined as a reader says them: "a", "a and b", "a, b and c". */
@@ -71,8 +65,12 @@ function earlierPhrase(files: readonly NamedLiveFile[]): string {
  * The sentence for a session whose files the map shows are `files`, newest first: what it is
  * doing with the newest, then up to `LIVE.namedBefore` earlier files and how many more there are.
  */
-export function liveSentence(session: LiveSession, files: readonly NamedLiveFile[]): string {
-  const who = `${visibleText(session.title)} session ${shortSessionId(session.id)}`;
+export function liveSentence(
+  session: LiveSession,
+  files: readonly NamedLiveFile[],
+  names: SessionNames,
+): string {
+  const who = `${visibleText(session.title)} session ${names.nameOf(session.id)}`;
   const [newest, ...earlier] = files;
   if (newest === undefined) return `${who} is working on files the map does not show yet.`;
   const now = `${who} ${DOING[newest.mode]} ${newest.name}`;

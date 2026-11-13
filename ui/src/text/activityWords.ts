@@ -5,7 +5,7 @@
 import type { ActivityEvent, EventKind } from '../api/activity';
 import { visibleText } from '../api/guard';
 import { formatUtcMoment, formatUtcTime } from './format';
-import { shortSessionId } from './liveWords';
+import type { SessionNames } from './sessionNames';
 
 /**
  * What an event's agent did when the event names no file the map lists. With a file, a read and an
@@ -26,15 +26,22 @@ const DID: Readonly<Record<EventKind, string>> = {
   session_end: 'ended its session',
 };
 
-/** Who did it: the agent's title and the session's short id, or "Session 3f2a…" without one. */
-export function actorName(event: Pick<ActivityEvent, 'agent' | 'session'>): string {
-  const id = shortSessionId(event.session);
+/** Who did it: the agent's title and the session's name, or "Session 3f2a…" without a title. */
+export function actorName(
+  event: Pick<ActivityEvent, 'agent' | 'session'>,
+  names: SessionNames,
+): string {
+  const id = names.nameOf(event.session);
   return event.agent === null ? `Session ${id}` : `${visibleText(event.agent.title)} ${id}`;
 }
 
 /** What happened, without its time: "Claude Code 3f2a… edited book.rs". */
-export function eventLine(event: ActivityEvent, fileName: string | null): string {
-  return `${actorName(event)} ${didText(event.kind, fileName)}`;
+export function eventLine(
+  event: ActivityEvent,
+  fileName: string | null,
+  names: SessionNames,
+): string {
+  return `${actorName(event, names)} ${didText(event.kind, fileName)}`;
 }
 
 /** What was done, with the file when there is one: "edited book.rs", "ran a shell command, about tax.rs". */
@@ -69,8 +76,13 @@ export function shortAgo(atMs: number, readMs: number): string {
  * The whole event in one sentence, both times, with the file's whole path: "… edited
  * src/orders/book.rs, 2 min ago, at 2026-… UTC."
  */
-export function eventSentence(event: ActivityEvent, path: string | null, readMs: number): string {
-  return `${eventLine(event, path)}, ${shortAgo(event.at_ms, readMs)}, at ${formatUtcMoment(event.at_ms)}.`;
+export function eventSentence(
+  event: ActivityEvent,
+  path: string | null,
+  readMs: number,
+  names: SessionNames,
+): string {
+  return `${eventLine(event, path, names)}, ${shortAgo(event.at_ms, readMs)}, at ${formatUtcMoment(event.at_ms)}.`;
 }
 
 /** The note that says how the times are read. */

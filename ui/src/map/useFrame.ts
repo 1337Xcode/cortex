@@ -6,6 +6,7 @@
 import { useMemo } from 'react';
 import type { LiveSession } from '../api/live';
 import { sessionName } from '../text/liveWords';
+import type { SessionNames } from '../text/sessionNames';
 import type { ViewPaint } from '../views/paint';
 import { agentFamily } from './agents';
 import { areBadgesShown, encodeBadges } from './badges';
@@ -60,6 +61,8 @@ export interface FrameInputs {
   readonly view: ViewPaint;
   /** The live sessions to mark; empty while none runs or the live view is paused. */
   readonly sessions: readonly LiveSession[];
+  /** The names the page gives its sessions, which the markers' labels use. */
+  readonly sessionNames: SessionNames;
 }
 
 /** The part of the screen the chrome leaves clear. */
@@ -167,24 +170,30 @@ function useLive(
   visibility: Visibility,
   sessions: readonly LiveSession[],
   view: { readonly colors: ThemeColors; readonly scale: number },
+  names: SessionNames,
 ): { readonly live: LiveBuffers; readonly markers: readonly MarkerLabel[] } {
   const { colors, scale } = view;
-  return useMemo(() => {
-    const live = encodeLive(scene, visibility, sessions, { colors, scale });
-    const markers = live.spots.map((spot): MarkerLabel => {
-      const session = live.sessions[spot.session];
-      return {
-        key: `s${session?.id ?? ''}`,
-        text: session === undefined ? '' : sessionName(session),
-        family: agentFamily(session?.agent ?? ''),
-        file: spot.file,
-        worldX: spot.worldX,
-        worldY: spot.worldY,
-        radiusPx: spot.radiusPx,
-      };
-    });
-    return { live, markers };
-  }, [scene, visibility, sessions, colors, scale]);
+  const live = useMemo(
+    () => encodeLive(scene, visibility, sessions, { colors, scale }),
+    [scene, visibility, sessions, colors, scale],
+  );
+  const markers = useMemo(
+    () =>
+      live.spots.map((spot): MarkerLabel => {
+        const session = live.sessions[spot.session];
+        return {
+          key: `s${session?.id ?? ''}`,
+          text: session === undefined ? '' : sessionName(session, names),
+          family: agentFamily(session?.agent ?? ''),
+          file: spot.file,
+          worldX: spot.worldX,
+          worldY: spot.worldY,
+          radiusPx: spot.radiusPx,
+        };
+      }),
+    [live, names],
+  );
+  return { live, markers };
 }
 
 /** The frame's buffers for the deck.gl layers. */
@@ -222,7 +231,13 @@ export function useFrame(inputs: FrameInputs): FrameBuffers {
     }),
     [scene, visibility, style, marked, isBadged],
   );
-  const { live, markers } = useLive(scene, visibility, inputs.sessions, { colors, scale });
+  const { live, markers } = useLive(
+    scene,
+    visibility,
+    inputs.sessions,
+    { colors, scale },
+    inputs.sessionNames,
+  );
   const links = useProminentLinks(scene, visibility, style, nearBox(camera, screen));
   const grid = useMemo(() => gridDots(camera, screen), [camera, screen]);
   const area = useMemo(() => clearArea(screen, inputs.insets), [screen, inputs.insets]);
