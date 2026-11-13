@@ -4,9 +4,10 @@
 //! Every answer, refusals included, carries the same headers: `Cache-Control: no-store`, since
 //! the map shows the repository as it is now and its address holds a key;
 //! `X-Content-Type-Options: nosniff`, so a browser never runs a file as a type other than the one
-//! given; `Referrer-Policy: no-referrer`, so the address and its token never leave in a `Referer`;
-//! and a `Content-Security-Policy` letting a page load and connect to its own origin only (a web
-//! socket to the map's own port included) and be framed by nothing. None carries a CORS header.
+//! given; `Referrer-Policy: same-origin`, so the address and its token never leave the map's own
+//! origin in a `Referer`, while a same-origin POST still carries the page's `Origin`; and a
+//! `Content-Security-Policy` letting a page load and connect to its own origin only (a web socket
+//! to the map's own port included) and be framed by nothing. None carries a CORS header.
 
 use std::sync::Arc;
 
@@ -188,7 +189,11 @@ impl Site {
         let headers = response.headers_mut();
         headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
         headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-        headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+        // `same-origin`, not `no-referrer`: the token in the address still goes, as a `Referer`,
+        // only to the daemon that gave it, and the Fetch standard then sends the page's own
+        // `Origin` with a same-origin POST in every mode (under `no-referrer`, `null` in any mode
+        // but `cors`), which the guard asks of a fact's word.
+        headers.insert(REFERRER_POLICY, HeaderValue::from_static("same-origin"));
         headers.insert(CONTENT_SECURITY_POLICY, self.policy.clone());
         if status == StatusCode::METHOD_NOT_ALLOWED {
             headers.insert(ALLOW, HeaderValue::from_static("GET"));
@@ -301,7 +306,7 @@ mod tests {
         let value = |name: HeaderName| headers.get(name).and_then(|value| value.to_str().ok());
         assert_eq!(value(CACHE_CONTROL), Some("no-store"));
         assert_eq!(value(X_CONTENT_TYPE_OPTIONS), Some("nosniff"));
-        assert_eq!(value(REFERRER_POLICY), Some("no-referrer"));
+        assert_eq!(value(REFERRER_POLICY), Some("same-origin"));
         assert_eq!(
             value(CONTENT_SECURITY_POLICY),
             Some(

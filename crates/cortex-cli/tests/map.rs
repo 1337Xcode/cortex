@@ -77,7 +77,7 @@ fn has_built_map() -> bool {
 /// same address. The address is on 127.0.0.1 with a 64-digit token. With the token, the health
 /// answers 200 with the daemon's version; a wrong token gets 404, a request naming another host
 /// or sent from another site's page 403, a POST 405, and the token without its slash a 308 to the
-/// address; each with an empty body, `Referrer-Policy: no-referrer` and no CORS header. The health
+/// address; each with an empty body, `Referrer-Policy: same-origin` and no CORS header. The health
 /// says `reading` until the daemon's first index is done and `ready` from then on. The map does not answer on the IPv6 loopback, nor on this machine's own network
 /// address when it has one.
 #[test]
@@ -181,7 +181,7 @@ fn the_map_is_served_on_127_0_0_1_behind_its_guard() -> TestResult {
         assert!(
             answered
                 .headers
-                .contains(&"referrer-policy: no-referrer".to_owned()),
+                .contains(&"referrer-policy: same-origin".to_owned()),
             "{head}"
         );
     }

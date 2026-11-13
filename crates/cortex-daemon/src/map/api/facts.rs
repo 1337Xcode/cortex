@@ -5,12 +5,12 @@
 //! makes.
 //!
 //! The guard lets a POST through only for these paths and only with the map's own `Origin`. The
-//! answer is JSON: the fact's number and its status now; or 409 with the message the writer
-//! answered, which is its refusal ("there is no fact 7") or, as for the command, the store's error
-//! when the transaction failed; or 503 when the daemon could not take the word in time, which
-//! changed nothing. The page must send the POST in `fetch`'s default mode: under the map's
-//! `no-referrer` policy, a request in `same-origin` or `no-cors` mode is sent with `Origin: null`,
-//! which the guard refuses.
+//! answer is JSON: the fact's number and its status now; or 409 with the writer's refusal
+//! ("there is no fact 7"); or 500 when the store failed to write it, saying so without the store's
+//! own words; or 503 when the daemon could not take the word in time, which changed nothing. The
+//! page's `Referrer-Policy` is `same-origin`, under which the Fetch standard sends a same-origin
+//! POST with the page's own `Origin` in every mode; under `no-referrer` it would send
+//! `Origin: null` in any mode but `cors`, which the guard refuses.
 
 use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
