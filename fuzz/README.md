@@ -9,6 +9,7 @@ bytes into a result or an error, never a panic, a hang, or an allocation past a 
 | `hook_stdin` | The bytes to the Claude Code adapter's `normalize`, as each event Cortex registers, with a working folder that is always in a repository and again in a linked working tree, so no path in the input reaches the file system |
 | `frame_decode` | The bytes to `read_frame` as a stream of requests and of answers, and to `decode` as one frame's body |
 | `extract_source` | Arbitrary bytes read as source, the first byte choosing which of the 21 languages, through the extractor that every file an agent touches goes through |
+| `transcript_line` | A line of an agent transcript to the usage meter, the first byte choosing the agent, carried through twice so what one line leaves for the next is read too |
 
 The crate is a workspace of its own, built on nightly by
 [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html), on Linux or macOS. From this
@@ -24,6 +25,10 @@ cargo +nightly fuzz run frame_decode corpus/frame_decode -- -max_total_time=600
 
 ```bash
 cargo +nightly fuzz run extract_source corpus/extract_source -- -max_total_time=600 -timeout=25
+```
+
+```bash
+cargo +nightly fuzz run transcript_line corpus/transcript_line -- -max_total_time=600
 ```
 
 The source extractor is slower than the other two by a wide margin, since every input is parsed by
