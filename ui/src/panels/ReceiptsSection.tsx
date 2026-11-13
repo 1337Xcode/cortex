@@ -31,6 +31,7 @@ import type { SessionNames } from '../text/sessionNames';
 import { ReceiptsChart } from './ReceiptsChart';
 import { RowList } from './RowList';
 import { Section } from './Section';
+import { whyNotLoaded } from '../text/loadWords';
 
 /** The headline: the comparison, or how far the tasks are from being enough for one. */
 function Headline({ receipts }: { receipts: Receipts }): ReactElement {
@@ -145,8 +146,8 @@ function ReceiptsBody(): ReactElement {
       return (
         <>
           <p className="panel-empty" role="alert" data-testid="receipts-error">
-            The receipts could not be loaded ({state.error.code}): {state.error.message}. Check that
-            Cortex is still running (cortex status in a terminal), then try again.
+            The receipts could not be loaded: {whyNotLoaded(state.error)}. Check that Cortex is
+            still running (cortex status in a terminal), then try again.
           </p>
           <Button
             variant="ghost"

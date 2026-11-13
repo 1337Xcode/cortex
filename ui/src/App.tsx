@@ -29,6 +29,7 @@ import { PAGE_REFRESHERS } from './state/pageRefreshers';
 import { mapStore, useMapStore, type IndexKnowledge, type LoadState } from './state/store';
 import { useIsNarrow } from './theme/media';
 import { EMPTY_RECHECK_MS } from './theme/tokens';
+import { whyNotLoaded } from './text/loadWords';
 
 /** What an empty map means, by what the page knows of the daemon's first reading. */
 function describeEmpty(index: IndexKnowledge): { readonly title: string; readonly next: string } {
@@ -73,7 +74,7 @@ export function describeLoad(
       };
     case 'error':
       return {
-        title: `The map could not be loaded (${load.error.code}): ${load.error.message}.`,
+        title: `The map could not be loaded: ${whyNotLoaded(load.error)}.`,
         next: 'Check that Cortex is still running (run cortex status in a terminal), then reload this page.',
       };
     case 'empty':

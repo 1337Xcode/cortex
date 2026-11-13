@@ -154,7 +154,7 @@ test('a comparison sent with 29 tasks a side is refused, never shown', async ({ 
   await page.keyboard.press('Enter');
   const section = receiptsSection(page);
   await expect(section.getByTestId('receipts-error')).toContainText(
-    'The receipts could not be loaded (bad_range): receipts.recorded.holdout.comparison: given before each arm has enough tasks.',
+    'The receipts could not be loaded: Cortex sent an answer this page cannot read (receipts.recorded.holdout.comparison: given before each arm has enough tasks).',
   );
   await expect(section.getByTestId('receipts-headline')).toHaveCount(0);
   await expectNoClaim(section);
@@ -209,7 +209,7 @@ test('the receipts are asked for only when the section opens, and a failure says
   await page.keyboard.press('Enter');
   const section = receiptsSection(page);
   await expect(section.getByTestId('receipts-error')).toHaveText(
-    'The receipts could not be loaded (http_status): the daemon answered 500. Check that Cortex is still running (cortex status in a terminal), then try again.',
+    'The receipts could not be loaded: the daemon answered 500. Check that Cortex is still running (cortex status in a terminal), then try again.',
   );
   await page.unroute('**/api/receipts');
   await section.getByRole('button', { name: 'Try again' }).click();

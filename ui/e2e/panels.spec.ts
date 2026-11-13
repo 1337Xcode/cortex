@@ -104,7 +104,7 @@ test.describe('activity', () => {
     await page.route('**/api/activity', (route) => route.fulfill({ status: 500, body: '' }));
     await openSection(page, 'Activity');
     await expect(page.getByTestId('activity-error')).toHaveText(
-      'The activity could not be loaded (http_status): the daemon answered 500. Check that Cortex is still running (cortex status in a terminal), then try again.',
+      'The activity could not be loaded: the daemon answered 500. Check that Cortex is still running (cortex status in a terminal), then try again.',
     );
     await page.unroute('**/api/activity');
     await page.getByTestId('overview-activity').getByRole('button', { name: 'Try again' }).click();

@@ -29,6 +29,7 @@ import {
   type SummarySentence,
   type SummaryText,
 } from './summarySentences';
+import { whyNotLoaded } from '../text/loadWords';
 
 /** A sentence's text as the page shows it, the files by the names `names` gives them. */
 export function sentenceText(parts: readonly SentencePart[], names: PathNames): string {
@@ -186,7 +187,7 @@ export function SummaryStrip({
       ) : (
         <p className="summary-state" role="alert">
           <ClippedText
-            text={`The summary could not be loaded (${text.error.code}): ${text.error.message}.`}
+            text={`The summary could not be loaded: ${whyNotLoaded(text.error)}.`}
             kind="words"
           />
         </p>

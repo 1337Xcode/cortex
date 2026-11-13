@@ -4,6 +4,7 @@
 import { useEffect, type ReactElement } from 'react';
 import { Button } from '../components/ui/button';
 import type { PanelState } from '../state/store';
+import { whyNotLoaded } from '../text/loadWords';
 
 /** Shows `state`, asking `load` when nothing was asked yet; `what` names the data in sentences. */
 export function LoadedBody<T>({
@@ -32,7 +33,7 @@ export function LoadedBody<T>({
       return (
         <>
           <p className="panel-empty" role="alert" data-testid={testId}>
-            {`${what.charAt(0).toUpperCase()}${what.slice(1)} could not be loaded (${state.error.code}): ${state.error.message}. Check that Cortex is still running (cortex status in a terminal), then try again.`}
+            {`${what.charAt(0).toUpperCase()}${what.slice(1)} could not be loaded: ${whyNotLoaded(state.error)}. Check that Cortex is still running (cortex status in a terminal), then try again.`}
           </p>
           <Button
             variant="ghost"

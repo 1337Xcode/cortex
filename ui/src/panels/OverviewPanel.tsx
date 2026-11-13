@@ -40,6 +40,7 @@ import { RowList } from './RowList';
 import { Footnote, Section } from './Section';
 import { SentenceView, summaryText } from './SummaryStrip';
 import { WarningsSection } from './WarningsSection';
+import { whyNotLoaded } from '../text/loadWords';
 
 /**
  * When the map's numbers were read, and, for a map too large to refresh by itself while agents
@@ -107,8 +108,7 @@ function AtAGlance({
         <p className="panel-empty">Loading the summary.</p>
       ) : (
         <p className="panel-empty" role="alert">
-          The summary could not be loaded ({text.error.code}): {text.error.message}. Reload the page
-          to try again.
+          The summary could not be loaded: {whyNotLoaded(text.error)}. Reload the page to try again.
         </p>
       )}
     </Section>
