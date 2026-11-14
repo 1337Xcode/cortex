@@ -44,6 +44,10 @@ change to how runs add up reaches results already made without running their ses
 keeps the runs that could not complete from the summary written when the evaluation ran, and
 refuses when that summary is missing.
 
+Each run works in a folder of its own under `--base`, deleted once its record is written; the
+folder of a run that could not complete is kept, to be looked into. A suite of hundreds of runs
+would otherwise keep a copy of a testbed, with the environment its check installed, for each.
+
 Each run clones its testbed at the pinned commit, or copies a folder holding it
 (`--from serena=<folder>`, leaving `.git/` and `.cortex/` behind). A task with `history = true`
 needs the repository's history, which a copy of files does not have, so its copy is made another

@@ -27,7 +27,7 @@ use anyhow::{Context, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::report::Incomplete;
-use crate::run::{Settings, TaskRun, run_task, taken_folders};
+use crate::run::{Settings, TaskRun, remove_run_folder, run_folder, run_task, taken_folders};
 use crate::task::Task;
 use crate::testbed::Testbed;
 
@@ -346,6 +346,14 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
             )]);
             runs.push(ran);
             results::write_runs(&args.out, &runs)?;
+            // A run that could not complete keeps its folder, to be looked into; this one is done.
+            let folder = run_folder(&args.base, &task.id, number);
+            if let Err(error) = remove_run_folder(&folder) {
+                say(&[format!(
+                    "{} run {number}: its folder is left: {error:#}",
+                    task.id
+                )]);
+            }
         }
     }
     say(&results::write_summary(&args.out, &runs, &incomplete)?);

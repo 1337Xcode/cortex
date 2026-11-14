@@ -202,6 +202,50 @@ pub(crate) fn run_folder(base: &Path, task: &str, run: u32) -> PathBuf {
     base.join(format!("{task}-{run}"))
 }
 
+/// Deletes the folder of a run whose record is written: its copy of the testbed, its store and its
+/// home, which nothing reads once the record is made. A suite of hundreds of runs would otherwise
+/// keep a copy of a testbed, with the environment its checks installed, for each. Git keeps its
+/// objects read-only, which Windows will not delete until that is cleared, so a first attempt that
+/// fails clears the flag on every file below the folder, links not followed, and tries again.
+///
+/// # Errors
+///
+/// The folder cannot be read or deleted.
+pub(crate) fn remove_run_folder(folder: &Path) -> anyhow::Result<()> {
+    if std::fs::remove_dir_all(folder).is_ok() || !folder.exists() {
+        return Ok(());
+    }
+    make_writable(folder)?;
+    std::fs::remove_dir_all(folder).with_context(|| format!("deleting {}", folder.display()))
+}
+
+/// Clears the read-only flag of every file in `folder` and below it, links not followed.
+fn make_writable(folder: &Path) -> anyhow::Result<()> {
+    let entries =
+        std::fs::read_dir(folder).with_context(|| format!("reading {}", folder.display()))?;
+    for entry in entries {
+        let path = entry
+            .with_context(|| format!("reading {}", folder.display()))?
+            .path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if metadata.is_dir() {
+            make_writable(&path)?;
+        } else if metadata.is_file() && metadata.permissions().readonly() {
+            let mut permissions = metadata.permissions();
+            // Only the read-only flag is cleared, on files this run made.
+            #[allow(
+                clippy::permissions_set_readonly_false,
+                reason = "the file is about to be deleted, by the user who made it"
+            )]
+            permissions.set_readonly(false);
+            std::fs::set_permissions(&path, permissions)
+                .with_context(|| format!("making {} writable", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// The run folders of `tasks`, each run `runs` times, that exist under `base` already: a run never
 /// works in a folder an earlier one left, whose copy, store and home are not fresh.
 pub(crate) fn taken_folders(base: &Path, tasks: &[&str], runs: u32) -> Vec<PathBuf> {
@@ -589,6 +633,26 @@ mod tests {
         let taken = taken_folders(base.path(), &["fix-tax"], 2);
         assert_eq!(taken, [base.path().join("fix-tax-2")]);
         assert!(taken_folders(base.path(), &["fix-tax"], 1).is_empty());
+        Ok(())
+    }
+
+    /// A finished run's folder is deleted with everything in it, a read-only file two folders down
+    /// included, as git leaves its objects; a folder already gone is not an error.
+    #[test]
+    fn a_finished_run_s_folder_is_deleted_read_only_files_and_all() -> anyhow::Result<()> {
+        let base = tempfile::tempdir()?;
+        let folder = run_folder(base.path(), "fix-tax", 2);
+        let objects = folder.join("repo").join(".git").join("objects");
+        std::fs::create_dir_all(&objects)?;
+        let object = objects.join("ab12");
+        std::fs::write(&object, b"blob")?;
+        let mut permissions = std::fs::metadata(&object)?.permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&object, permissions)?;
+        remove_run_folder(&folder)?;
+        assert!(!folder.exists());
+        assert!(base.path().exists());
+        remove_run_folder(&folder)?;
         Ok(())
     }
 
