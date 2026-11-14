@@ -1127,4 +1127,78 @@ mod tests {
         assert_eq!(writer.queries().counts()?.files, 0);
         Ok(())
     }
+
+    /// A full disk, made by capping the database at 64 pages more than it holds (SQLite's
+    /// `max_page_count` fails a write that would grow the file past it with the same "database or
+    /// disk is full" error a full disk gives) and filling those pages with rows of a table of the
+    /// test's own, 32 KiB each, so at most eight 4 KiB pages are left. Recording files then fails
+    /// within 4,000 of them with that error, met where SQLite writes the pages out: releasing the
+    /// savepoint each file is recorded under, which is the operation the error names. The commit
+    /// before it stays whole and nothing of the failed transaction is kept; once there is room
+    /// again the same writer records and commits.
+    #[test]
+    fn a_full_disk_fails_one_transaction_and_the_writer_carries_on()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let mut writer = Writer::open(&WriterOptions {
+            folder: &root.path().join(".cortex"),
+            repo_id: &RepoId::of(root.path()),
+            mmap_bytes: 0,
+            now_ms: 1,
+        })?;
+        let mut transaction = writer.transaction()?;
+        transaction.replace_file(&empty_file("kept.py")?)?;
+        transaction.commit()?;
+        writer
+            .connection
+            .execute_batch("CREATE TABLE filler (bytes BLOB NOT NULL)")?;
+        let pages: i64 = writer
+            .connection
+            .pragma_query_value(None, "page_count", |row| row.get(0))?;
+        writer
+            .connection
+            .pragma_update(None, "max_page_count", pages + 64)?;
+        let mut is_full = false;
+        for _ in 0..16 {
+            if let Err(error) = writer
+                .connection
+                .execute("INSERT INTO filler VALUES (zeroblob(32768))", [])
+            {
+                assert_eq!(
+                    error.sqlite_error_code(),
+                    Some(rusqlite::ErrorCode::DiskFull)
+                );
+                is_full = true;
+                break;
+            }
+        }
+        assert!(is_full, "64 pages took 16 rows of 32 KiB");
+        let mut transaction = writer.transaction()?;
+        let mut failure = None;
+        for number in 0..4_000 {
+            if let Err(error) = transaction.replace_file(&empty_file(&format!("f{number}.py"))?) {
+                failure = Some(error);
+                break;
+            }
+        }
+        let failure = failure.ok_or("4,000 files fit in eight pages")?;
+        let StoreError::Sqlite { operation, source } = &failure else {
+            return Err(format!("not a SQLite error: {failure:?}").into());
+        };
+        assert_eq!(
+            source.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DiskFull)
+        );
+        assert_eq!(*operation, "releasing a savepoint");
+        drop(transaction);
+        assert_eq!(writer.queries().counts()?.files, 1);
+        writer
+            .connection
+            .pragma_update(None, "max_page_count", pages + 4_096)?;
+        let mut transaction = writer.transaction()?;
+        transaction.replace_file(&empty_file("after.py")?)?;
+        transaction.commit()?;
+        assert_eq!(writer.queries().counts()?.files, 2);
+        Ok(())
+    }
 }
