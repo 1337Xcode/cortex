@@ -6,19 +6,19 @@
 
 use thiserror::Error;
 
+use crate::one_line::is_hidden;
+
 /// Most bytes a stored name may hold. Qualified names of nested items and long headings stay well
 /// below this; a longer text is not a name.
 pub const MAX_IDENTIFIER_BYTES: usize = 256;
 
-/// Characters that change the direction text displays in, or show nothing: the bidirectional
-/// marks, embeddings, overrides and isolates, the zero width space, the word joiner and the zero
-/// width no-break space. A name holding one can display as other text than it is, and a name
-/// reaches agents and people. The zero width joiner and non-joiner are allowed: some scripts and
-/// emoji need them.
-const HIDDEN_CHARACTERS: &[char] = &[
-    '\u{061C}', '\u{200B}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}',
-    '\u{202E}', '\u{2060}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}', '\u{FEFF}',
-];
+/// Whether `character` may not be in a name: one of those [`is_hidden`] lists, which change how
+/// text displays or show nothing, so that a name holding one can display as other text than it is,
+/// and a name reaches agents and people. The zero width joiner and non-joiner are the exception:
+/// some scripts and emoji need them.
+fn is_hiding(character: char) -> bool {
+    is_hidden(character) && !matches!(character, '\u{200C}' | '\u{200D}')
+}
 
 /// Why a text cannot be stored as a name.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -78,10 +78,7 @@ impl Identifier {
         if text.chars().any(char::is_control) {
             return Err(IdentifierError::ControlCharacter);
         }
-        if text
-            .chars()
-            .any(|character| HIDDEN_CHARACTERS.contains(&character))
-        {
+        if text.chars().any(is_hiding) {
             return Err(IdentifierError::HiddenCharacter);
         }
         Ok(Self(text.to_owned()))
@@ -150,10 +147,13 @@ mod tests {
         );
         // The bidirectional controls Unicode defines (the arabic letter mark, the left-to-right
         // and right-to-left marks, the embeddings and overrides with their pop, the isolates
-        // with theirs) and the three zero width characters that join nothing.
+        // with theirs), the three zero width characters that join nothing, the soft hyphen, the
+        // line and paragraph separators, the invisible operators, and the tag characters, which
+        // can spell text no one sees (here the first, U+E0001, the "A", and the last).
         let hidden = [
-            0x061C, 0x200B, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2060, 0x2066,
-            0x2067, 0x2068, 0x2069, 0xFEFF,
+            0x00AD, 0x061C, 0x200B, 0x200E, 0x200F, 0x2028, 0x2029, 0x202A, 0x202B, 0x202C, 0x202D,
+            0x202E, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x2066, 0x2067, 0x2068, 0x2069, 0xFEFF,
+            0xE0001, 0xE0041, 0xE007F,
         ];
         for code in hidden {
             let character = char::from_u32(code).unwrap_or_default();
