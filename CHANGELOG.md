@@ -8,6 +8,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- `cortex pause` and `cortex resume`: pause stops what Cortex says to agents in a repository,
+  until `cortex resume` or for `--minutes N`, while it goes on recording what they do there, so
+  nothing is lost for later. `cortex status` opens with the pause while it holds. `cortex off`
+  is unchanged: it stops the recording too.
 - `cortex statusline`, for Claude Code's status line: one line with the tokens Cortex added to
   the session and what the holdout comparison measured, which says savings are not measured yet
   until each arm has 30 ended tasks. It only reads, and prints nothing on any problem. `cortex
@@ -505,6 +509,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- A file saved just before a prompt (by an editor or a person, so only the file watcher saw it)
+  was counted as an edit of the task that prompt started, and the summary given to the agent
+  after a compaction said the task had edited it. Such an edit now belongs to the session,
+  not to a task that started after it.
 - The map no longer names or opens the wrong file when its snapshot is older than the daemon's:
   search results and live sessions are found by their paths, a file the map does not hold yet is
   listed by its path ("not on the map yet") and never marked or opened, and the map reads its data
