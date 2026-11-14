@@ -74,46 +74,34 @@ the command, not with the daemon.
 
 ## What has been measured
 
-Evaluations with Claude Code, in `eval/`: tasks on pinned open-source Python projects, each run in
-a fresh copy with Cortex installed. Some tasks first run warm-up sessions in the same area, as
-earlier work would; only the last session's work orders count.
+Evaluations with Claude Code, in `eval/`: tasks on three pinned open-source projects (31 on a
+Python toolkit of about 850 source files, 6 on a Python library of 15 files, 3 on a TypeScript web
+framework of 190 source files), each run in a fresh copy with Cortex installed. Some tasks first
+run warm-up sessions in the same area, as earlier work would; only the last session counts. Every
+task runs the same way twice: once with Cortex giving work orders, once with Cortex installed but
+holding every task out, and each task's runs are paired (`cortex-eval compare`, 95% intervals from
+resampling tasks).
 
-The latest, on 2026-11-06 (`eval/results/2026-11-06-5d28da8/`): 17 tasks, 2 runs each, on a
-project of about 850 source files (14 tasks) and one of 15 files (3 tasks), cloned with their git
-history.
+The latest, on 2026-11-14 (`eval/results/2026-11-14-8623dca-treated/` and `-held-out/`): 40 tasks,
+3 runs each in each arm, 240 runs, Claude Code 2.1.318 with Sonnet 5.5 at medium effort.
 
-- Every run's check passed.
-- The measured sessions got 18 work orders; 15 were used, meaning the session edited one of the
-  work order's first three files, or read one and edited a file that names it: a precision of 0.83
-  (95% interval 0.57 to 1.00, resampling tasks).
-- Every one of the 1,300 code lines the sessions were shown was the line its file held.
-- Everything Cortex said to the agents took at most 1.71% of the sessions' input tokens; in the
-  15-file project, which gets no work orders, at most 0.20%.
-- Warnings after edits named 32 files, of which 4 were read or edited afterwards. Most edits in
-  these tasks did not need the file a warning named.
+- The work orders are accurate. The measured sessions got 90; 68 were used, meaning the session
+  edited one of the work order's first three files, or read one and edited a file that names it: a
+  precision of 0.76 (95% interval 0.60 to 0.89). Every one of the 6,141 code lines shown was the
+  line its file held.
+- No saving is measured. With Cortex the measured sessions took 8,593 more input tokens on average
+  (interval 15,425 fewer to 32,131 more), 0.04 fewer turns (0.70 fewer to 0.66 more), and each run
+  cost $0.002 less ($0.008 less to $0.004 more). Every interval spans zero. One task's three runs
+  differ from each other by more than that: a median standard deviation of 27,076 input tokens
+  with Cortex and 22,135 without.
+- With Cortex every run's check passed (120 of 120); held out, 118 of 120 did (difference 0.02,
+  interval 0.00 to 0.04).
+- Everything Cortex said to the agents took at most 2.41% of the sessions' input tokens.
+- After edits Cortex gave 98 warnings; the file 35 of them named was read or edited later in the
+  task. Most edits in these tasks did not need the file a warning named.
 
-Whether Cortex saves tokens, turns or money is measured by running the same tasks twice, once with
-Cortex and once with Cortex holding every task out, and pairing each task's runs
-(`cortex-eval compare`). A first pilot, 15 tasks a side with 2 runs each
-(`eval/results/2026-11-06-e8bee2b-treated/comparison.txt`, 95% intervals from resampling tasks):
-
-- In the 8 tasks where Cortex gave the agent a work order, the measured sessions took 1.1 fewer
-  turns and tool calls (7.4 against 8.6; interval 0.4 to 1.9 fewer), and each run cost about 13%
-  less ($0.157 against $0.181; interval $0.009 to $0.041 less). Their input was 10,770 tokens
-  lower on average, which these few tasks do not settle (interval 27,500 lower to 6,850 higher).
-- In the 7 tasks where it gave none, the sessions took 1.6 more turns and 70,977 more input tokens
-  (intervals 0.4 to 2.6 more turns, 36,986 to 104,311 more tokens). Those 7 tasks were run again
-  on a later build, 2 runs each in each arm (`eval/results/2026-11-08-a9e546d-silent-treated/`),
-  and the cost did not come back: with Cortex the sessions took 19,707 fewer input tokens
-  (interval 95,424 fewer to 34,881 more), 0.64 fewer turns (2.43 fewer to 0.86 more) and $0.011
-  less a run (0.026 less to 0.001 more). The pilot's difference there was not a steady effect of
-  Cortex.
-- Over all 15 tasks the input was 27,378 tokens higher (interval 2,285 to 56,418), the turns and
-  tool calls the same within their interval (0.17 more; 0.77 fewer to 1.13 more), and each run
-  cost $0.008 less (interval $0.021 less to $0.005 more).
-
-Fifteen tasks a side is too few to state a saving overall. The next comparison runs 30 or more
-tasks a side once more tasks get a correct work order and the warnings are cut.
+So, as measured, Cortex gives an agent correct context it uses, and does not yet make the agent's
+work cheaper.
 
 ## Build and test
 
