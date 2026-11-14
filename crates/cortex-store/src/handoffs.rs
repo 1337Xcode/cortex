@@ -276,6 +276,15 @@ fn row_of(
     })
 }
 
+/// Deletes every handoff left before `before_ms`, open or closed: how many.
+pub(crate) fn delete_before(connection: &Connection, before_ms: i64) -> Result<u64, StoreError> {
+    connection
+        .prepare_cached(schema::HANDOFFS_DELETE_BEFORE)
+        .and_then(|mut statement| statement.execute([before_ms]))
+        .map(|deleted| u64::try_from(deleted).unwrap_or(u64::MAX))
+        .map_err(sqlite("deleting old handoffs"))
+}
+
 /// Clears the last failure of every handoff left before `before_ms`: how many.
 pub(crate) fn forget_failures(connection: &Connection, before_ms: i64) -> Result<u64, StoreError> {
     connection

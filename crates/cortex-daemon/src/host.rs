@@ -331,6 +331,7 @@ impl<'a> Host<'a> {
                     episodes = swept.episodes,
                     positions = swept.positions,
                     handoff_failures = swept.handoff_failures,
+                    handoffs = swept.handoffs,
                     blames = swept.blames,
                     warmed = swept.warmed,
                     pages = swept.pages,

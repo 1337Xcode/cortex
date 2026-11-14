@@ -5,8 +5,9 @@
 //! interest that has; the facts are reviewed and those retired
 //! for 90 days deleted; the gate's confidence model is fitted when one is due (see
 //! [`cortex_learn::calibrate`]); events and injections older than 90 days are deleted, episodes
-//! kept to 50,000 (unknown outcomes first), positions that can no longer hold removed and the
-//! failed checks handoffs keep cleared once a day old; the blames kept for file contents no
+//! kept to 50,000 (unknown outcomes first), positions that can no longer hold removed, the
+//! failed checks handoffs keep cleared once a day old and handoffs older than 90 days deleted
+//! (one is offered for a day); the blames kept for file contents no
 //! indexed file has are deleted and the rest kept to [`MAX_BLAMES`], and, while the history worker
 //! runs, the files worth warming are asked of it (see [`crate::history::warm`]); last, the
 //! query planner's statistics are refreshed and up to [`VACUUM_PAGES`] free pages given back to the
@@ -47,7 +48,7 @@ pub const PACE_WAIT: Duration = Duration::from_secs(2);
 /// behind it is recorded within milliseconds.
 const BATCH_ROWS: u64 = 500;
 
-/// How long events, injections and facts retired are kept: 90 days, in milliseconds.
+/// How long events, injections, facts retired and handoffs are kept: 90 days, in milliseconds.
 const KEPT_FOR_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
 
 /// How long a handoff keeps its failed check's command: a day, after which a session that has not
@@ -105,6 +106,8 @@ pub struct Swept {
     pub positions: u64,
     /// Handoffs whose failed check, with its command, was forgotten a day on.
     pub handoff_failures: u64,
+    /// Handoffs deleted, 90 days on.
+    pub handoffs: u64,
     /// Blames of line ranges deleted: of file contents no indexed file has, or past the cap.
     pub blames: u64,
     /// Files the history worker was asked to blame ahead of a prompt.
@@ -519,6 +522,8 @@ impl Upkeep {
                 swept.handoff_failures += transaction.forget_handoff_failures_before(
                     now_ms.saturating_sub(HANDOFF_FAILURE_KEPT_MS),
                 )?;
+                swept.handoffs +=
+                    transaction.delete_handoffs_before(now_ms.saturating_sub(KEPT_FOR_MS))?;
                 self.step.following()
             }
             Step::History => {

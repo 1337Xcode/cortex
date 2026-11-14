@@ -677,6 +677,15 @@ impl WriteTx<'_> {
         self.atomically(|connection| handoffs::forget_failures(connection, before_ms))
     }
 
+    /// Deletes every handoff left before `before_ms`, open or closed: how many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn delete_handoffs_before(&mut self, before_ms: i64) -> Result<u64, StoreError> {
+        self.atomically(|connection| handoffs::delete_before(connection, before_ms))
+    }
+
     /// Deletes at most `limit` episodes past the `keep` most worth keeping, those whose outcome is
     /// unknown first, then the oldest: how many.
     ///

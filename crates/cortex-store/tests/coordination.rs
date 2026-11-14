@@ -623,5 +623,15 @@ fn handoffs_are_left_one_a_session_and_closed() -> TestResult {
             ..other
         }]
     );
+    // Deleted by age, open or closed: before 2,100 takes the first (left at 1,500, closed) and
+    // the other (2,000, open) and leaves the second (2,500); before 1,000, none.
+    let mut transaction = writer.transaction()?;
+    let deleted = (
+        transaction.delete_handoffs_before(1_000)?,
+        transaction.delete_handoffs_before(2_100)?,
+    );
+    transaction.commit()?;
+    assert_eq!(deleted, (0, 2));
+    assert_eq!(failures(&scratch)?, [(SECOND.to_owned(), false)]);
     Ok(())
 }

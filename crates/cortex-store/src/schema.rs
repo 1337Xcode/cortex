@@ -1005,6 +1005,8 @@ pub(crate) const HANDOFF_CLOSE: &str = "UPDATE handoffs SET consumed_by = ?2, la
 /// Clears the last failure of every handoff left before ?1: a command is kept a day at most.
 pub(crate) const HANDOFFS_FORGET_FAILURES_BEFORE: &str = "UPDATE handoffs SET last_failure = NULL \
      WHERE last_failure IS NOT NULL AND created_at < ?1";
+/// Deletes every handoff left before ?1, open or closed.
+pub(crate) const HANDOFFS_DELETE_BEFORE: &str = "DELETE FROM handoffs WHERE created_at < ?1";
 /// The open handoffs left at ?1 or later, the newest first.
 pub(crate) const HANDOFFS_OPEN_SINCE: &str = "SELECT handoff_id, from_session, task_id, \
      working_set, open_warnings, last_failure, created_at FROM handoffs \
